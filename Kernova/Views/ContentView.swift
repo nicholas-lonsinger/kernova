@@ -1,13 +1,12 @@
 import SwiftUI
 
-/// Root view using `NavigationSplitView` with a sidebar listing VMs and a detail area.
+/// Detail pane showing the selected VM or a placeholder.
+/// Navigation split is now handled at the AppKit level via `NSSplitViewController`.
 struct ContentView: View {
     @Bindable var viewModel: VMLibraryViewModel
 
     var body: some View {
-        NavigationSplitView {
-            SidebarView(viewModel: viewModel)
-        } detail: {
+        Group {
             if let selected = viewModel.selectedInstance {
                 VMDetailView(instance: selected, viewModel: viewModel)
             } else {
@@ -22,6 +21,7 @@ struct ContentView: View {
                 }
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .sheet(isPresented: $viewModel.showCreationWizard) {
             VMCreationWizardView(viewModel: viewModel)
         }
