@@ -172,6 +172,104 @@ struct VMConfigurationTests {
         #expect(config.macAddress == nil)
     }
 
+    // MARK: - SharedDirectory Tests
+
+    @Test("SharedDirectory encodes and decodes via JSON")
+    func sharedDirectoryRoundTrip() throws {
+        let original = SharedDirectory(path: "/Users/test/Documents", readOnly: true)
+
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(SharedDirectory.self, from: data)
+
+        #expect(decoded.id == original.id)
+        #expect(decoded.path == "/Users/test/Documents")
+        #expect(decoded.readOnly == true)
+    }
+
+    @Test("SharedDirectory displayName returns last path component")
+    func sharedDirectoryDisplayName() {
+        let directory = SharedDirectory(path: "/Users/test/Documents/Projects")
+        #expect(directory.displayName == "Projects")
+
+        let rootDir = SharedDirectory(path: "/")
+        #expect(rootDir.displayName == "/")
+    }
+
+    @Test("VMConfiguration with shared directories round-trips through JSON")
+    func configWithSharedDirectoriesRoundTrip() throws {
+        let directories = [
+            SharedDirectory(path: "/Users/test/Shared", readOnly: false),
+            SharedDirectory(path: "/Users/test/ReadOnly", readOnly: true),
+        ]
+        let original = VMConfiguration(
+            name: "Sharing VM",
+            guestOS: .linux,
+            bootMode: .efi,
+            sharedDirectories: directories
+        )
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(original)
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(VMConfiguration.self, from: data)
+
+        #expect(decoded.sharedDirectories?.count == 2)
+        #expect(decoded.sharedDirectories?[0].path == "/Users/test/Shared")
+        #expect(decoded.sharedDirectories?[0].readOnly == false)
+        #expect(decoded.sharedDirectories?[1].path == "/Users/test/ReadOnly")
+        #expect(decoded.sharedDirectories?[1].readOnly == true)
+    }
+
+    @Test("Backward compatibility: decoding JSON without sharedDirectories field")
+    func backwardCompatibilitySharedDirectories() throws {
+        let json = """
+        {
+            "id": "12345678-1234-1234-1234-123456789012",
+            "name": "Old VM",
+            "guestOS": "linux",
+            "bootMode": "efi",
+            "cpuCount": 4,
+            "memorySizeInGB": 8,
+            "diskSizeInGB": 64,
+            "displayWidth": 1920,
+            "displayHeight": 1200,
+            "displayPPI": 144,
+            "networkEnabled": true,
+            "createdAt": "2025-01-01T00:00:00Z",
+            "notes": ""
+        }
+        """
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let config = try decoder.decode(VMConfiguration.self, from: Data(json.utf8))
+
+        #expect(config.sharedDirectories == nil)
+    }
+
+    @Test("VMConfiguration with nil shared directories omits field from JSON")
+    func nilSharedDirectoriesOmittedFromJSON() throws {
+        let config = VMConfiguration(
+            name: "No Shares",
+            guestOS: .macOS,
+            bootMode: .macOS
+        )
+
+        let data = try JSONEncoder().encode(config)
+        let jsonObject = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+
+        #expect(jsonObject["sharedDirectories"] == nil)
+    }
+
+    @Test("SharedDirectory defaults to read-write")
+    func sharedDirectoryDefaultReadOnly() {
+        let directory = SharedDirectory(path: "/tmp/test")
+        #expect(directory.readOnly == false)
+    }
+
     @Test("VMStatus.canStart returns true for stopped and error states")
     func canStartStates() {
         #expect(VMStatus.stopped.canStart == true)

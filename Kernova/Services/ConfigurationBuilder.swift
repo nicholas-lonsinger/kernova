@@ -41,6 +41,7 @@ struct ConfigurationBuilder: Sendable {
         configureNetwork(vzConfig, config: config)
         configureEntropy(vzConfig)
         configureAudio(vzConfig)
+        configureDirectorySharing(vzConfig, config: config)
 
         // Validate
         try vzConfig.validate()
@@ -232,6 +233,59 @@ struct ConfigurationBuilder: Sendable {
 
         audioDevice.streams = [inputStream, outputStream]
         vzConfig.audioDevices = [audioDevice]
+    }
+
+    // MARK: - Directory Sharing
+
+    private func configureDirectorySharing(_ vzConfig: VZVirtualMachineConfiguration, config: VMConfiguration) {
+        guard let directories = config.sharedDirectories, !directories.isEmpty else { return }
+
+        switch config.guestOS {
+        case .macOS:
+            configureMacOSDirectorySharing(vzConfig, directories: directories)
+        case .linux:
+            configureLinuxDirectorySharing(vzConfig, directories: directories)
+        }
+    }
+
+    private func configureMacOSDirectorySharing(
+        _ vzConfig: VZVirtualMachineConfiguration,
+        directories: [SharedDirectory]
+    ) {
+        // macOS guests use a single device with the automount tag.
+        // All directories are bundled into a VZMultipleDirectoryShare.
+        var shareMap: [String: VZSharedDirectory] = [:]
+        for directory in directories {
+            var name = directory.displayName
+            // Handle name collisions by prefixing with a UUID fragment
+            if shareMap[name] != nil {
+                name = "\(directory.id.uuidString.prefix(8))-\(name)"
+            }
+            shareMap[name] = VZSharedDirectory(url: URL(fileURLWithPath: directory.path), readOnly: directory.readOnly)
+        }
+
+        let multiShare = VZMultipleDirectoryShare(directories: shareMap)
+        let device = VZVirtioFileSystemDeviceConfiguration(tag: VZVirtioFileSystemDeviceConfiguration.macOSGuestAutomountTag)
+        device.share = multiShare
+
+        vzConfig.directorySharingDevices = [device]
+    }
+
+    private func configureLinuxDirectorySharing(
+        _ vzConfig: VZVirtualMachineConfiguration,
+        directories: [SharedDirectory]
+    ) {
+        // Linux guests get one device per directory with sequential tags (share0, share1, ...).
+        var devices: [VZVirtioFileSystemDeviceConfiguration] = []
+        for (index, directory) in directories.enumerated() {
+            let share = VZSingleDirectoryShare(
+                directory: VZSharedDirectory(url: URL(fileURLWithPath: directory.path), readOnly: directory.readOnly)
+            )
+            let device = VZVirtioFileSystemDeviceConfiguration(tag: "share\(index)")
+            device.share = share
+            devices.append(device)
+        }
+        vzConfig.directorySharingDevices = devices
     }
 }
 

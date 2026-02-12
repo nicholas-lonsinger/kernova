@@ -32,6 +32,17 @@ struct VMInfoView: View {
                     LabeledContent("MAC Address", value: mac)
                 }
             }
+
+            if let directories = instance.configuration.sharedDirectories, !directories.isEmpty {
+                Section("Shared Directories") {
+                    ForEach(directories) { directory in
+                        LabeledContent(directory.displayName) {
+                            Text(directory.readOnly ? "Read Only" : "Read/Write")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
         }
         .formStyle(.grouped)
     }

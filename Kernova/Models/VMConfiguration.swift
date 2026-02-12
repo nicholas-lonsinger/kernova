@@ -48,6 +48,10 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
     var initrdPath: String?
     var kernelCommandLine: String?
 
+    // MARK: - Shared Directories
+
+    var sharedDirectories: [SharedDirectory]?
+
     // MARK: - Metadata
 
     var createdAt: Date
@@ -74,6 +78,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         kernelPath: String? = nil,
         initrdPath: String? = nil,
         kernelCommandLine: String? = nil,
+        sharedDirectories: [SharedDirectory]? = nil,
         createdAt: Date = Date(),
         notes: String = ""
     ) {
@@ -95,6 +100,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         self.kernelPath = kernelPath
         self.initrdPath = initrdPath
         self.kernelCommandLine = kernelCommandLine
+        self.sharedDirectories = sharedDirectories
         self.createdAt = createdAt
         self.notes = notes
     }
@@ -103,5 +109,25 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
 
     var memorySizeInBytes: UInt64 {
         UInt64(memorySizeInGB) * 1024 * 1024 * 1024
+    }
+}
+
+// MARK: - SharedDirectory
+
+/// A host directory shared with the guest VM via VirtioFS.
+struct SharedDirectory: Codable, Sendable, Equatable, Identifiable {
+    var id: UUID
+    var path: String
+    var readOnly: Bool
+
+    init(id: UUID = UUID(), path: String, readOnly: Bool = false) {
+        self.id = id
+        self.path = path
+        self.readOnly = readOnly
+    }
+
+    /// The last path component, used as the display name in the UI and as the share name in VirtioFS.
+    var displayName: String {
+        (path as NSString).lastPathComponent
     }
 }
