@@ -10,7 +10,6 @@ struct VMSettingsView: View {
             Form {
                 generalSection
                 resourcesSection
-                displaySection
                 networkSection
                 notesSection
             }
@@ -52,14 +51,6 @@ struct VMSettingsView: View {
             )
 
             LabeledContent("Disk Size", value: "\(instance.configuration.diskSizeInGB) GB")
-        }
-    }
-
-    @ViewBuilder
-    private var displaySection: some View {
-        Section("Display") {
-            LabeledContent("Resolution", value: "\(instance.configuration.displayWidth) x \(instance.configuration.displayHeight)")
-            LabeledContent("PPI", value: "\(instance.configuration.displayPPI)")
         }
     }
 
