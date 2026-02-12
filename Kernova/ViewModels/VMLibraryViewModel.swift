@@ -46,7 +46,11 @@ final class VMLibraryViewModel {
                 do {
                     var config = try storageService.loadConfiguration(from: bundleURL)
                     let needsMigration = migrateConfigurationIfNeeded(&config)
-                    let instance = VMInstance(configuration: config, bundleURL: bundleURL)
+                    let saveFileURL = bundleURL.appendingPathComponent("SaveFile.vzvmsave")
+                    let initialStatus: VMStatus = FileManager.default.fileExists(
+                        atPath: saveFileURL.path
+                    ) ? .paused : .stopped
+                    let instance = VMInstance(configuration: config, bundleURL: bundleURL, status: initialStatus)
                     if needsMigration {
                         try storageService.saveConfiguration(config, to: bundleURL)
                         Self.logger.info("Migrated VM '\(config.name)': persisted stable identifiers")

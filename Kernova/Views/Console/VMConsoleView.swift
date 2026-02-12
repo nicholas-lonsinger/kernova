@@ -11,6 +11,12 @@ struct VMConsoleView: View {
             if let vm = instance.virtualMachine {
                 VMDisplayView(virtualMachine: vm)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if instance.isColdPaused {
+                ContentUnavailableView(
+                    "Paused",
+                    systemImage: "pause.circle",
+                    description: Text("This virtual machine's state is saved to disk. Resume to continue.")
+                )
             } else {
                 ContentUnavailableView(
                     "No Display",

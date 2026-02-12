@@ -121,6 +121,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSGestu
         withObservationTracking {
             _ = self.viewModel.selectedInstance
             _ = self.viewModel.selectedInstance?.status
+            _ = self.viewModel.selectedInstance?.virtualMachine
         } onChange: {
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -145,7 +146,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSGestu
         guard let instance = viewModel.selectedInstance else { return }
 
         // Determine which items to show based on current status
-        let desiredIdentifiers = desiredActionIdentifiers(for: instance.status)
+        let desiredIdentifiers = desiredActionIdentifiers(for: instance)
 
         // Insert each before the "+" (newVM) item
         let newVMIndex = toolbar.items.firstIndex {
@@ -157,14 +158,18 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSGestu
         }
     }
 
-    /// Returns the action identifiers that should be visible for a given VM status.
-    private func desiredActionIdentifiers(for status: VMStatus) -> [NSToolbarItem.Identifier] {
-        switch status {
+    /// Returns the action identifiers that should be visible for a given VM instance.
+    private func desiredActionIdentifiers(for instance: VMInstance) -> [NSToolbarItem.Identifier] {
+        switch instance.status {
         case .stopped:
             return [Self.startVMIdentifier, Self.deleteVMIdentifier]
         case .running:
             return [Self.pauseVMIdentifier, Self.stopVMIdentifier, Self.saveVMIdentifier]
         case .paused:
+            if instance.isColdPaused {
+                // State already saved to disk — no Save State, offer Delete instead
+                return [Self.resumeVMIdentifier, Self.stopVMIdentifier, Self.deleteVMIdentifier]
+            }
             return [Self.resumeVMIdentifier, Self.stopVMIdentifier, Self.saveVMIdentifier]
         case .error:
             return [Self.startVMIdentifier, Self.deleteVMIdentifier]

@@ -33,9 +33,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        // Save any running VMs before termination
+        // Save VMs that have a live virtual machine; cold-paused VMs already have state on disk
         let runningInstances = viewModel.instances.filter {
-            $0.status == .running || $0.status == .paused
+            ($0.status == .running || $0.status == .paused) && $0.virtualMachine != nil
         }
 
         guard !runningInstances.isEmpty else {

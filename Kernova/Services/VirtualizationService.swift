@@ -23,40 +23,16 @@ final class VirtualizationService {
         instance.status = .starting
 
         do {
-            let vzConfig = try configBuilder.build(
-                from: instance.configuration,
-                bundleURL: instance.bundleURL
-            )
-
-            let vm = VZVirtualMachine(configuration: vzConfig)
-            instance.virtualMachine = vm
-            instance.setupDelegate()
-
-            // If a save file exists, attempt to restore; fall back to cold boot on failure
             if instance.hasSaveFile {
-                do {
-                    instance.status = .restoring
-                    try await restoreMachineState(vm, from: instance.saveFileURL)
-                    try await vm.resume()
-
-                    // Remove the save file after successful restore
-                    try? FileManager.default.removeItem(at: instance.saveFileURL)
-                } catch {
-                    Self.logger.warning(
-                        "Restore failed for VM '\(instance.name)', falling back to cold boot: \(error.localizedDescription)"
-                    )
-
-                    // Remove the stale save file so future starts don't hit the same failure
-                    try? FileManager.default.removeItem(at: instance.saveFileURL)
-
-                    // Create a fresh VZVirtualMachine since the previous one may be in a bad state
-                    let freshVM = VZVirtualMachine(configuration: vzConfig)
-                    instance.virtualMachine = freshVM
-                    instance.setupDelegate()
-                    instance.status = .starting
-                    try await freshVM.start()
-                }
+                try await restoreOrColdBoot(instance)
             } else {
+                let vzConfig = try configBuilder.build(
+                    from: instance.configuration,
+                    bundleURL: instance.bundleURL
+                )
+                let vm = VZVirtualMachine(configuration: vzConfig)
+                instance.virtualMachine = vm
+                instance.setupDelegate()
                 try await vm.start()
             }
 
@@ -73,6 +49,14 @@ final class VirtualizationService {
 
     /// Requests a graceful ACPI shutdown of the virtual machine.
     func stop(_ instance: VMInstance) throws {
+        // Cold-paused: no live VM, just discard the save file
+        if instance.isColdPaused {
+            try? FileManager.default.removeItem(at: instance.saveFileURL)
+            instance.status = .stopped
+            Self.logger.info("Discarded saved state for VM '\(instance.name)'")
+            return
+        }
+
         guard instance.status.canStop, let vm = instance.virtualMachine else {
             throw VirtualizationError.invalidStateTransition(from: instance.status, action: "stop")
         }
@@ -83,6 +67,14 @@ final class VirtualizationService {
 
     /// Immediately terminates the virtual machine.
     func forceStop(_ instance: VMInstance) async throws {
+        // Cold-paused: no live VM, just discard the save file
+        if instance.isColdPaused {
+            try? FileManager.default.removeItem(at: instance.saveFileURL)
+            instance.status = .stopped
+            Self.logger.info("Discarded saved state for VM '\(instance.name)'")
+            return
+        }
+
         guard let vm = instance.virtualMachine else {
             throw VirtualizationError.noVirtualMachine
         }
@@ -107,20 +99,38 @@ final class VirtualizationService {
     }
 
     /// Resumes a paused virtual machine.
+    ///
+    /// Handles two cases:
+    /// - **Hot resume**: VM is in memory — calls `vm.resume()` directly.
+    /// - **Cold resume**: VM state is on disk only — rebuilds the VM and restores from save file.
     func resume(_ instance: VMInstance) async throws {
-        guard instance.status.canResume, let vm = instance.virtualMachine else {
+        guard instance.status.canResume else {
             throw VirtualizationError.invalidStateTransition(from: instance.status, action: "resume")
         }
 
-        try await vm.resume()
-        instance.status = .running
+        do {
+            if let vm = instance.virtualMachine {
+                // Hot resume — VM is already in memory
+                try await vm.resume()
+                instance.status = .running
 
-        // Remove stale save file so future saves can create a fresh one
-        if instance.hasSaveFile {
-            try? FileManager.default.removeItem(at: instance.saveFileURL)
+                if instance.hasSaveFile {
+                    try? FileManager.default.removeItem(at: instance.saveFileURL)
+                }
+            } else if instance.hasSaveFile {
+                // Cold resume — rebuild VM from disk state
+                try await restoreOrColdBoot(instance)
+                instance.status = .running
+            } else {
+                throw VirtualizationError.noSaveFile
+            }
+
+            Self.logger.info("Resumed VM '\(instance.name)'")
+        } catch {
+            instance.status = .error
+            instance.errorMessage = error.localizedDescription
+            throw error
         }
-
-        Self.logger.info("Resumed VM '\(instance.name)'")
     }
 
     // MARK: - Save / Restore
@@ -161,6 +171,40 @@ final class VirtualizationService {
         // Remove save file after successful restore
         try? FileManager.default.removeItem(at: instance.saveFileURL)
         Self.logger.info("Restored state for VM '\(instance.name)'")
+    }
+
+    // MARK: - Private Helpers
+
+    /// Builds a `VZVirtualMachine`, restores from a save file, and resumes.
+    /// On restore failure, deletes the stale save file and falls back to a cold boot.
+    private func restoreOrColdBoot(_ instance: VMInstance) async throws {
+        let vzConfig = try configBuilder.build(
+            from: instance.configuration,
+            bundleURL: instance.bundleURL
+        )
+
+        let vm = VZVirtualMachine(configuration: vzConfig)
+        instance.virtualMachine = vm
+        instance.setupDelegate()
+
+        do {
+            instance.status = .restoring
+            try await restoreMachineState(vm, from: instance.saveFileURL)
+            try await vm.resume()
+            try? FileManager.default.removeItem(at: instance.saveFileURL)
+        } catch {
+            Self.logger.warning(
+                "Restore failed for VM '\(instance.name)', falling back to cold boot: \(error.localizedDescription)"
+            )
+            try? FileManager.default.removeItem(at: instance.saveFileURL)
+
+            // Create a fresh VZVirtualMachine since the previous one may be in a bad state
+            let freshVM = VZVirtualMachine(configuration: vzConfig)
+            instance.virtualMachine = freshVM
+            instance.setupDelegate()
+            instance.status = .starting
+            try await freshVM.start()
+        }
     }
 
     // MARK: - Private Async Wrappers

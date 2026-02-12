@@ -69,6 +69,11 @@ final class VMInstance: Identifiable {
         FileManager.default.fileExists(atPath: saveFileURL.path)
     }
 
+    /// `true` when the VM is paused-to-disk but has no live `VZVirtualMachine` in memory.
+    var isColdPaused: Bool {
+        status == .paused && virtualMachine == nil
+    }
+
     // MARK: - Delegate Setup
 
     func setupDelegate() {
