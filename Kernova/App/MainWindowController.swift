@@ -5,9 +5,10 @@ import SwiftUI
 /// Using AppKit-level split view enables full-height sidebar layout (sidebar extends behind title bar).
 /// Toolbar is managed via `NSToolbarDelegate` because SwiftUI `.toolbar` modifiers don't propagate
 /// from `NSHostingController` children of `NSSplitViewController` to the window's toolbar.
-final class MainWindowController: NSWindowController, NSToolbarDelegate {
+final class MainWindowController: NSWindowController, NSToolbarDelegate, NSGestureRecognizerDelegate {
 
     private var viewModel: VMLibraryViewModel!
+    private var sidebarHostingController: NSViewController?
 
     // MARK: - Toolbar Item Identifiers
 
@@ -65,6 +66,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate {
 
         self.init(window: window)
         self.viewModel = viewModel
+        self.sidebarHostingController = sidebarHosting
 
         // Toolbar — managed via NSToolbarDelegate since SwiftUI toolbar propagation
         // doesn't work through NSSplitViewController child hosting controllers.
@@ -74,7 +76,35 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate {
         window.toolbar = toolbar
         window.toolbarStyle = .unified
 
+        // Deselect sidebar row when clicking empty space below the VM list
+        let clickGesture = NSClickGestureRecognizer(target: self, action: #selector(sidebarEmptyAreaClicked(_:)))
+        clickGesture.delegate = self
+        sidebarHosting.view.addGestureRecognizer(clickGesture)
+
         observeToolbarState()
+    }
+
+    // MARK: - Sidebar Empty-Area Click
+
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: NSGestureRecognizer) -> Bool {
+        guard let sidebarView = sidebarHostingController?.view,
+              let tableView = findTableView(in: sidebarView) else {
+            return false
+        }
+        let point = gestureRecognizer.location(in: tableView)
+        return tableView.row(at: point) == -1
+    }
+
+    @objc private func sidebarEmptyAreaClicked(_ sender: NSClickGestureRecognizer) {
+        viewModel.selectedID = nil
+    }
+
+    private func findTableView(in view: NSView) -> NSTableView? {
+        if let tableView = view as? NSTableView { return tableView }
+        for subview in view.subviews {
+            if let found = findTableView(in: subview) { return found }
+        }
+        return nil
     }
 
     // MARK: - Toolbar State Observation
