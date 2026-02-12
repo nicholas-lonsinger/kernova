@@ -114,6 +114,12 @@ final class VirtualizationService {
 
         try await vm.resume()
         instance.status = .running
+
+        // Remove stale save file so future saves can create a fresh one
+        if instance.hasSaveFile {
+            try? FileManager.default.removeItem(at: instance.saveFileURL)
+        }
+
         Self.logger.info("Resumed VM '\(instance.name)'")
     }
 
