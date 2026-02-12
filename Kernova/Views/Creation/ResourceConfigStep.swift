@@ -48,6 +48,10 @@ struct ResourceConfigStep: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+
+                Section("Network") {
+                    Toggle("Networking", isOn: $creationVM.networkEnabled)
+                }
             }
             .formStyle(.grouped)
         }

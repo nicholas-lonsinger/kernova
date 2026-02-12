@@ -55,6 +55,7 @@ final class VMCreationViewModel {
     var cpuCount: Int = 4
     var memoryInGB: Int = 8
     var diskSizeInGB: Int = 100
+    var networkEnabled: Bool = true
 
     // MARK: - Navigation
 
@@ -133,7 +134,9 @@ final class VMCreationViewModel {
         let bootMode = effectiveBootMode
 
         // Generate a stable MAC address so save/restore uses a consistent config
-        let macAddress = VZMACAddress.randomLocallyAdministered().string
+        let macAddress: String? = networkEnabled
+            ? VZMACAddress.randomLocallyAdministered().string
+            : nil
 
         // For EFI/Linux VMs, generate a stable machine identifier
         let genericMachineIdentifierData: Data? = (bootMode == .efi || bootMode == .linuxKernel)
@@ -147,6 +150,7 @@ final class VMCreationViewModel {
             cpuCount: cpuCount,
             memorySizeInGB: memoryInGB,
             diskSizeInGB: diskSizeInGB,
+            networkEnabled: networkEnabled,
             macAddress: macAddress,
             genericMachineIdentifierData: genericMachineIdentifierData,
             kernelPath: selectedBootMode == .linuxKernel ? kernelPath : nil,

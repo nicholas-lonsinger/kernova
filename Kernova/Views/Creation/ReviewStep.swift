@@ -28,6 +28,10 @@ struct ReviewStep: View {
                     LabeledContent("Disk Size", value: "\(creationVM.diskSizeInGB) GB")
                 }
 
+                Section("Network") {
+                    LabeledContent("Networking", value: creationVM.networkEnabled ? "Enabled" : "Disabled")
+                }
+
                 if creationVM.selectedOS == .macOS {
                     Section("Installation") {
                         LabeledContent("IPSW Source") {
