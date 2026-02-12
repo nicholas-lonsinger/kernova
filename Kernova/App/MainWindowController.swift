@@ -19,18 +19,11 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSGestu
     private static let stopVMIdentifier = NSToolbarItem.Identifier("stopVM")
     private static let saveVMIdentifier = NSToolbarItem.Identifier("saveVM")
     private static let deleteVMIdentifier = NSToolbarItem.Identifier("deleteVM")
+    private static let actionGroupIdentifier = NSToolbarItem.Identifier("actionGroup")
 
-    /// All VM action identifiers in their canonical toolbar order.
-    private static let actionIdentifiers: [NSToolbarItem.Identifier] = [
-        startVMIdentifier,
-        pauseVMIdentifier,
-        resumeVMIdentifier,
-        stopVMIdentifier,
-        saveVMIdentifier,
-        deleteVMIdentifier,
-    ]
-
-    private static let actionIdentifierSet: Set<NSToolbarItem.Identifier> = Set(actionIdentifiers)
+    /// The action identifiers that should currently appear in the toolbar group.
+    /// Updated by `rebuildActionItems()` before inserting the group item.
+    private var currentActionIdentifiers: [NSToolbarItem.Identifier] = []
 
     convenience init(viewModel: VMLibraryViewModel) {
         // Sidebar pane
@@ -131,31 +124,33 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSGestu
         }
     }
 
-    /// Removes all current action items and re-inserts the appropriate ones
-    /// based on the selected VM's status.
+    /// Removes the existing action group (if present) and re-inserts it after the
+    /// "+" button with the appropriate subitems for the selected VM's status.
     private func rebuildActionItems() {
         guard let toolbar = window?.toolbar else { return }
 
-        // Remove existing action items (iterate in reverse to keep indices stable)
-        for index in stride(from: toolbar.items.count - 1, through: 0, by: -1) {
-            if Self.actionIdentifierSet.contains(toolbar.items[index].itemIdentifier) {
-                toolbar.removeItem(at: index)
-            }
+        // Remove existing action group
+        if let groupIndex = toolbar.items.firstIndex(where: {
+            $0.itemIdentifier == Self.actionGroupIdentifier
+        }) {
+            toolbar.removeItem(at: groupIndex)
         }
 
         guard let instance = viewModel.selectedInstance else { return }
 
         // Determine which items to show based on current status
         let desiredIdentifiers = desiredActionIdentifiers(for: instance)
+        guard !desiredIdentifiers.isEmpty else { return }
 
-        // Insert each before the "+" (newVM) item
-        let newVMIndex = toolbar.items.firstIndex {
+        // Store desired identifiers so the delegate can build the group
+        currentActionIdentifiers = desiredIdentifiers
+
+        // Insert the action group after the "+" button
+        let insertIndex = (toolbar.items.firstIndex {
             $0.itemIdentifier == Self.newVMIdentifier
-        } ?? toolbar.items.count
+        } ?? toolbar.items.count - 1) + 1
 
-        for (offset, identifier) in desiredIdentifiers.enumerated() {
-            toolbar.insertItem(withItemIdentifier: identifier, at: newVMIndex + offset)
-        }
+        toolbar.insertItem(withItemIdentifier: Self.actionGroupIdentifier, at: insertIndex)
     }
 
     /// Returns the action identifiers that should be visible for a given VM instance.
@@ -195,13 +190,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSGestu
             .flexibleSpace,
             .toggleSidebar,
             .sidebarTrackingSeparator,
-            Self.startVMIdentifier,
-            Self.pauseVMIdentifier,
-            Self.resumeVMIdentifier,
-            Self.stopVMIdentifier,
-            Self.saveVMIdentifier,
-            Self.deleteVMIdentifier,
             Self.newVMIdentifier,
+            Self.actionGroupIdentifier,
         ]
     }
 
@@ -213,18 +203,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSGestu
         switch itemIdentifier {
         case Self.newVMIdentifier:
             return makeNewVMItem()
-        case Self.startVMIdentifier:
-            return makeStartVMItem()
-        case Self.pauseVMIdentifier:
-            return makePauseVMItem()
-        case Self.resumeVMIdentifier:
-            return makeResumeVMItem()
-        case Self.stopVMIdentifier:
-            return makeStopVMItem()
-        case Self.saveVMIdentifier:
-            return makeSaveVMItem()
-        case Self.deleteVMIdentifier:
-            return makeDeleteVMItem()
+        case Self.actionGroupIdentifier:
+            return makeActionGroup()
         default:
             return nil
         }
@@ -314,5 +294,25 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSGestu
         item.target = nil
         item.action = #selector(AppDelegate.deleteVM(_:))
         return item
+    }
+
+    private func makeActionGroup() -> NSToolbarItemGroup {
+        let subitems = currentActionIdentifiers.compactMap { identifier -> NSToolbarItem? in
+            switch identifier {
+            case Self.startVMIdentifier: return makeStartVMItem()
+            case Self.pauseVMIdentifier: return makePauseVMItem()
+            case Self.resumeVMIdentifier: return makeResumeVMItem()
+            case Self.stopVMIdentifier: return makeStopVMItem()
+            case Self.saveVMIdentifier: return makeSaveVMItem()
+            case Self.deleteVMIdentifier: return makeDeleteVMItem()
+            default: return nil
+            }
+        }
+        let group = NSToolbarItemGroup(itemIdentifier: Self.actionGroupIdentifier)
+        group.subitems = subitems
+        group.controlRepresentation = .expanded
+        group.label = "Actions"
+        group.paletteLabel = "VM Actions"
+        return group
     }
 }
