@@ -185,6 +185,9 @@ struct VMSettingsView: View {
             }
 
             if instance.configuration.guestOS == .linux {
+                Text("Shared directories are available as virtiofs mounts in the guest. Mount them with `mount -t virtiofs <tag> <mountpoint>`.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 if !directories.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Mount in guest:")
