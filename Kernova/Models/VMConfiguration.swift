@@ -42,8 +42,14 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
     /// Serialized `VZGenericMachineIdentifier.dataRepresentation`.
     var genericMachineIdentifierData: Data?
 
-    /// Path to an ISO image attached as a USB mass storage device (EFI boot).
+    // MARK: - Disc Drive
+
+    /// Path to an ISO image attached as a USB mass storage device.
     var isoPath: String?
+
+    /// When `true` and `bootMode == .efi`, the ISO device is placed before the main disk
+    /// so the EFI firmware discovers it first.
+    var bootFromDiscImage: Bool
 
     // MARK: - Linux kernel boot
 
@@ -79,6 +85,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         machineIdentifierData: Data? = nil,
         genericMachineIdentifierData: Data? = nil,
         isoPath: String? = nil,
+        bootFromDiscImage: Bool = false,
         kernelPath: String? = nil,
         initrdPath: String? = nil,
         kernelCommandLine: String? = nil,
@@ -102,12 +109,56 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         self.machineIdentifierData = machineIdentifierData
         self.genericMachineIdentifierData = genericMachineIdentifierData
         self.isoPath = isoPath
+        self.bootFromDiscImage = bootFromDiscImage
         self.kernelPath = kernelPath
         self.initrdPath = initrdPath
         self.kernelCommandLine = kernelCommandLine
         self.sharedDirectories = sharedDirectories
         self.createdAt = createdAt
         self.notes = notes
+    }
+
+    // MARK: - Codable
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, guestOS, bootMode
+        case cpuCount, memorySizeInGB, diskSizeInGB
+        case displayWidth, displayHeight, displayPPI
+        case networkEnabled, macAddress
+        case hardwareModelData, machineIdentifierData
+        case genericMachineIdentifierData
+        case isoPath, bootFromDiscImage
+        case kernelPath, initrdPath, kernelCommandLine
+        case sharedDirectories
+        case createdAt, notes
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        guestOS = try container.decode(VMGuestOS.self, forKey: .guestOS)
+        bootMode = try container.decode(VMBootMode.self, forKey: .bootMode)
+        cpuCount = try container.decode(Int.self, forKey: .cpuCount)
+        memorySizeInGB = try container.decode(Int.self, forKey: .memorySizeInGB)
+        diskSizeInGB = try container.decode(Int.self, forKey: .diskSizeInGB)
+        displayWidth = try container.decode(Int.self, forKey: .displayWidth)
+        displayHeight = try container.decode(Int.self, forKey: .displayHeight)
+        displayPPI = try container.decode(Int.self, forKey: .displayPPI)
+        networkEnabled = try container.decode(Bool.self, forKey: .networkEnabled)
+        macAddress = try container.decodeIfPresent(String.self, forKey: .macAddress)
+        hardwareModelData = try container.decodeIfPresent(Data.self, forKey: .hardwareModelData)
+        machineIdentifierData = try container.decodeIfPresent(Data.self, forKey: .machineIdentifierData)
+        genericMachineIdentifierData = try container.decodeIfPresent(Data.self, forKey: .genericMachineIdentifierData)
+        isoPath = try container.decodeIfPresent(String.self, forKey: .isoPath)
+        bootFromDiscImage = try container.decodeIfPresent(Bool.self, forKey: .bootFromDiscImage) ?? false
+        kernelPath = try container.decodeIfPresent(String.self, forKey: .kernelPath)
+        initrdPath = try container.decodeIfPresent(String.self, forKey: .initrdPath)
+        kernelCommandLine = try container.decodeIfPresent(String.self, forKey: .kernelCommandLine)
+        sharedDirectories = try container.decodeIfPresent([SharedDirectory].self, forKey: .sharedDirectories)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        notes = try container.decode(String.self, forKey: .notes)
     }
 
     // MARK: - Computed

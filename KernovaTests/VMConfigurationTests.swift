@@ -318,6 +318,68 @@ struct VMConfigurationTests {
         #expect(directory.readOnly == false)
     }
 
+    @Test("Configuration preserves bootFromDiscImage flag")
+    func bootFromDiscImageRoundTrip() throws {
+        let config = VMConfiguration(
+            name: "EFI Boot VM",
+            guestOS: .linux,
+            bootMode: .efi,
+            isoPath: "/Users/test/Downloads/ubuntu.iso",
+            bootFromDiscImage: true
+        )
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(config)
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(VMConfiguration.self, from: data)
+
+        #expect(decoded.bootFromDiscImage == true)
+        #expect(decoded.isoPath == "/Users/test/Downloads/ubuntu.iso")
+    }
+
+    @Test("Backward compatibility: decoding JSON without bootFromDiscImage defaults to false")
+    func backwardCompatibilityBootFromDiscImage() throws {
+        let json = """
+        {
+            "id": "12345678-1234-1234-1234-123456789012",
+            "name": "Old EFI VM",
+            "guestOS": "linux",
+            "bootMode": "efi",
+            "cpuCount": 4,
+            "memorySizeInGB": 8,
+            "diskSizeInGB": 64,
+            "displayWidth": 1920,
+            "displayHeight": 1200,
+            "displayPPI": 144,
+            "networkEnabled": true,
+            "isoPath": "/path/to/old.iso",
+            "createdAt": "2025-01-01T00:00:00Z",
+            "notes": ""
+        }
+        """
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let config = try decoder.decode(VMConfiguration.self, from: Data(json.utf8))
+
+        #expect(config.name == "Old EFI VM")
+        #expect(config.isoPath == "/path/to/old.iso")
+        #expect(config.bootFromDiscImage == false)
+    }
+
+    @Test("Default bootFromDiscImage is false")
+    func defaultBootFromDiscImage() {
+        let config = VMConfiguration(
+            name: "Test VM",
+            guestOS: .linux,
+            bootMode: .efi
+        )
+        #expect(config.bootFromDiscImage == false)
+    }
+
     @Test("VMStatus.canStart returns true for stopped and error states")
     func canStartStates() {
         #expect(VMStatus.stopped.canStart == true)

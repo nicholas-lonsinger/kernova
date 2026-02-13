@@ -203,14 +203,20 @@ struct ConfigurationBuilder: Sendable {
         let storage = VZVirtioBlockDeviceConfiguration(attachment: diskAttachment)
         vzConfig.storageDevices = [storage]
 
-        // Attach ISO as USB mass storage for EFI boot (e.g. Linux installer)
-        if config.bootMode == .efi, let isoPath = config.isoPath {
+        // Attach ISO as USB mass storage device
+        if let isoPath = config.isoPath {
             let isoURL = URL(fileURLWithPath: isoPath)
             if FileManager.default.fileExists(atPath: isoURL.path) {
                 do {
                     let isoAttachment = try VZDiskImageStorageDeviceAttachment(url: isoURL, readOnly: true)
                     let usbStorage = VZUSBMassStorageDeviceConfiguration(attachment: isoAttachment)
-                    vzConfig.storageDevices.append(usbStorage)
+                    // For EFI boot with boot-from-disc enabled, insert before main disk
+                    // so the firmware discovers the ISO first
+                    if config.bootFromDiscImage && config.bootMode == .efi {
+                        vzConfig.storageDevices.insert(usbStorage, at: 0)
+                    } else {
+                        vzConfig.storageDevices.append(usbStorage)
+                    }
                 } catch {
                     Self.logger.warning("Failed to attach ISO at \(isoPath): \(error.localizedDescription)")
                 }

@@ -18,9 +18,7 @@ struct VMSettingsView: View {
         ScrollView {
             Form {
                 generalSection
-                if instance.configuration.bootMode == .efi {
-                    bootMediaSection
-                }
+                discImageSection
                 resourcesSection
                 networkSection
                 sharedDirectoriesSection
@@ -47,8 +45,8 @@ struct VMSettingsView: View {
     }
 
     @ViewBuilder
-    private var bootMediaSection: some View {
-        Section("Boot Media") {
+    private var discImageSection: some View {
+        Section("Disc Image") {
             if let isoPath = instance.configuration.isoPath {
                 HStack {
                     Image(systemName: "opticaldisc")
@@ -67,20 +65,29 @@ struct VMSettingsView: View {
 
                     Button(role: .destructive) {
                         instance.configuration.isoPath = nil
+                        instance.configuration.bootFromDiscImage = false
                     } label: {
                         Image(systemName: "minus.circle.fill")
                             .foregroundStyle(.red)
                     }
                     .buttonStyle(.plain)
                 }
+
+                if instance.configuration.bootMode == .efi {
+                    Toggle("Boot from disc image", isOn: $instance.configuration.bootFromDiscImage)
+                }
             } else {
-                Text("No ISO image attached")
+                Text("No disc image attached")
                     .foregroundStyle(.secondary)
             }
 
-            Button(instance.configuration.isoPath != nil ? "Change ISO Image..." : "Browse ISO Image...") {
+            Button(instance.configuration.isoPath != nil ? "Change Disc Image..." : "Browse Disc Image...") {
                 browseISOImage()
             }
+
+            Text("Appears as a USB drive in the guest.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
