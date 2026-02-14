@@ -1,21 +1,6 @@
 import Foundation
 import Virtualization
-
-/// Represents the current phase of a macOS installation.
-enum MacOSInstallPhase: Sendable {
-    case downloading(progress: Double, bytesWritten: Int64, totalBytes: Int64)
-    case installing(progress: Double)
-}
-
-/// Tracks the full state of a multi-step macOS installation.
-struct MacOSInstallState: Sendable {
-    /// Whether the install includes a download step (false for local IPSW).
-    let hasDownloadStep: Bool
-    /// The current active phase.
-    var currentPhase: MacOSInstallPhase
-    /// Whether the download phase has completed.
-    var downloadCompleted: Bool = false
-}
+import os
 
 /// Runtime wrapper around a VM configuration, its backing virtual machine, and current status.
 @MainActor
@@ -46,44 +31,29 @@ final class VMInstance: Identifiable {
 
     private var delegateAdapter: VMDelegateAdapter?
 
+    // MARK: - Bundle Layout
+
+    let bundleLayout: VMBundleLayout
+
     // MARK: - Initializer
 
     init(configuration: VMConfiguration, bundleURL: URL, status: VMStatus = .stopped) {
         self.instanceID = configuration.id
         self.configuration = configuration
         self.bundleURL = bundleURL
+        self.bundleLayout = VMBundleLayout(bundleURL: bundleURL)
         self.status = status
     }
 
-    // MARK: - VM Bundle Paths
+    // MARK: - VM Bundle Paths (forwarded from VMBundleLayout)
 
-    var diskImageURL: URL {
-        bundleURL.appendingPathComponent("Disk.asif")
-    }
-
-    var auxiliaryStorageURL: URL {
-        bundleURL.appendingPathComponent("AuxiliaryStorage")
-    }
-
-    var hardwareModelURL: URL {
-        bundleURL.appendingPathComponent("HardwareModel")
-    }
-
-    var machineIdentifierURL: URL {
-        bundleURL.appendingPathComponent("MachineIdentifier")
-    }
-
-    var restoreImageURL: URL {
-        bundleURL.appendingPathComponent("RestoreImage.ipsw")
-    }
-
-    var saveFileURL: URL {
-        bundleURL.appendingPathComponent("SaveFile.vzvmsave")
-    }
-
-    var hasSaveFile: Bool {
-        FileManager.default.fileExists(atPath: saveFileURL.path)
-    }
+    var diskImageURL: URL { bundleLayout.diskImageURL }
+    var auxiliaryStorageURL: URL { bundleLayout.auxiliaryStorageURL }
+    var hardwareModelURL: URL { bundleLayout.hardwareModelURL }
+    var machineIdentifierURL: URL { bundleLayout.machineIdentifierURL }
+    var restoreImageURL: URL { bundleLayout.restoreImageURL }
+    var saveFileURL: URL { bundleLayout.saveFileURL }
+    var hasSaveFile: Bool { bundleLayout.hasSaveFile }
 
     /// `true` when the VM is paused-to-disk but has no live `VZVirtualMachine` in memory.
     var isColdPaused: Bool {
@@ -105,6 +75,8 @@ final class VMInstance: Identifiable {
 /// Bridges `VZVirtualMachineDelegate` callbacks to update the `VMInstance` status.
 @MainActor
 private final class VMDelegateAdapter: NSObject, VZVirtualMachineDelegate {
+    private static let logger = Logger(subsystem: "com.kernova.app", category: "VMDelegateAdapter")
+
     weak var instance: VMInstance?
 
     init(instance: VMInstance) {
@@ -113,16 +85,24 @@ private final class VMDelegateAdapter: NSObject, VZVirtualMachineDelegate {
 
     nonisolated func guestDidStop(_ virtualMachine: VZVirtualMachine) {
         MainActor.assumeIsolated {
-            instance?.status = .stopped
-            instance?.virtualMachine = nil
+            guard let instance else {
+                Self.logger.warning("guestDidStop received but VMInstance has been deallocated")
+                return
+            }
+            instance.status = .stopped
+            instance.virtualMachine = nil
         }
     }
 
     nonisolated func virtualMachine(_ virtualMachine: VZVirtualMachine, didStopWithError error: any Error) {
         MainActor.assumeIsolated {
-            instance?.status = .error
-            instance?.errorMessage = error.localizedDescription
-            instance?.virtualMachine = nil
+            guard let instance else {
+                Self.logger.warning("didStopWithError received but VMInstance has been deallocated")
+                return
+            }
+            instance.status = .error
+            instance.errorMessage = error.localizedDescription
+            instance.virtualMachine = nil
         }
     }
 }

@@ -58,7 +58,7 @@ struct ConfigurationBuilderTests {
         defer { try? FileManager.default.removeItem(at: tempDir) }
 
         // Create a dummy disk image so we get past disk validation
-        let diskURL = tempDir.appendingPathComponent("Disk.asif")
+        let diskURL = VMBundleLayout(bundleURL: tempDir).diskImageURL
         try Data().write(to: diskURL)
 
         let builder = ConfigurationBuilder()

@@ -58,19 +58,18 @@ struct ConfigurationBuilder: Sendable {
         config: VMConfiguration,
         bundleURL: URL
     ) throws {
+        let layout = VMBundleLayout(bundleURL: bundleURL)
         let platform = VZMacPlatformConfiguration()
 
         // Auxiliary storage
-        let auxStorageURL = bundleURL.appendingPathComponent("AuxiliaryStorage")
-        platform.auxiliaryStorage = VZMacAuxiliaryStorage(contentsOf: auxStorageURL)
+        platform.auxiliaryStorage = VZMacAuxiliaryStorage(contentsOf: layout.auxiliaryStorageURL)
 
         // Hardware model
         if let modelData = config.hardwareModelData,
            let hardwareModel = VZMacHardwareModel(dataRepresentation: modelData) {
             platform.hardwareModel = hardwareModel
         } else {
-            let modelURL = bundleURL.appendingPathComponent("HardwareModel")
-            let modelData = try Data(contentsOf: modelURL)
+            let modelData = try Data(contentsOf: layout.hardwareModelURL)
             guard let hardwareModel = VZMacHardwareModel(dataRepresentation: modelData) else {
                 throw ConfigurationBuilderError.invalidHardwareModel
             }
@@ -82,8 +81,7 @@ struct ConfigurationBuilder: Sendable {
            let machineID = VZMacMachineIdentifier(dataRepresentation: idData) {
             platform.machineIdentifier = machineID
         } else {
-            let idURL = bundleURL.appendingPathComponent("MachineIdentifier")
-            let idData = try Data(contentsOf: idURL)
+            let idData = try Data(contentsOf: layout.machineIdentifierURL)
             guard let machineID = VZMacMachineIdentifier(dataRepresentation: idData) else {
                 throw ConfigurationBuilderError.invalidMachineIdentifier
             }
@@ -123,12 +121,12 @@ struct ConfigurationBuilder: Sendable {
         }
         vzConfig.platform = platform
 
-        let efiVariableStoreURL = bundleURL.appendingPathComponent("EFIVariableStore")
+        let layout = VMBundleLayout(bundleURL: bundleURL)
         let variableStore: VZEFIVariableStore
-        if FileManager.default.fileExists(atPath: efiVariableStoreURL.path) {
-            variableStore = VZEFIVariableStore(url: efiVariableStoreURL)
+        if FileManager.default.fileExists(atPath: layout.efiVariableStoreURL.path) {
+            variableStore = VZEFIVariableStore(url: layout.efiVariableStoreURL)
         } else {
-            variableStore = try VZEFIVariableStore(creatingVariableStoreAt: efiVariableStoreURL, options: [])
+            variableStore = try VZEFIVariableStore(creatingVariableStoreAt: layout.efiVariableStoreURL, options: [])
         }
 
         let bootLoader = VZEFIBootLoader()
@@ -194,12 +192,12 @@ struct ConfigurationBuilder: Sendable {
         config: VMConfiguration,
         bundleURL: URL
     ) throws {
-        let diskURL = bundleURL.appendingPathComponent("Disk.asif")
-        guard FileManager.default.fileExists(atPath: diskURL.path) else {
-            throw ConfigurationBuilderError.diskImageNotFound(diskURL)
+        let layout = VMBundleLayout(bundleURL: bundleURL)
+        guard FileManager.default.fileExists(atPath: layout.diskImageURL.path) else {
+            throw ConfigurationBuilderError.diskImageNotFound(layout.diskImageURL)
         }
 
-        let diskAttachment = try VZDiskImageStorageDeviceAttachment(url: diskURL, readOnly: false)
+        let diskAttachment = try VZDiskImageStorageDeviceAttachment(url: layout.diskImageURL, readOnly: false)
         let storage = VZVirtioBlockDeviceConfiguration(attachment: diskAttachment)
         vzConfig.storageDevices = [storage]
 

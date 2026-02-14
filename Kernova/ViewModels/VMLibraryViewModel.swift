@@ -59,10 +59,8 @@ final class VMLibraryViewModel {
                 do {
                     var config = try storageService.loadConfiguration(from: bundleURL)
                     let needsMigration = migrateConfigurationIfNeeded(&config)
-                    let saveFileURL = bundleURL.appendingPathComponent("SaveFile.vzvmsave")
-                    let initialStatus: VMStatus = FileManager.default.fileExists(
-                        atPath: saveFileURL.path
-                    ) ? .paused : .stopped
+                    let layout = VMBundleLayout(bundleURL: bundleURL)
+                    let initialStatus: VMStatus = layout.hasSaveFile ? .paused : .stopped
                     let instance = VMInstance(configuration: config, bundleURL: bundleURL, status: initialStatus)
                     if needsMigration {
                         try storageService.saveConfiguration(config, to: bundleURL)
@@ -381,10 +379,8 @@ final class VMLibraryViewModel {
             for (config, bundleURL) in diskConfigs where !memoryIDs.contains(config.id) {
                 var mutableConfig = config
                 let _ = migrateConfigurationIfNeeded(&mutableConfig)
-                let saveFileURL = bundleURL.appendingPathComponent("SaveFile.vzvmsave")
-                let initialStatus: VMStatus = FileManager.default.fileExists(
-                    atPath: saveFileURL.path
-                ) ? .paused : .stopped
+                let layout = VMBundleLayout(bundleURL: bundleURL)
+                let initialStatus: VMStatus = layout.hasSaveFile ? .paused : .stopped
                 let instance = VMInstance(
                     configuration: mutableConfig,
                     bundleURL: bundleURL,
