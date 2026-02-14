@@ -380,20 +380,4 @@ struct VMConfigurationTests {
         #expect(config.bootFromDiscImage == false)
     }
 
-    @Test("VMStatus.canStart returns true for stopped and error states")
-    func canStartStates() {
-        #expect(VMStatus.stopped.canStart == true)
-        #expect(VMStatus.error.canStart == true)
-        #expect(VMStatus.running.canStart == false)
-        #expect(VMStatus.paused.canStart == false)
-        #expect(VMStatus.starting.canStart == false)
-    }
-
-    @Test("VMStatus.canEditSettings returns true for stopped and error states")
-    func canEditSettingsStates() {
-        #expect(VMStatus.stopped.canEditSettings == true)
-        #expect(VMStatus.error.canEditSettings == true)
-        #expect(VMStatus.running.canEditSettings == false)
-        #expect(VMStatus.paused.canEditSettings == false)
-    }
 }

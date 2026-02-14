@@ -199,6 +199,58 @@ struct VMLibraryViewModelTests {
         #expect(viewModel.errorMessage != nil)
     }
 
+    @Test("stop presents error on service failure")
+    func stopPresentsError() {
+        let virtService = MockVirtualizationService()
+        virtService.stopError = VirtualizationError.noVirtualMachine
+        let (viewModel, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let instance = makeInstance()
+
+        viewModel.stop(instance)
+
+        #expect(viewModel.showError == true)
+        #expect(viewModel.errorMessage != nil)
+    }
+
+    @Test("pause presents error on service failure")
+    func pausePresentsError() async {
+        let virtService = MockVirtualizationService()
+        virtService.pauseError = VirtualizationError.noVirtualMachine
+        let (viewModel, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let instance = makeInstance()
+
+        await viewModel.pause(instance)
+
+        #expect(viewModel.showError == true)
+        #expect(viewModel.errorMessage != nil)
+    }
+
+    @Test("resume presents error on service failure")
+    func resumePresentsError() async {
+        let virtService = MockVirtualizationService()
+        virtService.resumeError = VirtualizationError.noVirtualMachine
+        let (viewModel, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let instance = makeInstance()
+
+        await viewModel.resume(instance)
+
+        #expect(viewModel.showError == true)
+        #expect(viewModel.errorMessage != nil)
+    }
+
+    @Test("save presents error on service failure")
+    func savePresentsError() async {
+        let virtService = MockVirtualizationService()
+        virtService.saveError = VirtualizationError.noVirtualMachine
+        let (viewModel, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let instance = makeInstance()
+
+        await viewModel.save(instance)
+
+        #expect(viewModel.showError == true)
+        #expect(viewModel.errorMessage != nil)
+    }
+
     // MARK: - Save Configuration
 
     @Test("saveConfiguration persists via storage service")
