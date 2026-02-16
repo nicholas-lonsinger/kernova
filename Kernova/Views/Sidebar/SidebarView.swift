@@ -44,6 +44,10 @@ struct SidebarView: View {
 
         Divider()
 
+        Button("Show in Finder") {
+            NSWorkspace.shared.activateFileViewerSelecting([instance.bundleURL])
+        }
+
         Button("Move to Trash", role: .destructive) {
             viewModel.confirmDelete(instance)
         }
