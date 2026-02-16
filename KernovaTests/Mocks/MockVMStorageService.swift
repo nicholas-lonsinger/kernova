@@ -23,7 +23,10 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
     }
 
     func bundleURL(for configuration: VMConfiguration) throws -> URL {
-        baseDirectory.appendingPathComponent(configuration.id.uuidString, isDirectory: true)
+        baseDirectory.appendingPathComponent(
+            "\(configuration.id.uuidString).\(VMStorageService.bundleExtension)",
+            isDirectory: true
+        )
     }
 
     func listVMBundles() throws -> [URL] {
@@ -52,5 +55,9 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
     func deleteVMBundle(at bundleURL: URL) throws {
         deleteVMBundleCallCount += 1
         bundles.removeValue(forKey: bundleURL)
+    }
+
+    func migrateBundleIfNeeded(at bundleURL: URL) throws -> URL {
+        bundleURL
     }
 }

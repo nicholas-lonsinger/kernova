@@ -61,13 +61,14 @@ final class VMLibraryViewModel {
             let bundles = try storageService.listVMBundles()
             instances = bundles.compactMap { bundleURL in
                 do {
-                    var config = try storageService.loadConfiguration(from: bundleURL)
+                    let migratedURL = try storageService.migrateBundleIfNeeded(at: bundleURL)
+                    var config = try storageService.loadConfiguration(from: migratedURL)
                     let needsMigration = migrateConfigurationIfNeeded(&config)
-                    let layout = VMBundleLayout(bundleURL: bundleURL)
+                    let layout = VMBundleLayout(bundleURL: migratedURL)
                     let initialStatus: VMStatus = layout.hasSaveFile ? .paused : .stopped
-                    let instance = VMInstance(configuration: config, bundleURL: bundleURL, status: initialStatus)
+                    let instance = VMInstance(configuration: config, bundleURL: migratedURL, status: initialStatus)
                     if needsMigration {
-                        try storageService.saveConfiguration(config, to: bundleURL)
+                        try storageService.saveConfiguration(config, to: migratedURL)
                         Self.logger.info("Migrated VM '\(config.name)': persisted stable identifiers")
                     }
                     return instance
@@ -259,6 +260,52 @@ final class VMLibraryViewModel {
         showDeleteConfirmation = false
     }
 
+    // MARK: - Import
+
+    /// Imports a `.kernova` VM bundle from an external location (Finder double-click, drag-and-drop).
+    ///
+    /// If the bundle is already inside the VMs directory, it is simply selected.
+    /// If a VM with the same UUID already exists in the library, that instance is selected.
+    /// Otherwise, the bundle is copied into the VMs directory and loaded.
+    func importVM(from sourceURL: URL) {
+        do {
+            let vmsDir = try storageService.vmsDirectory
+
+            // If the source is already inside our VMs directory, just select it
+            if sourceURL.path.hasPrefix(vmsDir.path) {
+                let config = try storageService.loadConfiguration(from: sourceURL)
+                if let existing = instances.first(where: { $0.id == config.id }) {
+                    selectedID = existing.id
+                    return
+                }
+            }
+
+            // Load config from the source to check for duplicate UUIDs
+            let config = try storageService.loadConfiguration(from: sourceURL)
+
+            if let existing = instances.first(where: { $0.id == config.id }) {
+                selectedID = existing.id
+                Self.logger.info("VM '\(config.name)' already in library — selected existing instance")
+                return
+            }
+
+            // Copy bundle into VMs directory
+            let destinationURL = vmsDir.appendingPathComponent(sourceURL.lastPathComponent, isDirectory: true)
+            try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
+
+            // Load and add to library
+            let layout = VMBundleLayout(bundleURL: destinationURL)
+            let initialStatus: VMStatus = layout.hasSaveFile ? .paused : .stopped
+            let instance = VMInstance(configuration: config, bundleURL: destinationURL, status: initialStatus)
+            instances.append(instance)
+            instances.sort { $0.configuration.createdAt < $1.configuration.createdAt }
+            selectedID = instance.id
+            Self.logger.info("Imported VM '\(config.name)' from \(sourceURL.lastPathComponent)")
+        } catch {
+            presentError(error)
+        }
+    }
+
     // MARK: - Save Configuration
 
     func saveConfiguration(for instance: VMInstance) {
@@ -292,8 +339,9 @@ final class VMLibraryViewModel {
             // Build a map of UUID → bundle URL for bundles currently on disk
             var diskConfigs: [(VMConfiguration, URL)] = []
             for bundleURL in diskBundles {
-                if let config = try? storageService.loadConfiguration(from: bundleURL) {
-                    diskConfigs.append((config, bundleURL))
+                let migratedURL = (try? storageService.migrateBundleIfNeeded(at: bundleURL)) ?? bundleURL
+                if let config = try? storageService.loadConfiguration(from: migratedURL) {
+                    diskConfigs.append((config, migratedURL))
                 }
             }
             let diskIDs = Set(diskConfigs.map(\.0.id))

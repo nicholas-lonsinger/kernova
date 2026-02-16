@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var mainWindowController: MainWindowController?
     private var viewModel: VMLibraryViewModel!
+    private var pendingOpenURLs: [URL] = []
 
     // MARK: - Entry Point
 
@@ -26,6 +27,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let windowController = MainWindowController(viewModel: viewModel)
         windowController.showWindow(nil)
         mainWindowController = windowController
+
+        // Process any URLs received before the view model was ready
+        for url in pendingOpenURLs {
+            viewModel.importVM(from: url)
+        }
+        pendingOpenURLs.removeAll()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -56,6 +63,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         return .terminateLater
+    }
+
+    // MARK: - Open URLs (Finder double-click / dock icon drop)
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        let vmURLs = urls.filter { $0.pathExtension == VMStorageService.bundleExtension }
+
+        guard let viewModel else {
+            // Called before applicationDidFinishLaunching — queue for later
+            pendingOpenURLs.append(contentsOf: vmURLs)
+            return
+        }
+
+        for url in vmURLs {
+            viewModel.importVM(from: url)
+        }
     }
 
     // MARK: - Menu Actions

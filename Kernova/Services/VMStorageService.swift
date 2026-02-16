@@ -3,7 +3,7 @@ import os
 
 /// Manages VM bundle directories on disk under `~/Library/Application Support/Kernova/VMs/`.
 ///
-/// Each VM is stored as a bundle directory named by its UUID, containing:
+/// Each VM is stored as a `.kernova` document package named by its UUID, containing:
 /// - `config.json` — Serialized `VMConfiguration`
 /// - `Disk.asif` — ASIF sparse disk image
 /// - macOS-specific files: `AuxiliaryStorage`, `HardwareModel`, `MachineIdentifier`
@@ -11,6 +11,8 @@ import os
 struct VMStorageService: Sendable {
 
     private static let logger = Logger(subsystem: "com.kernova.app", category: "VMStorageService")
+
+    static let bundleExtension = "kernova"
 
     // MARK: - Directory Helpers
 
@@ -36,7 +38,10 @@ struct VMStorageService: Sendable {
 
     /// Returns the bundle directory URL for a given VM configuration.
     func bundleURL(for configuration: VMConfiguration) throws -> URL {
-        try vmsDirectory.appendingPathComponent(configuration.id.uuidString, isDirectory: true)
+        try vmsDirectory.appendingPathComponent(
+            "\(configuration.id.uuidString).\(Self.bundleExtension)",
+            isDirectory: true
+        )
     }
 
     // MARK: - CRUD
@@ -98,6 +103,38 @@ struct VMStorageService: Sendable {
         try FileManager.default.trashItem(at: bundleURL, resultingItemURL: nil)
         Self.logger.info("Moved VM bundle to Trash: \(bundleURL.lastPathComponent)")
     }
+
+    /// Migrates a legacy bare-UUID bundle directory to the `.kernova` package format.
+    ///
+    /// - If the URL already has the `.kernova` extension, returns it unchanged.
+    /// - If a bare `{UUID}` directory exists without a `.kernova` counterpart, renames it.
+    /// - If both `{UUID}` and `{UUID}.kernova` exist, throws `migrationConflict`.
+    func migrateBundleIfNeeded(at bundleURL: URL) throws -> URL {
+        if bundleURL.pathExtension == Self.bundleExtension {
+            return bundleURL
+        }
+
+        let migratedURL = bundleURL.deletingLastPathComponent()
+            .appendingPathComponent(
+                "\(bundleURL.lastPathComponent).\(Self.bundleExtension)",
+                isDirectory: true
+            )
+
+        let fm = FileManager.default
+        let legacyExists = fm.fileExists(atPath: bundleURL.path)
+        let migratedExists = fm.fileExists(atPath: migratedURL.path)
+
+        if legacyExists && migratedExists {
+            throw VMStorageError.migrationConflict(bundleURL)
+        }
+
+        if legacyExists {
+            try fm.moveItem(at: bundleURL, to: migratedURL)
+            Self.logger.info("Migrated VM bundle: \(bundleURL.lastPathComponent) → \(migratedURL.lastPathComponent)")
+        }
+
+        return migratedURL
+    }
 }
 
 // MARK: - VMStorageProviding
@@ -109,6 +146,7 @@ extension VMStorageService: VMStorageProviding {}
 enum VMStorageError: LocalizedError {
     case bundleAlreadyExists(UUID)
     case bundleNotFound(URL)
+    case migrationConflict(URL)
 
     var errorDescription: String? {
         switch self {
@@ -116,6 +154,8 @@ enum VMStorageError: LocalizedError {
             "A VM bundle already exists for ID \(id.uuidString)."
         case .bundleNotFound(let url):
             "VM bundle not found at \(url.path)."
+        case .migrationConflict(let url):
+            "Migration conflict: both legacy and .kernova bundles exist for \(url.lastPathComponent)."
         }
     }
 }

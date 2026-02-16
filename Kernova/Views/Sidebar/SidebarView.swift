@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Sidebar listing all virtual machines with status indicators.
 struct SidebarView: View {
@@ -17,6 +18,19 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        .onDrop(of: [.kernovaVM, .fileURL], isTargeted: nil) { providers in
+            for provider in providers {
+                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier) { data, _ in
+                    guard let data = data as? Data,
+                          let url = URL(dataRepresentation: data, relativeTo: nil),
+                          url.pathExtension == VMStorageService.bundleExtension else { return }
+                    Task { @MainActor in
+                        viewModel.importVM(from: url)
+                    }
+                }
+            }
+            return true
+        }
     }
 
     @ViewBuilder

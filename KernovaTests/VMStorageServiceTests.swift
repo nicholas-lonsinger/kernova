@@ -111,4 +111,81 @@ struct VMStorageServiceTests {
         let bundles = try service.listVMBundles()
         #expect(bundles.contains(bundleURL))
     }
+
+    // MARK: - Bundle Extension
+
+    @Test("Bundle URL has .kernova extension")
+    func bundleURLHasKernovaExtension() throws {
+        let config = VMConfiguration(
+            name: "Extension Test",
+            guestOS: .linux,
+            bootMode: .efi
+        )
+
+        let url = try service.bundleURL(for: config)
+        #expect(url.pathExtension == "kernova")
+        #expect(url.lastPathComponent == "\(config.id.uuidString).kernova")
+    }
+
+    // MARK: - Migration
+
+    @Test("Migrate legacy bundle to .kernova")
+    func migrateLegacyBundleToKernova() throws {
+        let uuid = UUID()
+        let vmsDir = try service.vmsDirectory
+        let legacyURL = vmsDir.appendingPathComponent(uuid.uuidString, isDirectory: true)
+
+        // Create a legacy bare-UUID directory with a config.json
+        try FileManager.default.createDirectory(at: legacyURL, withIntermediateDirectories: true)
+        let configData = "{}".data(using: .utf8)!
+        try configData.write(to: legacyURL.appendingPathComponent("config.json"))
+        defer {
+            let migratedURL = vmsDir.appendingPathComponent("\(uuid.uuidString).kernova", isDirectory: true)
+            try? FileManager.default.removeItem(at: migratedURL)
+            try? FileManager.default.removeItem(at: legacyURL)
+        }
+
+        let result = try service.migrateBundleIfNeeded(at: legacyURL)
+        #expect(result.pathExtension == "kernova")
+        #expect(result.lastPathComponent == "\(uuid.uuidString).kernova")
+        #expect(FileManager.default.fileExists(atPath: result.path))
+        #expect(!FileManager.default.fileExists(atPath: legacyURL.path))
+    }
+
+    @Test("Migrate already-migrated bundle is idempotent")
+    func migrateAlreadyMigratedIsIdempotent() throws {
+        let config = VMConfiguration(
+            name: "Idempotent Test",
+            guestOS: .linux,
+            bootMode: .efi
+        )
+
+        let bundleURL = try service.createVMBundle(for: config)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        // Already has .kernova extension — should return unchanged
+        let result = try service.migrateBundleIfNeeded(at: bundleURL)
+        #expect(result == bundleURL)
+        #expect(result.pathExtension == "kernova")
+    }
+
+    @Test("Migrate conflict throws error")
+    func migrateConflictThrows() throws {
+        let uuid = UUID()
+        let vmsDir = try service.vmsDirectory
+        let legacyURL = vmsDir.appendingPathComponent(uuid.uuidString, isDirectory: true)
+        let migratedURL = vmsDir.appendingPathComponent("\(uuid.uuidString).kernova", isDirectory: true)
+
+        // Create both legacy and migrated directories
+        try FileManager.default.createDirectory(at: legacyURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: migratedURL, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: legacyURL)
+            try? FileManager.default.removeItem(at: migratedURL)
+        }
+
+        #expect(throws: VMStorageError.self) {
+            _ = try service.migrateBundleIfNeeded(at: legacyURL)
+        }
+    }
 }
