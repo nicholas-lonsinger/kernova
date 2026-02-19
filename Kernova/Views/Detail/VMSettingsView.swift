@@ -144,7 +144,7 @@ struct VMSettingsView: View {
                 Text("No shared directories")
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(directories) { directory in
+                ForEach(sharedDirectoriesBinding) { $directory in
                     HStack {
                         Image(systemName: "folder")
                             .foregroundStyle(.secondary)
@@ -160,14 +160,12 @@ struct VMSettingsView: View {
 
                         Spacer()
 
-                        if let index = directories.firstIndex(where: { $0.id == directory.id }) {
-                            Toggle("Read Only", isOn: sharedDirectoriesBinding[index].readOnly)
-                                .toggleStyle(.switch)
-                                .labelsHidden()
-                            Text("Read Only")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
+                        Toggle("Read Only", isOn: $directory.readOnly)
+                            .toggleStyle(.switch)
+                            .labelsHidden()
+                        Text("Read Only")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
 
                         Button(role: .destructive) {
                             sharedDirectoriesBinding.wrappedValue.removeAll { $0.id == directory.id }
