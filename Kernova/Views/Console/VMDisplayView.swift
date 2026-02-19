@@ -10,6 +10,13 @@ struct VMDisplayView: NSViewRepresentable {
         view.capturesSystemKeys = true
         view.automaticallyReconfiguresDisplay = true
         view.virtualMachine = virtualMachine
+
+        if virtualMachine != nil {
+            DispatchQueue.main.async {
+                view.window?.makeFirstResponder(view)
+            }
+        }
+
         return view
     }
 
