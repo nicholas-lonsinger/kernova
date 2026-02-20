@@ -18,13 +18,14 @@ final class IPSWDownloadViewModel {
 
     var progressText: String {
         guard totalBytes > 0 else { return "Preparing..." }
-        let downloaded = DataFormatters.formatBytes(downloadedBytes)
-        let total = DataFormatters.formatBytes(totalBytes)
+        let downloaded = DataFormatters.formatBytesFixedWidth(downloadedBytes)
+        let total = DataFormatters.formatBytesFixedWidth(totalBytes)
         return "\(downloaded) / \(total)"
     }
 
     var percentText: String {
-        "\(Int(progress * 100))%"
+        String(format: "%3d%%", Int(progress * 100))
+            .replacingOccurrences(of: " ", with: "\u{2007}")
     }
 
     // MARK: - Download
