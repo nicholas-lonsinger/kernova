@@ -43,6 +43,19 @@ Everything touching `VZVirtualMachine` is `@MainActor`. The codebase uses Swift 
 
 Tests use Swift Testing (`@Suite`, `@Test`, `#expect`) — not XCTest. Test files are in `KernovaTests/`.
 
+## Development Guidelines
+
+### Unit Tests
+
+When adding new functionality or modifying existing behavior, include unit tests for the changes. Follow the existing patterns in `KernovaTests/`:
+
+- Use Swift Testing (`@Suite`, `@Test`, `#expect`) — not XCTest
+- Create mock implementations using protocols (see `KernovaTests/Mocks/`)
+- Test models, services, and view models — UI views don't need unit tests
+- Test both happy paths and error paths; use error injection in mocks (e.g., setting a `throwError` property)
+- Reuse shared test helpers and factories (e.g., `makeInstance()`) rather than duplicating setup logic across test files
+- Run the full test suite before committing to ensure nothing is broken
+
 ## Commit Messages
 
 Use the following format for all commits:
