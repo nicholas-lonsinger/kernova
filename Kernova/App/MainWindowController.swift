@@ -19,11 +19,12 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSGestu
     private static let stopVMIdentifier = NSToolbarItem.Identifier("stopVM")
     private static let saveVMIdentifier = NSToolbarItem.Identifier("saveVM")
     private static let deleteVMIdentifier = NSToolbarItem.Identifier("deleteVM")
-    private static let actionGroupIdentifier = NSToolbarItem.Identifier("actionGroup")
 
-    /// The action identifiers that should currently appear in the toolbar group.
-    /// Updated by `rebuildActionItems()` before inserting the group item.
-    private var currentActionIdentifiers: [NSToolbarItem.Identifier] = []
+    /// All possible action identifiers, used for reference.
+    private static let allActionIdentifiers: Set<NSToolbarItem.Identifier> = [
+        startVMIdentifier, pauseVMIdentifier, resumeVMIdentifier,
+        stopVMIdentifier, saveVMIdentifier, deleteVMIdentifier,
+    ]
 
     convenience init(viewModel: VMLibraryViewModel) {
         // Sidebar pane
@@ -124,33 +125,36 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSGestu
         }
     }
 
-    /// Removes the existing action group (if present) and re-inserts it after the
-    /// "+" button with the appropriate subitems for the selected VM's status.
+    /// Removes existing action items and spacer, then re-inserts individual
+    /// bordered `NSToolbarItem`s after a `.space` separator following the "+" button.
     private func rebuildActionItems() {
         guard let toolbar = window?.toolbar else { return }
 
-        // Remove existing action group
-        if let groupIndex = toolbar.items.firstIndex(where: {
-            $0.itemIdentifier == Self.actionGroupIdentifier
-        }) {
-            toolbar.removeItem(at: groupIndex)
+        // Remove existing action items and any .space we inserted
+        for index in stride(from: toolbar.items.count - 1, through: 0, by: -1) {
+            let id = toolbar.items[index].itemIdentifier
+            if Self.allActionIdentifiers.contains(id) || id == .space {
+                toolbar.removeItem(at: index)
+            }
         }
 
         guard let instance = viewModel.selectedInstance else { return }
 
-        // Determine which items to show based on current status
         let desiredIdentifiers = desiredActionIdentifiers(for: instance)
         guard !desiredIdentifiers.isEmpty else { return }
 
-        // Store desired identifiers so the delegate can build the group
-        currentActionIdentifiers = desiredIdentifiers
-
-        // Insert the action group after the "+" button
-        let insertIndex = (toolbar.items.firstIndex {
+        // Insert a spacer after the "+" button to break the pill grouping
+        var insertIndex = (toolbar.items.firstIndex {
             $0.itemIdentifier == Self.newVMIdentifier
         } ?? toolbar.items.count - 1) + 1
 
-        toolbar.insertItem(withItemIdentifier: Self.actionGroupIdentifier, at: insertIndex)
+        toolbar.insertItem(withItemIdentifier: .space, at: insertIndex)
+        insertIndex += 1
+
+        for identifier in desiredIdentifiers {
+            toolbar.insertItem(withItemIdentifier: identifier, at: insertIndex)
+            insertIndex += 1
+        }
     }
 
     /// Returns the action identifiers that should be visible for a given VM instance.
@@ -188,10 +192,16 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSGestu
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [
             .flexibleSpace,
+            .space,
             .toggleSidebar,
             .sidebarTrackingSeparator,
             Self.newVMIdentifier,
-            Self.actionGroupIdentifier,
+            Self.startVMIdentifier,
+            Self.pauseVMIdentifier,
+            Self.resumeVMIdentifier,
+            Self.stopVMIdentifier,
+            Self.saveVMIdentifier,
+            Self.deleteVMIdentifier,
         ]
     }
 
@@ -200,14 +210,13 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSGestu
         itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
         willBeInsertedIntoToolbar flag: Bool
     ) -> NSToolbarItem? {
-        switch itemIdentifier {
-        case Self.newVMIdentifier:
+        if itemIdentifier == Self.newVMIdentifier {
             return makeNewVMItem()
-        case Self.actionGroupIdentifier:
-            return makeActionGroup()
-        default:
-            return nil
         }
+        if Self.allActionIdentifiers.contains(itemIdentifier) {
+            return makeActionItem(for: itemIdentifier)
+        }
+        return nil
     }
 
     // MARK: - Toolbar Item Construction
@@ -224,95 +233,56 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSGestu
         return item
     }
 
-    private func makeStartVMItem() -> NSToolbarItem {
-        let item = NSToolbarItem(itemIdentifier: Self.startVMIdentifier)
-        item.label = "Start"
-        item.paletteLabel = "Start VM"
-        item.toolTip = "Start this virtual machine"
-        item.image = NSImage(systemSymbolName: "play.fill", accessibilityDescription: "Start")
-        item.isBordered = true
-        item.target = nil
-        item.action = #selector(AppDelegate.startVM(_:))
-        return item
+    // MARK: - Action Button Specs
+
+    private struct ActionButtonSpec {
+        let symbolName: String
+        let toolTip: String
+        let accessibilityLabel: String
+        let action: Selector
     }
 
-    private func makePauseVMItem() -> NSToolbarItem {
-        let item = NSToolbarItem(itemIdentifier: Self.pauseVMIdentifier)
-        item.label = "Pause"
-        item.paletteLabel = "Pause VM"
-        item.toolTip = "Pause the virtual machine"
-        item.image = NSImage(systemSymbolName: "pause.fill", accessibilityDescription: "Pause")
-        item.isBordered = true
-        item.target = nil
-        item.action = #selector(AppDelegate.pauseVM(_:))
-        return item
-    }
-
-    private func makeResumeVMItem() -> NSToolbarItem {
-        let item = NSToolbarItem(itemIdentifier: Self.resumeVMIdentifier)
-        item.label = "Resume"
-        item.paletteLabel = "Resume VM"
-        item.toolTip = "Resume the virtual machine"
-        item.image = NSImage(systemSymbolName: "play.fill", accessibilityDescription: "Resume")
-        item.isBordered = true
-        item.target = nil
-        item.action = #selector(AppDelegate.resumeVM(_:))
-        return item
-    }
-
-    private func makeStopVMItem() -> NSToolbarItem {
-        let item = NSToolbarItem(itemIdentifier: Self.stopVMIdentifier)
-        item.label = "Stop"
-        item.paletteLabel = "Stop VM"
-        item.toolTip = "Stop the virtual machine"
-        item.image = NSImage(systemSymbolName: "stop.fill", accessibilityDescription: "Stop")
-        item.isBordered = true
-        item.target = nil
-        item.action = #selector(AppDelegate.stopVM(_:))
-        return item
-    }
-
-    private func makeSaveVMItem() -> NSToolbarItem {
-        let item = NSToolbarItem(itemIdentifier: Self.saveVMIdentifier)
-        item.label = "Save State"
-        item.paletteLabel = "Save VM State"
-        item.toolTip = "Save the virtual machine state to disk"
-        item.image = NSImage(systemSymbolName: "square.and.arrow.down", accessibilityDescription: "Save State")
-        item.isBordered = true
-        item.target = nil
-        item.action = #selector(AppDelegate.saveVM(_:))
-        return item
-    }
-
-    private func makeDeleteVMItem() -> NSToolbarItem {
-        let item = NSToolbarItem(itemIdentifier: Self.deleteVMIdentifier)
-        item.label = "Move to Trash"
-        item.paletteLabel = "Move VM to Trash"
-        item.toolTip = "Move this virtual machine to the Trash"
-        item.image = NSImage(systemSymbolName: "trash", accessibilityDescription: "Move to Trash")
-        item.isBordered = true
-        item.target = nil
-        item.action = #selector(AppDelegate.deleteVM(_:))
-        return item
-    }
-
-    private func makeActionGroup() -> NSToolbarItemGroup {
-        let subitems = currentActionIdentifiers.compactMap { identifier -> NSToolbarItem? in
-            switch identifier {
-            case Self.startVMIdentifier: return makeStartVMItem()
-            case Self.pauseVMIdentifier: return makePauseVMItem()
-            case Self.resumeVMIdentifier: return makeResumeVMItem()
-            case Self.stopVMIdentifier: return makeStopVMItem()
-            case Self.saveVMIdentifier: return makeSaveVMItem()
-            case Self.deleteVMIdentifier: return makeDeleteVMItem()
-            default: return nil
-            }
+    private func actionButtonSpec(for identifier: NSToolbarItem.Identifier) -> ActionButtonSpec? {
+        switch identifier {
+        case Self.startVMIdentifier:
+            return ActionButtonSpec(
+                symbolName: "play.fill", toolTip: "Start this virtual machine",
+                accessibilityLabel: "Start", action: #selector(AppDelegate.startVM(_:)))
+        case Self.pauseVMIdentifier:
+            return ActionButtonSpec(
+                symbolName: "pause.fill", toolTip: "Pause the virtual machine",
+                accessibilityLabel: "Pause", action: #selector(AppDelegate.pauseVM(_:)))
+        case Self.resumeVMIdentifier:
+            return ActionButtonSpec(
+                symbolName: "play.fill", toolTip: "Resume the virtual machine",
+                accessibilityLabel: "Resume", action: #selector(AppDelegate.resumeVM(_:)))
+        case Self.stopVMIdentifier:
+            return ActionButtonSpec(
+                symbolName: "stop.fill", toolTip: "Stop the virtual machine",
+                accessibilityLabel: "Stop", action: #selector(AppDelegate.stopVM(_:)))
+        case Self.saveVMIdentifier:
+            return ActionButtonSpec(
+                symbolName: "square.and.arrow.down", toolTip: "Save the virtual machine state to disk",
+                accessibilityLabel: "Save State", action: #selector(AppDelegate.saveVM(_:)))
+        case Self.deleteVMIdentifier:
+            return ActionButtonSpec(
+                symbolName: "trash", toolTip: "Move this virtual machine to the Trash",
+                accessibilityLabel: "Move to Trash", action: #selector(AppDelegate.deleteVM(_:)))
+        default:
+            return nil
         }
-        let group = NSToolbarItemGroup(itemIdentifier: Self.actionGroupIdentifier)
-        group.subitems = subitems
-        group.controlRepresentation = .expanded
-        group.label = "Actions"
-        group.paletteLabel = "VM Actions"
-        return group
+    }
+
+    private func makeActionItem(for identifier: NSToolbarItem.Identifier) -> NSToolbarItem? {
+        guard let spec = actionButtonSpec(for: identifier) else { return nil }
+        let item = NSToolbarItem(itemIdentifier: identifier)
+        item.label = spec.accessibilityLabel
+        item.paletteLabel = spec.accessibilityLabel
+        item.toolTip = spec.toolTip
+        item.image = NSImage(systemSymbolName: spec.symbolName, accessibilityDescription: spec.accessibilityLabel)
+        item.isBordered = true
+        item.target = nil
+        item.action = spec.action
+        return item
     }
 }
