@@ -156,9 +156,11 @@ struct MacOSInstallProgressView: View {
     private var activeDetailText: some View {
         switch installState.currentPhase {
         case .downloading(let progress, let bytesWritten, let totalBytes):
-            let written = DataFormatters.formatBytes(UInt64(bytesWritten))
-            let total = DataFormatters.formatBytes(UInt64(totalBytes))
-            Text("Downloading: \(written) / \(total) — \(Int(progress * 100))%")
+            let written = DataFormatters.formatBytesFixedWidth(UInt64(bytesWritten))
+            let total = DataFormatters.formatBytesFixedWidth(UInt64(totalBytes))
+            let pct = String(format: "%3d", Int(progress * 100))
+                .replacingOccurrences(of: " ", with: "\u{2007}")
+            Text("Downloading:\u{2007}\(written) / \(total) — \(pct)%")
 
         case .installing(let progress):
             Text("Installing macOS: \(Int(progress * 100))%")
