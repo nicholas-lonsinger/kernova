@@ -25,32 +25,59 @@ struct IPSWService: Sendable {
     ) async throws {
         Self.logger.info("Downloading restore image from \(remoteURL)")
 
-        // Create delegate and session before entering the continuation so that
-        // the cancellation handler can call invalidateAndCancel() on the session.
-        let delegate = SessionDelegate(progressHandler: progressHandler)
-        let session = URLSession(
-            configuration: .default,
-            delegate: delegate,
-            delegateQueue: nil
-        )
-        delegate.session = session
+        // Create the destination file up-front so it's visible in Finder immediately.
+        FileManager.default.createFile(atPath: destinationURL.path, contents: nil)
 
-        let tempURL: URL = try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { continuation in
-                delegate.continuation = continuation
-                session.downloadTask(with: remoteURL).resume()
+        var cleanUpPartial = true
+        defer {
+            if cleanUpPartial {
+                Self.logger.info("Removing partial download at \(destinationURL.lastPathComponent)")
+                try? FileManager.default.removeItem(at: destinationURL)
             }
-        } onCancel: {
-            Self.logger.info("Download cancelled — invalidating URLSession")
-            session.invalidateAndCancel()
         }
 
-        // Move the downloaded file to the destination
-        if FileManager.default.fileExists(atPath: destinationURL.path) {
-            try FileManager.default.removeItem(at: destinationURL)
-        }
-        try FileManager.default.moveItem(at: tempURL, to: destinationURL)
+        let (asyncBytes, response) = try await URLSession.shared.bytes(from: remoteURL)
+        let expectedBytes = response.expectedContentLength  // -1 if unknown
+        let expected = expectedBytes > 0 ? expectedBytes : Int64.max
 
+        guard let fileHandle = FileHandle(forWritingAtPath: destinationURL.path) else {
+            throw IPSWError.downloadFailed("Could not open destination file for writing")
+        }
+        defer { try? fileHandle.close() }
+
+        let bufferSize = 512 * 1024  // 512 KB
+        var buffer = Data(capacity: bufferSize)
+        var bytesWritten: Int64 = 0
+
+        for try await byte in asyncBytes {
+            buffer.append(byte)
+            if buffer.count >= bufferSize {
+                try fileHandle.write(contentsOf: buffer)
+                bytesWritten += Int64(buffer.count)
+                buffer.removeAll(keepingCapacity: true)
+
+                if expectedBytes > 0 {
+                    let written = bytesWritten
+                    let fraction = Double(written) / Double(expected)
+                    let handler = progressHandler
+                    Task { @MainActor in handler(fraction, written, expected) }
+                }
+            }
+        }
+
+        // Flush any remaining bytes
+        if !buffer.isEmpty {
+            try fileHandle.write(contentsOf: buffer)
+            bytesWritten += Int64(buffer.count)
+        }
+
+        if expectedBytes > 0 {
+            let written = bytesWritten
+            let handler = progressHandler
+            Task { @MainActor in handler(1.0, written, expected) }
+        }
+
+        cleanUpPartial = false
         Self.logger.info("Restore image downloaded to \(destinationURL.lastPathComponent)")
     }
 
@@ -64,66 +91,6 @@ struct IPSWService: Sendable {
 // MARK: - IPSWProviding
 
 extension IPSWService: IPSWProviding {}
-
-// MARK: - Session Delegate
-
-/// Session-level delegate that reliably receives download progress callbacks.
-private final class SessionDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
-    let progressHandler: @MainActor @Sendable (Double, Int64, Int64) -> Void
-    var continuation: CheckedContinuation<URL, any Error>?
-    var session: URLSession?
-
-    init(
-        progressHandler: @MainActor @Sendable @escaping (Double, Int64, Int64) -> Void
-    ) {
-        self.progressHandler = progressHandler
-    }
-
-    func urlSession(
-        _ session: URLSession,
-        downloadTask: URLSessionDownloadTask,
-        didWriteData bytesWritten: Int64,
-        totalBytesWritten: Int64,
-        totalBytesExpectedToWrite: Int64
-    ) {
-        guard totalBytesExpectedToWrite > 0 else { return }
-        let fraction = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
-        let handler = progressHandler
-        Task { @MainActor in
-            handler(fraction, totalBytesWritten, totalBytesExpectedToWrite)
-        }
-    }
-
-    func urlSession(
-        _ session: URLSession,
-        downloadTask: URLSessionDownloadTask,
-        didFinishDownloadingTo location: URL
-    ) {
-        // Move file to a temp location that won't be cleaned up when the session invalidates
-        let tempURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString + ".ipsw")
-        do {
-            try FileManager.default.moveItem(at: location, to: tempURL)
-            continuation?.resume(returning: tempURL)
-        } catch {
-            continuation?.resume(throwing: error)
-        }
-        continuation = nil
-        self.session?.finishTasksAndInvalidate()
-    }
-
-    func urlSession(
-        _ session: URLSession,
-        task: URLSessionTask,
-        didCompleteWithError error: (any Error)?
-    ) {
-        if let error {
-            continuation?.resume(throwing: error)
-            continuation = nil
-            self.session?.finishTasksAndInvalidate()
-        }
-    }
-}
 
 // MARK: - Errors
 
