@@ -380,4 +380,63 @@ struct VMConfigurationTests {
         #expect(config.bootFromDiscImage == false)
     }
 
+    // MARK: - prefersFullscreen Tests
+
+    @Test("Default prefersFullscreen is false")
+    func defaultPrefersFullscreen() {
+        let config = VMConfiguration(
+            name: "Test VM",
+            guestOS: .linux,
+            bootMode: .efi
+        )
+        #expect(config.prefersFullscreen == false)
+    }
+
+    @Test("Configuration preserves prefersFullscreen flag")
+    func prefersFullscreenRoundTrip() throws {
+        let config = VMConfiguration(
+            name: "Fullscreen VM",
+            guestOS: .linux,
+            bootMode: .efi,
+            prefersFullscreen: true
+        )
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(config)
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(VMConfiguration.self, from: data)
+
+        #expect(decoded.prefersFullscreen == true)
+    }
+
+    @Test("Backward compatibility: decoding JSON without prefersFullscreen defaults to false")
+    func backwardCompatibilityPrefersFullscreen() throws {
+        let json = """
+        {
+            "id": "12345678-1234-1234-1234-123456789012",
+            "name": "Old VM",
+            "guestOS": "linux",
+            "bootMode": "efi",
+            "cpuCount": 4,
+            "memorySizeInGB": 8,
+            "diskSizeInGB": 64,
+            "displayWidth": 1920,
+            "displayHeight": 1200,
+            "displayPPI": 144,
+            "networkEnabled": true,
+            "createdAt": "2025-01-01T00:00:00Z",
+            "notes": ""
+        }
+        """
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let config = try decoder.decode(VMConfiguration.self, from: Data(json.utf8))
+
+        #expect(config.prefersFullscreen == false)
+    }
+
 }

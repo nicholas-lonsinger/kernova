@@ -95,7 +95,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     @objc func startVM(_ sender: Any?) {
         guard let instance = viewModel.selectedInstance else { return }
-        Task { await viewModel.start(instance) }
+        Task {
+            await viewModel.start(instance)
+            if instance.status == .running && instance.configuration.prefersFullscreen {
+                enterFullscreen(for: instance)
+            }
+        }
     }
 
     @objc func pauseVM(_ sender: Any?) {
@@ -105,7 +110,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     @objc func resumeVM(_ sender: Any?) {
         guard let instance = viewModel.selectedInstance else { return }
-        Task { await viewModel.resume(instance) }
+        Task {
+            await viewModel.resume(instance)
+            if instance.status == .running && instance.configuration.prefersFullscreen {
+                enterFullscreen(for: instance)
+            }
+        }
     }
 
     @objc func stopVM(_ sender: Any?) {
@@ -160,12 +170,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     @objc func toggleFullscreenDisplay(_ sender: Any?) {
         guard let instance = viewModel.selectedInstance else { return }
-        let vmID = instance.instanceID
 
-        if let existing = fullscreenWindows[vmID] {
+        if let existing = fullscreenWindows[instance.instanceID] {
             existing.window?.close()
             return
         }
+
+        instance.configuration.prefersFullscreen = true
+        viewModel.saveConfiguration(for: instance)
+        enterFullscreen(for: instance)
+    }
+
+    private func enterFullscreen(for instance: VMInstance) {
+        let vmID = instance.instanceID
+
+        // Already showing fullscreen for this VM
+        guard fullscreenWindows[vmID] == nil else { return }
 
         let controller = FullscreenWindowController(instance: instance)
         fullscreenWindows[vmID] = controller
@@ -176,10 +196,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
-                if let token = self?.fullscreenObservers.removeValue(forKey: vmID) {
+                guard let self else { return }
+                if let token = self.fullscreenObservers.removeValue(forKey: vmID) {
                     NotificationCenter.default.removeObserver(token)
                 }
-                self?.fullscreenWindows.removeValue(forKey: vmID)
+                if let controller = self.fullscreenWindows.removeValue(forKey: vmID),
+                   !controller.closedByVMStop {
+                    instance.configuration.prefersFullscreen = false
+                    self.viewModel.saveConfiguration(for: instance)
+                }
             }
         }
         fullscreenObservers[vmID] = token

@@ -12,6 +12,7 @@ import Virtualization
 final class FullscreenWindowController: NSWindowController, NSWindowDelegate {
 
     let vmID: UUID
+    private(set) var closedByVMStop = false
     private let instance: VMInstance
     private var observingStatus = false
 
@@ -76,6 +77,7 @@ final class FullscreenWindowController: NSWindowController, NSWindowDelegate {
                 guard let self, self.observingStatus else { return }
                 let status = self.instance.status
                 if status == .stopped || status == .error {
+                    self.closedByVMStop = true
                     self.window?.close()
                 } else {
                     self.observeStatus()

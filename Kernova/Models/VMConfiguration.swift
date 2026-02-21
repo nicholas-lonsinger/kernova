@@ -23,6 +23,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
     var displayWidth: Int
     var displayHeight: Int
     var displayPPI: Int
+    var prefersFullscreen: Bool
 
     // MARK: - Network
 
@@ -79,6 +80,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         displayWidth: Int = 1920,
         displayHeight: Int = 1200,
         displayPPI: Int = 144,
+        prefersFullscreen: Bool = false,
         networkEnabled: Bool = true,
         macAddress: String? = nil,
         hardwareModelData: Data? = nil,
@@ -103,6 +105,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         self.displayWidth = displayWidth
         self.displayHeight = displayHeight
         self.displayPPI = displayPPI
+        self.prefersFullscreen = prefersFullscreen
         self.networkEnabled = networkEnabled
         self.macAddress = macAddress
         self.hardwareModelData = hardwareModelData
@@ -123,7 +126,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case id, name, guestOS, bootMode
         case cpuCount, memorySizeInGB, diskSizeInGB
-        case displayWidth, displayHeight, displayPPI
+        case displayWidth, displayHeight, displayPPI, prefersFullscreen
         case networkEnabled, macAddress
         case hardwareModelData, machineIdentifierData
         case genericMachineIdentifierData
@@ -146,6 +149,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         displayWidth = try container.decode(Int.self, forKey: .displayWidth)
         displayHeight = try container.decode(Int.self, forKey: .displayHeight)
         displayPPI = try container.decode(Int.self, forKey: .displayPPI)
+        prefersFullscreen = try container.decodeIfPresent(Bool.self, forKey: .prefersFullscreen) ?? false
         networkEnabled = try container.decode(Bool.self, forKey: .networkEnabled)
         macAddress = try container.decodeIfPresent(String.self, forKey: .macAddress)
         hardwareModelData = try container.decodeIfPresent(Data.self, forKey: .hardwareModelData)
