@@ -133,6 +133,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         viewModel.renameVM(instance)
     }
 
+    @objc func cloneVM(_ sender: Any?) {
+        guard let instance = viewModel.selectedInstance else { return }
+        Task { await viewModel.cloneVM(instance) }
+    }
+
     @objc func deleteVM(_ sender: Any?) {
         guard let instance = viewModel.selectedInstance else { return }
         viewModel.confirmDelete(instance)
@@ -233,6 +238,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             return viewModel.selectedInstance?.status.canSave ?? false
         case #selector(renameVM(_:)):
             return viewModel.selectedInstance?.status.canEditSettings ?? false
+        case #selector(cloneVM(_:)):
+            guard let instance = viewModel.selectedInstance else { return false }
+            return instance.status.canEditSettings && !viewModel.isCloning
         case #selector(deleteVM(_:)):
             return viewModel.selectedInstance?.status.canEditSettings ?? false
         case #selector(showSerialConsole(_:)):
@@ -321,6 +329,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         fullscreenItem.keyEquivalentModifierMask = [.command, .shift]
         vmMenu.addItem(.separator())
         vmMenu.addItem(withTitle: "Rename...", action: #selector(renameVM(_:)), keyEquivalent: "")
+        vmMenu.addItem(withTitle: "Clone", action: #selector(cloneVM(_:)), keyEquivalent: "d")
         let deleteItem = vmMenu.addItem(withTitle: "Move to Trash", action: #selector(deleteVM(_:)), keyEquivalent: "\u{08}")
         deleteItem.keyEquivalentModifierMask = [.command]
         vmMenuItem.submenu = vmMenu

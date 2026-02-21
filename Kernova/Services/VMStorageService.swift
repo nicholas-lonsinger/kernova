@@ -95,6 +95,31 @@ struct VMStorageService: Sendable {
         return bundle
     }
 
+    /// Clones a VM bundle by creating a new bundle directory and copying specified files.
+    func cloneVMBundle(from sourceBundleURL: URL, newConfiguration: VMConfiguration, filesToCopy: [String]) throws -> URL {
+        let destinationBundle = try bundleURL(for: newConfiguration)
+
+        if FileManager.default.fileExists(atPath: destinationBundle.path) {
+            throw VMStorageError.bundleAlreadyExists(newConfiguration.id)
+        }
+
+        try FileManager.default.createDirectory(at: destinationBundle, withIntermediateDirectories: true)
+
+        let fm = FileManager.default
+        for fileName in filesToCopy {
+            let sourceFile = sourceBundleURL.appendingPathComponent(fileName)
+            let destinationFile = destinationBundle.appendingPathComponent(fileName)
+            if fm.fileExists(atPath: sourceFile.path) {
+                try fm.copyItem(at: sourceFile, to: destinationFile)
+            }
+        }
+
+        try saveConfiguration(newConfiguration, to: destinationBundle)
+
+        Self.logger.info("Cloned VM bundle from '\(sourceBundleURL.lastPathComponent)' to '\(destinationBundle.lastPathComponent)'")
+        return destinationBundle
+    }
+
     /// Deletes a VM bundle directory and all its contents.
     func deleteVMBundle(at bundleURL: URL) throws {
         guard FileManager.default.fileExists(atPath: bundleURL.path) else {
