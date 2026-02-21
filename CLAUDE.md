@@ -90,8 +90,6 @@ Use the following format for all commits:
 
 ## Test plan
 - [ ] <verification step as a checkbox>
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
 ```
 
 A `## Notes` section may be added optionally if there are caveats, follow-ups, or things reviewers should know.
@@ -126,8 +124,6 @@ feat: Add VM snapshot support
 - [ ] Built successfully on macOS 26
 - [ ] Tested snapshot create/restore cycle with macOS and Linux guests
 - [ ] All existing tests pass
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
 ```
 
-The `Co-Authored-By` trailer is automatically appended by Claude and should not be included manually.
+The `Co-Authored-By` trailer is automatically appended by Claude Code and should not be duplicated in the commit message body.
