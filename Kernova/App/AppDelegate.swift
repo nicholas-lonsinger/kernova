@@ -157,10 +157,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     // MARK: - Menu Validation
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        if menuItem.action == #selector(showSerialConsole(_:)) {
+        switch menuItem.action {
+        case #selector(startVM(_:)):
+            return viewModel.selectedInstance?.status.canStart ?? false
+        case #selector(pauseVM(_:)):
+            return viewModel.selectedInstance?.status.canPause ?? false
+        case #selector(resumeVM(_:)):
+            return viewModel.selectedInstance?.status.canResume ?? false
+        case #selector(stopVM(_:)):
+            return viewModel.selectedInstance?.status.canStop ?? false
+        case #selector(saveVM(_:)):
+            return viewModel.selectedInstance?.status.canSave ?? false
+        case #selector(deleteVM(_:)):
+            return viewModel.selectedInstance?.status.canEditSettings ?? false
+        case #selector(showSerialConsole(_:)):
             return viewModel.selectedInstance != nil
+        default:
+            return true
         }
-        return true
     }
 
     // MARK: - Main Menu
@@ -209,6 +223,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         editMenuItem.submenu = editMenu
         mainMenu.addItem(editMenuItem)
+
+        // Virtual Machine menu
+        let vmMenuItem = NSMenuItem()
+        let vmMenu = NSMenu(title: "Virtual Machine")
+        vmMenu.addItem(withTitle: "Start", action: #selector(startVM(_:)), keyEquivalent: "r")
+        let pauseItem = vmMenu.addItem(withTitle: "Pause", action: #selector(pauseVM(_:)), keyEquivalent: "p")
+        pauseItem.keyEquivalentModifierMask = [.command, .option]
+        let resumeItem = vmMenu.addItem(withTitle: "Resume", action: #selector(resumeVM(_:)), keyEquivalent: "r")
+        resumeItem.keyEquivalentModifierMask = [.command, .option]
+        vmMenu.addItem(withTitle: "Stop", action: #selector(stopVM(_:)), keyEquivalent: "")
+        vmMenu.addItem(.separator())
+        let saveItem = vmMenu.addItem(withTitle: "Save State", action: #selector(saveVM(_:)), keyEquivalent: "s")
+        saveItem.keyEquivalentModifierMask = [.command, .option]
+        vmMenu.addItem(.separator())
+        let deleteItem = vmMenu.addItem(withTitle: "Move to Trash", action: #selector(deleteVM(_:)), keyEquivalent: "\u{08}")
+        deleteItem.keyEquivalentModifierMask = [.command]
+        vmMenuItem.submenu = vmMenu
+        mainMenu.addItem(vmMenuItem)
 
         // Window menu
         let windowMenuItem = NSMenuItem()
