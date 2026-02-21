@@ -308,4 +308,181 @@ struct VMLibraryViewModelTests {
 
         #expect(viewModel.selectedInstance == nil)
     }
+
+    // MARK: - Create VM
+
+    @Test("createVM creates bundle, disk image, and adds instance")
+    func createVMAddsInstance() async {
+        let (viewModel, storage, diskService, _) = makeViewModel()
+        let wizard = VMCreationViewModel()
+        wizard.selectedOS = .linux
+        wizard.selectedBootMode = .efi
+        wizard.vmName = "New Linux VM"
+
+        await viewModel.createVM(from: wizard)
+
+        #expect(viewModel.instances.count == 1)
+        #expect(viewModel.instances.first?.name == "New Linux VM")
+        #expect(storage.createVMBundleCallCount == 1)
+        #expect(diskService.createDiskImageCallCount == 1)
+    }
+
+    @Test("createVM selects newly created instance")
+    func createVMSelectsInstance() async {
+        let (viewModel, _, _, _) = makeViewModel()
+        let wizard = VMCreationViewModel()
+        wizard.selectedOS = .linux
+        wizard.selectedBootMode = .efi
+        wizard.vmName = "Selected VM"
+
+        await viewModel.createVM(from: wizard)
+
+        #expect(viewModel.selectedID == viewModel.instances.first?.id)
+    }
+
+    @Test("createVM presents error when bundle creation fails")
+    func createVMBundleError() async {
+        let storage = MockVMStorageService()
+        storage.createVMBundleError = VMStorageError.bundleAlreadyExists(UUID())
+        let (viewModel, _, _, _) = makeViewModel(storageService: storage)
+        let wizard = VMCreationViewModel()
+        wizard.selectedOS = .linux
+        wizard.selectedBootMode = .efi
+        wizard.vmName = "Fail VM"
+
+        await viewModel.createVM(from: wizard)
+
+        #expect(viewModel.showError == true)
+        #expect(viewModel.errorMessage != nil)
+        #expect(viewModel.instances.isEmpty)
+    }
+
+    @Test("createVM presents error when disk image creation fails")
+    func createVMDiskImageError() async {
+        let diskService = MockDiskImageService()
+        diskService.createDiskImageError = NSError(domain: "test", code: 1)
+        let (viewModel, _, _, _) = makeViewModel(diskImageService: diskService)
+        let wizard = VMCreationViewModel()
+        wizard.selectedOS = .linux
+        wizard.selectedBootMode = .efi
+        wizard.vmName = "Disk Fail VM"
+
+        await viewModel.createVM(from: wizard)
+
+        #expect(viewModel.showError == true)
+        #expect(viewModel.errorMessage != nil)
+    }
+
+    // MARK: - Reconcile With Disk
+
+    @Test("reconcileWithDisk adds discovered bundles not in memory")
+    func reconcileAddsNewBundles() {
+        let storage = MockVMStorageService()
+        let config = VMConfiguration(name: "Discovered VM", guestOS: .linux, bootMode: .efi)
+        let bundleURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
+        storage.bundles[bundleURL] = config
+
+        let (viewModel, _, _, _) = makeViewModel(storageService: storage)
+        // loadVMs already ran during init, so the instance should be loaded
+        // But let's clear and reconcile manually to test the specific method
+        viewModel.instances.removeAll()
+
+        viewModel.reconcileWithDisk()
+
+        #expect(viewModel.instances.count == 1)
+        #expect(viewModel.instances.first?.name == "Discovered VM")
+    }
+
+    @Test("reconcileWithDisk removes stopped VMs whose bundles are gone")
+    func reconcileRemovesStoppedVMs() {
+        let (viewModel, _, _, _) = makeViewModel()
+        let instance = makeInstance(name: "Gone VM")
+        instance.status = .stopped
+        viewModel.instances.append(instance)
+
+        // Storage has no bundles, so instance should be removed
+        viewModel.reconcileWithDisk()
+
+        #expect(viewModel.instances.isEmpty)
+    }
+
+    @Test("reconcileWithDisk preserves running VMs even if bundle is missing")
+    func reconcilePreservesRunningVMs() {
+        let (viewModel, _, _, _) = makeViewModel()
+        let instance = makeInstance(name: "Running VM")
+        instance.status = .running
+        viewModel.instances.append(instance)
+
+        viewModel.reconcileWithDisk()
+
+        #expect(viewModel.instances.count == 1)
+        #expect(viewModel.instances.first?.name == "Running VM")
+    }
+
+    @Test("reconcileWithDisk preserves paused VMs even if bundle is missing")
+    func reconcilePreservesPausedVMs() {
+        let (viewModel, _, _, _) = makeViewModel()
+        let instance = makeInstance(name: "Paused VM")
+        instance.status = .paused
+        viewModel.instances.append(instance)
+
+        viewModel.reconcileWithDisk()
+
+        #expect(viewModel.instances.count == 1)
+        #expect(viewModel.instances.first?.name == "Paused VM")
+    }
+
+    @Test("reconcileWithDisk updates selection when selected stopped VM is removed")
+    func reconcileUpdatesSelection() {
+        let (viewModel, storage, _, _) = makeViewModel()
+        let remaining = makeInstance(name: "Remaining")
+        let removed = makeInstance(name: "Removed")
+        removed.status = .stopped
+        viewModel.instances = [remaining, removed]
+        viewModel.selectedID = removed.id
+
+        // Only keep the remaining instance's bundle on disk
+        let bundleURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(remaining.id.uuidString).kernova", isDirectory: true)
+        storage.bundles = [bundleURL: remaining.configuration]
+
+        viewModel.reconcileWithDisk()
+
+        #expect(viewModel.selectedID == remaining.id || viewModel.selectedID != removed.id)
+    }
+
+    // MARK: - Cancel Installation
+
+    #if arch(arm64)
+    @Test("cancelInstallation removes instance and deletes bundle")
+    func cancelInstallationRemovesInstance() {
+        let (viewModel, storage, _, _) = makeViewModel()
+        let instance = makeInstance(name: "Installing VM")
+        instance.status = .installing
+        viewModel.instances.append(instance)
+        storage.bundles[instance.bundleURL] = instance.configuration
+
+        viewModel.cancelInstallation(instance)
+
+        #expect(viewModel.instances.isEmpty)
+        #expect(storage.deleteVMBundleCallCount == 1)
+    }
+
+    @Test("cancelInstallation updates selection to first remaining instance")
+    func cancelInstallationUpdatesSelection() {
+        let (viewModel, storage, _, _) = makeViewModel()
+        let first = makeInstance(name: "First")
+        let installing = makeInstance(name: "Installing")
+        installing.status = .installing
+        viewModel.instances = [first, installing]
+        viewModel.selectedID = installing.id
+        storage.bundles[installing.bundleURL] = installing.configuration
+
+        viewModel.cancelInstallation(installing)
+
+        #expect(viewModel.instances.count == 1)
+        #expect(viewModel.selectedID == first.id)
+    }
+    #endif
 }

@@ -16,6 +16,10 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
     var deleteVMBundleCallCount = 0
     var createVMBundleCallCount = 0
 
+    // MARK: - Error Injection
+
+    var createVMBundleError: (any Error)?
+
     // MARK: - VMStorageProviding
 
     var vmsDirectory: URL {
@@ -47,6 +51,7 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
 
     func createVMBundle(for configuration: VMConfiguration) throws -> URL {
         createVMBundleCallCount += 1
+        if let error = createVMBundleError { throw error }
         let url = try bundleURL(for: configuration)
         bundles[url] = configuration
         return url

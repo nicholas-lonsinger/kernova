@@ -332,7 +332,7 @@ final class VMLibraryViewModel {
     }
 
     /// Diffs on-disk VM bundles against in-memory instances and adds/removes as needed.
-    private func reconcileWithDisk() {
+    func reconcileWithDisk() {
         do {
             let diskBundles = try storageService.listVMBundles()
 
