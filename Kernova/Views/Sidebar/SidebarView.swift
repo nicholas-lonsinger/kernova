@@ -9,11 +9,20 @@ struct SidebarView: View {
         List(selection: $viewModel.selectedID) {
             Section("Virtual Machines") {
                 ForEach(viewModel.instances) { instance in
-                    VMRowView(instance: instance)
-                        .tag(instance.id)
-                        .contextMenu {
-                            contextMenu(for: instance)
+                    VMRowView(
+                        instance: instance,
+                        isRenaming: viewModel.renamingInstanceID == instance.id,
+                        onCommitRename: { newName in
+                            viewModel.commitRename(for: instance, newName: newName)
+                        },
+                        onCancelRename: {
+                            viewModel.cancelRename()
                         }
+                    )
+                    .tag(instance.id)
+                    .contextMenu {
+                        contextMenu(for: instance)
+                    }
                 }
             }
         }
@@ -57,6 +66,11 @@ struct SidebarView: View {
         }
 
         Divider()
+
+        Button("Rename") {
+            viewModel.renameVM(instance)
+        }
+        .disabled(!instance.status.canEditSettings)
 
         Button("Show in Finder") {
             NSWorkspace.shared.activateFileViewerSelecting([instance.bundleURL])

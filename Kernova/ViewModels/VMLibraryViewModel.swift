@@ -24,6 +24,7 @@ final class VMLibraryViewModel {
     var showError = false
     var errorMessage: String?
     var instanceToDelete: VMInstance?
+    var renamingInstanceID: UUID?
 
     // MARK: - Directory Watcher
 
@@ -304,6 +305,27 @@ final class VMLibraryViewModel {
         } catch {
             presentError(error)
         }
+    }
+
+    // MARK: - Rename
+
+    func renameVM(_ instance: VMInstance) {
+        renamingInstanceID = instance.id
+    }
+
+    func commitRename(for instance: VMInstance, newName: String) {
+        let trimmed = newName.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else {
+            renamingInstanceID = nil
+            return
+        }
+        instance.configuration.name = trimmed
+        saveConfiguration(for: instance)
+        renamingInstanceID = nil
+    }
+
+    func cancelRename() {
+        renamingInstanceID = nil
     }
 
     // MARK: - Save Configuration
