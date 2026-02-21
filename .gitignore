@@ -46,6 +46,7 @@ Thumbs.db
 
 # Claude Code
 .claude/*.local.*
+CLAUDE.local.md
 
 # Secrets
 *.env
