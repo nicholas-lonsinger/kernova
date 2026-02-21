@@ -10,6 +10,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var pendingOpenURLs: [URL] = []
     private var serialConsoleWindows: [UUID: SerialConsoleWindowController] = [:]
     private var serialConsoleObservers: [UUID: Any] = [:]
+    private var fullscreenWindows: [UUID: FullscreenWindowController] = [:]
+    private var fullscreenObservers: [UUID: Any] = [:]
 
     // MARK: - Entry Point
 
@@ -154,6 +156,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         controller.showWindow(nil)
     }
 
+    // MARK: - Fullscreen Display
+
+    @objc func toggleFullscreenDisplay(_ sender: Any?) {
+        guard let instance = viewModel.selectedInstance else { return }
+        let vmID = instance.instanceID
+
+        if let existing = fullscreenWindows[vmID] {
+            existing.window?.close()
+            return
+        }
+
+        let controller = FullscreenWindowController(instance: instance)
+        fullscreenWindows[vmID] = controller
+
+        let token = NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification,
+            object: controller.window,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                if let token = self?.fullscreenObservers.removeValue(forKey: vmID) {
+                    NotificationCenter.default.removeObserver(token)
+                }
+                self?.fullscreenWindows.removeValue(forKey: vmID)
+            }
+        }
+        fullscreenObservers[vmID] = token
+
+        controller.showWindow(nil)
+    }
+
     // MARK: - Menu Validation
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
@@ -172,6 +205,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             return viewModel.selectedInstance?.status.canEditSettings ?? false
         case #selector(showSerialConsole(_:)):
             return viewModel.selectedInstance != nil
+        case #selector(toggleFullscreenDisplay(_:)):
+            guard let instance = viewModel.selectedInstance else { return false }
+            // Only allow fullscreen when the VM has a live VZVirtualMachine
+            let canFullscreen = (instance.status == .running || instance.status == .paused)
+                && instance.virtualMachine != nil
+            if canFullscreen, fullscreenWindows[instance.instanceID] != nil {
+                menuItem.title = "Exit Fullscreen Display"
+            } else {
+                menuItem.title = "Fullscreen Display"
+            }
+            return canFullscreen
         default:
             return true
         }
@@ -236,6 +280,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         vmMenu.addItem(.separator())
         let saveItem = vmMenu.addItem(withTitle: "Save State", action: #selector(saveVM(_:)), keyEquivalent: "s")
         saveItem.keyEquivalentModifierMask = [.command, .option]
+        vmMenu.addItem(.separator())
+        let fullscreenItem = vmMenu.addItem(
+            withTitle: "Fullscreen Display",
+            action: #selector(toggleFullscreenDisplay(_:)),
+            keyEquivalent: "f"
+        )
+        fullscreenItem.keyEquivalentModifierMask = [.command, .shift]
         vmMenu.addItem(.separator())
         let deleteItem = vmMenu.addItem(withTitle: "Move to Trash", action: #selector(deleteVM(_:)), keyEquivalent: "\u{08}")
         deleteItem.keyEquivalentModifierMask = [.command]

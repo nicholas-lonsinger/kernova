@@ -19,11 +19,13 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSGestu
     private static let stopVMIdentifier = NSToolbarItem.Identifier("stopVM")
     private static let saveVMIdentifier = NSToolbarItem.Identifier("saveVM")
     private static let deleteVMIdentifier = NSToolbarItem.Identifier("deleteVM")
+    private static let fullscreenVMIdentifier = NSToolbarItem.Identifier("fullscreenVM")
 
     /// All possible action identifiers, used for reference.
     private static let allActionIdentifiers: Set<NSToolbarItem.Identifier> = [
         startVMIdentifier, pauseVMIdentifier, resumeVMIdentifier,
         stopVMIdentifier, saveVMIdentifier, deleteVMIdentifier,
+        fullscreenVMIdentifier,
     ]
 
     convenience init(viewModel: VMLibraryViewModel) {
@@ -163,7 +165,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSGestu
         case .stopped:
             return [Self.startVMIdentifier, Self.deleteVMIdentifier]
         case .running:
-            return [Self.pauseVMIdentifier, Self.stopVMIdentifier, Self.saveVMIdentifier]
+            return [Self.pauseVMIdentifier, Self.stopVMIdentifier, Self.saveVMIdentifier, Self.fullscreenVMIdentifier]
         case .paused:
             if instance.isColdPaused {
                 // State already saved to disk — no Save State, offer Delete instead
@@ -202,6 +204,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSGestu
             Self.stopVMIdentifier,
             Self.saveVMIdentifier,
             Self.deleteVMIdentifier,
+            Self.fullscreenVMIdentifier,
         ]
     }
 
@@ -268,6 +271,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSGestu
             return ActionButtonSpec(
                 symbolName: "trash", toolTip: "Move this virtual machine to the Trash",
                 accessibilityLabel: "Move to Trash", action: #selector(AppDelegate.deleteVM(_:)))
+        case Self.fullscreenVMIdentifier:
+            return ActionButtonSpec(
+                symbolName: "arrow.up.left.and.arrow.down.right", toolTip: "Enter fullscreen display",
+                accessibilityLabel: "Fullscreen", action: #selector(AppDelegate.toggleFullscreenDisplay(_:)))
         default:
             return nil
         }

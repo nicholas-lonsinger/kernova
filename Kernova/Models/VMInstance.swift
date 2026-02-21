@@ -24,6 +24,9 @@ final class VMInstance: Identifiable {
     /// Error message if the VM entered an error state.
     var errorMessage: String?
 
+    /// `true` when this VM's display is shown in a dedicated fullscreen window.
+    var isInFullscreen: Bool = false
+
     // MARK: - Serial Console
 
     /// Observable text buffer driven by serial port output. Capped at 1 MB in memory;
