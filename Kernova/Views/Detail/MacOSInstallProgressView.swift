@@ -37,8 +37,7 @@ struct MacOSInstallProgressView: View {
                 Button("Cancel") {
                     showCancelConfirmation = true
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
+                .buttonStyle(.bordered)
             }
         }
         .frame(maxWidth: 400)
