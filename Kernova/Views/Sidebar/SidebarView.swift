@@ -72,6 +72,11 @@ struct SidebarView: View {
         }
         .disabled(!instance.status.canEditSettings)
 
+        Button("Clone") {
+            Task { await viewModel.cloneVM(instance) }
+        }
+        .disabled(!instance.status.canEditSettings || viewModel.isCloning)
+
         Button("Show in Finder") {
             NSWorkspace.shared.activateFileViewerSelecting([instance.bundleURL])
         }

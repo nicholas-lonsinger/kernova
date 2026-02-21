@@ -165,6 +165,44 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         notes = try container.decode(String.self, forKey: .notes)
     }
 
+    // MARK: - Cloning
+
+    /// Returns a new configuration suitable for a cloned VM instance.
+    ///
+    /// Identity fields (`id`, `createdAt`) are regenerated. The name is derived
+    /// from the original via ``generateCloneName(baseName:existingNames:)`` to
+    /// avoid collisions. Platform identity fields (`macAddress`,
+    /// `machineIdentifierData`, `genericMachineIdentifierData`) are **not**
+    /// regenerated here — the caller must replace them with fresh VZ framework
+    /// values after cloning.
+    func clonedForNewInstance(existingNames: [String]) -> VMConfiguration {
+        var clone = self
+        clone.id = UUID()
+        clone.createdAt = Date()
+        clone.name = Self.generateCloneName(baseName: name, existingNames: existingNames)
+        clone.prefersFullscreen = false
+
+        // Regenerate shared directory IDs to avoid VirtioFS collisions
+        clone.sharedDirectories = sharedDirectories?.map { dir in
+            SharedDirectory(id: UUID(), path: dir.path, readOnly: dir.readOnly)
+        }
+
+        return clone
+    }
+
+    /// Generates a unique clone name by appending " Copy", " Copy 2", etc.
+    static func generateCloneName(baseName: String, existingNames: [String]) -> String {
+        let candidate = "\(baseName) Copy"
+        if !existingNames.contains(candidate) {
+            return candidate
+        }
+        var counter = 2
+        while existingNames.contains("\(baseName) Copy \(counter)") {
+            counter += 1
+        }
+        return "\(baseName) Copy \(counter)"
+    }
+
     // MARK: - Computed
 
     var memorySizeInBytes: UInt64 {

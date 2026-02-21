@@ -566,4 +566,81 @@ struct VMLibraryViewModelTests {
         #expect(viewModel.renamingInstanceID == nil)
         #expect(storage.saveConfigurationCallCount == 0)
     }
+
+    // MARK: - Clone
+
+    @Test("cloneVM creates a new instance with different ID and Copy name")
+    func cloneVMCreatesNewInstance() async {
+        let (viewModel, storage, _, _) = makeViewModel()
+        let instance = makeInstance(name: "Original")
+        instance.status = .stopped
+        viewModel.instances.append(instance)
+        storage.bundles[instance.bundleURL] = instance.configuration
+
+        await viewModel.cloneVM(instance)
+
+        #expect(viewModel.instances.count == 2)
+        let cloned = viewModel.instances.first { $0.id != instance.id }
+        #expect(cloned != nil)
+        #expect(cloned?.name == "Original Copy")
+        #expect(cloned?.id != instance.id)
+        #expect(storage.cloneVMBundleCallCount == 1)
+    }
+
+    @Test("cloneVM selects the cloned instance")
+    func cloneVMSelectsClone() async {
+        let (viewModel, storage, _, _) = makeViewModel()
+        let instance = makeInstance(name: "Source")
+        instance.status = .stopped
+        viewModel.instances.append(instance)
+        storage.bundles[instance.bundleURL] = instance.configuration
+
+        await viewModel.cloneVM(instance)
+
+        let cloned = viewModel.instances.first { $0.id != instance.id }
+        #expect(viewModel.selectedID == cloned?.id)
+    }
+
+    @Test("cloneVM increments name when Copy already exists")
+    func cloneVMIncrementsName() async {
+        let (viewModel, storage, _, _) = makeViewModel()
+        let instance = makeInstance(name: "VM")
+        instance.status = .stopped
+        let copyInstance = makeInstance(name: "VM Copy")
+        viewModel.instances = [instance, copyInstance]
+        storage.bundles[instance.bundleURL] = instance.configuration
+
+        await viewModel.cloneVM(instance)
+
+        let cloned = viewModel.instances.first { $0.id != instance.id && $0.id != copyInstance.id }
+        #expect(cloned?.name == "VM Copy 2")
+    }
+
+    @Test("cloneVM is skipped when VM is running")
+    func cloneVMSkippedWhenRunning() async {
+        let (viewModel, storage, _, _) = makeViewModel()
+        let instance = makeInstance(name: "Running VM")
+        instance.status = .running
+        viewModel.instances.append(instance)
+
+        await viewModel.cloneVM(instance)
+
+        #expect(viewModel.instances.count == 1)
+        #expect(storage.cloneVMBundleCallCount == 0)
+    }
+
+    @Test("cloneVM presents error on storage failure")
+    func cloneVMPresentsError() async {
+        let storage = MockVMStorageService()
+        storage.cloneVMBundleError = VMStorageError.bundleAlreadyExists(UUID())
+        let (viewModel, _, _, _) = makeViewModel(storageService: storage)
+        let instance = makeInstance(name: "Fail Clone")
+        instance.status = .stopped
+        viewModel.instances.append(instance)
+
+        await viewModel.cloneVM(instance)
+
+        #expect(viewModel.showError == true)
+        #expect(viewModel.errorMessage != nil)
+    }
 }

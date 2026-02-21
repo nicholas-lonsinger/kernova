@@ -15,10 +15,12 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
     var saveConfigurationCallCount = 0
     var deleteVMBundleCallCount = 0
     var createVMBundleCallCount = 0
+    var cloneVMBundleCallCount = 0
 
     // MARK: - Error Injection
 
     var createVMBundleError: (any Error)?
+    var cloneVMBundleError: (any Error)?
 
     // MARK: - VMStorageProviding
 
@@ -54,6 +56,14 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
         if let error = createVMBundleError { throw error }
         let url = try bundleURL(for: configuration)
         bundles[url] = configuration
+        return url
+    }
+
+    func cloneVMBundle(from sourceBundleURL: URL, newConfiguration: VMConfiguration, filesToCopy: [String]) throws -> URL {
+        cloneVMBundleCallCount += 1
+        if let error = cloneVMBundleError { throw error }
+        let url = try bundleURL(for: newConfiguration)
+        bundles[url] = newConfiguration
         return url
     }
 

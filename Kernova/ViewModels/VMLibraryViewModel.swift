@@ -25,6 +25,7 @@ final class VMLibraryViewModel {
     var errorMessage: String?
     var instanceToDelete: VMInstance?
     var renamingInstanceID: UUID?
+    var isCloning = false
 
     // MARK: - Directory Watcher
 
@@ -338,6 +339,69 @@ final class VMLibraryViewModel {
         }
     }
 
+    // MARK: - Clone
+
+    func cloneVM(_ instance: VMInstance) async {
+        guard instance.status.canEditSettings else { return }
+
+        isCloning = true
+        defer { isCloning = false }
+
+        do {
+            let existingNames = instances.map(\.configuration.name)
+            var clonedConfig = instance.configuration.clonedForNewInstance(existingNames: existingNames)
+
+            // Regenerate platform identity fields
+            clonedConfig.macAddress = VZMACAddress.randomLocallyAdministered().string
+
+            #if arch(arm64)
+            if clonedConfig.guestOS == .macOS {
+                clonedConfig.machineIdentifierData = VZMacMachineIdentifier().dataRepresentation
+            }
+            #endif
+
+            if clonedConfig.bootMode == .efi || clonedConfig.bootMode == .linuxKernel {
+                clonedConfig.genericMachineIdentifierData = VZGenericMachineIdentifier().dataRepresentation
+            }
+
+            // Determine which bundle files to copy
+            var filesToCopy = ["Disk.asif"]
+            switch clonedConfig.guestOS {
+            case .macOS:
+                filesToCopy.append(contentsOf: ["AuxiliaryStorage", "HardwareModel"])
+            case .linux:
+                if clonedConfig.bootMode == .efi {
+                    filesToCopy.append("EFIVariableStore")
+                }
+            }
+
+            // Copy files off the main thread (disk images can be large)
+            let sourceBundleURL = instance.bundleURL
+            let config = clonedConfig
+            let storage = storageService
+            let bundleURL = try await Task.detached {
+                try storage.cloneVMBundle(from: sourceBundleURL, newConfiguration: config, filesToCopy: filesToCopy)
+            }.value
+
+            // Write regenerated MachineIdentifier file for macOS clones
+            #if arch(arm64)
+            if let machineIDData = clonedConfig.machineIdentifierData, clonedConfig.guestOS == .macOS {
+                let layout = VMBundleLayout(bundleURL: bundleURL)
+                try machineIDData.write(to: layout.machineIdentifierURL, options: .atomic)
+            }
+            #endif
+
+            let clonedInstance = VMInstance(configuration: clonedConfig, bundleURL: bundleURL)
+            instances.append(clonedInstance)
+            instances.sort { $0.configuration.createdAt < $1.configuration.createdAt }
+            selectedID = clonedInstance.id
+
+            Self.logger.info("Cloned VM '\(instance.name)' as '\(clonedConfig.name)'")
+        } catch {
+            presentError(error)
+        }
+    }
+
     // MARK: - Directory Watcher
 
     private func startDirectoryWatcher() {
@@ -355,6 +419,7 @@ final class VMLibraryViewModel {
 
     /// Diffs on-disk VM bundles against in-memory instances and adds/removes as needed.
     func reconcileWithDisk() {
+        guard !isCloning else { return }
         do {
             let diskBundles = try storageService.listVMBundles()
 
