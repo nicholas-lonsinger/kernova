@@ -7,7 +7,17 @@ struct VMConsoleView: View {
     var body: some View {
         VStack(spacing: 0) {
             // VM Display
-            if let vm = instance.virtualMachine {
+            if instance.isInFullscreen {
+                ContentUnavailableView {
+                    Label("Fullscreen", systemImage: "arrow.up.left.and.arrow.down.right")
+                } description: {
+                    Text("The virtual machine display is in fullscreen mode.")
+                } actions: {
+                    Button("Exit Fullscreen") {
+                        NSApp.sendAction(#selector(AppDelegate.toggleFullscreenDisplay(_:)), to: nil, from: nil)
+                    }
+                }
+            } else if let vm = instance.virtualMachine {
                 VMDisplayView(virtualMachine: vm)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if instance.isColdPaused {
