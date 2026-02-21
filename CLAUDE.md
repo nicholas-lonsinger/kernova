@@ -21,46 +21,15 @@ Requires **macOS 26 (Tahoe)**, **Xcode 26**, **Swift 6**, and **Apple Silicon** 
 
 ## Architecture
 
-Kernova is an AppKit app hosting SwiftUI views that manages virtual machines via Apple's `Virtualization.framework`.
+> Full directory structure, component map, data flow diagrams, design decisions, and test coverage details are in [ARCHITECTURE.md](ARCHITECTURE.md). Consult it before making structural changes. The summary below is a quick reference.
 
-**Data flow:** `AppDelegate` → `VMLibraryViewModel` → `VMLifecycleCoordinator` → services + SwiftUI views. `AppDelegate` manages multiple window controllers (main, serial console, fullscreen). `VMDirectoryWatcher` monitors the VMs directory for external filesystem changes and triggers reconciliation in the view model.
+Kernova is an AppKit app hosting SwiftUI views that manages virtual machines via Apple's `Virtualization.framework`, supporting macOS and Linux guests.
 
-### Key types
+**Data flow:** `AppDelegate` → `VMLibraryViewModel` → `VMLifecycleCoordinator` → services + SwiftUI views. `VMDirectoryWatcher` monitors the VMs directory for external filesystem changes and triggers reconciliation in the view model.
 
-- **`VMConfiguration`** (Model) — Codable struct persisted as `config.json` per VM bundle. Holds identity, resources, display, network, and OS-specific fields (macOS hardware model data, Linux kernel paths).
-- **`VMInstance`** (Runtime) — `@Observable` class wrapping a `VMConfiguration` + `VZVirtualMachine` + `VMStatus`. Owns bundle path references (disk image, save file, aux storage). Not persisted directly.
-- **`VMBundleLayout`** — `Sendable` struct centralizing all file paths within a `.kernova` VM bundle (disk image, aux storage, save file, serial log, etc.).
-- **`VMLibraryViewModel`** — Central `@Observable` view model owning the array of `VMInstance`s. Delegates lifecycle operations through `VMLifecycleCoordinator` rather than calling services directly.
-- **`VMLifecycleCoordinator`** — `@MainActor` coordinator that owns lifecycle services (`VirtualizationService`, `MacOSInstallService`, `IPSWService`) and orchestrates multi-step operations like macOS installation. Keeps `VMLibraryViewModel` focused on list management.
-- **`ConfigurationBuilder`** — Translates `VMConfiguration` → `VZVirtualMachineConfiguration`. Handles three boot paths: macOS (`VZMacOSBootLoader`), EFI (`VZEFIBootLoader`), and Linux kernel (`VZLinuxBootLoader`).
-- **`VirtualizationService`** — VM lifecycle (start/stop/pause/resume/save/restore). `@MainActor` since `VZVirtualMachine` is main-thread-only.
-- **`MacOSInstallService`** — `@MainActor` service that drives macOS guest installation via `VZMacOSInstaller`. Handles restore image loading, platform file setup, and KVO progress tracking.
-- **`MacOSInstallState`** — Tracks two-phase macOS installation progress (download + install).
-- **`IPSWService`** — `Sendable` struct that fetches and downloads macOS restore images from Apple.
-- **`VMStorageService`** — CRUD for VM bundle directories at `~/Library/Application Support/Kernova/VMs/`. Also handles VM cloning (`cloneVMBundle`) and bundle migration.
-- **`DiskImageService`** — Creates ASIF (Apple Sparse Image Format) disk images via `hdiutil`.
-- **`VMDirectoryWatcher`** — Monitors the VMs directory for external filesystem changes (e.g., Finder "Put Back" from Trash) and triggers reconciliation.
+**Concurrency model:** Everything touching `VZVirtualMachine` is `@MainActor`. The codebase uses Swift 6 strict concurrency. Services that interact with VZ are `@MainActor`-isolated; stateless services are `Sendable` structs. Some VZ delegate callbacks use `nonisolated(unsafe)` with `MainActor.assumeIsolated` to bridge back.
 
-### Service protocols
-
-All services are abstracted behind protocols for testability: `VirtualizationProviding`, `VMStorageProviding`, `DiskImageProviding`, `MacOSInstallProviding`, `IPSWProviding`. These are defined in `Services/Protocols/` and enable dependency injection with mocks in tests.
-
-### Window controllers
-
-The app uses three types of `NSWindowController`:
-- **`MainWindowController`** — Hosts the primary `NSSplitViewController` with SwiftUI views.
-- **`FullscreenWindowController`** — Dedicated fullscreen window per VM, auto-closes on VM stop.
-- **`SerialConsoleWindowController`** — Per-VM serial console window.
-
-These are managed by `AppDelegate`, which tracks them in dictionaries keyed by VM UUID.
-
-### Concurrency model
-
-Everything touching `VZVirtualMachine` is `@MainActor`. The codebase uses Swift 6 strict concurrency. `VMConfiguration` is `Sendable`; `VMInstance` is `@MainActor`-isolated. Services that interact with `VZVirtualMachine` are `@MainActor` (`VirtualizationService`, `MacOSInstallService`); others are `Sendable` structs with no mutable state (`VMStorageService`, `DiskImageService`, `IPSWService`). Some `VZVirtualMachine` callback APIs use `nonisolated(unsafe)` with `MainActor.assumeIsolated` to bridge delegate callbacks.
-
-### Tests
-
-Tests use Swift Testing (`@Suite`, `@Test`, `#expect`) — not XCTest. Test files are in `KernovaTests/`.
+**No external dependencies.** The app uses only Apple system frameworks.
 
 ## Development Guidelines
 
@@ -127,3 +96,33 @@ feat: Add VM snapshot support
 ```
 
 The `Co-Authored-By` trailer is automatically appended by Claude Code and should not be duplicated in the commit message body.
+
+## Architecture Change Protocol
+
+After completing any task that hits one or more of the following triggers, suggest follow-up updates before considering the task complete.
+
+### Triggers
+- Added, removed, renamed, or moved a file or directory
+- Changed how components communicate (new API surface, changed data flow, new service)
+- Added or removed a dependency or framework
+- Changed build configuration, entitlements, or tooling
+- Created a new public type/protocol or significantly changed an existing one
+- Changed the concurrency model or actor isolation of a component
+
+### Required Follow-ups
+
+1. **[ARCHITECTURE.md](ARCHITECTURE.md)** — Read the relevant sections first, then propose specific, targeted updates to reflect the change. Update the directory structure, component map, design decisions, or test coverage sections as needed. Do not rewrite the entire file — make surgical edits.
+
+2. **Testing** — For any new public function, type, or component:
+   - Write tests following the patterns in KernovaTests/ (Swift Testing, mocks, factories)
+   - If tests are deferred, explicitly state what's needed and why it was skipped
+
+3. **CLAUDE.md** — Update only if build commands, the concurrency model summary, or the data flow summary changed. Preserve commit message format and development guidelines as-is.
+
+4. **Maintenance Notes** — At the end of your response, include a summary:
+
+   ### Maintenance Notes
+   - ✅ Updated ARCHITECTURE.md directory structure
+   - ✅ Added tests for NewComponent
+   - ⚠️ No tests yet for `newFunction()` — needs mock for ExternalDependency
+   - ✅ CLAUDE.md unchanged (no structural impact)
