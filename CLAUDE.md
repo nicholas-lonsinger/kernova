@@ -23,21 +23,40 @@ Requires **macOS 26 (Tahoe)**, **Xcode 26**, **Swift 6**, and **Apple Silicon** 
 
 Kernova is an AppKit app hosting SwiftUI views that manages virtual machines via Apple's `Virtualization.framework`.
 
-**Data flow:** `AppDelegate` → `VMLibraryViewModel` → services + SwiftUI views
+**Data flow:** `AppDelegate` → `VMLibraryViewModel` → `VMLifecycleCoordinator` → services + SwiftUI views. `AppDelegate` manages multiple window controllers (main, serial console, fullscreen). `VMDirectoryWatcher` monitors the VMs directory for external filesystem changes and triggers reconciliation in the view model.
 
 ### Key types
 
 - **`VMConfiguration`** (Model) — Codable struct persisted as `config.json` per VM bundle. Holds identity, resources, display, network, and OS-specific fields (macOS hardware model data, Linux kernel paths).
 - **`VMInstance`** (Runtime) — `@Observable` class wrapping a `VMConfiguration` + `VZVirtualMachine` + `VMStatus`. Owns bundle path references (disk image, save file, aux storage). Not persisted directly.
-- **`VMLibraryViewModel`** — Central `@Observable` view model owning all service instances and the array of `VMInstance`s. All VM lifecycle calls go through here.
+- **`VMBundleLayout`** — `Sendable` struct centralizing all file paths within a `.kernova` VM bundle (disk image, aux storage, save file, serial log, etc.).
+- **`VMLibraryViewModel`** — Central `@Observable` view model owning the array of `VMInstance`s. Delegates lifecycle operations through `VMLifecycleCoordinator` rather than calling services directly.
+- **`VMLifecycleCoordinator`** — `@MainActor` coordinator that owns lifecycle services (`VirtualizationService`, `MacOSInstallService`, `IPSWService`) and orchestrates multi-step operations like macOS installation. Keeps `VMLibraryViewModel` focused on list management.
 - **`ConfigurationBuilder`** — Translates `VMConfiguration` → `VZVirtualMachineConfiguration`. Handles three boot paths: macOS (`VZMacOSBootLoader`), EFI (`VZEFIBootLoader`), and Linux kernel (`VZLinuxBootLoader`).
-- **`VirtualizationService`** — VM lifecycle (start/stop/pause/resume/save/restore). All `@MainActor` since `VZVirtualMachine` is main-thread-only.
-- **`VMStorageService`** — CRUD for VM bundle directories at `~/Library/Application Support/Kernova/VMs/`.
+- **`VirtualizationService`** — VM lifecycle (start/stop/pause/resume/save/restore). `@MainActor` since `VZVirtualMachine` is main-thread-only.
+- **`MacOSInstallService`** — `@MainActor` service that drives macOS guest installation via `VZMacOSInstaller`. Handles restore image loading, platform file setup, and KVO progress tracking.
+- **`MacOSInstallState`** — Tracks two-phase macOS installation progress (download + install).
+- **`IPSWService`** — `Sendable` struct that fetches and downloads macOS restore images from Apple.
+- **`VMStorageService`** — CRUD for VM bundle directories at `~/Library/Application Support/Kernova/VMs/`. Also handles VM cloning (`cloneVMBundle`) and bundle migration.
 - **`DiskImageService`** — Creates ASIF (Apple Sparse Image Format) disk images via `hdiutil`.
+- **`VMDirectoryWatcher`** — Monitors the VMs directory for external filesystem changes (e.g., Finder "Put Back" from Trash) and triggers reconciliation.
+
+### Service protocols
+
+All services are abstracted behind protocols for testability: `VirtualizationProviding`, `VMStorageProviding`, `DiskImageProviding`, `MacOSInstallProviding`, `IPSWProviding`. These are defined in `Services/Protocols/` and enable dependency injection with mocks in tests.
+
+### Window controllers
+
+The app uses three types of `NSWindowController`:
+- **`MainWindowController`** — Hosts the primary `NSSplitViewController` with SwiftUI views.
+- **`FullscreenWindowController`** — Dedicated fullscreen window per VM, auto-closes on VM stop.
+- **`SerialConsoleWindowController`** — Per-VM serial console window.
+
+These are managed by `AppDelegate`, which tracks them in dictionaries keyed by VM UUID.
 
 ### Concurrency model
 
-Everything touching `VZVirtualMachine` is `@MainActor`. The codebase uses Swift 6 strict concurrency. `VMConfiguration` is `Sendable`; `VMInstance` and services are `@MainActor`-isolated. Some `VZVirtualMachine` callback APIs use `nonisolated(unsafe)` with `MainActor.assumeIsolated` to bridge delegate callbacks.
+Everything touching `VZVirtualMachine` is `@MainActor`. The codebase uses Swift 6 strict concurrency. `VMConfiguration` is `Sendable`; `VMInstance` is `@MainActor`-isolated. Services that interact with `VZVirtualMachine` are `@MainActor` (`VirtualizationService`, `MacOSInstallService`); others are `Sendable` structs with no mutable state (`VMStorageService`, `DiskImageService`, `IPSWService`). Some `VZVirtualMachine` callback APIs use `nonisolated(unsafe)` with `MainActor.assumeIsolated` to bridge delegate callbacks.
 
 ### Tests
 
