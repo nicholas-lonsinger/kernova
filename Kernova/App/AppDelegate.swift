@@ -128,6 +128,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         Task { await viewModel.save(instance) }
     }
 
+    @objc func renameVM(_ sender: Any?) {
+        guard let instance = viewModel.selectedInstance else { return }
+        viewModel.renameVM(instance)
+    }
+
     @objc func deleteVM(_ sender: Any?) {
         guard let instance = viewModel.selectedInstance else { return }
         viewModel.confirmDelete(instance)
@@ -226,6 +231,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             return viewModel.selectedInstance?.status.canStop ?? false
         case #selector(saveVM(_:)):
             return viewModel.selectedInstance?.status.canSave ?? false
+        case #selector(renameVM(_:)):
+            return viewModel.selectedInstance?.status.canEditSettings ?? false
         case #selector(deleteVM(_:)):
             return viewModel.selectedInstance?.status.canEditSettings ?? false
         case #selector(showSerialConsole(_:)):
@@ -313,6 +320,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         )
         fullscreenItem.keyEquivalentModifierMask = [.command, .shift]
         vmMenu.addItem(.separator())
+        vmMenu.addItem(withTitle: "Rename...", action: #selector(renameVM(_:)), keyEquivalent: "")
         let deleteItem = vmMenu.addItem(withTitle: "Move to Trash", action: #selector(deleteVM(_:)), keyEquivalent: "\u{08}")
         deleteItem.keyEquivalentModifierMask = [.command]
         vmMenuItem.submenu = vmMenu
