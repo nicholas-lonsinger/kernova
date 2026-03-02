@@ -141,7 +141,7 @@ Services are split by concurrency requirements:
   - `DiskImageService` — creates ASIF disk images by shelling out to `hdiutil`
   - `IPSWService` — fetches available macOS restore images from Apple's catalog and downloads IPSW files
 
-- **`ConfigurationBuilder`** — pure translation from `VMConfiguration` to `VZVirtualMachineConfiguration`. Handles three boot paths: `VZMacOSBootLoader` (macOS), `VZEFIBootLoader` (EFI/UEFI), and `VZLinuxBootLoader` (direct kernel boot). Configures CPU, memory, storage, network, display, keyboard, trackpad, and audio devices.
+- **`ConfigurationBuilder`** — pure translation from `VMConfiguration` to `VZVirtualMachineConfiguration`. Handles three boot paths: `VZMacOSBootLoader` (macOS), `VZEFIBootLoader` (EFI/UEFI), and `VZLinuxBootLoader` (direct kernel boot). Configures CPU, memory, storage, network, display, keyboard, trackpad, and audio devices. Validates shared directory paths before VM launch (existence, is-directory, readable, writable for read-write shares).
 
 All service implementations conform to protocols defined in `Services/Protocols/`. This enables full dependency injection — tests use mock implementations that track call counts and support error injection.
 

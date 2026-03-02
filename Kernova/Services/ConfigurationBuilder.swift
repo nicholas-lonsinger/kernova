@@ -48,7 +48,7 @@ struct ConfigurationBuilder: Sendable {
         configureNetwork(vzConfig, config: config)
         configureEntropy(vzConfig)
         configureAudio(vzConfig)
-        configureDirectorySharing(vzConfig, config: config)
+        try configureDirectorySharing(vzConfig, config: config)
 
         // Serial port
         let (inputPipe, outputPipe) = configureSerialPort(vzConfig)
@@ -285,14 +285,37 @@ struct ConfigurationBuilder: Sendable {
 
     // MARK: - Directory Sharing
 
-    private func configureDirectorySharing(_ vzConfig: VZVirtualMachineConfiguration, config: VMConfiguration) {
+    private func configureDirectorySharing(_ vzConfig: VZVirtualMachineConfiguration, config: VMConfiguration) throws {
         guard let directories = config.sharedDirectories, !directories.isEmpty else { return }
+
+        try validateSharedDirectories(directories)
 
         switch config.guestOS {
         case .macOS:
             configureMacOSDirectorySharing(vzConfig, directories: directories)
         case .linux:
             configureLinuxDirectorySharing(vzConfig, directories: directories)
+        }
+    }
+
+    private func validateSharedDirectories(_ directories: [SharedDirectory]) throws {
+        let fileManager = FileManager.default
+        for directory in directories {
+            var isDirectory: ObjCBool = false
+            guard fileManager.fileExists(atPath: directory.path, isDirectory: &isDirectory) else {
+                throw ConfigurationBuilderError.sharedDirectoryNotFound(directory.path)
+            }
+            guard isDirectory.boolValue else {
+                throw ConfigurationBuilderError.sharedDirectoryNotADirectory(directory.path)
+            }
+            guard fileManager.isReadableFile(atPath: directory.path) else {
+                throw ConfigurationBuilderError.sharedDirectoryNotReadable(directory.path)
+            }
+            if !directory.readOnly {
+                guard fileManager.isWritableFile(atPath: directory.path) else {
+                    throw ConfigurationBuilderError.sharedDirectoryNotWritable(directory.path)
+                }
+            }
         }
     }
 
@@ -345,6 +368,10 @@ enum ConfigurationBuilderError: LocalizedError {
     case invalidMachineIdentifier
     case missingKernelPath
     case diskImageNotFound(URL)
+    case sharedDirectoryNotFound(String)
+    case sharedDirectoryNotADirectory(String)
+    case sharedDirectoryNotReadable(String)
+    case sharedDirectoryNotWritable(String)
 
     var errorDescription: String? {
         switch self {
@@ -358,6 +385,14 @@ enum ConfigurationBuilderError: LocalizedError {
             "A kernel path is required for Linux kernel boot mode."
         case .diskImageNotFound(let url):
             "Disk image not found at \(url.path)."
+        case .sharedDirectoryNotFound(let path):
+            "Shared directory not found at \(path)."
+        case .sharedDirectoryNotADirectory(let path):
+            "Shared path is not a directory: \(path)."
+        case .sharedDirectoryNotReadable(let path):
+            "Shared directory is not readable: \(path)."
+        case .sharedDirectoryNotWritable(let path):
+            "Shared directory is not writable: \(path)."
         }
     }
 }

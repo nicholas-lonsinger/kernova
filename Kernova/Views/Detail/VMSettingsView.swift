@@ -204,6 +204,12 @@ struct VMSettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            if !directories.isEmpty {
+                Text("Note: File sharing uses VirtioFS which has known framework limitations — files may intermittently appear missing, and permission mapping between host and guest can differ.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         } header: {
             Text("Shared Directories")
         }
