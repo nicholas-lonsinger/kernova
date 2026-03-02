@@ -26,10 +26,12 @@ final class VirtualizationService {
             if instance.hasSaveFile {
                 try await restoreOrColdBoot(instance)
             } else {
-                let result = try configBuilder.build(
-                    from: instance.configuration,
-                    bundleURL: instance.bundleURL
-                )
+                let builder = configBuilder
+                let config = instance.configuration
+                let bundleURL = instance.bundleURL
+                let result = try await Task.detached {
+                    try builder.build(from: config, bundleURL: bundleURL)
+                }.value
                 instance.serialInputPipe = result.serialInputPipe
                 instance.serialOutputPipe = result.serialOutputPipe
                 let vm = instance.attachVirtualMachine(from: result.configuration)
@@ -175,10 +177,12 @@ final class VirtualizationService {
     /// Builds a `VZVirtualMachine`, restores from a save file, and resumes.
     /// On restore failure, deletes the stale save file and falls back to a cold boot.
     private func restoreOrColdBoot(_ instance: VMInstance) async throws {
-        let result = try configBuilder.build(
-            from: instance.configuration,
-            bundleURL: instance.bundleURL
-        )
+        let builder = configBuilder
+        let config = instance.configuration
+        let bundleURL = instance.bundleURL
+        let result = try await Task.detached {
+            try builder.build(from: config, bundleURL: bundleURL)
+        }.value
 
         instance.serialInputPipe = result.serialInputPipe
         instance.serialOutputPipe = result.serialOutputPipe
