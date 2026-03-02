@@ -26,12 +26,7 @@ final class VirtualizationService {
             if instance.hasSaveFile {
                 try await restoreOrColdBoot(instance)
             } else {
-                let builder = configBuilder
-                let config = instance.configuration
-                let bundleURL = instance.bundleURL
-                let result = try await Task.detached {
-                    try builder.build(from: config, bundleURL: bundleURL)
-                }.value
+                let result = try await buildConfiguration(for: instance)
                 instance.serialInputPipe = result.serialInputPipe
                 instance.serialOutputPipe = result.serialOutputPipe
                 let vm = instance.attachVirtualMachine(from: result.configuration)
@@ -174,15 +169,20 @@ final class VirtualizationService {
 
     // MARK: - Private Helpers
 
-    /// Builds a `VZVirtualMachine`, restores from a save file, and resumes.
-    /// On restore failure, deletes the stale save file and falls back to a cold boot.
-    private func restoreOrColdBoot(_ instance: VMInstance) async throws {
+    /// Builds a VZ configuration off the main actor to avoid blocking the UI.
+    private func buildConfiguration(for instance: VMInstance) async throws -> ConfigurationBuilder.BuildResult {
         let builder = configBuilder
         let config = instance.configuration
         let bundleURL = instance.bundleURL
-        let result = try await Task.detached {
+        return try await Task.detached {
             try builder.build(from: config, bundleURL: bundleURL)
         }.value
+    }
+
+    /// Builds a `VZVirtualMachine`, restores from a save file, and resumes.
+    /// On restore failure, deletes the stale save file and falls back to a cold boot.
+    private func restoreOrColdBoot(_ instance: VMInstance) async throws {
+        let result = try await buildConfiguration(for: instance)
 
         instance.serialInputPipe = result.serialInputPipe
         instance.serialOutputPipe = result.serialOutputPipe
