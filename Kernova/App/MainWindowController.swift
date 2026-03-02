@@ -9,6 +9,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSGestu
 
     private var viewModel: VMLibraryViewModel!
     private var sidebarHostingController: NSViewController?
+    private var doubleClickGesture: NSClickGestureRecognizer?
 
     // MARK: - Toolbar Item Identifiers
 
@@ -83,7 +84,28 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSGestu
         clickGesture.delegate = self
         sidebarHosting.view.addGestureRecognizer(clickGesture)
 
+        // Double-click sidebar row to start/resume a VM.
+        // Uses a gesture recognizer on the hosting view (not the NSTableView)
+        // to avoid corrupting SwiftUI's internal table view state.
+        let doubleClickGesture = NSClickGestureRecognizer(target: self, action: #selector(sidebarRowDoubleClicked(_:)))
+        doubleClickGesture.numberOfClicksRequired = 2
+        doubleClickGesture.delaysPrimaryMouseButtonEvents = false
+        doubleClickGesture.delegate = self
+        sidebarHosting.view.addGestureRecognizer(doubleClickGesture)
+        self.doubleClickGesture = doubleClickGesture
+
         observeToolbarState()
+    }
+
+    // MARK: - Sidebar Double-Click to Start/Resume
+
+    @objc private func sidebarRowDoubleClicked(_ sender: Any?) {
+        guard let instance = viewModel.selectedInstance else { return }
+        if instance.status.canStart {
+            NSApp.sendAction(#selector(AppDelegate.startVM(_:)), to: nil, from: sender)
+        } else if instance.status.canResume {
+            NSApp.sendAction(#selector(AppDelegate.resumeVM(_:)), to: nil, from: sender)
+        }
     }
 
     // MARK: - Sidebar Empty-Area Click
@@ -94,7 +116,12 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSGestu
             return false
         }
         let point = gestureRecognizer.location(in: tableView)
-        return tableView.row(at: point) == -1
+        let clickedRow = tableView.row(at: point)
+
+        if gestureRecognizer === doubleClickGesture {
+            return clickedRow != -1  // Double-click: only on rows
+        }
+        return clickedRow == -1      // Single-click: only on empty space
     }
 
     @objc private func sidebarEmptyAreaClicked(_ sender: NSClickGestureRecognizer) {
