@@ -29,6 +29,7 @@ Kernova/
 │   ├── DiskImageService.swift          # Creates ASIF disk images via hdiutil (Sendable struct)
 │   ├── MacOSInstallService.swift       # Drives macOS guest install via VZMacOSInstaller (@MainActor)
 │   ├── IPSWService.swift               # Fetches/downloads macOS restore images (Sendable struct)
+│   ├── SystemSleepWatcher.swift        # Observes system sleep/wake, triggers VM pause/resume
 │   └── Protocols/                      # Service protocol abstractions for DI and testing
 │       ├── VirtualizationProviding.swift
 │       ├── VMStorageProviding.swift
@@ -95,7 +96,7 @@ KernovaTests/
 └── DataFormattersTests.swift           # Formatting utility tests
 ```
 
-**Total: 48 source files, 20 test files (15 suites + 5 mocks).**
+**Total: 49 source files, 20 test files (15 suites + 5 mocks).**
 
 ## Component Map
 
@@ -141,6 +142,8 @@ Services are split by concurrency requirements:
   - `DiskImageService` — creates ASIF disk images by shelling out to `hdiutil`
   - `IPSWService` — fetches available macOS restore images from Apple's catalog and downloads IPSW files
 
+- **`SystemSleepWatcher`** — `@MainActor` observer class that monitors `NSWorkspace.willSleepNotification` and `NSWorkspace.didWakeNotification`. Follows the same pattern as `VMDirectoryWatcher`: callback-driven, `nonisolated(unsafe)` for observer tokens, `start()`/`deinit` lifecycle. Owned by `VMLibraryViewModel`, which uses it to auto-pause running VMs before sleep and resume them on wake.
+
 - **`ConfigurationBuilder`** — pure translation from `VMConfiguration` to `VZVirtualMachineConfiguration`. Handles three boot paths: `VZMacOSBootLoader` (macOS), `VZEFIBootLoader` (EFI/UEFI), and `VZLinuxBootLoader` (direct kernel boot). Configures CPU, memory, storage, network, display, keyboard, trackpad, and audio devices. Validates shared directory paths before VM launch (existence, is-directory, readable, writable for read-write shares).
 
 All service implementations conform to protocols defined in `Services/Protocols/`. This enables full dependency injection — tests use mock implementations that track call counts and support error injection.
@@ -158,6 +161,8 @@ All service implementations conform to protocols defined in `Services/Protocols/
 - **`IPSWDownloadViewModel`** manages IPSW download state (progress, cancellation) during macOS VM creation.
 
 - **`VMDirectoryWatcher`** uses `DispatchSource.makeFileSystemObjectSource` to monitor the VMs directory for external changes (e.g., a user restoring a VM from Trash via Finder). When changes are detected, it triggers reconciliation in `VMLibraryViewModel` to sync the in-memory list with disk.
+
+- **`SystemSleepWatcher`** (see Services section) is also owned by `VMLibraryViewModel`, triggering `pauseAllForSleep()` and `resumeAllAfterWake()` on system sleep/wake events. Auto-paused VMs are tracked in `sleepPausedInstanceIDs` so user-paused VMs are not accidentally resumed.
 
 ### Views
 
@@ -204,6 +209,8 @@ AppDelegate
 
 SwiftUI views ──observe──→ VMLibraryViewModel ──delegates──→ VMLifecycleCoordinator ──calls──→ Services
                            VMInstance (per VM)
+
+SystemSleepWatcher ──sleep/wake──→ VMLibraryViewModel ──pause/resume──→ VMLifecycleCoordinator
 ```
 
 ### Utilities
@@ -294,7 +301,7 @@ No external package dependencies. No Swift Package Manager, CocoaPods, or Cartha
 | Component | Tests | Notes |
 |-----------|-------|-------|
 | `VMConfiguration` | 43 tests + clone suite | Encoding/decoding, defaults, validation, all fields |
-| `VMLibraryViewModel` | 39 tests | Add/remove/rename VMs, selection, delegation to coordinator |
+| `VMLibraryViewModel` | 47 tests | Add/remove/rename VMs, selection, delegation to coordinator, sleep/wake |
 | `VMCreationViewModel` | 44 tests | All wizard steps, validation, OS-specific paths |
 | `VMLifecycleCoordinator` | Yes | Multi-step orchestration, error handling, service delegation |
 | `VMInstance` | Yes | Status transitions, configuration updates, bundle layout |
@@ -319,6 +326,7 @@ These services interact with system processes, the network, or VZ installer inte
 ### Not Tested
 
 - `VMDirectoryWatcher` — relies on `DispatchSource` file system monitoring
+- `SystemSleepWatcher` — relies on `NSWorkspace` sleep/wake notifications (sleep/wake logic tested via `VMLibraryViewModel`)
 - `IPSWDownloadViewModel` — wraps async download state
 - `KernovaUTType` — static UTType declaration
 - `FileManagerExtensions` — FileManager convenience methods

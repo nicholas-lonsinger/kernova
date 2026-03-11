@@ -31,6 +31,11 @@ final class VMLibraryViewModel {
 
     private var directoryWatcher: VMDirectoryWatcher?
 
+    // MARK: - Sleep/Wake
+
+    private var sleepWatcher: SystemSleepWatcher?
+    var sleepPausedInstanceIDs: Set<UUID> = []
+
     var selectedInstance: VMInstance? {
         instances.first { $0.id == selectedID }
     }
@@ -54,6 +59,7 @@ final class VMLibraryViewModel {
 
         loadVMs()
         startDirectoryWatcher()
+        startSleepWatcher()
     }
 
     // MARK: - Load
@@ -400,6 +406,59 @@ final class VMLibraryViewModel {
         } catch {
             presentError(error)
         }
+    }
+
+    // MARK: - Sleep/Wake
+
+    /// Pauses all running VMs before system sleep. Tracks which VMs were auto-paused
+    /// so only those are resumed on wake (preserving user-paused VMs).
+    func pauseAllForSleep() async {
+        let runningInstances = instances.filter { $0.status == .running }
+        guard !runningInstances.isEmpty else { return }
+
+        Self.logger.info("System going to sleep — pausing \(runningInstances.count) running VM(s)")
+
+        for instance in runningInstances {
+            do {
+                try await lifecycle.pause(instance)
+                sleepPausedInstanceIDs.insert(instance.id)
+            } catch {
+                Self.logger.error("Failed to pause '\(instance.name)' for sleep: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// Resumes only VMs that were auto-paused by `pauseAllForSleep()`.
+    func resumeAllAfterWake() async {
+        let idsToResume = sleepPausedInstanceIDs
+        sleepPausedInstanceIDs.removeAll()
+        guard !idsToResume.isEmpty else { return }
+
+        let instancesToResume = instances.filter { idsToResume.contains($0.id) && $0.status == .paused }
+        guard !instancesToResume.isEmpty else { return }
+
+        Self.logger.info("System woke up — resuming \(instancesToResume.count) sleep-paused VM(s)")
+
+        for instance in instancesToResume {
+            do {
+                try await lifecycle.resume(instance)
+            } catch {
+                Self.logger.error("Failed to resume '\(instance.name)' after wake: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func startSleepWatcher() {
+        let watcher = SystemSleepWatcher(
+            onSleep: { [weak self] in
+                await self?.pauseAllForSleep()
+            },
+            onWake: { [weak self] in
+                await self?.resumeAllAfterWake()
+            }
+        )
+        watcher.start()
+        sleepWatcher = watcher
     }
 
     // MARK: - Directory Watcher
