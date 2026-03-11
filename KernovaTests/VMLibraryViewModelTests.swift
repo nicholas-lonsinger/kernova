@@ -567,6 +567,139 @@ struct VMLibraryViewModelTests {
         #expect(storage.saveConfigurationCallCount == 0)
     }
 
+    // MARK: - Sleep/Wake
+
+    @Test("pauseAllForSleep pauses only running VMs")
+    func pauseAllForSleepPausesRunning() async {
+        let (viewModel, _, _, virtService) = makeViewModel()
+        let running1 = makeInstance(name: "Running 1")
+        running1.status = .running
+        let running2 = makeInstance(name: "Running 2")
+        running2.status = .running
+        let stopped = makeInstance(name: "Stopped")
+        stopped.status = .stopped
+        let paused = makeInstance(name: "User Paused")
+        paused.status = .paused
+        viewModel.instances = [running1, running2, stopped, paused]
+
+        await viewModel.pauseAllForSleep()
+
+        #expect(virtService.pauseCallCount == 2)
+        #expect(viewModel.sleepPausedInstanceIDs == Set([running1.id, running2.id]))
+        #expect(running1.status == .paused)
+        #expect(running2.status == .paused)
+        #expect(stopped.status == .stopped)
+        #expect(paused.status == .paused)
+    }
+
+    @Test("resumeAllAfterWake resumes only sleep-paused VMs")
+    func resumeAllAfterWakeResumesOnlySleepPaused() async {
+        let (viewModel, _, _, virtService) = makeViewModel()
+        let sleepPaused = makeInstance(name: "Sleep Paused")
+        sleepPaused.status = .paused
+        let userPaused = makeInstance(name: "User Paused")
+        userPaused.status = .paused
+        viewModel.instances = [sleepPaused, userPaused]
+        viewModel.sleepPausedInstanceIDs = Set([sleepPaused.id])
+
+        await viewModel.resumeAllAfterWake()
+
+        #expect(virtService.resumeCallCount == 1)
+        #expect(sleepPaused.status == .running)
+        #expect(userPaused.status == .paused)
+        #expect(viewModel.sleepPausedInstanceIDs.isEmpty)
+    }
+
+    @Test("pauseAllForSleep handles pause failure gracefully")
+    func pauseAllForSleepHandlesError() async {
+        let virtService = MockVirtualizationService()
+        virtService.pauseError = VirtualizationError.noVirtualMachine
+        let (viewModel, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let running = makeInstance(name: "Running")
+        running.status = .running
+        viewModel.instances = [running]
+
+        await viewModel.pauseAllForSleep()
+
+        // Error is logged, not presented to user
+        #expect(viewModel.showError == false)
+        // Failed pause should not track the instance
+        #expect(viewModel.sleepPausedInstanceIDs.isEmpty)
+    }
+
+    @Test("resumeAllAfterWake clears tracking set even on failure")
+    func resumeAllAfterWakeClearsOnError() async {
+        let virtService = MockVirtualizationService()
+        virtService.resumeError = VirtualizationError.noVirtualMachine
+        let (viewModel, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let instance = makeInstance(name: "Sleep Paused")
+        instance.status = .paused
+        viewModel.instances = [instance]
+        viewModel.sleepPausedInstanceIDs = Set([instance.id])
+
+        await viewModel.resumeAllAfterWake()
+
+        #expect(viewModel.sleepPausedInstanceIDs.isEmpty)
+        #expect(viewModel.showError == false)
+    }
+
+    @Test("pauseAllForSleep is no-op when no running VMs")
+    func pauseAllForSleepNoOp() async {
+        let (viewModel, _, _, virtService) = makeViewModel()
+        let stopped = makeInstance(name: "Stopped")
+        stopped.status = .stopped
+        viewModel.instances = [stopped]
+
+        await viewModel.pauseAllForSleep()
+
+        #expect(virtService.pauseCallCount == 0)
+        #expect(viewModel.sleepPausedInstanceIDs.isEmpty)
+    }
+
+    @Test("resumeAllAfterWake is no-op when no sleep-paused VMs")
+    func resumeAllAfterWakeNoOp() async {
+        let (viewModel, _, _, virtService) = makeViewModel()
+        let paused = makeInstance(name: "User Paused")
+        paused.status = .paused
+        viewModel.instances = [paused]
+        // sleepPausedInstanceIDs is empty
+
+        await viewModel.resumeAllAfterWake()
+
+        #expect(virtService.resumeCallCount == 0)
+    }
+
+    @Test("pauseAllForSleep skips non-running states")
+    func pauseAllForSleepSkipsNonRunning() async {
+        let (viewModel, _, _, virtService) = makeViewModel()
+        let starting = makeInstance(name: "Starting")
+        starting.status = .starting
+        let saving = makeInstance(name: "Saving")
+        saving.status = .saving
+        let error = makeInstance(name: "Error")
+        error.status = .error
+        viewModel.instances = [starting, saving, error]
+
+        await viewModel.pauseAllForSleep()
+
+        #expect(virtService.pauseCallCount == 0)
+        #expect(viewModel.sleepPausedInstanceIDs.isEmpty)
+    }
+
+    @Test("resumeAllAfterWake skips VMs no longer paused")
+    func resumeAllAfterWakeSkipsNonPaused() async {
+        let (viewModel, _, _, virtService) = makeViewModel()
+        let instance = makeInstance(name: "Was Paused")
+        instance.status = .stopped  // Status changed between sleep and wake
+        viewModel.instances = [instance]
+        viewModel.sleepPausedInstanceIDs = Set([instance.id])
+
+        await viewModel.resumeAllAfterWake()
+
+        #expect(virtService.resumeCallCount == 0)
+        #expect(viewModel.sleepPausedInstanceIDs.isEmpty)
+    }
+
     // MARK: - Clone
 
     @Test("cloneVM creates a new instance with different ID and Copy name")
