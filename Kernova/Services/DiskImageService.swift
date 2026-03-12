@@ -41,7 +41,7 @@ struct DiskImageService: Sendable {
             throw DiskImageError.creationFailed(output)
         }
 
-        Self.logger.info("Successfully created ASIF disk image at \(url.lastPathComponent)")
+        Self.logger.notice("Successfully created ASIF disk image at \(url.lastPathComponent)")
     }
 
     /// Returns the physical (actual) size of a disk image on disk.

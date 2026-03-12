@@ -53,6 +53,7 @@ final class VMDirectoryWatcher {
 
     /// Debounces rapid FS events into a single reconciliation pass after 0.5 seconds of quiet.
     private func scheduleReconciliation() {
+        Self.logger.debug("Directory change detected, scheduling reconciliation")
         debounceTask?.cancel()
         debounceTask = Task {
             try? await Task.sleep(for: .milliseconds(500))

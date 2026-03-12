@@ -87,7 +87,7 @@ final class VMLibraryViewModel {
             }
             .sorted { $0.configuration.createdAt < $1.configuration.createdAt }
 
-            Self.logger.info("Loaded \(self.instances.count) VMs")
+            Self.logger.notice("Loaded \(self.instances.count) VMs")
         } catch {
             presentError(error)
         }
@@ -148,7 +148,7 @@ final class VMLibraryViewModel {
             }
             #endif
 
-            Self.logger.info("Created VM '\(config.name)'")
+            Self.logger.notice("Created VM '\(config.name)'")
         } catch {
             presentError(error)
         }
@@ -182,7 +182,7 @@ final class VMLibraryViewModel {
             selectedID = instances.first?.id
         }
 
-        Self.logger.info("Installation cancelled and VM '\(instance.name)' moved to Trash")
+        Self.logger.notice("Installation cancelled and VM '\(instance.name)' moved to Trash")
     }
     #endif
 
@@ -260,7 +260,7 @@ final class VMLibraryViewModel {
             if selectedID == instance.id {
                 selectedID = instances.first?.id
             }
-            Self.logger.info("Moved VM '\(instance.name)' to Trash")
+            Self.logger.notice("Moved VM '\(instance.name)' to Trash")
         } catch {
             presentError(error)
         }
@@ -308,7 +308,7 @@ final class VMLibraryViewModel {
             instances.append(instance)
             instances.sort { $0.configuration.createdAt < $1.configuration.createdAt }
             selectedID = instance.id
-            Self.logger.info("Imported VM '\(config.name)' from \(sourceURL.lastPathComponent)")
+            Self.logger.notice("Imported VM '\(config.name)' from \(sourceURL.lastPathComponent)")
         } catch {
             presentError(error)
         }
@@ -402,7 +402,7 @@ final class VMLibraryViewModel {
             instances.sort { $0.configuration.createdAt < $1.configuration.createdAt }
             selectedID = clonedInstance.id
 
-            Self.logger.info("Cloned VM '\(instance.name)' as '\(clonedConfig.name)'")
+            Self.logger.notice("Cloned VM '\(instance.name)' as '\(clonedConfig.name)'")
         } catch {
             presentError(error)
         }
@@ -414,14 +414,18 @@ final class VMLibraryViewModel {
     /// so only those are resumed on wake (preserving user-paused VMs).
     func pauseAllForSleep() async {
         let runningInstances = instances.filter { $0.status == .running }
-        guard !runningInstances.isEmpty else { return }
+        guard !runningInstances.isEmpty else {
+            Self.logger.debug("pauseAllForSleep: no running VMs, nothing to pause")
+            return
+        }
 
-        Self.logger.info("System going to sleep — pausing \(runningInstances.count) running VM(s)")
+        Self.logger.notice("System going to sleep — pausing \(runningInstances.count) running VM(s)")
 
         for instance in runningInstances {
             do {
                 try await lifecycle.pause(instance)
                 sleepPausedInstanceIDs.insert(instance.id)
+                Self.logger.debug("Paused '\(instance.name)' for sleep (status: \(instance.status.displayName))")
             } catch {
                 Self.logger.error("Failed to pause '\(instance.name)' for sleep: \(error.localizedDescription)")
             }
@@ -432,16 +436,20 @@ final class VMLibraryViewModel {
     func resumeAllAfterWake() async {
         let idsToResume = sleepPausedInstanceIDs
         sleepPausedInstanceIDs.removeAll()
-        guard !idsToResume.isEmpty else { return }
+        guard !idsToResume.isEmpty else {
+            Self.logger.debug("resumeAllAfterWake: no sleep-paused VMs to resume")
+            return
+        }
 
         let instancesToResume = instances.filter { idsToResume.contains($0.id) && $0.status == .paused }
         guard !instancesToResume.isEmpty else { return }
 
-        Self.logger.info("System woke up — resuming \(instancesToResume.count) sleep-paused VM(s)")
+        Self.logger.notice("System woke up — resuming \(instancesToResume.count) sleep-paused VM(s)")
 
         for instance in instancesToResume {
             do {
                 try await lifecycle.resume(instance)
+                Self.logger.debug("Resumed '\(instance.name)' after wake (status: \(instance.status.displayName))")
             } catch {
                 Self.logger.error("Failed to resume '\(instance.name)' after wake: \(error.localizedDescription)")
             }
@@ -479,6 +487,7 @@ final class VMLibraryViewModel {
     /// Diffs on-disk VM bundles against in-memory instances and adds/removes as needed.
     func reconcileWithDisk() {
         guard !isCloning else { return }
+        Self.logger.debug("reconcileWithDisk: starting")
         do {
             let diskBundles = try storageService.listVMBundles()
 
@@ -528,6 +537,7 @@ final class VMLibraryViewModel {
             if didChange {
                 instances.sort { $0.configuration.createdAt < $1.configuration.createdAt }
             }
+            Self.logger.debug("reconcileWithDisk: complete — \(self.instances.count) VM(s) in library")
         } catch {
             Self.logger.error("Directory reconciliation failed: \(error.localizedDescription)")
         }
