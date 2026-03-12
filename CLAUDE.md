@@ -44,6 +44,24 @@ When adding new functionality or modifying existing behavior, include unit tests
 - Reuse shared test helpers and factories (e.g., `makeInstance()`) rather than duplicating setup logic across test files
 - Run the full test suite before committing to ensure nothing is broken
 
+### Logging
+
+The app uses Apple's `os.Logger` (subsystem `com.kernova.app`) with per-component categories. Each service, view model, or model that logs declares a `private static let logger`. When adding or modifying functionality, include log calls at appropriate levels:
+
+| Level | When to use | Persistence |
+|-------|-------------|-------------|
+| `.debug` | Method entry with parameter snapshots, intermediate states, per-item iteration results. Diagnostic detail only useful when actively investigating. | Discarded unless streaming via Console.app or `log stream` |
+| `.info` | General operational context: routine progress, non-critical outcomes, sub-step completion. | In-memory only; evicted under pressure |
+| `.notice` | Definitive lifecycle events: VM started/stopped/paused/resumed/saved, bundle created/deleted, app launch. Events you need for post-mortem analysis. | Persisted to disk |
+| `.warning` | Unexpected but recoverable situations: missing files, fallback paths taken, degraded operation. | Persisted to disk |
+| `.error` | Failures: operations that did not complete, exceptions caught, error states entered. | Persisted to disk |
+
+**Guidelines:**
+- Every new service or view model should declare its own `private static let logger = Logger(subsystem: "com.kernova.app", category: "ComponentName")`
+- State transitions and irreversible actions (creating/deleting bundles, starting/stopping VMs) should be `.notice`
+- Method entry points in complex flows should have `.debug` logs with relevant parameter values
+- Do not use `print()`, `NSLog()`, or file-based logging
+
 ## Commit Messages
 
 Use the following format for all commits:

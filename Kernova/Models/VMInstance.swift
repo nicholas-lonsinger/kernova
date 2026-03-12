@@ -201,6 +201,7 @@ private final class VMDelegateAdapter: NSObject, VZVirtualMachineDelegate {
                 return
             }
             instance.resetToStopped()
+            Self.logger.notice("Guest stopped for VM '\(instance.name)'")
         }
     }
 
@@ -213,6 +214,7 @@ private final class VMDelegateAdapter: NSObject, VZVirtualMachineDelegate {
             instance.status = .error
             instance.errorMessage = error.localizedDescription
             instance.virtualMachine = nil
+            Self.logger.error("VM '\(instance.name)' stopped with error: \(error.localizedDescription)")
         }
     }
 }

@@ -16,6 +16,7 @@ final class VirtualizationService {
 
     /// Starts a virtual machine, optionally restoring from a saved state.
     func start(_ instance: VMInstance) async throws {
+        Self.logger.debug("start: status=\(instance.status.displayName), hasSaveFile=\(instance.hasSaveFile)")
         guard instance.status.canStart else {
             throw VirtualizationError.invalidStateTransition(from: instance.status, action: "start")
         }
@@ -35,7 +36,7 @@ final class VirtualizationService {
             }
 
             instance.status = .running
-            Self.logger.info("Started VM '\(instance.name)'")
+            Self.logger.notice("Started VM '\(instance.name)'")
         } catch {
             instance.status = .error
             instance.errorMessage = error.localizedDescription
@@ -47,11 +48,12 @@ final class VirtualizationService {
 
     /// Requests a graceful ACPI shutdown of the virtual machine.
     func stop(_ instance: VMInstance) throws {
+        Self.logger.debug("stop: status=\(instance.status.displayName), isColdPaused=\(instance.isColdPaused)")
         // Cold-paused: no live VM, just discard the save file
         if instance.isColdPaused {
             instance.removeSaveFile()
             instance.status = .stopped
-            Self.logger.info("Discarded saved state for VM '\(instance.name)'")
+            Self.logger.notice("Discarded saved state for VM '\(instance.name)'")
             return
         }
 
@@ -60,16 +62,17 @@ final class VirtualizationService {
         }
 
         try vm.requestStop()
-        Self.logger.info("Requested stop for VM '\(instance.name)'")
+        Self.logger.notice("Requested stop for VM '\(instance.name)'")
     }
 
     /// Immediately terminates the virtual machine.
     func forceStop(_ instance: VMInstance) async throws {
+        Self.logger.debug("forceStop: status=\(instance.status.displayName), isColdPaused=\(instance.isColdPaused)")
         // Cold-paused: no live VM, just discard the save file
         if instance.isColdPaused {
             instance.removeSaveFile()
             instance.status = .stopped
-            Self.logger.info("Discarded saved state for VM '\(instance.name)'")
+            Self.logger.notice("Discarded saved state for VM '\(instance.name)'")
             return
         }
 
@@ -79,20 +82,21 @@ final class VirtualizationService {
 
         try await vm.stop()
         instance.resetToStopped()
-        Self.logger.info("Force-stopped VM '\(instance.name)'")
+        Self.logger.notice("Force-stopped VM '\(instance.name)'")
     }
 
     // MARK: - Pause / Resume
 
     /// Pauses the virtual machine.
     func pause(_ instance: VMInstance) async throws {
+        Self.logger.debug("pause: status=\(instance.status.displayName)")
         guard instance.status.canPause, let vm = instance.virtualMachine else {
             throw VirtualizationError.invalidStateTransition(from: instance.status, action: "pause")
         }
 
         try await vm.pause()
         instance.status = .paused
-        Self.logger.info("Paused VM '\(instance.name)'")
+        Self.logger.notice("Paused VM '\(instance.name)'")
     }
 
     /// Resumes a paused virtual machine.
@@ -101,6 +105,7 @@ final class VirtualizationService {
     /// - **Hot resume**: VM is in memory — calls `vm.resume()` directly.
     /// - **Cold resume**: VM state is on disk only — rebuilds the VM and restores from save file.
     func resume(_ instance: VMInstance) async throws {
+        Self.logger.debug("resume: status=\(instance.status.displayName), hasVM=\(instance.virtualMachine != nil), hasSaveFile=\(instance.hasSaveFile)")
         guard instance.status.canResume else {
             throw VirtualizationError.invalidStateTransition(from: instance.status, action: "resume")
         }
@@ -119,7 +124,7 @@ final class VirtualizationService {
                 throw VirtualizationError.noSaveFile
             }
 
-            Self.logger.info("Resumed VM '\(instance.name)'")
+            Self.logger.notice("Resumed VM '\(instance.name)'")
         } catch {
             instance.status = .error
             instance.errorMessage = error.localizedDescription
@@ -131,6 +136,7 @@ final class VirtualizationService {
 
     /// Saves the current VM state to disk (pause + snapshot).
     func save(_ instance: VMInstance) async throws {
+        Self.logger.debug("save: status=\(instance.status.displayName)")
         guard instance.status.canSave, let vm = instance.virtualMachine else {
             throw VirtualizationError.invalidStateTransition(from: instance.status, action: "save")
         }
@@ -144,7 +150,7 @@ final class VirtualizationService {
 
         try await saveMachineState(vm, to: instance.saveFileURL)
         instance.status = .paused
-        Self.logger.info("Saved state for VM '\(instance.name)'")
+        Self.logger.notice("Saved state for VM '\(instance.name)'")
     }
 
     /// Restores a VM from a saved state file.
@@ -164,7 +170,7 @@ final class VirtualizationService {
 
         // Remove save file after successful restore
         instance.removeSaveFile()
-        Self.logger.info("Restored state for VM '\(instance.name)'")
+        Self.logger.notice("Restored state for VM '\(instance.name)'")
     }
 
     // MARK: - Private Helpers
@@ -189,6 +195,7 @@ final class VirtualizationService {
         let vm = instance.attachVirtualMachine(from: result.configuration)
         instance.startSerialReading()
 
+        Self.logger.debug("restoreOrColdBoot: attempting restore from save file")
         do {
             instance.status = .restoring
             try await restoreMachineState(vm, from: instance.saveFileURL)
@@ -201,6 +208,7 @@ final class VirtualizationService {
             instance.removeSaveFile()
 
             // Create a fresh VZVirtualMachine since the previous one may be in a bad state
+            Self.logger.debug("restoreOrColdBoot: falling back to cold boot with fresh VM")
             let freshVM = instance.attachVirtualMachine(from: result.configuration)
             instance.status = .starting
             try await freshVM.start()
