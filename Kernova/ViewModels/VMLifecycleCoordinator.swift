@@ -59,6 +59,7 @@ final class VMLifecycleCoordinator {
         wizard: VMCreationViewModel,
         storageService: any VMStorageProviding
     ) async throws {
+        Self.logger.debug("installMacOS: entering for '\(instance.name)', source=\(String(describing: wizard.ipswSource))")
         do {
             let ipswURL: URL
 

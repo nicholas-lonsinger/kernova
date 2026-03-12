@@ -23,6 +23,8 @@ struct ConfigurationBuilder: Sendable {
     func build(from config: VMConfiguration, bundleURL: URL) throws -> BuildResult {
         let vzConfig = VZVirtualMachineConfiguration()
 
+        Self.logger.debug("Building config: cpuCount=\(config.cpuCount), memoryMB=\(config.memorySizeInBytes / (1024 * 1024)), bootMode=\(config.bootMode.displayName)")
+
         // Resources
         vzConfig.cpuCount = config.cpuCount
         vzConfig.memorySize = config.memorySizeInBytes

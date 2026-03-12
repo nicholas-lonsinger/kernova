@@ -65,7 +65,6 @@ Kernova/
 │       ├── ResourceConfigStep.swift    # Step 3: CPU, memory, disk size
 │       └── ReviewStep.swift            # Step 4: Review and create
 ├── Utilities/
-│   ├── Logger.swift                    # Unified logging wrapper (os.Logger)
 │   ├── DataFormatters.swift            # Human-readable formatting for bytes, CPU counts, etc.
 │   └── FileManagerExtensions.swift     # FileManager convenience methods
 └── Resources/
@@ -215,9 +214,8 @@ SystemSleepWatcher ──sleep/wake──→ VMLibraryViewModel ──pause/resu
 
 ### Utilities
 
-**Files:** `Logger.swift`, `DataFormatters.swift`, `FileManagerExtensions.swift`
+**Files:** `DataFormatters.swift`, `FileManagerExtensions.swift`
 
-- `Logger` — thin wrapper around `os.Logger` with subsystem/category configuration
 - `DataFormatters` — human-readable formatting for bytes (e.g., "107.4 GB"), CPU counts, etc.
 - `FileManagerExtensions` — convenience methods on `FileManager`
 

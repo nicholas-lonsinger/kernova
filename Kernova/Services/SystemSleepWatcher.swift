@@ -47,6 +47,7 @@ final class SystemSleepWatcher {
         ) { [weak self] _ in
             guard let self else { return }
             MainActor.assumeIsolated {
+                Self.logger.notice("System will sleep — invoking sleep handler")
                 let onSleep = self.onSleep
                 Task { @MainActor in
                     await onSleep()
@@ -61,6 +62,7 @@ final class SystemSleepWatcher {
         ) { [weak self] _ in
             guard let self else { return }
             MainActor.assumeIsolated {
+                Self.logger.notice("System did wake — invoking wake handler")
                 let onWake = self.onWake
                 Task { @MainActor in
                     await onWake()

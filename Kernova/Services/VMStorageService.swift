@@ -91,7 +91,7 @@ struct VMStorageService: Sendable {
         try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
         try saveConfiguration(configuration, to: bundle)
 
-        Self.logger.info("Created VM bundle for '\(configuration.name)' at \(bundle.lastPathComponent)")
+        Self.logger.notice("Created VM bundle for '\(configuration.name)' at \(bundle.lastPathComponent)")
         return bundle
     }
 
@@ -116,7 +116,7 @@ struct VMStorageService: Sendable {
 
         try saveConfiguration(newConfiguration, to: destinationBundle)
 
-        Self.logger.info("Cloned VM bundle from '\(sourceBundleURL.lastPathComponent)' to '\(destinationBundle.lastPathComponent)'")
+        Self.logger.notice("Cloned VM bundle from '\(sourceBundleURL.lastPathComponent)' to '\(destinationBundle.lastPathComponent)'")
         return destinationBundle
     }
 
@@ -126,7 +126,7 @@ struct VMStorageService: Sendable {
             throw VMStorageError.bundleNotFound(bundleURL)
         }
         try FileManager.default.trashItem(at: bundleURL, resultingItemURL: nil)
-        Self.logger.info("Moved VM bundle to Trash: \(bundleURL.lastPathComponent)")
+        Self.logger.notice("Moved VM bundle to Trash: \(bundleURL.lastPathComponent)")
     }
 
     /// Migrates a legacy bare-UUID bundle directory to the `.kernova` package format.
@@ -155,7 +155,7 @@ struct VMStorageService: Sendable {
 
         if legacyExists {
             try fm.moveItem(at: bundleURL, to: migratedURL)
-            Self.logger.info("Migrated VM bundle: \(bundleURL.lastPathComponent) → \(migratedURL.lastPathComponent)")
+            Self.logger.notice("Migrated VM bundle: \(bundleURL.lastPathComponent) → \(migratedURL.lastPathComponent)")
         }
 
         return migratedURL
