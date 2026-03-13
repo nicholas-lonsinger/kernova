@@ -12,7 +12,7 @@ struct VMRowView: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: iconName)
+            Image(systemName: instance.configuration.guestOS.iconName)
                 .foregroundStyle(.secondary)
                 .frame(width: 20)
 
@@ -56,13 +56,6 @@ struct VMRowView: View {
             if !focused && isRenaming {
                 onCommitRename(editingName)
             }
-        }
-    }
-
-    private var iconName: String {
-        switch instance.configuration.guestOS {
-        case .macOS: "macwindow"
-        case .linux: "terminal"
         }
     }
 }

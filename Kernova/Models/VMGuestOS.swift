@@ -12,6 +12,13 @@ enum VMGuestOS: String, Codable, CaseIterable, Sendable {
         }
     }
 
+    var iconName: String {
+        switch self {
+        case .macOS: "apple.logo"
+        case .linux: "terminal.fill"
+        }
+    }
+
     var defaultCPUCount: Int {
         switch self {
         case .macOS: 4
