@@ -16,19 +16,19 @@ struct OSSelectionStep: View {
                 .multilineTextAlignment(.center)
 
             HStack(spacing: 20) {
-                osCard(for: .macOS, icon: "macwindow", description: "Run macOS in a virtual machine on Apple Silicon.")
-                osCard(for: .linux, icon: "terminal", description: "Run Linux distributions using EFI or direct kernel boot.")
+                osCard(for: .macOS, description: "Run macOS in a virtual machine on Apple Silicon.")
+                osCard(for: .linux, description: "Run Linux distributions using EFI or direct kernel boot.")
             }
             .padding(.top, 8)
         }
     }
 
-    private func osCard(for os: VMGuestOS, icon: String, description: String) -> some View {
+    private func osCard(for os: VMGuestOS, description: String) -> some View {
         Button {
             creationVM.selectedOS = os
         } label: {
             VStack(spacing: 12) {
-                Image(systemName: icon)
+                Image(systemName: os.iconName)
                     .font(.system(size: 36))
                     .foregroundStyle(creationVM.selectedOS == os ? Color.accentColor : .secondary)
 
