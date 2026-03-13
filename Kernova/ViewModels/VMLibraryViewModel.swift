@@ -256,6 +256,7 @@ final class VMLibraryViewModel {
     func deleteConfirmed(_ instance: VMInstance) {
         do {
             try storageService.deleteVMBundle(at: instance.bundleURL)
+            lifecycle.clearActiveOperation(for: instance.id)
             instances.removeAll { $0.id == instance.id }
             if selectedID == instance.id {
                 selectedID = instances.first?.id

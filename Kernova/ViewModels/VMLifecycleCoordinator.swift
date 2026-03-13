@@ -60,6 +60,12 @@ final class VMLifecycleCoordinator {
         activeOperations[instanceID] != nil
     }
 
+    /// Removes any active-operation tracking for the given VM.
+    /// Call when a VM is deleted to avoid stale entries in the dictionary.
+    func clearActiveOperation(for instanceID: UUID) {
+        activeOperations.removeValue(forKey: instanceID)
+    }
+
     /// Executes `body` only if no other operation is already in flight for this VM.
     ///
     /// Generates a unique token per invocation. The `defer` block only removes the
