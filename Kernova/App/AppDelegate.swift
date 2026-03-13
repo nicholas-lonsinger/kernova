@@ -146,10 +146,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     // MARK: - Serial Console
 
     @objc func showSerialConsole(_ sender: Any?) {
-        guard let instance = viewModel.selectedInstance else { return }
+        guard let instance = viewModel.selectedInstance,
+              instance.canShowSerialConsole else { return }
 
         if let existing = serialConsoleWindows[instance.instanceID] {
-            existing.showWindow(nil)
             existing.window?.makeKeyAndOrderFront(nil)
             return
         }
@@ -244,7 +244,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         case #selector(deleteVM(_:)):
             return viewModel.selectedInstance?.status.canEditSettings ?? false
         case #selector(showSerialConsole(_:)):
-            return viewModel.selectedInstance != nil
+            return viewModel.selectedInstance?.canShowSerialConsole ?? false
         case #selector(toggleFullscreenDisplay(_:)):
             guard let instance = viewModel.selectedInstance else { return false }
             // Only allow fullscreen when the VM has a live VZVirtualMachine
