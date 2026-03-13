@@ -61,8 +61,8 @@ struct VMRowView: View {
 
     private var iconName: String {
         switch instance.configuration.guestOS {
-        case .macOS: "macwindow"
-        case .linux: "terminal"
+        case .macOS: "apple.logo"
+        case .linux: "terminal.fill"
         }
     }
 }

@@ -16,8 +16,8 @@ struct OSSelectionStep: View {
                 .multilineTextAlignment(.center)
 
             HStack(spacing: 20) {
-                osCard(for: .macOS, icon: "macwindow", description: "Run macOS in a virtual machine on Apple Silicon.")
-                osCard(for: .linux, icon: "terminal", description: "Run Linux distributions using EFI or direct kernel boot.")
+                osCard(for: .macOS, icon: "apple.logo", description: "Run macOS in a virtual machine on Apple Silicon.")
+                osCard(for: .linux, icon: "terminal.fill", description: "Run Linux distributions using EFI or direct kernel boot.")
             }
             .padding(.top, 8)
         }
