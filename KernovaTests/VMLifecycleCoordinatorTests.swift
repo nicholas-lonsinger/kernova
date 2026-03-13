@@ -23,6 +23,19 @@ struct VMLifecycleCoordinatorTests {
         return (coordinator, virtService, installService, ipswService)
     }
 
+    private func makeSuspendingCoordinator() -> (
+        VMLifecycleCoordinator,
+        SuspendingMockVirtualizationService
+    ) {
+        let suspendingService = SuspendingMockVirtualizationService()
+        let coordinator = VMLifecycleCoordinator(
+            virtualizationService: suspendingService,
+            installService: MockMacOSInstallService(),
+            ipswService: MockIPSWService()
+        )
+        return (coordinator, suspendingService)
+    }
+
     private func makeInstance(name: String = "Test VM") -> VMInstance {
         let config = VMConfiguration(
             name: name,
@@ -137,12 +150,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("hasActiveOperation returns true during an in-flight operation")
     func hasActiveOperationTrueDuringOperation() async throws {
-        let suspendingService = SuspendingMockVirtualizationService()
-        let coordinator = VMLifecycleCoordinator(
-            virtualizationService: suspendingService,
-            installService: MockMacOSInstallService(),
-            ipswService: MockIPSWService()
-        )
+        let (coordinator, suspendingService) = makeSuspendingCoordinator()
         let instance = makeInstance()
 
         // Start an operation that will suspend
@@ -162,12 +170,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("concurrent operation on the same VM throws operationInProgress")
     func rejectsConcurrentOperationOnSameVM() async throws {
-        let suspendingService = SuspendingMockVirtualizationService()
-        let coordinator = VMLifecycleCoordinator(
-            virtualizationService: suspendingService,
-            installService: MockMacOSInstallService(),
-            ipswService: MockIPSWService()
-        )
+        let (coordinator, suspendingService) = makeSuspendingCoordinator()
         let instance = makeInstance()
 
         // Start an operation that will suspend
@@ -189,12 +192,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("operations on different VMs are allowed concurrently")
     func allowsConcurrentOperationsOnDifferentVMs() async throws {
-        let suspendingService = SuspendingMockVirtualizationService()
-        let coordinator = VMLifecycleCoordinator(
-            virtualizationService: suspendingService,
-            installService: MockMacOSInstallService(),
-            ipswService: MockIPSWService()
-        )
+        let (coordinator, suspendingService) = makeSuspendingCoordinator()
         let instance1 = makeInstance(name: "VM 1")
         let instance2 = makeInstance(name: "VM 2")
 
@@ -248,12 +246,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("stop bypasses serialization during an active operation")
     func stopBypassesSerializationDuringActiveOperation() async throws {
-        let suspendingService = SuspendingMockVirtualizationService()
-        let coordinator = VMLifecycleCoordinator(
-            virtualizationService: suspendingService,
-            installService: MockMacOSInstallService(),
-            ipswService: MockIPSWService()
-        )
+        let (coordinator, suspendingService) = makeSuspendingCoordinator()
         let instance = makeInstance()
 
         // Start an operation that will suspend
@@ -277,12 +270,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("forceStop bypasses serialization during an active operation")
     func forceStopBypassesSerializationDuringActiveOperation() async throws {
-        let suspendingService = SuspendingMockVirtualizationService()
-        let coordinator = VMLifecycleCoordinator(
-            virtualizationService: suspendingService,
-            installService: MockMacOSInstallService(),
-            ipswService: MockIPSWService()
-        )
+        let (coordinator, suspendingService) = makeSuspendingCoordinator()
         let instance = makeInstance()
 
         // Start an operation that will suspend
@@ -334,12 +322,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("token prevents stale defer from clobbering after stop clears entry")
     func tokenPreventsStaleRemoval() async throws {
-        let suspendingService = SuspendingMockVirtualizationService()
-        let coordinator = VMLifecycleCoordinator(
-            virtualizationService: suspendingService,
-            installService: MockMacOSInstallService(),
-            ipswService: MockIPSWService()
-        )
+        let (coordinator, suspendingService) = makeSuspendingCoordinator()
         let instance = makeInstance()
 
         // Start an operation that will suspend (acquires token A)
