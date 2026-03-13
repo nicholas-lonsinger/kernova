@@ -81,6 +81,11 @@ final class VMInstance: Identifiable {
         status == .paused && virtualMachine == nil
     }
 
+    /// `true` when the VM is eligible to show a serial console window (active status + live VM).
+    var canShowSerialConsole: Bool {
+        (status == .running || status == .paused) && virtualMachine != nil
+    }
+
     // MARK: - Delegate Setup
 
     func setupDelegate() {

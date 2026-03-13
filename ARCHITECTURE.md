@@ -12,7 +12,7 @@ Kernova/
 │   ├── AppDelegate.swift               # NSApplicationDelegate — startup, window tracking, menu, save-on-quit
 │   ├── MainWindowController.swift      # Primary NSSplitViewController hosting SwiftUI sidebar + detail
 │   ├── FullscreenWindowController.swift # Per-VM fullscreen window, auto-closes on VM stop
-│   └── SerialConsoleWindowController.swift # Per-VM serial console window
+│   └── SerialConsoleWindowController.swift # Per-VM serial console window, auto-closes on VM stop
 ├── Models/                             # Data types — all value types or @MainActor-isolated
 │   ├── VMConfiguration.swift           # Codable/Sendable struct persisted as config.json per VM bundle
 │   ├── VMInstance.swift                # @Observable runtime wrapper: VMConfiguration + VZVirtualMachine + VMStatus

@@ -1,17 +1,26 @@
 import Cocoa
+import os
 import SwiftUI
 
 /// Manages a serial console window for a single VM instance.
 ///
 /// Each VM gets its own window controller. The window hosts a `SerialConsoleContentView`
 /// via `NSHostingController` and persists its frame position per VM ID.
+///
+/// The controller observes the VM's status and automatically closes the window when
+/// the VM stops or enters an error state, mirroring `FullscreenWindowController` behavior.
 @MainActor
-final class SerialConsoleWindowController: NSWindowController {
+final class SerialConsoleWindowController: NSWindowController, NSWindowDelegate {
+
+    private static let logger = Logger(subsystem: "com.kernova.app", category: "SerialConsoleWindowController")
 
     let vmID: UUID
+    private let instance: VMInstance
+    private var observingStatus = false
 
     init(instance: VMInstance) {
         self.vmID = instance.instanceID
+        self.instance = instance
 
         let contentView = SerialConsoleContentView(instance: instance)
         let hostingController = NSHostingController(rootView: contentView)
@@ -28,16 +37,61 @@ final class SerialConsoleWindowController: NSWindowController {
         window.minSize = NSSize(width: 400, height: 200)
 
         super.init(window: window)
+        window.delegate = self
 
         // Restore saved frame or center on first open
         let frameName = "SerialConsole-\(instance.instanceID.uuidString)"
         if !window.setFrameUsingName(frameName) {
             window.center()
         }
+
+        // Validate restored frame is visible on a connected screen
+        if let frame = self.window?.frame,
+           !NSScreen.screens.contains(where: { $0.visibleFrame.intersects(frame) }) {
+            Self.logger.debug("Restored frame not visible on any screen, centering window")
+            window.center()
+        }
+
         window.setFrameAutosaveName(frameName)
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    // MARK: - Lifecycle
+
+    override func showWindow(_ sender: Any?) {
+        super.showWindow(sender)
+        if !observingStatus { observeStatus() }
+        Self.logger.debug("Serial console window shown for VM '\(self.instance.name)'")
+    }
+
+    // MARK: - NSWindowDelegate
+
+    func windowWillClose(_ notification: Notification) {
+        observingStatus = false
+        Self.logger.debug("Serial console window closing for VM '\(self.instance.name)'")
+    }
+
+    // MARK: - Status Observation
+
+    /// Automatically closes the serial console window when the VM stops or errors out.
+    private func observeStatus() {
+        observingStatus = true
+        withObservationTracking {
+            _ = self.instance.status
+        } onChange: {
+            Task { @MainActor [weak self] in
+                guard let self, self.observingStatus else { return }
+                let status = self.instance.status
+                if status == .stopped || status == .error {
+                    Self.logger.notice("Auto-closing serial console for VM '\(self.instance.name)' (status: \(status.displayName))")
+                    self.window?.close()
+                } else {
+                    self.observeStatus()
+                }
+            }
+        }
     }
 }
