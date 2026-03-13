@@ -113,6 +113,10 @@ feat: Add VM snapshot support
 - [ ] All existing tests pass
 ```
 
+### Scoping the message
+
+Commit messages must reflect the full intent and scope of all changes, not just the last operation performed. Before writing a commit message, review both the conversation context (what the user asked for, the steps taken) and the staged diff holistically. Lead with the primary purpose; secondary details (naming conventions, formatting choices) belong in the body.
+
 The `Co-Authored-By` trailer is automatically appended by Claude Code and should not be duplicated in the commit message body.
 
 ## Architecture Change Protocol
