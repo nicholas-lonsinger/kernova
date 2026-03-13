@@ -153,7 +153,7 @@ All service implementations conform to protocols defined in `Services/Protocols/
 
 - **`VMLibraryViewModel`** is the central `@Observable` view model. It owns the array of `VMInstance`s and handles list-level operations: add, remove, rename, selection tracking. For lifecycle operations (start, stop, install), it delegates to `VMLifecycleCoordinator`.
 
-- **`VMLifecycleCoordinator`** is an `@MainActor` coordinator that owns the lifecycle services (`VirtualizationService`, `MacOSInstallService`, `IPSWService`). It orchestrates multi-step operations like macOS installation (which involves IPSW download → platform file creation → VM configuration → installation). This separation keeps `VMLibraryViewModel` focused on list management.
+- **`VMLifecycleCoordinator`** is an `@MainActor` coordinator that owns the lifecycle services (`VirtualizationService`, `MacOSInstallService`, `IPSWService`). It orchestrates multi-step operations like macOS installation (which involves IPSW download → platform file creation → VM configuration → installation). This separation keeps `VMLibraryViewModel` focused on list management. The coordinator enforces **per-VM operation serialization** — at most one lifecycle operation can be in flight for a given VM at any time; concurrent requests are rejected with `VMLifecycleCoordinator.LifecycleError.operationInProgress`. `stop` and `forceStop` bypass serialization entirely (clearing the active-operation token before calling the service) so users can always cancel hung operations.
 
 - **`VMCreationViewModel`** drives the multi-step creation wizard. It tracks the current step, validates inputs at each stage, and produces a `VMConfiguration` + disk image on completion.
 
@@ -265,9 +265,9 @@ SystemSleepWatcher ──sleep/wake──→ VMLibraryViewModel ──pause/resu
 
 ### 6. VMLifecycleCoordinator separation
 
-**What:** `VMLifecycleCoordinator` sits between `VMLibraryViewModel` and the services, orchestrating multi-step operations.
+**What:** `VMLifecycleCoordinator` sits between `VMLibraryViewModel` and the services, orchestrating multi-step operations. It also enforces per-VM operation serialization — a token-based `[UUID: UUID]` dictionary maps each VM to its current operation token and rejects concurrent requests with `VMLifecycleCoordinator.LifecycleError.operationInProgress`. `stop`/`forceStop` bypass serialization entirely — they clear the token *before* calling the service, which invalidates any in-flight operation's `defer` guard and prevents stale removals.
 
-**Why:** macOS VM installation is a multi-step process (download IPSW → create platform files → configure VM → install). Putting this in `VMLibraryViewModel` would bloat it with orchestration logic. The coordinator keeps the view model focused on list management and selection, while the coordinator handles operational complexity.
+**Why:** macOS VM installation is a multi-step process (download IPSW → create platform files → configure VM → install). Putting this in `VMLibraryViewModel` would bloat it with orchestration logic. The coordinator keeps the view model focused on list management and selection, while the coordinator handles operational complexity. Operation serialization prevents undefined behavior from concurrent `VZVirtualMachine` calls (e.g., double-start or pause-during-start).
 
 **Alternatives:** Fat view model (simpler structure but harder to test and maintain), or individual operation objects (more granular but more types to manage).
 
@@ -301,7 +301,7 @@ No external package dependencies. No Swift Package Manager, CocoaPods, or Cartha
 | `VMConfiguration` | 43 tests + clone suite | Encoding/decoding, defaults, validation, all fields |
 | `VMLibraryViewModel` | 47 tests | Add/remove/rename VMs, selection, delegation to coordinator, sleep/wake |
 | `VMCreationViewModel` | 44 tests | All wizard steps, validation, OS-specific paths |
-| `VMLifecycleCoordinator` | Yes | Multi-step orchestration, error handling, service delegation |
+| `VMLifecycleCoordinator` | Yes | Multi-step orchestration, error handling, service delegation, token-based operation serialization, stop/forceStop bypass, stale-token race condition coverage |
 | `VMInstance` | Yes | Status transitions, configuration updates, bundle layout |
 | `ConfigurationBuilder` | Yes | All three boot paths, device configuration |
 | `VirtualizationService` | Yes | Start/stop/pause/resume via mock VZ objects |
@@ -336,6 +336,6 @@ These services interact with system processes, the network, or VZ installer inte
 ### Test Patterns
 
 - **Framework:** Swift Testing (`@Suite`, `@Test`, `#expect`) — not XCTest
-- **Mocks:** 5 mock implementations conforming to service protocols, supporting call counting and error injection via `throwError` properties
+- **Mocks:** 6 mock implementations conforming to service protocols, supporting call counting and error injection via `throwError` properties. Includes `SuspendingMockVirtualizationService` for testing operation serialization — suspends mid-operation to verify concurrent rejection and token-based race conditions. Relies on `@MainActor` cooperative scheduling (documented in the mock) and enforces single-suspension via `precondition`
 - **Factories:** Shared helpers like `makeInstance()`, `makeViewModel()`, `makeCoordinator()` reduce setup duplication
 - **Error paths:** Mocks support setting `throwError` to inject failures and verify error handling

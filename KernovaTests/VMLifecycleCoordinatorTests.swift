@@ -125,6 +125,247 @@ struct VMLifecycleCoordinatorTests {
         }
     }
 
+    // MARK: - Operation Serialization
+
+    @Test("hasActiveOperation returns false when no operation is running")
+    func hasActiveOperationInitiallyFalse() {
+        let (coordinator, _, _, _) = makeCoordinator()
+        let instance = makeInstance()
+
+        #expect(!coordinator.hasActiveOperation(for: instance.id))
+    }
+
+    @Test("hasActiveOperation returns true during an in-flight operation")
+    func hasActiveOperationTrueDuringOperation() async throws {
+        let suspendingService = SuspendingMockVirtualizationService()
+        let coordinator = VMLifecycleCoordinator(
+            virtualizationService: suspendingService,
+            installService: MockMacOSInstallService(),
+            ipswService: MockIPSWService()
+        )
+        let instance = makeInstance()
+
+        // Start an operation that will suspend
+        let task = Task { @MainActor in
+            try await coordinator.start(instance)
+        }
+
+        // Wait for the operation to begin (the mock will signal via its continuation)
+        await suspendingService.waitUntilSuspended()
+
+        #expect(coordinator.hasActiveOperation(for: instance.id))
+
+        // Let the operation complete
+        suspendingService.resumeSuspended()
+        try await task.value
+    }
+
+    @Test("concurrent operation on the same VM throws operationInProgress")
+    func rejectsConcurrentOperationOnSameVM() async throws {
+        let suspendingService = SuspendingMockVirtualizationService()
+        let coordinator = VMLifecycleCoordinator(
+            virtualizationService: suspendingService,
+            installService: MockMacOSInstallService(),
+            ipswService: MockIPSWService()
+        )
+        let instance = makeInstance()
+
+        // Start an operation that will suspend
+        let task = Task { @MainActor in
+            try await coordinator.start(instance)
+        }
+
+        await suspendingService.waitUntilSuspended()
+
+        // A second operation on the same VM should be rejected
+        await #expect(throws: VMLifecycleCoordinator.LifecycleError.self) {
+            try await coordinator.pause(instance)
+        }
+
+        // Clean up
+        suspendingService.resumeSuspended()
+        try await task.value
+    }
+
+    @Test("operations on different VMs are allowed concurrently")
+    func allowsConcurrentOperationsOnDifferentVMs() async throws {
+        let suspendingService = SuspendingMockVirtualizationService()
+        let coordinator = VMLifecycleCoordinator(
+            virtualizationService: suspendingService,
+            installService: MockMacOSInstallService(),
+            ipswService: MockIPSWService()
+        )
+        let instance1 = makeInstance(name: "VM 1")
+        let instance2 = makeInstance(name: "VM 2")
+
+        // Start an operation on instance1 that suspends
+        let task = Task { @MainActor in
+            try await coordinator.start(instance1)
+        }
+
+        await suspendingService.waitUntilSuspended()
+
+        // A different VM should still be able to start (uses regular mock behavior for second call)
+        suspendingService.shouldSuspendOnStart = false
+        try await coordinator.start(instance2)
+
+        // Clean up
+        suspendingService.resumeSuspended()
+        try await task.value
+    }
+
+    @Test("lock is released after operation completes successfully")
+    func lockReleasedAfterSuccess() async throws {
+        let (coordinator, _, _, _) = makeCoordinator()
+        let instance = makeInstance()
+
+        try await coordinator.start(instance)
+        #expect(!coordinator.hasActiveOperation(for: instance.id))
+
+        // A second operation should succeed
+        instance.status = .running
+        try await coordinator.pause(instance)
+        #expect(!coordinator.hasActiveOperation(for: instance.id))
+    }
+
+    @Test("lock is released after operation fails")
+    func lockReleasedAfterError() async throws {
+        let (coordinator, virtService, _, _) = makeCoordinator()
+        virtService.startError = VirtualizationError.noVirtualMachine
+        let instance = makeInstance()
+
+        await #expect(throws: VirtualizationError.self) {
+            try await coordinator.start(instance)
+        }
+
+        #expect(!coordinator.hasActiveOperation(for: instance.id))
+
+        // Should be able to retry after failure
+        virtService.startError = nil
+        try await coordinator.start(instance)
+        #expect(virtService.startCallCount == 2)
+    }
+
+    @Test("stop bypasses serialization during an active operation")
+    func stopBypassesSerializationDuringActiveOperation() async throws {
+        let suspendingService = SuspendingMockVirtualizationService()
+        let coordinator = VMLifecycleCoordinator(
+            virtualizationService: suspendingService,
+            installService: MockMacOSInstallService(),
+            ipswService: MockIPSWService()
+        )
+        let instance = makeInstance()
+
+        // Start an operation that will suspend
+        let task = Task { @MainActor in
+            try await coordinator.start(instance)
+        }
+
+        await suspendingService.waitUntilSuspended()
+        #expect(coordinator.hasActiveOperation(for: instance.id))
+
+        // Stop should succeed even though start is in flight
+        try coordinator.stop(instance)
+
+        // Active operation flag should be cleared by stop
+        #expect(!coordinator.hasActiveOperation(for: instance.id))
+
+        // Clean up — let the suspended start complete
+        suspendingService.resumeSuspended()
+        _ = try? await task.value
+    }
+
+    @Test("forceStop bypasses serialization during an active operation")
+    func forceStopBypassesSerializationDuringActiveOperation() async throws {
+        let suspendingService = SuspendingMockVirtualizationService()
+        let coordinator = VMLifecycleCoordinator(
+            virtualizationService: suspendingService,
+            installService: MockMacOSInstallService(),
+            ipswService: MockIPSWService()
+        )
+        let instance = makeInstance()
+
+        // Start an operation that will suspend
+        let task = Task { @MainActor in
+            try await coordinator.start(instance)
+        }
+
+        await suspendingService.waitUntilSuspended()
+        #expect(coordinator.hasActiveOperation(for: instance.id))
+
+        // Force stop should succeed even though start is in flight
+        try await coordinator.forceStop(instance)
+
+        // Active operation flag should be cleared by forceStop
+        #expect(!coordinator.hasActiveOperation(for: instance.id))
+
+        // Clean up
+        suspendingService.resumeSuspended()
+        _ = try? await task.value
+    }
+
+    @Test("stop does not affect active operation tracking")
+    func stopDoesNotAffectActiveOperationTracking() throws {
+        let (coordinator, virtService, _, _) = makeCoordinator()
+        let instance = makeInstance()
+        instance.status = .running
+
+        try coordinator.stop(instance)
+        #expect(!coordinator.hasActiveOperation(for: instance.id))
+        #expect(virtService.stopCallCount == 1)
+    }
+
+    @Test("stop error does not affect active operation tracking")
+    func stopErrorDoesNotAffectActiveOperationTracking() async throws {
+        let (coordinator, virtService, _, _) = makeCoordinator()
+        virtService.stopError = VirtualizationError.noVirtualMachine
+        let instance = makeInstance()
+
+        #expect(throws: VirtualizationError.self) {
+            try coordinator.stop(instance)
+        }
+
+        #expect(!coordinator.hasActiveOperation(for: instance.id))
+
+        // Should be able to start after failed stop
+        try await coordinator.start(instance)
+        #expect(virtService.startCallCount == 1)
+    }
+
+    @Test("token prevents stale defer from clobbering after stop clears entry")
+    func tokenPreventsStaleRemoval() async throws {
+        let suspendingService = SuspendingMockVirtualizationService()
+        let coordinator = VMLifecycleCoordinator(
+            virtualizationService: suspendingService,
+            installService: MockMacOSInstallService(),
+            ipswService: MockIPSWService()
+        )
+        let instance = makeInstance()
+
+        // Start an operation that will suspend (acquires token A)
+        let task = Task { @MainActor in
+            try await coordinator.start(instance)
+        }
+
+        await suspendingService.waitUntilSuspended()
+        #expect(coordinator.hasActiveOperation(for: instance.id))
+
+        // Stop clears the active operation entry (invalidating token A)
+        try coordinator.stop(instance)
+        #expect(!coordinator.hasActiveOperation(for: instance.id))
+
+        // Resume the suspended start — its defer should NOT re-clear the entry
+        // because its token no longer matches
+        suspendingService.resumeSuspended()
+        _ = try? await task.value
+
+        // Now start a new operation — this should succeed because
+        // the stale defer didn't clobber anything
+        suspendingService.shouldSuspendOnStart = false
+        try await coordinator.start(instance)
+        #expect(!coordinator.hasActiveOperation(for: instance.id))
+    }
+
     // MARK: - macOS Installation
 
     #if arch(arm64)
