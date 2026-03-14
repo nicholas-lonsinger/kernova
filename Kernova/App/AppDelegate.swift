@@ -3,7 +3,7 @@ import SwiftUI
 
 @main
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenuDelegate {
 
     private var mainWindowController: MainWindowController?
     private var viewModel: VMLibraryViewModel!
@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var serialConsoleObservers: [UUID: Any] = [:]
     private var fullscreenWindows: [UUID: FullscreenWindowController] = [:]
     private var fullscreenObservers: [UUID: Any] = [:]
+    private var serialConsoleMenuItem: NSMenuItem?
 
     // MARK: - Entry Point
 
@@ -261,6 +262,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
     }
 
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        if menu === NSApp.windowsMenu {
+            serialConsoleMenuItem?.isEnabled = viewModel.selectedInstance?.canShowSerialConsole ?? false
+        }
+    }
+
     // MARK: - Main Menu
 
     private func setupMainMenu() {
@@ -344,6 +351,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             keyEquivalent: "t"
         )
         serialItem.keyEquivalentModifierMask = [.command, .shift]
+        self.serialConsoleMenuItem = serialItem
         windowMenu.addItem(serialItem)
         windowMenu.addItem(.separator())
         windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
@@ -352,6 +360,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         windowMenu.addItem(withTitle: "Bring All to Front", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
         windowMenuItem.submenu = windowMenu
         NSApp.windowsMenu = windowMenu
+        windowMenu.delegate = self
         mainMenu.addItem(windowMenuItem)
 
         // Help menu
