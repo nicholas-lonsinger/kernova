@@ -19,17 +19,17 @@ struct VMGuestOSTests {
 
     // MARK: - Default Resource Values
 
-    @Test("macOS defaults: 4 CPUs, 8 GB memory, 100 GB disk")
+    @Test("macOS defaults: 4 CPUs, 8 GB memory, 100 GB disk (clamped to hardware maximums)")
     func macOSDefaults() {
-        #expect(VMGuestOS.macOS.defaultCPUCount == 4)
-        #expect(VMGuestOS.macOS.defaultMemoryInGB == 8)
+        #expect(VMGuestOS.macOS.defaultCPUCount == min(4, VMGuestOS.macOS.maxCPUCount))
+        #expect(VMGuestOS.macOS.defaultMemoryInGB == min(8, VMGuestOS.macOS.maxMemoryInGB))
         #expect(VMGuestOS.macOS.defaultDiskSizeInGB == 100)
     }
 
-    @Test("Linux defaults: 2 CPUs, 4 GB memory, 64 GB disk")
+    @Test("Linux defaults: 2 CPUs, 4 GB memory, 64 GB disk (clamped to hardware maximums)")
     func linuxDefaults() {
-        #expect(VMGuestOS.linux.defaultCPUCount == 2)
-        #expect(VMGuestOS.linux.defaultMemoryInGB == 4)
+        #expect(VMGuestOS.linux.defaultCPUCount == min(2, VMGuestOS.linux.maxCPUCount))
+        #expect(VMGuestOS.linux.defaultMemoryInGB == min(4, VMGuestOS.linux.maxMemoryInGB))
         #expect(VMGuestOS.linux.defaultDiskSizeInGB == 64)
     }
 

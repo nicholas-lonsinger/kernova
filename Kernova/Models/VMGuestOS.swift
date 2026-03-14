@@ -20,17 +20,21 @@ enum VMGuestOS: String, Codable, CaseIterable, Sendable {
     }
 
     var defaultCPUCount: Int {
+        let preferred: Int
         switch self {
-        case .macOS: 4
-        case .linux: 2
+        case .macOS: preferred = 4
+        case .linux: preferred = 2
         }
+        return min(preferred, maxCPUCount)
     }
 
     var defaultMemoryInGB: Int {
+        let preferred: Int
         switch self {
-        case .macOS: 8
-        case .linux: 4
+        case .macOS: preferred = 8
+        case .linux: preferred = 4
         }
+        return min(preferred, maxMemoryInGB)
     }
 
     var defaultDiskSizeInGB: Int {
