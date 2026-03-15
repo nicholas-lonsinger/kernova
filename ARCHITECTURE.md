@@ -17,7 +17,7 @@ Kernova/
 │   ├── VMConfiguration.swift           # Codable/Sendable struct persisted as config.json per VM bundle
 │   ├── VMInstance.swift                # @Observable runtime wrapper: VMConfiguration + VZVirtualMachine + VMStatus
 │   ├── VMBundleLayout.swift            # Sendable struct centralizing file paths within a .kernova bundle
-│   ├── VMStatus.swift                  # Enum: stopped, starting, running, pausing, paused, stopping, error
+│   ├── VMStatus.swift                  # Enum: stopped, starting, running, paused, saving, restoring, installing, error
 │   ├── VMBootMode.swift                # Enum: macOS, efi, linuxKernel
 │   ├── VMGuestOS.swift                 # Enum: macOS, linux
 │   ├── MacOSInstallState.swift         # Tracks two-phase macOS installation progress (download + install)

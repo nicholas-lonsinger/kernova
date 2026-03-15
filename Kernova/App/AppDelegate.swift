@@ -133,6 +133,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             if bringToFront {
                 windowController.showWindow(nil)
             } else {
+                windowController.showWindow(nil)
                 windowController.window?.orderBack(nil)
             }
             mainWindowController = windowController
