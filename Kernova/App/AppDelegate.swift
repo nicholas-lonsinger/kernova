@@ -119,21 +119,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     private func showLibraryWindow(bringToFront: Bool) {
-        if mainWindowController?.window == nil {
+        if let existingWindow = mainWindowController?.window {
+            if bringToFront {
+                Self.logger.debug("showLibrary: focusing existing window")
+                existingWindow.makeKeyAndOrderFront(nil)
+            } else {
+                Self.logger.debug("showLibrary: showing existing window in background")
+                existingWindow.orderBack(nil)
+            }
+        } else {
             Self.logger.notice("showLibrary: recreating main window controller")
             let windowController = MainWindowController(viewModel: viewModel)
-            windowController.showWindow(nil)
-            mainWindowController = windowController
-        }
-
-        if let window = mainWindowController?.window {
             if bringToFront {
-                Self.logger.debug("showLibrary: focusing window")
-                window.makeKeyAndOrderFront(nil)
+                windowController.showWindow(nil)
             } else {
-                Self.logger.debug("showLibrary: showing window in background")
-                window.orderBack(nil)
+                windowController.showWindowInBackground()
             }
+            mainWindowController = windowController
         }
     }
 
