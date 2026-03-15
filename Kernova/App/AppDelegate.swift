@@ -1,4 +1,5 @@
 import Cocoa
+import os
 import SwiftUI
 
 @main
@@ -13,6 +14,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private var fullscreenWindows: [UUID: FullscreenWindowController] = [:]
     private var fullscreenObservers: [UUID: Any] = [:]
     private var serialConsoleMenuItem: NSMenuItem!
+
+    private static let logger = Logger(subsystem: "com.kernova.app", category: "AppDelegate")
 
     // MARK: - Entry Point
 
@@ -41,7 +44,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        true
+        let hasActiveVMs = viewModel.instances.contains { instance in
+            // Live-paused VMs (not cold-paused to disk) should also keep the app alive
+            instance.status.isActive || (instance.status == .paused && instance.virtualMachine != nil)
+        }
+
+        // Stay alive if VMs are active or fullscreen windows still exist
+        if hasActiveVMs || !fullscreenWindows.isEmpty {
+            Self.logger.debug("applicationShouldTerminateAfterLastWindowClosed: false (activeVMs=\(hasActiveVMs), fullscreenWindows=\(self.fullscreenWindows.count))")
+            return false
+        }
+
+        Self.logger.debug("applicationShouldTerminateAfterLastWindowClosed: true")
+        return true
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            showLibrary(nil)
+        }
+        return true
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -90,6 +112,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     @objc func newVM(_ sender: Any?) {
         viewModel.showCreationWizard = true
+    }
+
+    @objc func showLibrary(_ sender: Any?) {
+        showLibraryWindow(bringToFront: true)
+    }
+
+    private func showLibraryWindow(bringToFront: Bool) {
+        if let existingWindow = mainWindowController?.window {
+            if bringToFront {
+                Self.logger.debug("showLibrary: focusing existing window")
+                existingWindow.makeKeyAndOrderFront(nil)
+            } else {
+                Self.logger.debug("showLibrary: showing existing window in background")
+                existingWindow.orderBack(nil)
+            }
+        } else {
+            Self.logger.notice("showLibrary: recreating main window controller")
+            let windowController = MainWindowController(viewModel: viewModel)
+            if bringToFront {
+                windowController.showWindow(nil)
+            } else {
+                windowController.showWindowInBackground()
+            }
+            mainWindowController = windowController
+        }
     }
 
     // MARK: - VM Actions
@@ -205,7 +252,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             forName: NSWindow.willCloseNotification,
             object: controller.window,
             queue: .main
-        ) { [weak self] _ in
+        ) { [weak self] notification in
+            // Capture window state synchronously — by the time the Task runs, it may have changed
+            let wasKeyWindow = (notification.object as? NSWindow)?.isKeyWindow ?? false
+            let appWasActive = NSApp.isActive
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 if let token = self.fullscreenObservers.removeValue(forKey: vmID) {
@@ -215,6 +265,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                    !controller.closedByVMStop {
                     instance.configuration.prefersFullscreen = false
                     self.viewModel.saveConfiguration(for: instance)
+                }
+
+                // Restore library window based on context:
+                // - Key + active app: user deliberately left fullscreen → focus library
+                // - App not active: VM stopped while user is elsewhere → show library in background
+                // - Active but not key: user is in another Kernova window → no action needed
+                if wasKeyWindow && appWasActive {
+                    self.showLibrary(nil)
+                } else if !appWasActive {
+                    self.showLibraryWindow(bringToFront: false)
                 }
             }
         }
@@ -348,6 +408,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // Window menu
         let windowMenuItem = NSMenuItem()
         let windowMenu = NSMenu(title: "Window")
+        let showLibraryItem = NSMenuItem(
+            title: "Show Library",
+            action: #selector(showLibrary(_:)),
+            keyEquivalent: "0"
+        )
+        windowMenu.addItem(showLibraryItem)
+        windowMenu.addItem(.separator())
         let serialItem = NSMenuItem(
             title: "Serial Console",
             action: #selector(showSerialConsole(_:)),

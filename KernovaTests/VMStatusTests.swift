@@ -79,6 +79,20 @@ struct VMStatusTests {
         #expect(VMStatus.installing.canEditSettings == false)
     }
 
+    // MARK: - Active
+
+    @Test("isActive returns true for running, starting, saving, restoring, installing")
+    func isActive() {
+        #expect(VMStatus.running.isActive == true)
+        #expect(VMStatus.starting.isActive == true)
+        #expect(VMStatus.saving.isActive == true)
+        #expect(VMStatus.restoring.isActive == true)
+        #expect(VMStatus.installing.isActive == true)
+        #expect(VMStatus.paused.isActive == false)
+        #expect(VMStatus.stopped.isActive == false)
+        #expect(VMStatus.error.isActive == false)
+    }
+
     // MARK: - Transitioning
 
     @Test("isTransitioning returns true for starting, saving, restoring, and installing")

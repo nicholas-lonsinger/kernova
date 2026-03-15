@@ -97,6 +97,15 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSGestu
         observeToolbarState()
     }
 
+    /// Makes the window visible behind other windows without stealing focus.
+    ///
+    /// Use instead of ``showWindow(_:)`` when the window should exist but not
+    /// interrupt the user. All controller setup happens in ``init(viewModel:)``,
+    /// so this is safe to call without going through `showWindow`.
+    func showWindowInBackground() {
+        window?.orderBack(nil)
+    }
+
     // MARK: - Sidebar Double-Click to Start/Resume
 
     @objc private func sidebarRowDoubleClicked(_ sender: Any?) {

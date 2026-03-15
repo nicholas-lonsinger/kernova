@@ -17,7 +17,7 @@ Kernova/
 │   ├── VMConfiguration.swift           # Codable/Sendable struct persisted as config.json per VM bundle
 │   ├── VMInstance.swift                # @Observable runtime wrapper: VMConfiguration + VZVirtualMachine + VMStatus
 │   ├── VMBundleLayout.swift            # Sendable struct centralizing file paths within a .kernova bundle
-│   ├── VMStatus.swift                  # Enum: stopped, starting, running, pausing, paused, stopping, error
+│   ├── VMStatus.swift                  # Enum: stopped, starting, running, paused, saving, restoring, installing, error
 │   ├── VMBootMode.swift                # Enum: macOS, efi, linuxKernel
 │   ├── VMGuestOS.swift                 # Enum: macOS, linux
 │   ├── MacOSInstallState.swift         # Tracks two-phase macOS installation progress (download + install)
@@ -104,9 +104,11 @@ KernovaTests/
 **Files:** `AppDelegate.swift`, `MainWindowController.swift`, `FullscreenWindowController.swift`, `SerialConsoleWindowController.swift`
 
 `AppDelegate` is the entry point. It creates the `VMLibraryViewModel` and `VMLifecycleCoordinator`, opens the main window, and manages the lifecycle of all windows. It tracks window controllers in dictionaries keyed by VM UUID, enabling one-to-many relationships (a VM can have a main view, a fullscreen window, and a serial console open simultaneously). `AppDelegate` also handles:
-- The application menu (including VM-specific actions)
+- The application menu (including VM-specific actions and Window > Show Library with Cmd+0)
 - Save-on-quit behavior (saving VM state before termination)
-- Window restoration
+- Conditional termination: `applicationShouldTerminateAfterLastWindowClosed` returns `false` when VMs are active or fullscreen windows exist, preventing premature exit on fullscreen-to-inline transitions
+- Dock icon reopen: `applicationShouldHandleReopen` restores the main window when clicked with no visible windows
+- Fullscreen exit recovery: closing a fullscreen window automatically re-shows the main library window via `showLibrary(_:)`
 
 `MainWindowController` hosts an `NSSplitViewController` where each pane is an `NSHostingController` wrapping SwiftUI views. This is the AppKit/SwiftUI bridge point.
 
@@ -122,7 +124,7 @@ The model layer has two key types:
 
 `VMBundleLayout` is a `Sendable` struct that takes a bundle root path and provides all derived file paths (disk image, aux storage, save file, serial log, etc.), keeping path logic centralized.
 
-The remaining models are enums: `VMStatus` (stopped/starting/running/pausing/paused/stopping/error), `VMBootMode` (macOS/efi/linuxKernel), `VMGuestOS` (macOS/linux), and `MacOSInstallState` (tracking download and install phases with progress).
+The remaining models are enums: `VMStatus` (stopped/starting/running/paused/saving/restoring/installing/error), `VMBootMode` (macOS/efi/linuxKernel), `VMGuestOS` (macOS/linux), and `MacOSInstallState` (tracking download and install phases with progress). `VMStatus` provides computed properties for state checks (`canStart`, `canStop`, `canPause`, `canResume`, `canSave`, `canEditSettings`, `isTransitioning`, `isActive`).
 
 ### Services
 
