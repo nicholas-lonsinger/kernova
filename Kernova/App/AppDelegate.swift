@@ -45,10 +45,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         let hasActiveVMs = viewModel.instances.contains { instance in
-            if instance.status.isActive { return true }
-            // Live-paused VMs (not cold-paused to disk) should keep the app alive
-            if instance.status == .paused && instance.virtualMachine != nil { return true }
-            return false
+            // Live-paused VMs (not cold-paused to disk) should also keep the app alive
+            instance.status.isActive || (instance.status == .paused && instance.virtualMachine != nil)
         }
 
         // Stay alive if VMs are active or fullscreen windows still exist
@@ -117,13 +115,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     @objc func showLibrary(_ sender: Any?) {
+        showLibraryWindow(bringToFront: true)
+    }
+
+    private func showLibraryWindow(bringToFront: Bool) {
         if let existingWindow = mainWindowController?.window {
-            Self.logger.debug("showLibrary: focusing existing window")
-            existingWindow.makeKeyAndOrderFront(nil)
+            if bringToFront {
+                Self.logger.debug("showLibrary: focusing existing window")
+                existingWindow.makeKeyAndOrderFront(nil)
+            } else {
+                Self.logger.debug("showLibrary: showing existing window in background")
+                existingWindow.orderBack(nil)
+            }
         } else {
             Self.logger.notice("showLibrary: recreating main window controller")
             let windowController = MainWindowController(viewModel: viewModel)
-            windowController.showWindow(nil)
+            if bringToFront {
+                windowController.showWindow(nil)
+            } else {
+                windowController.window?.orderBack(nil)
+            }
             mainWindowController = windowController
         }
     }
@@ -241,7 +252,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             forName: NSWindow.willCloseNotification,
             object: controller.window,
             queue: .main
-        ) { [weak self] _ in
+        ) { [weak self] notification in
+            // Capture window state synchronously — by the time the Task runs, it may have changed
+            let wasKeyWindow = (notification.object as? NSWindow)?.isKeyWindow ?? false
+            let appWasActive = NSApp.isActive
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 if let token = self.fullscreenObservers.removeValue(forKey: vmID) {
@@ -253,8 +267,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                     self.viewModel.saveConfiguration(for: instance)
                 }
 
-                // Ensure the main window is visible after fullscreen closes
-                self.showLibrary(nil)
+                // Restore library window based on context:
+                // - Key + active app: user deliberately left fullscreen → focus library
+                // - App not active: VM stopped while user is elsewhere → show library in background
+                // - Active but not key: user is in another Kernova window → no action needed
+                if wasKeyWindow && appWasActive {
+                    self.showLibrary(nil)
+                } else if !appWasActive {
+                    self.showLibraryWindow(bringToFront: false)
+                }
             }
         }
         fullscreenObservers[vmID] = token
