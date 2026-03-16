@@ -53,7 +53,7 @@ struct VMSettingsView: View {
                         .foregroundStyle(.secondary)
 
                     VStack(alignment: .leading, spacing: 2) {
-                        Text((isoPath as NSString).lastPathComponent)
+                        Text(URL(fileURLWithPath: isoPath).lastPathComponent)
                         Text(isoPath)
                             .font(.caption)
                             .foregroundStyle(.secondary)

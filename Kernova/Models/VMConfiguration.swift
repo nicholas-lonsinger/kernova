@@ -226,6 +226,6 @@ struct SharedDirectory: Codable, Sendable, Equatable, Identifiable {
 
     /// The last path component, used as the display name in the UI and as the share name in VirtioFS.
     var displayName: String {
-        (path as NSString).lastPathComponent
+        URL(fileURLWithPath: path).lastPathComponent
     }
 }
