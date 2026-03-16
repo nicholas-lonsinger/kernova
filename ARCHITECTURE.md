@@ -144,7 +144,7 @@ Services are split by concurrency requirements:
 
 - **`SystemSleepWatcher`** — `@MainActor` observer class that monitors `NSWorkspace.willSleepNotification` and `NSWorkspace.didWakeNotification`. Follows the same pattern as `VMDirectoryWatcher`: callback-driven, `nonisolated(unsafe)` for observer tokens, `start()`/`deinit` lifecycle. Owned by `VMLibraryViewModel`, which uses it to auto-pause running VMs before sleep and resume them on wake.
 
-- **`ConfigurationBuilder`** — pure translation from `VMConfiguration` to `VZVirtualMachineConfiguration`. Handles three boot paths: `VZMacOSBootLoader` (macOS), `VZEFIBootLoader` (EFI/UEFI), and `VZLinuxBootLoader` (direct kernel boot). Configures CPU, memory, storage, network, display, keyboard, trackpad, and audio devices. Validates shared directory paths before VM launch (existence, is-directory, readable, writable for read-write shares).
+- **`ConfigurationBuilder`** — pure translation from `VMConfiguration` to `VZVirtualMachineConfiguration`. Handles three boot paths: `VZMacOSBootLoader` (macOS), `VZEFIBootLoader` (EFI/UEFI), and `VZLinuxBootLoader` (direct kernel boot). Configures CPU, memory, storage, network, display, keyboard, trackpad, and audio devices. Resolves symlinks on all user-supplied paths (shared directories, kernel/initrd, ISO images) and validates existence before passing to VZ. Shared directory validation checks existence, is-directory, readability, and writability (for read-write shares) against the resolved path.
 
 All service implementations conform to protocols defined in `Services/Protocols/`. This enables full dependency injection — tests use mock implementations that track call counts and support error injection.
 
@@ -303,7 +303,7 @@ No external package dependencies. No Swift Package Manager, CocoaPods, or Cartha
 | `VMCreationViewModel` | 44 tests | All wizard steps, validation, OS-specific paths |
 | `VMLifecycleCoordinator` | Yes | Multi-step orchestration, error handling, service delegation, token-based operation serialization, stop/forceStop bypass, stale-token race condition coverage |
 | `VMInstance` | Yes | Status transitions, configuration updates, bundle layout |
-| `ConfigurationBuilder` | Yes | All three boot paths, device configuration |
+| `ConfigurationBuilder` | Yes | All three boot paths, device configuration, path validation (symlinks, missing kernel/initrd/ISO) |
 | `VirtualizationService` | Yes | Start/stop/pause/resume via mock VZ objects |
 | `VMStorageService` | Yes | CRUD operations, cloning, migration |
 | `VMBundleLayout` | Yes | Path derivation from bundle root |

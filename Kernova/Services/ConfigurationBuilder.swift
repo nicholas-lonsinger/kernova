@@ -176,9 +176,19 @@ struct ConfigurationBuilder: Sendable {
             throw ConfigurationBuilderError.missingKernelPath
         }
 
-        let bootLoader = VZLinuxBootLoader(kernelURL: URL(fileURLWithPath: kernelPath))
+        let fileManager = FileManager.default
+        let kernelURL = URL(fileURLWithPath: kernelPath).resolvingSymlinksInPath()
+        guard fileManager.fileExists(atPath: kernelURL.path(percentEncoded: false)) else {
+            throw ConfigurationBuilderError.kernelNotFound(kernelPath)
+        }
+
+        let bootLoader = VZLinuxBootLoader(kernelURL: kernelURL)
         if let initrdPath = config.initrdPath {
-            bootLoader.initialRamdiskURL = URL(fileURLWithPath: initrdPath)
+            let initrdURL = URL(fileURLWithPath: initrdPath).resolvingSymlinksInPath()
+            guard fileManager.fileExists(atPath: initrdURL.path(percentEncoded: false)) else {
+                throw ConfigurationBuilderError.initrdNotFound(initrdPath)
+            }
+            bootLoader.initialRamdiskURL = initrdURL
         }
         bootLoader.commandLine = config.kernelCommandLine ?? "console=hvc0"
         vzConfig.bootLoader = bootLoader
@@ -215,23 +225,19 @@ struct ConfigurationBuilder: Sendable {
 
         // Attach ISO as USB mass storage device
         if let isoPath = config.isoPath {
-            let isoURL = URL(fileURLWithPath: isoPath)
-            if FileManager.default.fileExists(atPath: isoURL.path(percentEncoded: false)) {
-                do {
-                    let isoAttachment = try VZDiskImageStorageDeviceAttachment(url: isoURL, readOnly: true)
-                    let usbStorage = VZUSBMassStorageDeviceConfiguration(attachment: isoAttachment)
-                    // For EFI boot with boot-from-disc enabled, insert before main disk
-                    // so the firmware discovers the ISO first
-                    if config.bootFromDiscImage && config.bootMode == .efi {
-                        vzConfig.storageDevices.insert(usbStorage, at: 0)
-                    } else {
-                        vzConfig.storageDevices.append(usbStorage)
-                    }
-                } catch {
-                    Self.logger.warning("Failed to attach ISO at \(isoPath): \(error.localizedDescription)")
-                }
+            let isoURL = URL(fileURLWithPath: isoPath).resolvingSymlinksInPath()
+            guard FileManager.default.fileExists(atPath: isoURL.path(percentEncoded: false)) else {
+                throw ConfigurationBuilderError.isoImageNotFound(isoPath)
+            }
+
+            let isoAttachment = try VZDiskImageStorageDeviceAttachment(url: isoURL, readOnly: true)
+            let usbStorage = VZUSBMassStorageDeviceConfiguration(attachment: isoAttachment)
+            // For EFI boot with boot-from-disc enabled, insert before main disk
+            // so the firmware discovers the ISO first
+            if config.bootFromDiscImage && config.bootMode == .efi {
+                vzConfig.storageDevices.insert(usbStorage, at: 0)
             } else {
-                Self.logger.warning("ISO not found at \(isoPath), skipping — VM will boot from disk")
+                vzConfig.storageDevices.append(usbStorage)
             }
         }
     }
@@ -290,51 +296,63 @@ struct ConfigurationBuilder: Sendable {
     private func configureDirectorySharing(_ vzConfig: VZVirtualMachineConfiguration, config: VMConfiguration) throws {
         guard let directories = config.sharedDirectories, !directories.isEmpty else { return }
 
-        try validateSharedDirectories(directories)
+        let resolvedURLs = try validateSharedDirectories(directories)
 
         switch config.guestOS {
         case .macOS:
-            configureMacOSDirectorySharing(vzConfig, directories: directories)
+            configureMacOSDirectorySharing(vzConfig, directories: directories, resolvedURLs: resolvedURLs)
         case .linux:
-            configureLinuxDirectorySharing(vzConfig, directories: directories)
+            configureLinuxDirectorySharing(vzConfig, directories: directories, resolvedURLs: resolvedURLs)
         }
     }
 
-    private func validateSharedDirectories(_ directories: [SharedDirectory]) throws {
+    /// Validates shared directories and returns resolved URLs (symlinks followed).
+    private func validateSharedDirectories(_ directories: [SharedDirectory]) throws -> [URL] {
         let fileManager = FileManager.default
+        var resolvedURLs: [URL] = []
         for directory in directories {
+            let resolvedURL = URL(fileURLWithPath: directory.path).resolvingSymlinksInPath()
+            let resolvedPath = resolvedURL.path(percentEncoded: false)
+
+            if resolvedPath != directory.path {
+                Self.logger.info("Shared directory '\(directory.path)' resolved to '\(resolvedPath)'")
+            }
+
             var isDirectory: ObjCBool = false
-            guard fileManager.fileExists(atPath: directory.path, isDirectory: &isDirectory) else {
+            guard fileManager.fileExists(atPath: resolvedPath, isDirectory: &isDirectory) else {
                 throw ConfigurationBuilderError.sharedDirectoryNotFound(directory.path)
             }
             guard isDirectory.boolValue else {
                 throw ConfigurationBuilderError.sharedDirectoryNotADirectory(directory.path)
             }
-            guard fileManager.isReadableFile(atPath: directory.path) else {
+            guard fileManager.isReadableFile(atPath: resolvedPath) else {
                 throw ConfigurationBuilderError.sharedDirectoryNotReadable(directory.path)
             }
             if !directory.readOnly {
-                guard fileManager.isWritableFile(atPath: directory.path) else {
+                guard fileManager.isWritableFile(atPath: resolvedPath) else {
                     throw ConfigurationBuilderError.sharedDirectoryNotWritable(directory.path)
                 }
             }
+            resolvedURLs.append(resolvedURL)
         }
+        return resolvedURLs
     }
 
     private func configureMacOSDirectorySharing(
         _ vzConfig: VZVirtualMachineConfiguration,
-        directories: [SharedDirectory]
+        directories: [SharedDirectory],
+        resolvedURLs: [URL]
     ) {
         // macOS guests use a single device with the automount tag.
         // All directories are bundled into a VZMultipleDirectoryShare.
         var shareMap: [String: VZSharedDirectory] = [:]
-        for directory in directories {
+        for (index, directory) in directories.enumerated() {
             var name = directory.displayName
             // Handle name collisions by prefixing with a UUID fragment
             if shareMap[name] != nil {
                 name = "\(directory.id.uuidString.prefix(8))-\(name)"
             }
-            shareMap[name] = VZSharedDirectory(url: URL(fileURLWithPath: directory.path), readOnly: directory.readOnly)
+            shareMap[name] = VZSharedDirectory(url: resolvedURLs[index], readOnly: directory.readOnly)
         }
 
         let multiShare = VZMultipleDirectoryShare(directories: shareMap)
@@ -346,13 +364,14 @@ struct ConfigurationBuilder: Sendable {
 
     private func configureLinuxDirectorySharing(
         _ vzConfig: VZVirtualMachineConfiguration,
-        directories: [SharedDirectory]
+        directories: [SharedDirectory],
+        resolvedURLs: [URL]
     ) {
         // Linux guests get one device per directory with sequential tags (share0, share1, ...).
         var devices: [VZVirtioFileSystemDeviceConfiguration] = []
         for (index, directory) in directories.enumerated() {
             let share = VZSingleDirectoryShare(
-                directory: VZSharedDirectory(url: URL(fileURLWithPath: directory.path), readOnly: directory.readOnly)
+                directory: VZSharedDirectory(url: resolvedURLs[index], readOnly: directory.readOnly)
             )
             let device = VZVirtioFileSystemDeviceConfiguration(tag: "share\(index)")
             device.share = share
@@ -369,6 +388,9 @@ enum ConfigurationBuilderError: LocalizedError {
     case invalidHardwareModel
     case invalidMachineIdentifier
     case missingKernelPath
+    case kernelNotFound(String)
+    case initrdNotFound(String)
+    case isoImageNotFound(String)
     case diskImageNotFound(URL)
     case sharedDirectoryNotFound(String)
     case sharedDirectoryNotADirectory(String)
@@ -385,6 +407,12 @@ enum ConfigurationBuilderError: LocalizedError {
             "The stored machine identifier data is invalid."
         case .missingKernelPath:
             "A kernel path is required for Linux kernel boot mode."
+        case .kernelNotFound(let path):
+            "Kernel image not found at \(path)."
+        case .initrdNotFound(let path):
+            "Initial ramdisk not found at \(path)."
+        case .isoImageNotFound(let path):
+            "ISO image not found at \(path)."
         case .diskImageNotFound(let url):
             "Disk image not found at \(url.path(percentEncoded: false))."
         case .sharedDirectoryNotFound(let path):
