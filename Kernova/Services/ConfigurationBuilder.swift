@@ -4,6 +4,9 @@ import os
 
 /// Translates a `VMConfiguration` into a `VZVirtualMachineConfiguration`.
 ///
+/// Resolves symlinks and validates all user-supplied file paths (kernel, initrd, ISO,
+/// shared directories) before passing them to Virtualization.framework.
+///
 /// Supports three boot paths:
 /// - **macOS**: `VZMacPlatformConfiguration` + `VZMacOSBootLoader` (Apple Silicon only)
 /// - **EFI**: `VZGenericPlatformConfiguration` + `VZEFIBootLoader` (Linux guests)
@@ -178,15 +181,39 @@ struct ConfigurationBuilder: Sendable {
 
         let fileManager = FileManager.default
         let kernelURL = URL(fileURLWithPath: kernelPath).resolvingSymlinksInPath()
-        guard fileManager.fileExists(atPath: kernelURL.path(percentEncoded: false)) else {
+        let resolvedKernelPath = kernelURL.path(percentEncoded: false)
+
+        if resolvedKernelPath != kernelPath {
+            Self.logger.info("Kernel path '\(kernelPath)' resolved to '\(resolvedKernelPath)'")
+        }
+
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: resolvedKernelPath, isDirectory: &isDirectory) else {
+            Self.logger.error("Kernel image not found at '\(kernelPath)' (resolved: '\(resolvedKernelPath)')")
             throw ConfigurationBuilderError.kernelNotFound(kernelPath)
+        }
+        guard !isDirectory.boolValue else {
+            Self.logger.error("Kernel path is a directory, not a file: '\(kernelPath)' (resolved: '\(resolvedKernelPath)')")
+            throw ConfigurationBuilderError.kernelPathIsDirectory(kernelPath)
         }
 
         let bootLoader = VZLinuxBootLoader(kernelURL: kernelURL)
         if let initrdPath = config.initrdPath {
             let initrdURL = URL(fileURLWithPath: initrdPath).resolvingSymlinksInPath()
-            guard fileManager.fileExists(atPath: initrdURL.path(percentEncoded: false)) else {
+            let resolvedInitrdPath = initrdURL.path(percentEncoded: false)
+
+            if resolvedInitrdPath != initrdPath {
+                Self.logger.info("Initrd path '\(initrdPath)' resolved to '\(resolvedInitrdPath)'")
+            }
+
+            var isInitrdDirectory: ObjCBool = false
+            guard fileManager.fileExists(atPath: resolvedInitrdPath, isDirectory: &isInitrdDirectory) else {
+                Self.logger.error("Initial ramdisk not found at '\(initrdPath)' (resolved: '\(resolvedInitrdPath)')")
                 throw ConfigurationBuilderError.initrdNotFound(initrdPath)
+            }
+            guard !isInitrdDirectory.boolValue else {
+                Self.logger.error("Initrd path is a directory, not a file: '\(initrdPath)' (resolved: '\(resolvedInitrdPath)')")
+                throw ConfigurationBuilderError.initrdPathIsDirectory(initrdPath)
             }
             bootLoader.initialRamdiskURL = initrdURL
         }
@@ -226,8 +253,20 @@ struct ConfigurationBuilder: Sendable {
         // Attach ISO as USB mass storage device
         if let isoPath = config.isoPath {
             let isoURL = URL(fileURLWithPath: isoPath).resolvingSymlinksInPath()
-            guard FileManager.default.fileExists(atPath: isoURL.path(percentEncoded: false)) else {
+            let resolvedISOPath = isoURL.path(percentEncoded: false)
+
+            if resolvedISOPath != isoPath {
+                Self.logger.info("ISO path '\(isoPath)' resolved to '\(resolvedISOPath)'")
+            }
+
+            var isISODirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: resolvedISOPath, isDirectory: &isISODirectory) else {
+                Self.logger.error("ISO image not found at '\(isoPath)' (resolved: '\(resolvedISOPath)')")
                 throw ConfigurationBuilderError.isoImageNotFound(isoPath)
+            }
+            guard !isISODirectory.boolValue else {
+                Self.logger.error("ISO path is a directory, not a file: '\(isoPath)' (resolved: '\(resolvedISOPath)')")
+                throw ConfigurationBuilderError.isoImagePathIsDirectory(isoPath)
             }
 
             let isoAttachment = try VZDiskImageStorageDeviceAttachment(url: isoURL, readOnly: true)
@@ -389,8 +428,11 @@ enum ConfigurationBuilderError: LocalizedError {
     case invalidMachineIdentifier
     case missingKernelPath
     case kernelNotFound(String)
+    case kernelPathIsDirectory(String)
     case initrdNotFound(String)
+    case initrdPathIsDirectory(String)
     case isoImageNotFound(String)
+    case isoImagePathIsDirectory(String)
     case diskImageNotFound(URL)
     case sharedDirectoryNotFound(String)
     case sharedDirectoryNotADirectory(String)
@@ -409,10 +451,16 @@ enum ConfigurationBuilderError: LocalizedError {
             "A kernel path is required for Linux kernel boot mode."
         case .kernelNotFound(let path):
             "Kernel image not found at \(path)."
+        case .kernelPathIsDirectory(let path):
+            "Kernel path is a directory, not a file: \(path)."
         case .initrdNotFound(let path):
             "Initial ramdisk not found at \(path)."
+        case .initrdPathIsDirectory(let path):
+            "Initial ramdisk path is a directory, not a file: \(path)."
         case .isoImageNotFound(let path):
-            "ISO image not found at \(path)."
+            "ISO image not found at \(path). Remove the ISO path from your VM configuration if the installation media is no longer needed."
+        case .isoImagePathIsDirectory(let path):
+            "ISO image path is a directory, not a file: \(path)."
         case .diskImageNotFound(let url):
             "Disk image not found at \(url.path(percentEncoded: false))."
         case .sharedDirectoryNotFound(let path):
