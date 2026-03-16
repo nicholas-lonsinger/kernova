@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+> Design philosophy and UI guidelines are in [SPEC.md](SPEC.md).
+
 ## Build & Test
 
 This is an Xcode project (not Swift Package Manager). Build and test via `xcodebuild`:
@@ -62,7 +64,15 @@ The app uses Apple's `os.Logger` (subsystem `com.kernova.app`) with per-componen
 - Method entry points in complex flows should have `.debug` logs with relevant parameter values
 - Do not use `print()`, `NSLog()`, or file-based logging
 
-## Commit Messages
+### File Operations
+
+- When deleting files, prefer `trash` over `rm` whenever possible (moves to Trash instead of permanent deletion).
+
+## Git Workflow
+
+These conventions apply to **all** forms of committing: local commits, PR squash/merge commits, and any other git operations that produce commits.
+
+### Commit Messages
 
 Use the following format for all commits:
 
@@ -118,6 +128,14 @@ feat: Add VM snapshot support
 Commit messages must reflect the full intent and scope of all changes, not just the last operation performed. Before writing a commit message, review both the conversation context (what the user asked for, the steps taken) and the staged diff holistically. Lead with the primary purpose; secondary details (naming conventions, formatting choices) belong in the body.
 
 The `Co-Authored-By` trailer is automatically appended by Claude Code and should not be duplicated in the commit message body.
+
+### Merging Pull Requests
+
+When merging PRs with `gh pr merge`, always use `--subject` with the PR title and append the PR number in parentheses (e.g., `"fix: Title (#11)"`), matching the repo's existing convention. Always use `--delete-branch` to clean up the remote branch.
+
+### Post-Commit
+
+After a commit/push, if any new preferences or insights emerged during the work, ask the user if they'd like to add them to memory.
 
 ## Architecture Change Protocol
 
