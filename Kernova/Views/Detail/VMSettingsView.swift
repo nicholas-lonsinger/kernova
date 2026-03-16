@@ -101,7 +101,7 @@ struct VMSettingsView: View {
         panel.prompt = "Attach"
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        instance.configuration.isoPath = url.path
+        instance.configuration.isoPath = url.path(percentEncoded: false)
     }
 
     @ViewBuilder
@@ -238,7 +238,7 @@ struct VMSettingsView: View {
         let existingPaths = Set(current.map(\.path))
 
         for url in panel.urls {
-            let path = url.path
+            let path = url.path(percentEncoded: false)
             guard !existingPaths.contains(path) else { continue }
             current.append(SharedDirectory(path: path))
         }

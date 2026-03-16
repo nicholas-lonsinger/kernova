@@ -27,7 +27,7 @@ struct DiskImageService: Sendable {
             "--fs", "none",
             "--format", "ASIF",
             "--size", "\(sizeInGB)g",
-            url.path
+            url.path(percentEncoded: false)
         ]
         process.standardOutput = pipe
         process.standardError = pipe
@@ -46,8 +46,8 @@ struct DiskImageService: Sendable {
 
     /// Returns the physical (actual) size of a disk image on disk.
     func physicalSize(of url: URL) throws -> UInt64 {
-        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
-        return attributes[.size] as? UInt64 ?? 0
+        let values = try url.resourceValues(forKeys: [.totalFileAllocatedSizeKey])
+        return UInt64(values.totalFileAllocatedSize ?? 0)
     }
 }
 

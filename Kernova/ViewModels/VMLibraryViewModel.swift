@@ -281,7 +281,7 @@ final class VMLibraryViewModel {
             let vmsDir = try storageService.vmsDirectory
 
             // If the source is already inside our VMs directory, just select it
-            if sourceURL.path.hasPrefix(vmsDir.path) {
+            if sourceURL.path(percentEncoded: false).hasPrefix(vmsDir.path(percentEncoded: false)) {
                 let config = try storageService.loadConfiguration(from: sourceURL)
                 if let existing = instances.first(where: { $0.id == config.id }) {
                     selectedID = existing.id

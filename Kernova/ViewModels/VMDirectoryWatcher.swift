@@ -25,9 +25,9 @@ final class VMDirectoryWatcher {
 
     /// Starts watching the given directory for file system write events.
     func start(directory: URL) {
-        let fd = open(directory.path, O_EVTONLY)
+        let fd = open(directory.path(percentEncoded: false), O_EVTONLY)
         guard fd >= 0 else {
-            Self.logger.warning("Could not open VMs directory for monitoring: \(directory.path)")
+            Self.logger.warning("Could not open VMs directory for monitoring: \(directory.path(percentEncoded: false))")
             return
         }
 
@@ -48,7 +48,7 @@ final class VMDirectoryWatcher {
         source.resume()
         directorySource = source
 
-        Self.logger.info("Started directory watcher on \(directory.path)")
+        Self.logger.info("Started directory watcher on \(directory.path(percentEncoded: false))")
     }
 
     /// Debounces rapid FS events into a single reconciliation pass after 0.5 seconds of quiet.

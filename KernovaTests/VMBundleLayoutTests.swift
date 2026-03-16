@@ -76,7 +76,7 @@ struct VMBundleLayoutTests {
         defer { try? FileManager.default.removeItem(at: tempDir) }
 
         let layout = VMBundleLayout(bundleURL: tempDir)
-        FileManager.default.createFile(atPath: layout.saveFileURL.path, contents: Data([0x00]))
+        FileManager.default.createFile(atPath: layout.saveFileURL.path(percentEncoded: false), contents: Data([0x00]))
 
         #expect(layout.hasSaveFile == true)
     }
@@ -116,7 +116,7 @@ struct VMBundleLayoutTests {
         defer { try? FileManager.default.removeItem(at: tempDir) }
 
         let layout = VMBundleLayout(bundleURL: tempDir)
-        let path = layout.diskImageURL.path
+        let path = layout.diskImageURL.path(percentEncoded: false)
 
         // Create a sparse file via ftruncate: 10 MB logical size, 0 bytes physically allocated
         let logicalSize: UInt64 = 10 * 1024 * 1024

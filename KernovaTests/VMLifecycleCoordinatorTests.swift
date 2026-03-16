@@ -380,7 +380,7 @@ struct VMLifecycleCoordinatorTests {
         wizard.selectedOS = .macOS
         wizard.ipswSource = .downloadLatest
         wizard.ipswDownloadPath = FileManager.default.temporaryDirectory
-            .appendingPathComponent("test-restore.ipsw").path
+            .appendingPathComponent("test-restore.ipsw").path(percentEncoded: false)
 
         let storageService = MockVMStorageService()
 

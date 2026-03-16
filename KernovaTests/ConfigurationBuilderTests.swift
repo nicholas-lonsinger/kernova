@@ -89,7 +89,7 @@ struct ConfigurationBuilderTests {
         defer { try? FileManager.default.removeItem(at: bundleURL) }
 
         // Create a file (not a directory) to use as the shared path
-        let filePath = bundleURL.appendingPathComponent("not-a-directory").path
+        let filePath = bundleURL.appendingPathComponent("not-a-directory").path(percentEncoded: false)
         FileManager.default.createFile(atPath: filePath, contents: nil)
 
         let config = makeLinuxConfig(sharedDirectories: [
@@ -110,11 +110,11 @@ struct ConfigurationBuilderTests {
         // Create a read-only directory
         let shareDir = bundleURL.appendingPathComponent("readonly-share")
         try FileManager.default.createDirectory(at: shareDir, withIntermediateDirectories: true)
-        try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: shareDir.path)
-        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: shareDir.path) }
+        try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: shareDir.path(percentEncoded: false))
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: shareDir.path(percentEncoded: false)) }
 
         let config = makeLinuxConfig(sharedDirectories: [
-            SharedDirectory(path: shareDir.path, readOnly: false)
+            SharedDirectory(path: shareDir.path(percentEncoded: false), readOnly: false)
         ])
 
         let builder = ConfigurationBuilder()
@@ -131,11 +131,11 @@ struct ConfigurationBuilderTests {
         // Create a read-only directory
         let shareDir = bundleURL.appendingPathComponent("readonly-share")
         try FileManager.default.createDirectory(at: shareDir, withIntermediateDirectories: true)
-        try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: shareDir.path)
-        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: shareDir.path) }
+        try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: shareDir.path(percentEncoded: false))
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: shareDir.path(percentEncoded: false)) }
 
         let config = makeLinuxConfig(sharedDirectories: [
-            SharedDirectory(path: shareDir.path, readOnly: true)
+            SharedDirectory(path: shareDir.path(percentEncoded: false), readOnly: true)
         ])
 
         let builder = ConfigurationBuilder()

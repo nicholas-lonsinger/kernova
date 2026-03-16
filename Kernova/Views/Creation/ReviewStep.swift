@@ -62,7 +62,7 @@ struct ReviewStep: View {
     }
 
     private func abbreviateWithTilde(_ path: String) -> String {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let home = FileManager.default.homeDirectoryForCurrentUser.path(percentEncoded: false)
         if path.hasPrefix(home) {
             return "~" + path.dropFirst(home.count)
         }

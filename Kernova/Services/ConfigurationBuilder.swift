@@ -135,7 +135,7 @@ struct ConfigurationBuilder: Sendable {
 
         let layout = VMBundleLayout(bundleURL: bundleURL)
         let variableStore: VZEFIVariableStore
-        if FileManager.default.fileExists(atPath: layout.efiVariableStoreURL.path) {
+        if FileManager.default.fileExists(atPath: layout.efiVariableStoreURL.path(percentEncoded: false)) {
             variableStore = VZEFIVariableStore(url: layout.efiVariableStoreURL)
         } else {
             variableStore = try VZEFIVariableStore(creatingVariableStoreAt: layout.efiVariableStoreURL, options: [])
@@ -205,7 +205,7 @@ struct ConfigurationBuilder: Sendable {
         bundleURL: URL
     ) throws {
         let layout = VMBundleLayout(bundleURL: bundleURL)
-        guard FileManager.default.fileExists(atPath: layout.diskImageURL.path) else {
+        guard FileManager.default.fileExists(atPath: layout.diskImageURL.path(percentEncoded: false)) else {
             throw ConfigurationBuilderError.diskImageNotFound(layout.diskImageURL)
         }
 
@@ -216,7 +216,7 @@ struct ConfigurationBuilder: Sendable {
         // Attach ISO as USB mass storage device
         if let isoPath = config.isoPath {
             let isoURL = URL(fileURLWithPath: isoPath)
-            if FileManager.default.fileExists(atPath: isoURL.path) {
+            if FileManager.default.fileExists(atPath: isoURL.path(percentEncoded: false)) {
                 do {
                     let isoAttachment = try VZDiskImageStorageDeviceAttachment(url: isoURL, readOnly: true)
                     let usbStorage = VZUSBMassStorageDeviceConfiguration(attachment: isoAttachment)
@@ -386,7 +386,7 @@ enum ConfigurationBuilderError: LocalizedError {
         case .missingKernelPath:
             "A kernel path is required for Linux kernel boot mode."
         case .diskImageNotFound(let url):
-            "Disk image not found at \(url.path)."
+            "Disk image not found at \(url.path(percentEncoded: false))."
         case .sharedDirectoryNotFound(let path):
             "Shared directory not found at \(path)."
         case .sharedDirectoryNotADirectory(let path):
