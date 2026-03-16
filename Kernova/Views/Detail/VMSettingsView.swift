@@ -122,13 +122,10 @@ struct VMSettingsView: View {
             )
 
             LabeledContent("Disk Size") {
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text("\(instance.configuration.diskSizeInGB) GB allocated")
-                    if let usage = instance.diskUsageBytes {
-                        Text("\(DataFormatters.formatBytes(usage)) on disk")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+                if let usage = instance.diskUsageBytes {
+                    Text("\(DataFormatters.formatBytes(usage)) (on disk) / \(instance.configuration.diskSizeInGB) GB (allocated)")
+                } else {
+                    Text("\(instance.configuration.diskSizeInGB) GB")
                 }
             }
         }
