@@ -29,7 +29,7 @@ struct VMStorageService: Sendable {
                 .appendingPathComponent("Kernova", isDirectory: true)
                 .appendingPathComponent("VMs", isDirectory: true)
 
-            if !FileManager.default.fileExists(atPath: vmsDir.path) {
+            if !FileManager.default.fileExists(atPath: vmsDir.path(percentEncoded: false)) {
                 try FileManager.default.createDirectory(at: vmsDir, withIntermediateDirectories: true)
             }
             return vmsDir
@@ -56,7 +56,7 @@ struct VMStorageService: Sendable {
         )
         return contents.filter { url in
             let configFile = url.appendingPathComponent("config.json")
-            return FileManager.default.fileExists(atPath: configFile.path)
+            return FileManager.default.fileExists(atPath: configFile.path(percentEncoded: false))
         }
     }
 
@@ -84,7 +84,7 @@ struct VMStorageService: Sendable {
     func createVMBundle(for configuration: VMConfiguration) throws -> URL {
         let bundle = try bundleURL(for: configuration)
 
-        if FileManager.default.fileExists(atPath: bundle.path) {
+        if FileManager.default.fileExists(atPath: bundle.path(percentEncoded: false)) {
             throw VMStorageError.bundleAlreadyExists(configuration.id)
         }
 
@@ -99,7 +99,7 @@ struct VMStorageService: Sendable {
     func cloneVMBundle(from sourceBundleURL: URL, newConfiguration: VMConfiguration, filesToCopy: [String]) throws -> URL {
         let destinationBundle = try bundleURL(for: newConfiguration)
 
-        if FileManager.default.fileExists(atPath: destinationBundle.path) {
+        if FileManager.default.fileExists(atPath: destinationBundle.path(percentEncoded: false)) {
             throw VMStorageError.bundleAlreadyExists(newConfiguration.id)
         }
 
@@ -109,7 +109,7 @@ struct VMStorageService: Sendable {
         for fileName in filesToCopy {
             let sourceFile = sourceBundleURL.appendingPathComponent(fileName)
             let destinationFile = destinationBundle.appendingPathComponent(fileName)
-            if fm.fileExists(atPath: sourceFile.path) {
+            if fm.fileExists(atPath: sourceFile.path(percentEncoded: false)) {
                 try fm.copyItem(at: sourceFile, to: destinationFile)
             }
         }
@@ -122,7 +122,7 @@ struct VMStorageService: Sendable {
 
     /// Deletes a VM bundle directory and all its contents.
     func deleteVMBundle(at bundleURL: URL) throws {
-        guard FileManager.default.fileExists(atPath: bundleURL.path) else {
+        guard FileManager.default.fileExists(atPath: bundleURL.path(percentEncoded: false)) else {
             throw VMStorageError.bundleNotFound(bundleURL)
         }
         try FileManager.default.trashItem(at: bundleURL, resultingItemURL: nil)
@@ -146,8 +146,8 @@ struct VMStorageService: Sendable {
             )
 
         let fm = FileManager.default
-        let legacyExists = fm.fileExists(atPath: bundleURL.path)
-        let migratedExists = fm.fileExists(atPath: migratedURL.path)
+        let legacyExists = fm.fileExists(atPath: bundleURL.path(percentEncoded: false))
+        let migratedExists = fm.fileExists(atPath: migratedURL.path(percentEncoded: false))
 
         if legacyExists && migratedExists {
             throw VMStorageError.migrationConflict(bundleURL)
@@ -178,7 +178,7 @@ enum VMStorageError: LocalizedError {
         case .bundleAlreadyExists(let id):
             "A VM bundle already exists for ID \(id.uuidString)."
         case .bundleNotFound(let url):
-            "VM bundle not found at \(url.path)."
+            "VM bundle not found at \(url.path(percentEncoded: false))."
         case .migrationConflict(let url):
             "Migration conflict: both legacy and .kernova bundles exist for \(url.lastPathComponent)."
         }

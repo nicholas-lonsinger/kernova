@@ -137,7 +137,7 @@ final class VMCreationViewModel {
     static var defaultIPSWDownloadPath: String {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Downloads/RestoreImage.ipsw")
-            .path
+            .path(percentEncoded: false)
     }
 
     // MARK: - Apply Defaults

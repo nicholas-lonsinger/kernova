@@ -37,7 +37,7 @@ struct VMBundleLayout: Sendable {
     }
 
     var hasSaveFile: Bool {
-        FileManager.default.fileExists(atPath: saveFileURL.path)
+        FileManager.default.fileExists(atPath: saveFileURL.path(percentEncoded: false))
     }
 
     /// Actual bytes consumed on disk by the sparse disk image, or `nil` if the file doesn't exist.

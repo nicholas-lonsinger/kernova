@@ -13,7 +13,7 @@ extension FileManager {
             )
             let kernovaDir = appSupport.appendingPathComponent("Kernova", isDirectory: true)
 
-            if !fileExists(atPath: kernovaDir.path) {
+            if !fileExists(atPath: kernovaDir.path(percentEncoded: false)) {
                 try createDirectory(at: kernovaDir, withIntermediateDirectories: true)
             }
 
@@ -27,18 +27,12 @@ extension FileManager {
             let vmsDir = try kernovaAppSupportDirectory
                 .appendingPathComponent("VMs", isDirectory: true)
 
-            if !fileExists(atPath: vmsDir.path) {
+            if !fileExists(atPath: vmsDir.path(percentEncoded: false)) {
                 try createDirectory(at: vmsDir, withIntermediateDirectories: true)
             }
 
             return vmsDir
         }
-    }
-
-    /// Returns the size of a file or directory in bytes.
-    func sizeOfItem(atPath path: String) throws -> UInt64 {
-        let attributes = try attributesOfItem(atPath: path)
-        return attributes[.size] as? UInt64 ?? 0
     }
 
     /// Returns the total size of a directory and all its contents.

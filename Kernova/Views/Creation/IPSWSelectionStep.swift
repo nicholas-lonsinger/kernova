@@ -160,7 +160,7 @@ struct IPSWSelectionStep: View {
         panel.allowedContentTypes = [UTType(filenameExtension: "ipsw")!]
 
         if panel.runModal() == .OK, let url = panel.url {
-            creationVM.ipswDownloadPath = url.path
+            creationVM.ipswDownloadPath = url.path(percentEncoded: false)
         }
     }
 
@@ -173,12 +173,12 @@ struct IPSWSelectionStep: View {
 
         if panel.runModal() == .OK, let url = panel.url {
             creationVM.ipswSource = .localFile
-            creationVM.ipswPath = url.path
+            creationVM.ipswPath = url.path(percentEncoded: false)
         }
     }
 
     private func abbreviateWithTilde(_ path: String) -> String {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let home = FileManager.default.homeDirectoryForCurrentUser.path(percentEncoded: false)
         if path.hasPrefix(home) {
             return "~" + path.dropFirst(home.count)
         }

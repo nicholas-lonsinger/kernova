@@ -16,15 +16,15 @@ struct VMStorageServiceTests {
         )
 
         let bundleURL = try service.createVMBundle(for: config)
-        #expect(FileManager.default.fileExists(atPath: bundleURL.path))
+        #expect(FileManager.default.fileExists(atPath: bundleURL.path(percentEncoded: false)))
 
         // Verify config.json exists
         let configURL = bundleURL.appendingPathComponent("config.json")
-        #expect(FileManager.default.fileExists(atPath: configURL.path))
+        #expect(FileManager.default.fileExists(atPath: configURL.path(percentEncoded: false)))
 
         // Clean up (use removeItem directly to avoid polluting Trash during tests)
         try FileManager.default.removeItem(at: bundleURL)
-        #expect(!FileManager.default.fileExists(atPath: bundleURL.path))
+        #expect(!FileManager.default.fileExists(atPath: bundleURL.path(percentEncoded: false)))
     }
 
     @Test("Load configuration from bundle")
@@ -148,8 +148,8 @@ struct VMStorageServiceTests {
         let result = try service.migrateBundleIfNeeded(at: legacyURL)
         #expect(result.pathExtension == "kernova")
         #expect(result.lastPathComponent == "\(uuid.uuidString).kernova")
-        #expect(FileManager.default.fileExists(atPath: result.path))
-        #expect(!FileManager.default.fileExists(atPath: legacyURL.path))
+        #expect(FileManager.default.fileExists(atPath: result.path(percentEncoded: false)))
+        #expect(!FileManager.default.fileExists(atPath: legacyURL.path(percentEncoded: false)))
     }
 
     @Test("Migrate already-migrated bundle is idempotent")

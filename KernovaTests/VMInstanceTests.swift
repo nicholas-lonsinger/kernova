@@ -59,17 +59,17 @@ struct VMInstanceTests {
             withIntermediateDirectories: true
         )
         FileManager.default.createFile(
-            atPath: instance.saveFileURL.path,
+            atPath: instance.saveFileURL.path(percentEncoded: false),
             contents: Data("fake save".utf8)
         )
 
         defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
 
-        #expect(FileManager.default.fileExists(atPath: instance.saveFileURL.path))
+        #expect(FileManager.default.fileExists(atPath: instance.saveFileURL.path(percentEncoded: false)))
 
         instance.removeSaveFile()
 
-        #expect(!FileManager.default.fileExists(atPath: instance.saveFileURL.path))
+        #expect(!FileManager.default.fileExists(atPath: instance.saveFileURL.path(percentEncoded: false)))
     }
 
     // MARK: - isColdPaused

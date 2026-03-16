@@ -26,7 +26,7 @@ struct IPSWService: Sendable {
         Self.logger.info("Downloading restore image from \(remoteURL)")
 
         // Create the destination file up-front so it's visible in Finder immediately.
-        FileManager.default.createFile(atPath: destinationURL.path, contents: nil)
+        FileManager.default.createFile(atPath: destinationURL.path(percentEncoded: false), contents: nil)
 
         var cleanUpPartial = true
         defer {
@@ -40,8 +40,11 @@ struct IPSWService: Sendable {
         let expectedBytes = response.expectedContentLength  // -1 if unknown
         let expected = expectedBytes > 0 ? expectedBytes : Int64.max
 
-        guard let fileHandle = FileHandle(forWritingAtPath: destinationURL.path) else {
-            throw IPSWError.downloadFailed("Could not open destination file for writing")
+        let fileHandle: FileHandle
+        do {
+            fileHandle = try FileHandle(forWritingTo: destinationURL)
+        } catch {
+            throw IPSWError.downloadFailed("Could not open destination file for writing: \(error.localizedDescription)")
         }
         defer { try? fileHandle.close() }
 
