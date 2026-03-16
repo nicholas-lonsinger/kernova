@@ -39,4 +39,13 @@ struct VMBundleLayout: Sendable {
     var hasSaveFile: Bool {
         FileManager.default.fileExists(atPath: saveFileURL.path)
     }
+
+    /// Actual bytes consumed on disk by the sparse disk image, or `nil` if the file doesn't exist.
+    var diskUsageBytes: UInt64? {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: diskImageURL.path),
+              let size = attrs[.size] as? UInt64 else {
+            return nil
+        }
+        return size
+    }
 }

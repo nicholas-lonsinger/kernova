@@ -121,7 +121,16 @@ struct VMSettingsView: View {
                 in: os.minMemoryInGB...os.maxMemoryInGB
             )
 
-            LabeledContent("Disk Size", value: "\(instance.configuration.diskSizeInGB) GB")
+            LabeledContent("Disk Size") {
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text("\(instance.configuration.diskSizeInGB) GB allocated")
+                    if let usage = instance.diskUsageBytes {
+                        Text("\(DataFormatters.formatBytes(usage)) on disk")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
         }
     }
 

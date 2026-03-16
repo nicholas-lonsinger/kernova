@@ -80,4 +80,29 @@ struct VMBundleLayoutTests {
 
         #expect(layout.hasSaveFile == true)
     }
+
+    // MARK: - diskUsageBytes
+
+    @Test("diskUsageBytes returns nil when disk image does not exist")
+    func diskUsageBytesReturnsNilForMissingFile() {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let layout = VMBundleLayout(bundleURL: tempDir)
+        #expect(layout.diskUsageBytes == nil)
+    }
+
+    @Test("diskUsageBytes returns correct size for an existing file")
+    func diskUsageBytesReturnsSize() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let layout = VMBundleLayout(bundleURL: tempDir)
+        let testData = Data(repeating: 0xAB, count: 4096)
+        try testData.write(to: layout.diskImageURL)
+
+        let usage = layout.diskUsageBytes
+        #expect(usage == 4096)
+    }
 }

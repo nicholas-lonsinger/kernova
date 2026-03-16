@@ -75,6 +75,7 @@ final class VMInstance: Identifiable {
     var saveFileURL: URL { bundleLayout.saveFileURL }
     var hasSaveFile: Bool { bundleLayout.hasSaveFile }
     var serialLogURL: URL { bundleLayout.serialLogURL }
+    var diskUsageBytes: UInt64? { bundleLayout.diskUsageBytes }
 
     /// `true` when the VM is paused-to-disk but has no live `VZVirtualMachine` in memory.
     var isColdPaused: Bool {
