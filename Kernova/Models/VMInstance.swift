@@ -137,18 +137,27 @@ final class VMInstance: Identifiable {
             FileManager.default.createFile(atPath: logURL.path(percentEncoded: false), contents: nil)
         }
         let logHandle = try? FileHandle(forWritingTo: logURL)
-        _ = try? logHandle?.seekToEnd()
+        do {
+            _ = try logHandle?.seekToEnd()
+        } catch {
+            Self.logger.warning("Could not seek to end of serial log: \(error.localizedDescription)")
+        }
         serialLogFileHandle = logHandle
 
         // Capture for the readability handler closure (runs on a background GCD queue)
         let logFileHandle = logHandle
+        let logger = Self.logger
 
         outputPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             guard !data.isEmpty else { return }
 
             // Write to disk log (background-safe — FileHandle is thread-safe for sequential writes)
-            try? logFileHandle?.write(contentsOf: data)
+            do {
+                try logFileHandle?.write(contentsOf: data)
+            } catch {
+                logger.error("Failed to write to serial log: \(error.localizedDescription)")
+            }
 
             // Update UI buffer on the main actor
             if let text = String(data: data, encoding: .utf8) {
@@ -176,13 +185,21 @@ final class VMInstance: Identifiable {
     func sendSerialInput(_ string: String) {
         guard let data = string.data(using: .utf8),
               let inputPipe = serialInputPipe else { return }
-        try? inputPipe.fileHandleForWriting.write(contentsOf: data)
+        do {
+            try inputPipe.fileHandleForWriting.write(contentsOf: data)
+        } catch {
+            Self.logger.error("Failed to send serial input to VM '\(self.name)': \(error.localizedDescription)")
+        }
     }
 
     /// Stops reading from the serial output pipe and closes the log file handle.
     func stopSerialReading() {
         serialOutputPipe?.fileHandleForReading.readabilityHandler = nil
-        try? serialLogFileHandle?.close()
+        do {
+            try serialLogFileHandle?.close()
+        } catch {
+            Self.logger.warning("Failed to close serial log file for VM '\(self.name)': \(error.localizedDescription)")
+        }
         serialLogFileHandle = nil
     }
 }

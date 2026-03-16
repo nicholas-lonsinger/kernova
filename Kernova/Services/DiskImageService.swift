@@ -46,8 +46,8 @@ struct DiskImageService: Sendable {
 
     /// Returns the physical (actual) size of a disk image on disk.
     func physicalSize(of url: URL) throws -> UInt64 {
-        let values = try url.resourceValues(forKeys: [.fileSizeKey])
-        return UInt64(values.fileSize ?? 0)
+        let values = try url.resourceValues(forKeys: [.totalFileAllocatedSizeKey])
+        return UInt64(values.totalFileAllocatedSize ?? 0)
     }
 }
 
