@@ -189,6 +189,7 @@
 /* Begin PBXShellScriptBuildPhase section */
 		A10000D0 /* Set Build Number from Git */ = {
 			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
 			files = (
 			);
