@@ -303,7 +303,7 @@ No external package dependencies. No Swift Package Manager, CocoaPods, or Cartha
 | `VMCreationViewModel` | 44 tests | All wizard steps, validation, OS-specific paths |
 | `VMLifecycleCoordinator` | Yes | Multi-step orchestration, error handling, service delegation, token-based operation serialization, stop/forceStop bypass, stale-token race condition coverage |
 | `VMInstance` | Yes | Status transitions, configuration updates, bundle layout |
-| `ConfigurationBuilder` | Yes | All three boot paths, device configuration, path validation (symlinks, missing kernel/initrd/ISO) |
+| `ConfigurationBuilder` | Yes | All three boot paths, device configuration, path validation (symlinks, missing kernel/initrd/ISO, directory rejection for file paths) |
 | `VirtualizationService` | Yes | Start/stop/pause/resume via mock VZ objects |
 | `VMStorageService` | Yes | CRUD operations, cloning, migration |
 | `VMBundleLayout` | Yes | Path derivation from bundle root |

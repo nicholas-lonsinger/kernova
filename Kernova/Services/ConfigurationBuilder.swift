@@ -361,16 +361,20 @@ struct ConfigurationBuilder: Sendable {
 
             var isDirectory: ObjCBool = false
             guard fileManager.fileExists(atPath: resolvedPath, isDirectory: &isDirectory) else {
+                Self.logger.error("Shared directory not found at '\(directory.path)' (resolved: '\(resolvedPath)')")
                 throw ConfigurationBuilderError.sharedDirectoryNotFound(directory.path)
             }
             guard isDirectory.boolValue else {
+                Self.logger.error("Shared path is not a directory: '\(directory.path)' (resolved: '\(resolvedPath)')")
                 throw ConfigurationBuilderError.sharedDirectoryNotADirectory(directory.path)
             }
             guard fileManager.isReadableFile(atPath: resolvedPath) else {
+                Self.logger.error("Shared directory is not readable: '\(directory.path)' (resolved: '\(resolvedPath)')")
                 throw ConfigurationBuilderError.sharedDirectoryNotReadable(directory.path)
             }
             if !directory.readOnly {
                 guard fileManager.isWritableFile(atPath: resolvedPath) else {
+                    Self.logger.error("Shared directory is not writable: '\(directory.path)' (resolved: '\(resolvedPath)')")
                     throw ConfigurationBuilderError.sharedDirectoryNotWritable(directory.path)
                 }
             }

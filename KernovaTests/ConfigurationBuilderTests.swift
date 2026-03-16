@@ -221,7 +221,7 @@ struct ConfigurationBuilderTests {
                  .initrdNotFound, .initrdPathIsDirectory,
                  .isoImageNotFound, .isoImagePathIsDirectory:
                 Issue.record("Unexpected path validation error: \(error)")
-            // Expected failures in test environment (no real VZ hardware):
+            // Non-path-validation errors — tolerated if they occur:
             case .macOSGuestRequiresAppleSilicon,
                  .invalidHardwareModel, .invalidMachineIdentifier,
                  .missingKernelPath, .diskImageNotFound:
@@ -324,7 +324,7 @@ struct ConfigurationBuilderTests {
                  .initrdNotFound, .initrdPathIsDirectory,
                  .isoImageNotFound, .isoImagePathIsDirectory:
                 Issue.record("Unexpected path validation error: \(error)")
-            // Expected failures in test environment (no real VZ hardware):
+            // Non-path-validation errors — tolerated if they occur:
             case .macOSGuestRequiresAppleSilicon,
                  .invalidHardwareModel, .invalidMachineIdentifier,
                  .missingKernelPath, .diskImageNotFound:
@@ -552,6 +552,47 @@ struct ConfigurationBuilderTests {
             guard let e = error as? ConfigurationBuilderError,
                   case .isoImagePathIsDirectory = e else { return false }
             return true
+        }
+    }
+
+    // MARK: - Happy-Path Symlink Tests
+
+    @Test("Builder follows symlink to valid kernel file")
+    func builderFollowsSymlinkToValidKernelFile() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        // Create a real kernel file and a symlink to it
+        let realKernel = bundleURL.appendingPathComponent("vmlinuz").path(percentEncoded: false)
+        FileManager.default.createFile(atPath: realKernel, contents: Data([0]))
+        let symlinkPath = bundleURL.appendingPathComponent("link-to-vmlinuz").path(percentEncoded: false)
+        try FileManager.default.createSymbolicLink(atPath: symlinkPath, withDestinationPath: realKernel)
+
+        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .linuxKernel)
+        config.kernelPath = symlinkPath
+
+        let builder = ConfigurationBuilder()
+        // Build may fail for other reasons (e.g., VZ framework validation), but must NOT fail
+        // with a path validation error — symlink to kernel file should be resolved and accepted.
+        do {
+            _ = try builder.build(from: config, bundleURL: bundleURL)
+        } catch let error as ConfigurationBuilderError {
+            switch error {
+            // Path validation errors — these MUST NOT occur:
+            case .sharedDirectoryNotFound, .sharedDirectoryNotADirectory,
+                 .sharedDirectoryNotReadable, .sharedDirectoryNotWritable,
+                 .kernelNotFound, .kernelPathIsDirectory,
+                 .initrdNotFound, .initrdPathIsDirectory,
+                 .isoImageNotFound, .isoImagePathIsDirectory:
+                Issue.record("Unexpected path validation error: \(error)")
+            // Non-path-validation errors — tolerated if they occur:
+            case .macOSGuestRequiresAppleSilicon,
+                 .invalidHardwareModel, .invalidMachineIdentifier,
+                 .missingKernelPath, .diskImageNotFound:
+                break
+            }
+        } catch {
+            // VZ framework or other errors are expected
         }
     }
 }
