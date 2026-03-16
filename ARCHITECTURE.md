@@ -49,7 +49,6 @@ Kernova/
 │   │   └── VMRowView.swift             # Individual VM row (name, status, inline rename)
 │   ├── Detail/
 │   │   ├── VMDetailView.swift          # Main detail pane — toolbar + console/settings switch
-│   │   ├── VMInfoView.swift            # VM information display
 │   │   ├── VMSettingsView.swift        # VM configuration editor
 │   │   └── MacOSInstallProgressView.swift # Two-phase install progress (download + install)
 │   ├── Console/
@@ -95,7 +94,7 @@ KernovaTests/
 └── DataFormattersTests.swift           # Formatting utility tests
 ```
 
-**Total: 49 source files, 20 test files (15 suites + 5 mocks).**
+**Total: 48 source files, 20 test files (15 suites + 5 mocks).**
 
 ## Component Map
 
@@ -167,7 +166,7 @@ All service implementations conform to protocols defined in `Services/Protocols/
 
 ### Views
 
-**Files:** 17 SwiftUI views across 4 subdirectories + root
+**Files:** 16 SwiftUI views across 4 subdirectories + root
 
 Views observe `VMLibraryViewModel` and individual `VMInstance`s via the Observation framework. The view hierarchy:
 
@@ -176,7 +175,6 @@ ContentView
 ├── SidebarView → VMRowView (per VM)
 └── VMDetailView
     ├── VMConsoleView → VMDisplayView (NSViewRepresentable for VZVirtualMachineView)
-    ├── VMInfoView
     ├── VMSettingsView
     └── MacOSInstallProgressView
 VMCreationWizardView (modal)
