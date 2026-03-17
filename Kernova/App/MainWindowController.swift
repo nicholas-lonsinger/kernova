@@ -154,6 +154,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSGestu
             _ = self.viewModel.selectedInstance
             _ = self.viewModel.selectedInstance?.status
             _ = self.viewModel.selectedInstance?.virtualMachine
+            _ = self.viewModel.selectedInstance?.preparingState
         } onChange: {
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -197,6 +198,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSGestu
 
     /// Returns the action identifiers that should be visible for a given VM instance.
     private func desiredActionIdentifiers(for instance: VMInstance) -> [NSToolbarItem.Identifier] {
+        if instance.isPreparing { return [] }
+
         switch instance.status {
         case .stopped:
             return [Self.startVMIdentifier, Self.deleteVMIdentifier]

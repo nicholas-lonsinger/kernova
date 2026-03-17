@@ -41,10 +41,16 @@ struct VMRowView: View {
 
             Spacer()
 
-            Circle()
-                .fill(instance.statusDisplayColor)
-                .frame(width: 8, height: 8)
-                .help(instance.statusToolTip ?? "")
+            if instance.isPreparing {
+                ProgressView()
+                    .controlSize(.mini)
+                    .frame(width: 8, height: 8)
+            } else {
+                Circle()
+                    .fill(instance.statusDisplayColor)
+                    .frame(width: 8, height: 8)
+                    .help(instance.statusToolTip ?? "")
+            }
         }
         .padding(.vertical, 2)
         .onChange(of: isRenaming) { _, renaming in

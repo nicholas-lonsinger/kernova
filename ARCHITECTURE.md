@@ -120,7 +120,7 @@ The model layer has two key types:
 
 - **`VMConfiguration`** is the persisted identity of a VM. It's a `Codable` + `Sendable` struct written as `config.json` inside each VM bundle. It holds: name, UUID, guest OS type, boot mode, CPU/memory/disk settings, display configuration, network settings, and OS-specific fields (macOS hardware model data, Linux kernel/initrd/cmdline paths).
 
-- **`VMInstance`** is the runtime representation. It's an `@Observable` `@MainActor` class that wraps a `VMConfiguration`, an optional `VZVirtualMachine`, and a `VMStatus`. It references the VM's bundle path and provides computed properties for disk image, aux storage, and save file locations via `VMBundleLayout`. A view-layer extension (`VMInstance+Display.swift`) provides display properties (`statusDisplayName`, `statusDisplayColor`, `statusToolTip`) that distinguish cold-paused VMs (state saved to disk, shown as "Suspended" in orange) from live-paused VMs (in memory, shown as "Paused" in yellow).
+- **`VMInstance`** is the runtime representation. It's an `@Observable` `@MainActor` class that wraps a `VMConfiguration`, an optional `VZVirtualMachine`, and a `VMStatus`. It references the VM's bundle path and provides computed properties for disk image, aux storage, and save file locations via `VMBundleLayout`. A view-layer extension (`VMInstance+Display.swift`) provides display properties (`statusDisplayName`, `statusDisplayColor`, `statusToolTip`) that distinguish preparing VMs (shown as "Cloning…"/"Importing…" in orange with a spinner), cold-paused VMs (state saved to disk, shown as "Suspended" in orange), and live-paused VMs (in memory, shown as "Paused" in yellow). The `PreparingOperation` enum (`.cloning`, `.importing`) provides display labels, cancel labels, and alert titles for preparing states. The `PreparingState` struct bundles the operation and its cancellable task into a single optional (`preparingState`) — when non-nil the instance is preparing, and `isPreparing` is a computed convenience.
 
 `VMBundleLayout` is a `Sendable` struct that takes a bundle root path and provides all derived file paths (disk image, aux storage, save file, serial log, etc.), keeping path logic centralized.
 
@@ -153,7 +153,7 @@ All service implementations conform to protocols defined in `Services/Protocols/
 
 **Files:** `VMLibraryViewModel.swift`, `VMLifecycleCoordinator.swift`, `VMCreationViewModel.swift`, `IPSWDownloadViewModel.swift`, `VMDirectoryWatcher.swift`
 
-- **`VMLibraryViewModel`** is the central `@Observable` view model. It owns the array of `VMInstance`s and handles list-level operations: add, remove, rename, selection tracking. For lifecycle operations (start, stop, install), it delegates to `VMLifecycleCoordinator`.
+- **`VMLibraryViewModel`** is the central `@Observable` view model. It owns the array of `VMInstance`s and handles list-level operations: add, remove, rename, selection tracking. For lifecycle operations (start, stop, install), it delegates to `VMLifecycleCoordinator`. Clone and import operations use a "phantom row" pattern: a `VMInstance` with `isPreparing = true` appears immediately in the sidebar with a spinner while the file copy runs asynchronously via `Task.detached`. The `hasPreparing` computed property enforces serialization — only one clone/import at a time. Cancellation removes the phantom row, cancels the task, and cleans up partial files on disk.
 
 - **`VMLifecycleCoordinator`** is an `@MainActor` coordinator that owns the lifecycle services (`VirtualizationService`, `MacOSInstallService`, `IPSWService`). It orchestrates multi-step operations like macOS installation (which involves IPSW download → platform file creation → VM configuration → installation). This separation keeps `VMLibraryViewModel` focused on list management. The coordinator enforces **per-VM operation serialization** — at most one lifecycle operation can be in flight for a given VM at any time; concurrent requests are rejected with `VMLifecycleCoordinator.LifecycleError.operationInProgress`. `stop` and `forceStop` bypass serialization entirely (clearing the active-operation token before calling the service) so users can always cancel hung operations.
 
@@ -300,10 +300,10 @@ No external package dependencies. No Swift Package Manager, CocoaPods, or Cartha
 | Component | Tests | Notes |
 |-----------|-------|-------|
 | `VMConfiguration` | 43 tests + clone suite | Encoding/decoding, defaults, validation, all fields |
-| `VMLibraryViewModel` | 47 tests | Add/remove/rename VMs, selection, delegation to coordinator, sleep/wake |
+| `VMLibraryViewModel` | 59 tests | Add/remove/rename VMs, selection, delegation to coordinator, sleep/wake, clone/import phantom rows, cancel preparing |
 | `VMCreationViewModel` | 44 tests | All wizard steps, validation, OS-specific paths |
 | `VMLifecycleCoordinator` | Yes | Multi-step orchestration, error handling, service delegation, token-based operation serialization, stop/forceStop bypass, stale-token race condition coverage |
-| `VMInstance` | Yes | Status transitions, configuration updates, bundle layout |
+| `VMInstance` | Yes | Status transitions, configuration updates, bundle layout, preparing state display properties |
 | `ConfigurationBuilder` | Yes | All three boot paths, device configuration, path validation (symlinks, missing kernel/initrd/ISO, directory rejection for file paths) |
 | `VirtualizationService` | Yes | Start/stop/pause/resume via mock VZ objects |
 | `VMStorageService` | Yes | CRUD operations, cloning, migration |

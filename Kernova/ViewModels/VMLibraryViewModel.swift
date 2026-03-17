@@ -25,7 +25,11 @@ final class VMLibraryViewModel {
     var errorMessage: String?
     var instanceToDelete: VMInstance?
     var renamingInstanceID: UUID?
-    var isCloning = false
+    var showCancelPreparingConfirmation = false
+    var preparingInstanceToCancel: VMInstance?
+
+    /// `true` when any instance is mid-clone or mid-import.
+    var hasPreparing: Bool { instances.contains(where: \.isPreparing) }
 
     // MARK: - Directory Watcher
 
@@ -275,7 +279,7 @@ final class VMLibraryViewModel {
     ///
     /// If the bundle is already inside the VMs directory, it is simply selected.
     /// If a VM with the same UUID already exists in the library, that instance is selected.
-    /// Otherwise, the bundle is copied into the VMs directory and loaded.
+    /// Otherwise, the bundle is copied into the VMs directory asynchronously with a phantom row.
     func importVM(from sourceURL: URL) {
         do {
             let vmsDir = try storageService.vmsDirectory
@@ -298,18 +302,57 @@ final class VMLibraryViewModel {
                 return
             }
 
-            // Copy bundle into VMs directory
-            let destinationURL = vmsDir.appendingPathComponent(sourceURL.lastPathComponent, isDirectory: true)
-            try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
+            // Serialize: only one preparing operation at a time
+            guard !hasPreparing else {
+                presentError(PreparingError.operationInProgress)
+                return
+            }
 
-            // Load and add to library
-            let layout = VMBundleLayout(bundleURL: destinationURL)
-            let initialStatus: VMStatus = layout.hasSaveFile ? .paused : .stopped
-            let instance = VMInstance(configuration: config, bundleURL: destinationURL, status: initialStatus)
-            instances.append(instance)
+            // Check save file from source bundle (destination doesn't exist yet)
+            let sourceLayout = VMBundleLayout(bundleURL: sourceURL)
+            let initialStatus: VMStatus = sourceLayout.hasSaveFile ? .paused : .stopped
+
+            // Determine destination, avoiding filename collisions
+            let destinationURL: URL = {
+                let candidate = vmsDir.appendingPathComponent(sourceURL.lastPathComponent, isDirectory: true)
+                guard FileManager.default.fileExists(atPath: candidate.path(percentEncoded: false)) else {
+                    return candidate
+                }
+                let stem = sourceURL.deletingPathExtension().lastPathComponent
+                let ext = sourceURL.pathExtension
+                var counter = 2
+                var url: URL
+                repeat {
+                    url = vmsDir.appendingPathComponent("\(stem) \(counter).\(ext)", isDirectory: true)
+                    counter += 1
+                } while FileManager.default.fileExists(atPath: url.path(percentEncoded: false))
+                return url
+            }()
+            // Create phantom row immediately
+            let phantom = VMInstance(configuration: config, bundleURL: destinationURL, status: initialStatus)
+            instances.append(phantom)
             instances.sort { $0.configuration.createdAt < $1.configuration.createdAt }
-            selectedID = instance.id
-            Self.logger.notice("Imported VM '\(config.name)' from \(sourceURL.lastPathComponent)")
+            selectedID = phantom.id
+
+            // Launch async file copy and assign preparing state atomically
+            let task = Task { [weak self] in
+                do {
+                    try await Task.detached {
+                        try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
+                    }.value
+
+                    guard let self else { return }
+                    phantom.preparingState = nil
+                    Self.logger.notice("Imported VM '\(config.name)' from \(sourceURL.lastPathComponent)")
+                } catch {
+                    guard let self else { return }
+                    self.cleanupPhantomInstance(phantom)
+                    if !Task.isCancelled {
+                        self.presentError(error)
+                    }
+                }
+            }
+            phantom.preparingState = VMInstance.PreparingState(operation: .importing, task: task)
         } catch {
             presentError(error)
         }
@@ -348,65 +391,85 @@ final class VMLibraryViewModel {
 
     // MARK: - Clone
 
-    func cloneVM(_ instance: VMInstance) async {
+    func cloneVM(_ instance: VMInstance) {
         guard instance.status.canEditSettings else { return }
+        guard !hasPreparing else {
+            presentError(PreparingError.operationInProgress)
+            return
+        }
 
-        isCloning = true
-        defer { isCloning = false }
+        let existingNames = instances.map(\.configuration.name)
+        var clonedConfig = instance.configuration.clonedForNewInstance(existingNames: existingNames)
 
+        // Regenerate platform identity fields
+        clonedConfig.macAddress = VZMACAddress.randomLocallyAdministered().string
+
+        #if arch(arm64)
+        if clonedConfig.guestOS == .macOS {
+            clonedConfig.machineIdentifierData = VZMacMachineIdentifier().dataRepresentation
+        }
+        #endif
+
+        if clonedConfig.bootMode == .efi || clonedConfig.bootMode == .linuxKernel {
+            clonedConfig.genericMachineIdentifierData = VZGenericMachineIdentifier().dataRepresentation
+        }
+
+        // Determine which bundle files to copy
+        var filesToCopy = ["Disk.asif"]
+        switch clonedConfig.guestOS {
+        case .macOS:
+            filesToCopy.append(contentsOf: ["AuxiliaryStorage", "HardwareModel"])
+        case .linux:
+            if clonedConfig.bootMode == .efi {
+                filesToCopy.append("EFIVariableStore")
+            }
+        }
+
+        // Derive the destination bundle URL (may touch disk to ensure VMs directory exists)
+        let bundleURL: URL
         do {
-            let existingNames = instances.map(\.configuration.name)
-            var clonedConfig = instance.configuration.clonedForNewInstance(existingNames: existingNames)
-
-            // Regenerate platform identity fields
-            clonedConfig.macAddress = VZMACAddress.randomLocallyAdministered().string
-
-            #if arch(arm64)
-            if clonedConfig.guestOS == .macOS {
-                clonedConfig.machineIdentifierData = VZMacMachineIdentifier().dataRepresentation
-            }
-            #endif
-
-            if clonedConfig.bootMode == .efi || clonedConfig.bootMode == .linuxKernel {
-                clonedConfig.genericMachineIdentifierData = VZGenericMachineIdentifier().dataRepresentation
-            }
-
-            // Determine which bundle files to copy
-            var filesToCopy = ["Disk.asif"]
-            switch clonedConfig.guestOS {
-            case .macOS:
-                filesToCopy.append(contentsOf: ["AuxiliaryStorage", "HardwareModel"])
-            case .linux:
-                if clonedConfig.bootMode == .efi {
-                    filesToCopy.append("EFIVariableStore")
-                }
-            }
-
-            // Copy files off the main thread (disk images can be large)
-            let sourceBundleURL = instance.bundleURL
-            let config = clonedConfig
-            let storage = storageService
-            let bundleURL = try await Task.detached {
-                try storage.cloneVMBundle(from: sourceBundleURL, newConfiguration: config, filesToCopy: filesToCopy)
-            }.value
-
-            // Write regenerated MachineIdentifier file for macOS clones
-            #if arch(arm64)
-            if let machineIDData = clonedConfig.machineIdentifierData, clonedConfig.guestOS == .macOS {
-                let layout = VMBundleLayout(bundleURL: bundleURL)
-                try machineIDData.write(to: layout.machineIdentifierURL, options: .atomic)
-            }
-            #endif
-
-            let clonedInstance = VMInstance(configuration: clonedConfig, bundleURL: bundleURL)
-            instances.append(clonedInstance)
-            instances.sort { $0.configuration.createdAt < $1.configuration.createdAt }
-            selectedID = clonedInstance.id
-
-            Self.logger.notice("Cloned VM '\(instance.name)' as '\(clonedConfig.name)'")
+            bundleURL = try storageService.bundleURL(for: clonedConfig)
         } catch {
             presentError(error)
+            return
         }
+
+        // Create phantom row immediately
+        let phantom = VMInstance(configuration: clonedConfig, bundleURL: bundleURL)
+        instances.append(phantom)
+        instances.sort { $0.configuration.createdAt < $1.configuration.createdAt }
+        selectedID = phantom.id
+
+        // Launch async file copy and assign preparing state atomically
+        let sourceBundleURL = instance.bundleURL
+        let config = clonedConfig
+        let storage = storageService
+        let task = Task { [weak self] in
+            do {
+                try await Task.detached {
+                    let resultURL = try storage.cloneVMBundle(from: sourceBundleURL, newConfiguration: config, filesToCopy: filesToCopy)
+
+                    // Write regenerated MachineIdentifier file for macOS clones (off main thread)
+                    #if arch(arm64)
+                    if let machineIDData = config.machineIdentifierData, config.guestOS == .macOS {
+                        let layout = VMBundleLayout(bundleURL: resultURL)
+                        try machineIDData.write(to: layout.machineIdentifierURL, options: .atomic)
+                    }
+                    #endif
+                }.value
+
+                guard let self else { return }
+                phantom.preparingState = nil
+                Self.logger.notice("Cloned VM '\(instance.name)' as '\(config.name)'")
+            } catch {
+                guard let self else { return }
+                self.cleanupPhantomInstance(phantom)
+                if !Task.isCancelled {
+                    self.presentError(error)
+                }
+            }
+        }
+        phantom.preparingState = VMInstance.PreparingState(operation: .cloning, task: task)
     }
 
     // MARK: - Sleep/Wake
@@ -487,7 +550,7 @@ final class VMLibraryViewModel {
 
     /// Diffs on-disk VM bundles against in-memory instances and adds/removes as needed.
     func reconcileWithDisk() {
-        guard !isCloning else { return }
+        guard !hasPreparing else { return }
         Self.logger.debug("reconcileWithDisk: starting")
         do {
             let diskBundles = try storageService.listVMBundles()
@@ -521,9 +584,10 @@ final class VMLibraryViewModel {
             }
 
             // Removals: instances in memory whose bundles no longer exist on disk
-            // Only remove stopped or errored VMs — never touch running/paused ones
+            // Only remove stopped or errored VMs — never touch running/paused/preparing ones
             let instancesToRemove = instances.filter { instance in
                 !diskIDs.contains(instance.id)
+                    && !instance.isPreparing
                     && (instance.status == .stopped || instance.status == .error)
             }
             for instance in instancesToRemove {
@@ -544,7 +608,60 @@ final class VMLibraryViewModel {
         }
     }
 
+    // MARK: - Cancel Preparing
+
+    func confirmCancelPreparing(_ instance: VMInstance) {
+        preparingInstanceToCancel = instance
+        showCancelPreparingConfirmation = true
+    }
+
+    func cancelPreparingConfirmed(_ instance: VMInstance) {
+        let operationLabel = instance.preparingState?.operation.displayLabel ?? "preparing"
+
+        instance.preparingState?.task.cancel()
+        cleanupPhantomInstance(instance)
+
+        preparingInstanceToCancel = nil
+        showCancelPreparingConfirmation = false
+
+        Self.logger.notice("Cancelled \(operationLabel) for '\(instance.name)'")
+    }
+
+    /// Removes a phantom instance from the library, clears its preparing state, and trashes its partial bundle.
+    private func cleanupPhantomInstance(_ phantom: VMInstance) {
+        instances.removeAll { $0.id == phantom.id }
+        if selectedID == phantom.id {
+            selectedID = instances.first?.id
+        }
+        phantom.preparingState = nil
+        Self.trashPartialBundle(at: phantom.bundleURL)
+    }
+
     // MARK: - Error Handling
+
+    /// Moves a partial VM bundle to the Trash in the background, logging on failure.
+    private static func trashPartialBundle(at url: URL) {
+        let log = logger
+        Task.detached {
+            do {
+                try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+            } catch {
+                log.warning("Failed to clean up partial bundle at \(url.lastPathComponent): \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// Error type for preparing-related validation failures.
+    private enum PreparingError: LocalizedError {
+        case operationInProgress
+
+        var errorDescription: String? {
+            switch self {
+            case .operationInProgress:
+                return "Another clone or import operation is already in progress. Please wait for it to finish."
+            }
+        }
+    }
 
     func presentError(_ error: Error) {
         errorMessage = error.localizedDescription

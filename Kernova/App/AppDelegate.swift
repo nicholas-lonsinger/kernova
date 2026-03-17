@@ -45,8 +45,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         let hasActiveVMs = viewModel.instances.contains { instance in
-            // Live-paused VMs (not cold-paused to disk) should also keep the app alive
-            instance.status.isActive || (instance.status == .paused && instance.virtualMachine != nil)
+            // Live-paused VMs (not cold-paused to disk) and preparing VMs should also keep the app alive
+            instance.isPreparing || instance.status.isActive || (instance.status == .paused && instance.virtualMachine != nil)
         }
 
         // Stay alive if VMs are active or fullscreen windows still exist
@@ -67,6 +67,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // Cancel all preparing operations and remove phantom rows before terminating
+        viewModel.instances.removeAll { instance in
+            guard instance.isPreparing else { return false }
+
+            Self.logger.notice("Terminating: cancelling preparing operation for '\(instance.name)'")
+            instance.preparingState?.task.cancel()
+            // Best effort — in-flight copy may still be writing (FileManager.copyItem is not interruptible)
+            do {
+                try FileManager.default.trashItem(at: instance.bundleURL, resultingItemURL: nil)
+            } catch {
+                Self.logger.warning("Failed to clean up partial bundle for '\(instance.name)' during termination: \(error.localizedDescription)")
+            }
+            return true
+        }
+
         // Save VMs that have a live virtual machine; cold-paused VMs already have state on disk
         let runningInstances = viewModel.instances.filter {
             ($0.status == .running || $0.status == .paused) && $0.virtualMachine != nil
@@ -183,7 +198,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     @objc func cloneVM(_ sender: Any?) {
         guard let instance = viewModel.selectedInstance else { return }
-        Task { await viewModel.cloneVM(instance) }
+        viewModel.cloneVM(instance)
     }
 
     @objc func deleteVM(_ sender: Any?) {
@@ -286,6 +301,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     // MARK: - Menu Validation
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        // Preparing instances disable all VM menu bar actions (cancel is only available via sidebar context menu)
+        if let instance = viewModel.selectedInstance, instance.isPreparing {
+            switch menuItem.action {
+            case #selector(showLibrary(_:)), #selector(newVM(_:)):
+                return true
+            default:
+                return false
+            }
+        }
+
         switch menuItem.action {
         case #selector(startVM(_:)):
             return viewModel.selectedInstance?.status.canStart ?? false
@@ -301,7 +326,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             return viewModel.selectedInstance?.status.canEditSettings ?? false
         case #selector(cloneVM(_:)):
             guard let instance = viewModel.selectedInstance else { return false }
-            return instance.status.canEditSettings && !viewModel.isCloning
+            return instance.status.canEditSettings && !viewModel.hasPreparing
         case #selector(deleteVM(_:)):
             return viewModel.selectedInstance?.status.canEditSettings ?? false
         // AppKit bypasses NSMenuItemValidation for windowsMenu items, so

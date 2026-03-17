@@ -7,24 +7,35 @@ struct VMDetailView: View {
 
     var body: some View {
         Group {
-            switch instance.status {
-            case .stopped, .error:
-                VMSettingsView(instance: instance, viewModel: viewModel)
+            if let preparing = instance.preparingState {
+                VStack(spacing: 12) {
+                    ProgressView()
+                        .controlSize(.large)
+                    Text(preparing.operation.displayLabel)
+                        .font(.headline)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                switch instance.status {
+                case .stopped, .error:
+                    VMSettingsView(instance: instance, viewModel: viewModel)
 
-            case .installing:
-                if let installState = instance.installState {
-                    MacOSInstallProgressView(installState: installState) {
-                        viewModel.cancelInstallation(instance)
+                case .installing:
+                    if let installState = instance.installState {
+                        MacOSInstallProgressView(installState: installState) {
+                            viewModel.cancelInstallation(instance)
+                        }
+                    } else {
+                        transitionView
                     }
-                } else {
+
+                case .running, .paused:
+                    VMConsoleView(instance: instance)
+
+                default:
                     transitionView
                 }
-
-            case .running, .paused:
-                VMConsoleView(instance: instance)
-
-            default:
-                transitionView
             }
         }
         .navigationTitle(instance.name)
@@ -39,6 +50,18 @@ struct VMDetailView: View {
             Button("Cancel", role: .cancel) {}
         } message: { vm in
             Text("\"\(vm.name)\" will be moved to the Trash. You can restore it using Finder's Put Back command. Empty the Trash to permanently delete the VM and reclaim disk space.")
+        }
+        .alert(
+            viewModel.preparingInstanceToCancel?.preparingState?.operation.cancelAlertTitle ?? "",
+            isPresented: $viewModel.showCancelPreparingConfirmation,
+            presenting: viewModel.preparingInstanceToCancel
+        ) { instance in
+            Button(instance.preparingState?.operation.cancelLabel ?? "Cancel", role: .destructive) {
+                viewModel.cancelPreparingConfirmed(instance)
+            }
+            Button("Continue", role: .cancel) {}
+        } message: { _ in
+            Text("The operation will be stopped and any partially copied files will be removed.")
         }
     }
 

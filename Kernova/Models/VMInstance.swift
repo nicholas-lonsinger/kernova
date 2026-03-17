@@ -21,6 +21,49 @@ final class VMInstance: Identifiable {
     /// Handle to the in-flight macOS installation task, enabling cooperative cancellation.
     var installTask: Task<Void, Never>?
 
+    // MARK: - Preparing State (Clone/Import)
+
+    /// Describes the kind of long-running preparation operation in progress
+    /// and provides all associated user-facing strings (display labels, cancel labels, alert titles).
+    enum PreparingOperation: Sendable {
+        case cloning
+        case importing
+
+        var displayLabel: String {
+            switch self {
+            case .cloning: "Cloning\u{2026}"
+            case .importing: "Importing\u{2026}"
+            }
+        }
+
+        var cancelLabel: String {
+            switch self {
+            case .cloning: "Cancel Clone"
+            case .importing: "Cancel Import"
+            }
+        }
+
+        var cancelAlertTitle: String {
+            switch self {
+            case .cloning: "Cancel Clone?"
+            case .importing: "Cancel Import?"
+            }
+        }
+    }
+
+    /// Tracks an in-flight clone or import operation. Non-nil when this instance is a
+    /// "phantom row" awaiting a file copy to finish (see `VMLibraryViewModel`).
+    struct PreparingState {
+        let operation: PreparingOperation
+        var task: Task<Void, Never>
+    }
+
+    /// Non-nil when this instance is a phantom row awaiting a clone or import to finish.
+    var preparingState: PreparingState?
+
+    /// Convenience: `true` when a preparing operation is in progress.
+    var isPreparing: Bool { preparingState != nil }
+
     /// Error message if the VM entered an error state.
     var errorMessage: String?
 
