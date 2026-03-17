@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import SwiftUI
 @testable import Kernova
 
 @Suite("VMInstance Tests")
@@ -163,5 +164,54 @@ struct VMInstanceTests {
     func serialLogURL() {
         let instance = makeInstance()
         #expect(instance.serialLogURL.lastPathComponent == "serial.log")
+    }
+
+    // MARK: - Status Display Properties
+
+    @Test("statusDisplayName returns Suspended when cold-paused")
+    func statusDisplayNameColdPaused() {
+        let instance = makeInstance(status: .paused)
+        #expect(instance.isColdPaused == true)
+        #expect(instance.statusDisplayName == "Suspended")
+    }
+
+    @Test("statusDisplayName delegates to status.displayName for non-paused states")
+    func statusDisplayNameDelegates() {
+        for status in [VMStatus.stopped, .running, .starting, .saving, .restoring, .installing, .error] {
+            let instance = makeInstance(status: status)
+            #expect(instance.statusDisplayName == status.displayName)
+        }
+    }
+
+    @Test("statusDisplayColor returns orange when cold-paused")
+    func statusDisplayColorColdPaused() {
+        let instance = makeInstance(status: .paused)
+        #expect(instance.isColdPaused == true)
+        #expect(instance.statusDisplayColor == .orange)
+    }
+
+    @Test("statusDisplayColor delegates to status.statusColor for non-paused states")
+    func statusDisplayColorDelegates() {
+        for status in [VMStatus.stopped, .running, .starting, .saving, .restoring, .installing, .error] {
+            let instance = makeInstance(status: status)
+            #expect(instance.statusDisplayColor == status.statusColor)
+        }
+    }
+
+    @Test("statusToolTip mentions disk when cold-paused")
+    func statusToolTipColdPaused() {
+        let instance = makeInstance(status: .paused)
+        #expect(instance.isColdPaused == true)
+        let tip = instance.statusToolTip
+        #expect(tip != nil)
+        #expect(tip!.contains("disk"))
+    }
+
+    @Test("statusToolTip returns nil for non-paused states")
+    func statusToolTipNilForNonPaused() {
+        for status in [VMStatus.stopped, .running, .starting, .saving, .restoring, .installing, .error] {
+            let instance = makeInstance(status: status)
+            #expect(instance.statusToolTip == nil)
+        }
     }
 }

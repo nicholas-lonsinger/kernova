@@ -42,8 +42,9 @@ struct VMRowView: View {
             Spacer()
 
             Circle()
-                .fill(instance.status.statusColor)
+                .fill(instance.statusDisplayColor)
                 .frame(width: 8, height: 8)
+                .help(instance.statusToolTip ?? "")
         }
         .padding(.vertical, 2)
         .onChange(of: isRenaming) { _, renaming in
