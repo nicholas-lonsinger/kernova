@@ -105,8 +105,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                     try await viewModel.trySave(instance)
                     viewModel.saveConfiguration(for: instance)
                 } catch {
-                    // Best-effort save; force-stop if save fails
-                    try? await viewModel.tryForceStop(instance)
+                    Self.logger.error("Failed to save '\(instance.name)' during termination: \(error.localizedDescription)")
+                    do {
+                        try await viewModel.tryForceStop(instance)
+                    } catch {
+                        Self.logger.error("Failed to force-stop '\(instance.name)' during termination: \(error.localizedDescription)")
+                    }
                 }
             }
             NSApplication.shared.reply(toApplicationShouldTerminate: true)
