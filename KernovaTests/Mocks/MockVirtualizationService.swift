@@ -29,7 +29,12 @@ final class MockVirtualizationService: VirtualizationProviding {
 
     func start(_ instance: VMInstance) async throws {
         startCallCount += 1
-        if let error = startError { throw error }
+        if let error = startError {
+            instance.tearDownSession()
+            instance.status = .error
+            instance.errorMessage = error.localizedDescription
+            throw error
+        }
         instance.status = .running
     }
 
@@ -47,25 +52,45 @@ final class MockVirtualizationService: VirtualizationProviding {
 
     func pause(_ instance: VMInstance) async throws {
         pauseCallCount += 1
-        if let error = pauseError { throw error }
+        if let error = pauseError {
+            instance.status = .error
+            instance.errorMessage = error.localizedDescription
+            throw error
+        }
         instance.status = .paused
     }
 
     func resume(_ instance: VMInstance) async throws {
         resumeCallCount += 1
-        if let error = resumeError { throw error }
+        if let error = resumeError {
+            instance.tearDownSession()
+            instance.status = .error
+            instance.errorMessage = error.localizedDescription
+            throw error
+        }
         instance.status = .running
     }
 
     func save(_ instance: VMInstance) async throws {
         saveCallCount += 1
-        if let error = saveError { throw error }
+        if let error = saveError {
+            instance.tearDownSession()
+            instance.status = .error
+            instance.errorMessage = error.localizedDescription
+            throw error
+        }
+        instance.tearDownSession()
         instance.status = .paused
     }
 
     func restore(_ instance: VMInstance) async throws {
         restoreCallCount += 1
-        if let error = restoreError { throw error }
+        if let error = restoreError {
+            instance.tearDownSession()
+            instance.status = .error
+            instance.errorMessage = error.localizedDescription
+            throw error
+        }
         instance.status = .running
     }
 }
