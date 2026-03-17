@@ -141,13 +141,21 @@ final class VMInstance: Identifiable {
 
     // MARK: - State Helpers
 
-    /// Releases the VZVirtualMachine reference and marks the VM as stopped.
-    func resetToStopped() {
+    /// Tears down the live VM session: stops serial I/O, releases pipes, and
+    /// clears the `VZVirtualMachine` reference. Does **not** change `status` —
+    /// callers set the appropriate status after calling this.
+    func tearDownSession() {
         stopSerialReading()
         serialInputPipe = nil
         serialOutputPipe = nil
-        status = .stopped
         virtualMachine = nil
+        delegateAdapter = nil
+    }
+
+    /// Releases the VZVirtualMachine reference and marks the VM as stopped.
+    func resetToStopped() {
+        tearDownSession()
+        status = .stopped
     }
 
     /// Creates a VZVirtualMachine, assigns it, and wires up the delegate. Returns the VM.
@@ -279,9 +287,9 @@ private final class VMDelegateAdapter: NSObject, VZVirtualMachineDelegate {
                 Self.logger.warning("didStopWithError received but VMInstance has been deallocated")
                 return
             }
+            instance.tearDownSession()
             instance.status = .error
             instance.errorMessage = error.localizedDescription
-            instance.virtualMachine = nil
             Self.logger.error("VM '\(instance.name)' stopped with error: \(error.localizedDescription)")
         }
     }

@@ -38,6 +38,8 @@ final class VirtualizationService {
             instance.status = .running
             Self.logger.notice("Started VM '\(instance.name)'")
         } catch {
+            Self.logger.error("Failed to start VM '\(instance.name)': \(error.localizedDescription)")
+            instance.tearDownSession()
             instance.status = .error
             instance.errorMessage = error.localizedDescription
             throw error
@@ -94,9 +96,16 @@ final class VirtualizationService {
             throw VirtualizationError.invalidStateTransition(from: instance.status, action: "pause")
         }
 
-        try await vm.pause()
-        instance.status = .paused
-        Self.logger.notice("Paused VM '\(instance.name)'")
+        do {
+            try await vm.pause()
+            instance.status = .paused
+            Self.logger.notice("Paused VM '\(instance.name)'")
+        } catch {
+            Self.logger.error("Failed to pause VM '\(instance.name)': \(error.localizedDescription)")
+            instance.status = .error
+            instance.errorMessage = error.localizedDescription
+            throw error
+        }
     }
 
     /// Resumes a paused virtual machine.
@@ -126,6 +135,8 @@ final class VirtualizationService {
 
             Self.logger.notice("Resumed VM '\(instance.name)'")
         } catch {
+            Self.logger.error("Failed to resume VM '\(instance.name)': \(error.localizedDescription)")
+            instance.tearDownSession()
             instance.status = .error
             instance.errorMessage = error.localizedDescription
             throw error
@@ -143,14 +154,23 @@ final class VirtualizationService {
 
         instance.status = .saving
 
-        // Pause first if running
-        if vm.state == .running {
-            try await vm.pause()
-        }
+        do {
+            // Pause first if running
+            if vm.state == .running {
+                try await vm.pause()
+            }
 
-        try await saveMachineState(vm, to: instance.saveFileURL)
-        instance.status = .paused
-        Self.logger.notice("Saved state for VM '\(instance.name)'")
+            try await saveMachineState(vm, to: instance.saveFileURL)
+            instance.tearDownSession()
+            instance.status = .paused
+            Self.logger.notice("Saved state for VM '\(instance.name)'")
+        } catch {
+            Self.logger.error("Failed to save VM '\(instance.name)': \(error.localizedDescription)")
+            instance.tearDownSession()
+            instance.status = .error
+            instance.errorMessage = error.localizedDescription
+            throw error
+        }
     }
 
     /// Restores a VM from a saved state file.
@@ -164,13 +184,22 @@ final class VirtualizationService {
         }
 
         instance.status = .restoring
-        try await restoreMachineState(vm, from: instance.saveFileURL)
-        try await vm.resume()
-        instance.status = .running
 
-        // Remove save file after successful restore
-        instance.removeSaveFile()
-        Self.logger.notice("Restored state for VM '\(instance.name)'")
+        do {
+            try await restoreMachineState(vm, from: instance.saveFileURL)
+            try await vm.resume()
+            instance.status = .running
+
+            // Remove save file after successful restore
+            instance.removeSaveFile()
+            Self.logger.notice("Restored state for VM '\(instance.name)'")
+        } catch {
+            Self.logger.error("Failed to restore VM '\(instance.name)': \(error.localizedDescription)")
+            instance.tearDownSession()
+            instance.status = .error
+            instance.errorMessage = error.localizedDescription
+            throw error
+        }
     }
 
     // MARK: - Private Helpers

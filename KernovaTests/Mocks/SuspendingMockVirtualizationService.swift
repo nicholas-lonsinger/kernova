@@ -86,6 +86,7 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
     }
 
     func save(_ instance: VMInstance) async throws {
+        instance.tearDownSession()
         instance.status = .paused
     }
 

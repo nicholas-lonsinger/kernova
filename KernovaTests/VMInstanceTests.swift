@@ -18,6 +18,34 @@ struct VMInstanceTests {
         return VMInstance(configuration: config, bundleURL: bundleURL, status: status)
     }
 
+    // MARK: - tearDownSession
+
+    @Test("tearDownSession clears pipes and virtualMachine without changing status")
+    func tearDownSessionPreservesStatus() {
+        let instance = makeInstance(status: .running)
+        instance.serialInputPipe = Pipe()
+        instance.serialOutputPipe = Pipe()
+
+        instance.tearDownSession()
+
+        #expect(instance.status == .running)
+        #expect(instance.virtualMachine == nil)
+        #expect(instance.serialInputPipe == nil)
+        #expect(instance.serialOutputPipe == nil)
+    }
+
+    @Test("tearDownSession is idempotent")
+    func tearDownSessionIdempotent() {
+        let instance = makeInstance(status: .paused)
+        instance.tearDownSession()
+        instance.tearDownSession()
+
+        #expect(instance.status == .paused)
+        #expect(instance.virtualMachine == nil)
+        #expect(instance.serialInputPipe == nil)
+        #expect(instance.serialOutputPipe == nil)
+    }
+
     // MARK: - resetToStopped
 
     @Test("resetToStopped sets status to stopped and clears virtualMachine")
