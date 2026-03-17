@@ -41,7 +41,7 @@ struct VMRowView: View {
 
             Spacer()
 
-            if instance.isPreparing {
+            if instance.isPreparing || instance.status.isTransitioning {
                 ProgressView()
                     .controlSize(.mini)
                     .frame(width: 8, height: 8)
