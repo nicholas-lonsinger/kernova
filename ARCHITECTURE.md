@@ -44,6 +44,7 @@ Kernova/
 │   └── VMDirectoryWatcher.swift        # DispatchSource monitor for external filesystem changes
 ├── Views/                              # SwiftUI views
 │   ├── ContentView.swift               # Root SwiftUI view (sidebar + detail split)
+│   ├── VMInstance+Display.swift        # Display-layer extension: cold-paused vs live-paused distinction
 │   ├── Sidebar/
 │   │   ├── SidebarView.swift           # VM list with toolbar actions
 │   │   └── VMRowView.swift             # Individual VM row (name, status, inline rename)
@@ -94,7 +95,7 @@ KernovaTests/
 └── DataFormattersTests.swift           # Formatting utility tests
 ```
 
-**Total: 48 source files, 20 test files (15 suites + 5 mocks).**
+**Total: 49 source files, 20 test files (15 suites + 5 mocks).**
 
 ## Component Map
 
@@ -119,7 +120,7 @@ The model layer has two key types:
 
 - **`VMConfiguration`** is the persisted identity of a VM. It's a `Codable` + `Sendable` struct written as `config.json` inside each VM bundle. It holds: name, UUID, guest OS type, boot mode, CPU/memory/disk settings, display configuration, network settings, and OS-specific fields (macOS hardware model data, Linux kernel/initrd/cmdline paths).
 
-- **`VMInstance`** is the runtime representation. It's an `@Observable` `@MainActor` class that wraps a `VMConfiguration`, an optional `VZVirtualMachine`, and a `VMStatus`. It references the VM's bundle path and provides computed properties for disk image, aux storage, and save file locations via `VMBundleLayout`.
+- **`VMInstance`** is the runtime representation. It's an `@Observable` `@MainActor` class that wraps a `VMConfiguration`, an optional `VZVirtualMachine`, and a `VMStatus`. It references the VM's bundle path and provides computed properties for disk image, aux storage, and save file locations via `VMBundleLayout`. A view-layer extension (`VMInstance+Display.swift`) provides display properties (`statusDisplayName`, `statusDisplayColor`, `statusToolTip`) that distinguish cold-paused VMs (state saved to disk, shown as "Suspended" in orange) from live-paused VMs (in memory, shown as "Paused" in yellow).
 
 `VMBundleLayout` is a `Sendable` struct that takes a bundle root path and provides all derived file paths (disk image, aux storage, save file, serial log, etc.), keeping path logic centralized.
 

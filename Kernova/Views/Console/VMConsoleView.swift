@@ -22,7 +22,7 @@ struct VMConsoleView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if instance.isColdPaused {
                 ContentUnavailableView(
-                    "Paused",
+                    "Suspended",
                     systemImage: "pause.circle",
                     description: Text("This virtual machine's state is saved to disk. Resume to continue.")
                 )
