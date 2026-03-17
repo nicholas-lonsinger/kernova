@@ -68,6 +68,34 @@ final class VMCreationViewModel {
 
     // MARK: - Navigation
 
+    var validationMessage: String? {
+        guard !canAdvance else { return nil }
+        switch currentStep {
+        case .osSelection, .review:
+            return nil
+        case .bootConfig:
+            switch selectedOS {
+            case .macOS:
+                switch ipswSource {
+                case .downloadLatest:
+                    if ipswDownloadPath == nil { return "Choose a download location." }
+                    if shouldShowOverwriteWarning { return "Resolve the file conflict above to continue." }
+                case .localFile:
+                    if ipswPath == nil { return "Select a restore image file." }
+                }
+            case .linux:
+                switch selectedBootMode {
+                case .efi: return "Select an ISO image to continue."
+                case .linuxKernel: return "Select a kernel image to continue."
+                case .macOS: return "Invalid boot configuration."
+                }
+            }
+            return nil
+        case .resources:
+            return "Enter a name for your virtual machine."
+        }
+    }
+
     var canAdvance: Bool {
         switch currentStep {
         case .osSelection:

@@ -79,6 +79,12 @@ struct VMCreationWizardView: View {
 
             Spacer()
 
+            if let message = creationVM.validationMessage {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             if creationVM.currentStep != .osSelection {
                 Button("Back") {
                     creationVM.goBack()

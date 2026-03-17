@@ -502,4 +502,99 @@ struct VMCreationViewModelTests {
 
         #expect(vm.ipswDownloadPathFileExists == false)
     }
+
+    // MARK: - validationMessage
+
+    @Test("validationMessage is nil when canAdvance is true")
+    func validationMessageNilWhenCanAdvance() {
+        let vm = VMCreationViewModel()
+
+        // osSelection — always advanceable
+        vm.currentStep = .osSelection
+        #expect(vm.validationMessage == nil)
+
+        // review — always advanceable
+        vm.currentStep = .review
+        #expect(vm.validationMessage == nil)
+
+        // bootConfig with valid config
+        vm.currentStep = .bootConfig
+        vm.selectedOS = .linux
+        vm.selectedBootMode = .efi
+        vm.isoPath = "/path/to/image.iso"
+        #expect(vm.validationMessage == nil)
+
+        // resources with valid name
+        vm.currentStep = .resources
+        vm.vmName = "My VM"
+        #expect(vm.validationMessage == nil)
+    }
+
+    @Test("validationMessage returns ISO hint for Linux EFI with no isoPath")
+    func validationMessageLinuxEFINoISO() {
+        let vm = VMCreationViewModel()
+        vm.currentStep = .bootConfig
+        vm.selectedOS = .linux
+        vm.selectedBootMode = .efi
+        vm.isoPath = nil
+
+        #expect(vm.validationMessage == "Select an ISO image to continue.")
+    }
+
+    @Test("validationMessage returns kernel hint for Linux kernel with no kernelPath")
+    func validationMessageLinuxKernelNoKernel() {
+        let vm = VMCreationViewModel()
+        vm.currentStep = .bootConfig
+        vm.selectedOS = .linux
+        vm.selectedBootMode = .linuxKernel
+        vm.kernelPath = nil
+
+        #expect(vm.validationMessage == "Select a kernel image to continue.")
+    }
+
+    @Test("validationMessage returns IPSW hint for macOS localFile with no ipswPath")
+    func validationMessageMacOSLocalFileNoIPSW() {
+        let vm = VMCreationViewModel()
+        vm.currentStep = .bootConfig
+        vm.selectedOS = .macOS
+        vm.ipswSource = .localFile
+        vm.ipswPath = nil
+
+        #expect(vm.validationMessage == "Select a restore image file.")
+    }
+
+    @Test("validationMessage returns download location hint for macOS downloadLatest with nil path")
+    func validationMessageMacOSDownloadLatestNoPath() {
+        let vm = VMCreationViewModel()
+        vm.currentStep = .bootConfig
+        vm.selectedOS = .macOS
+        vm.ipswSource = .downloadLatest
+        vm.ipswDownloadPath = nil
+
+        #expect(vm.validationMessage == "Choose a download location.")
+    }
+
+    @Test("validationMessage returns conflict hint when overwrite warning is showing")
+    func validationMessageOverwriteConflict() {
+        let vm = VMCreationViewModel()
+        vm.currentStep = .bootConfig
+        vm.selectedOS = .macOS
+        vm.ipswSource = .downloadLatest
+        vm.ipswDownloadPath = "/usr/bin/true"  // exists on disk → triggers warning
+
+        #expect(vm.shouldShowOverwriteWarning == true)
+        #expect(vm.validationMessage == "Resolve the file conflict above to continue.")
+    }
+
+    @Test("validationMessage returns name hint for resources step with empty name")
+    func validationMessageResourcesEmptyName() {
+        let vm = VMCreationViewModel()
+        vm.currentStep = .resources
+
+        vm.vmName = ""
+        #expect(vm.validationMessage == "Enter a name for your virtual machine.")
+
+        vm.vmName = "   "
+        #expect(vm.validationMessage == "Enter a name for your virtual machine.")
+    }
 }
