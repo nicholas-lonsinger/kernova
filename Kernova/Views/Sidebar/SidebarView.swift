@@ -44,46 +44,55 @@ struct SidebarView: View {
 
     @ViewBuilder
     private func contextMenu(for instance: VMInstance) -> some View {
-        if instance.status.canStart {
-            Button("Start") {
-                Task { await viewModel.start(instance) }
+        if let preparing = instance.preparingState {
+            Button(preparing.operation.cancelLabel) {
+                viewModel.confirmCancelPreparing(instance)
             }
-        }
-        if instance.status.canPause {
-            Button("Pause") {
-                Task { await viewModel.pause(instance) }
+            Button("Show in Finder") {
+                NSWorkspace.shared.activateFileViewerSelecting([instance.bundleURL])
             }
-        }
-        if instance.status.canResume {
-            Button("Resume") {
-                Task { await viewModel.resume(instance) }
+        } else {
+            if instance.status.canStart {
+                Button("Start") {
+                    Task { await viewModel.start(instance) }
+                }
             }
-        }
-        if instance.status.canStop {
-            Button("Stop") {
-                viewModel.stop(instance)
+            if instance.status.canPause {
+                Button("Pause") {
+                    Task { await viewModel.pause(instance) }
+                }
             }
-        }
+            if instance.status.canResume {
+                Button("Resume") {
+                    Task { await viewModel.resume(instance) }
+                }
+            }
+            if instance.status.canStop {
+                Button("Stop") {
+                    viewModel.stop(instance)
+                }
+            }
 
-        Divider()
+            Divider()
 
-        Button("Rename") {
-            viewModel.renameVM(instance)
-        }
-        .disabled(!instance.status.canEditSettings)
+            Button("Rename") {
+                viewModel.renameVM(instance)
+            }
+            .disabled(!instance.status.canEditSettings)
 
-        Button("Clone") {
-            Task { await viewModel.cloneVM(instance) }
-        }
-        .disabled(!instance.status.canEditSettings || viewModel.isCloning)
+            Button("Clone") {
+                viewModel.cloneVM(instance)
+            }
+            .disabled(!instance.status.canEditSettings || viewModel.hasPreparing)
 
-        Button("Show in Finder") {
-            NSWorkspace.shared.activateFileViewerSelecting([instance.bundleURL])
-        }
+            Button("Show in Finder") {
+                NSWorkspace.shared.activateFileViewerSelecting([instance.bundleURL])
+            }
 
-        Button("Move to Trash", role: .destructive) {
-            viewModel.confirmDelete(instance)
+            Button("Move to Trash", role: .destructive) {
+                viewModel.confirmDelete(instance)
+            }
+            .disabled(instance.status != .stopped)
         }
-        .disabled(instance.status != .stopped)
     }
 }

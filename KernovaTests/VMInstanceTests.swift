@@ -214,4 +214,64 @@ struct VMInstanceTests {
             #expect(instance.statusToolTip == nil)
         }
     }
+
+    // MARK: - Preparing State
+
+    @Test("preparingState defaults to nil and isPreparing to false")
+    func preparingStateDefaultsNil() {
+        let instance = makeInstance()
+        #expect(instance.preparingState == nil)
+        #expect(instance.isPreparing == false)
+    }
+
+    @Test("isPreparing is true when preparingState is set")
+    func isPreparingTrueWhenSet() {
+        let instance = makeInstance()
+        let task = Task {}
+        instance.preparingState = VMInstance.PreparingState(operation: .cloning, task: task)
+        #expect(instance.isPreparing == true)
+
+        instance.preparingState = nil
+        #expect(instance.isPreparing == false)
+        task.cancel()
+    }
+
+    @Test("statusDisplayName returns preparing label when isPreparing")
+    func statusDisplayNamePreparing() {
+        let instance = makeInstance()
+        let task = Task {}
+        defer { task.cancel() }
+
+        instance.preparingState = VMInstance.PreparingState(operation: .cloning, task: task)
+        #expect(instance.statusDisplayName == "Cloning\u{2026}")
+
+        instance.preparingState = VMInstance.PreparingState(operation: .importing, task: task)
+        #expect(instance.statusDisplayName == "Importing\u{2026}")
+    }
+
+    @Test("statusDisplayColor returns orange when isPreparing")
+    func statusDisplayColorPreparing() {
+        let instance = makeInstance()
+        let task = Task {}
+        defer { task.cancel() }
+        instance.preparingState = VMInstance.PreparingState(operation: .cloning, task: task)
+        #expect(instance.statusDisplayColor == .orange)
+    }
+
+    @Test("statusToolTip returns preparing label when isPreparing")
+    func statusToolTipPreparing() {
+        let instance = makeInstance()
+        let task = Task {}
+        defer { task.cancel() }
+        instance.preparingState = VMInstance.PreparingState(operation: .cloning, task: task)
+        #expect(instance.statusToolTip == "Cloning\u{2026}")
+    }
+
+    @Test("PreparingOperation cancelLabel and cancelAlertTitle")
+    func preparingOperationLabels() {
+        #expect(VMInstance.PreparingOperation.cloning.cancelLabel == "Cancel Clone")
+        #expect(VMInstance.PreparingOperation.cloning.cancelAlertTitle == "Cancel Clone?")
+        #expect(VMInstance.PreparingOperation.importing.cancelLabel == "Cancel Import")
+        #expect(VMInstance.PreparingOperation.importing.cancelAlertTitle == "Cancel Import?")
+    }
 }

@@ -702,68 +702,54 @@ struct VMLibraryViewModelTests {
 
     // MARK: - Clone
 
-    @Test("cloneVM creates a new instance with different ID and Copy name")
-    func cloneVMCreatesNewInstance() async {
+    /// Helper to mark an instance as preparing with a no-op task.
+    private func markPreparing(_ instance: VMInstance, operation: VMInstance.PreparingOperation = .cloning) {
+        instance.preparingState = VMInstance.PreparingState(operation: operation, task: Task {})
+    }
+
+    @Test("cloneVM creates phantom row immediately with preparingState")
+    func cloneVMCreatesPhantomRow() {
         let (viewModel, storage, _, _) = makeViewModel()
         let instance = makeInstance(name: "Original")
         instance.status = .stopped
         viewModel.instances.append(instance)
         storage.bundles[instance.bundleURL] = instance.configuration
 
-        await viewModel.cloneVM(instance)
+        viewModel.cloneVM(instance)
 
         #expect(viewModel.instances.count == 2)
-        let cloned = viewModel.instances.first { $0.id != instance.id }
-        #expect(cloned != nil)
-        #expect(cloned?.name == "Original Copy")
-        #expect(cloned?.id != instance.id)
+        let phantom = viewModel.instances.first { $0.id != instance.id }
+        #expect(phantom != nil)
+        #expect(phantom?.isPreparing == true)
+        #expect(phantom?.preparingState?.operation == .cloning)
+        #expect(phantom?.name == "Original Copy")
+        #expect(viewModel.selectedID == phantom?.id)
+    }
+
+    @Test("cloneVM transitions phantom to real on success")
+    func cloneVMTransitionsPhantom() async {
+        let (viewModel, storage, _, _) = makeViewModel()
+        let instance = makeInstance(name: "Original")
+        instance.status = .stopped
+        viewModel.instances.append(instance)
+        storage.bundles[instance.bundleURL] = instance.configuration
+
+        viewModel.cloneVM(instance)
+
+        let phantom = viewModel.instances.first { $0.id != instance.id }
+        #expect(phantom != nil)
+
+        // Wait for the preparing task to complete
+        await phantom?.preparingState?.task.value
+
+        #expect(phantom?.isPreparing == false)
+        #expect(phantom?.preparingState == nil)
+        #expect(viewModel.instances.count == 2)
         #expect(storage.cloneVMBundleCallCount == 1)
     }
 
-    @Test("cloneVM selects the cloned instance")
-    func cloneVMSelectsClone() async {
-        let (viewModel, storage, _, _) = makeViewModel()
-        let instance = makeInstance(name: "Source")
-        instance.status = .stopped
-        viewModel.instances.append(instance)
-        storage.bundles[instance.bundleURL] = instance.configuration
-
-        await viewModel.cloneVM(instance)
-
-        let cloned = viewModel.instances.first { $0.id != instance.id }
-        #expect(viewModel.selectedID == cloned?.id)
-    }
-
-    @Test("cloneVM increments name when Copy already exists")
-    func cloneVMIncrementsName() async {
-        let (viewModel, storage, _, _) = makeViewModel()
-        let instance = makeInstance(name: "VM")
-        instance.status = .stopped
-        let copyInstance = makeInstance(name: "VM Copy")
-        viewModel.instances = [instance, copyInstance]
-        storage.bundles[instance.bundleURL] = instance.configuration
-
-        await viewModel.cloneVM(instance)
-
-        let cloned = viewModel.instances.first { $0.id != instance.id && $0.id != copyInstance.id }
-        #expect(cloned?.name == "VM Copy 2")
-    }
-
-    @Test("cloneVM is skipped when VM is running")
-    func cloneVMSkippedWhenRunning() async {
-        let (viewModel, storage, _, _) = makeViewModel()
-        let instance = makeInstance(name: "Running VM")
-        instance.status = .running
-        viewModel.instances.append(instance)
-
-        await viewModel.cloneVM(instance)
-
-        #expect(viewModel.instances.count == 1)
-        #expect(storage.cloneVMBundleCallCount == 0)
-    }
-
-    @Test("cloneVM presents error on storage failure")
-    func cloneVMPresentsError() async {
+    @Test("cloneVM removes phantom on storage error and selects remaining instance")
+    func cloneVMRemovesPhantomOnError() async {
         let storage = MockVMStorageService()
         storage.cloneVMBundleError = VMStorageError.bundleAlreadyExists(UUID())
         let (viewModel, _, _, _) = makeViewModel(storageService: storage)
@@ -771,9 +757,171 @@ struct VMLibraryViewModelTests {
         instance.status = .stopped
         viewModel.instances.append(instance)
 
-        await viewModel.cloneVM(instance)
+        viewModel.cloneVM(instance)
 
+        // Phantom was created
+        let phantom = viewModel.instances.first { $0.id != instance.id }
+        #expect(phantom != nil)
+
+        // Wait for the task to complete (and fail)
+        await phantom?.preparingState?.task.value
+
+        #expect(viewModel.instances.count == 1)
+        #expect(viewModel.instances.first?.id == instance.id)
+        #expect(viewModel.selectedID == instance.id)
         #expect(viewModel.showError == true)
         #expect(viewModel.errorMessage != nil)
+    }
+
+    @Test("cloneVM is skipped when VM is running")
+    func cloneVMSkippedWhenRunning() {
+        let (viewModel, storage, _, _) = makeViewModel()
+        let instance = makeInstance(name: "Running VM")
+        instance.status = .running
+        viewModel.instances.append(instance)
+
+        viewModel.cloneVM(instance)
+
+        #expect(viewModel.instances.count == 1)
+        #expect(storage.cloneVMBundleCallCount == 0)
+    }
+
+    @Test("cloneVM shows error when hasPreparing is true")
+    func cloneVMShowsErrorWhenPreparing() {
+        let (viewModel, _, _, _) = makeViewModel()
+        let existing = makeInstance(name: "Existing")
+        markPreparing(existing)
+        let instance = makeInstance(name: "Source")
+        instance.status = .stopped
+        viewModel.instances = [existing, instance]
+
+        viewModel.cloneVM(instance)
+
+        // No new instance added, error shown
+        #expect(viewModel.instances.count == 2)
+        #expect(viewModel.showError == true)
+    }
+
+    @Test("cloneVM increments name when Copy already exists")
+    func cloneVMIncrementsName() {
+        let (viewModel, storage, _, _) = makeViewModel()
+        let instance = makeInstance(name: "VM")
+        instance.status = .stopped
+        let copyInstance = makeInstance(name: "VM Copy")
+        viewModel.instances = [instance, copyInstance]
+        storage.bundles[instance.bundleURL] = instance.configuration
+
+        viewModel.cloneVM(instance)
+
+        let cloned = viewModel.instances.first { $0.id != instance.id && $0.id != copyInstance.id }
+        #expect(cloned?.name == "VM Copy 2")
+    }
+
+    // MARK: - Cancel Preparing
+
+    @Test("cancelPreparingConfirmed removes phantom instance and cancels task")
+    func cancelPreparingConfirmedRemovesPhantom() {
+        let (viewModel, _, _, _) = makeViewModel()
+        let phantom = makeInstance(name: "Cloning VM")
+        markPreparing(phantom)
+        viewModel.instances.append(phantom)
+        viewModel.selectedID = phantom.id
+
+        viewModel.cancelPreparingConfirmed(phantom)
+
+        #expect(viewModel.instances.isEmpty)
+        #expect(phantom.preparingState == nil)
+        #expect(viewModel.showCancelPreparingConfirmation == false)
+        #expect(viewModel.preparingInstanceToCancel == nil)
+    }
+
+    @Test("cancelPreparingConfirmed selects remaining instance")
+    func cancelPreparingConfirmedSelectsRemaining() {
+        let (viewModel, _, _, _) = makeViewModel()
+        let other = makeInstance(name: "Other VM")
+        let phantom = makeInstance(name: "Cloning VM")
+        markPreparing(phantom)
+        viewModel.instances = [other, phantom]
+        viewModel.selectedID = phantom.id
+
+        viewModel.cancelPreparingConfirmed(phantom)
+
+        #expect(viewModel.instances.count == 1)
+        #expect(viewModel.selectedID == other.id)
+    }
+
+    @Test("confirmCancelPreparing sets state for alert")
+    func confirmCancelPreparingSetsState() {
+        let (viewModel, _, _, _) = makeViewModel()
+        let phantom = makeInstance(name: "Cloning VM")
+        markPreparing(phantom)
+        viewModel.instances.append(phantom)
+
+        viewModel.confirmCancelPreparing(phantom)
+
+        #expect(viewModel.showCancelPreparingConfirmation == true)
+        #expect(viewModel.preparingInstanceToCancel?.id == phantom.id)
+    }
+
+    // MARK: - hasPreparing
+
+    @Test("hasPreparing returns true when an instance is preparing")
+    func hasPreparingTrue() {
+        let (viewModel, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        markPreparing(instance)
+        viewModel.instances.append(instance)
+
+        #expect(viewModel.hasPreparing == true)
+    }
+
+    @Test("hasPreparing returns false when no instances are preparing")
+    func hasPreparingFalse() {
+        let (viewModel, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        viewModel.instances.append(instance)
+
+        #expect(viewModel.hasPreparing == false)
+    }
+
+    // MARK: - Reconcile With Disk (Preparing)
+
+    @Test("reconcileWithDisk skips when instances are preparing")
+    func reconcileSkipsWhenPreparing() {
+        let storage = MockVMStorageService()
+        let config = VMConfiguration(name: "New VM", guestOS: .linux, bootMode: .efi)
+        let bundleURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
+        storage.bundles[bundleURL] = config
+
+        let (viewModel, _, _, _) = makeViewModel(storageService: storage)
+        viewModel.instances.removeAll()
+
+        // Add a preparing instance
+        let preparing = makeInstance(name: "Preparing")
+        markPreparing(preparing)
+        viewModel.instances.append(preparing)
+
+        viewModel.reconcileWithDisk()
+
+        // Should not have added the disk bundle because hasPreparing is true
+        #expect(viewModel.instances.count == 1)
+        #expect(viewModel.instances.first?.name == "Preparing")
+    }
+
+    @Test("reconcileWithDisk preserves preparing instances from removal")
+    func reconcilePreservesPreparingInstances() {
+        let (viewModel, _, _, _) = makeViewModel()
+        let preparing = makeInstance(name: "Preparing VM")
+        markPreparing(preparing)
+        preparing.status = .stopped
+        viewModel.instances.append(preparing)
+
+        // Storage has no bundles — normally this instance would be removed
+        // but hasPreparing guard should prevent reconcile from running
+        viewModel.reconcileWithDisk()
+
+        #expect(viewModel.instances.count == 1)
+        #expect(viewModel.instances.first?.name == "Preparing VM")
     }
 }
