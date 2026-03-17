@@ -149,6 +149,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         if let existingWindow = mainWindowController?.window {
             if bringToFront {
                 Self.logger.debug("showLibrary: focusing existing window")
+                NSApp.activate()
                 existingWindow.makeKeyAndOrderFront(nil)
             } else {
                 Self.logger.debug("showLibrary: showing existing window in background")
