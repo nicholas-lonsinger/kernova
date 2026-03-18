@@ -301,10 +301,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSGestu
             return ActionButtonSpec(
                 symbolName: "play.fill", toolTip: "Resume the virtual machine",
                 accessibilityLabel: "Resume", action: #selector(AppDelegate.resumeVM(_:)))
-        case Self.stopVMIdentifier:
-            return ActionButtonSpec(
-                symbolName: "stop.fill", toolTip: "Stop the virtual machine",
-                accessibilityLabel: "Stop", action: #selector(AppDelegate.stopVM(_:)))
         case Self.saveVMIdentifier:
             return ActionButtonSpec(
                 symbolName: "square.and.arrow.down", toolTip: "Save the virtual machine state to disk",

@@ -211,6 +211,7 @@ final class VMLibraryViewModel {
     func stop(_ instance: VMInstance) {
         if let lastRequest = lastStopRequestTimes[instance.id],
            Date().timeIntervalSince(lastRequest) >= 5 {
+            Self.logger.debug("Stop escalation for '\(instance.name)': graceful stop sent \(Date().timeIntervalSince(lastRequest), format: .fixed(precision: 1))s ago")
             confirmForceStopAfterGraceful(instance)
             return
         }
@@ -226,6 +227,7 @@ final class VMLibraryViewModel {
         do {
             try await lifecycle.forceStop(instance)
             lastStopRequestTimes.removeValue(forKey: instance.id)
+            Self.logger.notice("Force-stopped VM '\(instance.name)'")
         } catch {
             presentError(error)
         }

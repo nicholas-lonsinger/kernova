@@ -963,20 +963,31 @@ struct VMLibraryViewModelTests {
 
     @Test("reconcileWithDisk clears stop timestamps for stopped VMs")
     func reconcileClearsStopTimestamps() {
-        let (viewModel, _, _, _) = makeViewModel()
-        let instance = makeInstance()
-        instance.status = .stopped
-        viewModel.instances.append(instance)
+        let storage = MockVMStorageService()
+        let config = VMConfiguration(name: "Stopped VM", guestOS: .linux, bootMode: .efi)
+        let bundleURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
+        storage.bundles[bundleURL] = config
 
-        // Set a stale timestamp
-        viewModel.setLastStopRequestTime(Date(), for: instance.id)
+        let (viewModel, _, _, virtService) = makeViewModel(storageService: storage)
+
+        // The instance was loaded by init; mark it stopped and set a stale timestamp
+        guard let instance = viewModel.instances.first else {
+            Issue.record("Expected one loaded instance")
+            return
+        }
+        instance.status = .stopped
+        viewModel.setLastStopRequestTime(Date().addingTimeInterval(-10), for: instance.id)
 
         viewModel.reconcileWithDisk()
 
-        // After reconcile, calling stop on a running VM with the same ID should not escalate
-        // (timestamp was cleared for stopped VMs)
-        // Verify indirectly: the instance was removed (no bundle on disk), so the timestamp cleanup ran
-        #expect(viewModel.instances.isEmpty)
+        // Instance still exists (bundle is on disk), but timestamp should have been cleared.
+        // Verify by setting to running and calling stop — should NOT escalate.
+        instance.status = .running
+        viewModel.stop(instance)
+
+        #expect(virtService.stopCallCount == 1)
+        #expect(viewModel.showStopEscalation == false)
     }
 
     // MARK: - hasPreparing
