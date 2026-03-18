@@ -12,7 +12,7 @@ import Virtualization
 final class FullscreenWindowController: NSWindowController, NSWindowDelegate {
 
     let vmID: UUID
-    private(set) var closedByVMStop = false
+    private(set) var closedProgrammatically = false
     private let instance: VMInstance
     private var observingStatus = false
 
@@ -67,17 +67,18 @@ final class FullscreenWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: - Status Observation
 
-    /// Automatically closes the fullscreen window when the VM stops or errors out.
+    /// Automatically closes the fullscreen window when the VM stops, errors, or is cold-paused (save state).
     private func observeStatus() {
         observingStatus = true
         withObservationTracking {
             _ = self.instance.status
+            _ = self.instance.virtualMachine
         } onChange: {
             Task { @MainActor [weak self] in
                 guard let self, self.observingStatus else { return }
                 let status = self.instance.status
-                if status == .stopped || status == .error {
-                    self.closedByVMStop = true
+                if status == .stopped || status == .error || self.instance.isColdPaused {
+                    self.closedProgrammatically = true
                     self.window?.close()
                 } else {
                     self.observeStatus()
@@ -98,6 +99,16 @@ private struct FullscreenVMView: View {
         if let vm = instance.virtualMachine {
             VMDisplayView(virtualMachine: vm)
                 .ignoresSafeArea()
+        } else if instance.status.isTransitioning || instance.isColdPaused {
+            VStack(spacing: 12) {
+                ProgressView()
+                    .controlSize(.large)
+                Text(instance.isColdPaused ? "Restoring" : instance.status.displayName)
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(.black)
         } else {
             ContentUnavailableView(
                 "No Display",

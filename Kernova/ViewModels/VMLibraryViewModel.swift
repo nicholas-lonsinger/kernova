@@ -35,6 +35,10 @@ final class VMLibraryViewModel {
     /// `true` when any instance is mid-clone or mid-import.
     var hasPreparing: Bool { instances.contains(where: \.isPreparing) }
 
+    /// Called when a VM with `prefersFullscreen` is about to start or resume,
+    /// allowing the app delegate to pre-create the fullscreen window with a spinner.
+    @ObservationIgnored var onEnterFullscreen: ((VMInstance) -> Void)?
+
     // MARK: - Directory Watcher
 
     private var directoryWatcher: VMDirectoryWatcher?
@@ -201,6 +205,9 @@ final class VMLibraryViewModel {
     // MARK: - Lifecycle
 
     func start(_ instance: VMInstance) async {
+        if instance.configuration.prefersFullscreen {
+            onEnterFullscreen?(instance)
+        }
         do {
             try await lifecycle.start(instance)
         } catch {
@@ -267,6 +274,9 @@ final class VMLibraryViewModel {
     }
 
     func resume(_ instance: VMInstance) async {
+        if instance.configuration.prefersFullscreen {
+            onEnterFullscreen?(instance)
+        }
         do {
             try await lifecycle.resume(instance)
         } catch {

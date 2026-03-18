@@ -30,6 +30,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         viewModel = VMLibraryViewModel()
+        viewModel.onEnterFullscreen = { [weak self] instance in
+            self?.enterFullscreen(for: instance)
+        }
         setupMainMenu()
 
         let windowController = MainWindowController(viewModel: viewModel)
@@ -171,12 +174,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     @objc func startVM(_ sender: Any?) {
         guard let instance = viewModel.selectedInstance else { return }
-        Task {
-            await viewModel.start(instance)
-            if instance.status == .running && instance.configuration.prefersFullscreen {
-                enterFullscreen(for: instance)
-            }
-        }
+        Task { await viewModel.start(instance) }
     }
 
     @objc func pauseVM(_ sender: Any?) {
@@ -186,12 +184,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     @objc func resumeVM(_ sender: Any?) {
         guard let instance = viewModel.selectedInstance else { return }
-        Task {
-            await viewModel.resume(instance)
-            if instance.status == .running && instance.configuration.prefersFullscreen {
-                enterFullscreen(for: instance)
-            }
-        }
+        Task { await viewModel.resume(instance) }
     }
 
     @objc func stopVM(_ sender: Any?) {
@@ -300,7 +293,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                     NotificationCenter.default.removeObserver(token)
                 }
                 if let controller = self.fullscreenWindows.removeValue(forKey: vmID),
-                   !controller.closedByVMStop {
+                   !controller.closedProgrammatically {
                     instance.configuration.prefersFullscreen = false
                     self.viewModel.saveConfiguration(for: instance)
                 }
