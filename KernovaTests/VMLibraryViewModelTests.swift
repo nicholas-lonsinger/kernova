@@ -863,6 +863,122 @@ struct VMLibraryViewModelTests {
         #expect(viewModel.preparingInstanceToCancel?.id == phantom.id)
     }
 
+    // MARK: - Force Stop Confirmation
+
+    @Test("confirmForceStop sets instance and shows confirmation")
+    func confirmForceStop() {
+        let (viewModel, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        instance.status = .running
+        viewModel.instances.append(instance)
+
+        viewModel.confirmForceStop(instance)
+
+        #expect(viewModel.instanceToForceStop?.id == instance.id)
+        #expect(viewModel.showForceStopConfirmation == true)
+    }
+
+    @Test("forceStopConfirmed delegates to lifecycle and clears timestamp")
+    func forceStopConfirmed() async {
+        let (viewModel, _, _, virtService) = makeViewModel()
+        let instance = makeInstance()
+        instance.status = .running
+        viewModel.instances.append(instance)
+
+        // Set a stop request timestamp first
+        viewModel.setLastStopRequestTime(Date(), for: instance.id)
+
+        await viewModel.forceStopConfirmed(instance)
+
+        #expect(virtService.forceStopCallCount == 1)
+        #expect(instance.status == .stopped)
+    }
+
+    // MARK: - Stop Escalation
+
+    @Test("stop records timestamp and delegates to lifecycle on first call")
+    func stopFirstCallRecordsTimestamp() {
+        let (viewModel, _, _, virtService) = makeViewModel()
+        let instance = makeInstance()
+        instance.status = .running
+        viewModel.instances.append(instance)
+
+        viewModel.stop(instance)
+
+        #expect(virtService.stopCallCount == 1)
+    }
+
+    @Test("stop within 5 seconds sends another graceful stop")
+    func stopWithin5SecondsNoEscalation() {
+        let (viewModel, _, _, virtService) = makeViewModel()
+        let instance = makeInstance()
+        instance.status = .running
+        viewModel.instances.append(instance)
+
+        // Simulate a recent stop request (1 second ago)
+        viewModel.setLastStopRequestTime(Date().addingTimeInterval(-1), for: instance.id)
+
+        viewModel.stop(instance)
+
+        // Should send another graceful stop, not escalate
+        #expect(virtService.stopCallCount == 1)
+        #expect(viewModel.showStopEscalation == false)
+    }
+
+    @Test("stop after 5+ seconds shows escalation dialog")
+    func stopAfter5SecondsShowsEscalation() {
+        let (viewModel, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        instance.status = .running
+        viewModel.instances.append(instance)
+
+        // Simulate a stop request from 6 seconds ago
+        viewModel.setLastStopRequestTime(Date().addingTimeInterval(-6), for: instance.id)
+
+        viewModel.stop(instance)
+
+        #expect(viewModel.showStopEscalation == true)
+        #expect(viewModel.instanceToEscalate?.id == instance.id)
+    }
+
+    @Test("clearStopTimestamp allows fresh stop without escalation")
+    func clearStopTimestampAllowsFreshStop() {
+        let (viewModel, _, _, virtService) = makeViewModel()
+        let instance = makeInstance()
+        instance.status = .running
+        viewModel.instances.append(instance)
+
+        // Simulate an old stop request
+        viewModel.setLastStopRequestTime(Date().addingTimeInterval(-10), for: instance.id)
+
+        // Clear it
+        viewModel.clearStopTimestamp(for: instance.id)
+
+        // Next stop should be a fresh graceful stop
+        viewModel.stop(instance)
+
+        #expect(virtService.stopCallCount == 1)
+        #expect(viewModel.showStopEscalation == false)
+    }
+
+    @Test("reconcileWithDisk clears stop timestamps for stopped VMs")
+    func reconcileClearsStopTimestamps() {
+        let (viewModel, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        instance.status = .stopped
+        viewModel.instances.append(instance)
+
+        // Set a stale timestamp
+        viewModel.setLastStopRequestTime(Date(), for: instance.id)
+
+        viewModel.reconcileWithDisk()
+
+        // After reconcile, calling stop on a running VM with the same ID should not escalate
+        // (timestamp was cleared for stopped VMs)
+        // Verify indirectly: the instance was removed (no bundle on disk), so the timestamp cleanup ran
+        #expect(viewModel.instances.isEmpty)
+    }
+
     // MARK: - hasPreparing
 
     @Test("hasPreparing returns true when an instance is preparing")

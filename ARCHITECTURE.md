@@ -104,13 +104,13 @@ KernovaTests/
 **Files:** `AppDelegate.swift`, `MainWindowController.swift`, `FullscreenWindowController.swift`, `SerialConsoleWindowController.swift`
 
 `AppDelegate` is the entry point. It creates the `VMLibraryViewModel` and `VMLifecycleCoordinator`, opens the main window, and manages the lifecycle of all windows. It tracks window controllers in dictionaries keyed by VM UUID, enabling one-to-many relationships (a VM can have a main view, a fullscreen window, and a serial console open simultaneously). `AppDelegate` also handles:
-- The application menu (including VM-specific actions and Window > Show Library with Cmd+0)
+- The application menu (including VM-specific actions, Force Stop with `canForceStop` validation, and Window > Show Library with Cmd+0)
 - Save-on-quit behavior (saving VM state before termination)
 - Conditional termination: `applicationShouldTerminateAfterLastWindowClosed` returns `false` when VMs are active or fullscreen windows exist, preventing premature exit on fullscreen-to-inline transitions
 - Dock icon reopen: `applicationShouldHandleReopen` restores the main window when clicked with no visible windows
 - Fullscreen exit recovery: closing a fullscreen window automatically re-shows the main library window via `showLibrary(_:)`
 
-`MainWindowController` hosts an `NSSplitViewController` where each pane is an `NSHostingController` wrapping SwiftUI views. This is the AppKit/SwiftUI bridge point.
+`MainWindowController` hosts an `NSSplitViewController` where each pane is an `NSHostingController` wrapping SwiftUI views. This is the AppKit/SwiftUI bridge point. The Stop toolbar item uses a custom `NSButton` with `bezelStyle = .toolbar` (instead of the image-based approach used by other items) to support an `NSPressGestureRecognizer` for long-press force-stop.
 
 ### Models
 
@@ -124,7 +124,7 @@ The model layer has two key types:
 
 `VMBundleLayout` is a `Sendable` struct that takes a bundle root path and provides all derived file paths (disk image, aux storage, save file, serial log, etc.), keeping path logic centralized.
 
-The remaining models are enums: `VMStatus` (stopped/starting/running/paused/saving/restoring/installing/error), `VMBootMode` (macOS/efi/linuxKernel), `VMGuestOS` (macOS/linux), and `MacOSInstallState` (tracking download and install phases with progress). `VMStatus` provides computed properties for state checks (`canStart`, `canStop`, `canPause`, `canResume`, `canSave`, `canEditSettings`, `isTransitioning`, `isActive`).
+The remaining models are enums: `VMStatus` (stopped/starting/running/paused/saving/restoring/installing/error), `VMBootMode` (macOS/efi/linuxKernel), `VMGuestOS` (macOS/linux), and `MacOSInstallState` (tracking download and install phases with progress). `VMStatus` provides computed properties for state checks (`canStart`, `canStop`, `canForceStop`, `canPause`, `canResume`, `canSave`, `canEditSettings`, `isTransitioning`, `isActive`). `canForceStop` covers all states where a `VZVirtualMachine` may exist and need forceful termination (running, paused, starting, saving, restoring).
 
 ### Services
 
@@ -153,7 +153,7 @@ All service implementations conform to protocols defined in `Services/Protocols/
 
 **Files:** `VMLibraryViewModel.swift`, `VMLifecycleCoordinator.swift`, `VMCreationViewModel.swift`, `IPSWDownloadViewModel.swift`, `VMDirectoryWatcher.swift`
 
-- **`VMLibraryViewModel`** is the central `@Observable` view model. It owns the array of `VMInstance`s and handles list-level operations: add, remove, rename, selection tracking. For lifecycle operations (start, stop, install), it delegates to `VMLifecycleCoordinator`. Clone and import operations use a "phantom row" pattern: a `VMInstance` with `isPreparing = true` appears immediately in the sidebar with a spinner while the file copy runs asynchronously via `Task.detached`. The `hasPreparing` computed property enforces serialization — only one clone/import at a time. Cancellation removes the phantom row, cancels the task, and cleans up partial files on disk.
+- **`VMLibraryViewModel`** is the central `@Observable` view model. It owns the array of `VMInstance`s and handles list-level operations: add, remove, rename, selection tracking. For lifecycle operations (start, stop, install), it delegates to `VMLifecycleCoordinator`. Clone and import operations use a "phantom row" pattern: a `VMInstance` with `isPreparing = true` appears immediately in the sidebar with a spinner while the file copy runs asynchronously via `Task.detached`. The `hasPreparing` computed property enforces serialization — only one clone/import at a time. Cancellation removes the phantom row, cancels the task, and cleans up partial files on disk. Force-stop is surfaced via `confirmForceStop()` (direct) and smart escalation in `stop()` — if a graceful stop was already requested 5+ seconds ago and the user clicks stop again, an escalation dialog offers force-stop. Per-VM timestamps in `lastStopRequestTimes` track this, cleared on successful force-stop, reconciliation, or via `clearStopTimestamp()`.
 
 - **`VMLifecycleCoordinator`** is an `@MainActor` coordinator that owns the lifecycle services (`VirtualizationService`, `MacOSInstallService`, `IPSWService`). It orchestrates multi-step operations like macOS installation (which involves IPSW download → platform file creation → VM configuration → installation). This separation keeps `VMLibraryViewModel` focused on list management. The coordinator enforces **per-VM operation serialization** — at most one lifecycle operation can be in flight for a given VM at any time; concurrent requests are rejected with `VMLifecycleCoordinator.LifecycleError.operationInProgress`. `stop` and `forceStop` bypass serialization entirely (clearing the active-operation token before calling the service) so users can always cancel hung operations.
 
@@ -300,7 +300,7 @@ No external package dependencies. No Swift Package Manager, CocoaPods, or Cartha
 | Component | Tests | Notes |
 |-----------|-------|-------|
 | `VMConfiguration` | 43 tests + clone suite | Encoding/decoding, defaults, validation, all fields |
-| `VMLibraryViewModel` | 59 tests | Add/remove/rename VMs, selection, delegation to coordinator, sleep/wake, clone/import phantom rows, cancel preparing |
+| `VMLibraryViewModel` | 66 tests | Add/remove/rename VMs, selection, delegation to coordinator, sleep/wake, clone/import phantom rows, cancel preparing, force-stop confirmation, stop escalation timing |
 | `VMCreationViewModel` | 44 tests | All wizard steps, validation, OS-specific paths |
 | `VMLifecycleCoordinator` | Yes | Multi-step orchestration, error handling, service delegation, token-based operation serialization, stop/forceStop bypass, stale-token race condition coverage |
 | `VMInstance` | Yes | Status transitions, configuration updates, bundle layout, preparing state display properties |
@@ -308,7 +308,7 @@ No external package dependencies. No Swift Package Manager, CocoaPods, or Cartha
 | `VirtualizationService` | Yes | Start/stop/pause/resume via mock VZ objects |
 | `VMStorageService` | Yes | CRUD operations, cloning, migration |
 | `VMBundleLayout` | Yes | Path derivation from bundle root |
-| `VMStatus` | Yes | Enum behavior and transitions |
+| `VMStatus` | Yes | Enum behavior, transitions, `canForceStop` |
 | `VMBootMode` | Yes | Enum cases and properties |
 | `VMGuestOS` | Yes | Enum cases and properties |
 | `MacOSInstallState` | Yes | Phase tracking, progress calculation |
