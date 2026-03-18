@@ -383,8 +383,8 @@ final class VMLibraryViewModel {
                         try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
                     }.value
 
-                    guard self != nil else { return }
                     phantom.preparingState = nil
+                    guard self != nil else { return }
                     Self.logger.notice("Imported VM '\(config.name)' from \(sourceURL.lastPathComponent)")
                 } catch {
                     guard let self else { return }
@@ -500,8 +500,8 @@ final class VMLibraryViewModel {
                     #endif
                 }.value
 
-                guard self != nil else { return }
                 phantom.preparingState = nil
+                guard self != nil else { return }
                 Self.logger.notice("Cloned VM '\(instance.name)' as '\(config.name)'")
             } catch {
                 guard let self else { return }

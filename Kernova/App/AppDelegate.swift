@@ -287,8 +287,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             queue: .main
         ) { [weak self] notification in
             // Capture window state synchronously — by the time the Task runs, it may have changed
-            let wasKeyWindow = (notification.object as? NSWindow)?.isKeyWindow ?? false
-            let appWasActive = NSApp.isActive
+            // Safe: queue: .main guarantees main thread execution
+            let window = notification.object as? NSWindow
+            let (wasKeyWindow, appWasActive) = MainActor.assumeIsolated {
+                (window?.isKeyWindow ?? false, NSApp.isActive)
+            }
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 if let token = self.fullscreenObservers.removeValue(forKey: vmID) {
