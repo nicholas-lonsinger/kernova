@@ -255,6 +255,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSGestu
         if itemIdentifier == Self.newVMIdentifier {
             return makeNewVMItem()
         }
+        if itemIdentifier == Self.stopVMIdentifier {
+            return makeStopActionItem()
+        }
         if Self.allActionIdentifiers.contains(itemIdentifier) {
             return makeActionItem(for: itemIdentifier)
         }
@@ -298,10 +301,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSGestu
             return ActionButtonSpec(
                 symbolName: "play.fill", toolTip: "Resume the virtual machine",
                 accessibilityLabel: "Resume", action: #selector(AppDelegate.resumeVM(_:)))
-        case Self.stopVMIdentifier:
-            return ActionButtonSpec(
-                symbolName: "stop.fill", toolTip: "Stop the virtual machine",
-                accessibilityLabel: "Stop", action: #selector(AppDelegate.stopVM(_:)))
         case Self.saveVMIdentifier:
             return ActionButtonSpec(
                 symbolName: "square.and.arrow.down", toolTip: "Save the virtual machine state to disk",
@@ -317,6 +316,32 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSGestu
         default:
             return nil
         }
+    }
+
+    private func makeStopActionItem() -> NSToolbarItem {
+        let item = NSToolbarItem(itemIdentifier: Self.stopVMIdentifier)
+        let button = NSButton(
+            image: NSImage(systemSymbolName: "stop.fill", accessibilityDescription: "Stop")!,
+            target: nil,
+            action: #selector(AppDelegate.stopVM(_:))
+        )
+        button.bezelStyle = .toolbar
+        let pressGesture = NSPressGestureRecognizer(
+            target: self, action: #selector(stopButtonLongPressed(_:))
+        )
+        pressGesture.minimumPressDuration = 0.5
+        button.addGestureRecognizer(pressGesture)
+        item.view = button
+        item.label = "Stop"
+        item.paletteLabel = "Stop"
+        item.toolTip = "Stop the virtual machine. Long-press to force stop."
+        return item
+    }
+
+    @objc private func stopButtonLongPressed(_ sender: NSPressGestureRecognizer) {
+        guard sender.state == .began,
+              let instance = viewModel.selectedInstance else { return }
+        viewModel.confirmForceStop(instance)
     }
 
     private func makeActionItem(for identifier: NSToolbarItem.Identifier) -> NSToolbarItem? {

@@ -49,6 +49,13 @@ enum VMStatus: String, Codable, Sendable {
     var canSave: Bool { self == .running || self == .paused }
     var canEditSettings: Bool { self == .stopped || self == .error }
 
+    var canForceStop: Bool {
+        switch self {
+        case .running, .paused, .starting, .saving, .restoring: true
+        default: false
+        }
+    }
+
     /// Whether this status represents an active VM that should keep the app alive.
     /// Note: live-paused VMs (`.paused` with a non-nil `VZVirtualMachine`) should
     /// be handled separately by the caller.
