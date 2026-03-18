@@ -177,8 +177,8 @@ final class VMLibraryViewModel {
         instance.installTask?.cancel()
         instance.installTask = nil
 
-        // 2. Release VZ resources
-        instance.virtualMachine = nil
+        // 2. Release VZ resources (tearDownSession clears VM, pipes, delegate adapter)
+        instance.tearDownSession()
         instance.installState = nil
 
         // 3. Remove bundle from disk (moves to Trash)
@@ -300,9 +300,12 @@ final class VMLibraryViewModel {
     }
 
     func deleteConfirmed(_ instance: VMInstance) {
+        instance.tearDownSession()
         do {
             try storageService.deleteVMBundle(at: instance.bundleURL)
             lifecycle.clearActiveOperation(for: instance.id)
+            lastStopRequestTimes.removeValue(forKey: instance.id)
+            sleepPausedInstanceIDs.remove(instance.id)
             instances.removeAll { $0.id == instance.id }
             if selectedID == instance.id {
                 selectedID = instances.first?.id
