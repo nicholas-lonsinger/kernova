@@ -63,6 +63,35 @@ struct VMDetailView: View {
         } message: { _ in
             Text("The operation will be stopped and any partially copied files will be removed.")
         }
+        .alert(
+            "Force Stop Virtual Machine",
+            isPresented: $viewModel.showForceStopConfirmation,
+            presenting: viewModel.instanceToForceStop
+        ) { vm in
+            Button("Force Stop", role: .destructive) {
+                Task { await viewModel.forceStopConfirmed(vm) }
+            }
+            if vm.status.canStop {
+                Button("Shut Down") {
+                    viewModel.stop(vm)
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { vm in
+            Text("\"\(vm.name)\" will be immediately terminated. Any unsaved data inside the guest will be lost.")
+        }
+        .alert(
+            "Shut Down Not Responding",
+            isPresented: $viewModel.showStopEscalation,
+            presenting: viewModel.instanceToEscalate
+        ) { vm in
+            Button("Force Stop", role: .destructive) {
+                Task { await viewModel.forceStopConfirmed(vm) }
+            }
+            Button("Keep Waiting", role: .cancel) {}
+        } message: { vm in
+            Text("A shut down request was already sent to \"\(vm.name)\". The virtual machine may need more time, or it may be unresponsive.")
+        }
     }
 
     private var transitionView: some View {

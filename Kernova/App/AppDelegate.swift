@@ -199,6 +199,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         viewModel.stop(instance)
     }
 
+    @objc func forceStopVM(_ sender: Any?) {
+        guard let instance = viewModel.selectedInstance else { return }
+        viewModel.confirmForceStop(instance)
+    }
+
     @objc func saveVM(_ sender: Any?) {
         guard let instance = viewModel.selectedInstance else { return }
         Task { await viewModel.save(instance) }
@@ -333,6 +338,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             return viewModel.selectedInstance?.status.canResume ?? false
         case #selector(stopVM(_:)):
             return viewModel.selectedInstance?.status.canStop ?? false
+        case #selector(forceStopVM(_:)):
+            return viewModel.selectedInstance?.status.canForceStop ?? false
         case #selector(saveVM(_:)):
             return viewModel.selectedInstance?.status.canSave ?? false
         case #selector(renameVM(_:)):
@@ -425,6 +432,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let resumeItem = vmMenu.addItem(withTitle: "Resume", action: #selector(resumeVM(_:)), keyEquivalent: "r")
         resumeItem.keyEquivalentModifierMask = [.command, .option]
         vmMenu.addItem(withTitle: "Stop", action: #selector(stopVM(_:)), keyEquivalent: "")
+        vmMenu.addItem(withTitle: "Force Stop", action: #selector(forceStopVM(_:)), keyEquivalent: "")
         vmMenu.addItem(.separator())
         let saveItem = vmMenu.addItem(withTitle: "Save State", action: #selector(saveVM(_:)), keyEquivalent: "s")
         saveItem.keyEquivalentModifierMask = [.command, .option]

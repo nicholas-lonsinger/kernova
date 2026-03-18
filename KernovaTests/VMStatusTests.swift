@@ -79,6 +79,18 @@ struct VMStatusTests {
         #expect(VMStatus.installing.canEditSettings == false)
     }
 
+    @Test("canForceStop returns true for running, paused, starting, saving, restoring")
+    func canForceStop() {
+        #expect(VMStatus.running.canForceStop == true)
+        #expect(VMStatus.paused.canForceStop == true)
+        #expect(VMStatus.starting.canForceStop == true)
+        #expect(VMStatus.saving.canForceStop == true)
+        #expect(VMStatus.restoring.canForceStop == true)
+        #expect(VMStatus.stopped.canForceStop == false)
+        #expect(VMStatus.installing.canForceStop == false)
+        #expect(VMStatus.error.canForceStop == false)
+    }
+
     // MARK: - Active
 
     @Test("isActive returns true for running, starting, saving, restoring, installing")

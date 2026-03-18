@@ -27,6 +27,10 @@ final class VMLibraryViewModel {
     var renamingInstanceID: UUID?
     var showCancelPreparingConfirmation = false
     var preparingInstanceToCancel: VMInstance?
+    var showForceStopConfirmation = false
+    var instanceToForceStop: VMInstance?
+    var showStopEscalation = false
+    var instanceToEscalate: VMInstance?
 
     /// `true` when any instance is mid-clone or mid-import.
     var hasPreparing: Bool { instances.contains(where: \.isPreparing) }
@@ -34,6 +38,10 @@ final class VMLibraryViewModel {
     // MARK: - Directory Watcher
 
     private var directoryWatcher: VMDirectoryWatcher?
+
+    // MARK: - Stop Escalation
+
+    private var lastStopRequestTimes: [UUID: Date] = [:]
 
     // MARK: - Sleep/Wake
 
@@ -201,8 +209,15 @@ final class VMLibraryViewModel {
     }
 
     func stop(_ instance: VMInstance) {
+        if let lastRequest = lastStopRequestTimes[instance.id],
+           Date().timeIntervalSince(lastRequest) >= 5 {
+            Self.logger.debug("Stop escalation for '\(instance.name)': graceful stop sent \(Date().timeIntervalSince(lastRequest), format: .fixed(precision: 1))s ago")
+            confirmForceStopAfterGraceful(instance)
+            return
+        }
         do {
             try lifecycle.stop(instance)
+            lastStopRequestTimes[instance.id] = Date()
         } catch {
             presentError(error)
         }
@@ -211,9 +226,36 @@ final class VMLibraryViewModel {
     func forceStop(_ instance: VMInstance) async {
         do {
             try await lifecycle.forceStop(instance)
+            lastStopRequestTimes.removeValue(forKey: instance.id)
+            Self.logger.notice("Force-stopped VM '\(instance.name)'")
         } catch {
             presentError(error)
         }
+    }
+
+    // MARK: - Force Stop Confirmation
+
+    func confirmForceStop(_ instance: VMInstance) {
+        instanceToForceStop = instance
+        showForceStopConfirmation = true
+    }
+
+    func forceStopConfirmed(_ instance: VMInstance) async {
+        await forceStop(instance)
+    }
+
+    private func confirmForceStopAfterGraceful(_ instance: VMInstance) {
+        instanceToEscalate = instance
+        showStopEscalation = true
+    }
+
+    func clearStopTimestamp(for instanceID: UUID) {
+        lastStopRequestTimes.removeValue(forKey: instanceID)
+    }
+
+    /// Sets a stop request timestamp for the given VM. Used by tests to simulate elapsed time.
+    func setLastStopRequestTime(_ date: Date, for instanceID: UUID) {
+        lastStopRequestTimes[instanceID] = date
     }
 
     func pause(_ instance: VMInstance) async {
@@ -602,6 +644,12 @@ final class VMLibraryViewModel {
             if didChange {
                 instances.sort { $0.configuration.createdAt < $1.configuration.createdAt }
             }
+
+            // Clean up stop escalation timestamps for VMs that have stopped
+            for instance in instances where instance.status == .stopped {
+                lastStopRequestTimes.removeValue(forKey: instance.id)
+            }
+
             Self.logger.debug("reconcileWithDisk: complete — \(self.instances.count) VM(s) in library")
         } catch {
             Self.logger.error("Directory reconciliation failed: \(error.localizedDescription)")
