@@ -286,9 +286,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             object: controller.window,
             queue: .main
         ) { [weak self] notification in
-            // Capture window state synchronously — by the time the Task runs, it may have changed
-            // Safe: queue: .main guarantees main thread execution
+            // Capture window state synchronously before the Task runs (it may change).
+            // The observer closure is @Sendable (nonisolated), but queue: .main guarantees
+            // main thread execution, making MainActor.assumeIsolated safe.
             let window = notification.object as? NSWindow
+            dispatchPrecondition(condition: .onQueue(.main))
             let (wasKeyWindow, appWasActive) = MainActor.assumeIsolated {
                 (window?.isKeyWindow ?? false, NSApp.isActive)
             }
