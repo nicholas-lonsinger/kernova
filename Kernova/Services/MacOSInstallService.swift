@@ -93,7 +93,7 @@ final class MacOSInstallService {
         }
 
         // Capture progress for the @Sendable onCancel closure (VZMacOSInstaller is not Sendable)
-        nonisolated(unsafe) let installerProgress = installer.progress
+        let installerProgress = installer.progress
 
         Self.logger.info("Running macOS installer...")
         try await withTaskCancellationHandler {
