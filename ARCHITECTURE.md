@@ -56,6 +56,7 @@ Kernova/
 │   │   ├── VMConsoleView.swift         # VM display container
 │   │   ├── VMDisplayView.swift         # NSViewRepresentable wrapping VZVirtualMachineView
 │   │   ├── VMPauseOverlay.swift         # Frosted overlay with play button for live-paused VMs
+│   │   ├── VMTransitionOverlay.swift    # Frosted overlay with spinner for saving/restoring states
 │   │   ├── SerialConsoleContentView.swift # Serial console content wrapper
 │   │   └── SerialTerminalView.swift    # Terminal text view for serial output
 │   └── Creation/
@@ -96,7 +97,7 @@ KernovaTests/
 └── DataFormattersTests.swift           # Formatting utility tests
 ```
 
-**Total: 49 source files, 20 test files (15 suites + 5 mocks).**
+**Total: 50 source files, 20 test files (15 suites + 5 mocks).**
 
 ## Component Map
 
@@ -168,7 +169,7 @@ All service implementations conform to protocols defined in `Services/Protocols/
 
 ### Views
 
-**Files:** 17 SwiftUI views across 4 subdirectories + root
+**Files:** 18 SwiftUI views across 4 subdirectories + root
 
 Views observe `VMLibraryViewModel` and individual `VMInstance`s via the Observation framework. The view hierarchy:
 
@@ -176,7 +177,7 @@ Views observe `VMLibraryViewModel` and individual `VMInstance`s via the Observat
 ContentView
 ├── SidebarView → VMRowView (per VM)
 └── VMDetailView
-    ├── VMConsoleView → VMDisplayView (NSViewRepresentable for VZVirtualMachineView) + VMPauseOverlay
+    ├── VMConsoleView → VMDisplayView (NSViewRepresentable for VZVirtualMachineView) + VMPauseOverlay + VMTransitionOverlay
     ├── VMSettingsView
     └── MacOSInstallProgressView
 VMCreationWizardView (modal)
