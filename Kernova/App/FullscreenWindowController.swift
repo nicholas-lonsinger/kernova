@@ -13,6 +13,7 @@ final class FullscreenWindowController: NSWindowController, NSWindowDelegate {
 
     let vmID: UUID
     private(set) var closedProgrammatically = false
+    private(set) var lastDisplayID: CGDirectDisplayID?
     private let instance: VMInstance
     private var observingStatus = false
 
@@ -56,6 +57,10 @@ final class FullscreenWindowController: NSWindowController, NSWindowDelegate {
     // MARK: - NSWindowDelegate
 
     func windowWillClose(_ notification: Notification) {
+        // Capture display ID if not already set by the programmatic-close path
+        if lastDisplayID == nil {
+            lastDisplayID = window?.screen?.displayID
+        }
         observingStatus = false
         instance.isInFullscreen = false
     }
@@ -78,6 +83,7 @@ final class FullscreenWindowController: NSWindowController, NSWindowDelegate {
                 guard let self, self.observingStatus else { return }
                 let status = self.instance.status
                 if status == .stopped || status == .error || self.instance.isColdPaused {
+                    self.lastDisplayID = self.window?.screen?.displayID
                     self.closedProgrammatically = true
                     self.window?.close()
                 } else {
@@ -85,6 +91,14 @@ final class FullscreenWindowController: NSWindowController, NSWindowDelegate {
                 }
             }
         }
+    }
+}
+
+// MARK: - NSScreen Display ID
+
+extension NSScreen {
+    var displayID: CGDirectDisplayID? {
+        deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
     }
 }
 

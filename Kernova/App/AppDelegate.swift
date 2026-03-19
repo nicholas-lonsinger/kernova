@@ -295,9 +295,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 if let token = self.fullscreenObservers.removeValue(forKey: vmID) {
                     NotificationCenter.default.removeObserver(token)
                 }
-                if let controller = self.fullscreenWindows.removeValue(forKey: vmID),
-                   !controller.closedProgrammatically {
-                    instance.configuration.prefersFullscreen = false
+                if let controller = self.fullscreenWindows.removeValue(forKey: vmID) {
+                    // Always remember which display the VM was on
+                    if let displayID = controller.lastDisplayID {
+                        instance.configuration.lastFullscreenDisplayID = displayID
+                    }
+                    if !controller.closedProgrammatically {
+                        instance.configuration.prefersFullscreen = false
+                        Self.logger.debug("Cleared prefersFullscreen for '\(instance.name)' (user exited fullscreen)")
+                    }
                     self.viewModel.saveConfiguration(for: instance)
                 }
 
@@ -314,7 +320,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
         fullscreenObservers[vmID] = token
 
+        // Position on the remembered display so toggleFullScreen picks the correct screen
+        if let screen = targetScreen(for: instance),
+           let window = controller.window {
+            let frame = screen.frame
+            let centeredOrigin = NSPoint(
+                x: frame.midX - window.frame.width / 2,
+                y: frame.midY - window.frame.height / 2
+            )
+            window.setFrameOrigin(centeredOrigin)
+        }
+
         controller.showWindow(nil)
+    }
+
+    /// Returns the best screen for entering fullscreen, using a fallback chain:
+    /// 1. The display the VM was last fullscreen on (persisted in configuration)
+    /// 2. The library window's current display
+    /// 3. The primary display
+    private func targetScreen(for instance: VMInstance) -> NSScreen? {
+        if let savedID = instance.configuration.lastFullscreenDisplayID {
+            if let target = NSScreen.screens.first(where: { $0.displayID == savedID }) {
+                Self.logger.debug("targetScreen for '\(instance.name)': using saved display \(savedID)")
+                return target
+            }
+            Self.logger.debug("targetScreen for '\(instance.name)': saved display \(savedID) not found, falling back")
+        }
+        if let libraryScreen = mainWindowController?.window?.screen {
+            return libraryScreen
+        }
+        return NSScreen.screens.first
     }
 
     // MARK: - Menu Validation

@@ -439,4 +439,63 @@ struct VMConfigurationTests {
         #expect(config.prefersFullscreen == false)
     }
 
+    // MARK: - lastFullscreenDisplayID Tests
+
+    @Test("Default lastFullscreenDisplayID is nil")
+    func defaultLastFullscreenDisplayID() {
+        let config = VMConfiguration(
+            name: "Test VM",
+            guestOS: .linux,
+            bootMode: .efi
+        )
+        #expect(config.lastFullscreenDisplayID == nil)
+    }
+
+    @Test("Configuration preserves lastFullscreenDisplayID")
+    func lastFullscreenDisplayIDRoundTrip() throws {
+        let config = VMConfiguration(
+            name: "Display VM",
+            guestOS: .linux,
+            bootMode: .efi,
+            lastFullscreenDisplayID: 4_280_803_137
+        )
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(config)
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(VMConfiguration.self, from: data)
+
+        #expect(decoded.lastFullscreenDisplayID == 4_280_803_137)
+    }
+
+    @Test("Backward compatibility: decoding JSON without lastFullscreenDisplayID defaults to nil")
+    func backwardCompatibilityLastFullscreenDisplayID() throws {
+        let json = """
+        {
+            "id": "12345678-1234-1234-1234-123456789012",
+            "name": "Old VM",
+            "guestOS": "linux",
+            "bootMode": "efi",
+            "cpuCount": 4,
+            "memorySizeInGB": 8,
+            "diskSizeInGB": 64,
+            "displayWidth": 1920,
+            "displayHeight": 1200,
+            "displayPPI": 144,
+            "networkEnabled": true,
+            "createdAt": "2025-01-01T00:00:00Z",
+            "notes": ""
+        }
+        """
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let config = try decoder.decode(VMConfiguration.self, from: Data(json.utf8))
+
+        #expect(config.lastFullscreenDisplayID == nil)
+    }
+
 }
