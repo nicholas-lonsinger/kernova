@@ -303,7 +303,7 @@ No external package dependencies. No Swift Package Manager, CocoaPods, or Cartha
 | Component | Tests | Notes |
 |-----------|-------|-------|
 | `VMConfiguration` | 47 tests + clone suite | Encoding/decoding, defaults, validation, all fields |
-| `VMLibraryViewModel` | 67 tests | Add/remove/rename VMs, selection, auto-select on load, delegation to coordinator, sleep/wake, clone/import phantom rows, cancel preparing, force-stop confirmation, stop escalation timing |
+| `VMLibraryViewModel` | 68 tests | Add/remove/rename VMs, selection, auto-select on load, selection preservation on reload, delegation to coordinator, sleep/wake, clone/import phantom rows, cancel preparing, force-stop confirmation, stop escalation timing |
 | `VMCreationViewModel` | 44 tests | All wizard steps, validation, OS-specific paths |
 | `VMLifecycleCoordinator` | Yes | Multi-step orchestration, error handling, service delegation, token-based operation serialization, stop/forceStop bypass, stale-token race condition coverage |
 | `VMInstance` | Yes | Status transitions, configuration updates, bundle layout, preparing state display properties |
