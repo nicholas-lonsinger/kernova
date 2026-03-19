@@ -9,7 +9,6 @@ struct VMTransitionOverlay: View {
         VStack(spacing: 12) {
             ProgressView()
                 .controlSize(.large)
-                .accessibilityLabel(label)
 
             Text(label)
                 .font(.title2)
