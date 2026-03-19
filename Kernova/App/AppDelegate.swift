@@ -17,6 +17,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     private static let logger = Logger(subsystem: "com.kernova.app", category: "AppDelegate")
 
+    /// Returns the VM that menu actions should target: the fullscreen VM if its window
+    /// is key, otherwise the sidebar-selected VM.
+    private var activeInstance: VMInstance? {
+        if let keyWindow = NSApp.keyWindow,
+           let controller = fullscreenWindows.values.first(where: { $0.window === keyWindow }) {
+            return controller.instance
+        }
+        return viewModel.selectedInstance
+    }
+
     // MARK: - Entry Point
 
     static func main() {
@@ -173,54 +183,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     // MARK: - VM Actions
 
     @objc func startVM(_ sender: Any?) {
-        guard let instance = viewModel.selectedInstance else { return }
+        guard let instance = activeInstance else { return }
         Task { await viewModel.start(instance) }
     }
 
     @objc func pauseVM(_ sender: Any?) {
-        guard let instance = viewModel.selectedInstance else { return }
+        guard let instance = activeInstance else { return }
         Task { await viewModel.pause(instance) }
     }
 
     @objc func resumeVM(_ sender: Any?) {
-        guard let instance = viewModel.selectedInstance else { return }
+        guard let instance = activeInstance else { return }
         Task { await viewModel.resume(instance) }
     }
 
     @objc func stopVM(_ sender: Any?) {
-        guard let instance = viewModel.selectedInstance else { return }
+        guard let instance = activeInstance else { return }
         viewModel.stop(instance)
     }
 
     @objc func forceStopVM(_ sender: Any?) {
-        guard let instance = viewModel.selectedInstance else { return }
+        guard let instance = activeInstance else { return }
         viewModel.confirmForceStop(instance)
     }
 
     @objc func saveVM(_ sender: Any?) {
-        guard let instance = viewModel.selectedInstance else { return }
+        guard let instance = activeInstance else { return }
         Task { await viewModel.save(instance) }
     }
 
     @objc func renameVM(_ sender: Any?) {
-        guard let instance = viewModel.selectedInstance else { return }
+        guard let instance = activeInstance else { return }
         viewModel.renameVM(instance)
     }
 
     @objc func cloneVM(_ sender: Any?) {
-        guard let instance = viewModel.selectedInstance else { return }
+        guard let instance = activeInstance else { return }
         viewModel.cloneVM(instance)
     }
 
     @objc func deleteVM(_ sender: Any?) {
-        guard let instance = viewModel.selectedInstance else { return }
+        guard let instance = activeInstance else { return }
         viewModel.confirmDelete(instance)
     }
 
     // MARK: - Serial Console
 
     @objc func showSerialConsole(_ sender: Any?) {
-        guard let instance = viewModel.selectedInstance,
+        guard let instance = activeInstance,
               instance.canShowSerialConsole else { return }
 
         if let existing = serialConsoleWindows[instance.instanceID] {
@@ -253,7 +263,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     // MARK: - Fullscreen Display
 
     @objc func toggleFullscreenDisplay(_ sender: Any?) {
-        guard let instance = viewModel.selectedInstance else { return }
+        guard let instance = activeInstance else { return }
 
         if let existing = fullscreenWindows[instance.instanceID] {
             existing.window?.close()
@@ -356,7 +366,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         // Preparing instances disable all VM menu bar actions (cancel is only available via sidebar context menu)
-        if let instance = viewModel.selectedInstance, instance.isPreparing {
+        if let instance = activeInstance, instance.isPreparing {
             switch menuItem.action {
             case #selector(showLibrary(_:)), #selector(newVM(_:)):
                 return true
@@ -367,31 +377,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
         switch menuItem.action {
         case #selector(startVM(_:)):
-            return viewModel.selectedInstance?.status.canStart ?? false
+            return activeInstance?.status.canStart ?? false
         case #selector(pauseVM(_:)):
-            return viewModel.selectedInstance?.status.canPause ?? false
+            return activeInstance?.status.canPause ?? false
         case #selector(resumeVM(_:)):
-            return viewModel.selectedInstance?.status.canResume ?? false
+            return activeInstance?.status.canResume ?? false
         case #selector(stopVM(_:)):
-            return viewModel.selectedInstance?.status.canStop ?? false
+            return activeInstance?.status.canStop ?? false
         case #selector(forceStopVM(_:)):
-            return viewModel.selectedInstance?.status.canForceStop ?? false
+            return activeInstance?.status.canForceStop ?? false
         case #selector(saveVM(_:)):
-            return viewModel.selectedInstance?.status.canSave ?? false
+            return activeInstance?.status.canSave ?? false
         case #selector(renameVM(_:)):
-            return viewModel.selectedInstance?.status.canEditSettings ?? false
+            return activeInstance?.status.canEditSettings ?? false
         case #selector(cloneVM(_:)):
-            guard let instance = viewModel.selectedInstance else { return false }
+            guard let instance = activeInstance else { return false }
             return instance.status.canEditSettings && !viewModel.hasPreparing
         case #selector(deleteVM(_:)):
-            return viewModel.selectedInstance?.status.canEditSettings ?? false
+            return activeInstance?.status.canEditSettings ?? false
         // AppKit bypasses NSMenuItemValidation for windowsMenu items, so
         // menuNeedsUpdate(_:) handles visual state. This case covers keyboard
         // shortcut validation, which still routes through validateMenuItem(_:).
         case #selector(showSerialConsole(_:)):
-            return viewModel.selectedInstance?.canShowSerialConsole ?? false
+            return activeInstance?.canShowSerialConsole ?? false
         case #selector(toggleFullscreenDisplay(_:)):
-            guard let instance = viewModel.selectedInstance else { return false }
+            guard let instance = activeInstance else { return false }
             // Only allow fullscreen when the VM has a live VZVirtualMachine
             let canFullscreen = (instance.status == .running || instance.status == .paused)
                 && instance.virtualMachine != nil
@@ -408,7 +418,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         if menu === NSApp.windowsMenu {
-            serialConsoleMenuItem.isEnabled = viewModel.selectedInstance?.canShowSerialConsole ?? false
+            serialConsoleMenuItem.isEnabled = activeInstance?.canShowSerialConsole ?? false
         }
     }
 
