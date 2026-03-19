@@ -403,9 +403,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             return activeInstance?.canShowSerialConsole ?? false
         case #selector(toggleFullscreenDisplay(_:)):
             guard let instance = activeInstance else { return false }
-            // Only allow fullscreen when the VM has a live VZVirtualMachine
-            let canFullscreen = (instance.status == .running || instance.status == .paused)
-                && instance.virtualMachine != nil
+            let canFullscreen = instance.canFullscreen
             if canFullscreen, fullscreenWindows[instance.instanceID] != nil {
                 menuItem.title = "Exit Fullscreen Display"
             } else {
