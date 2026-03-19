@@ -1,8 +1,9 @@
 import SwiftUI
 
-/// Console view with the VM display and lifecycle control toolbar.
+/// Console view that displays the VM screen, pause overlay, or a placeholder depending on VM state.
 struct VMConsoleView: View {
     @Bindable var instance: VMInstance
+    var onResume: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -20,6 +21,7 @@ struct VMConsoleView: View {
             } else if let vm = instance.virtualMachine {
                 VMDisplayView(virtualMachine: vm)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .vmPauseOverlay(isPaused: instance.status == .paused, onResume: onResume)
             } else if instance.isColdPaused {
                 ContentUnavailableView(
                     "Suspended",

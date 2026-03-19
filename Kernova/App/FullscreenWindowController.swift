@@ -16,11 +16,11 @@ final class FullscreenWindowController: NSWindowController, NSWindowDelegate {
     private let instance: VMInstance
     private var observingStatus = false
 
-    init(instance: VMInstance) {
+    init(instance: VMInstance, onResume: @escaping () -> Void) {
         self.vmID = instance.instanceID
         self.instance = instance
 
-        let contentView = FullscreenVMView(instance: instance)
+        let contentView = FullscreenVMView(instance: instance, onResume: onResume)
         let hostingController = NSHostingController(rootView: contentView)
         hostingController.sizingOptions = []
 
@@ -91,14 +91,16 @@ final class FullscreenWindowController: NSWindowController, NSWindowDelegate {
 // MARK: - Fullscreen SwiftUI View
 
 /// SwiftUI view used inside the fullscreen window. Shows the VM display when a
-/// `VZVirtualMachine` is available, or a placeholder otherwise.
+/// `VZVirtualMachine` is available (with a pause overlay when live-paused), or a placeholder otherwise.
 private struct FullscreenVMView: View {
     let instance: VMInstance
+    var onResume: () -> Void
 
     var body: some View {
         if let vm = instance.virtualMachine {
             VMDisplayView(virtualMachine: vm)
                 .ignoresSafeArea()
+                .vmPauseOverlay(isPaused: instance.status == .paused, onResume: onResume)
         } else if instance.status.isTransitioning || instance.isColdPaused {
             VStack(spacing: 12) {
                 ProgressView()

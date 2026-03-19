@@ -55,6 +55,7 @@ Kernova/
 │   ├── Console/
 │   │   ├── VMConsoleView.swift         # VM display container
 │   │   ├── VMDisplayView.swift         # NSViewRepresentable wrapping VZVirtualMachineView
+│   │   ├── VMPauseOverlay.swift         # Frosted overlay with play button for live-paused VMs
 │   │   ├── SerialConsoleContentView.swift # Serial console content wrapper
 │   │   └── SerialTerminalView.swift    # Terminal text view for serial output
 │   └── Creation/
@@ -167,7 +168,7 @@ All service implementations conform to protocols defined in `Services/Protocols/
 
 ### Views
 
-**Files:** 16 SwiftUI views across 4 subdirectories + root
+**Files:** 17 SwiftUI views across 4 subdirectories + root
 
 Views observe `VMLibraryViewModel` and individual `VMInstance`s via the Observation framework. The view hierarchy:
 
@@ -175,7 +176,7 @@ Views observe `VMLibraryViewModel` and individual `VMInstance`s via the Observat
 ContentView
 ├── SidebarView → VMRowView (per VM)
 └── VMDetailView
-    ├── VMConsoleView → VMDisplayView (NSViewRepresentable for VZVirtualMachineView)
+    ├── VMConsoleView → VMDisplayView (NSViewRepresentable for VZVirtualMachineView) + VMPauseOverlay
     ├── VMSettingsView
     └── MacOSInstallProgressView
 VMCreationWizardView (modal)
