@@ -14,7 +14,7 @@ final class FullscreenWindowController: NSWindowController, NSWindowDelegate {
     let vmID: UUID
     private(set) var closedProgrammatically = false
     private(set) var lastDisplayID: CGDirectDisplayID?
-    private let instance: VMInstance
+    let instance: VMInstance
     private var observingStatus = false
 
     init(instance: VMInstance, onResume: @escaping () -> Void) {
