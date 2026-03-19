@@ -115,6 +115,7 @@ private struct FullscreenVMView: View {
             VMDisplayView(virtualMachine: vm)
                 .ignoresSafeArea()
                 .vmPauseOverlay(isPaused: instance.status == .paused, onResume: onResume)
+                .vmTransitionOverlay(status: instance.status)
         } else if instance.status.isTransitioning || instance.isColdPaused {
             VStack(spacing: 12) {
                 ProgressView()

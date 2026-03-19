@@ -22,6 +22,7 @@ struct VMConsoleView: View {
                 VMDisplayView(virtualMachine: vm)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .vmPauseOverlay(isPaused: instance.status == .paused, onResume: onResume)
+                    .vmTransitionOverlay(status: instance.status)
             } else if instance.isColdPaused {
                 ContentUnavailableView(
                     "Suspended",
