@@ -24,6 +24,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
     var displayHeight: Int
     var displayPPI: Int
     var prefersFullscreen: Bool
+    var lastFullscreenDisplayID: UInt32?
 
     // MARK: - Network
 
@@ -81,6 +82,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         displayHeight: Int = 1200,
         displayPPI: Int = 144,
         prefersFullscreen: Bool = false,
+        lastFullscreenDisplayID: UInt32? = nil,
         networkEnabled: Bool = true,
         macAddress: String? = nil,
         hardwareModelData: Data? = nil,
@@ -106,6 +108,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         self.displayHeight = displayHeight
         self.displayPPI = displayPPI
         self.prefersFullscreen = prefersFullscreen
+        self.lastFullscreenDisplayID = lastFullscreenDisplayID
         self.networkEnabled = networkEnabled
         self.macAddress = macAddress
         self.hardwareModelData = hardwareModelData
@@ -126,7 +129,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case id, name, guestOS, bootMode
         case cpuCount, memorySizeInGB, diskSizeInGB
-        case displayWidth, displayHeight, displayPPI, prefersFullscreen
+        case displayWidth, displayHeight, displayPPI, prefersFullscreen, lastFullscreenDisplayID
         case networkEnabled, macAddress
         case hardwareModelData, machineIdentifierData
         case genericMachineIdentifierData
@@ -150,6 +153,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         displayHeight = try container.decode(Int.self, forKey: .displayHeight)
         displayPPI = try container.decode(Int.self, forKey: .displayPPI)
         prefersFullscreen = try container.decodeIfPresent(Bool.self, forKey: .prefersFullscreen) ?? false
+        lastFullscreenDisplayID = try container.decodeIfPresent(UInt32.self, forKey: .lastFullscreenDisplayID)
         networkEnabled = try container.decode(Bool.self, forKey: .networkEnabled)
         macAddress = try container.decodeIfPresent(String.self, forKey: .macAddress)
         hardwareModelData = try container.decodeIfPresent(Data.self, forKey: .hardwareModelData)
@@ -181,6 +185,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         clone.createdAt = Date()
         clone.name = Self.generateCloneName(baseName: name, existingNames: existingNames)
         clone.prefersFullscreen = false
+        clone.lastFullscreenDisplayID = nil
 
         // Regenerate shared directory IDs to avoid VirtioFS collisions
         clone.sharedDirectories = sharedDirectories?.map { dir in

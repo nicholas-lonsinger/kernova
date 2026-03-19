@@ -167,6 +167,14 @@ struct VMConfigurationCloneTests {
         #expect(clone.prefersFullscreen == false)
     }
 
+    @Test("Clone resets lastFullscreenDisplayID to nil")
+    func cloneResetsLastFullscreenDisplayID() {
+        var config = makeConfig()
+        config.lastFullscreenDisplayID = 4_280_803_137
+        let clone = config.clonedForNewInstance(existingNames: [])
+        #expect(clone.lastFullscreenDisplayID == nil)
+    }
+
     // MARK: - Shared Directories
 
     @Test("Clone regenerates shared directory IDs")
