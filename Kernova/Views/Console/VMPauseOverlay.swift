@@ -21,6 +21,7 @@ struct VMPauseOverlay: View {
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Resume")
 
                 Text("Paused")
                     .font(.title2)
