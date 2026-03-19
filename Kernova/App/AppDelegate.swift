@@ -271,7 +271,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // Already showing fullscreen for this VM
         guard fullscreenWindows[vmID] == nil else { return }
 
-        let controller = FullscreenWindowController(instance: instance)
+        let controller = FullscreenWindowController(instance: instance) { [weak self] in
+            guard let self else { return }
+            Task { await self.viewModel.resume(instance) }
+        }
         fullscreenWindows[vmID] = controller
 
         let token = NotificationCenter.default.addObserver(

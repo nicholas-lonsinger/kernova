@@ -3,6 +3,7 @@ import SwiftUI
 /// Console view with the VM display and lifecycle control toolbar.
 struct VMConsoleView: View {
     @Bindable var instance: VMInstance
+    var onResume: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -20,6 +21,13 @@ struct VMConsoleView: View {
             } else if let vm = instance.virtualMachine {
                 VMDisplayView(virtualMachine: vm)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .overlay {
+                        if instance.status == .paused {
+                            VMPauseOverlay(onResume: onResume)
+                                .transition(.opacity)
+                        }
+                    }
+                    .animation(.easeInOut(duration: 0.25), value: instance.status == .paused)
             } else if instance.isColdPaused {
                 ContentUnavailableView(
                     "Suspended",

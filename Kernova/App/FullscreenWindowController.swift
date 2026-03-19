@@ -16,11 +16,11 @@ final class FullscreenWindowController: NSWindowController, NSWindowDelegate {
     private let instance: VMInstance
     private var observingStatus = false
 
-    init(instance: VMInstance) {
+    init(instance: VMInstance, onResume: @escaping () -> Void) {
         self.vmID = instance.instanceID
         self.instance = instance
 
-        let contentView = FullscreenVMView(instance: instance)
+        let contentView = FullscreenVMView(instance: instance, onResume: onResume)
         let hostingController = NSHostingController(rootView: contentView)
         hostingController.sizingOptions = []
 
@@ -94,11 +94,19 @@ final class FullscreenWindowController: NSWindowController, NSWindowDelegate {
 /// `VZVirtualMachine` is available, or a placeholder otherwise.
 private struct FullscreenVMView: View {
     let instance: VMInstance
+    var onResume: () -> Void
 
     var body: some View {
         if let vm = instance.virtualMachine {
             VMDisplayView(virtualMachine: vm)
                 .ignoresSafeArea()
+                .overlay {
+                    if instance.status == .paused {
+                        VMPauseOverlay(onResume: onResume)
+                            .transition(.opacity)
+                    }
+                }
+                .animation(.easeInOut(duration: 0.25), value: instance.status == .paused)
         } else if instance.status.isTransitioning || instance.isColdPaused {
             VStack(spacing: 12) {
                 ProgressView()
