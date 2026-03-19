@@ -10,7 +10,7 @@ Kernova is a macOS application for creating and managing virtual machines via Ap
 Kernova/
 ├── App/                                # App lifecycle and window management
 │   ├── AppDelegate.swift               # NSApplicationDelegate — startup, window tracking, menu, save-on-quit
-│   ├── MainWindowController.swift      # Primary NSSplitViewController hosting SwiftUI sidebar + detail
+│   ├── MainWindowController.swift      # NSWindow + NSHostingController hosting SwiftUI NavigationSplitView
 │   ├── FullscreenWindowController.swift # Per-VM fullscreen window, auto-closes on VM stop
 │   └── SerialConsoleWindowController.swift # Per-VM serial console window, auto-closes on VM stop
 ├── Models/                             # Data types — all value types or @MainActor-isolated
@@ -43,10 +43,10 @@ Kernova/
 │   ├── IPSWDownloadViewModel.swift     # Manages IPSW download state for macOS VM creation
 │   └── VMDirectoryWatcher.swift        # DispatchSource monitor for external filesystem changes
 ├── Views/                              # SwiftUI views
-│   ├── ContentView.swift               # Root SwiftUI view (sidebar + detail split)
+│   ├── ContentView.swift               # Root NavigationSplitView with sidebar, detail, and toolbar
 │   ├── VMInstance+Display.swift        # Display-layer extension: cold-paused vs live-paused distinction
 │   ├── Sidebar/
-│   │   ├── SidebarView.swift           # VM list with toolbar actions
+│   │   ├── SidebarView.swift           # VM list with selection, double-click-to-start, and context menus
 │   │   └── VMRowView.swift             # Individual VM row (name, status, inline rename)
 │   ├── Detail/
 │   │   ├── VMDetailView.swift          # Main detail pane — toolbar + console/settings switch
@@ -112,7 +112,7 @@ KernovaTests/
 - Dock icon reopen: `applicationShouldHandleReopen` restores the main window when clicked with no visible windows
 - Fullscreen exit recovery: closing a fullscreen window automatically re-shows the main library window via `showLibrary(_:)`
 
-`MainWindowController` hosts an `NSSplitViewController` where each pane is an `NSHostingController` wrapping SwiftUI views. This is the AppKit/SwiftUI bridge point. The Stop toolbar item uses a custom `NSButton` with `bezelStyle = .toolbar` (instead of the image-based approach used by other items) to support an `NSPressGestureRecognizer` for long-press force-stop.
+`MainWindowController` creates an `NSWindow` with an empty `NSToolbar` (`.unified` style) and a single `NSHostingController` hosting `ContentView`. SwiftUI's `NavigationSplitView` handles the sidebar/detail split, and `.toolbar` modifiers populate the toolbar automatically. The `.fullSizeContentView` style mask preserves the full-height sidebar look. The Stop toolbar button uses a `Menu(primaryAction:)` pattern: tap sends a graceful stop, click-hold reveals a dropdown with "Force Stop".
 
 ### Models
 
@@ -202,9 +202,10 @@ AppDelegate
     │                 └── DiskImageService
     │
     ├── creates → MainWindowController
-    │                 └── NSSplitViewController
-    │                       ├── NSHostingController(SidebarView)
-    │                       └── NSHostingController(VMDetailView)
+    │                 └── NSHostingController(ContentView)
+    │                       └── NavigationSplitView
+    │                             ├── SidebarView
+    │                             └── VMDetailView
     │
     ├── manages → FullscreenWindowController (per VM)
     └── manages → SerialConsoleWindowController (per VM)
@@ -226,11 +227,11 @@ SystemSleepWatcher ──sleep/wake──→ VMLibraryViewModel ──pause/resu
 
 ### 1. AppKit hosting SwiftUI
 
-**What:** The app uses `NSSplitViewController` with `NSHostingController` children rather than a pure SwiftUI app.
+**What:** The app uses `NSWindow` + `NSHostingController` wrapping a SwiftUI `NavigationSplitView`. An empty `NSToolbar` is attached to the window so SwiftUI's `.toolbar` modifiers populate it automatically.
 
-**Why:** SwiftUI's `.toolbar` modifier doesn't propagate correctly through nested `NSHostingController`s. The app needs per-pane toolbars and precise window management (multiple window types per VM, fullscreen control) that SwiftUI's window APIs don't fully support. `NSToolbar` via `NSToolbarDelegate` gives full control.
+**Why:** The app needs precise window management (multiple window types per VM, fullscreen control) that SwiftUI's window APIs don't fully support. `NSWindow` with an `NSHostingController` provides the necessary control while keeping the UI fully declarative in SwiftUI.
 
-**Alternatives:** Pure SwiftUI with `WindowGroup`/`Window` — would simplify code but loses toolbar control and multi-window management needed for VM display windows.
+**Alternatives:** Pure SwiftUI with `WindowGroup`/`Window` — would simplify code but loses multi-window management needed for VM display windows.
 
 ### 2. VM bundle as `.kernova` package directory
 
@@ -274,13 +275,13 @@ SystemSleepWatcher ──sleep/wake──→ VMLibraryViewModel ──pause/resu
 
 **Alternatives:** Fat view model (simpler structure but harder to test and maintain), or individual operation objects (more granular but more types to manage).
 
-### 7. NSToolbar via delegate
+### 7. SwiftUI toolbar via empty NSToolbar
 
-**What:** The main window toolbar uses `NSToolbarDelegate` rather than SwiftUI's `.toolbar` modifier.
+**What:** The main window attaches an empty `NSToolbar` (no delegate, no items) with `.unified` style. SwiftUI's `.toolbar` modifiers on `ContentView` populate it automatically.
 
-**Why:** SwiftUI toolbar items don't propagate through `NSHostingController` children. Since the main window is an `NSSplitViewController` with hosted SwiftUI panes, the toolbar must be configured at the AppKit level.
+**Why:** An `NSToolbar` instance must exist on the window for SwiftUI toolbar items to appear. Since the entire view hierarchy is a single `NSHostingController`, SwiftUI can propagate toolbar modifiers normally — no `NSToolbarDelegate` needed.
 
-**Alternatives:** SwiftUI `.toolbar` — only works if the entire window is a single SwiftUI hierarchy, which it isn't.
+**Alternatives:** `NSToolbarDelegate` with imperative item construction — more code, requires manual observation of view model state to rebuild items.
 
 ## Dependencies
 
@@ -302,7 +303,7 @@ No external package dependencies. No Swift Package Manager, CocoaPods, or Cartha
 | Component | Tests | Notes |
 |-----------|-------|-------|
 | `VMConfiguration` | 47 tests + clone suite | Encoding/decoding, defaults, validation, all fields |
-| `VMLibraryViewModel` | 66 tests | Add/remove/rename VMs, selection, delegation to coordinator, sleep/wake, clone/import phantom rows, cancel preparing, force-stop confirmation, stop escalation timing |
+| `VMLibraryViewModel` | 68 tests | Add/remove/rename VMs, selection, auto-select on load, selection preservation on reload, delegation to coordinator, sleep/wake, clone/import phantom rows, cancel preparing, force-stop confirmation, stop escalation timing |
 | `VMCreationViewModel` | 44 tests | All wizard steps, validation, OS-specific paths |
 | `VMLifecycleCoordinator` | Yes | Multi-step orchestration, error handling, service delegation, token-based operation serialization, stop/forceStop bypass, stale-token race condition coverage |
 | `VMInstance` | Yes | Status transitions, configuration updates, bundle layout, preparing state display properties |

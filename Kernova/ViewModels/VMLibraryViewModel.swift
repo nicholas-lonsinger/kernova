@@ -103,6 +103,9 @@ final class VMLibraryViewModel {
             }
             .sorted { $0.configuration.createdAt < $1.configuration.createdAt }
 
+            if selectedID == nil || !instances.contains(where: { $0.id == selectedID }) {
+                selectedID = instances.first?.id
+            }
             Self.logger.notice("Loaded \(self.instances.count) VMs")
         } catch {
             presentError(error)

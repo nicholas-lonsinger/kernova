@@ -20,10 +20,22 @@ struct SidebarView: View {
                         }
                     )
                     .tag(instance.id)
-                    .contextMenu {
-                        contextMenu(for: instance)
-                    }
                 }
+            }
+        }
+        .contextMenu(forSelectionType: UUID.self) { selectedIDs in
+            if let id = selectedIDs.first,
+               let instance = viewModel.instances.first(where: { $0.id == id }) {
+                contextMenu(for: instance)
+            }
+        } primaryAction: { selectedIDs in
+            guard let id = selectedIDs.first,
+                  let instance = viewModel.instances.first(where: { $0.id == id }),
+                  !instance.isPreparing else { return }
+            if instance.status.canStart {
+                Task { await viewModel.start(instance) }
+            } else if instance.status.canResume {
+                Task { await viewModel.resume(instance) }
             }
         }
         .listStyle(.sidebar)
