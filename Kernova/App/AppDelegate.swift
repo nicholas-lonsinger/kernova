@@ -316,6 +316,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                     }
                     self.viewModel.saveConfiguration(for: instance)
                 }
+                self.viewModel.selectedID = vmID
 
                 // Restore library window based on context:
                 // - Key + active app: user deliberately left fullscreen → focus library
