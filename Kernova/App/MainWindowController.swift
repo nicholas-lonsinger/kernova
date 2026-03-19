@@ -19,13 +19,12 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSGestu
     private static let resumeVMIdentifier = NSToolbarItem.Identifier("resumeVM")
     private static let stopVMIdentifier = NSToolbarItem.Identifier("stopVM")
     private static let saveVMIdentifier = NSToolbarItem.Identifier("saveVM")
-    private static let deleteVMIdentifier = NSToolbarItem.Identifier("deleteVM")
     private static let fullscreenVMIdentifier = NSToolbarItem.Identifier("fullscreenVM")
 
     /// All possible action identifiers, used for reference.
     private static let allActionIdentifiers: Set<NSToolbarItem.Identifier> = [
         startVMIdentifier, pauseVMIdentifier, resumeVMIdentifier,
-        stopVMIdentifier, saveVMIdentifier, deleteVMIdentifier,
+        stopVMIdentifier, saveVMIdentifier,
         fullscreenVMIdentifier,
     ]
 
@@ -202,17 +201,24 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSGestu
 
         switch instance.status {
         case .stopped:
-            return [Self.startVMIdentifier, Self.deleteVMIdentifier]
+            return [Self.startVMIdentifier]
         case .running:
-            return [Self.pauseVMIdentifier, Self.stopVMIdentifier, Self.saveVMIdentifier, Self.fullscreenVMIdentifier]
+            return [Self.pauseVMIdentifier, Self.stopVMIdentifier,
+                    .space,
+                    Self.saveVMIdentifier,
+                    .space,
+                    Self.fullscreenVMIdentifier]
         case .paused:
             if instance.isColdPaused {
-                // State already saved to disk — no Save State, offer Delete instead
-                return [Self.resumeVMIdentifier, Self.stopVMIdentifier, Self.deleteVMIdentifier]
+                return [Self.resumeVMIdentifier, Self.stopVMIdentifier]
             }
-            return [Self.resumeVMIdentifier, Self.stopVMIdentifier, Self.saveVMIdentifier]
+            return [Self.resumeVMIdentifier, Self.stopVMIdentifier,
+                    .space,
+                    Self.saveVMIdentifier,
+                    .space,
+                    Self.fullscreenVMIdentifier]
         case .error:
-            return [Self.startVMIdentifier, Self.deleteVMIdentifier]
+            return [Self.startVMIdentifier]
         case .starting, .saving, .restoring, .installing:
             return []
         }
@@ -242,7 +248,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSGestu
             Self.resumeVMIdentifier,
             Self.stopVMIdentifier,
             Self.saveVMIdentifier,
-            Self.deleteVMIdentifier,
             Self.fullscreenVMIdentifier,
         ]
     }
@@ -305,10 +310,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSGestu
             return ActionButtonSpec(
                 symbolName: "square.and.arrow.down", toolTip: "Save the virtual machine state to disk",
                 accessibilityLabel: "Save State", action: #selector(AppDelegate.saveVM(_:)))
-        case Self.deleteVMIdentifier:
-            return ActionButtonSpec(
-                symbolName: "trash", toolTip: "Move this virtual machine to the Trash",
-                accessibilityLabel: "Move to Trash", action: #selector(AppDelegate.deleteVM(_:)))
         case Self.fullscreenVMIdentifier:
             return ActionButtonSpec(
                 symbolName: "arrow.up.left.and.arrow.down.right", toolTip: "Enter fullscreen display",

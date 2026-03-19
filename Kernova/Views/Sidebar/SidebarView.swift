@@ -52,6 +52,7 @@ struct SidebarView: View {
                 NSWorkspace.shared.activateFileViewerSelecting([instance.bundleURL])
             }
         } else {
+            // Lifecycle
             if instance.status.canStart {
                 Button("Start") {
                     Task { await viewModel.start(instance) }
@@ -72,9 +73,31 @@ struct SidebarView: View {
                     viewModel.stop(instance)
                 }
             }
+            if instance.status.canForceStop && !instance.status.canStop {
+                Button("Force Stop") {
+                    viewModel.confirmForceStop(instance)
+                }
+            }
+
+            // State
+            if instance.status.canSave && !instance.isColdPaused {
+                Divider()
+                Button("Save State") {
+                    Task { await viewModel.save(instance) }
+                }
+            }
+
+            // Display
+            if instance.canFullscreen {
+                Divider()
+                Button("Fullscreen Display") {
+                    NSApp.sendAction(#selector(AppDelegate.toggleFullscreenDisplay(_:)), to: nil, from: nil)
+                }
+            }
 
             Divider()
 
+            // Management
             Button("Rename") {
                 viewModel.renameVM(instance)
             }
@@ -89,10 +112,13 @@ struct SidebarView: View {
                 NSWorkspace.shared.activateFileViewerSelecting([instance.bundleURL])
             }
 
+            Divider()
+
+            // Destructive
             Button("Move to Trash", role: .destructive) {
                 viewModel.confirmDelete(instance)
             }
-            .disabled(instance.status != .stopped)
+            .disabled(!instance.status.canEditSettings)
         }
     }
 }
