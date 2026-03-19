@@ -210,7 +210,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSGestu
                 // State already saved to disk — no Save State, offer Delete instead
                 return [Self.resumeVMIdentifier, Self.stopVMIdentifier, Self.deleteVMIdentifier]
             }
-            return [Self.resumeVMIdentifier, Self.stopVMIdentifier, Self.saveVMIdentifier]
+            return [Self.resumeVMIdentifier, Self.stopVMIdentifier, Self.saveVMIdentifier, Self.fullscreenVMIdentifier]
         case .error:
             return [Self.startVMIdentifier, Self.deleteVMIdentifier]
         case .starting, .saving, .restoring, .installing:
