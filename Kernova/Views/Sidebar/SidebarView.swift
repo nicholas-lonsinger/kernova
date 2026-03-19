@@ -88,7 +88,7 @@ struct SidebarView: View {
             }
 
             // Display
-            if instance.status.canStop && instance.virtualMachine != nil {
+            if instance.canFullscreen {
                 Divider()
                 Button("Fullscreen Display") {
                     NSApp.sendAction(#selector(AppDelegate.toggleFullscreenDisplay(_:)), to: nil, from: nil)
