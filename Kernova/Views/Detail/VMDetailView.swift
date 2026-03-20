@@ -30,7 +30,7 @@ struct VMDetailView: View {
                         transitionView
                     }
 
-                case .running, .paused:
+                case .running, .paused, .saving, .restoring:
                     VMConsoleView(instance: instance) {
                         Task { await viewModel.resume(instance) }
                     }
