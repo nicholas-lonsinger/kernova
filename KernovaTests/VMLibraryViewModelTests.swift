@@ -607,15 +607,26 @@ struct VMLibraryViewModelTests {
 
     // MARK: - Rename
 
-    @Test("renameVM sets renamingInstanceID")
-    func renameVMSetsID() {
+    @Test("renameVM sets activeRename to detail target")
+    func renameVMSetsDetailTarget() {
         let (viewModel, _, _, _) = makeViewModel()
         let instance = makeInstance()
         viewModel.instances.append(instance)
 
         viewModel.renameVM(instance)
 
-        #expect(viewModel.renamingInstanceID == instance.id)
+        #expect(viewModel.activeRename == .detail(instance.id))
+    }
+
+    @Test("renameVMInSidebar sets activeRename to sidebar target")
+    func renameVMInSidebarSetsSidebarTarget() {
+        let (viewModel, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        viewModel.instances.append(instance)
+
+        viewModel.renameVMInSidebar(instance)
+
+        #expect(viewModel.activeRename == .sidebar(instance.id))
     }
 
     @Test("commitRename updates name and persists")
@@ -623,12 +634,12 @@ struct VMLibraryViewModelTests {
         let (viewModel, storage, _, _) = makeViewModel()
         let instance = makeInstance(name: "Old Name")
         viewModel.instances.append(instance)
-        viewModel.renamingInstanceID = instance.id
+        viewModel.activeRename = .detail(instance.id)
 
         viewModel.commitRename(for: instance, newName: "New Name")
 
         #expect(instance.name == "New Name")
-        #expect(viewModel.renamingInstanceID == nil)
+        #expect(viewModel.activeRename == nil)
         #expect(storage.saveConfigurationCallCount == 1)
     }
 
@@ -637,12 +648,12 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, _) = makeViewModel()
         let instance = makeInstance(name: "Original")
         viewModel.instances.append(instance)
-        viewModel.renamingInstanceID = instance.id
+        viewModel.activeRename = .detail(instance.id)
 
         viewModel.commitRename(for: instance, newName: "  Trimmed  ")
 
         #expect(instance.name == "Trimmed")
-        #expect(viewModel.renamingInstanceID == nil)
+        #expect(viewModel.activeRename == nil)
     }
 
     @Test("commitRename rejects empty name and preserves original")
@@ -650,12 +661,12 @@ struct VMLibraryViewModelTests {
         let (viewModel, storage, _, _) = makeViewModel()
         let instance = makeInstance(name: "Keep Me")
         viewModel.instances.append(instance)
-        viewModel.renamingInstanceID = instance.id
+        viewModel.activeRename = .detail(instance.id)
 
         viewModel.commitRename(for: instance, newName: "")
 
         #expect(instance.name == "Keep Me")
-        #expect(viewModel.renamingInstanceID == nil)
+        #expect(viewModel.activeRename == nil)
         #expect(storage.saveConfigurationCallCount == 0)
     }
 
@@ -664,12 +675,12 @@ struct VMLibraryViewModelTests {
         let (viewModel, storage, _, _) = makeViewModel()
         let instance = makeInstance(name: "Keep Me")
         viewModel.instances.append(instance)
-        viewModel.renamingInstanceID = instance.id
+        viewModel.activeRename = .detail(instance.id)
 
         viewModel.commitRename(for: instance, newName: "   ")
 
         #expect(instance.name == "Keep Me")
-        #expect(viewModel.renamingInstanceID == nil)
+        #expect(viewModel.activeRename == nil)
         #expect(storage.saveConfigurationCallCount == 0)
     }
 
@@ -678,11 +689,11 @@ struct VMLibraryViewModelTests {
         let (viewModel, storage, _, _) = makeViewModel()
         let instance = makeInstance()
         viewModel.instances.append(instance)
-        viewModel.renamingInstanceID = instance.id
+        viewModel.activeRename = .sidebar(instance.id)
 
         viewModel.cancelRename()
 
-        #expect(viewModel.renamingInstanceID == nil)
+        #expect(viewModel.activeRename == nil)
         #expect(storage.saveConfigurationCallCount == 0)
     }
 
