@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import Kernova
 
-@Suite("VMLibraryViewModel Tests")
+@Suite("VMLibraryViewModel Tests", .serialized)
 @MainActor
 struct VMLibraryViewModelTests {
 
@@ -11,7 +11,7 @@ struct VMLibraryViewModelTests {
         diskImageService: MockDiskImageService = MockDiskImageService(),
         virtualizationService: MockVirtualizationService = MockVirtualizationService()
     ) -> (VMLibraryViewModel, MockVMStorageService, MockDiskImageService, MockVirtualizationService) {
-        UserDefaults.standard.removeObject(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
+        UserDefaults.standard.removeObject(forKey: "lastSelectedVMID")
         let vm = VMLibraryViewModel(
             storageService: storageService,
             diskImageService: diskImageService,
@@ -95,7 +95,7 @@ struct VMLibraryViewModelTests {
 
         viewModel.selectedID = instance.id
 
-        let stored = UserDefaults.standard.string(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
+        let stored = UserDefaults.standard.string(forKey: "lastSelectedVMID")
         #expect(stored == instance.id.uuidString)
     }
 
@@ -108,7 +108,7 @@ struct VMLibraryViewModelTests {
 
         viewModel.selectedID = nil
 
-        let stored = UserDefaults.standard.string(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
+        let stored = UserDefaults.standard.string(forKey: "lastSelectedVMID")
         #expect(stored == nil)
     }
 
@@ -125,8 +125,8 @@ struct VMLibraryViewModelTests {
         storage.bundles[url2] = config2
 
         // Clear then seed UserDefaults before ViewModel init triggers loadVMs()
-        UserDefaults.standard.removeObject(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
-        UserDefaults.standard.set(config2.id.uuidString, forKey: VMLibraryViewModel.lastSelectedVMIDKey)
+        UserDefaults.standard.removeObject(forKey: "lastSelectedVMID")
+        UserDefaults.standard.set(config2.id.uuidString, forKey: "lastSelectedVMID")
 
         let viewModel = VMLibraryViewModel(
             storageService: storage,
@@ -148,8 +148,8 @@ struct VMLibraryViewModelTests {
         storage.bundles[url] = config
 
         // Clear then seed UserDefaults with a UUID that doesn't match any VM
-        UserDefaults.standard.removeObject(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
-        UserDefaults.standard.set(UUID().uuidString, forKey: VMLibraryViewModel.lastSelectedVMIDKey)
+        UserDefaults.standard.removeObject(forKey: "lastSelectedVMID")
+        UserDefaults.standard.set(UUID().uuidString, forKey: "lastSelectedVMID")
 
         let viewModel = VMLibraryViewModel(
             storageService: storage,

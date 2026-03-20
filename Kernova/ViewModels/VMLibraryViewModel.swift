@@ -8,7 +8,7 @@ import os
 final class VMLibraryViewModel {
 
     private static let logger = Logger(subsystem: "com.kernova.app", category: "VMLibraryViewModel")
-    static let lastSelectedVMIDKey = "lastSelectedVMID"
+    private static let lastSelectedVMIDKey = "lastSelectedVMID"
 
     // MARK: - Services
 
