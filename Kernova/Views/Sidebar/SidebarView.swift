@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 /// Sidebar listing all virtual machines with status indicators.
 struct SidebarView: View {
     @Bindable var viewModel: VMLibraryViewModel
+    var isSidebarVisible: Bool = true
 
     var body: some View {
         List(selection: $viewModel.selectedID) {
@@ -36,6 +37,18 @@ struct SidebarView: View {
                 Task { await viewModel.start(instance) }
             } else if instance.status.canResume {
                 Task { await viewModel.resume(instance) }
+            }
+        }
+        .toolbar {
+            if isSidebarVisible {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        viewModel.showCreationWizard = true
+                    } label: {
+                        Label("New VM", systemImage: "plus")
+                    }
+                    .help("Create a new virtual machine")
+                }
             }
         }
         .listStyle(.sidebar)

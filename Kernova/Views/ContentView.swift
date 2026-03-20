@@ -3,10 +3,11 @@ import SwiftUI
 /// Root view wrapping `NavigationSplitView` with sidebar and detail columns.
 struct ContentView: View {
     @Bindable var viewModel: VMLibraryViewModel
+    @State private var columnVisibility: NavigationSplitViewVisibility = .automatic
 
     var body: some View {
-        NavigationSplitView {
-            SidebarView(viewModel: viewModel)
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            SidebarView(viewModel: viewModel, isSidebarVisible: columnVisibility != .detailOnly)
                 .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 350)
         } detail: {
             if let selected = viewModel.selectedInstance {
@@ -24,15 +25,6 @@ struct ContentView: View {
             }
         }
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    viewModel.showCreationWizard = true
-                } label: {
-                    Label("New VM", systemImage: "plus")
-                }
-                .help("Create a new virtual machine")
-            }
-
             ToolbarItemGroup(placement: .principal) {
                 if let instance = viewModel.selectedInstance, !instance.isPreparing {
                     actionButtons(for: instance)
