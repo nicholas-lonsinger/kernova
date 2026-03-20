@@ -88,6 +88,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     func windowWillClose(_ notification: Notification) {
         observingToolbar = false
+        Self.logger.debug("Main window closing, toolbar observation stopped")
     }
 
     // MARK: - Toolbar State Observation
@@ -110,24 +111,31 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     }
 
     private func updateToolbarItems() {
-        guard let toolbar = window?.toolbar else { return }
-
-        // Update play button image/label based on canResume
-        if let playItem = toolbar.items.first(where: { $0.itemIdentifier == Self.toolbarPlay }) {
-            let canResume = viewModel.selectedInstance?.status.canResume ?? false
-            playItem.label = canResume ? "Resume" : "Start"
-            playItem.image = NSImage(systemSymbolName: "play.fill", accessibilityDescription: canResume ? "Resume" : "Start")
-            playItem.toolTip = canResume ? "Resume the virtual machine" : "Start this virtual machine"
+        guard let toolbar = window?.toolbar else {
+            Self.logger.warning("updateToolbarItems: window or toolbar is nil — toolbar state will be stale")
+            return
         }
 
-        // Update fullscreen button label based on isInFullscreen
-        if let fullscreenItem = toolbar.items.first(where: { $0.itemIdentifier == Self.toolbarFullscreen }) {
-            let isFullscreen = viewModel.selectedInstance?.isInFullscreen ?? false
-            fullscreenItem.label = isFullscreen ? "Exit Fullscreen" : "Fullscreen"
-            fullscreenItem.toolTip = isFullscreen ? "Exit fullscreen display" : "Enter fullscreen display"
-        }
-
+        updatePlayItem(in: toolbar)
+        updateFullscreenItem(in: toolbar)
         toolbar.validateVisibleItems()
+    }
+
+    private func updatePlayItem(in toolbar: NSToolbar) {
+        guard let playItem = toolbar.items.first(where: { $0.itemIdentifier == Self.toolbarPlay }) else { return }
+        let canResume = viewModel.selectedInstance?.status.canResume ?? false
+        let label = canResume ? "Resume" : "Start"
+        playItem.label = label
+        playItem.image = NSImage(systemSymbolName: "play.fill", accessibilityDescription: label)
+        playItem.toolTip = canResume ? "Resume the virtual machine" : "Start this virtual machine"
+        playItem.action = canResume ? #selector(AppDelegate.resumeVM(_:)) : #selector(AppDelegate.startVM(_:))
+    }
+
+    private func updateFullscreenItem(in toolbar: NSToolbar) {
+        guard let fullscreenItem = toolbar.items.first(where: { $0.itemIdentifier == Self.toolbarFullscreen }) else { return }
+        let isFullscreen = viewModel.selectedInstance?.isInFullscreen ?? false
+        fullscreenItem.label = isFullscreen ? "Exit Fullscreen" : "Fullscreen"
+        fullscreenItem.toolTip = isFullscreen ? "Exit fullscreen display" : "Enter fullscreen display"
     }
 
     // MARK: - NSToolbarDelegate
@@ -177,13 +185,12 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             )
 
         case Self.toolbarPlay:
-            let canResume = viewModel.selectedInstance?.status.canResume ?? false
             return makeToolbarItem(
                 identifier: itemIdentifier,
-                label: canResume ? "Resume" : "Start",
+                label: "Start",
                 symbol: "play.fill",
-                action: canResume ? #selector(AppDelegate.resumeVM(_:)) : #selector(AppDelegate.startVM(_:)),
-                toolTip: canResume ? "Resume the virtual machine" : "Start this virtual machine"
+                action: #selector(AppDelegate.startVM(_:)),
+                toolTip: "Start this virtual machine"
             )
 
         case Self.toolbarPause:
@@ -218,13 +225,12 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             )
 
         case Self.toolbarFullscreen:
-            let isFullscreen = viewModel.selectedInstance?.isInFullscreen ?? false
             return makeToolbarItem(
                 identifier: itemIdentifier,
-                label: isFullscreen ? "Exit Fullscreen" : "Fullscreen",
+                label: "Fullscreen",
                 symbol: "arrow.up.left.and.arrow.down.right",
                 action: #selector(AppDelegate.toggleFullscreenDisplay(_:)),
-                toolTip: isFullscreen ? "Exit fullscreen display" : "Enter fullscreen display"
+                toolTip: "Enter fullscreen display"
             )
 
         default:
@@ -255,11 +261,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
 extension MainWindowController: NSToolbarItemValidation {
     func validateToolbarItem(_ item: NSToolbarItem) -> Bool {
-        guard let instance = viewModel.selectedInstance else {
-            return item.itemIdentifier == Self.toolbarNewVM
-        }
-
-        if instance.isPreparing {
+        guard let instance = viewModel.selectedInstance, !instance.isPreparing else {
             return item.itemIdentifier == Self.toolbarNewVM
         }
 
@@ -280,6 +282,7 @@ extension MainWindowController: NSToolbarItemValidation {
         case Self.toolbarFullscreen:
             return instance.canFullscreen
         default:
+            Self.logger.debug("validateToolbarItem: unrecognized identifier '\(item.itemIdentifier.rawValue)'")
             return true
         }
     }

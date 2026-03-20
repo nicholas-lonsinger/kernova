@@ -74,8 +74,9 @@ Kernova/
     └── Kernova.entitlements            # com.apple.security.virtualization entitlement
 
 KernovaTests/
-├── Mocks/                              # Mock service implementations (5 files)
+├── Mocks/                              # Mock service implementations (6 files)
 │   ├── MockVirtualizationService.swift
+│   ├── SuspendingMockVirtualizationService.swift
 │   ├── MockVMStorageService.swift
 │   ├── MockDiskImageService.swift
 │   ├── MockMacOSInstallService.swift
@@ -91,13 +92,14 @@ KernovaTests/
 ├── VMStorageServiceTests.swift         # Storage CRUD and migration tests
 ├── VMBundleLayoutTests.swift           # Bundle path calculation tests
 ├── VMStatusTests.swift                 # Status enum behavior tests
+├── VMStatusSerialConsoleTests.swift    # Serial console status tests
 ├── VMBootModeTests.swift               # Boot mode enum tests
 ├── VMGuestOSTests.swift                # Guest OS enum tests
 ├── MacOSInstallStateTests.swift        # Install state tracking tests
 └── DataFormattersTests.swift           # Formatting utility tests
 ```
 
-**Total: 50 source files, 20 test files (15 suites + 5 mocks).**
+**Total: 50 source files, 22 test files (16 suites + 6 mocks).**
 
 *Note: `ContentView.swift` was removed when `NavigationSplitView` was replaced by `NSSplitViewController` in `MainWindowController`. Its responsibilities were split between `MainWindowController` (toolbar, split view) and `MainDetailView` (detail switching, sheets, alerts).*
 
