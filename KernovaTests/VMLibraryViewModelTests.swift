@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import Kernova
 
-@Suite("VMLibraryViewModel Tests")
+@Suite("VMLibraryViewModel Tests", .serialized)
 @MainActor
 struct VMLibraryViewModelTests {
 
@@ -11,6 +11,7 @@ struct VMLibraryViewModelTests {
         diskImageService: MockDiskImageService = MockDiskImageService(),
         virtualizationService: MockVirtualizationService = MockVirtualizationService()
     ) -> (VMLibraryViewModel, MockVMStorageService, MockDiskImageService, MockVirtualizationService) {
+        UserDefaults.standard.removeObject(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
         let vm = VMLibraryViewModel(
             storageService: storageService,
             diskImageService: diskImageService,
@@ -82,6 +83,83 @@ struct VMLibraryViewModelTests {
         viewModel.loadVMs()
 
         #expect(viewModel.selectedID == secondID)
+    }
+
+    // MARK: - Selection Persistence
+
+    @Test("selectedID persists to UserDefaults on change")
+    func selectedIDPersistsToUserDefaults() {
+        let (viewModel, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        viewModel.instances.append(instance)
+
+        viewModel.selectedID = instance.id
+
+        let stored = UserDefaults.standard.string(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
+        #expect(stored == instance.id.uuidString)
+    }
+
+    @Test("selectedID clears UserDefaults when set to nil")
+    func selectedIDClearsUserDefaults() {
+        let (viewModel, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        viewModel.instances.append(instance)
+        viewModel.selectedID = instance.id
+
+        viewModel.selectedID = nil
+
+        let stored = UserDefaults.standard.string(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
+        #expect(stored == nil)
+    }
+
+    @Test("loadVMs restores selection from UserDefaults when VM still exists")
+    func loadVMsRestoresFromUserDefaults() {
+        let storage = MockVMStorageService()
+        let config1 = VMConfiguration(name: "First VM", guestOS: .linux, bootMode: .efi)
+        let config2 = VMConfiguration(name: "Second VM", guestOS: .linux, bootMode: .efi)
+        let url1 = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(config1.id.uuidString).kernova", isDirectory: true)
+        let url2 = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(config2.id.uuidString).kernova", isDirectory: true)
+        storage.bundles[url1] = config1
+        storage.bundles[url2] = config2
+
+        // Clear then seed UserDefaults before ViewModel init triggers loadVMs()
+        UserDefaults.standard.removeObject(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
+        UserDefaults.standard.set(config2.id.uuidString, forKey: VMLibraryViewModel.lastSelectedVMIDKey)
+
+        let viewModel = VMLibraryViewModel(
+            storageService: storage,
+            diskImageService: MockDiskImageService(),
+            virtualizationService: MockVirtualizationService(),
+            installService: MockMacOSInstallService(),
+            ipswService: MockIPSWService()
+        )
+
+        #expect(viewModel.selectedID == config2.id)
+    }
+
+    @Test("loadVMs falls back to first VM when stored ID is invalid")
+    func loadVMsFallsBackWhenStoredIDInvalid() {
+        let storage = MockVMStorageService()
+        let config = VMConfiguration(name: "Only VM", guestOS: .linux, bootMode: .efi)
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
+        storage.bundles[url] = config
+
+        // Clear then seed UserDefaults with a UUID that doesn't match any VM
+        UserDefaults.standard.removeObject(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
+        UserDefaults.standard.set(UUID().uuidString, forKey: VMLibraryViewModel.lastSelectedVMIDKey)
+
+        let viewModel = VMLibraryViewModel(
+            storageService: storage,
+            diskImageService: MockDiskImageService(),
+            virtualizationService: MockVirtualizationService(),
+            installService: MockMacOSInstallService(),
+            ipswService: MockIPSWService()
+        )
+
+        #expect(viewModel.selectedID == config.id)
     }
 
     // MARK: - Delete
