@@ -41,7 +41,7 @@ struct SidebarView: View {
         }
         .toolbar {
             if isSidebarVisible {
-                ToolbarItem(placement: .automatic) {
+                ToolbarItem(placement: .primaryAction) {
                     Button {
                         viewModel.showCreationWizard = true
                     } label: {
