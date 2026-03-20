@@ -51,22 +51,32 @@ struct ContentView: View {
     private func actionButtons(for instance: VMInstance) -> some View {
         switch instance.status {
         case .stopped, .error:
-            startButton
+            ControlGroup {
+                startButton
+            }
         case .running:
-            pauseButton
-            stopMenu(for: instance)
-            Divider()
-            saveStateButton
-            Divider()
-            fullscreenButton
-        case .paused:
-            resumeButton
-            stopMenu(for: instance)
-            if !instance.isColdPaused {
-                Divider()
+            ControlGroup {
+                pauseButton
+                stopMenu(for: instance)
+            }
+            ControlGroup {
                 saveStateButton
-                Divider()
+            }
+            ControlGroup {
                 fullscreenButton
+            }
+        case .paused:
+            ControlGroup {
+                resumeButton
+                stopMenu(for: instance)
+            }
+            if !instance.isColdPaused {
+                ControlGroup {
+                    saveStateButton
+                }
+                ControlGroup {
+                    fullscreenButton
+                }
             }
         case .starting, .saving, .restoring, .installing:
             EmptyView()
@@ -110,6 +120,7 @@ struct ContentView: View {
         } primaryAction: {
             NSApp.sendAction(#selector(AppDelegate.stopVM(_:)), to: nil, from: nil)
         }
+        .menuIndicator(.hidden)
         .help("Stop the virtual machine. Click and hold for Force Stop.")
     }
 
