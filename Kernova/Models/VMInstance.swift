@@ -137,6 +137,11 @@ final class VMInstance: Identifiable {
         status == .paused && virtualMachine == nil
     }
 
+    /// `true` when the VM is eligible to save state (active + live VM, not cold-paused).
+    var canSave: Bool {
+        status.canSave && !isColdPaused
+    }
+
     /// `true` when the VM is eligible to enter fullscreen display (active status + live VM).
     var canFullscreen: Bool {
         (status == .running || status == .paused) && virtualMachine != nil

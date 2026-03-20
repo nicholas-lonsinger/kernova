@@ -122,6 +122,42 @@ struct VMInstanceTests {
         #expect(instance.isColdPaused == false)
     }
 
+    // MARK: - canSave
+
+    @Test("canSave is true when running (without live VM, tests model logic)")
+    func canSaveRunning() {
+        let instance = makeInstance(status: .running)
+        // status.canSave is true and isColdPaused is false
+        #expect(instance.canSave == true)
+    }
+
+    @Test("canSave is false when stopped")
+    func canSaveStopped() {
+        let instance = makeInstance(status: .stopped)
+        #expect(instance.canSave == false)
+    }
+
+    @Test("canSave is false for cold-paused VM (paused without live VM)")
+    func canSaveColdPaused() {
+        let instance = makeInstance(status: .paused)
+        #expect(instance.isColdPaused == true)
+        #expect(instance.canSave == false)
+    }
+
+    @Test("canSave is false during transitions")
+    func canSaveTransitions() {
+        for status in [VMStatus.starting, .saving, .restoring, .installing] {
+            let instance = makeInstance(status: status)
+            #expect(instance.canSave == false)
+        }
+    }
+
+    @Test("canSave is false in error state")
+    func canSaveError() {
+        let instance = makeInstance(status: .error)
+        #expect(instance.canSave == false)
+    }
+
     // MARK: - canShowSerialConsole
 
     @Test("canShowSerialConsole is false when running without a virtual machine")

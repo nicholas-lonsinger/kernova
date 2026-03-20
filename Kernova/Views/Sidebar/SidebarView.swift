@@ -105,7 +105,7 @@ struct SidebarView: View {
             }
 
             // State
-            if instance.status.canSave && !instance.isColdPaused {
+            if instance.canSave {
                 Divider()
                 Button("Save State") {
                     Task { await viewModel.save(instance) }
