@@ -34,8 +34,7 @@ struct VMStorageServiceTests {
             guestOS: .macOS,
             bootMode: .macOS,
             cpuCount: 6,
-            memorySizeInGB: 12,
-            notes: "Test notes"
+            memorySizeInGB: 12
         )
 
         let bundleURL = try service.createVMBundle(for: config)
@@ -46,7 +45,6 @@ struct VMStorageServiceTests {
         #expect(loaded.name == config.name)
         #expect(loaded.cpuCount == 6)
         #expect(loaded.memorySizeInGB == 12)
-        #expect(loaded.notes == "Test notes")
     }
 
     @Test("Save updated configuration")

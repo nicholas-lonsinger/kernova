@@ -22,7 +22,6 @@ struct VMSettingsView: View {
                 resourcesSection
                 networkSection
                 sharedDirectoriesSection
-                notesSection
             }
             .formStyle(.grouped)
             .padding()
@@ -244,13 +243,5 @@ struct VMSettingsView: View {
         }
 
         sharedDirectoriesBinding.wrappedValue = current
-    }
-
-    @ViewBuilder
-    private var notesSection: some View {
-        Section("Notes") {
-            TextEditor(text: $instance.configuration.notes)
-                .frame(minHeight: 60)
-        }
     }
 }

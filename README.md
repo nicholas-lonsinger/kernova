@@ -31,7 +31,6 @@ A macOS GUI application for creating and managing virtual machines using Apple's
 ### Management
 
 - **VM renaming** — Inline rename or via menu
-- **VM notes** — Per-VM notes field for metadata and descriptions
 - **Sleep integration** — Auto-pauses running VMs on system sleep, resumes on wake
 - **Directory watching** — Monitors the VMs directory for external filesystem changes
 - **Config migration** — Automatic schema migration for configuration compatibility

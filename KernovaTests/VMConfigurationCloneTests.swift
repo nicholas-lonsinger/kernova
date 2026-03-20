@@ -10,7 +10,6 @@ struct VMConfigurationCloneTests {
         guestOS: VMGuestOS = .linux,
         bootMode: VMBootMode = .efi,
         prefersFullscreen: Bool = true,
-        notes: String = "Some notes",
         sharedDirectories: [SharedDirectory]? = nil,
         hardwareModelData: Data? = nil
     ) -> VMConfiguration {
@@ -20,8 +19,7 @@ struct VMConfigurationCloneTests {
             bootMode: bootMode,
             prefersFullscreen: prefersFullscreen,
             hardwareModelData: hardwareModelData,
-            sharedDirectories: sharedDirectories,
-            notes: notes
+            sharedDirectories: sharedDirectories
         )
     }
 
@@ -144,12 +142,6 @@ struct VMConfigurationCloneTests {
 
         #expect(clone.guestOS == .linux)
         #expect(clone.bootMode == .linuxKernel)
-    }
-
-    @Test("Clone preserves notes")
-    func clonePreservesNotes() {
-        let clone = makeConfig(notes: "Important notes").clonedForNewInstance(existingNames: [])
-        #expect(clone.notes == "Important notes")
     }
 
     @Test("Clone preserves macOS hardware model data")
