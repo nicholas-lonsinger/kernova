@@ -295,6 +295,40 @@ struct VMInstanceTests {
         #expect(instance.statusToolTip == "Cloning\u{2026}")
     }
 
+    // MARK: - Cached Disk Usage
+
+    @Test("cachedDiskUsageBytes starts nil and becomes non-nil after refreshDiskUsage")
+    func cachedDiskUsageRefresh() async throws {
+        let instance = makeInstance()
+
+        // Create the bundle directory and a fake disk image so there's something to measure
+        try FileManager.default.createDirectory(
+            at: instance.bundleURL,
+            withIntermediateDirectories: true
+        )
+        let diskData = Data(repeating: 0xAB, count: 4096)
+        try diskData.write(to: instance.diskImageURL)
+        defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
+
+        #expect(instance.cachedDiskUsageBytes == nil)
+
+        await instance.refreshDiskUsage()
+
+        #expect(instance.cachedDiskUsageBytes != nil)
+        #expect(instance.cachedDiskUsageBytes! > 0)
+    }
+
+    @Test("cachedDiskUsageBytes remains nil when disk image does not exist")
+    func cachedDiskUsageNilForMissingFile() async {
+        let instance = makeInstance()
+
+        #expect(instance.cachedDiskUsageBytes == nil)
+
+        await instance.refreshDiskUsage()
+
+        #expect(instance.cachedDiskUsageBytes == nil)
+    }
+
     @Test("PreparingOperation cancelLabel and cancelAlertTitle")
     func preparingOperationLabels() {
         #expect(VMInstance.PreparingOperation.cloning.cancelLabel == "Cancel Clone")

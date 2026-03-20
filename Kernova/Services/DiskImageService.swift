@@ -32,13 +32,22 @@ struct DiskImageService: Sendable {
         process.standardOutput = pipe
         process.standardError = pipe
 
-        try process.run()
-        process.waitUntilExit()
-
-        guard process.terminationStatus == 0 else {
-            let outputData = pipe.fileHandleForReading.readDataToEndOfFile()
-            let output = String(data: outputData, encoding: .utf8) ?? "Unknown error"
-            throw DiskImageError.creationFailed(output)
+        try await withCheckedThrowingContinuation { continuation in
+            process.terminationHandler = { terminatedProcess in
+                if terminatedProcess.terminationStatus == 0 {
+                    continuation.resume()
+                } else {
+                    let outputData = pipe.fileHandleForReading.readDataToEndOfFile()
+                    let output = String(data: outputData, encoding: .utf8) ?? "Unknown error"
+                    continuation.resume(throwing: DiskImageError.creationFailed(output))
+                }
+            }
+            do {
+                try process.run()
+            } catch {
+                process.terminationHandler = nil
+                continuation.resume(throwing: error)
+            }
         }
 
         Self.logger.notice("Successfully created ASIF disk image at \(url.lastPathComponent)")

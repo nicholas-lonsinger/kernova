@@ -122,12 +122,15 @@ struct VMSettingsView: View {
             )
 
             LabeledContent("Disk Size") {
-                if let usage = instance.diskUsageBytes {
+                if let usage = instance.cachedDiskUsageBytes {
                     Text("\(DataFormatters.formatBytes(usage)) (on disk) / \(instance.configuration.diskSizeInGB) GB (allocated)")
                 } else {
                     Text("\(instance.configuration.diskSizeInGB) GB")
                 }
             }
+        }
+        .task(id: instance.id) {
+            await instance.refreshDiskUsage()
         }
     }
 
