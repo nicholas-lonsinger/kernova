@@ -66,7 +66,6 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
     // MARK: - Metadata
 
     var createdAt: Date
-    var notes: String
 
     // MARK: - Initializer
 
@@ -94,8 +93,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         initrdPath: String? = nil,
         kernelCommandLine: String? = nil,
         sharedDirectories: [SharedDirectory]? = nil,
-        createdAt: Date = Date(),
-        notes: String = ""
+        createdAt: Date = Date()
     ) {
         self.id = id
         self.name = name
@@ -121,7 +119,6 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         self.kernelCommandLine = kernelCommandLine
         self.sharedDirectories = sharedDirectories
         self.createdAt = createdAt
-        self.notes = notes
     }
 
     // MARK: - Codable
@@ -136,7 +133,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         case isoPath, bootFromDiscImage
         case kernelPath, initrdPath, kernelCommandLine
         case sharedDirectories
-        case createdAt, notes
+        case createdAt
     }
 
     init(from decoder: Decoder) throws {
@@ -166,7 +163,6 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         kernelCommandLine = try container.decodeIfPresent(String.self, forKey: .kernelCommandLine)
         sharedDirectories = try container.decodeIfPresent([SharedDirectory].self, forKey: .sharedDirectories)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
-        notes = try container.decode(String.self, forKey: .notes)
     }
 
     // MARK: - Cloning
