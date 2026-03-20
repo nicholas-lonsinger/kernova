@@ -388,7 +388,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         case #selector(forceStopVM(_:)):
             return activeInstance?.status.canForceStop ?? false
         case #selector(saveVM(_:)):
-            return activeInstance?.status.canSave ?? false
+            return activeInstance?.canSave ?? false
         case #selector(renameVM(_:)):
             return activeInstance?.status.canEditSettings ?? false
         case #selector(cloneVM(_:)):

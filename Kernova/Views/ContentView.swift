@@ -26,8 +26,16 @@ struct ContentView: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                if let instance = viewModel.selectedInstance, !instance.isPreparing {
-                    actionButtons(for: instance)
+                ControlGroup {
+                    playButton
+                    pauseButton
+                    stopMenu
+                }
+                ControlGroup {
+                    saveStateButton
+                }
+                ControlGroup {
+                    fullscreenButton
                 }
             }
         }
@@ -45,51 +53,30 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - Action Buttons
+    // MARK: - Toolbar Helpers
 
-    @ViewBuilder
-    private func actionButtons(for instance: VMInstance) -> some View {
-        switch instance.status {
-        case .stopped, .error:
-            ControlGroup {
-                startButton
-            }
-        case .running:
-            ControlGroup {
-                pauseButton
-                stopMenu(for: instance)
-            }
-            ControlGroup {
-                saveStateButton
-            }
-            ControlGroup {
-                fullscreenButton
-            }
-        case .paused:
-            ControlGroup {
-                resumeButton
-                stopMenu(for: instance)
-            }
-            if !instance.isColdPaused {
-                ControlGroup {
-                    saveStateButton
-                }
-                ControlGroup {
-                    fullscreenButton
-                }
-            }
-        case .starting, .saving, .restoring, .installing:
-            EmptyView()
-        }
+    /// Whether all toolbar buttons should be disabled (no VM selected or VM is preparing).
+    private var allDisabled: Bool {
+        guard let instance = viewModel.selectedInstance else { return true }
+        return instance.isPreparing
     }
 
-    private var startButton: some View {
-        Button {
-            NSApp.sendAction(#selector(AppDelegate.startVM(_:)), to: nil, from: nil)
+    // MARK: - Action Buttons
+
+    private var playButton: some View {
+        let canResume = viewModel.selectedInstance?.status.canResume ?? false
+
+        return Button {
+            if canResume {
+                NSApp.sendAction(#selector(AppDelegate.resumeVM(_:)), to: nil, from: nil)
+            } else {
+                NSApp.sendAction(#selector(AppDelegate.startVM(_:)), to: nil, from: nil)
+            }
         } label: {
-            Label("Start", systemImage: "play.fill")
+            Label(canResume ? "Resume" : "Start", systemImage: "play.fill")
         }
-        .help("Start this virtual machine")
+        .disabled(allDisabled || !((viewModel.selectedInstance?.status.canStart ?? false) || canResume))
+        .help(canResume ? "Resume the virtual machine" : "Start this virtual machine")
     }
 
     private var pauseButton: some View {
@@ -98,19 +85,11 @@ struct ContentView: View {
         } label: {
             Label("Pause", systemImage: "pause.fill")
         }
+        .disabled(allDisabled || !(viewModel.selectedInstance?.status.canPause ?? false))
         .help("Pause the virtual machine")
     }
 
-    private var resumeButton: some View {
-        Button {
-            NSApp.sendAction(#selector(AppDelegate.resumeVM(_:)), to: nil, from: nil)
-        } label: {
-            Label("Resume", systemImage: "play.fill")
-        }
-        .help("Resume the virtual machine")
-    }
-
-    private func stopMenu(for instance: VMInstance) -> some View {
+    private var stopMenu: some View {
         Menu {
             Button("Force Stop") {
                 NSApp.sendAction(#selector(AppDelegate.forceStopVM(_:)), to: nil, from: nil)
@@ -120,6 +99,7 @@ struct ContentView: View {
         } primaryAction: {
             NSApp.sendAction(#selector(AppDelegate.stopVM(_:)), to: nil, from: nil)
         }
+        .disabled(allDisabled || !(viewModel.selectedInstance?.status.canStop ?? false))
         .menuIndicator(.hidden)
         .help("Stop the virtual machine. Click and hold for Force Stop.")
     }
@@ -130,6 +110,7 @@ struct ContentView: View {
         } label: {
             Label("Save State", systemImage: "square.and.arrow.down")
         }
+        .disabled(allDisabled || !(viewModel.selectedInstance?.canSave ?? false))
         .help("Save the virtual machine state to disk")
     }
 
@@ -139,6 +120,7 @@ struct ContentView: View {
         } label: {
             Label("Fullscreen", systemImage: "arrow.up.left.and.arrow.down.right")
         }
+        .disabled(allDisabled || !(viewModel.selectedInstance?.canFullscreen ?? false))
         .help("Enter fullscreen display")
     }
 }
