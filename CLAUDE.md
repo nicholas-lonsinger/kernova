@@ -27,7 +27,7 @@ Requires **macOS 26 (Tahoe)**, **Xcode 26**, **Swift 6**, and **Apple Silicon** 
 
 Kernova is an AppKit app hosting SwiftUI views that manages virtual machines via Apple's `Virtualization.framework`, supporting macOS and Linux guests.
 
-**Data flow:** `AppDelegate` → `VMLibraryViewModel` → `VMLifecycleCoordinator` → services + SwiftUI views. `ContentView` hosts a `NavigationSplitView` with sidebar and detail columns and a declarative toolbar. `VMDirectoryWatcher` monitors the VMs directory for external filesystem changes and triggers reconciliation in the view model.
+**Data flow:** `AppDelegate` → `VMLibraryViewModel` → `VMLifecycleCoordinator` → services + SwiftUI views. `MainWindowController` hosts an `NSSplitViewController` with sidebar (`SidebarView`) and detail (`MainDetailView` → `VMDetailView`) panes, plus a native `NSToolbar` with `NSToolbarItem`s. `VMDirectoryWatcher` monitors the VMs directory for external filesystem changes and triggers reconciliation in the view model.
 
 **Concurrency model:** Everything touching `VZVirtualMachine` is `@MainActor`. The codebase uses Swift 6 strict concurrency. Services that interact with VZ are `@MainActor`-isolated; stateless services are `Sendable` structs. Some VZ delegate callbacks use `nonisolated(unsafe)` with `MainActor.assumeIsolated` to bridge back.
 

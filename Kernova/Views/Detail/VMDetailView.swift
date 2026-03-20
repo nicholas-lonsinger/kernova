@@ -40,7 +40,6 @@ struct VMDetailView: View {
                 }
             }
         }
-        .navigationTitle(instance.name)
         .alert(
             "Delete Virtual Machine",
             isPresented: $viewModel.showDeleteConfirmation,
