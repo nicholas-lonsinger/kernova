@@ -25,7 +25,7 @@ struct ContentView: View {
             }
         }
         .toolbar {
-            ToolbarItemGroup(placement: .principal) {
+            ToolbarItemGroup(placement: .primaryAction) {
                 if let instance = viewModel.selectedInstance, !instance.isPreparing {
                     actionButtons(for: instance)
                 }
@@ -51,18 +51,32 @@ struct ContentView: View {
     private func actionButtons(for instance: VMInstance) -> some View {
         switch instance.status {
         case .stopped, .error:
-            startButton
+            ControlGroup {
+                startButton
+            }
         case .running:
-            pauseButton
-            stopMenu(for: instance)
-            saveStateButton
-            fullscreenButton
-        case .paused:
-            resumeButton
-            stopMenu(for: instance)
-            if !instance.isColdPaused {
+            ControlGroup {
+                pauseButton
+                stopMenu(for: instance)
+            }
+            ControlGroup {
                 saveStateButton
+            }
+            ControlGroup {
                 fullscreenButton
+            }
+        case .paused:
+            ControlGroup {
+                resumeButton
+                stopMenu(for: instance)
+            }
+            if !instance.isColdPaused {
+                ControlGroup {
+                    saveStateButton
+                }
+                ControlGroup {
+                    fullscreenButton
+                }
             }
         case .starting, .saving, .restoring, .installing:
             EmptyView()
@@ -106,6 +120,7 @@ struct ContentView: View {
         } primaryAction: {
             NSApp.sendAction(#selector(AppDelegate.stopVM(_:)), to: nil, from: nil)
         }
+        .menuIndicator(.hidden)
         .help("Stop the virtual machine. Click and hold for Force Stop.")
     }
 
