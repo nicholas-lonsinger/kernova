@@ -11,7 +11,7 @@ struct SidebarView: View {
                 ForEach(viewModel.instances) { instance in
                     VMRowView(
                         instance: instance,
-                        isRenaming: viewModel.renamingInstanceID == instance.id,
+                        isRenaming: viewModel.activeRename == .sidebar(instance.id),
                         onCommitRename: { newName in
                             viewModel.commitRename(for: instance, newName: newName)
                         },
@@ -111,7 +111,7 @@ struct SidebarView: View {
 
             // Management
             Button("Rename") {
-                viewModel.renameVM(instance)
+                viewModel.renameVMInSidebar(instance)
             }
             .disabled(!instance.status.canEditSettings)
 

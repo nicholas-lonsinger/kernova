@@ -34,7 +34,7 @@ final class VMLibraryViewModel {
     var showError = false
     var errorMessage: String?
     var instanceToDelete: VMInstance?
-    var renamingInstanceID: UUID?
+    var activeRename: RenameTarget?
     var showCancelPreparingConfirmation = false
     var preparingInstanceToCancel: VMInstance?
     var showForceStopConfirmation = false
@@ -417,23 +417,38 @@ final class VMLibraryViewModel {
 
     // MARK: - Rename
 
+    enum RenameTarget: Equatable {
+        case sidebar(UUID)
+        case detail(UUID)
+
+        var instanceID: UUID {
+            switch self {
+            case .sidebar(let id), .detail(let id): return id
+            }
+        }
+    }
+
+    func renameVMInSidebar(_ instance: VMInstance) {
+        activeRename = .sidebar(instance.id)
+    }
+
     func renameVM(_ instance: VMInstance) {
-        renamingInstanceID = instance.id
+        activeRename = .detail(instance.id)
     }
 
     func commitRename(for instance: VMInstance, newName: String) {
         let trimmed = newName.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else {
-            renamingInstanceID = nil
+            activeRename = nil
             return
         }
         instance.configuration.name = trimmed
         saveConfiguration(for: instance)
-        renamingInstanceID = nil
+        activeRename = nil
     }
 
     func cancelRename() {
-        renamingInstanceID = nil
+        activeRename = nil
     }
 
     // MARK: - Save Configuration

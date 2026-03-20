@@ -6,6 +6,13 @@ struct VMSettingsView: View {
     @Bindable var instance: VMInstance
     @Bindable var viewModel: VMLibraryViewModel
 
+    @State private var editingName = ""
+    @FocusState private var isNameFieldFocused: Bool
+
+    private var isRenaming: Bool {
+        viewModel.activeRename == .detail(instance.id)
+    }
+
     /// Binding that unwraps the optional shared directories array, defaulting to empty.
     private var sharedDirectoriesBinding: Binding<[SharedDirectory]> {
         Binding(
@@ -36,10 +43,37 @@ struct VMSettingsView: View {
     @ViewBuilder
     private var generalSection: some View {
         Section("General") {
-            TextField("Name", text: $instance.configuration.name)
+            if isRenaming {
+                TextField("Name", text: $editingName)
+                    .focused($isNameFieldFocused)
+                    .onSubmit {
+                        viewModel.commitRename(for: instance, newName: editingName)
+                    }
+                    .onExitCommand {
+                        viewModel.cancelRename()
+                    }
+            } else {
+                Button { viewModel.renameVM(instance) } label: {
+                    LabeledContent("Name") {
+                        Text(instance.name)
+                    }
+                }
+                .buttonStyle(.plain)
+            }
             LabeledContent("Type", value: instance.configuration.guestOS.displayName)
             LabeledContent("Boot Mode", value: instance.configuration.bootMode.displayName)
             LabeledContent("Created", value: instance.configuration.createdAt.formatted(date: .abbreviated, time: .shortened))
+        }
+        .onChange(of: isRenaming) { _, renaming in
+            if renaming {
+                editingName = instance.name
+                isNameFieldFocused = true
+            }
+        }
+        .onChange(of: isNameFieldFocused) { _, focused in
+            if !focused && isRenaming {
+                viewModel.commitRename(for: instance, newName: editingName)
+            }
         }
     }
 
