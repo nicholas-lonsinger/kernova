@@ -5,10 +5,11 @@ import SwiftUI
 /// Manages the main library window using an `NSSplitViewController` for sidebar/detail layout
 /// and an `NSToolbar` with native toolbar items. SwiftUI views render content inside each pane.
 @MainActor
-final class MainWindowController: NSWindowController, NSToolbarDelegate {
+final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindowDelegate {
 
     private let viewModel: VMLibraryViewModel
     private let splitViewController = NSSplitViewController()
+    private var observingToolbar = false
 
     private static let logger = Logger(subsystem: "com.kernova.app", category: "MainWindowController")
 
@@ -53,6 +54,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate {
         window.minSize = NSSize(width: 800, height: 500)
 
         super.init(window: window)
+        window.delegate = self
         self.shouldCascadeWindows = false
 
         // Toolbar
@@ -70,6 +72,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate {
         window.setFrameAutosaveName("KernovaMainWindow")
 
         observeToolbarState()
+        Self.logger.notice("Main window controller initialized")
     }
 
     required init?(coder: NSCoder) {
@@ -81,9 +84,16 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate {
         window?.orderBack(nil)
     }
 
+    // MARK: - NSWindowDelegate
+
+    func windowWillClose(_ notification: Notification) {
+        observingToolbar = false
+    }
+
     // MARK: - Toolbar State Observation
 
     private func observeToolbarState() {
+        observingToolbar = true
         withObservationTracking {
             _ = self.viewModel.selectedID
             _ = self.viewModel.selectedInstance?.status
@@ -92,7 +102,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate {
             _ = self.viewModel.selectedInstance?.virtualMachine
         } onChange: {
             Task { @MainActor [weak self] in
-                guard let self else { return }
+                guard let self, self.observingToolbar else { return }
                 self.updateToolbarItems()
                 self.observeToolbarState()
             }
@@ -186,13 +196,17 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate {
             )
 
         case Self.toolbarStop:
-            return makeToolbarItem(
-                identifier: itemIdentifier,
-                label: "Stop",
-                symbol: "stop.fill",
-                action: #selector(AppDelegate.stopVM(_:)),
-                toolTip: "Stop the virtual machine"
-            )
+            let item = NSMenuToolbarItem(itemIdentifier: itemIdentifier)
+            item.label = "Stop"
+            item.image = NSImage(systemSymbolName: "stop.fill", accessibilityDescription: "Stop")
+            item.action = #selector(AppDelegate.stopVM(_:))
+            item.toolTip = "Stop the virtual machine. Click and hold for Force Stop."
+            item.isBordered = true
+            item.showsIndicator = false
+            let menu = NSMenu()
+            menu.addItem(NSMenuItem(title: "Force Stop", action: #selector(AppDelegate.forceStopVM(_:)), keyEquivalent: ""))
+            item.menu = menu
+            return item
 
         case Self.toolbarSaveState:
             return makeToolbarItem(
@@ -260,7 +274,7 @@ extension MainWindowController: NSToolbarItemValidation {
         case Self.toolbarPause:
             return instance.status.canPause
         case Self.toolbarStop:
-            return instance.status.canStop
+            return instance.status.canStop || instance.status.canForceStop
         case Self.toolbarSaveState:
             return instance.canSave
         case Self.toolbarFullscreen:

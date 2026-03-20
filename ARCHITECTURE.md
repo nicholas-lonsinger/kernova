@@ -171,7 +171,7 @@ All service implementations conform to protocols defined in `Services/Protocols/
 
 ### Views
 
-**Files:** 17 SwiftUI views across 4 subdirectories
+**Files:** 18 SwiftUI views across 4 subdirectories
 
 Views observe `VMLibraryViewModel` and individual `VMInstance`s via the Observation framework. The view hierarchy (AppKit owns the structural layout, SwiftUI renders content):
 
