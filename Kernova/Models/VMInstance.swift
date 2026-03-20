@@ -186,7 +186,14 @@ final class VMInstance: Identifiable {
 
     /// Removes the persisted save file from the bundle, if it exists.
     func removeSaveFile() {
-        try? FileManager.default.removeItem(at: saveFileURL)
+        do {
+            try FileManager.default.removeItem(at: saveFileURL)
+        } catch let error as NSError where error.domain == NSCocoaErrorDomain
+            && error.code == NSFileNoSuchFileError {
+            // File already absent — expected in some flows
+        } catch {
+            Self.logger.warning("Failed to remove save file for '\(self.name)': \(error.localizedDescription)")
+        }
     }
 
     // MARK: - Serial Console I/O
