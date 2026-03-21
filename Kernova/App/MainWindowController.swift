@@ -169,10 +169,14 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     }
 
     private func updateFullscreenItem(in toolbar: NSToolbar) {
-        guard let fullscreenItem = toolbar.items.first(where: { $0.itemIdentifier == Self.toolbarFullscreen }) else { return }
+        guard let group = toolbar.items.first(where: { $0.itemIdentifier == Self.toolbarFullscreen }) as? NSToolbarItemGroup,
+              let subitem = group.subitems.first else { return }
         let isFullscreen = viewModel.selectedInstance?.isInFullscreen ?? false
-        fullscreenItem.label = isFullscreen ? "Exit Fullscreen" : "Fullscreen"
-        fullscreenItem.toolTip = isFullscreen ? "Exit fullscreen display" : "Enter fullscreen display"
+        let label = isFullscreen ? "Exit Fullscreen" : "Fullscreen"
+        if subitem.label != label {
+            subitem.label = label
+            group.label = label
+        }
     }
 
     // MARK: - NSToolbarDelegate
@@ -184,9 +188,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             .toggleSidebar,
             .sidebarTrackingSeparator,
             Self.toolbarLifecycle,
-            .space,
             Self.toolbarSaveState,
-            .space,
             Self.toolbarFullscreen,
         ]
     }
@@ -197,7 +199,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             .toggleSidebar,
             .sidebarTrackingSeparator,
             .flexibleSpace,
-            .space,
             Self.toolbarLifecycle,
             Self.toolbarSaveState,
             Self.toolbarFullscreen,
@@ -236,21 +237,19 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             return group
 
         case Self.toolbarSaveState:
-            return makeToolbarItem(
+            return makeSingleItemGroup(
                 identifier: itemIdentifier,
                 label: "Save State",
                 symbol: "square.and.arrow.down",
-                action: #selector(AppDelegate.saveVM(_:)),
-                toolTip: "Save the virtual machine state to disk"
+                action: #selector(AppDelegate.saveVM(_:))
             )
 
         case Self.toolbarFullscreen:
-            return makeToolbarItem(
+            return makeSingleItemGroup(
                 identifier: itemIdentifier,
                 label: "Fullscreen",
                 symbol: "arrow.up.left.and.arrow.down.right",
-                action: #selector(AppDelegate.toggleFullscreenDisplay(_:)),
-                toolTip: "Enter fullscreen display"
+                action: #selector(AppDelegate.toggleFullscreenDisplay(_:))
             )
 
         default:
@@ -295,6 +294,24 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         item.toolTip = toolTip
         item.isBordered = true
         return item
+    }
+
+    private func makeSingleItemGroup(
+        identifier: NSToolbarItem.Identifier,
+        label: String,
+        symbol: String,
+        action: Selector
+    ) -> NSToolbarItemGroup {
+        let group = NSToolbarItemGroup(
+            itemIdentifier: identifier,
+            images: [NSImage(systemSymbolName: symbol, accessibilityDescription: label)!],
+            selectionMode: .momentary,
+            labels: [label],
+            target: nil,
+            action: action
+        )
+        group.label = label
+        return group
     }
 }
 
