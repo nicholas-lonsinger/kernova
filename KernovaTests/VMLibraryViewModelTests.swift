@@ -12,6 +12,7 @@ struct VMLibraryViewModelTests {
         virtualizationService: MockVirtualizationService = MockVirtualizationService()
     ) -> (VMLibraryViewModel, MockVMStorageService, MockDiskImageService, MockVirtualizationService) {
         UserDefaults.standard.removeObject(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
+        UserDefaults.standard.removeObject(forKey: VMLibraryViewModel.vmOrderKey)
         let vm = VMLibraryViewModel(
             storageService: storageService,
             diskImageService: diskImageService,
@@ -1081,5 +1082,141 @@ struct VMLibraryViewModelTests {
 
         #expect(viewModel.instances.count == 1)
         #expect(viewModel.instances.first?.name == "Preparing VM")
+    }
+
+    // MARK: - Reorder
+
+    @Test("moveVM reorders instances and persists order to UserDefaults")
+    func moveVMReordersAndPersists() {
+        let (viewModel, _, _, _) = makeViewModel()
+        let a = makeInstance(name: "A")
+        let b = makeInstance(name: "B")
+        let c = makeInstance(name: "C")
+        viewModel.instances = [a, b, c]
+
+        viewModel.moveVM(fromOffsets: IndexSet(integer: 2), toOffset: 0)
+
+        #expect(viewModel.instances.map(\.name) == ["C", "A", "B"])
+        let stored = UserDefaults.standard.stringArray(forKey: VMLibraryViewModel.vmOrderKey)
+        #expect(stored == [c.id.uuidString, a.id.uuidString, b.id.uuidString])
+    }
+
+    @Test("loadVMs applies custom order from UserDefaults")
+    func loadVMsAppliesCustomOrder() {
+        let storage = MockVMStorageService()
+        let config1 = VMConfiguration(name: "First", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 100))
+        let config2 = VMConfiguration(name: "Second", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 200))
+        let config3 = VMConfiguration(name: "Third", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 300))
+        let url1 = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(config1.id.uuidString).kernova", isDirectory: true)
+        let url2 = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(config2.id.uuidString).kernova", isDirectory: true)
+        let url3 = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(config3.id.uuidString).kernova", isDirectory: true)
+        storage.bundles[url1] = config1
+        storage.bundles[url2] = config2
+        storage.bundles[url3] = config3
+
+        // Set custom order: Third, First, Second
+        UserDefaults.standard.removeObject(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
+        UserDefaults.standard.set(
+            [config3.id.uuidString, config1.id.uuidString, config2.id.uuidString],
+            forKey: VMLibraryViewModel.vmOrderKey
+        )
+
+        let viewModel = VMLibraryViewModel(
+            storageService: storage,
+            diskImageService: MockDiskImageService(),
+            virtualizationService: MockVirtualizationService(),
+            installService: MockMacOSInstallService(),
+            ipswService: MockIPSWService()
+        )
+
+        #expect(viewModel.instances.map(\.name) == ["Third", "First", "Second"])
+    }
+
+    @Test("loadVMs falls back to createdAt when no custom order exists")
+    func loadVMsFallsBackToCreatedAt() {
+        let storage = MockVMStorageService()
+        let config1 = VMConfiguration(name: "Older", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 100))
+        let config2 = VMConfiguration(name: "Newer", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 200))
+        let url1 = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(config1.id.uuidString).kernova", isDirectory: true)
+        let url2 = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(config2.id.uuidString).kernova", isDirectory: true)
+        storage.bundles[url1] = config1
+        storage.bundles[url2] = config2
+
+        let (viewModel, _, _, _) = makeViewModel(storageService: storage)
+
+        #expect(viewModel.instances.map(\.name) == ["Older", "Newer"])
+    }
+
+    @Test("reconcileWithDisk appends new VMs after custom-ordered ones")
+    func reconcileAppendsNewVMs() {
+        let storage = MockVMStorageService()
+        let config1 = VMConfiguration(name: "Existing", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 200))
+        let url1 = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(config1.id.uuidString).kernova", isDirectory: true)
+        storage.bundles[url1] = config1
+
+        let (viewModel, _, _, _) = makeViewModel(storageService: storage)
+        #expect(viewModel.instances.count == 1)
+
+        // Simulate a new VM appearing on disk
+        let config2 = VMConfiguration(name: "Discovered", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 100))
+        let url2 = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(config2.id.uuidString).kernova", isDirectory: true)
+        storage.bundles[url2] = config2
+
+        viewModel.reconcileWithDisk()
+
+        #expect(viewModel.instances.count == 2)
+        // Existing VM should stay first (it's in customOrder), Discovered appends at end
+        #expect(viewModel.instances.first?.name == "Existing")
+        #expect(viewModel.instances.last?.name == "Discovered")
+    }
+
+    @Test("deleteConfirmed removes VM from persisted order")
+    func deleteRemovesFromOrder() {
+        let (viewModel, storage, _, _) = makeViewModel()
+        let a = makeInstance(name: "A")
+        let b = makeInstance(name: "B")
+        viewModel.instances = [a, b]
+        viewModel.selectedID = b.id
+        storage.bundles[b.bundleURL] = b.configuration
+
+        viewModel.deleteConfirmed(b)
+
+        let stored = UserDefaults.standard.stringArray(forKey: VMLibraryViewModel.vmOrderKey)
+        #expect(stored == [a.id.uuidString])
+    }
+
+    @Test("custom order ignores stale UUIDs not present in loaded VMs")
+    func customOrderIgnoresStaleUUIDs() {
+        let storage = MockVMStorageService()
+        let config = VMConfiguration(name: "Only VM", guestOS: .linux, bootMode: .efi)
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
+        storage.bundles[url] = config
+
+        // Set custom order with a stale UUID followed by the real one
+        let staleID = UUID()
+        UserDefaults.standard.removeObject(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
+        UserDefaults.standard.set(
+            [staleID.uuidString, config.id.uuidString],
+            forKey: VMLibraryViewModel.vmOrderKey
+        )
+
+        let viewModel = VMLibraryViewModel(
+            storageService: storage,
+            diskImageService: MockDiskImageService(),
+            virtualizationService: MockVirtualizationService(),
+            installService: MockMacOSInstallService(),
+            ipswService: MockIPSWService()
+        )
+
+        #expect(viewModel.instances.count == 1)
+        #expect(viewModel.instances.first?.name == "Only VM")
     }
 }

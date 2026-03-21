@@ -20,6 +20,10 @@ struct SidebarView: View {
                         }
                     )
                     .tag(instance.id)
+                    .moveDisabled(instance.isPreparing)
+                }
+                .onMove { source, destination in
+                    viewModel.moveVM(fromOffsets: source, toOffset: destination)
                 }
             }
         }
