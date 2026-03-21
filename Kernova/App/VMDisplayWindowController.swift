@@ -94,11 +94,13 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
 
     func windowDidEnterFullScreen(_ notification: Notification) {
         instance.displayMode = .fullscreen
+        window?.toolbar?.isVisible = false
     }
 
     func windowDidExitFullScreen(_ notification: Notification) {
         guard instance.displayMode == .fullscreen else { return }
         instance.displayMode = .popOut
+        window?.toolbar?.isVisible = true
     }
 
     // MARK: - Instance Observation
