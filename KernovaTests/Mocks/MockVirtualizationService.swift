@@ -15,9 +15,11 @@ final class MockVirtualizationService: VirtualizationProviding {
     var saveCallCount = 0
     var restoreCallCount = 0
 
-    // MARK: - Error Injection
+    // MARK: - Error Injection & Recovery
 
     var startError: (any Error)?
+    /// Status to set on start failure. Defaults to `.error`; set to `.stopped` to simulate transient errors.
+    var startErrorRecoveryStatus: VMStatus = .error
     var stopError: (any Error)?
     var forceStopError: (any Error)?
     var pauseError: (any Error)?
@@ -31,7 +33,7 @@ final class MockVirtualizationService: VirtualizationProviding {
         startCallCount += 1
         if let error = startError {
             instance.tearDownSession()
-            instance.status = .error
+            instance.status = startErrorRecoveryStatus
             instance.errorMessage = error.localizedDescription
             throw error
         }
