@@ -9,6 +9,7 @@ final class VMLibraryViewModel {
 
     private static let logger = Logger(subsystem: "com.kernova.app", category: "VMLibraryViewModel")
     static let lastSelectedVMIDKey = "lastSelectedVMID"
+    static let vmOrderKey = "vmOrder"
 
     // MARK: - Services
 
@@ -42,6 +43,9 @@ final class VMLibraryViewModel {
 
     /// `true` when any instance is mid-clone or mid-import.
     var hasPreparing: Bool { instances.contains(where: \.isPreparing) }
+
+    /// Cached custom VM order loaded from UserDefaults.
+    private var customOrder: [UUID] = []
 
     /// Called when a VM with `prefersFullscreen` is about to start or resume,
     /// allowing the app delegate to pre-create the fullscreen window with a spinner.
@@ -105,7 +109,13 @@ final class VMLibraryViewModel {
                     return nil
                 }
             }
-            .sorted { $0.configuration.createdAt < $1.configuration.createdAt }
+
+            // Load custom order, sort, and capture baseline
+            if let savedStrings = UserDefaults.standard.stringArray(forKey: Self.vmOrderKey) {
+                customOrder = savedStrings.compactMap { UUID(uuidString: $0) }
+            }
+            sortInstances()
+            customOrder = instances.map(\.id)
 
             if selectedID == nil || !instances.contains(where: { $0.id == selectedID }) {
                 if let savedString = UserDefaults.standard.string(forKey: Self.lastSelectedVMIDKey),
@@ -308,6 +318,7 @@ final class VMLibraryViewModel {
             lifecycle.clearActiveOperation(for: instance.id)
             sleepPausedInstanceIDs.remove(instance.id)
             instances.removeAll { $0.id == instance.id }
+            persistOrder()
             if selectedID == instance.id {
                 selectedID = instances.first?.id
             }
@@ -377,7 +388,7 @@ final class VMLibraryViewModel {
             // Create phantom row immediately
             let phantom = VMInstance(configuration: config, bundleURL: destinationURL, status: initialStatus)
             instances.append(phantom)
-            instances.sort { $0.configuration.createdAt < $1.configuration.createdAt }
+            sortInstances()
             selectedID = phantom.id
 
             // Launch async file copy and assign preparing state atomically
@@ -509,7 +520,7 @@ final class VMLibraryViewModel {
         // Create phantom row immediately
         let phantom = VMInstance(configuration: clonedConfig, bundleURL: bundleURL)
         instances.append(phantom)
-        instances.sort { $0.configuration.createdAt < $1.configuration.createdAt }
+        sortInstances()
         selectedID = phantom.id
 
         // Launch async file copy and assign preparing state atomically
@@ -683,7 +694,8 @@ final class VMLibraryViewModel {
             }
 
             if didChange {
-                instances.sort { $0.configuration.createdAt < $1.configuration.createdAt }
+                sortInstances()
+                persistOrder()
             }
 
             Self.logger.debug("reconcileWithDisk: complete — \(self.instances.count) VM(s) in library")
@@ -719,6 +731,37 @@ final class VMLibraryViewModel {
         }
         phantom.preparingState = nil
         Self.trashPartialBundle(at: phantom.bundleURL)
+    }
+
+    // MARK: - Reorder
+
+    /// Moves VMs in the sidebar list and persists the new order.
+    func moveVM(fromOffsets source: IndexSet, toOffset destination: Int) {
+        instances.move(fromOffsets: source, toOffset: destination)
+        persistOrder()
+    }
+
+    /// Sorts instances by custom order, falling back to `createdAt` for unordered VMs.
+    private func sortInstances() {
+        let orderMap = Dictionary(uniqueKeysWithValues: zip(customOrder, customOrder.indices))
+        instances.sort { lhs, rhs in
+            switch (orderMap[lhs.id], orderMap[rhs.id]) {
+            case let (.some(l), .some(r)):
+                return l < r
+            case (.some, .none):
+                return true
+            case (.none, .some):
+                return false
+            case (.none, .none):
+                return lhs.configuration.createdAt < rhs.configuration.createdAt
+            }
+        }
+    }
+
+    /// Saves the current instance order to UserDefaults.
+    private func persistOrder() {
+        customOrder = instances.map(\.id)
+        UserDefaults.standard.set(customOrder.map(\.uuidString), forKey: Self.vmOrderKey)
     }
 
     // MARK: - Error Handling
