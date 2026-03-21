@@ -40,7 +40,7 @@ final class VirtualizationService {
         } catch {
             Self.logger.error("Failed to start VM '\(instance.name)': \(error.localizedDescription)")
             instance.tearDownSession()
-            instance.status = .error
+            instance.status = Self.isTransientStartError(error) ? .stopped : .error
             instance.errorMessage = error.localizedDescription
             throw error
         }
@@ -199,6 +199,25 @@ final class VirtualizationService {
             instance.status = .error
             instance.errorMessage = error.localizedDescription
             throw error
+        }
+    }
+
+    // MARK: - Error Classification
+
+    /// Returns `true` when the error is a transient environmental condition (e.g. too many
+    /// concurrent VMs) rather than a problem with the VM itself. Transient errors leave the
+    /// VM in `.stopped` so the indicator stays grey; permanent errors set `.error` (red).
+    static func isTransientStartError(_ error: Error) -> Bool {
+        if error is ConfigurationBuilderError { return false }
+
+        let nsError = error as NSError
+        guard nsError.domain == VZError.errorDomain else { return false }
+
+        switch VZError.Code(rawValue: nsError.code) {
+        case .virtualMachineLimitExceeded, .operationCancelled:
+            return true
+        default:
+            return false
         }
     }
 
