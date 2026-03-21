@@ -39,20 +39,7 @@ final class SerialConsoleWindowController: NSWindowController, NSWindowDelegate 
         super.init(window: window)
         window.delegate = self
 
-        // Restore saved frame or center on first open
-        let frameName = "SerialConsole-\(instance.instanceID.uuidString)"
-        if !window.setFrameUsingName(frameName) {
-            window.center()
-        }
-
-        // Validate restored frame is visible on a connected screen
-        if let frame = self.window?.frame,
-           !NSScreen.screens.contains(where: { $0.visibleFrame.intersects(frame) }) {
-            Self.logger.debug("Restored frame not visible on any screen, centering window")
-            window.center()
-        }
-
-        window.setFrameAutosaveName(frameName)
+        window.restoreFrame(named: "SerialConsole-\(instance.instanceID.uuidString)")
     }
 
     required init?(coder: NSCoder) {

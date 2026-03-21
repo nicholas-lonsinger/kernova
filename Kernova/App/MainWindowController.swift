@@ -32,12 +32,14 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         self.viewModel = viewModel
 
         let sidebarHost = NSHostingController(rootView: SidebarView(viewModel: viewModel))
+        sidebarHost.sizingOptions = []
         self.sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebarHost)
         sidebarItem.minimumThickness = 200
         sidebarItem.maximumThickness = 350
         splitViewController.addSplitViewItem(sidebarItem)
 
         let detailHost = NSHostingController(rootView: MainDetailView(viewModel: viewModel))
+        detailHost.sizingOptions = []
         let detailItem = NSSplitViewItem(viewController: detailHost)
         detailItem.minimumThickness = 400
         splitViewController.addSplitViewItem(detailItem)
@@ -64,12 +66,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         window.toolbar = toolbar
         window.toolbarStyle = .unified
 
-        // Restore saved frame BEFORE enabling autosave to avoid overwriting it.
-        // Only center on first launch (when no saved frame exists).
-        if !window.setFrameUsingName("KernovaMainWindow") {
-            window.center()
-        }
-        window.setFrameAutosaveName("KernovaMainWindow")
+        window.restoreFrame(named: "KernovaMainWindow")
 
         observeToolbarState()
         observeSidebarCollapse()
@@ -359,5 +356,26 @@ extension MainWindowController: NSToolbarItemValidation {
             Self.logger.debug("validateToolbarItem: unrecognized identifier '\(item.itemIdentifier.rawValue)'")
             return true
         }
+    }
+}
+
+// MARK: - NSWindow Frame Restoration
+
+extension NSWindow {
+    private static let frameLogger = Logger(subsystem: "com.kernova.app", category: "NSWindow+FrameRestore")
+
+    /// Restores a previously saved frame, validates it's visible on a connected screen,
+    /// and enables autosave for future changes. Centers the window if no saved frame exists
+    /// or the saved frame doesn't intersect any connected screen.
+    func restoreFrame(named name: String) {
+        if !setFrameUsingName(name) {
+            center()
+        }
+        let screens = NSScreen.screens
+        if !screens.isEmpty, !screens.contains(where: { $0.visibleFrame.intersects(frame) }) {
+            Self.frameLogger.warning("Restored frame for '\(name)' is off-screen, centering window")
+            center()
+        }
+        setFrameAutosaveName(name)
     }
 }
