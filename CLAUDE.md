@@ -88,7 +88,7 @@ guard let value = knownGoodAPI("compile-time-constant") else {
 
 ### Review Debt Tracking
 
-When reviewing code — via review tools (`/simplify`, `/review-pr`, etc.), post-implementation review agents, or while working on adjacent code — valid findings that are **out of scope** for the current task must be captured as GitHub issues rather than silently dropped.
+When reviewing code — via review tools (`/simplify`, `/review-pr`, etc.), post-implementation review agents, external PR review feedback (bot or human), or while working on adjacent code — valid findings that are **out of scope** for the current task must be captured as GitHub issues rather than silently dropped.
 
 **What to capture** (important + moderate severity):
 - Bugs, correctness problems, or logic errors
