@@ -91,6 +91,7 @@ final class VMLibraryViewModel {
     func loadVMs() {
         do {
             let bundles = try storageService.listVMBundles()
+            var failedBundles: [String] = []
             instances = bundles.compactMap { bundleURL in
                 do {
                     let migratedURL = try storageService.migrateBundleIfNeeded(at: bundleURL)
@@ -106,8 +107,12 @@ final class VMLibraryViewModel {
                     return instance
                 } catch {
                     Self.logger.error("Failed to load VM from \(bundleURL.lastPathComponent): \(error.localizedDescription)")
+                    failedBundles.append(bundleURL.deletingPathExtension().lastPathComponent)
                     return nil
                 }
+            }
+            if !failedBundles.isEmpty {
+                presentError(LoadError.bundleLoadFailed(names: failedBundles))
             }
 
             // Load persisted order, sort by it, then normalize customOrder to match
@@ -477,6 +482,7 @@ final class VMLibraryViewModel {
             try storageService.saveConfiguration(instance.configuration, to: instance.bundleURL)
         } catch {
             Self.logger.error("Failed to save configuration: \(error.localizedDescription)")
+            presentError(error)
         }
     }
 
@@ -819,6 +825,19 @@ final class VMLibraryViewModel {
             switch self {
             case .operationInProgress:
                 return "Another clone or import operation is already in progress. Please wait for it to finish."
+            }
+        }
+    }
+
+    /// Error type for VM loading failures.
+    private enum LoadError: LocalizedError {
+        case bundleLoadFailed(names: [String])
+
+        var errorDescription: String? {
+            switch self {
+            case .bundleLoadFailed(let names):
+                assert(!names.isEmpty, "bundleLoadFailed requires at least one bundle name")
+                return "Failed to load the following VMs: \(names.joined(separator: ", ")). They may have corrupted configurations."
             }
         }
     }
