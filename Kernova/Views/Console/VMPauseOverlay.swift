@@ -16,6 +16,7 @@ struct VMPauseOverlay: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Resume")
+            .help("Resume the virtual machine")
 
             Text("Paused")
                 .font(.title2)

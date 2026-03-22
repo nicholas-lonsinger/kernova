@@ -26,14 +26,25 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
 
     private static let toolbarLifecycle = NSToolbarItem.Identifier("displayLifecycle")
     private static let toolbarSaveState = NSToolbarItem.Identifier("displaySaveState")
+    private static let saveStateToolTip = "Save the virtual machine state to disk"
     private static let toolbarDisplay = NSToolbarItem.Identifier("displayDisplay")
 
     private enum LifecycleSegment: Int {
         case play = 0, pause = 1, stop = 2
+
+        static let startToolTip = "Start the virtual machine"
+        static let resumeToolTip = "Resume the virtual machine"
+        static let pauseToolTip = "Pause the virtual machine"
+        static let stopToolTip = "Stop the virtual machine"
     }
 
     private enum DisplaySegment: Int {
         case popIn = 0, fullscreen = 1
+
+        static let popOutToolTip = "Open display in a separate window"
+        static let popInToolTip = "Return display to the main window"
+        static let fullscreenToolTip = "Enter fullscreen display"
+        static let exitFullscreenToolTip = "Exit fullscreen display"
     }
 
     init(instance: VMInstance, enterFullscreen: Bool, onResume: @escaping () -> Void) {
@@ -152,6 +163,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         if play.label != playLabel {
             play.label = playLabel
             play.image = NSImage(systemSymbolName: "play.fill", accessibilityDescription: playLabel)
+            play.toolTip = canResume ? LifecycleSegment.resumeToolTip : LifecycleSegment.startToolTip
         }
 
         play.isEnabled = instance.status.canStart || canResume
@@ -182,6 +194,9 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
                 systemSymbolName: instance.isInSeparateWindow ? "pip.enter" : "pip.exit",
                 accessibilityDescription: popLabel
             )
+            popInItem.toolTip = instance.isInSeparateWindow
+                ? DisplaySegment.popInToolTip
+                : DisplaySegment.popOutToolTip
         }
 
         let fsLabel = instance.isInFullscreen ? "Exit Fullscreen" : "Fullscreen"
@@ -193,6 +208,9 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
                     : "arrow.up.left.and.arrow.down.right",
                 accessibilityDescription: fsLabel
             )
+            fullscreenItem.toolTip = instance.isInFullscreen
+                ? DisplaySegment.exitFullscreenToolTip
+                : DisplaySegment.fullscreenToolTip
         }
     }
 
@@ -273,6 +291,9 @@ extension VMDisplayWindowController: NSToolbarDelegate {
                 action: #selector(lifecycleAction(_:))
             )
             group.label = "State Controls"
+            group.subitems[LifecycleSegment.play.rawValue].toolTip = LifecycleSegment.startToolTip
+            group.subitems[LifecycleSegment.pause.rawValue].toolTip = LifecycleSegment.pauseToolTip
+            group.subitems[LifecycleSegment.stop.rawValue].toolTip = LifecycleSegment.stopToolTip
             group.autovalidates = false
             return group
 
@@ -286,6 +307,7 @@ extension VMDisplayWindowController: NSToolbarDelegate {
                 action: #selector(AppDelegate.saveVM(_:))
             )
             group.label = "Save State"
+            group.subitems.first?.toolTip = Self.saveStateToolTip
             group.autovalidates = false
             return group
 
@@ -302,6 +324,8 @@ extension VMDisplayWindowController: NSToolbarDelegate {
                 action: #selector(displayAction(_:))
             )
             group.label = "Display"
+            group.subitems[DisplaySegment.popIn.rawValue].toolTip = DisplaySegment.popInToolTip
+            group.subitems[DisplaySegment.fullscreen.rawValue].toolTip = DisplaySegment.fullscreenToolTip
             group.autovalidates = false
             return group
 

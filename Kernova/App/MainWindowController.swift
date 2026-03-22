@@ -17,6 +17,11 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     private enum LifecycleSegment: Int {
         case play = 0, pause = 1, stop = 2
+
+        static let startToolTip = "Start the virtual machine"
+        static let resumeToolTip = "Resume the virtual machine"
+        static let pauseToolTip = "Pause the virtual machine"
+        static let stopToolTip = "Stop the virtual machine"
     }
 
     // MARK: - Toolbar Item Identifiers
@@ -24,10 +29,16 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     private static let toolbarNewVM = NSToolbarItem.Identifier("newVM")
     private static let toolbarLifecycle = NSToolbarItem.Identifier("lifecycle")
     private static let toolbarSaveState = NSToolbarItem.Identifier("saveState")
+    private static let saveStateToolTip = "Save the virtual machine state to disk"
     private static let toolbarDisplay = NSToolbarItem.Identifier("display")
 
     private enum DisplaySegment: Int {
         case popOut = 0, fullscreen = 1
+
+        static let popOutToolTip = "Open display in a separate window"
+        static let popInToolTip = "Return display to the main window"
+        static let fullscreenToolTip = "Enter fullscreen display"
+        static let exitFullscreenToolTip = "Exit fullscreen display"
     }
 
     // MARK: - Init
@@ -170,6 +181,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         if play.label != playLabel {
             play.label = playLabel
             play.image = NSImage(systemSymbolName: "play.fill", accessibilityDescription: playLabel)
+            play.toolTip = canResume ? LifecycleSegment.resumeToolTip : LifecycleSegment.startToolTip
         }
 
         play.isEnabled = instance.status.canStart || canResume
@@ -217,6 +229,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
                 systemSymbolName: instance.isInSeparateWindow ? "pip.enter" : "pip.exit",
                 accessibilityDescription: popLabel
             )
+            popOutItem.toolTip = instance.isInSeparateWindow
+                ? DisplaySegment.popInToolTip
+                : DisplaySegment.popOutToolTip
         }
 
         let fsLabel = instance.isInFullscreen ? "Exit Fullscreen" : "Fullscreen"
@@ -228,6 +243,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
                     : "arrow.up.left.and.arrow.down.right",
                 accessibilityDescription: fsLabel
             )
+            fullscreenItem.toolTip = instance.isInFullscreen
+                ? DisplaySegment.exitFullscreenToolTip
+                : DisplaySegment.fullscreenToolTip
         }
     }
 
@@ -286,6 +304,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
                 action: #selector(lifecycleAction(_:))
             )
             group.label = "State Controls"
+            group.subitems[LifecycleSegment.play.rawValue].toolTip = LifecycleSegment.startToolTip
+            group.subitems[LifecycleSegment.pause.rawValue].toolTip = LifecycleSegment.pauseToolTip
+            group.subitems[LifecycleSegment.stop.rawValue].toolTip = LifecycleSegment.stopToolTip
             group.autovalidates = false
             return group
 
@@ -294,7 +315,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
                 identifier: itemIdentifier,
                 label: "Save State",
                 symbol: "square.and.arrow.down",
-                action: #selector(AppDelegate.saveVM(_:))
+                action: #selector(AppDelegate.saveVM(_:)),
+                toolTip: Self.saveStateToolTip
             )
 
         case Self.toolbarDisplay:
@@ -310,6 +332,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
                 action: #selector(displayAction(_:))
             )
             group.label = "Display"
+            group.subitems[DisplaySegment.popOut.rawValue].toolTip = DisplaySegment.popOutToolTip
+            group.subitems[DisplaySegment.fullscreen.rawValue].toolTip = DisplaySegment.fullscreenToolTip
             group.autovalidates = false
             return group
 
@@ -376,7 +400,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         identifier: NSToolbarItem.Identifier,
         label: String,
         symbol: String,
-        action: Selector
+        action: Selector,
+        toolTip: String? = nil
     ) -> NSToolbarItemGroup {
         let group = NSToolbarItemGroup(
             itemIdentifier: identifier,
@@ -387,6 +412,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             action: action
         )
         group.label = label
+        if let toolTip { group.subitems.first?.toolTip = toolTip }
         group.autovalidates = false
         return group
     }
