@@ -138,6 +138,7 @@ final class VMLibraryViewModel {
             }
             Self.logger.notice("Loaded \(self.instances.count) VMs")
         } catch {
+            Self.logger.error("Failed to load VM library: \(error.localizedDescription)")
             presentError(error)
         }
     }
@@ -192,7 +193,10 @@ final class VMLibraryViewModel {
                             storageService: storageService
                         )
                     } catch {
-                        presentError(error)
+                        if !Task.isCancelled {
+                            Self.logger.error("Failed to install macOS on '\(instance.name)': \(error.localizedDescription)")
+                            presentError(error)
+                        }
                     }
                 }
             }
@@ -200,6 +204,7 @@ final class VMLibraryViewModel {
 
             Self.logger.notice("Created VM '\(config.name)'")
         } catch {
+            Self.logger.error("Failed to create VM: \(error.localizedDescription)")
             presentError(error)
         }
     }
@@ -247,6 +252,7 @@ final class VMLibraryViewModel {
         do {
             try await lifecycle.start(instance)
         } catch {
+            Self.logger.error("Failed to start '\(instance.name)': \(error.localizedDescription)")
             presentError(error)
         }
     }
@@ -255,6 +261,7 @@ final class VMLibraryViewModel {
         do {
             try lifecycle.stop(instance)
         } catch {
+            Self.logger.error("Failed to stop '\(instance.name)': \(error.localizedDescription)")
             presentError(error)
         }
     }
@@ -264,6 +271,7 @@ final class VMLibraryViewModel {
             try await lifecycle.forceStop(instance)
             Self.logger.notice("Force-stopped VM '\(instance.name)'")
         } catch {
+            Self.logger.error("Failed to force-stop '\(instance.name)': \(error.localizedDescription)")
             presentError(error)
         }
     }
@@ -283,6 +291,7 @@ final class VMLibraryViewModel {
         do {
             try await lifecycle.pause(instance)
         } catch {
+            Self.logger.error("Failed to pause '\(instance.name)': \(error.localizedDescription)")
             presentError(error)
         }
     }
@@ -294,6 +303,7 @@ final class VMLibraryViewModel {
         do {
             try await lifecycle.resume(instance)
         } catch {
+            Self.logger.error("Failed to resume '\(instance.name)': \(error.localizedDescription)")
             presentError(error)
         }
     }
@@ -302,6 +312,7 @@ final class VMLibraryViewModel {
         do {
             try await lifecycle.save(instance)
         } catch {
+            Self.logger.error("Failed to save '\(instance.name)': \(error.localizedDescription)")
             presentError(error)
         }
     }
@@ -336,6 +347,7 @@ final class VMLibraryViewModel {
             }
             Self.logger.notice("Moved VM '\(instance.name)' to Trash")
         } catch {
+            Self.logger.error("Failed to delete VM '\(instance.name)': \(error.localizedDescription)")
             presentError(error)
         }
         instanceToDelete = nil
@@ -373,6 +385,7 @@ final class VMLibraryViewModel {
 
             // Serialize: only one preparing operation at a time
             guard !hasPreparing else {
+                Self.logger.info("Import blocked: another preparing operation is in progress")
                 presentError(PreparingError.operationInProgress)
                 return
             }
@@ -429,12 +442,14 @@ final class VMLibraryViewModel {
                     }
                     self.cleanupPhantomInstance(phantom)
                     if !Task.isCancelled {
+                        Self.logger.error("Failed to import VM '\(config.name)': \(error.localizedDescription)")
                         self.presentError(error)
                     }
                 }
             }
             phantom.preparingState = VMInstance.PreparingState(operation: .importing, task: task)
         } catch {
+            Self.logger.error("Failed to import VM from \(sourceURL.lastPathComponent): \(error.localizedDescription)")
             presentError(error)
         }
     }
@@ -489,8 +504,12 @@ final class VMLibraryViewModel {
     // MARK: - Clone
 
     func cloneVM(_ instance: VMInstance) {
-        guard instance.status.canEditSettings else { return }
+        guard instance.status.canEditSettings else {
+            Self.logger.debug("Clone skipped for '\(instance.name)': status '\(instance.status.displayName)' does not allow editing")
+            return
+        }
         guard !hasPreparing else {
+            Self.logger.info("Clone blocked: another preparing operation is in progress")
             presentError(PreparingError.operationInProgress)
             return
         }
@@ -527,6 +546,7 @@ final class VMLibraryViewModel {
         do {
             bundleURL = try storageService.bundleURL(for: clonedConfig)
         } catch {
+            Self.logger.error("Failed to derive bundle URL for clone of '\(instance.name)': \(error.localizedDescription)")
             presentError(error)
             return
         }
@@ -574,6 +594,7 @@ final class VMLibraryViewModel {
                 }
                 self.cleanupPhantomInstance(phantom)
                 if !Task.isCancelled {
+                    Self.logger.error("Failed to clone VM '\(config.name)': \(error.localizedDescription)")
                     self.presentError(error)
                 }
             }
@@ -672,7 +693,10 @@ final class VMLibraryViewModel {
 
     /// Diffs on-disk VM bundles against in-memory instances and adds/removes as needed.
     func reconcileWithDisk() {
-        guard !hasPreparing else { return }
+        guard !hasPreparing else {
+            Self.logger.debug("reconcileWithDisk: skipped — preparing operation in progress")
+            return
+        }
         Self.logger.debug("reconcileWithDisk: starting")
         do {
             let diskBundles = try storageService.listVMBundles()
@@ -862,6 +886,5 @@ final class VMLibraryViewModel {
     func presentError(_ error: Error) {
         errorMessage = error.localizedDescription
         showError = true
-        Self.logger.error("\(error.localizedDescription)")
     }
 }
