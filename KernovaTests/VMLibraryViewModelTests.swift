@@ -383,6 +383,18 @@ struct VMLibraryViewModelTests {
         #expect(storage.saveConfigurationCallCount == 1)
     }
 
+    @Test("saveConfiguration presents error on failure")
+    func saveConfigurationPresentsError() {
+        let (viewModel, storage, _, _) = makeViewModel()
+        let instance = makeInstance()
+        storage.saveConfigurationError = NSError(domain: "test", code: 1)
+
+        viewModel.saveConfiguration(for: instance)
+
+        #expect(viewModel.showError == true)
+        #expect(viewModel.errorMessage != nil)
+    }
+
     // MARK: - trySave / tryForceStop
 
     @Test("trySave throws on failure")
