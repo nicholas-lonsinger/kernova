@@ -69,7 +69,8 @@ Kernova/
 │       └── ReviewStep.swift            # Step 4: Review and create
 ├── Utilities/
 │   ├── DataFormatters.swift            # Human-readable formatting for bytes, CPU counts, etc.
-│   └── FileManagerExtensions.swift     # FileManager convenience methods
+│   ├── FileManagerExtensions.swift     # FileManager convenience methods
+│   └── NSImageExtensions.swift         # Nil-safe SF Symbol image loading
 └── Resources/
     ├── Assets.xcassets/                # App icons and image assets
     └── Kernova.entitlements            # com.apple.security.virtualization entitlement
@@ -223,10 +224,11 @@ SystemSleepWatcher ──sleep/wake──→ VMLibraryViewModel ──pause/resu
 
 ### Utilities
 
-**Files:** `DataFormatters.swift`, `FileManagerExtensions.swift`
+**Files:** `DataFormatters.swift`, `FileManagerExtensions.swift`, `NSImageExtensions.swift`
 
 - `DataFormatters` — human-readable formatting for bytes (e.g., "107.4 GB"), CPU counts, etc.
 - `FileManagerExtensions` — convenience methods on `FileManager`
+- `NSImageExtensions` — `NSImage.systemSymbol(_:accessibilityDescription:)` for nil-safe SF Symbol loading with error logging
 
 ## Key Design Decisions
 

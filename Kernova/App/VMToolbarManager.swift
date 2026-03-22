@@ -81,9 +81,9 @@ final class VMToolbarManager: NSObject {
             let group = NSToolbarItemGroup(
                 itemIdentifier: identifier,
                 images: [
-                    NSImage(systemSymbolName: "play.fill", accessibilityDescription: "Start")!,
-                    NSImage(systemSymbolName: "pause.fill", accessibilityDescription: "Pause")!,
-                    NSImage(systemSymbolName: "stop.fill", accessibilityDescription: "Stop")!,
+                    .systemSymbol("play.fill", accessibilityDescription: "Start"),
+                    .systemSymbol("pause.fill", accessibilityDescription: "Pause"),
+                    .systemSymbol("stop.fill", accessibilityDescription: "Stop"),
                 ],
                 selectionMode: .momentary,
                 labels: ["Start", "Pause", "Stop"],
@@ -110,8 +110,8 @@ final class VMToolbarManager: NSObject {
             let group = NSToolbarItemGroup(
                 itemIdentifier: identifier,
                 images: [
-                    NSImage(systemSymbolName: "pip.exit", accessibilityDescription: "Pop Out")!,
-                    NSImage(systemSymbolName: "arrow.up.left.and.arrow.down.right", accessibilityDescription: "Fullscreen")!,
+                    .systemSymbol("pip.exit", accessibilityDescription: "Pop Out"),
+                    .systemSymbol("arrow.up.left.and.arrow.down.right", accessibilityDescription: "Fullscreen"),
                 ],
                 selectionMode: .momentary,
                 labels: ["Pop Out", "Fullscreen"],
@@ -157,7 +157,7 @@ final class VMToolbarManager: NSObject {
         let play = group.subitems[LifecycleSegment.play.rawValue]
         if play.label != playLabel {
             play.label = playLabel
-            play.image = NSImage(systemSymbolName: "play.fill", accessibilityDescription: playLabel)
+            play.image = .systemSymbol("play.fill", accessibilityDescription: playLabel)
             play.toolTip = canResume ? Self.resumeToolTip : Self.startToolTip
         }
 
@@ -210,8 +210,8 @@ final class VMToolbarManager: NSObject {
         let popLabel = instance.isInSeparateWindow ? "Pop In" : "Pop Out"
         if popItem.label != popLabel {
             popItem.label = popLabel
-            popItem.image = NSImage(
-                systemSymbolName: instance.isInSeparateWindow ? "pip.enter" : "pip.exit",
+            popItem.image = .systemSymbol(
+                instance.isInSeparateWindow ? "pip.enter" : "pip.exit",
                 accessibilityDescription: popLabel
             )
             popItem.toolTip = instance.isInSeparateWindow ? Self.popInToolTip : Self.popOutToolTip
@@ -220,8 +220,8 @@ final class VMToolbarManager: NSObject {
         let fsLabel = instance.isInFullscreen ? "Exit Fullscreen" : "Fullscreen"
         if fullscreenItem.label != fsLabel {
             fullscreenItem.label = fsLabel
-            fullscreenItem.image = NSImage(
-                systemSymbolName: instance.isInFullscreen
+            fullscreenItem.image = .systemSymbol(
+                instance.isInFullscreen
                     ? "arrow.down.right.and.arrow.up.left"
                     : "arrow.up.left.and.arrow.down.right",
                 accessibilityDescription: fsLabel
@@ -287,7 +287,7 @@ final class VMToolbarManager: NSObject {
     ) -> NSToolbarItemGroup {
         let group = NSToolbarItemGroup(
             itemIdentifier: identifier,
-            images: [NSImage(systemSymbolName: symbol, accessibilityDescription: label)!],
+            images: [.systemSymbol(symbol, accessibilityDescription: label)],
             selectionMode: .momentary,
             labels: [label],
             target: nil,
