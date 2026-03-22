@@ -65,21 +65,27 @@ struct VMDetailView: View {
             Text("The operation will be stopped and any partially copied files will be removed.")
         }
         .alert(
-            "Force Stop Virtual Machine",
+            viewModel.instanceToForceStop?.isColdPaused == true
+                ? "Discard Saved State"
+                : "Force Stop Virtual Machine",
             isPresented: $viewModel.showForceStopConfirmation,
             presenting: viewModel.instanceToForceStop
         ) { vm in
-            Button("Force Stop", role: .destructive) {
+            Button(vm.isColdPaused ? "Discard" : "Force Stop", role: .destructive) {
                 Task { await viewModel.forceStopConfirmed(vm) }
             }
-            if vm.status.canStop {
+            if vm.canStop {
                 Button("Shut Down") {
                     viewModel.stop(vm)
                 }
             }
             Button("Cancel", role: .cancel) {}
         } message: { vm in
-            Text("\"\(vm.name)\" will be immediately terminated. Any unsaved data inside the guest will be lost.")
+            if vm.isColdPaused {
+                Text("\"\(vm.name)\" has its state saved to disk. Discarding will permanently delete the saved state.")
+            } else {
+                Text("\"\(vm.name)\" will be immediately terminated. Any unsaved data inside the guest will be lost.")
+            }
         }
     }
 

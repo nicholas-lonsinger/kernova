@@ -84,12 +84,16 @@ struct SidebarView: View {
                     Task { await viewModel.resume(instance) }
                 }
             }
-            if instance.status.canStop {
+            if instance.canStop {
                 Button("Stop") {
                     viewModel.stop(instance)
                 }
             }
-            if instance.status.canForceStop && !instance.status.canStop {
+            if instance.isColdPaused {
+                Button("Discard Saved State") {
+                    viewModel.confirmForceStop(instance)
+                }
+            } else if instance.status.canForceStop && !instance.status.canStop {
                 Button("Force Stop") {
                     viewModel.confirmForceStop(instance)
                 }

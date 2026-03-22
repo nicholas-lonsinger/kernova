@@ -163,7 +163,8 @@ final class VMToolbarManager: NSObject {
 
         play.isEnabled = instance.status.canStart || canResume
         group.subitems[LifecycleSegment.pause.rawValue].isEnabled = instance.status.canPause
-        group.subitems[LifecycleSegment.stop.rawValue].isEnabled = instance.status.canStop
+        // canStop excludes cold-paused (no graceful stop possible); isColdPaused enables the "discard saved state" path
+        group.subitems[LifecycleSegment.stop.rawValue].isEnabled = instance.canStop || instance.isColdPaused
     }
 
     private func updateSaveStateItem(in toolbar: NSToolbar, instance: VMInstance?) {

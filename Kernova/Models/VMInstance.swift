@@ -153,6 +153,11 @@ final class VMInstance: Identifiable {
         isPreparing || status.isActive || (status == .paused && virtualMachine != nil)
     }
 
+    /// `true` when the VM is eligible for graceful stop (running or live-paused, not cold-paused).
+    var canStop: Bool {
+        status.canStop && !isColdPaused
+    }
+
     /// `true` when the VM is eligible to save state (active + live VM, not cold-paused).
     var canSave: Bool {
         status.canSave && !isColdPaused
