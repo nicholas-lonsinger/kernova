@@ -752,8 +752,9 @@ struct VMLibraryViewModelTests {
 
         await viewModel.pauseAllForSleep()
 
-        // Error is logged, not presented to user
-        #expect(viewModel.showError == false)
+        // Error is surfaced to the user
+        #expect(viewModel.showError == true)
+        #expect(viewModel.errorMessage?.contains("Running") == true)
         // Failed pause should not track the instance
         #expect(viewModel.sleepPausedInstanceIDs.isEmpty)
     }
@@ -771,7 +772,9 @@ struct VMLibraryViewModelTests {
         await viewModel.resumeAllAfterWake()
 
         #expect(viewModel.sleepPausedInstanceIDs.isEmpty)
-        #expect(viewModel.showError == false)
+        // Error is surfaced to the user
+        #expect(viewModel.showError == true)
+        #expect(viewModel.errorMessage?.contains("Sleep Paused") == true)
     }
 
     @Test("pauseAllForSleep is no-op when no running VMs")
