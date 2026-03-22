@@ -11,18 +11,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private var pendingOpenURLs: [URL] = []
     private var serialConsoleWindows: [UUID: SerialConsoleWindowController] = [:]
     private var serialConsoleObservers: [UUID: Any] = [:]
-    private var fullscreenWindows: [UUID: FullscreenWindowController] = [:]
-    private var fullscreenObservers: [UUID: Any] = [:]
+    private var displayWindows: [UUID: VMDisplayWindowController] = [:]
+    private var displayWindowObservers: [UUID: Any] = [:]
     private var serialConsoleMenuItem: NSMenuItem!
 
     private static let logger = Logger(subsystem: "com.kernova.app", category: "AppDelegate")
 
-    /// Returns the VM that menu actions should target: the fullscreen VM if its window
-    /// is key, otherwise the sidebar-selected VM.
+    /// Returns the VM that menu actions should target: the display or serial console
+    /// window's VM if its window is key, otherwise the sidebar-selected VM.
     private var activeInstance: VMInstance? {
-        if let keyWindow = NSApp.keyWindow,
-           let controller = fullscreenWindows.values.first(where: { $0.window === keyWindow }) {
-            return controller.instance
+        if let keyWindow = NSApp.keyWindow {
+            if let controller = displayWindows.values.first(where: { $0.window === keyWindow }) {
+                return controller.instance
+            }
+            if let controller = serialConsoleWindows.values.first(where: { $0.window === keyWindow }) {
+                return controller.instance
+            }
         }
         return viewModel.selectedInstance
     }
@@ -40,8 +44,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         viewModel = VMLibraryViewModel()
-        viewModel.onEnterFullscreen = { [weak self] instance in
-            self?.enterFullscreen(for: instance)
+        viewModel.onOpenDisplayWindow = { [weak self] instance in
+            self?.openDisplayWindow(for: instance)
         }
         setupMainMenu()
 
@@ -62,9 +66,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             instance.isPreparing || instance.status.isActive || (instance.status == .paused && instance.virtualMachine != nil)
         }
 
-        // Stay alive if VMs are active or fullscreen windows still exist
-        if hasActiveVMs || !fullscreenWindows.isEmpty {
-            Self.logger.debug("applicationShouldTerminateAfterLastWindowClosed: false (activeVMs=\(hasActiveVMs), fullscreenWindows=\(self.fullscreenWindows.count))")
+        // Stay alive if VMs are active or display windows still exist
+        if hasActiveVMs || !displayWindows.isEmpty {
+            Self.logger.debug("applicationShouldTerminateAfterLastWindowClosed: false (activeVMs=\(hasActiveVMs), displayWindows=\(self.displayWindows.count))")
             return false
         }
 
@@ -260,32 +264,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         controller.showWindow(nil)
     }
 
-    // MARK: - Fullscreen Display
+    // MARK: - Display Window (Pop-Out / Fullscreen)
 
-    @objc func toggleFullscreenDisplay(_ sender: Any?) {
+    @objc func togglePopOut(_ sender: Any?) {
         guard let instance = activeInstance else { return }
 
-        if let existing = fullscreenWindows[instance.instanceID] {
+        if let existing = displayWindows[instance.instanceID] {
             existing.window?.close()
             return
         }
 
-        instance.configuration.prefersFullscreen = true
+        instance.configuration.displayPreference = .popOut
         viewModel.saveConfiguration(for: instance)
-        enterFullscreen(for: instance)
+        openDisplayWindow(for: instance, enterFullscreen: false)
     }
 
-    private func enterFullscreen(for instance: VMInstance) {
+    @objc func toggleFullscreen(_ sender: Any?) {
+        guard let instance = activeInstance else { return }
+
+        if let existing = displayWindows[instance.instanceID] {
+            existing.window?.toggleFullScreen(nil)
+            return
+        }
+
+        instance.configuration.displayPreference = .fullscreen
+        viewModel.saveConfiguration(for: instance)
+        openDisplayWindow(for: instance, enterFullscreen: true)
+    }
+
+    private func openDisplayWindow(for instance: VMInstance) {
+        openDisplayWindow(for: instance, enterFullscreen: instance.configuration.displayPreference == .fullscreen)
+    }
+
+    private func openDisplayWindow(for instance: VMInstance, enterFullscreen: Bool) {
         let vmID = instance.instanceID
 
-        // Already showing fullscreen for this VM
-        guard fullscreenWindows[vmID] == nil else { return }
+        // Already showing a display window for this VM
+        guard displayWindows[vmID] == nil else { return }
 
-        let controller = FullscreenWindowController(instance: instance) { [weak self] in
+        let controller = VMDisplayWindowController(instance: instance, enterFullscreen: enterFullscreen) { [weak self] in
             guard let self else { return }
             Task { await self.viewModel.resume(instance) }
         }
-        fullscreenWindows[vmID] = controller
+        displayWindows[vmID] = controller
 
         let token = NotificationCenter.default.addObserver(
             forName: NSWindow.willCloseNotification,
@@ -302,24 +323,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             }
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                if let token = self.fullscreenObservers.removeValue(forKey: vmID) {
+                if let token = self.displayWindowObservers.removeValue(forKey: vmID) {
                     NotificationCenter.default.removeObserver(token)
                 }
-                if let controller = self.fullscreenWindows.removeValue(forKey: vmID) {
+                if let controller = self.displayWindows.removeValue(forKey: vmID) {
                     // Always remember which display the VM was on
                     if let displayID = controller.lastDisplayID {
                         instance.configuration.lastFullscreenDisplayID = displayID
                     }
                     if !controller.closedProgrammatically {
-                        instance.configuration.prefersFullscreen = false
-                        Self.logger.debug("Cleared prefersFullscreen for '\(instance.name)' (user exited fullscreen)")
+                        instance.configuration.displayPreference = .inline
+                        Self.logger.debug("Cleared displayPreference for '\(instance.name)' (user closed display window)")
                     }
                     self.viewModel.saveConfiguration(for: instance)
                 }
                 self.viewModel.selectedID = vmID
 
                 // Restore library window based on context:
-                // - Key + active app: user deliberately left fullscreen → focus library
+                // - Key + active app: user deliberately closed display → focus library
                 // - App not active: VM stopped while user is elsewhere → show library in background
                 // - Active but not key: user is in another Kernova window → no action needed
                 if wasKeyWindow && appWasActive {
@@ -329,17 +350,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 }
             }
         }
-        fullscreenObservers[vmID] = token
+        displayWindowObservers[vmID] = token
 
-        // Position on the remembered display so toggleFullScreen picks the correct screen
-        if let screen = targetScreen(for: instance),
-           let window = controller.window {
-            let frame = screen.frame
-            let centeredOrigin = NSPoint(
-                x: frame.midX - window.frame.width / 2,
-                y: frame.midY - window.frame.height / 2
-            )
-            window.setFrameOrigin(centeredOrigin)
+        // For fullscreen: position on the remembered display so toggleFullScreen picks the correct screen
+        if enterFullscreen {
+            if let screen = targetScreen(for: instance),
+               let window = controller.window {
+                let frame = screen.frame
+                let centeredOrigin = NSPoint(
+                    x: frame.midX - window.frame.width / 2,
+                    y: frame.midY - window.frame.height / 2
+                )
+                window.setFrameOrigin(centeredOrigin)
+            }
         }
 
         controller.showWindow(nil)
@@ -401,15 +424,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // shortcut validation, which still routes through validateMenuItem(_:).
         case #selector(showSerialConsole(_:)):
             return activeInstance?.canShowSerialConsole ?? false
-        case #selector(toggleFullscreenDisplay(_:)):
+        case #selector(togglePopOut(_:)):
             guard let instance = activeInstance else { return false }
-            let canFullscreen = instance.canFullscreen
-            if canFullscreen, fullscreenWindows[instance.instanceID] != nil {
-                menuItem.title = "Exit Fullscreen Display"
-            } else {
-                menuItem.title = "Fullscreen Display"
-            }
-            return canFullscreen
+            let canUse = instance.canUseExternalDisplay
+            menuItem.title = displayWindows[instance.instanceID] != nil ? "Pop In Display" : "Pop Out Display"
+            return canUse
+        case #selector(toggleFullscreen(_:)):
+            guard let instance = activeInstance else { return false }
+            let canUse = instance.canUseExternalDisplay
+            let isFullscreen = displayWindows[instance.instanceID] != nil && instance.isInFullscreen
+            menuItem.title = isFullscreen ? "Exit Fullscreen Display" : "Fullscreen Display"
+            return canUse
         default:
             return true
         }
@@ -482,9 +507,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let saveItem = vmMenu.addItem(withTitle: "Save State", action: #selector(saveVM(_:)), keyEquivalent: "s")
         saveItem.keyEquivalentModifierMask = [.command, .option]
         vmMenu.addItem(.separator())
+        let popOutItem = vmMenu.addItem(
+            withTitle: "Pop Out Display",
+            action: #selector(togglePopOut(_:)),
+            keyEquivalent: "o"
+        )
+        popOutItem.keyEquivalentModifierMask = [.command, .shift]
         let fullscreenItem = vmMenu.addItem(
             withTitle: "Fullscreen Display",
-            action: #selector(toggleFullscreenDisplay(_:)),
+            action: #selector(toggleFullscreen(_:)),
             keyEquivalent: "f"
         )
         fullscreenItem.keyEquivalentModifierMask = [.command, .shift]
