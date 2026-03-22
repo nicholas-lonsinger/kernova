@@ -19,6 +19,7 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
 
     // MARK: - Error Injection
 
+    var saveConfigurationError: (any Error)?
     var createVMBundleError: (any Error)?
     var cloneVMBundleError: (any Error)?
 
@@ -48,6 +49,7 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
 
     func saveConfiguration(_ configuration: VMConfiguration, to bundleURL: URL) throws {
         saveConfigurationCallCount += 1
+        if let error = saveConfigurationError { throw error }
         bundles[bundleURL] = configuration
     }
 
