@@ -16,9 +16,14 @@
 		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXBuildFile section */
+		A10000F1 /* DiskTemplates in Resources */ = {isa = PBXBuildFile; fileRef = A10000F0 /* DiskTemplates */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		A1000004 /* Kernova.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Kernova.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000005 /* KernovaTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KernovaTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000F0 /* DiskTemplates */ = {isa = PBXFileReference; lastKnownFileType = folder; path = DiskTemplates; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -26,6 +31,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				App/Info.plist,
+				Resources/DiskTemplates,
 			);
 			target = A1000003 /* Kernova */;
 		};
@@ -70,6 +76,7 @@
 			children = (
 				A1000006 /* Kernova */,
 				A1000007 /* KernovaTests */,
+				A10000F0 /* DiskTemplates */,
 				A1000021 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -175,6 +182,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A10000F1 /* DiskTemplates in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

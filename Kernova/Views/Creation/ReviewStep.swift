@@ -25,7 +25,7 @@ struct ReviewStep: View {
                 Section("Resources") {
                     LabeledContent("CPU Cores", value: "\(creationVM.cpuCount)")
                     LabeledContent("Memory", value: "\(creationVM.memoryInGB) GB")
-                    LabeledContent("Disk Size", value: "\(creationVM.diskSizeInGB) GB")
+                    LabeledContent("Disk Size", value: DataFormatters.formatDiskSize(creationVM.diskSizeInGB))
                 }
 
                 Section("Network") {

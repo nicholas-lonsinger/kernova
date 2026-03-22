@@ -7,6 +7,7 @@ struct VMSettingsView: View {
     @Bindable var viewModel: VMLibraryViewModel
 
     @State private var editingName = ""
+    @State private var showingDiskInfo = false
     @FocusState private var isNameFieldFocused: Bool
 
     private var isRenaming: Bool {
@@ -154,11 +155,27 @@ struct VMSettingsView: View {
                 in: os.minMemoryInGB...os.maxMemoryInGB
             )
 
-            LabeledContent("Disk Size") {
-                if let usage = instance.cachedDiskUsageBytes {
-                    Text("\(DataFormatters.formatBytes(usage)) (on disk) / \(instance.configuration.diskSizeInGB) GB (allocated)")
-                } else {
-                    Text("\(instance.configuration.diskSizeInGB) GB")
+            LabeledContent {
+                HStack {
+                    if let usage = instance.cachedDiskUsageBytes {
+                        Text("\(DataFormatters.formatBytes(usage)) (on disk) / \(DataFormatters.formatDiskSize(instance.configuration.diskSizeInGB)) (allocated)")
+                    } else {
+                        Text(DataFormatters.formatDiskSize(instance.configuration.diskSizeInGB))
+                    }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text("Disk Size")
+                    Button {
+                        showingDiskInfo.toggle()
+                    } label: {
+                        Image(systemName: "info.circle")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .popover(isPresented: $showingDiskInfo, arrowEdge: .trailing) {
+                        diskInfoPopover
+                    }
                 }
             }
         }
@@ -277,5 +294,37 @@ struct VMSettingsView: View {
         }
 
         sharedDirectoriesBinding.wrappedValue = current
+    }
+
+    @ViewBuilder
+    private var diskInfoPopover: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Disk Size")
+                .font(.headline)
+
+            Text("This VM uses a fixed-size ASIF (Apple Sparse Image Format) disk. The image only consumes physical disk space as data is written.")
+
+            Divider()
+
+            Text("Expanding the disk")
+                .font(.subheadline)
+                .fontWeight(.medium)
+
+            Text("To resize the disk image, use Terminal:")
+                .font(.callout)
+
+            Text("diskutil image resize --size <new-size>g \\\n  <path-to-Disk.asif>")
+                .font(.system(.caption, design: .monospaced))
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.quaternary)
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+
+            Text("Alternatively, attach an additional ISO or shared directory to transfer data without resizing.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+        .padding()
+        .frame(width: 340)
     }
 }
