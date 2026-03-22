@@ -71,6 +71,30 @@ struct DataFormattersTests {
         #expect(result.contains("\u{2007}"))
     }
 
+    // MARK: - formatDiskSize
+
+    @Test("formatDiskSize formats GB values with figure-space padding")
+    func formatDiskSizeGB() {
+        #expect(DataFormatters.formatDiskSize(100) == "100\u{2007}GB")
+        #expect(DataFormatters.formatDiskSize(250) == "250\u{2007}GB")
+        #expect(DataFormatters.formatDiskSize(10) == "\u{2007}10\u{2007}GB")
+        #expect(DataFormatters.formatDiskSize(75) == "\u{2007}75\u{2007}GB")
+    }
+
+    @Test("formatDiskSize formats whole TB values with one decimal")
+    func formatDiskSizeWholeTB() {
+        #expect(DataFormatters.formatDiskSize(1000) == "1.0\u{2007}TB")
+        #expect(DataFormatters.formatDiskSize(2000) == "2.0\u{2007}TB")
+        #expect(DataFormatters.formatDiskSize(4000) == "4.0\u{2007}TB")
+    }
+
+    @Test("formatDiskSize formats fractional TB with one decimal")
+    func formatDiskSizeFractionalTB() {
+        #expect(DataFormatters.formatDiskSize(1500) == "1.5\u{2007}TB")
+        #expect(DataFormatters.formatDiskSize(2500) == "2.5\u{2007}TB")
+        #expect(DataFormatters.formatDiskSize(3500) == "3.5\u{2007}TB")
+    }
+
     // MARK: - formatCPUCount
 
     @Test("formatCPUCount returns singular for 1 core")

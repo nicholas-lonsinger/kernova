@@ -37,6 +37,23 @@ enum DataFormatters {
             .replacingOccurrences(of: " ", with: "\u{2007}")
     }
 
+    /// Formats a disk size in GB for display, using TB for sizes >= 1000 GB.
+    ///
+    /// The numeric part is right-justified to 3 characters using figure spaces
+    /// (U+2007) so entries align in menus and pickers.
+    ///
+    /// Examples: `10` → `"\u{2007}10 GB"`, `100` → `"100 GB"`, `1500` → `"1.5 TB"`.
+    static func formatDiskSize(_ sizeInGB: Int) -> String {
+        let formatted: String
+        if sizeInGB >= 1000 {
+            let tb = Double(sizeInGB) / 1000
+            formatted = String(format: "%3.1f TB", tb)
+        } else {
+            formatted = String(format: "%3d GB", sizeInGB)
+        }
+        return formatted.replacingOccurrences(of: " ", with: "\u{2007}")
+    }
+
     /// Formats a CPU count for display.
     static func formatCPUCount(_ count: Int) -> String {
         count == 1 ? "1 core" : "\(count) cores"
