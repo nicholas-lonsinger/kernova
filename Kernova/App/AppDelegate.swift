@@ -307,10 +307,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // Already showing a display window for this VM
         guard displayWindows[vmID] == nil else { return }
 
-        let controller = VMDisplayWindowController(instance: instance, enterFullscreen: enterFullscreen) { [weak self] in
-            guard let self else { return }
-            Task { await self.viewModel.resume(instance) }
-        }
+        let controller = VMDisplayWindowController(
+            instance: instance,
+            enterFullscreen: enterFullscreen,
+            onResume: { [weak self] in
+                guard let self else { return }
+                Task { await self.viewModel.resume(instance) }
+            },
+            onSaveConfiguration: { [weak self] in
+                self?.viewModel.saveConfiguration(for: instance)
+            }
+        )
         displayWindows[vmID] = controller
 
         let token = NotificationCenter.default.addObserver(
