@@ -8,14 +8,24 @@ struct VMConsoleView: View {
     var body: some View {
         VStack(spacing: 0) {
             // VM Display
-            if instance.isInFullscreen {
+            if instance.displayMode == .fullscreen {
                 ContentUnavailableView {
                     Label("Fullscreen", systemImage: "arrow.up.left.and.arrow.down.right")
                 } description: {
                     Text("The virtual machine display is in fullscreen mode.")
                 } actions: {
                     Button("Exit Fullscreen") {
-                        NSApp.sendAction(#selector(AppDelegate.toggleFullscreenDisplay(_:)), to: nil, from: nil)
+                        NSApp.sendAction(#selector(AppDelegate.toggleFullscreen(_:)), to: nil, from: nil)
+                    }
+                }
+            } else if instance.displayMode == .popOut {
+                ContentUnavailableView {
+                    Label("Popped Out", systemImage: "pip.exit")
+                } description: {
+                    Text("The virtual machine display is in a separate window.")
+                } actions: {
+                    Button("Pop In") {
+                        NSApp.sendAction(#selector(AppDelegate.togglePopOut(_:)), to: nil, from: nil)
                     }
                 }
             } else if let vm = instance.virtualMachine {

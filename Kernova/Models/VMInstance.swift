@@ -2,6 +2,16 @@ import Foundation
 import os
 import Virtualization
 
+/// The VM display's current hosting location.
+enum VMDisplayMode: Sendable {
+    /// Display is embedded in the main window's detail pane.
+    case inline
+    /// Display is in its own resizable window (not fullscreen).
+    case popOut
+    /// Display is in its own window in native macOS fullscreen.
+    case fullscreen
+}
+
 /// Runtime wrapper around a VM configuration, its backing virtual machine, and current status.
 @MainActor
 @Observable
@@ -67,8 +77,8 @@ final class VMInstance: Identifiable {
     /// Error message if the VM entered an error state.
     var errorMessage: String?
 
-    /// `true` when this VM's display is shown in a dedicated fullscreen window.
-    var isInFullscreen: Bool = false
+    /// Where the VM display is currently hosted (inline, pop-out window, or fullscreen).
+    var displayMode: VMDisplayMode = .inline
 
     // MARK: - Serial Console
 
@@ -142,10 +152,16 @@ final class VMInstance: Identifiable {
         status.canSave && !isColdPaused
     }
 
-    /// `true` when the VM is eligible to enter fullscreen display (active status + live VM).
-    var canFullscreen: Bool {
+    /// `true` when the VM is eligible to pop out or enter fullscreen (active status + live VM).
+    var canUseExternalDisplay: Bool {
         (status == .running || status == .paused) && virtualMachine != nil
     }
+
+    /// `true` when this VM's display is shown in a dedicated fullscreen window.
+    var isInFullscreen: Bool { displayMode == .fullscreen }
+
+    /// `true` when the display is in any separate window (pop-out or fullscreen).
+    var isInSeparateWindow: Bool { displayMode != .inline }
 
     /// `true` when the VM is eligible to show a serial console window (active status + live VM).
     var canShowSerialConsole: Bool {

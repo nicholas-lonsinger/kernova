@@ -9,7 +9,7 @@ struct VMConfigurationCloneTests {
         name: String = "My VM",
         guestOS: VMGuestOS = .linux,
         bootMode: VMBootMode = .efi,
-        prefersFullscreen: Bool = true,
+        displayPreference: VMDisplayPreference = .fullscreen,
         sharedDirectories: [SharedDirectory]? = nil,
         hardwareModelData: Data? = nil
     ) -> VMConfiguration {
@@ -17,7 +17,7 @@ struct VMConfigurationCloneTests {
             name: name,
             guestOS: guestOS,
             bootMode: bootMode,
-            prefersFullscreen: prefersFullscreen,
+            displayPreference: displayPreference,
             hardwareModelData: hardwareModelData,
             sharedDirectories: sharedDirectories
         )
@@ -153,10 +153,10 @@ struct VMConfigurationCloneTests {
 
     // MARK: - Reset Fields
 
-    @Test("Clone resets prefersFullscreen to false")
-    func cloneResetsPrefersFullscreen() {
-        let clone = makeConfig(prefersFullscreen: true).clonedForNewInstance(existingNames: [])
-        #expect(clone.prefersFullscreen == false)
+    @Test("Clone resets displayPreference to inline")
+    func cloneResetsDisplayPreference() {
+        let clone = makeConfig(displayPreference: .fullscreen).clonedForNewInstance(existingNames: [])
+        #expect(clone.displayPreference == .inline)
     }
 
     @Test("Clone resets lastFullscreenDisplayID to nil")

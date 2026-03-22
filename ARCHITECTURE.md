@@ -11,7 +11,7 @@ Kernova/
 ├── App/                                # App lifecycle and window management
 │   ├── AppDelegate.swift               # NSApplicationDelegate — startup, window tracking, menu, save-on-quit
 │   ├── MainWindowController.swift      # NSSplitViewController + NSToolbar with native items
-│   ├── FullscreenWindowController.swift # Per-VM fullscreen window, auto-closes on VM stop
+│   ├── VMDisplayWindowController.swift  # Per-VM display window (pop-out or fullscreen), auto-closes on VM stop
 │   └── SerialConsoleWindowController.swift # Per-VM serial console window, auto-closes on VM stop
 ├── Models/                             # Data types — all value types or @MainActor-isolated
 │   ├── VMConfiguration.swift           # Codable/Sendable struct persisted as config.json per VM bundle
@@ -107,7 +107,7 @@ KernovaTests/
 
 ### App Layer
 
-**Files:** `AppDelegate.swift`, `MainWindowController.swift`, `FullscreenWindowController.swift`, `SerialConsoleWindowController.swift`
+**Files:** `AppDelegate.swift`, `MainWindowController.swift`, `VMDisplayWindowController.swift`, `SerialConsoleWindowController.swift`
 
 `AppDelegate` is the entry point. It creates the `VMLibraryViewModel` and `VMLifecycleCoordinator`, opens the main window, and manages the lifecycle of all windows. It tracks window controllers in dictionaries keyed by VM UUID, enabling one-to-many relationships (a VM can have a main view, a fullscreen window, and a serial console open simultaneously). `AppDelegate` also handles:
 - The application menu (including VM-specific actions, Force Stop with `canForceStop` validation, and Window > Show Library with Cmd+0)
@@ -210,7 +210,7 @@ AppDelegate
     │                 ├── Sidebar: NSHostingController(SidebarView)
     │                 └── Detail:  NSHostingController(MainDetailView → VMDetailView)
     │
-    ├── manages → FullscreenWindowController (per VM)
+    ├── manages → VMDisplayWindowController (per VM)
     └── manages → SerialConsoleWindowController (per VM)
 
 SwiftUI views ──observe──→ VMLibraryViewModel ──delegates──→ VMLifecycleCoordinator ──calls──→ Services
@@ -280,9 +280,9 @@ SystemSleepWatcher ──sleep/wake──→ VMLibraryViewModel ──pause/resu
 
 ### 7. Native NSToolbar with observation-driven validation
 
-**What:** The main window uses an `NSToolbar` with `NSToolbarDelegate` creating native `NSToolbarItem`s. Toolbar state (enabled/disabled, Start/Resume label) is driven by `withObservationTracking` on the view model, triggering `validateVisibleItems()` on change. `NSToolbarItemValidation` on `MainWindowController` handles per-item enable/disable logic.
+**What:** The main window uses an `NSToolbar` with `NSToolbarDelegate` creating native `NSToolbarItem`s. Toolbar state (enabled/disabled, Start/Resume label) is driven by `withObservationTracking` on the view model, directly setting `isEnabled` on subitems on change. All toolbar item groups use `autovalidates = false` to prevent AppKit's automatic validation from overriding the observation-driven state.
 
-**Why:** Native `NSToolbarItem`s provide reliable layout, proper `.sidebarTrackingSeparator` support, and standard macOS toolbar appearance. The `withObservationTracking` pattern (already used in `FullscreenWindowController` and `SerialConsoleWindowController`) re-evaluates on any observed property change and re-registers itself, providing reactive updates without SwiftUI.
+**Why:** Native `NSToolbarItem`s provide reliable layout, proper `.sidebarTrackingSeparator` support, and standard macOS toolbar appearance. The `withObservationTracking` pattern (already used in `VMDisplayWindowController` and `SerialConsoleWindowController`) re-evaluates on any observed property change and re-registers itself, providing reactive updates without SwiftUI.
 
 **Alternatives:** SwiftUI `.toolbar` modifiers on a hosting controller — simpler declarative API but caused persistent layout issues with grouped items and sidebar tracking.
 
@@ -336,7 +336,7 @@ These services interact with system processes, the network, or VZ installer inte
 - `KernovaUTType` — static UTType declaration
 - `FileManagerExtensions` — FileManager convenience methods
 - `Logger` — thin os.Logger wrapper
-- All window controllers (`MainWindowController`, `FullscreenWindowController`, `SerialConsoleWindowController`)
+- All window controllers (`MainWindowController`, `VMDisplayWindowController`, `SerialConsoleWindowController`)
 - `AppDelegate` — app lifecycle and window management
 - All SwiftUI views
 
