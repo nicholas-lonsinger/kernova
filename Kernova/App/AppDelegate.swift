@@ -58,13 +58,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             viewModel.importVM(from: url)
         }
         pendingOpenURLs.removeAll()
+
+        observeForTermination()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        let hasActiveVMs = viewModel.instances.contains { instance in
-            // Live-paused VMs (not cold-paused to disk) and preparing VMs should also keep the app alive
-            instance.isPreparing || instance.status.isActive || (instance.status == .paused && instance.virtualMachine != nil)
-        }
+        let hasActiveVMs = viewModel.instances.contains(where: \.isKeepingAppAlive)
 
         // Stay alive if VMs are active or display windows still exist
         if hasActiveVMs || !displayWindows.isEmpty {
@@ -257,6 +256,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                     NotificationCenter.default.removeObserver(token)
                 }
                 self?.serialConsoleWindows.removeValue(forKey: vmID)
+                self?.terminateIfIdle()
             }
         }
         serialConsoleObservers[vmID] = token
@@ -331,17 +331,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                     if let displayID = controller.lastDisplayID {
                         instance.configuration.lastFullscreenDisplayID = displayID
                     }
+
                     if !controller.closedProgrammatically {
+                        // User manually closed the display window
                         instance.configuration.displayPreference = .inline
                         Self.logger.debug("Cleared displayPreference for '\(instance.name)' (user closed display window)")
                     }
+
                     self.viewModel.saveConfiguration(for: instance)
+
+                    if controller.closedProgrammatically {
+                        // VM stopped/errored/cold-paused — check if app should quit
+                        self.terminateIfIdle()
+                        return
+                    }
                 }
                 self.viewModel.selectedID = vmID
 
-                // Restore library window based on context:
+                // Restore library window for user-initiated close:
                 // - Key + active app: user deliberately closed display → focus library
-                // - App not active: VM stopped while user is elsewhere → show library in background
+                // - App not active: user closed display while elsewhere → show library in background
                 // - Active but not key: user is in another Kernova window → no action needed
                 if wasKeyWindow && appWasActive {
                     self.showLibrary(nil)
@@ -384,6 +393,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             return libraryScreen
         }
         return NSScreen.screens.first
+    }
+
+    // MARK: - Idle Termination
+
+    /// Whether the main library window has been dismissed (closed by the user).
+    /// Distinguishes closed from hidden (Cmd+H) and minimized (Cmd+M) via runtime inspection.
+    /// Returns `false` if the window controller or its window is nil (no window to inspect).
+    private var isMainWindowDismissed: Bool {
+        guard let window = mainWindowController?.window else { return false }
+        if NSApp.isHidden || window.isMiniaturized { return false }
+        return !window.isVisible
+    }
+
+    /// Whether the app has no reason to stay alive: main window dismissed,
+    /// no auxiliary windows remain, and no VMs are active.
+    private var isIdle: Bool {
+        guard isMainWindowDismissed else { return false }
+        guard displayWindows.isEmpty else { return false }
+        guard serialConsoleWindows.isEmpty else { return false }
+        return !viewModel.instances.contains(where: \.isKeepingAppAlive)
+    }
+
+    /// Terminates the app if `isIdle` is true.
+    private func terminateIfIdle() {
+        guard isIdle else { return }
+        Self.logger.notice("No visible windows and no active VMs — requesting termination")
+        NSApp.terminate(nil)
+    }
+
+    /// Registers a one-shot observation on the instances list and each instance's
+    /// `isKeepingAppAlive` state. Re-subscribes after each change for continuous observation.
+    private func observeForTermination() {
+        withObservationTracking {
+            for instance in viewModel.instances {
+                _ = instance.isKeepingAppAlive
+            }
+        } onChange: {
+            Task { @MainActor [weak self] in
+                guard let self else {
+                    Self.logger.warning("observeForTermination: observation chain ended (self deallocated)")
+                    return
+                }
+                self.terminateIfIdle()
+                self.observeForTermination()
+            }
+        }
     }
 
     // MARK: - Menu Validation

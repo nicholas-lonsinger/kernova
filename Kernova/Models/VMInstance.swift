@@ -147,6 +147,12 @@ final class VMInstance: Identifiable {
         status == .paused && virtualMachine == nil
     }
 
+    /// `true` when this VM should keep the app alive: preparing, in an active lifecycle
+    /// state, or live-paused in memory (as opposed to cold-paused to disk).
+    var isKeepingAppAlive: Bool {
+        isPreparing || status.isActive || (status == .paused && virtualMachine != nil)
+    }
+
     /// `true` when the VM is eligible to save state (active + live VM, not cold-paused).
     var canSave: Bool {
         status.canSave && !isColdPaused

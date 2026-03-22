@@ -122,6 +122,40 @@ struct VMInstanceTests {
         #expect(instance.isColdPaused == false)
     }
 
+    // MARK: - isKeepingAppAlive
+
+    @Test("isKeepingAppAlive is true when preparing")
+    func isKeepingAppAlivePreparing() {
+        let instance = makeInstance(status: .stopped)
+        let task = Task {}
+        defer { task.cancel() }
+        instance.preparingState = VMInstance.PreparingState(operation: .cloning, task: task)
+        #expect(instance.isKeepingAppAlive == true)
+    }
+
+    @Test("isKeepingAppAlive is true for active statuses")
+    func isKeepingAppAliveActive() {
+        for status in [VMStatus.running, .starting, .saving, .restoring, .installing] {
+            let instance = makeInstance(status: status)
+            #expect(instance.isKeepingAppAlive == true)
+        }
+    }
+
+    @Test("isKeepingAppAlive is false when cold-paused")
+    func isKeepingAppAliveColdPaused() {
+        let instance = makeInstance(status: .paused)
+        #expect(instance.virtualMachine == nil)
+        #expect(instance.isKeepingAppAlive == false)
+    }
+
+    @Test("isKeepingAppAlive is false when stopped or error")
+    func isKeepingAppAliveStoppedOrError() {
+        for status in [VMStatus.stopped, .error] {
+            let instance = makeInstance(status: status)
+            #expect(instance.isKeepingAppAlive == false)
+        }
+    }
+
     // MARK: - canSave
 
     @Test("canSave is true when running (without live VM, tests model logic)")
