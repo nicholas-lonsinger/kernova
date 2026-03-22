@@ -26,11 +26,11 @@ struct VMGuestOSTests {
         #expect(VMGuestOS.macOS.defaultDiskSizeInGB == 100)
     }
 
-    @Test("Linux defaults: 2 CPUs, 4 GB memory, 64 GB disk (clamped to hardware maximums)")
+    @Test("Linux defaults: 2 CPUs, 4 GB memory, 50 GB disk (clamped to hardware maximums)")
     func linuxDefaults() {
         #expect(VMGuestOS.linux.defaultCPUCount == min(2, VMGuestOS.linux.maxCPUCount))
         #expect(VMGuestOS.linux.defaultMemoryInGB == min(4, VMGuestOS.linux.maxMemoryInGB))
-        #expect(VMGuestOS.linux.defaultDiskSizeInGB == 64)
+        #expect(VMGuestOS.linux.defaultDiskSizeInGB == 50)
     }
 
     // MARK: - Min Resource Constraints
@@ -47,10 +47,10 @@ struct VMGuestOSTests {
         #expect(VMGuestOS.linux.minMemoryInGB == 2)
     }
 
-    @Test("Minimum disk size is 64 GB for macOS and 10 GB for Linux")
+    @Test("Minimum disk size is 64 GB for macOS and 25 GB for Linux")
     func minDiskSize() {
         #expect(VMGuestOS.macOS.minDiskSizeInGB == 64)
-        #expect(VMGuestOS.linux.minDiskSizeInGB == 10)
+        #expect(VMGuestOS.linux.minDiskSizeInGB == 25)
     }
 
     // MARK: - Max Resource Constraints
@@ -69,10 +69,10 @@ struct VMGuestOSTests {
         #expect(VMGuestOS.linux.maxMemoryInGB == hostMemoryGB)
     }
 
-    @Test("Max disk size is 2048 GB for both OS types")
+    @Test("Max disk size is 4000 GB for both OS types")
     func maxDiskSize() {
-        #expect(VMGuestOS.macOS.maxDiskSizeInGB == 2048)
-        #expect(VMGuestOS.linux.maxDiskSizeInGB == 2048)
+        #expect(VMGuestOS.macOS.maxDiskSizeInGB == 4000)
+        #expect(VMGuestOS.linux.maxDiskSizeInGB == 4000)
     }
 
     // MARK: - Constraint Relationships
@@ -97,5 +97,27 @@ struct VMGuestOSTests {
         #expect(os.defaultMemoryInGB <= os.maxMemoryInGB)
         #expect(os.minDiskSizeInGB <= os.defaultDiskSizeInGB)
         #expect(os.defaultDiskSizeInGB <= os.maxDiskSizeInGB)
+    }
+
+    // MARK: - Available Disk Sizes
+
+    @Test("macOS available disk sizes start at 100 GB (filtered by minDiskSizeInGB)")
+    func macOSAvailableDiskSizes() {
+        let sizes = VMGuestOS.macOS.availableDiskSizes
+        #expect(sizes.first == 100)
+        #expect(sizes == [100, 150, 200, 500, 1000, 2000, 3000, 4000])
+    }
+
+    @Test("Linux available disk sizes start at 25 GB (all template sizes)")
+    func linuxAvailableDiskSizes() {
+        let sizes = VMGuestOS.linux.availableDiskSizes
+        #expect(sizes.first == 25)
+        #expect(sizes == [25, 50, 100, 150, 200, 500, 1000, 2000, 3000, 4000])
+    }
+
+    @Test("Default disk size is contained in available disk sizes for both OS types")
+    func defaultDiskSizeInAvailableSizes() {
+        #expect(VMGuestOS.macOS.availableDiskSizes.contains(VMGuestOS.macOS.defaultDiskSizeInGB))
+        #expect(VMGuestOS.linux.availableDiskSizes.contains(VMGuestOS.linux.defaultDiskSizeInGB))
     }
 }

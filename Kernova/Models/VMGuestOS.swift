@@ -40,8 +40,13 @@ enum VMGuestOS: String, Codable, CaseIterable, Sendable {
     var defaultDiskSizeInGB: Int {
         switch self {
         case .macOS: 100
-        case .linux: 64
+        case .linux: 50
         }
+    }
+
+    /// The fixed disk sizes available for this guest OS, matching bundled ASIF templates.
+    var availableDiskSizes: [Int] {
+        DiskImageService.templateSizes.filter { $0 >= minDiskSizeInGB }
     }
 
     var minCPUCount: Int { 2 }
@@ -65,9 +70,9 @@ enum VMGuestOS: String, Codable, CaseIterable, Sendable {
     var minDiskSizeInGB: Int {
         switch self {
         case .macOS: 64
-        case .linux: 10
+        case .linux: 25
         }
     }
 
-    var maxDiskSizeInGB: Int { 2048 }
+    var maxDiskSizeInGB: Int { 4000 }
 }

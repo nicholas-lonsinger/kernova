@@ -37,14 +37,13 @@ struct ResourceConfigStep: View {
                 }
 
                 Section("Storage") {
-                    Stepper(
-                        "Disk Size: \(creationVM.diskSizeInGB) GB",
-                        value: $creationVM.diskSizeInGB,
-                        in: os.minDiskSizeInGB...os.maxDiskSizeInGB,
-                        step: 10
-                    )
+                    Picker("Disk Size", selection: $creationVM.diskSizeInGB) {
+                        ForEach(os.availableDiskSizes, id: \.self) { size in
+                            Text(size >= 1000 ? "\(size / 1000) TB" : "\(size) GB").tag(size)
+                        }
+                    }
 
-                    Text("The disk image uses Apple Sparse Image Format (ASIF). Physical disk usage grows only as data is written.")
+                    Text("Physical disk usage grows only as data is written (ASIF sparse format).")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
