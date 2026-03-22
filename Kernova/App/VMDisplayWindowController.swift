@@ -19,11 +19,12 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
     let instance: VMInstance
     private let toolbarManager: VMToolbarManager
     private let enterFullscreen: Bool
+    private let onSaveConfiguration: () -> Void
     private var observingInstance = false
 
     private static let logger = Logger(subsystem: "com.kernova.app", category: "VMDisplayWindowController")
 
-    init(instance: VMInstance, enterFullscreen: Bool, onResume: @escaping () -> Void) {
+    init(instance: VMInstance, enterFullscreen: Bool, onResume: @escaping () -> Void, onSaveConfiguration: @escaping () -> Void) {
         self.vmID = instance.instanceID
         self.instance = instance
         self.toolbarManager = VMToolbarManager(
@@ -37,6 +38,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
             instanceProvider: { [weak instance] in instance }
         )
         self.enterFullscreen = enterFullscreen
+        self.onSaveConfiguration = onSaveConfiguration
 
         let contentView = DetachedVMView(instance: instance, onResume: onResume)
         let hostingController = NSHostingController(rootView: contentView)
@@ -94,12 +96,24 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
     func windowDidEnterFullScreen(_ notification: Notification) {
         instance.displayMode = .fullscreen
         window?.toolbar?.isVisible = false
+        if instance.configuration.displayPreference != .fullscreen {
+            instance.configuration.displayPreference = .fullscreen
+            onSaveConfiguration()
+        }
     }
 
     func windowDidExitFullScreen(_ notification: Notification) {
         guard instance.displayMode == .fullscreen else { return }
         instance.displayMode = .popOut
         window?.toolbar?.isVisible = true
+        // Only update the persisted preference for user-initiated exits.
+        // During programmatic close (VM stopped/errored/cold-paused), the
+        // preference should remain .fullscreen so it restores correctly
+        // when the display window is next opened.
+        if !closedProgrammatically && instance.configuration.displayPreference != .popOut {
+            instance.configuration.displayPreference = .popOut
+            onSaveConfiguration()
+        }
     }
 
     // MARK: - Instance Observation
