@@ -39,7 +39,7 @@ struct ResourceConfigStep: View {
                 Section("Storage") {
                     Picker("Disk Size", selection: $creationVM.diskSizeInGB) {
                         ForEach(os.availableDiskSizes, id: \.self) { size in
-                            Text(size >= 1000 ? "\(size / 1000) TB" : "\(size) GB").tag(size)
+                            Text(DataFormatters.formatDiskSize(size)).tag(size)
                         }
                     }
 

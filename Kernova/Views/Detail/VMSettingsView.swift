@@ -158,11 +158,9 @@ struct VMSettingsView: View {
             LabeledContent {
                 HStack {
                     if let usage = instance.cachedDiskUsageBytes {
-                        let allocated = instance.configuration.diskSizeInGB
-                        Text("\(DataFormatters.formatBytes(usage)) (on disk) / \(allocated >= 1000 ? "\(allocated / 1000) TB" : "\(allocated) GB") (allocated)")
+                        Text("\(DataFormatters.formatBytes(usage)) (on disk) / \(DataFormatters.formatDiskSize(instance.configuration.diskSizeInGB)) (allocated)")
                     } else {
-                        let allocated = instance.configuration.diskSizeInGB
-                        Text(allocated >= 1000 ? "\(allocated / 1000) TB" : "\(allocated) GB")
+                        Text(DataFormatters.formatDiskSize(instance.configuration.diskSizeInGB))
                     }
                 }
             } label: {
