@@ -475,7 +475,8 @@ final class VMLibraryViewModel {
         do {
             try storageService.saveConfiguration(instance.configuration, to: instance.bundleURL)
         } catch {
-            Self.logger.error("Failed to save configuration: \(error.localizedDescription)")
+            Self.logger.error("Failed to save configuration for '\(instance.name)': \(error.localizedDescription)")
+            presentError(error)
         }
     }
 
