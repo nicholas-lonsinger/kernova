@@ -29,7 +29,8 @@ struct DiskImageService: Sendable {
 
         guard let templateURL = Bundle.main.url(
             forResource: "BlankDisk-\(sizeInGB)GB.asif",
-            withExtension: "lzfse"
+            withExtension: "lzfse",
+            subdirectory: "DiskTemplates"
         ) else {
             throw DiskImageError.creationFailed("No template disk image for \(sizeInGB) GB")
         }
