@@ -66,6 +66,22 @@ The app uses Apple's `os.Logger` (subsystem `com.kernova.app`) with per-componen
 - Method entry points in complex flows should have `.debug` logs with relevant parameter values
 - Do not use `print()`, `NSLog()`, or file-based logging
 
+### Defensive Unwrapping
+
+When calling an API that returns an optional but is invoked with compile-time-known inputs (SF Symbol names, known resource identifiers, hardcoded keys), use `assertionFailure` with a graceful fallback:
+
+```swift
+guard let value = knownGoodAPI("compile-time-constant") else {
+    logger.fault("Descriptive message '\(context, privacy: .public)'")
+    assertionFailure("Descriptive message: \(context)")
+    return fallbackValue
+}
+```
+
+- **Debug builds** crash immediately at the call site, catching typos and deployment-target mismatches on first test run
+- **Release builds** return the fallback and log at `.fault` level for post-mortem diagnosis
+- Do not force-unwrap (`!`) — it crashes end users. Do not silently return a fallback without `assertionFailure` — it masks bugs during development.
+
 ### File Operations
 
 - When deleting files, prefer `trash` over `rm` whenever possible (moves to Trash instead of permanent deletion).
