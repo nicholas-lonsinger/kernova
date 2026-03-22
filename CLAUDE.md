@@ -86,6 +86,61 @@ guard let value = knownGoodAPI("compile-time-constant") else {
 
 - When deleting files, prefer `trash` over `rm` whenever possible (moves to Trash instead of permanent deletion).
 
+### Review Debt Tracking
+
+When reviewing code — via review tools (`/simplify`, `/review-pr`, etc.), post-implementation review agents, or while working on adjacent code — valid findings that are **out of scope** for the current task must be captured as GitHub issues rather than silently dropped.
+
+**What to capture** (important + moderate severity):
+- Bugs, correctness problems, or logic errors
+- Security concerns
+- Performance issues
+- Meaningful refactoring opportunities or non-trivial code smells
+- Missing test coverage for critical paths
+
+**What to skip:**
+- Pure style or cosmetic nits (naming preferences, formatting)
+- Suggestions already covered by existing issues
+- Trivial improvements with negligible impact
+
+**Issue format:**
+
+~~~bash
+gh issue create \
+  --title "<concise description of the finding>" \
+  --label "<review-debt/label>" \
+  --body "$(cat <<'EOF'
+## Found during
+<PR #N / review of `FileName.swift` / context description>
+
+## Description
+<What the issue is and why it matters>
+
+## Location
+<File path(s) and line number(s) or function name(s)>
+
+## Suggested fix
+<Brief suggestion if one is obvious, otherwise omit this section>
+EOF
+)"
+~~~
+
+**Labels** — use the most specific match:
+
+| Label | When to use |
+|-------|-------------|
+| `review-debt/bug` | Correctness issues, logic errors, potential crashes |
+| `review-debt/security` | Security concerns, unsafe patterns |
+| `review-debt/performance` | Inefficient code paths, unnecessary allocations |
+| `review-debt/refactor` | Code smells, duplication, poor abstractions |
+| `review-debt/test-gap` | Missing or insufficient tests for critical code |
+
+**Guidelines:**
+- Always check for existing issues before creating duplicates
+- Reference the source PR or file context in the issue body
+- Keep issue titles actionable and specific (e.g., "Add error handling for disk-full scenario in BundleManager" not "Improve error handling")
+- When multiple related findings exist, group them into a single issue if they share a root cause
+- After creating issues, mention them in the conversation so the user is aware
+
 ## Git Workflow
 
 These conventions apply to **all** forms of committing: local commits, PR squash/merge commits, and any other git operations that produce commits.
