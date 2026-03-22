@@ -202,7 +202,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     @objc func stopVM(_ sender: Any?) {
         guard let instance = activeInstance else { return }
-        viewModel.stop(instance)
+        // Require explicit confirmation before discarding saved state
+        if instance.isColdPaused {
+            viewModel.confirmForceStop(instance)
+        } else {
+            viewModel.stop(instance)
+        }
     }
 
     @objc func forceStopVM(_ sender: Any?) {
@@ -462,7 +467,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         case #selector(resumeVM(_:)):
             return activeInstance?.status.canResume ?? false
         case #selector(stopVM(_:)):
-            return activeInstance?.status.canStop ?? false
+            guard let instance = activeInstance else { return false }
+            return instance.canStop || instance.isColdPaused
         case #selector(forceStopVM(_:)):
             return activeInstance?.status.canForceStop ?? false
         case #selector(saveVM(_:)):

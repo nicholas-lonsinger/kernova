@@ -156,6 +156,42 @@ struct VMInstanceTests {
         }
     }
 
+    // MARK: - canStop
+
+    @Test("canStop is true when running (without live VM, tests model logic)")
+    func canStopRunning() {
+        let instance = makeInstance(status: .running)
+        // status.canStop is true and isColdPaused is false
+        #expect(instance.canStop == true)
+    }
+
+    @Test("canStop is false when stopped")
+    func canStopStopped() {
+        let instance = makeInstance(status: .stopped)
+        #expect(instance.canStop == false)
+    }
+
+    @Test("canStop is false for cold-paused VM (paused without live VM)")
+    func canStopColdPaused() {
+        let instance = makeInstance(status: .paused)
+        #expect(instance.isColdPaused == true)
+        #expect(instance.canStop == false)
+    }
+
+    @Test("canStop is false during transitions")
+    func canStopTransitions() {
+        for status in [VMStatus.starting, .saving, .restoring, .installing] {
+            let instance = makeInstance(status: status)
+            #expect(instance.canStop == false)
+        }
+    }
+
+    @Test("canStop is false in error state")
+    func canStopError() {
+        let instance = makeInstance(status: .error)
+        #expect(instance.canStop == false)
+    }
+
     // MARK: - canSave
 
     @Test("canSave is true when running (without live VM, tests model logic)")

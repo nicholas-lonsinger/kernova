@@ -186,7 +186,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
         play.isEnabled = instance.status.canStart || canResume
         group.subitems[LifecycleSegment.pause.rawValue].isEnabled = instance.status.canPause
-        group.subitems[LifecycleSegment.stop.rawValue].isEnabled = instance.status.canStop
+        group.subitems[LifecycleSegment.stop.rawValue].isEnabled = instance.canStop || instance.isColdPaused
     }
 
     private func updateSaveStateItem(in toolbar: NSToolbar) {
