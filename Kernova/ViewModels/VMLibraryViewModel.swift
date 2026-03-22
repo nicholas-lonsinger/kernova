@@ -47,9 +47,9 @@ final class VMLibraryViewModel {
     /// Current VM ordering used by sortInstances(); synchronized with UserDefaults via persistOrder().
     private var customOrder: [UUID] = []
 
-    /// Called when a VM with `prefersFullscreen` is about to start or resume,
-    /// allowing the app delegate to pre-create the fullscreen window with a spinner.
-    @ObservationIgnored var onEnterFullscreen: ((VMInstance) -> Void)?
+    /// Called when a VM with a non-inline `displayPreference` is about to start or resume,
+    /// allowing the app delegate to pre-create the display window with a spinner.
+    @ObservationIgnored var onOpenDisplayWindow: ((VMInstance) -> Void)?
 
     // MARK: - Directory Watcher
 
@@ -235,8 +235,8 @@ final class VMLibraryViewModel {
     // MARK: - Lifecycle
 
     func start(_ instance: VMInstance) async {
-        if instance.configuration.prefersFullscreen {
-            onEnterFullscreen?(instance)
+        if instance.configuration.displayPreference != .inline {
+            onOpenDisplayWindow?(instance)
         }
         do {
             try await lifecycle.start(instance)
@@ -282,8 +282,8 @@ final class VMLibraryViewModel {
     }
 
     func resume(_ instance: VMInstance) async {
-        if instance.configuration.prefersFullscreen {
-            onEnterFullscreen?(instance)
+        if instance.configuration.displayPreference != .inline {
+            onOpenDisplayWindow?(instance)
         }
         do {
             try await lifecycle.resume(instance)

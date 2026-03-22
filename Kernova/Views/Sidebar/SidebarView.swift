@@ -104,10 +104,13 @@ struct SidebarView: View {
             }
 
             // Display
-            if instance.canFullscreen {
+            if instance.canUseExternalDisplay {
                 Divider()
-                Button("Fullscreen Display") {
-                    NSApp.sendAction(#selector(AppDelegate.toggleFullscreenDisplay(_:)), to: nil, from: nil)
+                Button(instance.isInSeparateWindow ? "Pop In Display" : "Pop Out Display") {
+                    NSApp.sendAction(#selector(AppDelegate.togglePopOut(_:)), to: nil, from: nil)
+                }
+                Button(instance.isInFullscreen ? "Exit Fullscreen Display" : "Fullscreen Display") {
+                    NSApp.sendAction(#selector(AppDelegate.toggleFullscreen(_:)), to: nil, from: nil)
                 }
             }
 

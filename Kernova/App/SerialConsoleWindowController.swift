@@ -8,14 +8,14 @@ import SwiftUI
 /// via `NSHostingController` and persists its frame position per VM ID.
 ///
 /// The controller observes the VM's status and automatically closes the window when
-/// the VM stops or enters an error state, mirroring `FullscreenWindowController` behavior.
+/// the VM stops or enters an error state, mirroring `VMDisplayWindowController` behavior.
 @MainActor
 final class SerialConsoleWindowController: NSWindowController, NSWindowDelegate {
 
     private static let logger = Logger(subsystem: "com.kernova.app", category: "SerialConsoleWindowController")
 
     let vmID: UUID
-    private let instance: VMInstance
+    let instance: VMInstance
     private var observingStatus = false
 
     init(instance: VMInstance) {

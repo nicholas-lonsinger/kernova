@@ -402,25 +402,25 @@ struct VMConfigurationTests {
         #expect(config.bootFromDiscImage == false)
     }
 
-    // MARK: - prefersFullscreen Tests
+    // MARK: - displayPreference Tests
 
-    @Test("Default prefersFullscreen is false")
-    func defaultPrefersFullscreen() {
+    @Test("Default displayPreference is inline")
+    func defaultDisplayPreference() {
         let config = VMConfiguration(
             name: "Test VM",
             guestOS: .linux,
             bootMode: .efi
         )
-        #expect(config.prefersFullscreen == false)
+        #expect(config.displayPreference == .inline)
     }
 
-    @Test("Configuration preserves prefersFullscreen flag")
-    func prefersFullscreenRoundTrip() throws {
+    @Test("Configuration preserves displayPreference")
+    func displayPreferenceRoundTrip() throws {
         let config = VMConfiguration(
             name: "Fullscreen VM",
             guestOS: .linux,
             bootMode: .efi,
-            prefersFullscreen: true
+            displayPreference: .fullscreen
         )
 
         let encoder = JSONEncoder()
@@ -431,11 +431,31 @@ struct VMConfigurationTests {
         decoder.dateDecodingStrategy = .iso8601
         let decoded = try decoder.decode(VMConfiguration.self, from: data)
 
-        #expect(decoded.prefersFullscreen == true)
+        #expect(decoded.displayPreference == .fullscreen)
     }
 
-    @Test("Backward compatibility: decoding JSON without prefersFullscreen defaults to false")
-    func backwardCompatibilityPrefersFullscreen() throws {
+    @Test("displayPreference round-trips popOut value")
+    func displayPreferencePopOutRoundTrip() throws {
+        let config = VMConfiguration(
+            name: "PopOut VM",
+            guestOS: .linux,
+            bootMode: .efi,
+            displayPreference: .popOut
+        )
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(config)
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(VMConfiguration.self, from: data)
+
+        #expect(decoded.displayPreference == .popOut)
+    }
+
+    @Test("Decoding JSON without displayPreference defaults to inline")
+    func missingDisplayPreferenceDefaultsToInline() throws {
         let json = """
         {
             "id": "12345678-1234-1234-1234-123456789012",
@@ -457,7 +477,7 @@ struct VMConfigurationTests {
         decoder.dateDecodingStrategy = .iso8601
         let config = try decoder.decode(VMConfiguration.self, from: Data(json.utf8))
 
-        #expect(config.prefersFullscreen == false)
+        #expect(config.displayPreference == .inline)
     }
 
     // MARK: - lastFullscreenDisplayID Tests

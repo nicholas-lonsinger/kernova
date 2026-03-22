@@ -1,5 +1,12 @@
 import Foundation
 
+/// The user's preferred display hosting for a VM on start/resume.
+enum VMDisplayPreference: String, Codable, Sendable, Equatable {
+    case inline
+    case popOut
+    case fullscreen
+}
+
 /// Persistent configuration for a virtual machine.
 ///
 /// This type is serialized to `config.json` inside each VM bundle directory.
@@ -23,7 +30,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
     var displayWidth: Int
     var displayHeight: Int
     var displayPPI: Int
-    var prefersFullscreen: Bool
+    var displayPreference: VMDisplayPreference
     var lastFullscreenDisplayID: UInt32?
 
     // MARK: - Network
@@ -80,7 +87,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         displayWidth: Int = 1920,
         displayHeight: Int = 1200,
         displayPPI: Int = 144,
-        prefersFullscreen: Bool = false,
+        displayPreference: VMDisplayPreference = .inline,
         lastFullscreenDisplayID: UInt32? = nil,
         networkEnabled: Bool = true,
         macAddress: String? = nil,
@@ -105,7 +112,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         self.displayWidth = displayWidth
         self.displayHeight = displayHeight
         self.displayPPI = displayPPI
-        self.prefersFullscreen = prefersFullscreen
+        self.displayPreference = displayPreference
         self.lastFullscreenDisplayID = lastFullscreenDisplayID
         self.networkEnabled = networkEnabled
         self.macAddress = macAddress
@@ -126,7 +133,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case id, name, guestOS, bootMode
         case cpuCount, memorySizeInGB, diskSizeInGB
-        case displayWidth, displayHeight, displayPPI, prefersFullscreen, lastFullscreenDisplayID
+        case displayWidth, displayHeight, displayPPI, displayPreference, lastFullscreenDisplayID
         case networkEnabled, macAddress
         case hardwareModelData, machineIdentifierData
         case genericMachineIdentifierData
@@ -149,7 +156,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         displayWidth = try container.decode(Int.self, forKey: .displayWidth)
         displayHeight = try container.decode(Int.self, forKey: .displayHeight)
         displayPPI = try container.decode(Int.self, forKey: .displayPPI)
-        prefersFullscreen = try container.decodeIfPresent(Bool.self, forKey: .prefersFullscreen) ?? false
+        displayPreference = try container.decodeIfPresent(VMDisplayPreference.self, forKey: .displayPreference) ?? .inline
         lastFullscreenDisplayID = try container.decodeIfPresent(UInt32.self, forKey: .lastFullscreenDisplayID)
         networkEnabled = try container.decode(Bool.self, forKey: .networkEnabled)
         macAddress = try container.decodeIfPresent(String.self, forKey: .macAddress)
@@ -180,7 +187,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         clone.id = UUID()
         clone.createdAt = Date()
         clone.name = Self.generateCloneName(baseName: name, existingNames: existingNames)
-        clone.prefersFullscreen = false
+        clone.displayPreference = .inline
         clone.lastFullscreenDisplayID = nil
 
         // Regenerate shared directory IDs to avoid VirtioFS collisions
