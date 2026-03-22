@@ -26,6 +26,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
 
     private static let toolbarLifecycle = NSToolbarItem.Identifier("displayLifecycle")
     private static let toolbarSaveState = NSToolbarItem.Identifier("displaySaveState")
+    private static let saveStateToolTip = "Save the virtual machine state to disk"
     private static let toolbarDisplay = NSToolbarItem.Identifier("displayDisplay")
 
     private enum LifecycleSegment: Int {
@@ -306,7 +307,7 @@ extension VMDisplayWindowController: NSToolbarDelegate {
                 action: #selector(AppDelegate.saveVM(_:))
             )
             group.label = "Save State"
-            group.subitems.first?.toolTip = "Save the virtual machine state to disk"
+            group.subitems.first?.toolTip = Self.saveStateToolTip
             group.autovalidates = false
             return group
 

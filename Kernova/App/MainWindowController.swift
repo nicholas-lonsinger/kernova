@@ -29,6 +29,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     private static let toolbarNewVM = NSToolbarItem.Identifier("newVM")
     private static let toolbarLifecycle = NSToolbarItem.Identifier("lifecycle")
     private static let toolbarSaveState = NSToolbarItem.Identifier("saveState")
+    private static let saveStateToolTip = "Save the virtual machine state to disk"
     private static let toolbarDisplay = NSToolbarItem.Identifier("display")
 
     private enum DisplaySegment: Int {
@@ -315,7 +316,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
                 label: "Save State",
                 symbol: "square.and.arrow.down",
                 action: #selector(AppDelegate.saveVM(_:)),
-                toolTip: "Save the virtual machine state to disk"
+                toolTip: Self.saveStateToolTip
             )
 
         case Self.toolbarDisplay:
