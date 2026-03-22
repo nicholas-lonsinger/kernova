@@ -91,6 +91,7 @@ final class VMLibraryViewModel {
     func loadVMs() {
         do {
             let bundles = try storageService.listVMBundles()
+            var failedBundles: [String] = []
             instances = bundles.compactMap { bundleURL in
                 do {
                     let migratedURL = try storageService.migrateBundleIfNeeded(at: bundleURL)
@@ -106,8 +107,12 @@ final class VMLibraryViewModel {
                     return instance
                 } catch {
                     Self.logger.error("Failed to load VM from \(bundleURL.lastPathComponent): \(error.localizedDescription)")
+                    failedBundles.append(bundleURL.deletingPathExtension().lastPathComponent)
                     return nil
                 }
+            }
+            if !failedBundles.isEmpty {
+                presentError(LoadError.bundleLoadFailed(names: failedBundles))
             }
 
             // Load persisted order, sort by it, then normalize customOrder to match
@@ -219,6 +224,7 @@ final class VMLibraryViewModel {
             try storageService.deleteVMBundle(at: instance.bundleURL)
         } catch {
             Self.logger.error("Failed to trash VM bundle during cancellation: \(error.localizedDescription)")
+            presentError(error)
         }
 
         // 4. Remove from library and update selection
@@ -588,6 +594,7 @@ final class VMLibraryViewModel {
 
         Self.logger.notice("System going to sleep — pausing \(runningInstances.count) running VM(s)")
 
+        var failedNames: [String] = []
         for instance in runningInstances {
             do {
                 try await lifecycle.pause(instance)
@@ -595,7 +602,11 @@ final class VMLibraryViewModel {
                 Self.logger.debug("Paused '\(instance.name)' for sleep (status: \(instance.status.displayName))")
             } catch {
                 Self.logger.error("Failed to pause '\(instance.name)' for sleep: \(error.localizedDescription)")
+                failedNames.append(instance.name)
             }
+        }
+        if !failedNames.isEmpty {
+            presentError(SleepWakeError.pauseFailed(vmNames: failedNames))
         }
     }
 
@@ -613,13 +624,18 @@ final class VMLibraryViewModel {
 
         Self.logger.notice("System woke up — resuming \(instancesToResume.count) sleep-paused VM(s)")
 
+        var failedNames: [String] = []
         for instance in instancesToResume {
             do {
                 try await lifecycle.resume(instance)
                 Self.logger.debug("Resumed '\(instance.name)' after wake (status: \(instance.status.displayName))")
             } catch {
                 Self.logger.error("Failed to resume '\(instance.name)' after wake: \(error.localizedDescription)")
+                failedNames.append(instance.name)
             }
+        }
+        if !failedNames.isEmpty {
+            presentError(SleepWakeError.resumeFailed(vmNames: failedNames))
         }
     }
 
@@ -639,8 +655,11 @@ final class VMLibraryViewModel {
     // MARK: - Directory Watcher
 
     private func startDirectoryWatcher() {
-        guard let vmsDir = try? storageService.vmsDirectory else {
-            Self.logger.warning("Could not resolve VMs directory for file system watcher")
+        let vmsDir: URL
+        do {
+            vmsDir = try storageService.vmsDirectory
+        } catch {
+            Self.logger.warning("Could not resolve VMs directory for file system watcher: \(error.localizedDescription)")
             return
         }
 
@@ -661,9 +680,18 @@ final class VMLibraryViewModel {
             // Build a map of UUID → bundle URL for bundles currently on disk
             var diskConfigs: [(VMConfiguration, URL)] = []
             for bundleURL in diskBundles {
-                let migratedURL = (try? storageService.migrateBundleIfNeeded(at: bundleURL)) ?? bundleURL
-                if let config = try? storageService.loadConfiguration(from: migratedURL) {
+                let migratedURL: URL
+                do {
+                    migratedURL = try storageService.migrateBundleIfNeeded(at: bundleURL)
+                } catch {
+                    Self.logger.warning("Failed to migrate bundle at \(bundleURL.lastPathComponent): \(error.localizedDescription)")
+                    migratedURL = bundleURL
+                }
+                do {
+                    let config = try storageService.loadConfiguration(from: migratedURL)
                     diskConfigs.append((config, migratedURL))
+                } catch {
+                    Self.logger.warning("Failed to load config from \(migratedURL.lastPathComponent) during reconciliation: \(error.localizedDescription)")
                 }
             }
             let diskIDs = Set(diskConfigs.map(\.0.id))
@@ -784,7 +812,7 @@ final class VMLibraryViewModel {
             do {
                 try FileManager.default.trashItem(at: url, resultingItemURL: nil)
             } catch {
-                log.warning("Failed to clean up partial bundle at \(url.lastPathComponent): \(error.localizedDescription)")
+                log.error("Failed to clean up partial bundle at \(url.lastPathComponent): \(error.localizedDescription)")
             }
         }
     }
@@ -797,6 +825,36 @@ final class VMLibraryViewModel {
             switch self {
             case .operationInProgress:
                 return "Another clone or import operation is already in progress. Please wait for it to finish."
+            }
+        }
+    }
+
+    /// Error type for VM loading failures.
+    private enum LoadError: LocalizedError {
+        case bundleLoadFailed(names: [String])
+
+        var errorDescription: String? {
+            switch self {
+            case .bundleLoadFailed(let names):
+                assert(!names.isEmpty, "bundleLoadFailed requires at least one bundle name")
+                return "Failed to load the following VMs: \(names.joined(separator: ", ")). They may have corrupted configurations."
+            }
+        }
+    }
+
+    /// Error type for sleep/wake lifecycle failures.
+    private enum SleepWakeError: LocalizedError {
+        case pauseFailed(vmNames: [String])
+        case resumeFailed(vmNames: [String])
+
+        var errorDescription: String? {
+            switch self {
+            case .pauseFailed(let vmNames):
+                assert(!vmNames.isEmpty, "pauseFailed requires at least one VM name")
+                return "Failed to pause the following VMs before sleep: \(vmNames.joined(separator: ", ")). They may experience data corruption."
+            case .resumeFailed(let vmNames):
+                assert(!vmNames.isEmpty, "resumeFailed requires at least one VM name")
+                return "Failed to resume the following VMs after wake: \(vmNames.joined(separator: ", ")). You may need to restart them manually."
             }
         }
     }
