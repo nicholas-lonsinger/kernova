@@ -140,6 +140,31 @@ struct VMLibraryViewModelTests {
         #expect(viewModel.selectedID == config2.id)
     }
 
+    @Test("loadVMs surfaces error when individual bundles fail to load")
+    func loadVMsSurfacesErrorForFailedBundles() {
+        let storage = MockVMStorageService()
+        // Add a good bundle and a bad bundle
+        let goodConfig = VMConfiguration(name: "Good VM", guestOS: .linux, bootMode: .efi)
+        let goodURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(goodConfig.id.uuidString).kernova", isDirectory: true)
+        storage.bundles[goodURL] = goodConfig
+
+        let badURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("bad-bundle.kernova", isDirectory: true)
+        // Register the URL so listVMBundles returns it, but mark it to fail on load
+        storage.bundles[badURL] = VMConfiguration(name: "Bad VM", guestOS: .linux, bootMode: .efi)
+        storage.loadConfigurationFailURLs = [badURL]
+
+        let (viewModel, _, _, _) = makeViewModel(storageService: storage)
+
+        // Good VM loaded, bad VM skipped
+        #expect(viewModel.instances.count == 1)
+        #expect(viewModel.instances.first?.name == "Good VM")
+        // Error surfaced to user about the failed bundle
+        #expect(viewModel.showError == true)
+        #expect(viewModel.errorMessage != nil)
+    }
+
     @Test("loadVMs falls back to first VM when stored ID is invalid")
     func loadVMsFallsBackWhenStoredIDInvalid() {
         let storage = MockVMStorageService()
@@ -616,6 +641,26 @@ struct VMLibraryViewModelTests {
         #expect(viewModel.instances.count == 1)
         #expect(viewModel.selectedID == first.id)
     }
+
+    @Test("cancelInstallation surfaces error when trash fails")
+    func cancelInstallationSurfacesTrashError() {
+        let storage = MockVMStorageService()
+        storage.deleteVMBundleError = VMStorageError.bundleNotFound(
+            FileManager.default.temporaryDirectory
+        )
+        let (viewModel, _, _, _) = makeViewModel(storageService: storage)
+        let instance = makeInstance(name: "Installing VM")
+        instance.status = .installing
+        viewModel.instances.append(instance)
+
+        viewModel.cancelInstallation(instance)
+
+        // Error surfaced to user
+        #expect(viewModel.showError == true)
+        #expect(viewModel.errorMessage != nil)
+        // Instance still removed from library despite trash failure
+        #expect(viewModel.instances.isEmpty)
+    }
     #endif
 
     // MARK: - Rename
@@ -764,8 +809,9 @@ struct VMLibraryViewModelTests {
 
         await viewModel.pauseAllForSleep()
 
-        // Error is logged, not presented to user
-        #expect(viewModel.showError == false)
+        // Error is surfaced to the user
+        #expect(viewModel.showError == true)
+        #expect(viewModel.errorMessage?.contains("Running") == true)
         // Failed pause should not track the instance
         #expect(viewModel.sleepPausedInstanceIDs.isEmpty)
     }
@@ -783,7 +829,9 @@ struct VMLibraryViewModelTests {
         await viewModel.resumeAllAfterWake()
 
         #expect(viewModel.sleepPausedInstanceIDs.isEmpty)
-        #expect(viewModel.showError == false)
+        // Error is surfaced to the user
+        #expect(viewModel.showError == true)
+        #expect(viewModel.errorMessage?.contains("Sleep Paused") == true)
     }
 
     @Test("pauseAllForSleep is no-op when no running VMs")

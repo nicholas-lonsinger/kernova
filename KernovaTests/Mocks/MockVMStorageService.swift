@@ -19,9 +19,12 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
 
     // MARK: - Error Injection
 
-    var saveConfigurationError: (any Error)?
     var createVMBundleError: (any Error)?
     var cloneVMBundleError: (any Error)?
+    var saveConfigurationError: (any Error)?
+    var deleteVMBundleError: (any Error)?
+    /// Set of bundle URLs whose loadConfiguration should throw.
+    var loadConfigurationFailURLs: Set<URL> = []
 
     // MARK: - VMStorageProviding
 
@@ -41,6 +44,9 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
     }
 
     func loadConfiguration(from bundleURL: URL) throws -> VMConfiguration {
+        if loadConfigurationFailURLs.contains(bundleURL) {
+            throw VMStorageError.bundleNotFound(bundleURL)
+        }
         guard let config = bundles[bundleURL] else {
             throw VMStorageError.bundleNotFound(bundleURL)
         }
@@ -71,6 +77,7 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
 
     func deleteVMBundle(at bundleURL: URL) throws {
         deleteVMBundleCallCount += 1
+        if let error = deleteVMBundleError { throw error }
         bundles.removeValue(forKey: bundleURL)
     }
 
