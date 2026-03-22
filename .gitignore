@@ -46,6 +46,7 @@ Thumbs.db
 
 # Claude Code
 .claude/*.local.*
+.claude/worktrees/
 CLAUDE.local.md
 
 # Secrets
