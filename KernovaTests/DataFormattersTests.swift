@@ -77,7 +77,7 @@ struct DataFormattersTests {
     func formatDiskSizeGB() {
         #expect(DataFormatters.formatDiskSize(100) == "100\u{2007}GB")
         #expect(DataFormatters.formatDiskSize(250) == "250\u{2007}GB")
-        #expect(DataFormatters.formatDiskSize(10) == "\u{2007}\u{2007}10\u{2007}GB")
+        #expect(DataFormatters.formatDiskSize(10) == "\u{2007}10\u{2007}GB")
         #expect(DataFormatters.formatDiskSize(75) == "\u{2007}75\u{2007}GB")
     }
 

@@ -15,18 +15,12 @@ struct DiskImageService: Sendable {
 
     private static let logger = Logger(subsystem: "com.kernova.app", category: "DiskImageService")
 
-    /// The available template disk sizes in GB, matching bundled ASIF images.
-    static let templateSizes = [
-        10, 15, 20, 25, 50, 75, 100, 125, 150, 175, 200, 225, 250,
-        500, 750, 1000, 1500, 2000, 2500, 3000, 3500, 4000
-    ]
-
     /// Creates an ASIF sparse disk image at the specified URL by decompressing a bundled template.
     ///
     /// - Parameters:
     ///   - url: The file URL where the disk image should be created.
     ///   - sizeInGB: The virtual capacity of the disk image in gigabytes. Must match
-    ///     one of the bundled template sizes in ``templateSizes``.
+    ///     one of the sizes in ``VMGuestOS/allDiskSizes``.
     func createDiskImage(at url: URL, sizeInGB: Int) async throws {
         Self.logger.info("Creating ASIF disk image: \(sizeInGB) GB at \(url.lastPathComponent)")
 
@@ -38,9 +32,12 @@ struct DiskImageService: Sendable {
             throw DiskImageError.creationFailed("No template disk image for \(sizeInGB) GB")
         }
 
-        let compressed = try Data(contentsOf: templateURL)
-        let decompressed = try (compressed as NSData).decompressed(using: .lzfse) as Data
-        try decompressed.write(to: url)
+        let destination = url
+        try await Task.detached {
+            let compressed = try Data(contentsOf: templateURL)
+            let decompressed = try (compressed as NSData).decompressed(using: .lzfse) as Data
+            try decompressed.write(to: destination)
+        }.value
 
         Self.logger.notice("Successfully created ASIF disk image at \(url.lastPathComponent)")
     }
@@ -63,8 +60,8 @@ enum DiskImageError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .creationFailed(let output):
-            "Failed to create disk image: \(output)"
+        case .creationFailed(let reason):
+            "Failed to create disk image: \(reason)"
         }
     }
 }
