@@ -17,39 +17,25 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
     private(set) var closedProgrammatically = false
     private(set) var lastDisplayID: CGDirectDisplayID?
     let instance: VMInstance
+    private let toolbarManager: VMToolbarManager
     private let enterFullscreen: Bool
     private var observingInstance = false
 
     private static let logger = Logger(subsystem: "com.kernova.app", category: "VMDisplayWindowController")
 
-    // MARK: - Toolbar Item Identifiers
-
-    private static let toolbarLifecycle = NSToolbarItem.Identifier("displayLifecycle")
-    private static let toolbarSaveState = NSToolbarItem.Identifier("displaySaveState")
-    private static let saveStateToolTip = "Save the virtual machine state to disk"
-    private static let toolbarDisplay = NSToolbarItem.Identifier("displayDisplay")
-
-    private enum LifecycleSegment: Int {
-        case play = 0, pause = 1, stop = 2
-
-        static let startToolTip = "Start the virtual machine"
-        static let resumeToolTip = "Resume the virtual machine"
-        static let pauseToolTip = "Pause the virtual machine"
-        static let stopToolTip = "Stop the virtual machine"
-    }
-
-    private enum DisplaySegment: Int {
-        case popIn = 0, fullscreen = 1
-
-        static let popOutToolTip = "Open display in a separate window"
-        static let popInToolTip = "Return display to the main window"
-        static let fullscreenToolTip = "Enter fullscreen display"
-        static let exitFullscreenToolTip = "Exit fullscreen display"
-    }
-
     init(instance: VMInstance, enterFullscreen: Bool, onResume: @escaping () -> Void) {
         self.vmID = instance.instanceID
         self.instance = instance
+        self.toolbarManager = VMToolbarManager(
+            configuration: .init(
+                lifecycleID: NSToolbarItem.Identifier("displayLifecycle"),
+                saveStateID: NSToolbarItem.Identifier("displaySaveState"),
+                displayID: NSToolbarItem.Identifier("displayDisplay"),
+                checksPreparing: false,
+                gatesDisplayOnCapability: false
+            ),
+            instanceProvider: { [weak instance] in instance }
+        )
         self.enterFullscreen = enterFullscreen
 
         let contentView = DetachedVMView(instance: instance, onResume: onResume)
@@ -145,107 +131,11 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
     // MARK: - Toolbar State
 
     private func updateToolbarItems() {
-        guard let toolbar = window?.toolbar else { return }
-
-        updateLifecycleGroup(in: toolbar)
-        updateSaveStateItem(in: toolbar)
-        updateDisplayGroup(in: toolbar)
-    }
-
-    private func updateLifecycleGroup(in toolbar: NSToolbar) {
-        guard let group = toolbar.items.first(where: { $0.itemIdentifier == Self.toolbarLifecycle }) as? NSToolbarItemGroup,
-              group.subitems.count == 3 else { return }
-
-        let canResume = instance.status.canResume
-        let playLabel = canResume ? "Resume" : "Start"
-
-        let play = group.subitems[LifecycleSegment.play.rawValue]
-        if play.label != playLabel {
-            play.label = playLabel
-            play.image = NSImage(systemSymbolName: "play.fill", accessibilityDescription: playLabel)
-            play.toolTip = canResume ? LifecycleSegment.resumeToolTip : LifecycleSegment.startToolTip
-        }
-
-        play.isEnabled = instance.status.canStart || canResume
-        group.subitems[LifecycleSegment.pause.rawValue].isEnabled = instance.status.canPause
-        group.subitems[LifecycleSegment.stop.rawValue].isEnabled = instance.canStop || instance.isColdPaused
-    }
-
-    private func updateSaveStateItem(in toolbar: NSToolbar) {
-        guard let group = toolbar.items.first(where: { $0.itemIdentifier == Self.toolbarSaveState }) as? NSToolbarItemGroup,
-              let subitem = group.subitems.first else { return }
-        subitem.isEnabled = instance.canSave
-    }
-
-    private func updateDisplayGroup(in toolbar: NSToolbar) {
-        guard let group = toolbar.items.first(where: { $0.itemIdentifier == Self.toolbarDisplay }) as? NSToolbarItemGroup,
-              group.subitems.count == 2 else { return }
-
-        let popInItem = group.subitems[DisplaySegment.popIn.rawValue]
-        let fullscreenItem = group.subitems[DisplaySegment.fullscreen.rawValue]
-
-        popInItem.isEnabled = true
-        fullscreenItem.isEnabled = true
-
-        let popLabel = instance.isInSeparateWindow ? "Pop In" : "Pop Out"
-        if popInItem.label != popLabel {
-            popInItem.label = popLabel
-            popInItem.image = NSImage(
-                systemSymbolName: instance.isInSeparateWindow ? "pip.enter" : "pip.exit",
-                accessibilityDescription: popLabel
-            )
-            popInItem.toolTip = instance.isInSeparateWindow
-                ? DisplaySegment.popInToolTip
-                : DisplaySegment.popOutToolTip
-        }
-
-        let fsLabel = instance.isInFullscreen ? "Exit Fullscreen" : "Fullscreen"
-        if fullscreenItem.label != fsLabel {
-            fullscreenItem.label = fsLabel
-            fullscreenItem.image = NSImage(
-                systemSymbolName: instance.isInFullscreen
-                    ? "arrow.down.right.and.arrow.up.left"
-                    : "arrow.up.left.and.arrow.down.right",
-                accessibilityDescription: fsLabel
-            )
-            fullscreenItem.toolTip = instance.isInFullscreen
-                ? DisplaySegment.exitFullscreenToolTip
-                : DisplaySegment.fullscreenToolTip
-        }
-    }
-
-    // MARK: - Toolbar Actions
-
-    @objc private func lifecycleAction(_ group: NSToolbarItemGroup) {
-        guard let segment = LifecycleSegment(rawValue: group.selectedIndex) else {
-            Self.logger.warning("lifecycleAction: unexpected selectedIndex \(group.selectedIndex)")
+        guard let toolbar = window?.toolbar else {
+            Self.logger.warning("updateToolbarItems: window or toolbar is nil — toolbar state will be stale")
             return
         }
-        switch segment {
-        case .play:
-            if instance.status.canResume {
-                NSApp.sendAction(#selector(AppDelegate.resumeVM(_:)), to: nil, from: nil)
-            } else {
-                NSApp.sendAction(#selector(AppDelegate.startVM(_:)), to: nil, from: nil)
-            }
-        case .pause:
-            NSApp.sendAction(#selector(AppDelegate.pauseVM(_:)), to: nil, from: nil)
-        case .stop:
-            NSApp.sendAction(#selector(AppDelegate.stopVM(_:)), to: nil, from: nil)
-        }
-    }
-
-    @objc private func displayAction(_ group: NSToolbarItemGroup) {
-        guard let segment = DisplaySegment(rawValue: group.selectedIndex) else {
-            Self.logger.warning("displayAction: unexpected selectedIndex \(group.selectedIndex)")
-            return
-        }
-        switch segment {
-        case .popIn:
-            NSApp.sendAction(#selector(AppDelegate.togglePopOut(_:)), to: nil, from: nil)
-        case .fullscreen:
-            NSApp.sendAction(#selector(AppDelegate.toggleFullscreen(_:)), to: nil, from: nil)
-        }
+        toolbarManager.updateToolbarItems(in: toolbar)
     }
 }
 
@@ -254,21 +144,11 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
 extension VMDisplayWindowController: NSToolbarDelegate {
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [
-            .flexibleSpace,
-            Self.toolbarLifecycle,
-            Self.toolbarSaveState,
-            Self.toolbarDisplay,
-        ]
+        [.flexibleSpace] + toolbarManager.sharedItemIdentifiers
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [
-            .flexibleSpace,
-            Self.toolbarLifecycle,
-            Self.toolbarSaveState,
-            Self.toolbarDisplay,
-        ]
+        [.flexibleSpace] + toolbarManager.sharedItemIdentifiers
     }
 
     func toolbar(
@@ -276,62 +156,7 @@ extension VMDisplayWindowController: NSToolbarDelegate {
         itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
         willBeInsertedIntoToolbar flag: Bool
     ) -> NSToolbarItem? {
-        switch itemIdentifier {
-        case Self.toolbarLifecycle:
-            let group = NSToolbarItemGroup(
-                itemIdentifier: itemIdentifier,
-                images: [
-                    NSImage(systemSymbolName: "play.fill", accessibilityDescription: "Start")!,
-                    NSImage(systemSymbolName: "pause.fill", accessibilityDescription: "Pause")!,
-                    NSImage(systemSymbolName: "stop.fill", accessibilityDescription: "Stop")!,
-                ],
-                selectionMode: .momentary,
-                labels: ["Start", "Pause", "Stop"],
-                target: self,
-                action: #selector(lifecycleAction(_:))
-            )
-            group.label = "State Controls"
-            group.subitems[LifecycleSegment.play.rawValue].toolTip = LifecycleSegment.startToolTip
-            group.subitems[LifecycleSegment.pause.rawValue].toolTip = LifecycleSegment.pauseToolTip
-            group.subitems[LifecycleSegment.stop.rawValue].toolTip = LifecycleSegment.stopToolTip
-            group.autovalidates = false
-            return group
-
-        case Self.toolbarSaveState:
-            let group = NSToolbarItemGroup(
-                itemIdentifier: itemIdentifier,
-                images: [NSImage(systemSymbolName: "square.and.arrow.down", accessibilityDescription: "Save State")!],
-                selectionMode: .momentary,
-                labels: ["Save State"],
-                target: nil,
-                action: #selector(AppDelegate.saveVM(_:))
-            )
-            group.label = "Save State"
-            group.subitems.first?.toolTip = Self.saveStateToolTip
-            group.autovalidates = false
-            return group
-
-        case Self.toolbarDisplay:
-            let group = NSToolbarItemGroup(
-                itemIdentifier: itemIdentifier,
-                images: [
-                    NSImage(systemSymbolName: "pip.enter", accessibilityDescription: "Pop In")!,
-                    NSImage(systemSymbolName: "arrow.up.left.and.arrow.down.right", accessibilityDescription: "Fullscreen")!,
-                ],
-                selectionMode: .momentary,
-                labels: ["Pop In", "Fullscreen"],
-                target: self,
-                action: #selector(displayAction(_:))
-            )
-            group.label = "Display"
-            group.subitems[DisplaySegment.popIn.rawValue].toolTip = DisplaySegment.popInToolTip
-            group.subitems[DisplaySegment.fullscreen.rawValue].toolTip = DisplaySegment.fullscreenToolTip
-            group.autovalidates = false
-            return group
-
-        default:
-            return nil
-        }
+        toolbarManager.makeToolbarItem(for: itemIdentifier)
     }
 }
 

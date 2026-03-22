@@ -8,43 +8,29 @@ import SwiftUI
 final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindowDelegate {
 
     private let viewModel: VMLibraryViewModel
+    private let toolbarManager: VMToolbarManager
     private let splitViewController = NSSplitViewController()
     private let sidebarItem: NSSplitViewItem
     private var observingToolbar = false
     private var sidebarCollapseObservation: NSKeyValueObservation?
 
     private static let logger = Logger(subsystem: "com.kernova.app", category: "MainWindowController")
-
-    private enum LifecycleSegment: Int {
-        case play = 0, pause = 1, stop = 2
-
-        static let startToolTip = "Start the virtual machine"
-        static let resumeToolTip = "Resume the virtual machine"
-        static let pauseToolTip = "Pause the virtual machine"
-        static let stopToolTip = "Stop the virtual machine"
-    }
-
-    // MARK: - Toolbar Item Identifiers
-
     private static let toolbarNewVM = NSToolbarItem.Identifier("newVM")
-    private static let toolbarLifecycle = NSToolbarItem.Identifier("lifecycle")
-    private static let toolbarSaveState = NSToolbarItem.Identifier("saveState")
-    private static let saveStateToolTip = "Save the virtual machine state to disk"
-    private static let toolbarDisplay = NSToolbarItem.Identifier("display")
-
-    private enum DisplaySegment: Int {
-        case popOut = 0, fullscreen = 1
-
-        static let popOutToolTip = "Open display in a separate window"
-        static let popInToolTip = "Return display to the main window"
-        static let fullscreenToolTip = "Enter fullscreen display"
-        static let exitFullscreenToolTip = "Exit fullscreen display"
-    }
 
     // MARK: - Init
 
     init(viewModel: VMLibraryViewModel) {
         self.viewModel = viewModel
+        self.toolbarManager = VMToolbarManager(
+            configuration: .init(
+                lifecycleID: NSToolbarItem.Identifier("lifecycle"),
+                saveStateID: NSToolbarItem.Identifier("saveState"),
+                displayID: NSToolbarItem.Identifier("display"),
+                checksPreparing: true,
+                gatesDisplayOnCapability: true
+            ),
+            instanceProvider: { [weak viewModel] in viewModel?.selectedInstance }
+        )
 
         let sidebarHost = NSHostingController(rootView: SidebarView(viewModel: viewModel))
         sidebarHost.sizingOptions = []
@@ -157,96 +143,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             return
         }
 
-        updateLifecycleGroup(in: toolbar)
-        updateSaveStateItem(in: toolbar)
-        updateDisplayGroup(in: toolbar)
-    }
-
-    private func updateLifecycleGroup(in toolbar: NSToolbar) {
-        guard let group = toolbar.items.first(where: { $0.itemIdentifier == Self.toolbarLifecycle }) as? NSToolbarItemGroup,
-              group.subitems.count == 3 else {
-            Self.logger.warning("updateLifecycleGroup: lifecycle group missing or has unexpected subitem count")
-            return
-        }
-
-        guard let instance = viewModel.selectedInstance, !instance.isPreparing else {
-            group.subitems.forEach { $0.isEnabled = false }
-            return
-        }
-
-        let canResume = instance.status.canResume
-        let playLabel = canResume ? "Resume" : "Start"
-
-        let play = group.subitems[LifecycleSegment.play.rawValue]
-        if play.label != playLabel {
-            play.label = playLabel
-            play.image = NSImage(systemSymbolName: "play.fill", accessibilityDescription: playLabel)
-            play.toolTip = canResume ? LifecycleSegment.resumeToolTip : LifecycleSegment.startToolTip
-        }
-
-        play.isEnabled = instance.status.canStart || canResume
-        group.subitems[LifecycleSegment.pause.rawValue].isEnabled = instance.status.canPause
-        group.subitems[LifecycleSegment.stop.rawValue].isEnabled = instance.canStop || instance.isColdPaused
-    }
-
-    private func updateSaveStateItem(in toolbar: NSToolbar) {
-        guard let group = toolbar.items.first(where: { $0.itemIdentifier == Self.toolbarSaveState }) as? NSToolbarItemGroup,
-              let subitem = group.subitems.first else {
-            Self.logger.warning("updateSaveStateItem: save state group missing or empty")
-            return
-        }
-        guard let instance = viewModel.selectedInstance, !instance.isPreparing else {
-            subitem.isEnabled = false
-            return
-        }
-        subitem.isEnabled = instance.canSave
-    }
-
-    private func updateDisplayGroup(in toolbar: NSToolbar) {
-        guard let group = toolbar.items.first(where: { $0.itemIdentifier == Self.toolbarDisplay }) as? NSToolbarItemGroup,
-              group.subitems.count == 2 else {
-            Self.logger.warning("updateDisplayGroup: display group missing or has unexpected subitem count")
-            return
-        }
-
-        let popOutItem = group.subitems[DisplaySegment.popOut.rawValue]
-        let fullscreenItem = group.subitems[DisplaySegment.fullscreen.rawValue]
-
-        guard let instance = viewModel.selectedInstance, !instance.isPreparing else {
-            popOutItem.isEnabled = false
-            fullscreenItem.isEnabled = false
-            return
-        }
-
-        let canUse = instance.canUseExternalDisplay
-        popOutItem.isEnabled = canUse
-        fullscreenItem.isEnabled = canUse
-
-        let popLabel = instance.isInSeparateWindow ? "Pop In" : "Pop Out"
-        if popOutItem.label != popLabel {
-            popOutItem.label = popLabel
-            popOutItem.image = NSImage(
-                systemSymbolName: instance.isInSeparateWindow ? "pip.enter" : "pip.exit",
-                accessibilityDescription: popLabel
-            )
-            popOutItem.toolTip = instance.isInSeparateWindow
-                ? DisplaySegment.popInToolTip
-                : DisplaySegment.popOutToolTip
-        }
-
-        let fsLabel = instance.isInFullscreen ? "Exit Fullscreen" : "Fullscreen"
-        if fullscreenItem.label != fsLabel {
-            fullscreenItem.label = fsLabel
-            fullscreenItem.image = NSImage(
-                systemSymbolName: instance.isInFullscreen
-                    ? "arrow.down.right.and.arrow.up.left"
-                    : "arrow.up.left.and.arrow.down.right",
-                accessibilityDescription: fsLabel
-            )
-            fullscreenItem.toolTip = instance.isInFullscreen
-                ? DisplaySegment.exitFullscreenToolTip
-                : DisplaySegment.fullscreenToolTip
-        }
+        toolbarManager.updateToolbarItems(in: toolbar)
     }
 
     // MARK: - NSToolbarDelegate
@@ -257,10 +154,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             Self.toolbarNewVM,
             .toggleSidebar,
             .sidebarTrackingSeparator,
-            Self.toolbarLifecycle,
-            Self.toolbarSaveState,
-            Self.toolbarDisplay,
-        ]
+        ] + toolbarManager.sharedItemIdentifiers
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -269,10 +163,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             .toggleSidebar,
             .sidebarTrackingSeparator,
             .flexibleSpace,
-            Self.toolbarLifecycle,
-            Self.toolbarSaveState,
-            Self.toolbarDisplay,
-        ]
+        ] + toolbarManager.sharedItemIdentifiers
     }
 
     func toolbar(
@@ -280,6 +171,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
         willBeInsertedIntoToolbar flag: Bool
     ) -> NSToolbarItem? {
+        if let sharedItem = toolbarManager.makeToolbarItem(for: itemIdentifier) {
+            return sharedItem
+        }
+
         switch itemIdentifier {
         case Self.toolbarNewVM:
             return makeToolbarItem(
@@ -289,92 +184,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
                 action: #selector(AppDelegate.newVM(_:)),
                 toolTip: "Create a new virtual machine"
             )
-
-        case Self.toolbarLifecycle:
-            let group = NSToolbarItemGroup(
-                itemIdentifier: itemIdentifier,
-                images: [
-                    NSImage(systemSymbolName: "play.fill", accessibilityDescription: "Start")!,
-                    NSImage(systemSymbolName: "pause.fill", accessibilityDescription: "Pause")!,
-                    NSImage(systemSymbolName: "stop.fill", accessibilityDescription: "Stop")!,
-                ],
-                selectionMode: .momentary,
-                labels: ["Start", "Pause", "Stop"],
-                target: self,
-                action: #selector(lifecycleAction(_:))
-            )
-            group.label = "State Controls"
-            group.subitems[LifecycleSegment.play.rawValue].toolTip = LifecycleSegment.startToolTip
-            group.subitems[LifecycleSegment.pause.rawValue].toolTip = LifecycleSegment.pauseToolTip
-            group.subitems[LifecycleSegment.stop.rawValue].toolTip = LifecycleSegment.stopToolTip
-            group.autovalidates = false
-            return group
-
-        case Self.toolbarSaveState:
-            return makeSingleItemGroup(
-                identifier: itemIdentifier,
-                label: "Save State",
-                symbol: "square.and.arrow.down",
-                action: #selector(AppDelegate.saveVM(_:)),
-                toolTip: Self.saveStateToolTip
-            )
-
-        case Self.toolbarDisplay:
-            let group = NSToolbarItemGroup(
-                itemIdentifier: itemIdentifier,
-                images: [
-                    NSImage(systemSymbolName: "pip.exit", accessibilityDescription: "Pop Out")!,
-                    NSImage(systemSymbolName: "arrow.up.left.and.arrow.down.right", accessibilityDescription: "Fullscreen")!,
-                ],
-                selectionMode: .momentary,
-                labels: ["Pop Out", "Fullscreen"],
-                target: self,
-                action: #selector(displayAction(_:))
-            )
-            group.label = "Display"
-            group.subitems[DisplaySegment.popOut.rawValue].toolTip = DisplaySegment.popOutToolTip
-            group.subitems[DisplaySegment.fullscreen.rawValue].toolTip = DisplaySegment.fullscreenToolTip
-            group.autovalidates = false
-            return group
-
         default:
             return nil
-        }
-    }
-
-    // MARK: - Lifecycle Group Action
-
-    @objc private func lifecycleAction(_ group: NSToolbarItemGroup) {
-        guard let segment = LifecycleSegment(rawValue: group.selectedIndex) else {
-            Self.logger.warning("lifecycleAction: unexpected selectedIndex \(group.selectedIndex)")
-            return
-        }
-        switch segment {
-        case .play:
-            if viewModel.selectedInstance?.status.canResume ?? false {
-                NSApp.sendAction(#selector(AppDelegate.resumeVM(_:)), to: nil, from: nil)
-            } else {
-                NSApp.sendAction(#selector(AppDelegate.startVM(_:)), to: nil, from: nil)
-            }
-        case .pause:
-            NSApp.sendAction(#selector(AppDelegate.pauseVM(_:)), to: nil, from: nil)
-        case .stop:
-            NSApp.sendAction(#selector(AppDelegate.stopVM(_:)), to: nil, from: nil)
-        }
-    }
-
-    // MARK: - Display Group Action
-
-    @objc private func displayAction(_ group: NSToolbarItemGroup) {
-        guard let segment = DisplaySegment(rawValue: group.selectedIndex) else {
-            Self.logger.warning("displayAction: unexpected selectedIndex \(group.selectedIndex)")
-            return
-        }
-        switch segment {
-        case .popOut:
-            NSApp.sendAction(#selector(AppDelegate.togglePopOut(_:)), to: nil, from: nil)
-        case .fullscreen:
-            NSApp.sendAction(#selector(AppDelegate.toggleFullscreen(_:)), to: nil, from: nil)
         }
     }
 
@@ -396,26 +207,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         return item
     }
 
-    private func makeSingleItemGroup(
-        identifier: NSToolbarItem.Identifier,
-        label: String,
-        symbol: String,
-        action: Selector,
-        toolTip: String? = nil
-    ) -> NSToolbarItemGroup {
-        let group = NSToolbarItemGroup(
-            itemIdentifier: identifier,
-            images: [NSImage(systemSymbolName: symbol, accessibilityDescription: label)!],
-            selectionMode: .momentary,
-            labels: [label],
-            target: nil,
-            action: action
-        )
-        group.label = label
-        if let toolTip { group.subitems.first?.toolTip = toolTip }
-        group.autovalidates = false
-        return group
-    }
 }
 
 // MARK: - NSToolbarItemValidation
@@ -426,14 +217,14 @@ extension MainWindowController: NSToolbarItemValidation {
             return item.itemIdentifier == Self.toolbarNewVM
         }
 
-        switch item.itemIdentifier {
-        case Self.toolbarNewVM, Self.toolbarLifecycle, Self.toolbarSaveState, Self.toolbarDisplay:
+        if item.itemIdentifier == Self.toolbarNewVM
+            || toolbarManager.sharedItemIdentifiers.contains(item.itemIdentifier) {
             // Group subitems are enabled/disabled directly in updateToolbarItems()
             return true
-        default:
-            Self.logger.debug("validateToolbarItem: unrecognized identifier '\(item.itemIdentifier.rawValue)'")
-            return true
         }
+
+        Self.logger.debug("validateToolbarItem: unrecognized identifier '\(item.itemIdentifier.rawValue)'")
+        return true
     }
 }
 
