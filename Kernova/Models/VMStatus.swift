@@ -43,6 +43,8 @@ enum VMStatus: String, Codable, Sendable {
     }
 
     var canStart: Bool { self == .stopped || self == .error }
+    /// Status-level stop eligibility. Does not account for cold-paused state;
+    /// prefer `VMInstance.canStop` for runtime checks.
     var canStop: Bool { self == .running || self == .paused }
     var canPause: Bool { self == .running }
     var canResume: Bool { self == .paused }
