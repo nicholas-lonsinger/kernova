@@ -280,7 +280,7 @@ SystemSleepWatcher ──sleep/wake──→ VMLibraryViewModel ──pause/resu
 
 ### 7. Native NSToolbar with observation-driven validation
 
-**What:** The main window uses an `NSToolbar` with `NSToolbarDelegate` creating native `NSToolbarItem`s. Toolbar state (enabled/disabled, Start/Resume label) is driven by `withObservationTracking` on the view model, triggering `validateVisibleItems()` on change. `NSToolbarItemValidation` on `MainWindowController` handles per-item enable/disable logic.
+**What:** The main window uses an `NSToolbar` with `NSToolbarDelegate` creating native `NSToolbarItem`s. Toolbar state (enabled/disabled, Start/Resume label) is driven by `withObservationTracking` on the view model, directly setting `isEnabled` on subitems on change. All toolbar item groups use `autovalidates = false` to prevent AppKit's automatic validation from overriding the observation-driven state.
 
 **Why:** Native `NSToolbarItem`s provide reliable layout, proper `.sidebarTrackingSeparator` support, and standard macOS toolbar appearance. The `withObservationTracking` pattern (already used in `VMDisplayWindowController` and `SerialConsoleWindowController`) re-evaluates on any observed property change and re-registers itself, providing reactive updates without SwiftUI.
 

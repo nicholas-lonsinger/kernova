@@ -78,6 +78,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         if enterFullscreen {
             window?.toggleFullScreen(nil)
         }
+        updateToolbarItems()
         observeInstance()
     }
 
@@ -110,7 +111,6 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
     /// and to keep toolbar items in sync with current status.
     private func observeInstance() {
         observingInstance = true
-        updateToolbarItems()
         withObservationTracking {
             _ = self.instance.status
             _ = self.instance.virtualMachine
@@ -308,15 +308,6 @@ extension VMDisplayWindowController: NSToolbarDelegate {
         default:
             return nil
         }
-    }
-}
-
-// MARK: - NSToolbarItemValidation
-
-extension VMDisplayWindowController: NSToolbarItemValidation {
-    func validateToolbarItem(_ item: NSToolbarItem) -> Bool {
-        // Group subitems are enabled/disabled directly in updateToolbarItems()
-        true
     }
 }
 

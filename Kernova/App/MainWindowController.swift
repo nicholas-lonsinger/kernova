@@ -72,6 +72,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
         window.restoreFrame(named: "KernovaMainWindow")
 
+        updateToolbarItems()
         observeToolbarState()
         observeSidebarCollapse()
         Self.logger.notice("Main window controller initialized")
@@ -124,7 +125,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     private func observeToolbarState() {
         observingToolbar = true
-        updateToolbarItems()
         withObservationTracking {
             _ = self.viewModel.selectedID
             _ = self.viewModel.selectedInstance?.status
