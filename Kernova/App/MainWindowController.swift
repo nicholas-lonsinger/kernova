@@ -200,7 +200,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     ) -> NSToolbarItem {
         let item = NSToolbarItem(itemIdentifier: identifier)
         item.label = label
-        item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
+        item.image = .systemSymbol(symbol, accessibilityDescription: label)
         item.action = action
         item.toolTip = toolTip
         item.isBordered = true
