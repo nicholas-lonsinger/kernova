@@ -831,8 +831,10 @@ final class VMLibraryViewModel {
         var errorDescription: String? {
             switch self {
             case .pauseFailed(let vmNames):
+                assert(!vmNames.isEmpty, "pauseFailed requires at least one VM name")
                 return "Failed to pause the following VMs before sleep: \(vmNames.joined(separator: ", ")). They may experience data corruption."
             case .resumeFailed(let vmNames):
+                assert(!vmNames.isEmpty, "resumeFailed requires at least one VM name")
                 return "Failed to resume the following VMs after wake: \(vmNames.joined(separator: ", ")). You may need to restart them manually."
             }
         }
