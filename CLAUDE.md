@@ -10,14 +10,16 @@ This is an Xcode project (not Swift Package Manager). Build and test via `xcodeb
 
 ```bash
 # Build
-xcodebuild -project Kernova.xcodeproj -scheme Kernova -destination 'platform=macOS' build
+xcodebuild -project Kernova.xcodeproj -scheme Kernova -destination 'platform=macOS' -derivedDataPath DerivedData build
 
 # Run tests
-xcodebuild -project Kernova.xcodeproj -scheme Kernova -destination 'platform=macOS' test
+xcodebuild -project Kernova.xcodeproj -scheme Kernova -destination 'platform=macOS' -derivedDataPath DerivedData test
 
 # Run a single test suite
-xcodebuild -project Kernova.xcodeproj -scheme Kernova -destination 'platform=macOS' test -only-testing:KernovaTests/VMConfigurationTests
+xcodebuild -project Kernova.xcodeproj -scheme Kernova -destination 'platform=macOS' -derivedDataPath DerivedData test -only-testing:KernovaTests/VMConfigurationTests
 ```
+
+The `-derivedDataPath DerivedData` flag ensures build output goes to a deterministic local `DerivedData/` directory (already gitignored) instead of the per-path-hashed `~/Library/Developer/Xcode/DerivedData/` location. This avoids glob ambiguity when worktrees or parallel builds create multiple DerivedData folders.
 
 Requires **macOS 26 (Tahoe)**, **Xcode 26**, **Swift 6**, and **Apple Silicon** (for macOS guest support). The app uses the `com.apple.security.virtualization` entitlement.
 
