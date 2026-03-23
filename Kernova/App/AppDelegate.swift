@@ -16,7 +16,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private var serialConsoleMenuItem: NSMenuItem!
     /// Set in `applicationWillBecomeActive` and read in `applicationShouldHandleReopen`
     /// to distinguish a dock click that activates the app from one on an already-active app.
-    /// Cleared asynchronously after each event cycle.
+    ///
+    /// Cleared in two places: synchronously in `applicationShouldHandleReopen` (for dock clicks)
+    /// and asynchronously via Task (for non-dock activations like Cmd-Tab where the reopen
+    /// callback never fires). The synchronous clear prevents rapid successive dock clicks from
+    /// reading a stale `true` before the async Task has run.
     private var wasJustActivated = false
 
     private static let logger = Logger(subsystem: "com.kernova.app", category: "AppDelegate")
@@ -94,7 +98,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         let justActivated = wasJustActivated
-        wasJustActivated = false
+        wasJustActivated = false  // Synchronous clear — see wasJustActivated doc comment
 
         if !flag {
             showLibrary(nil)
