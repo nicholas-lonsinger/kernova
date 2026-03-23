@@ -25,7 +25,7 @@ Requires **macOS 26 (Tahoe)**, **Xcode 26**, **Swift 6**, and **Apple Silicon** 
 
 ## Architecture
 
-> Full directory structure, component map, data flow diagrams, design decisions, and test coverage details are in [ARCHITECTURE.md](ARCHITECTURE.md). Consult it before making structural changes. The summary below is a quick reference.
+> Full directory structure, component map, data flow diagrams, design decisions, and test coverage details are in [ARCHITECTURE.md](ARCHITECTURE.md). Consult it before making structural changes. The summary below is a quick reference; if it conflicts with ARCHITECTURE.md, ARCHITECTURE.md is authoritative.
 
 Kernova is an AppKit app hosting SwiftUI views that manages virtual machines via Apple's `Virtualization.framework`, supporting macOS and Linux guests.
 
@@ -59,6 +59,7 @@ The app uses Apple's `os.Logger` (subsystem `com.kernova.app`) with per-componen
 | `.notice` | Definitive lifecycle events: VM started/stopped/paused/resumed/saved, bundle created/deleted, app launch. Events you need for post-mortem analysis. | Persisted to disk |
 | `.warning` | Unexpected but recoverable situations: missing files, fallback paths taken, degraded operation. | Persisted to disk |
 | `.error` | Failures: operations that did not complete, exceptions caught, error states entered. | Persisted to disk |
+| `.fault` | Programming errors: impossible states, compile-time-known inputs that failed lookup. Paired with `assertionFailure`. | Persisted to disk; always visible; never redacted |
 
 **Guidelines:**
 - Every new service or view model should declare its own `private static let logger = Logger(subsystem: "com.kernova.app", category: "ComponentName")`
@@ -86,9 +87,20 @@ guard let value = knownGoodAPI("compile-time-constant") else {
 
 - When deleting files, prefer `trash` over `rm` whenever possible (moves to Trash instead of permanent deletion).
 
-### Review Debt Tracking
+### Review Feedback Handling
 
-When reviewing code — via review tools (`/simplify`, `/review-pr`, etc.), post-implementation review agents, external PR review feedback (bot or human), or while working on adjacent code — valid findings that are **out of scope** for the current task must be captured as GitHub issues rather than silently dropped.
+When reviewing code — via review tools (`/simplify`, `/review-pr`, etc.), post-implementation review agents, external PR review feedback (bot or human), or while working on adjacent code — every finding must be triaged into one of four categories:
+
+| Category | Action | When to use |
+|----------|--------|-------------|
+| **Fix now** | Apply the fix as part of the current work | Valid finding, in scope, reasonable effort |
+| **Fix later** | File a GitHub issue (see [Review Debt Tracking](#review-debt-tracking) below) | Valid finding, but out of scope or too large for the current task |
+| **Annotate** | Add a `RATIONALE:` comment (see [Intentional Pattern Annotations](#intentional-pattern-annotations) below) | Code looks wrong or unconventional but is correct for a project-specific reason |
+| **Dismiss** | No action needed | Pure style nits, cosmetic preferences, trivial improvements with negligible impact |
+
+#### Review Debt Tracking
+
+Valid findings that are **out of scope** for the current task must be captured as GitHub issues rather than silently dropped.
 
 **What to capture** (important + moderate severity):
 - Bugs, correctness problems, or logic errors
@@ -96,11 +108,6 @@ When reviewing code — via review tools (`/simplify`, `/review-pr`, etc.), post
 - Performance issues
 - Meaningful refactoring opportunities or non-trivial code smells
 - Missing test coverage for critical paths
-
-**What to skip:**
-- Pure style or cosmetic nits (naming preferences, formatting)
-- Suggestions already covered by existing issues
-- Trivial improvements with negligible impact
 
 **Issue format:**
 
@@ -141,6 +148,29 @@ EOF
 - When multiple related findings exist, group them into a single issue if they share a root cause
 - After creating issues, mention them in the conversation so the user is aware
 
+#### Intentional Pattern Annotations
+
+When a review flags code that *looks* wrong or unconventional but is **intentionally correct** for a project-specific reason, add an inline comment with the `RATIONALE:` prefix explaining why. This prevents the same pattern from being re-flagged in future reviews.
+
+**When to annotate:**
+- The code contradicts a general best practice but is correct here due to framework constraints, performance requirements, or architectural decisions
+- A reviewer (human or automated) would reasonably flag this without project-specific context
+- The reason is not already documented in CLAUDE.md, ARCHITECTURE.md, or an adjacent comment
+
+**Format:**
+
+```swift
+// RATIONALE: VZVirtualMachine delegates are not actor-isolated by the framework,
+// so we use nonisolated(unsafe) and bridge back via MainActor.assumeIsolated.
+nonisolated(unsafe) func guestDidStop(_ virtualMachine: VZVirtualMachine) {
+```
+
+**Guidelines:**
+- Keep annotations concise — explain *why* the pattern is correct, not *what* the code does
+- If the same rationale applies project-wide (not just at one call site), consider adding it to CLAUDE.md or ARCHITECTURE.md instead of repeating the comment on every instance
+- `RATIONALE:` comments are greppable — use `grep -r "RATIONALE:"` to audit all intentional deviations
+- Do not use `RATIONALE:` for general explanatory comments — reserve it strictly for patterns that would otherwise be flagged as issues
+
 ## Git Workflow
 
 These conventions apply to **all** forms of committing: local commits, PR squash/merge commits, and any other git operations that produce commits.
@@ -153,10 +183,10 @@ Use the following format for all commits:
 <type>: <concise subject line>
 
 ## Summary
-- <bullet points summarizing what changed and why>
+- <user-facing intent: what capability was added/fixed/changed and why>
 
 ## Changes
-- <bullet points describing each discrete change>
+- <implementation details: specific files, types, or components modified>
 
 ## Test plan
 - [ ] <verification step as a checkbox>
@@ -204,7 +234,7 @@ The `Co-Authored-By` trailer is automatically appended by Claude Code and should
 
 ### Merging Pull Requests
 
-When merging PRs with `gh pr merge`, always use `--subject` with the PR title and append the PR number in parentheses (e.g., `"fix: Title (#11)"`), matching the repo's existing convention. Always use `--delete-branch` to clean up the remote branch.
+When merging PRs with `gh pr merge`, always squash-merge with `--squash --subject` using the PR title and appending the PR number in parentheses (e.g., `--squash --subject "fix: Title (#11)"`), matching the repo's existing convention. Always use `--delete-branch` to clean up the remote branch.
 
 ### Post-Commit
 
