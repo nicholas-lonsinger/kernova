@@ -67,7 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
         // Stay alive if VMs are active or display windows still exist
         if hasActiveVMs || !displayWindows.isEmpty {
-            Self.logger.debug("applicationShouldTerminateAfterLastWindowClosed: false (activeVMs=\(hasActiveVMs), displayWindows=\(self.displayWindows.count))")
+            Self.logger.debug("applicationShouldTerminateAfterLastWindowClosed: false (activeVMs=\(hasActiveVMs, privacy: .public), displayWindows=\(self.displayWindows.count, privacy: .public))")
             return false
         }
 
@@ -95,13 +95,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         viewModel.instances.removeAll { instance in
             guard instance.isPreparing else { return false }
 
-            Self.logger.notice("Terminating: cancelling preparing operation for '\(instance.name)'")
+            Self.logger.notice("Terminating: cancelling preparing operation for '\(instance.name, privacy: .public)'")
             instance.preparingState?.task.cancel()
             // Best effort — in-flight copy may still be writing (FileManager.copyItem is not interruptible)
             do {
                 try FileManager.default.trashItem(at: instance.bundleURL, resultingItemURL: nil)
             } catch {
-                Self.logger.warning("Failed to clean up partial bundle for '\(instance.name)' during termination: \(error.localizedDescription)")
+                Self.logger.warning("Failed to clean up partial bundle for '\(instance.name, privacy: .public)' during termination: \(error.localizedDescription, privacy: .public)")
             }
             return true
         }
@@ -121,11 +121,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                     try await viewModel.trySave(instance)
                     viewModel.saveConfiguration(for: instance)
                 } catch {
-                    Self.logger.error("Failed to save '\(instance.name)' during termination: \(error.localizedDescription)")
+                    Self.logger.error("Failed to save '\(instance.name, privacy: .public)' during termination: \(error.localizedDescription, privacy: .public)")
                     do {
                         try await viewModel.tryForceStop(instance)
                     } catch {
-                        Self.logger.error("Failed to force-stop '\(instance.name)' during termination: \(error.localizedDescription)")
+                        Self.logger.error("Failed to force-stop '\(instance.name, privacy: .public)' during termination: \(error.localizedDescription, privacy: .public)")
                     }
                 }
             }
@@ -347,7 +347,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                     if !controller.closedProgrammatically {
                         // User manually closed the display window
                         instance.configuration.displayPreference = .inline
-                        Self.logger.debug("Cleared displayPreference for '\(instance.name)' (user closed display window)")
+                        Self.logger.debug("Cleared displayPreference for '\(instance.name, privacy: .public)' (user closed display window)")
                     }
 
                     self.viewModel.saveConfiguration(for: instance)
@@ -396,10 +396,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private func targetScreen(for instance: VMInstance) -> NSScreen? {
         if let savedID = instance.configuration.lastFullscreenDisplayID {
             if let target = NSScreen.screens.first(where: { $0.displayID == savedID }) {
-                Self.logger.debug("targetScreen for '\(instance.name)': using saved display \(savedID)")
+                Self.logger.debug("targetScreen for '\(instance.name, privacy: .public)': using saved display \(savedID, privacy: .public)")
                 return target
             }
-            Self.logger.debug("targetScreen for '\(instance.name)': saved display \(savedID) not found, falling back")
+            Self.logger.debug("targetScreen for '\(instance.name, privacy: .public)': saved display \(savedID, privacy: .public) not found, falling back")
         }
         if let libraryScreen = mainWindowController?.window?.screen {
             return libraryScreen

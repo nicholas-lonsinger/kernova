@@ -26,7 +26,7 @@ struct ConfigurationBuilder: Sendable {
     func build(from config: VMConfiguration, bundleURL: URL) throws -> BuildResult {
         let vzConfig = VZVirtualMachineConfiguration()
 
-        Self.logger.debug("Building config: cpuCount=\(config.cpuCount), memoryMB=\(config.memorySizeInBytes / (1024 * 1024)), bootMode=\(config.bootMode.displayName)")
+        Self.logger.debug("Building config: cpuCount=\(config.cpuCount, privacy: .public), memoryMB=\(config.memorySizeInBytes / (1024 * 1024), privacy: .public), bootMode=\(config.bootMode.displayName, privacy: .public)")
 
         // Resources
         vzConfig.cpuCount = config.cpuCount
@@ -61,7 +61,7 @@ struct ConfigurationBuilder: Sendable {
         // Validate
         try vzConfig.validate()
 
-        Self.logger.info("Built VZ configuration for '\(config.name)' (\(config.bootMode.displayName))")
+        Self.logger.info("Built VZ configuration for '\(config.name, privacy: .public)' (\(config.bootMode.displayName, privacy: .public))")
         return BuildResult(configuration: vzConfig, serialInputPipe: inputPipe, serialOutputPipe: outputPipe)
     }
 
@@ -176,7 +176,7 @@ struct ConfigurationBuilder: Sendable {
         vzConfig.platform = platform
 
         guard let kernelPath = config.kernelPath else {
-            Self.logger.error("Kernel path is required but not set for VM '\(config.name)'")
+            Self.logger.error("Kernel path is required but not set for VM '\(config.name, privacy: .public)'")
             throw ConfigurationBuilderError.missingKernelPath
         }
 
@@ -185,16 +185,16 @@ struct ConfigurationBuilder: Sendable {
         let resolvedKernelPath = kernelURL.path(percentEncoded: false)
 
         if resolvedKernelPath != kernelPath {
-            Self.logger.info("Kernel path '\(kernelPath)' resolved to '\(resolvedKernelPath)'")
+            Self.logger.info("Kernel path '\(kernelPath, privacy: .public)' resolved to '\(resolvedKernelPath, privacy: .public)'")
         }
 
         var isDirectory: ObjCBool = false
         guard fileManager.fileExists(atPath: resolvedKernelPath, isDirectory: &isDirectory) else {
-            Self.logger.error("Kernel image not found at '\(kernelPath)' (resolved: '\(resolvedKernelPath)')")
+            Self.logger.error("Kernel image not found at '\(kernelPath, privacy: .public)' (resolved: '\(resolvedKernelPath, privacy: .public)')")
             throw ConfigurationBuilderError.kernelNotFound(kernelPath)
         }
         guard !isDirectory.boolValue else {
-            Self.logger.error("Kernel path is a directory, not a file: '\(kernelPath)' (resolved: '\(resolvedKernelPath)')")
+            Self.logger.error("Kernel path is a directory, not a file: '\(kernelPath, privacy: .public)' (resolved: '\(resolvedKernelPath, privacy: .public)')")
             throw ConfigurationBuilderError.kernelPathIsDirectory(kernelPath)
         }
 
@@ -204,16 +204,16 @@ struct ConfigurationBuilder: Sendable {
             let resolvedInitrdPath = initrdURL.path(percentEncoded: false)
 
             if resolvedInitrdPath != initrdPath {
-                Self.logger.info("Initrd path '\(initrdPath)' resolved to '\(resolvedInitrdPath)'")
+                Self.logger.info("Initrd path '\(initrdPath, privacy: .public)' resolved to '\(resolvedInitrdPath, privacy: .public)'")
             }
 
             var isInitrdDirectory: ObjCBool = false
             guard fileManager.fileExists(atPath: resolvedInitrdPath, isDirectory: &isInitrdDirectory) else {
-                Self.logger.error("Initial ramdisk not found at '\(initrdPath)' (resolved: '\(resolvedInitrdPath)')")
+                Self.logger.error("Initial ramdisk not found at '\(initrdPath, privacy: .public)' (resolved: '\(resolvedInitrdPath, privacy: .public)')")
                 throw ConfigurationBuilderError.initrdNotFound(initrdPath)
             }
             guard !isInitrdDirectory.boolValue else {
-                Self.logger.error("Initrd path is a directory, not a file: '\(initrdPath)' (resolved: '\(resolvedInitrdPath)')")
+                Self.logger.error("Initrd path is a directory, not a file: '\(initrdPath, privacy: .public)' (resolved: '\(resolvedInitrdPath, privacy: .public)')")
                 throw ConfigurationBuilderError.initrdPathIsDirectory(initrdPath)
             }
             bootLoader.initialRamdiskURL = initrdURL
@@ -244,7 +244,7 @@ struct ConfigurationBuilder: Sendable {
     ) throws {
         let layout = VMBundleLayout(bundleURL: bundleURL)
         guard FileManager.default.fileExists(atPath: layout.diskImageURL.path(percentEncoded: false)) else {
-            Self.logger.error("Disk image not found at '\(layout.diskImageURL.path(percentEncoded: false))'")
+            Self.logger.error("Disk image not found at '\(layout.diskImageURL.path(percentEncoded: false), privacy: .public)'")
             throw ConfigurationBuilderError.diskImageNotFound(layout.diskImageURL)
         }
 
@@ -258,16 +258,16 @@ struct ConfigurationBuilder: Sendable {
             let resolvedISOPath = isoURL.path(percentEncoded: false)
 
             if resolvedISOPath != isoPath {
-                Self.logger.info("ISO path '\(isoPath)' resolved to '\(resolvedISOPath)'")
+                Self.logger.info("ISO path '\(isoPath, privacy: .public)' resolved to '\(resolvedISOPath, privacy: .public)'")
             }
 
             var isISODirectory: ObjCBool = false
             guard FileManager.default.fileExists(atPath: resolvedISOPath, isDirectory: &isISODirectory) else {
-                Self.logger.error("ISO image not found at '\(isoPath)' (resolved: '\(resolvedISOPath)')")
+                Self.logger.error("ISO image not found at '\(isoPath, privacy: .public)' (resolved: '\(resolvedISOPath, privacy: .public)')")
                 throw ConfigurationBuilderError.isoImageNotFound(isoPath)
             }
             guard !isISODirectory.boolValue else {
-                Self.logger.error("ISO path is a directory, not a file: '\(isoPath)' (resolved: '\(resolvedISOPath)')")
+                Self.logger.error("ISO path is a directory, not a file: '\(isoPath, privacy: .public)' (resolved: '\(resolvedISOPath, privacy: .public)')")
                 throw ConfigurationBuilderError.isoImagePathIsDirectory(isoPath)
             }
 
@@ -275,7 +275,7 @@ struct ConfigurationBuilder: Sendable {
             do {
                 isoAttachment = try VZDiskImageStorageDeviceAttachment(url: isoURL, readOnly: true)
             } catch {
-                Self.logger.error("Failed to attach ISO at '\(isoPath)' (resolved: '\(resolvedISOPath)'): \(error.localizedDescription)")
+                Self.logger.error("Failed to attach ISO at '\(isoPath, privacy: .public)' (resolved: '\(resolvedISOPath, privacy: .public)'): \(error.localizedDescription, privacy: .public)")
                 throw error
             }
             let usbStorage = VZUSBMassStorageDeviceConfiguration(attachment: isoAttachment)
@@ -362,25 +362,25 @@ struct ConfigurationBuilder: Sendable {
             let resolvedPath = resolvedURL.path(percentEncoded: false)
 
             if resolvedPath != directory.path {
-                Self.logger.info("Shared directory '\(directory.path)' resolved to '\(resolvedPath)'")
+                Self.logger.info("Shared directory '\(directory.path, privacy: .public)' resolved to '\(resolvedPath, privacy: .public)'")
             }
 
             var isDirectory: ObjCBool = false
             guard fileManager.fileExists(atPath: resolvedPath, isDirectory: &isDirectory) else {
-                Self.logger.error("Shared directory not found at '\(directory.path)' (resolved: '\(resolvedPath)')")
+                Self.logger.error("Shared directory not found at '\(directory.path, privacy: .public)' (resolved: '\(resolvedPath, privacy: .public)')")
                 throw ConfigurationBuilderError.sharedDirectoryNotFound(directory.path)
             }
             guard isDirectory.boolValue else {
-                Self.logger.error("Shared path is not a directory: '\(directory.path)' (resolved: '\(resolvedPath)')")
+                Self.logger.error("Shared path is not a directory: '\(directory.path, privacy: .public)' (resolved: '\(resolvedPath, privacy: .public)')")
                 throw ConfigurationBuilderError.sharedDirectoryNotADirectory(directory.path)
             }
             guard fileManager.isReadableFile(atPath: resolvedPath) else {
-                Self.logger.error("Shared directory is not readable: '\(directory.path)' (resolved: '\(resolvedPath)')")
+                Self.logger.error("Shared directory is not readable: '\(directory.path, privacy: .public)' (resolved: '\(resolvedPath, privacy: .public)')")
                 throw ConfigurationBuilderError.sharedDirectoryNotReadable(directory.path)
             }
             if !directory.readOnly {
                 guard fileManager.isWritableFile(atPath: resolvedPath) else {
-                    Self.logger.error("Shared directory is not writable: '\(directory.path)' (resolved: '\(resolvedPath)')")
+                    Self.logger.error("Shared directory is not writable: '\(directory.path, privacy: .public)' (resolved: '\(resolvedPath, privacy: .public)')")
                     throw ConfigurationBuilderError.sharedDirectoryNotWritable(directory.path)
                 }
             }

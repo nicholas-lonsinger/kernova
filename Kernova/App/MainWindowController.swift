@@ -223,7 +223,7 @@ extension MainWindowController: NSToolbarItemValidation {
             return true
         }
 
-        Self.logger.debug("validateToolbarItem: unrecognized identifier '\(item.itemIdentifier.rawValue)'")
+        Self.logger.debug("validateToolbarItem: unrecognized identifier '\(item.itemIdentifier.rawValue, privacy: .public)'")
         return true
     }
 }
@@ -242,7 +242,7 @@ extension NSWindow {
         }
         let screens = NSScreen.screens
         if !screens.isEmpty, !screens.contains(where: { $0.visibleFrame.intersects(frame) }) {
-            Self.frameLogger.warning("Restored frame for '\(name)' is off-screen, centering window")
+            Self.frameLogger.warning("Restored frame for '\(name, privacy: .public)' is off-screen, centering window")
             center()
         }
         setFrameAutosaveName(name)

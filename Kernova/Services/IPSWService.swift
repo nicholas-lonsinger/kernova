@@ -23,7 +23,7 @@ struct IPSWService: Sendable {
         to destinationURL: URL,
         progressHandler: @MainActor @Sendable @escaping (Double, Int64, Int64) -> Void
     ) async throws {
-        Self.logger.info("Downloading restore image from \(remoteURL)")
+        Self.logger.info("Downloading restore image from \(remoteURL, privacy: .public)")
 
         // Create the destination file up-front so it's visible in Finder immediately.
         FileManager.default.createFile(atPath: destinationURL.path(percentEncoded: false), contents: nil)
@@ -31,7 +31,7 @@ struct IPSWService: Sendable {
         var cleanUpPartial = true
         defer {
             if cleanUpPartial {
-                Self.logger.info("Removing partial download at \(destinationURL.lastPathComponent)")
+                Self.logger.info("Removing partial download at \(destinationURL.lastPathComponent, privacy: .public)")
                 try? FileManager.default.removeItem(at: destinationURL)
             }
         }
@@ -81,7 +81,7 @@ struct IPSWService: Sendable {
         }
 
         cleanUpPartial = false
-        Self.logger.info("Restore image downloaded to \(destinationURL.lastPathComponent)")
+        Self.logger.info("Restore image downloaded to \(destinationURL.lastPathComponent, privacy: .public)")
     }
 
     /// Loads a restore image from a local IPSW file.
