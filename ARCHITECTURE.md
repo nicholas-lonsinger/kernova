@@ -13,7 +13,8 @@ Kernova/
 │   ├── MainWindowController.swift      # NSSplitViewController + NSToolbar with native items
 │   ├── VMDisplayWindowController.swift  # Per-VM display window (pop-out or fullscreen), auto-closes on VM stop
 │   ├── VMToolbarManager.swift          # Shared toolbar logic for lifecycle, save-state, and display groups
-│   └── SerialConsoleWindowController.swift # Per-VM serial console window, auto-closes on VM stop
+│   ├── SerialConsoleWindowController.swift # Per-VM serial console window, auto-closes on VM stop
+│   └── Info.plist                        # App configuration and metadata
 ├── Models/                             # Data types — all value types or @MainActor-isolated
 │   ├── VMConfiguration.swift           # Codable/Sendable struct persisted as config.json per VM bundle
 │   ├── VMInstance.swift                # @Observable runtime wrapper: VMConfiguration + VZVirtualMachine + VMStatus
@@ -27,7 +28,7 @@ Kernova/
 │   ├── ConfigurationBuilder.swift      # VMConfiguration → VZVirtualMachineConfiguration (3 boot paths)
 │   ├── VirtualizationService.swift     # VM lifecycle: start/stop/pause/resume/save/restore (@MainActor)
 │   ├── VMStorageService.swift          # CRUD for VM bundles + cloning + migration (Sendable struct)
-│   ├── DiskImageService.swift          # Creates ASIF disk images via hdiutil (Sendable struct)
+│   ├── DiskImageService.swift          # Creates ASIF disk images from bundled templates (Sendable struct)
 │   ├── MacOSInstallService.swift       # Drives macOS guest install via VZMacOSInstaller (@MainActor)
 │   ├── IPSWService.swift               # Fetches/downloads macOS restore images (Sendable struct)
 │   ├── SystemSleepWatcher.swift        # Observes system sleep/wake, triggers VM pause/resume
@@ -75,6 +76,9 @@ Kernova/
     ├── Assets.xcassets/                # App icons and image assets
     └── Kernova.entitlements            # com.apple.security.virtualization entitlement
 
+DiskTemplates/                             # Bundled ASIF disk image templates (22 lzfse-compressed files)
+                                           # Decompressed at VM creation time by DiskImageService
+
 KernovaTests/
 ├── Mocks/                              # Mock service implementations (6 files)
 │   ├── MockVirtualizationService.swift
@@ -99,10 +103,11 @@ KernovaTests/
 ├── VMBootModeTests.swift               # Boot mode enum tests
 ├── VMGuestOSTests.swift                # Guest OS enum tests
 ├── MacOSInstallStateTests.swift        # Install state tracking tests
-└── DataFormattersTests.swift           # Formatting utility tests
+├── DataFormattersTests.swift           # Formatting utility tests
+└── NSImageExtensionsTests.swift        # SF Symbol loading utility tests
 ```
 
-**Total: 51 source files, 23 test files (17 suites + 6 mocks).**
+**Total: 52 source files, 24 test files (18 suites + 6 mocks).**
 
 *Note: `ContentView.swift` was removed when `NavigationSplitView` was replaced by `NSSplitViewController` in `MainWindowController`. Its responsibilities were split between `MainWindowController` (toolbar, split view) and `MainDetailView` (detail switching, sheets, alerts).*
 
@@ -149,7 +154,7 @@ Services are split by concurrency requirements:
 
 - **`Sendable` struct services** (no mutable state, safe to call from anywhere):
   - `VMStorageService` — creates/deletes/lists VM bundle directories at `~/Library/Application Support/Kernova/VMs/`, handles cloning (deep copy with new UUID), and bundle migration for schema changes
-  - `DiskImageService` — creates ASIF disk images by shelling out to `hdiutil`
+  - `DiskImageService` — creates ASIF disk images by decompressing bundled lzfse-compressed templates (sandbox-safe, no subprocess)
   - `IPSWService` — fetches available macOS restore images from Apple's catalog and downloads IPSW files
 
 - **`SystemSleepWatcher`** — `@MainActor` observer class that monitors `NSWorkspace.willSleepNotification` and `NSWorkspace.didWakeNotification`. Follows the same pattern as `VMDirectoryWatcher`: callback-driven, `nonisolated(unsafe)` for observer tokens, `start()`/`deinit` lifecycle. Owned by `VMLibraryViewModel`, which uses it to auto-pause running VMs before sleep and resume them on wake.
@@ -248,13 +253,13 @@ SystemSleepWatcher ──sleep/wake──→ VMLibraryViewModel ──pause/resu
 
 **Alternatives:** SQLite database, single directory with UUID-named files, or Core Data. The bundle approach is simpler and more transparent.
 
-### 3. ASIF disk images via hdiutil
+### 3. ASIF disk images via bundled templates
 
-**What:** Disk images use Apple Sparse Image Format, created by shelling out to `hdiutil`.
+**What:** Disk images use Apple Sparse Image Format (ASIF), a macOS 26 format. Pre-built templates are stored lzfse-compressed in `DiskTemplates/` (~3 KB each) and decompressed at VM creation time.
 
-**Why:** ASIF provides near-native SSD performance with space efficiency — a 100 GB disk image starts at under 1 GB on disk and grows as the guest writes data. No third-party disk image library needed.
+**Why:** ASIF provides near-native SSD performance with space efficiency — a 100 GB disk image starts at ~4 MB on disk and grows as the guest writes data. The template approach is fully sandbox-safe (no subprocess spawning), unlike the previous `hdiutil`-based approach.
 
-**Alternatives:** Raw disk images (simple but waste space), QCOW2 (not natively supported by Virtualization.framework), or `truncate` for sparse files (less reliable across file systems).
+**Alternatives:** Raw disk images (simple but waste space), QCOW2 (not natively supported by Virtualization.framework), or runtime `hdiutil` invocation (not sandbox-safe, requires process spawning).
 
 ### 4. `@MainActor` isolation strategy
 
@@ -324,12 +329,13 @@ No external package dependencies. No Swift Package Manager, CocoaPods, or Cartha
 | `MacOSInstallState` | Yes | Phase tracking, progress calculation |
 | `VMToolbarManager` | 22 tests | Item creation, state updates, configuration flags, label toggling |
 | `DataFormatters` | Yes | Byte formatting, CPU count formatting |
+| `NSImageExtensions` | Yes | SF Symbol loading with known symbol validation |
 
 ### Mocked but Not Directly Tested
 
 These services interact with system processes, the network, or VZ installer internals. They are fully mocked in other tests but don't have their own test suites against real implementations:
 
-- `DiskImageService` — shells out to `hdiutil`
+- `DiskImageService` — decompresses bundled templates (no subprocess; direct testing feasible but requires bundled resources in test target)
 - `IPSWService` — makes network requests to Apple
 - `MacOSInstallService` — requires a real `VZVirtualMachine` and restore image
 
@@ -340,7 +346,6 @@ These services interact with system processes, the network, or VZ installer inte
 - `IPSWDownloadViewModel` — wraps async download state
 - `KernovaUTType` — static UTType declaration
 - `FileManagerExtensions` — FileManager convenience methods
-- `Logger` — thin os.Logger wrapper
 - All window controllers (`MainWindowController`, `VMDisplayWindowController`, `SerialConsoleWindowController`)
 - `AppDelegate` — app lifecycle and window management
 - All SwiftUI views
