@@ -118,7 +118,7 @@ final class VMInstance: Identifiable {
         let layout = bundleLayout
         let usage = await Task.detached { layout.diskUsageBytes }.value
         cachedDiskUsageBytes = usage
-        Self.logger.debug("Refreshed disk usage for '\(self.name)': \(usage.map { "\($0) bytes" } ?? "nil")")
+        Self.logger.debug("Refreshed disk usage for '\(self.name, privacy: .public)': \(usage.map { "\($0) bytes" } ?? "nil", privacy: .public)")
     }
 
     // MARK: - Initializer
@@ -224,7 +224,7 @@ final class VMInstance: Identifiable {
             && error.code == NSFileNoSuchFileError {
             // File already absent — expected in some flows
         } catch {
-            Self.logger.warning("Failed to remove save file for '\(self.name)': \(error.localizedDescription)")
+            Self.logger.warning("Failed to remove save file for '\(self.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -246,11 +246,11 @@ final class VMInstance: Identifiable {
         do {
             let handle = try FileHandle(forWritingTo: logURL)
             do { _ = try handle.seekToEnd() } catch {
-                Self.logger.warning("Could not seek to end of serial log: \(error.localizedDescription)")
+                Self.logger.warning("Could not seek to end of serial log: \(error.localizedDescription, privacy: .public)")
             }
             serialLogFileHandle = handle
         } catch {
-            Self.logger.warning("Could not open serial log for writing: \(error.localizedDescription)")
+            Self.logger.warning("Could not open serial log for writing: \(error.localizedDescription, privacy: .public)")
         }
 
         // Capture for the readability handler closure (runs on a background GCD queue)
@@ -265,7 +265,7 @@ final class VMInstance: Identifiable {
             do {
                 try logFileHandle?.write(contentsOf: data)
             } catch {
-                logger.error("Failed to write to serial log: \(error.localizedDescription)")
+                logger.error("Failed to write to serial log: \(error.localizedDescription, privacy: .public)")
             }
 
             // Update UI buffer on the main actor
@@ -287,7 +287,7 @@ final class VMInstance: Identifiable {
             }
         }
 
-        Self.logger.info("Serial reading started for '\(self.name)'")
+        Self.logger.info("Serial reading started for '\(self.name, privacy: .public)'")
     }
 
     /// Sends a string to the guest via the serial input pipe.
@@ -297,7 +297,7 @@ final class VMInstance: Identifiable {
         do {
             try inputPipe.fileHandleForWriting.write(contentsOf: data)
         } catch {
-            Self.logger.error("Failed to send serial input to VM '\(self.name)': \(error.localizedDescription)")
+            Self.logger.error("Failed to send serial input to VM '\(self.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -307,7 +307,7 @@ final class VMInstance: Identifiable {
         do {
             try serialLogFileHandle?.close()
         } catch {
-            Self.logger.warning("Failed to close serial log file for VM '\(self.name)': \(error.localizedDescription)")
+            Self.logger.warning("Failed to close serial log file for VM '\(self.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
         }
         serialLogFileHandle = nil
     }
@@ -333,7 +333,7 @@ private final class VMDelegateAdapter: NSObject, VZVirtualMachineDelegate {
                 return
             }
             instance.resetToStopped()
-            Self.logger.notice("Guest stopped for VM '\(instance.name)'")
+            Self.logger.notice("Guest stopped for VM '\(instance.name, privacy: .public)'")
         }
     }
 
@@ -346,7 +346,7 @@ private final class VMDelegateAdapter: NSObject, VZVirtualMachineDelegate {
             instance.tearDownSession()
             instance.status = .error
             instance.errorMessage = error.localizedDescription
-            Self.logger.error("VM '\(instance.name)' stopped with error: \(error.localizedDescription)")
+            Self.logger.error("VM '\(instance.name, privacy: .public)' stopped with error: \(error.localizedDescription, privacy: .public)")
         }
     }
 }

@@ -77,7 +77,7 @@ final class VMLifecycleCoordinator {
         body: () async throws -> T
     ) async throws -> T {
         guard activeOperations[instance.id] == nil else {
-            Self.logger.warning("Rejected \(action) for '\(instance.name)': operation already in progress")
+            Self.logger.warning("Rejected \(action, privacy: .public) for '\(instance.name, privacy: .public)': operation already in progress")
             throw LifecycleError.operationInProgress(vmName: instance.name)
         }
 
@@ -89,7 +89,7 @@ final class VMLifecycleCoordinator {
             }
         }
 
-        Self.logger.debug("Acquired operation lock for '\(instance.name)' (action: \(action))")
+        Self.logger.debug("Acquired operation lock for '\(instance.name, privacy: .public)' (action: \(action, privacy: .public))")
         return try await body()
     }
 
@@ -146,7 +146,7 @@ final class VMLifecycleCoordinator {
         storageService: any VMStorageProviding
     ) async throws {
         try await serialized(instance, action: "installMacOS") {
-            Self.logger.debug("installMacOS: entering for '\(instance.name)', source=\(String(describing: wizard.ipswSource))")
+            Self.logger.debug("installMacOS: entering for '\(instance.name, privacy: .public)', source=\(String(describing: wizard.ipswSource), privacy: .public)")
             do {
                 let ipswURL: URL
 
@@ -204,9 +204,9 @@ final class VMLifecycleCoordinator {
                     instance.installState?.currentPhase = .installing(progress: progress)
                 }
             } catch is CancellationError {
-                Self.logger.info("macOS installation cancelled for '\(instance.name)'")
+                Self.logger.info("macOS installation cancelled for '\(instance.name, privacy: .public)'")
             } catch let error as NSError where error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled {
-                Self.logger.info("IPSW download cancelled for '\(instance.name)'")
+                Self.logger.info("IPSW download cancelled for '\(instance.name, privacy: .public)'")
             } catch {
                 instance.status = .error
                 instance.errorMessage = error.localizedDescription

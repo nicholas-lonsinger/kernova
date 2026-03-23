@@ -51,14 +51,14 @@ final class SerialConsoleWindowController: NSWindowController, NSWindowDelegate 
     override func showWindow(_ sender: Any?) {
         super.showWindow(sender)
         if !observingStatus { observeStatus() }
-        Self.logger.debug("Serial console window shown for VM '\(self.instance.name)'")
+        Self.logger.debug("Serial console window shown for VM '\(self.instance.name, privacy: .public)'")
     }
 
     // MARK: - NSWindowDelegate
 
     func windowWillClose(_ notification: Notification) {
         observingStatus = false
-        Self.logger.debug("Serial console window closing for VM '\(self.instance.name)'")
+        Self.logger.debug("Serial console window closing for VM '\(self.instance.name, privacy: .public)'")
     }
 
     // MARK: - Status Observation
@@ -73,7 +73,7 @@ final class SerialConsoleWindowController: NSWindowController, NSWindowDelegate 
                 guard let self, self.observingStatus else { return }
                 let status = self.instance.status
                 if status == .stopped || status == .error {
-                    Self.logger.notice("Auto-closing serial console for VM '\(self.instance.name)' (status: \(status.displayName))")
+                    Self.logger.notice("Auto-closing serial console for VM '\(self.instance.name, privacy: .public)' (status: \(status.displayName, privacy: .public))")
                     self.window?.close()
                 } else {
                     self.observeStatus()

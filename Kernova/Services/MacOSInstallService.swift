@@ -34,7 +34,7 @@ final class MacOSInstallService {
     ) async throws {
         instance.status = .installing
 
-        Self.logger.info("Starting macOS installation for '\(instance.name)'")
+        Self.logger.info("Starting macOS installation for '\(instance.name, privacy: .public)'")
 
         // 1. Load restore image
         let restoreImage = try await loadRestoreImage(from: restoreImageURL)
@@ -105,7 +105,7 @@ final class MacOSInstallService {
         instance.resetToStopped()
         instance.installState?.currentPhase = .installing(progress: 1.0)
 
-        Self.logger.info("macOS installation completed for '\(instance.name)'")
+        Self.logger.info("macOS installation completed for '\(instance.name, privacy: .public)'")
     }
 
     // MARK: - Platform Setup
@@ -129,7 +129,7 @@ final class MacOSInstallService {
             options: []
         )
 
-        Self.logger.info("Created platform files for '\(instance.name)'")
+        Self.logger.info("Created platform files for '\(instance.name, privacy: .public)'")
     }
 
     // MARK: - Helpers

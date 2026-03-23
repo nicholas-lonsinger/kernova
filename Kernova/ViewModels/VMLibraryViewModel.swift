@@ -102,11 +102,11 @@ final class VMLibraryViewModel {
                     let instance = VMInstance(configuration: config, bundleURL: migratedURL, status: initialStatus)
                     if needsMigration {
                         try storageService.saveConfiguration(config, to: migratedURL)
-                        Self.logger.info("Migrated VM '\(config.name)': persisted stable identifiers")
+                        Self.logger.info("Migrated VM '\(config.name, privacy: .public)': persisted stable identifiers")
                     }
                     return instance
                 } catch {
-                    Self.logger.error("Failed to load VM from \(bundleURL.lastPathComponent): \(error.localizedDescription)")
+                    Self.logger.error("Failed to load VM from \(bundleURL.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
                     failedBundles.append(bundleURL.deletingPathExtension().lastPathComponent)
                     return nil
                 }
@@ -119,7 +119,7 @@ final class VMLibraryViewModel {
             // the actual instance list (prunes stale UUIDs, incorporates new VMs).
             if let savedStrings = UserDefaults.standard.stringArray(forKey: Self.vmOrderKey) {
                 customOrder = savedStrings.compactMap { UUID(uuidString: $0) }
-                Self.logger.debug("Loaded custom VM order: \(self.customOrder.count) UUID(s)")
+                Self.logger.debug("Loaded custom VM order: \(self.customOrder.count, privacy: .public) UUID(s)")
             } else {
                 Self.logger.debug("No custom VM order found — using default createdAt sort")
             }
@@ -136,9 +136,9 @@ final class VMLibraryViewModel {
                     selectedID = instances.first?.id
                 }
             }
-            Self.logger.notice("Loaded \(self.instances.count) VMs")
+            Self.logger.notice("Loaded \(self.instances.count, privacy: .public) VMs")
         } catch {
-            Self.logger.error("Failed to load VM library: \(error.localizedDescription)")
+            Self.logger.error("Failed to load VM library: \(error.localizedDescription, privacy: .public)")
             presentError(error)
         }
     }
@@ -194,7 +194,7 @@ final class VMLibraryViewModel {
                         )
                     } catch {
                         if !Task.isCancelled {
-                            Self.logger.error("Failed to install macOS on '\(instance.name)': \(error.localizedDescription)")
+                            Self.logger.error("Failed to install macOS on '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
                             presentError(error)
                         }
                     }
@@ -202,9 +202,9 @@ final class VMLibraryViewModel {
             }
             #endif
 
-            Self.logger.notice("Created VM '\(config.name)'")
+            Self.logger.notice("Created VM '\(config.name, privacy: .public)'")
         } catch {
-            Self.logger.error("Failed to create VM: \(error.localizedDescription)")
+            Self.logger.error("Failed to create VM: \(error.localizedDescription, privacy: .public)")
             presentError(error)
         }
     }
@@ -214,7 +214,7 @@ final class VMLibraryViewModel {
     #if arch(arm64)
     /// Cancels an in-progress macOS installation, cleans up the VM bundle, and removes it from the library.
     func cancelInstallation(_ instance: VMInstance) {
-        Self.logger.info("Cancelling installation for '\(instance.name)'")
+        Self.logger.info("Cancelling installation for '\(instance.name, privacy: .public)'")
 
         // 1. Cancel the in-flight task (triggers cooperative cancellation in download/install)
         instance.installTask?.cancel()
@@ -228,7 +228,7 @@ final class VMLibraryViewModel {
         do {
             try storageService.deleteVMBundle(at: instance.bundleURL)
         } catch {
-            Self.logger.error("Failed to trash VM bundle during cancellation: \(error.localizedDescription)")
+            Self.logger.error("Failed to trash VM bundle during cancellation: \(error.localizedDescription, privacy: .public)")
             presentError(error)
         }
 
@@ -239,7 +239,7 @@ final class VMLibraryViewModel {
             selectedID = instances.first?.id
         }
 
-        Self.logger.notice("Installation cancelled and VM '\(instance.name)' moved to Trash")
+        Self.logger.notice("Installation cancelled and VM '\(instance.name, privacy: .public)' moved to Trash")
     }
     #endif
 
@@ -252,7 +252,7 @@ final class VMLibraryViewModel {
         do {
             try await lifecycle.start(instance)
         } catch {
-            Self.logger.error("Failed to start '\(instance.name)': \(error.localizedDescription)")
+            Self.logger.error("Failed to start '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
             presentError(error)
         }
     }
@@ -261,7 +261,7 @@ final class VMLibraryViewModel {
         do {
             try lifecycle.stop(instance)
         } catch {
-            Self.logger.error("Failed to stop '\(instance.name)': \(error.localizedDescription)")
+            Self.logger.error("Failed to stop '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
             presentError(error)
         }
     }
@@ -269,9 +269,9 @@ final class VMLibraryViewModel {
     func forceStop(_ instance: VMInstance) async {
         do {
             try await lifecycle.forceStop(instance)
-            Self.logger.notice("Force-stopped VM '\(instance.name)'")
+            Self.logger.notice("Force-stopped VM '\(instance.name, privacy: .public)'")
         } catch {
-            Self.logger.error("Failed to force-stop '\(instance.name)': \(error.localizedDescription)")
+            Self.logger.error("Failed to force-stop '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
             presentError(error)
         }
     }
@@ -291,7 +291,7 @@ final class VMLibraryViewModel {
         do {
             try await lifecycle.pause(instance)
         } catch {
-            Self.logger.error("Failed to pause '\(instance.name)': \(error.localizedDescription)")
+            Self.logger.error("Failed to pause '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
             presentError(error)
         }
     }
@@ -303,7 +303,7 @@ final class VMLibraryViewModel {
         do {
             try await lifecycle.resume(instance)
         } catch {
-            Self.logger.error("Failed to resume '\(instance.name)': \(error.localizedDescription)")
+            Self.logger.error("Failed to resume '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
             presentError(error)
         }
     }
@@ -312,7 +312,7 @@ final class VMLibraryViewModel {
         do {
             try await lifecycle.save(instance)
         } catch {
-            Self.logger.error("Failed to save '\(instance.name)': \(error.localizedDescription)")
+            Self.logger.error("Failed to save '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
             presentError(error)
         }
     }
@@ -345,9 +345,9 @@ final class VMLibraryViewModel {
             if selectedID == instance.id {
                 selectedID = instances.first?.id
             }
-            Self.logger.notice("Moved VM '\(instance.name)' to Trash")
+            Self.logger.notice("Moved VM '\(instance.name, privacy: .public)' to Trash")
         } catch {
-            Self.logger.error("Failed to delete VM '\(instance.name)': \(error.localizedDescription)")
+            Self.logger.error("Failed to delete VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
             presentError(error)
         }
         instanceToDelete = nil
@@ -379,7 +379,7 @@ final class VMLibraryViewModel {
 
             if let existing = instances.first(where: { $0.id == config.id }) {
                 selectedID = existing.id
-                Self.logger.info("VM '\(config.name)' already in library — selected existing instance")
+                Self.logger.info("VM '\(config.name, privacy: .public)' already in library — selected existing instance")
                 return
             }
 
@@ -428,28 +428,28 @@ final class VMLibraryViewModel {
                     // the phantom row's UI should always reflect completion.
                     phantom.preparingState = nil
                     guard self != nil else {
-                        Self.logger.warning("Import completed but view model was deallocated — VM '\(config.name)' exists on disk but was not added to library")
+                        Self.logger.warning("Import completed but view model was deallocated — VM '\(config.name, privacy: .public)' exists on disk but was not added to library")
                         return
                     }
-                    Self.logger.notice("Imported VM '\(config.name)' from \(sourceURL.lastPathComponent)")
+                    Self.logger.notice("Imported VM '\(config.name, privacy: .public)' from \(sourceURL.lastPathComponent, privacy: .public)")
                 } catch {
                     guard let self else {
                         // Clear preparing state and trash partial bundle even without the view model.
                         phantom.preparingState = nil
                         Self.trashPartialBundle(at: phantom.bundleURL)
-                        Self.logger.error("Import failed and view model was deallocated — trashed partial bundle '\(config.name)': \(error.localizedDescription)")
+                        Self.logger.error("Import failed and view model was deallocated — trashed partial bundle '\(config.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
                         return
                     }
                     self.cleanupPhantomInstance(phantom)
                     if !Task.isCancelled {
-                        Self.logger.error("Failed to import VM '\(config.name)': \(error.localizedDescription)")
+                        Self.logger.error("Failed to import VM '\(config.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
                         self.presentError(error)
                     }
                 }
             }
             phantom.preparingState = VMInstance.PreparingState(operation: .importing, task: task)
         } catch {
-            Self.logger.error("Failed to import VM from \(sourceURL.lastPathComponent): \(error.localizedDescription)")
+            Self.logger.error("Failed to import VM from \(sourceURL.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
             presentError(error)
         }
     }
@@ -496,7 +496,7 @@ final class VMLibraryViewModel {
         do {
             try storageService.saveConfiguration(instance.configuration, to: instance.bundleURL)
         } catch {
-            Self.logger.error("Failed to save configuration for '\(instance.name)': \(error.localizedDescription)")
+            Self.logger.error("Failed to save configuration for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
             presentError(error)
         }
     }
@@ -505,7 +505,7 @@ final class VMLibraryViewModel {
 
     func cloneVM(_ instance: VMInstance) {
         guard instance.status.canEditSettings else {
-            Self.logger.debug("Clone skipped for '\(instance.name)': status '\(instance.status.displayName)' does not allow editing")
+            Self.logger.debug("Clone skipped for '\(instance.name, privacy: .public)': status '\(instance.status.displayName, privacy: .public)' does not allow editing")
             return
         }
         guard !hasPreparing else {
@@ -546,7 +546,7 @@ final class VMLibraryViewModel {
         do {
             bundleURL = try storageService.bundleURL(for: clonedConfig)
         } catch {
-            Self.logger.error("Failed to derive bundle URL for clone of '\(instance.name)': \(error.localizedDescription)")
+            Self.logger.error("Failed to derive bundle URL for clone of '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
             presentError(error)
             return
         }
@@ -580,21 +580,21 @@ final class VMLibraryViewModel {
                 // the phantom row's UI should always reflect completion.
                 phantom.preparingState = nil
                 guard self != nil else {
-                    Self.logger.warning("Clone completed but view model was deallocated — VM '\(config.name)' exists on disk but was not added to library")
+                    Self.logger.warning("Clone completed but view model was deallocated — VM '\(config.name, privacy: .public)' exists on disk but was not added to library")
                     return
                 }
-                Self.logger.notice("Cloned VM '\(instance.name)' as '\(config.name)'")
+                Self.logger.notice("Cloned VM '\(instance.name, privacy: .public)' as '\(config.name, privacy: .public)'")
             } catch {
                 guard let self else {
                     // Clear preparing state and trash partial bundle even without the view model.
                     phantom.preparingState = nil
                     Self.trashPartialBundle(at: phantom.bundleURL)
-                    Self.logger.error("Clone failed and view model was deallocated — trashed partial bundle '\(config.name)': \(error.localizedDescription)")
+                    Self.logger.error("Clone failed and view model was deallocated — trashed partial bundle '\(config.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
                     return
                 }
                 self.cleanupPhantomInstance(phantom)
                 if !Task.isCancelled {
-                    Self.logger.error("Failed to clone VM '\(config.name)': \(error.localizedDescription)")
+                    Self.logger.error("Failed to clone VM '\(config.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
                     self.presentError(error)
                 }
             }
@@ -613,16 +613,16 @@ final class VMLibraryViewModel {
             return
         }
 
-        Self.logger.notice("System going to sleep — pausing \(runningInstances.count) running VM(s)")
+        Self.logger.notice("System going to sleep — pausing \(runningInstances.count, privacy: .public) running VM(s)")
 
         var failedNames: [String] = []
         for instance in runningInstances {
             do {
                 try await lifecycle.pause(instance)
                 sleepPausedInstanceIDs.insert(instance.id)
-                Self.logger.debug("Paused '\(instance.name)' for sleep (status: \(instance.status.displayName))")
+                Self.logger.debug("Paused '\(instance.name, privacy: .public)' for sleep (status: \(instance.status.displayName, privacy: .public))")
             } catch {
-                Self.logger.error("Failed to pause '\(instance.name)' for sleep: \(error.localizedDescription)")
+                Self.logger.error("Failed to pause '\(instance.name, privacy: .public)' for sleep: \(error.localizedDescription, privacy: .public)")
                 failedNames.append(instance.name)
             }
         }
@@ -643,15 +643,15 @@ final class VMLibraryViewModel {
         let instancesToResume = instances.filter { idsToResume.contains($0.id) && $0.status == .paused }
         guard !instancesToResume.isEmpty else { return }
 
-        Self.logger.notice("System woke up — resuming \(instancesToResume.count) sleep-paused VM(s)")
+        Self.logger.notice("System woke up — resuming \(instancesToResume.count, privacy: .public) sleep-paused VM(s)")
 
         var failedNames: [String] = []
         for instance in instancesToResume {
             do {
                 try await lifecycle.resume(instance)
-                Self.logger.debug("Resumed '\(instance.name)' after wake (status: \(instance.status.displayName))")
+                Self.logger.debug("Resumed '\(instance.name, privacy: .public)' after wake (status: \(instance.status.displayName, privacy: .public))")
             } catch {
-                Self.logger.error("Failed to resume '\(instance.name)' after wake: \(error.localizedDescription)")
+                Self.logger.error("Failed to resume '\(instance.name, privacy: .public)' after wake: \(error.localizedDescription, privacy: .public)")
                 failedNames.append(instance.name)
             }
         }
@@ -680,7 +680,7 @@ final class VMLibraryViewModel {
         do {
             vmsDir = try storageService.vmsDirectory
         } catch {
-            Self.logger.warning("Could not resolve VMs directory for file system watcher: \(error.localizedDescription)")
+            Self.logger.warning("Could not resolve VMs directory for file system watcher: \(error.localizedDescription, privacy: .public)")
             return
         }
 
@@ -708,14 +708,14 @@ final class VMLibraryViewModel {
                 do {
                     migratedURL = try storageService.migrateBundleIfNeeded(at: bundleURL)
                 } catch {
-                    Self.logger.warning("Failed to migrate bundle at \(bundleURL.lastPathComponent): \(error.localizedDescription)")
+                    Self.logger.warning("Failed to migrate bundle at \(bundleURL.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
                     migratedURL = bundleURL
                 }
                 do {
                     let config = try storageService.loadConfiguration(from: migratedURL)
                     diskConfigs.append((config, migratedURL))
                 } catch {
-                    Self.logger.warning("Failed to load config from \(migratedURL.lastPathComponent) during reconciliation: \(error.localizedDescription)")
+                    Self.logger.warning("Failed to load config from \(migratedURL.lastPathComponent, privacy: .public) during reconciliation: \(error.localizedDescription, privacy: .public)")
                 }
             }
             let diskIDs = Set(diskConfigs.map(\.0.id))
@@ -734,7 +734,7 @@ final class VMLibraryViewModel {
                     status: initialStatus
                 )
                 instances.append(instance)
-                Self.logger.info("Discovered VM '\(config.name)' on disk — added to library")
+                Self.logger.info("Discovered VM '\(config.name, privacy: .public)' on disk — added to library")
                 didChange = true
             }
 
@@ -750,7 +750,7 @@ final class VMLibraryViewModel {
                 if selectedID == instance.id {
                     selectedID = instances.first?.id
                 }
-                Self.logger.info("VM '\(instance.name)' no longer on disk — removed from library")
+                Self.logger.info("VM '\(instance.name, privacy: .public)' no longer on disk — removed from library")
                 didChange = true
             }
 
@@ -759,9 +759,9 @@ final class VMLibraryViewModel {
                 persistOrder()
             }
 
-            Self.logger.debug("reconcileWithDisk: complete — \(self.instances.count) VM(s) in library")
+            Self.logger.debug("reconcileWithDisk: complete — \(self.instances.count, privacy: .public) VM(s) in library")
         } catch {
-            Self.logger.error("Directory reconciliation failed: \(error.localizedDescription)")
+            Self.logger.error("Directory reconciliation failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -781,7 +781,7 @@ final class VMLibraryViewModel {
         preparingInstanceToCancel = nil
         showCancelPreparingConfirmation = false
 
-        Self.logger.notice("Cancelled \(operationLabel) for '\(instance.name)'")
+        Self.logger.notice("Cancelled \(operationLabel, privacy: .public) for '\(instance.name, privacy: .public)'")
     }
 
     /// Removes a phantom instance from the library, clears its preparing state, and trashes its partial bundle.
@@ -836,7 +836,7 @@ final class VMLibraryViewModel {
             do {
                 try FileManager.default.trashItem(at: url, resultingItemURL: nil)
             } catch {
-                log.error("Failed to clean up partial bundle at \(url.lastPathComponent): \(error.localizedDescription)")
+                log.error("Failed to clean up partial bundle at \(url.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
             }
         }
     }

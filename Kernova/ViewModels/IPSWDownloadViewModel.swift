@@ -50,6 +50,6 @@ final class IPSWDownloadViewModel {
     func failDownload(with error: Error) {
         isDownloading = false
         errorMessage = error.localizedDescription
-        Self.logger.error("IPSW download failed: \(error.localizedDescription)")
+        Self.logger.error("IPSW download failed: \(error.localizedDescription, privacy: .public)")
     }
 }
