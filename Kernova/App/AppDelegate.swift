@@ -14,6 +14,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private var displayWindows: [UUID: VMDisplayWindowController] = [:]
     private var displayWindowObservers: [UUID: Any] = [:]
     private var serialConsoleMenuItem: NSMenuItem!
+    /// Set in `applicationWillBecomeActive` and read in `applicationShouldHandleReopen`
+    /// to distinguish a dock click that activates the app from one on an already-active app.
+    /// Cleared asynchronously after each event cycle.
     private var wasJustActivated = false
 
     private static let logger = Logger(subsystem: "com.kernova.app", category: "AppDelegate")
@@ -77,10 +80,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     func applicationWillBecomeActive(_ notification: Notification) {
+        Self.logger.debug("applicationWillBecomeActive: setting wasJustActivated")
         wasJustActivated = true
-        // Clear after the current event cycle for non-dock activations
-        // (e.g., clicking a window, Cmd-Tab) where applicationShouldHandleReopen
-        // is never called and would otherwise leave the flag stale.
+        // Clear after the current event cycle so the flag doesn't remain stale
+        // for non-dock activations (e.g., Cmd-Tab, clicking a window) where
+        // applicationShouldHandleReopen is never called. When it IS called
+        // (dock clicks), it runs synchronously during the same event dispatch,
+        // so it reads the flag before this Task body executes.
         Task { @MainActor [weak self] in
             self?.wasJustActivated = false
         }
@@ -95,6 +101,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         } else if !justActivated && isMainWindowDismissed {
             Self.logger.debug("applicationShouldHandleReopen: reopening dismissed library window")
             showLibrary(nil)
+        } else if justActivated {
+            Self.logger.debug("applicationShouldHandleReopen: suppressed (initial activation with visible windows)")
         }
         return true
     }
