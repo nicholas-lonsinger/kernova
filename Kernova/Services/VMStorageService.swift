@@ -77,7 +77,7 @@ struct VMStorageService: Sendable {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let data = try encoder.encode(configuration)
         try data.write(to: configURL, options: .atomic)
-        Self.logger.info("Saved configuration for VM '\(configuration.name)' to \(bundleURL.lastPathComponent)")
+        Self.logger.info("Saved configuration for VM '\(configuration.name, privacy: .public)' to \(bundleURL.lastPathComponent, privacy: .public)")
     }
 
     /// Creates a new VM bundle directory and saves the initial configuration.
@@ -91,7 +91,7 @@ struct VMStorageService: Sendable {
         try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
         try saveConfiguration(configuration, to: bundle)
 
-        Self.logger.notice("Created VM bundle for '\(configuration.name)' at \(bundle.lastPathComponent)")
+        Self.logger.notice("Created VM bundle for '\(configuration.name, privacy: .public)' at \(bundle.lastPathComponent, privacy: .public)")
         return bundle
     }
 
@@ -116,7 +116,7 @@ struct VMStorageService: Sendable {
 
         try saveConfiguration(newConfiguration, to: destinationBundle)
 
-        Self.logger.notice("Cloned VM bundle from '\(sourceBundleURL.lastPathComponent)' to '\(destinationBundle.lastPathComponent)'")
+        Self.logger.notice("Cloned VM bundle from '\(sourceBundleURL.lastPathComponent, privacy: .public)' to '\(destinationBundle.lastPathComponent, privacy: .public)'")
         return destinationBundle
     }
 
@@ -126,7 +126,7 @@ struct VMStorageService: Sendable {
             throw VMStorageError.bundleNotFound(bundleURL)
         }
         try FileManager.default.trashItem(at: bundleURL, resultingItemURL: nil)
-        Self.logger.notice("Moved VM bundle to Trash: \(bundleURL.lastPathComponent)")
+        Self.logger.notice("Moved VM bundle to Trash: \(bundleURL.lastPathComponent, privacy: .public)")
     }
 
     /// Migrates a legacy bare-UUID bundle directory to the `.kernova` package format.
@@ -155,7 +155,7 @@ struct VMStorageService: Sendable {
 
         if legacyExists {
             try fm.moveItem(at: bundleURL, to: migratedURL)
-            Self.logger.notice("Migrated VM bundle: \(bundleURL.lastPathComponent) → \(migratedURL.lastPathComponent)")
+            Self.logger.notice("Migrated VM bundle: \(bundleURL.lastPathComponent, privacy: .public) → \(migratedURL.lastPathComponent, privacy: .public)")
         }
 
         return migratedURL

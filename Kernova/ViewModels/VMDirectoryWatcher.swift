@@ -27,7 +27,7 @@ final class VMDirectoryWatcher {
     func start(directory: URL) {
         let fd = open(directory.path(percentEncoded: false), O_EVTONLY)
         guard fd >= 0 else {
-            Self.logger.warning("Could not open VMs directory for monitoring: \(directory.path(percentEncoded: false))")
+            Self.logger.warning("Could not open VMs directory for monitoring: \(directory.path(percentEncoded: false), privacy: .public)")
             return
         }
 
@@ -48,7 +48,7 @@ final class VMDirectoryWatcher {
         source.resume()
         directorySource = source
 
-        Self.logger.info("Started directory watcher on \(directory.path(percentEncoded: false))")
+        Self.logger.info("Started directory watcher on \(directory.path(percentEncoded: false), privacy: .public)")
     }
 
     /// Debounces rapid FS events into a single reconciliation pass after 0.5 seconds of quiet.

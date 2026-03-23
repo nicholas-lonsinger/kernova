@@ -22,7 +22,7 @@ struct DiskImageService: Sendable {
     ///   - sizeInGB: The virtual capacity of the disk image in gigabytes. Must match
     ///     one of the sizes in ``VMGuestOS/allDiskSizes``.
     func createDiskImage(at url: URL, sizeInGB: Int) async throws {
-        Self.logger.info("Creating ASIF disk image: \(sizeInGB) GB at \(url.lastPathComponent)")
+        Self.logger.info("Creating ASIF disk image: \(sizeInGB, privacy: .public) GB at \(url.lastPathComponent, privacy: .public)")
 
         guard let templateURL = Bundle.main.url(
             forResource: "BlankDisk-\(sizeInGB)GB.asif",
@@ -39,7 +39,7 @@ struct DiskImageService: Sendable {
             try decompressed.write(to: destination)
         }.value
 
-        Self.logger.notice("Successfully created ASIF disk image at \(url.lastPathComponent)")
+        Self.logger.notice("Successfully created ASIF disk image at \(url.lastPathComponent, privacy: .public)")
     }
 
     /// Returns the physical (actual) size of a disk image on disk.
