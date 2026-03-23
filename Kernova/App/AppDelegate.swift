@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private var displayWindows: [UUID: VMDisplayWindowController] = [:]
     private var displayWindowObservers: [UUID: Any] = [:]
     private var serialConsoleMenuItem: NSMenuItem!
+    private var wasJustActivated = false
 
     private static let logger = Logger(subsystem: "com.kernova.app", category: "AppDelegate")
 
@@ -75,8 +76,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         return true
     }
 
+    func applicationWillBecomeActive(_ notification: Notification) {
+        wasJustActivated = true
+        // Clear after the current event cycle for non-dock activations
+        // (e.g., clicking a window, Cmd-Tab) where applicationShouldHandleReopen
+        // is never called and would otherwise leave the flag stale.
+        Task { @MainActor [weak self] in
+            self?.wasJustActivated = false
+        }
+    }
+
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        let justActivated = wasJustActivated
+        wasJustActivated = false
+
         if !flag {
+            showLibrary(nil)
+        } else if !justActivated && isMainWindowDismissed {
+            Self.logger.debug("applicationShouldHandleReopen: reopening dismissed library window")
             showLibrary(nil)
         }
         return true
