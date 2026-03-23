@@ -234,7 +234,19 @@ The `Co-Authored-By` trailer is automatically appended by Claude Code and should
 
 ### Merging Pull Requests
 
-When merging PRs with `gh pr merge`, always squash-merge with `--squash --subject` using the PR title and appending the PR number in parentheses (e.g., `--squash --subject "fix: Title (#11)"`), matching the repo's existing convention. Always use `--delete-branch` to clean up the remote branch.
+When merging PRs with `gh pr merge`, always squash-merge with `--squash --subject` using the PR title and appending the PR number in parentheses (e.g., `--squash --subject "fix: Title (#11)"`), matching the repo's existing convention.
+
+**Do not use `--delete-branch`.** The repo has `delete_branch_on_merge` enabled on GitHub, so remote branches are auto-deleted. The `--delete-branch` flag causes `gh` to run `git checkout main` locally, which fails in worktree contexts.
+
+#### Post-merge cleanup
+
+After a successful merge, run the following steps to clean up the local branch and sync:
+
+1. `gh pr view <N> --json state -q .state` — confirm `"MERGED"` before deleting anything
+2. If in a worktree: `git checkout worktree-<name>` (switch back to the original worktree branch)
+3. `git branch -D <merged-branch>`
+4. `git branch -d -r origin/<merged-branch>`
+5. `git pull`
 
 ### Post-Commit
 
