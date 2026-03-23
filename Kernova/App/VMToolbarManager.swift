@@ -235,7 +235,7 @@ final class VMToolbarManager: NSObject {
 
     @objc private func lifecycleAction(_ group: NSToolbarItemGroup) {
         guard let segment = LifecycleSegment(rawValue: group.selectedIndex) else {
-            Self.logger.warning("lifecycleAction: unexpected selectedIndex \(group.selectedIndex)")
+            Self.logger.warning("lifecycleAction: unexpected selectedIndex \(group.selectedIndex, privacy: .public)")
             return
         }
         switch segment {
@@ -254,7 +254,7 @@ final class VMToolbarManager: NSObject {
 
     @objc private func displayAction(_ group: NSToolbarItemGroup) {
         guard let segment = DisplaySegment(rawValue: group.selectedIndex) else {
-            Self.logger.warning("displayAction: unexpected selectedIndex \(group.selectedIndex)")
+            Self.logger.warning("displayAction: unexpected selectedIndex \(group.selectedIndex, privacy: .public)")
             return
         }
         switch segment {

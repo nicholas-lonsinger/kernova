@@ -16,7 +16,7 @@ final class VirtualizationService {
 
     /// Starts a virtual machine, optionally restoring from a saved state.
     func start(_ instance: VMInstance) async throws {
-        Self.logger.debug("start: status=\(instance.status.displayName), hasSaveFile=\(instance.hasSaveFile)")
+        Self.logger.debug("start: status=\(instance.status.displayName, privacy: .public), hasSaveFile=\(instance.hasSaveFile, privacy: .public)")
         guard instance.status.canStart else {
             throw VirtualizationError.invalidStateTransition(from: instance.status, action: "start")
         }
@@ -36,9 +36,9 @@ final class VirtualizationService {
             }
 
             instance.status = .running
-            Self.logger.notice("Started VM '\(instance.name)'")
+            Self.logger.notice("Started VM '\(instance.name, privacy: .public)'")
         } catch {
-            Self.logger.error("Failed to start VM '\(instance.name)': \(error.localizedDescription)")
+            Self.logger.error("Failed to start VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
             instance.tearDownSession()
             instance.status = Self.isTransientStartError(error) ? .stopped : .error
             instance.errorMessage = error.localizedDescription
@@ -50,12 +50,12 @@ final class VirtualizationService {
 
     /// Requests a graceful ACPI shutdown of the virtual machine.
     func stop(_ instance: VMInstance) throws {
-        Self.logger.debug("stop: status=\(instance.status.displayName), isColdPaused=\(instance.isColdPaused)")
+        Self.logger.debug("stop: status=\(instance.status.displayName, privacy: .public), isColdPaused=\(instance.isColdPaused, privacy: .public)")
         // Cold-paused: no live VM, just discard the save file
         if instance.isColdPaused {
             instance.removeSaveFile()
             instance.status = .stopped
-            Self.logger.notice("Discarded saved state for VM '\(instance.name)'")
+            Self.logger.notice("Discarded saved state for VM '\(instance.name, privacy: .public)'")
             return
         }
 
@@ -64,17 +64,17 @@ final class VirtualizationService {
         }
 
         try vm.requestStop()
-        Self.logger.notice("Requested stop for VM '\(instance.name)'")
+        Self.logger.notice("Requested stop for VM '\(instance.name, privacy: .public)'")
     }
 
     /// Immediately terminates the virtual machine.
     func forceStop(_ instance: VMInstance) async throws {
-        Self.logger.debug("forceStop: status=\(instance.status.displayName), isColdPaused=\(instance.isColdPaused)")
+        Self.logger.debug("forceStop: status=\(instance.status.displayName, privacy: .public), isColdPaused=\(instance.isColdPaused, privacy: .public)")
         // Cold-paused: no live VM, just discard the save file
         if instance.isColdPaused {
             instance.removeSaveFile()
             instance.status = .stopped
-            Self.logger.notice("Discarded saved state for VM '\(instance.name)'")
+            Self.logger.notice("Discarded saved state for VM '\(instance.name, privacy: .public)'")
             return
         }
 
@@ -84,14 +84,14 @@ final class VirtualizationService {
 
         try await vm.stop()
         instance.resetToStopped()
-        Self.logger.notice("Force-stopped VM '\(instance.name)'")
+        Self.logger.notice("Force-stopped VM '\(instance.name, privacy: .public)'")
     }
 
     // MARK: - Pause / Resume
 
     /// Pauses the virtual machine.
     func pause(_ instance: VMInstance) async throws {
-        Self.logger.debug("pause: status=\(instance.status.displayName)")
+        Self.logger.debug("pause: status=\(instance.status.displayName, privacy: .public)")
         guard instance.status.canPause, let vm = instance.virtualMachine else {
             throw VirtualizationError.invalidStateTransition(from: instance.status, action: "pause")
         }
@@ -99,9 +99,9 @@ final class VirtualizationService {
         do {
             try await vm.pause()
             instance.status = .paused
-            Self.logger.notice("Paused VM '\(instance.name)'")
+            Self.logger.notice("Paused VM '\(instance.name, privacy: .public)'")
         } catch {
-            Self.logger.error("Failed to pause VM '\(instance.name)': \(error.localizedDescription)")
+            Self.logger.error("Failed to pause VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
             instance.status = .error
             instance.errorMessage = error.localizedDescription
             throw error
@@ -114,7 +114,7 @@ final class VirtualizationService {
     /// - **Hot resume**: VM is in memory — calls `vm.resume()` directly.
     /// - **Cold resume**: VM state is on disk only — rebuilds the VM and restores from save file.
     func resume(_ instance: VMInstance) async throws {
-        Self.logger.debug("resume: status=\(instance.status.displayName), hasVM=\(instance.virtualMachine != nil), hasSaveFile=\(instance.hasSaveFile)")
+        Self.logger.debug("resume: status=\(instance.status.displayName, privacy: .public), hasVM=\(instance.virtualMachine != nil, privacy: .public), hasSaveFile=\(instance.hasSaveFile, privacy: .public)")
         guard instance.status.canResume else {
             throw VirtualizationError.invalidStateTransition(from: instance.status, action: "resume")
         }
@@ -133,9 +133,9 @@ final class VirtualizationService {
                 throw VirtualizationError.noSaveFile
             }
 
-            Self.logger.notice("Resumed VM '\(instance.name)'")
+            Self.logger.notice("Resumed VM '\(instance.name, privacy: .public)'")
         } catch {
-            Self.logger.error("Failed to resume VM '\(instance.name)': \(error.localizedDescription)")
+            Self.logger.error("Failed to resume VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
             instance.tearDownSession()
             instance.status = .error
             instance.errorMessage = error.localizedDescription
@@ -147,7 +147,7 @@ final class VirtualizationService {
 
     /// Saves the current VM state to disk (pause + snapshot).
     func save(_ instance: VMInstance) async throws {
-        Self.logger.debug("save: status=\(instance.status.displayName)")
+        Self.logger.debug("save: status=\(instance.status.displayName, privacy: .public)")
         guard instance.status.canSave, let vm = instance.virtualMachine else {
             throw VirtualizationError.invalidStateTransition(from: instance.status, action: "save")
         }
@@ -163,9 +163,9 @@ final class VirtualizationService {
             try await saveMachineState(vm, to: instance.saveFileURL)
             instance.tearDownSession()
             instance.status = .paused
-            Self.logger.notice("Saved state for VM '\(instance.name)'")
+            Self.logger.notice("Saved state for VM '\(instance.name, privacy: .public)'")
         } catch {
-            Self.logger.error("Failed to save VM '\(instance.name)': \(error.localizedDescription)")
+            Self.logger.error("Failed to save VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
             instance.tearDownSession()
             instance.status = .error
             instance.errorMessage = error.localizedDescription
@@ -192,9 +192,9 @@ final class VirtualizationService {
 
             // Remove save file after successful restore
             instance.removeSaveFile()
-            Self.logger.notice("Restored state for VM '\(instance.name)'")
+            Self.logger.notice("Restored state for VM '\(instance.name, privacy: .public)'")
         } catch {
-            Self.logger.error("Failed to restore VM '\(instance.name)': \(error.localizedDescription)")
+            Self.logger.error("Failed to restore VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
             instance.tearDownSession()
             instance.status = .error
             instance.errorMessage = error.localizedDescription
@@ -251,7 +251,7 @@ final class VirtualizationService {
             instance.removeSaveFile()
         } catch {
             Self.logger.warning(
-                "Restore failed for VM '\(instance.name)', falling back to cold boot: \(error.localizedDescription)"
+                "Restore failed for VM '\(instance.name, privacy: .public)', falling back to cold boot: \(error.localizedDescription, privacy: .public)"
             )
             instance.removeSaveFile()
 
