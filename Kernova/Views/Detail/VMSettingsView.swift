@@ -29,6 +29,7 @@ struct VMSettingsView: View {
                 discImageSection
                 resourcesSection
                 networkSection
+                audioSection
                 clipboardSection
                 sharedDirectoriesSection
             }
@@ -192,6 +193,16 @@ struct VMSettingsView: View {
             if let mac = instance.configuration.macAddress {
                 LabeledContent("MAC Address", value: mac)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var audioSection: some View {
+        Section("Audio") {
+            Toggle("Microphone", isOn: $instance.configuration.microphoneEnabled)
+            Text("Allows the guest to access the host microphone. Speaker output is always enabled.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 

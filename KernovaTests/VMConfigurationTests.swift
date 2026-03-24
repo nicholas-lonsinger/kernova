@@ -596,4 +596,62 @@ struct VMConfigurationTests {
         #expect(config.clipboardSharingEnabled == false)
     }
 
+    // MARK: - microphoneEnabled Tests
+
+    @Test("Default microphoneEnabled is false")
+    func defaultMicrophoneEnabled() {
+        let config = VMConfiguration(
+            name: "Test VM",
+            guestOS: .linux,
+            bootMode: .efi
+        )
+        #expect(config.microphoneEnabled == false)
+    }
+
+    @Test("Configuration preserves microphoneEnabled flag")
+    func microphoneEnabledRoundTrip() throws {
+        let config = VMConfiguration(
+            name: "Mic VM",
+            guestOS: .linux,
+            bootMode: .efi,
+            microphoneEnabled: true
+        )
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(config)
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(VMConfiguration.self, from: data)
+
+        #expect(decoded.microphoneEnabled == true)
+    }
+
+    @Test("Backward compatibility: decoding JSON without microphoneEnabled defaults to false")
+    func backwardCompatibilityMicrophoneEnabled() throws {
+        let json = """
+        {
+            "id": "00000000-0000-0000-0000-000000000002",
+            "name": "Old VM",
+            "guestOS": "linux",
+            "bootMode": "efi",
+            "cpuCount": 4,
+            "memorySizeInGB": 4,
+            "diskSizeInGB": 64,
+            "displayWidth": 1920,
+            "displayHeight": 1200,
+            "displayPPI": 144,
+            "networkEnabled": true,
+            "createdAt": "2025-01-01T00:00:00Z"
+        }
+        """
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let config = try decoder.decode(VMConfiguration.self, from: Data(json.utf8))
+
+        #expect(config.microphoneEnabled == false)
+    }
+
 }
