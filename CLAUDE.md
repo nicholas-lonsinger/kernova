@@ -244,7 +244,7 @@ When merging PRs with `gh pr merge`, always squash-merge with `--squash --subjec
 After a successful merge, run the following steps to clean up the local branch and sync:
 
 1. `gh pr view <N> --json state -q .state` — confirm `"MERGED"` before deleting anything
-2. If in a worktree: `git checkout worktree-<name>` (switch back to the original worktree branch)
+2. If in a worktree: switch to the worktree's local branch, which is always the worktree name with a `worktree-` prefix (e.g., `git checkout worktree-expressive-yawning-sutton` for a worktree named `expressive-yawning-sutton`)
 3. `git branch -D <merged-branch>`
 4. `git branch -d -r origin/<merged-branch>`
 5. `git pull`
