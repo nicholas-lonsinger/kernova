@@ -1,3 +1,4 @@
+import AVFoundation
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -8,6 +9,8 @@ struct VMSettingsView: View {
 
     @State private var editingName = ""
     @State private var showingDiskInfo = false
+    @State private var showingMicPermissionInfo = false
+    @State private var micPermission: AVAuthorizationStatus = AVCaptureDevice.authorizationStatus(for: .audio)
     @FocusState private var isNameFieldFocused: Bool
 
     private var isRenaming: Bool {
@@ -203,6 +206,50 @@ struct VMSettingsView: View {
             Text("Allows the guest to access the host microphone. Speaker output is always enabled.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            if instance.configuration.microphoneEnabled {
+                if micPermission == .notDetermined {
+                    Text("macOS will ask for microphone permission the first time a VM uses it.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if micPermission == .denied || micPermission == .restricted {
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.red)
+
+                        Text("Microphone permission is denied. Enable it in System Settings for Kernova to pass your microphone to VMs.")
+                            .font(.caption)
+
+                        Spacer()
+
+                        Button {
+                            showingMicPermissionInfo.toggle()
+                        } label: {
+                            Image(systemName: "info.circle")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .popover(isPresented: $showingMicPermissionInfo, arrowEdge: .trailing) {
+                            micPermissionInfoPopover
+                        }
+                    }
+                    .padding(10)
+                    .background {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.red.opacity(0.1))
+                            .strokeBorder(Color.red.opacity(0.3), lineWidth: 1)
+                    }
+                }
+            }
+        }
+        .onChange(of: instance.configuration.microphoneEnabled) {
+            micPermission = AVCaptureDevice.authorizationStatus(for: .audio)
+        }
+        .onAppear {
+            micPermission = AVCaptureDevice.authorizationStatus(for: .audio)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            micPermission = AVCaptureDevice.authorizationStatus(for: .audio)
         }
     }
 
@@ -343,6 +390,35 @@ struct VMSettingsView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 4))
 
             Text("Alternatively, attach an additional ISO or shared directory to transfer data without resizing.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+        .padding()
+        .frame(width: 340)
+    }
+
+    @ViewBuilder
+    private var micPermissionInfoPopover: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Microphone Permission")
+                .font(.headline)
+
+            Text("Kernova needs microphone permission to pass your mic input to virtual machines.")
+
+            Divider()
+
+            Text("How to enable")
+                .font(.subheadline)
+                .fontWeight(.medium)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("1. Open **System Settings**")
+                Text("2. Go to **Privacy & Security → Microphone**")
+                Text("3. Enable the toggle for **Kernova**")
+            }
+            .font(.callout)
+
+            Text("You may need to restart Kernova after granting permission.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }
