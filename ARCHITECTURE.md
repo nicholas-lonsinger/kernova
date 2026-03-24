@@ -113,7 +113,7 @@ KernovaTests/
 └── NSImageExtensionsTests.swift        # SF Symbol loading utility tests
 ```
 
-**Total: 52 source files, 24 test files (18 suites + 6 mocks).**
+**Total: 56 source files, 25 test files (19 suites + 6 mocks).**
 
 *Note: `ContentView.swift` was removed when `NavigationSplitView` was replaced by `NSSplitViewController` in `MainWindowController`. Its responsibilities were split between `MainWindowController` (toolbar, split view) and `MainDetailView` (detail switching, sheets, alerts).*
 

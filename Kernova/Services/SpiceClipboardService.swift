@@ -24,11 +24,12 @@ final class SpiceClipboardService {
     ///
     /// - Set by the guest agent when the guest copies text (via `handleClipboardData`)
     /// - Editable by the user in the clipboard window's `TextEditor`
-    /// - Sent to the guest (via `CLIPBOARD_GRAB`) when the clipboard window loses focus
+    /// - Announced to the guest (via `CLIPBOARD_GRAB`) when the clipboard window loses
+    ///   focus; the guest then requests the actual data via `CLIPBOARD_REQUEST`
     var clipboardText: String = ""
 
     /// `true` once the guest agent has completed the capabilities handshake.
-    var isConnected: Bool = false
+    private(set) var isConnected: Bool = false
 
     // MARK: - Private
 
@@ -63,6 +64,8 @@ final class SpiceClipboardService {
     /// Stops reading and releases resources.
     func stop() {
         outputPipe.fileHandleForReading.readabilityHandler = nil
+        isConnected = false
+        pendingOutboundText = nil
         Self.logger.info("SPICE clipboard service stopped")
     }
 
@@ -143,6 +146,9 @@ final class SpiceClipboardService {
 
             case .other(let type):
                 Self.logger.debug("Ignoring unhandled SPICE message type: \(type.rawValue, privacy: .public)")
+
+            case .malformedChunk:
+                Self.logger.warning("Skipping malformed SPICE chunk")
             }
         }
     }
@@ -150,12 +156,19 @@ final class SpiceClipboardService {
     // MARK: - Message Handlers
 
     private func handleCapabilities(request: Bool, caps: [UInt32]) {
-        isConnected = true
-
+        let hasClipboard = hasCapability(caps, .clipboard)
         let byDemand = hasCapability(caps, .clipboardByDemand)
+
         Self.logger.notice(
-            "Guest agent connected (caps: \(caps.map { String($0, radix: 16) }, privacy: .public), byDemand: \(byDemand, privacy: .public))"
+            "Guest agent capabilities (caps: \(caps.map { String($0, radix: 16) }, privacy: .public), clipboard: \(hasClipboard, privacy: .public), byDemand: \(byDemand, privacy: .public))"
         )
+
+        guard hasClipboard else {
+            Self.logger.warning("Guest agent does not support clipboard — clipboard sharing will not function")
+            return
+        }
+
+        isConnected = true
 
         // If the guest requested our capabilities, send them back (non-requesting)
         if request {

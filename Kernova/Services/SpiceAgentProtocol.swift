@@ -9,14 +9,9 @@ enum SpiceConstants {
     /// Protocol version stamped in every `VDAgentMessage`.
     static let agentProtocol: UInt32 = 1
 
-    /// Port used for client → agent messages.
-    static let clientPort: UInt32 = 1
-
-    /// Port used for agent → client messages.
+    /// Destination port for host → guest messages (`VDP_SERVER_PORT`).
+    /// The guest agent reads from this port.
     static let serverPort: UInt32 = 2
-
-    /// Maximum data size per chunk recommended by the protocol.
-    static let maxDataSize: Int = 2048
 }
 
 // MARK: - VDI Chunk Header
@@ -136,7 +131,7 @@ enum SpiceAgentCapability: Int, Sendable {
 /// Builds complete wire-ready messages (VDI chunk header + VDAgent message header + data).
 ///
 /// All messages are sent from the host (client) to the guest (agent), so the chunk
-/// port is always `VDP_CLIENT_PORT`.
+/// port is always `VDP_SERVER_PORT` (the destination port the guest agent reads from).
 enum SpiceMessageBuilder {
 
     /// Builds an `ANNOUNCE_CAPABILITIES` message advertising clipboard support.
@@ -220,12 +215,15 @@ enum SpiceAgentParsedMessage: Sendable {
     case clipboardData(type: SpiceClipboardType, data: Data)
     case clipboardRelease
     case other(type: SpiceAgentMessageType)
+    /// Inner header could not be parsed (unknown type, truncated payload, etc.).
+    case malformedChunk
 }
 
 /// Incremental parser for the SPICE agent protocol stream.
 ///
-/// Handles message fragmentation: a single VDAgent message may span multiple
-/// VDI chunks, and a single read from the pipe may contain partial data.
+/// Handles byte-stream fragmentation: a single pipe read may deliver partial
+/// VDI chunks, and multiple complete chunks may arrive in a single read.
+/// Each VDI chunk is expected to contain a complete VDAgent message.
 struct SpiceAgentParser: Sendable {
 
     private var buffer = Data()
@@ -263,7 +261,8 @@ struct SpiceAgentParser: Sendable {
     }
 
     /// Attempts to parse one complete message from the buffer.
-    /// Consumes the bytes on success, leaves the buffer unchanged on failure.
+    /// Consumes the bytes on success, leaves the buffer unchanged when incomplete,
+    /// or resets it entirely when corruption is detected.
     private mutating func tryParseNext() -> SpiceAgentParsedMessage? {
         // Need at least a VDI chunk header
         guard buffer.count >= VDIChunkHeader.size else { return nil }
@@ -289,7 +288,7 @@ struct SpiceAgentParser: Sendable {
         // but continue parsing — don't halt the loop.
         guard chunkPayload.count >= VDAgentMessageHeader.size,
               let msgHeader = VDAgentMessageHeader.deserialize(from: chunkPayload) else {
-            return .other(type: .mouseState)  // Sentinel to keep the while-loop going
+            return .malformedChunk
         }
 
         let msgData = chunkPayload.count > VDAgentMessageHeader.size
