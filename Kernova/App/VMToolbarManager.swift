@@ -17,6 +17,7 @@ final class VMToolbarManager: NSObject {
         let lifecycleID: NSToolbarItem.Identifier
         let saveStateID: NSToolbarItem.Identifier
         let clipboardID: NSToolbarItem.Identifier?
+        let removableMediaID: NSToolbarItem.Identifier?
         let displayID: NSToolbarItem.Identifier
 
         /// When `true`, checks `instance.isPreparing` and disables all items while preparing.
@@ -34,6 +35,9 @@ final class VMToolbarManager: NSObject {
         var ids = [configuration.lifecycleID, configuration.saveStateID]
         if let clipboardID = configuration.clipboardID {
             ids.append(clipboardID)
+        }
+        if let removableMediaID = configuration.removableMediaID {
+            ids.append(removableMediaID)
         }
         ids.append(configuration.displayID)
         return ids
@@ -69,6 +73,7 @@ final class VMToolbarManager: NSObject {
     init(configuration: Configuration, instanceProvider: @escaping () -> VMInstance?) {
         var allIDs = [configuration.lifecycleID, configuration.saveStateID, configuration.displayID]
         if let clipboardID = configuration.clipboardID { allIDs.append(clipboardID) }
+        if let removableMediaID = configuration.removableMediaID { allIDs.append(removableMediaID) }
         assert(Set(allIDs).count == allIDs.count,
                "VMToolbarManager.Configuration identifiers must be distinct")
         self.configuration = configuration
@@ -121,6 +126,15 @@ final class VMToolbarManager: NSObject {
                 toolTip: "Open the clipboard sharing window"
             )
 
+        case configuration.removableMediaID:
+            return makeSingleItemGroup(
+                identifier: identifier,
+                label: "Removable Media",
+                symbol: "opticaldisc",
+                action: #selector(AppDelegate.showRemovableMedia(_:)),
+                toolTip: "Attach or eject removable media"
+            )
+
         case configuration.displayID:
             let group = NSToolbarItemGroup(
                 itemIdentifier: identifier,
@@ -152,6 +166,7 @@ final class VMToolbarManager: NSObject {
         updateLifecycleGroup(in: toolbar, instance: instance)
         updateSaveStateItem(in: toolbar, instance: instance)
         updateClipboardItem(in: toolbar, instance: instance)
+        updateRemovableMediaItem(in: toolbar, instance: instance)
         updateDisplayGroup(in: toolbar, instance: instance)
     }
 
@@ -209,6 +224,14 @@ final class VMToolbarManager: NSObject {
         }
 
         subitem.isEnabled = instance.canShowClipboard
+    }
+
+    private func updateRemovableMediaItem(in toolbar: NSToolbar, instance: VMInstance?) {
+        guard let removableMediaID = configuration.removableMediaID,
+              let group = toolbar.items.first(where: { $0.itemIdentifier == removableMediaID }) as? NSToolbarItemGroup,
+              let subitem = group.subitems.first else { return }
+
+        subitem.isEnabled = instance?.canAttachUSBDevices ?? false
     }
 
     private func updateDisplayGroup(in toolbar: NSToolbar, instance: VMInstance?) {

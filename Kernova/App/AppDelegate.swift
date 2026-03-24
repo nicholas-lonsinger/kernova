@@ -341,6 +341,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         controller.showWindow(nil)
     }
 
+    // MARK: - Removable Media
+
+    @objc func showRemovableMedia(_ sender: Any?) {
+        guard let instance = activeInstance,
+              instance.canAttachUSBDevices else { return }
+
+        let menu = NSMenu()
+        let menuItem = NSMenuItem()
+        menuItem.view = NSHostingView(
+            rootView: RemovableMediaPopoverView(instance: instance, viewModel: viewModel)
+        )
+        menu.addItem(menuItem)
+
+        // Position the menu at the click location. NSMenu handles coordinate
+        // transformation internally, avoiding the toolbar view hierarchy issues
+        // that made NSPopover positioning unreliable.
+        if let event = NSApp.currentEvent, let contentView = event.window?.contentView {
+            menu.popUp(positioning: nil, at: event.locationInWindow, in: contentView)
+        }
+    }
+
     // MARK: - Display Window (Pop-Out / Fullscreen)
 
     @objc func togglePopOut(_ sender: Any?) {
@@ -567,6 +588,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             return activeInstance?.canShowSerialConsole ?? false
         case #selector(showClipboard(_:)):
             return activeInstance?.canShowClipboard ?? false
+        case #selector(showRemovableMedia(_:)):
+            return activeInstance?.canAttachUSBDevices ?? false
         case #selector(togglePopOut(_:)):
             guard let instance = activeInstance else { return false }
             let canUse = instance.canUseExternalDisplay
@@ -697,6 +720,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         clipboardItem.keyEquivalentModifierMask = [.command, .shift]
         self.clipboardMenuItem = clipboardItem
         windowMenu.addItem(clipboardItem)
+        let removableMediaItem = NSMenuItem(
+            title: "Removable Media",
+            action: #selector(showRemovableMedia(_:)),
+            keyEquivalent: "u"
+        )
+        removableMediaItem.keyEquivalentModifierMask = [.command, .shift]
+        windowMenu.addItem(removableMediaItem)
         windowMenu.addItem(.separator())
         windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
         windowMenu.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")

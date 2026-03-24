@@ -27,8 +27,8 @@ struct VMSettingsView: View {
         viewModel.activeRename == .detail(instance.id)
     }
 
-    /// Binding that unwraps the optional additional disks array, defaulting to empty.
-    private var additionalDisksBinding: Binding<[AdditionalDisk]> {
+    /// Binding that unwraps the optional storage disks array, defaulting to empty.
+    private var storageDiskBinding: Binding<[AdditionalDisk]> {
         Binding(
             get: { instance.configuration.additionalDisks ?? [] },
             set: { instance.configuration.additionalDisks = $0.isEmpty ? nil : $0 }
@@ -48,8 +48,8 @@ struct VMSettingsView: View {
             Form {
                 generalSection
                 resourcesSection
-                discImageSection
-                additionalDisksSection
+                storageDiskSection
+                removableMediaSection
                 sharedDirectoriesSection
                 networkSection
                 audioSection
@@ -103,8 +103,8 @@ struct VMSettingsView: View {
     }
 
     @ViewBuilder
-    private var discImageSection: some View {
-        Section("Disc Image") {
+    private var removableMediaSection: some View {
+        Section("Removable Media") {
             if let discImagePath = instance.configuration.discImagePath {
                 HStack {
                     Image(systemName: "opticaldisc")
@@ -137,23 +137,21 @@ struct VMSettingsView: View {
                     Toggle("Boot from disc image", isOn: $instance.configuration.bootFromDiscImage)
                 }
             } else {
-                Text("No disc image attached")
+                Text("No removable media attached")
                     .foregroundStyle(.secondary)
             }
 
-            Button(instance.configuration.discImagePath != nil ? "Change Disc Image..." : "Browse Disc Image...") {
-                browseDiscImage()
+            Button(instance.configuration.discImagePath != nil ? "Change Disc Image..." : "Attach Disc Image...") {
+                browseRemovableMedia()
             }
 
-            Text(instance.configuration.discImageReadOnly
-                ? "Appears as a read-only USB drive in the guest."
-                : "Appears as a writable USB drive in the guest. Changes are written to the disk image file.")
+            Text("Appears as a USB drive in the guest. Use for installer ISOs, recovery images, or file transfer. When read-only is off, changes are written back to the disk image file.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
     }
 
-    private func browseDiscImage() {
+    private func browseRemovableMedia() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
@@ -166,18 +164,18 @@ struct VMSettingsView: View {
         instance.configuration.discImagePath = url.path(percentEncoded: false)
     }
 
-    // MARK: - Additional Disks
+    // MARK: - Storage Disks
 
     @ViewBuilder
-    private var additionalDisksSection: some View {
+    private var storageDiskSection: some View {
         Section {
-            let disks = additionalDisksBinding.wrappedValue
+            let disks = storageDiskBinding.wrappedValue
 
             if disks.isEmpty {
-                Text("No additional disks attached")
+                Text("No storage disks attached")
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(additionalDisksBinding) { $disk in
+                ForEach(storageDiskBinding) { $disk in
                     HStack {
                         Image(systemName: disk.isInternal ? "internaldrive" : "externaldrive")
                             .foregroundStyle(.secondary)
@@ -225,7 +223,7 @@ struct VMSettingsView: View {
                 }
             }
 
-            Text("Additional disks appear as virtio block devices in the guest (e.g., /dev/vdb on Linux).")
+            Text("Storage disks provide high-performance persistent storage. They appear as block devices in the guest (e.g., /dev/vdb on Linux) and support TRIM for efficient space usage.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -243,7 +241,7 @@ struct VMSettingsView: View {
                 }
             }
         } header: {
-            Text("Additional Disks")
+            Text("Storage Disks")
         }
     }
 
@@ -258,7 +256,7 @@ struct VMSettingsView: View {
 
         guard panel.runModal() == .OK else { return }
 
-        var current = additionalDisksBinding.wrappedValue
+        var current = storageDiskBinding.wrappedValue
         let existingPaths = Set(current.map(\.path))
 
         for url in panel.urls {
@@ -267,7 +265,7 @@ struct VMSettingsView: View {
             current.append(AdditionalDisk(path: path))
         }
 
-        additionalDisksBinding.wrappedValue = current
+        storageDiskBinding.wrappedValue = current
     }
 
     @ViewBuilder
@@ -548,7 +546,7 @@ struct VMSettingsView: View {
                 .background(.quaternary)
                 .clipShape(RoundedRectangle(cornerRadius: 4))
 
-            Text("Alternatively, attach an additional disc image or shared directory to transfer data without resizing.")
+            Text("Alternatively, add a storage disk or shared directory to transfer data without resizing.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }

@@ -64,8 +64,10 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
     /// Serialized `VZGenericMachineIdentifier.dataRepresentation`.
     var genericMachineIdentifierData: Data?
 
-    // MARK: - Disc Drive
+    // MARK: - Removable Media
 
+    // RATIONALE: UI shows "Removable Media" but the config field retains "discImagePath"
+    // to avoid a config.json migration. Both refer to VZUSBMassStorageDeviceConfiguration.
     /// Path to a disk image attached as a USB mass storage device.
     var discImagePath: String?
 
@@ -82,8 +84,10 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
     var initrdPath: String?
     var kernelCommandLine: String?
 
-    // MARK: - Additional Disks
+    // MARK: - Storage Disks
 
+    // RATIONALE: UI shows "Storage Disks" but the config field retains "additionalDisks"
+    // to avoid a config.json migration.
     /// Extra disk images attached as virtio block devices (e.g., /dev/vdb on Linux).
     var additionalDisks: [AdditionalDisk]?
 

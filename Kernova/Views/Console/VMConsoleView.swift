@@ -3,7 +3,6 @@ import SwiftUI
 /// Console view that displays the VM screen, pause overlay, or a placeholder depending on VM state.
 struct VMConsoleView: View {
     @Bindable var instance: VMInstance
-    @Bindable var viewModel: VMLibraryViewModel
     var onResume: () -> Void
 
     var body: some View {
@@ -45,11 +44,6 @@ struct VMConsoleView: View {
                     systemImage: "display",
                     description: Text("The virtual machine display is not available.")
                 )
-            }
-
-            if instance.canAttachUSBDevices {
-                Divider()
-                USBDevicesBar(instance: instance, viewModel: viewModel)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

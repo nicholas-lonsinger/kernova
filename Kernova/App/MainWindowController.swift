@@ -26,6 +26,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
                 lifecycleID: NSToolbarItem.Identifier("lifecycle"),
                 saveStateID: NSToolbarItem.Identifier("saveState"),
                 clipboardID: NSToolbarItem.Identifier("clipboard"),
+                removableMediaID: NSToolbarItem.Identifier("removableMedia"),
                 displayID: NSToolbarItem.Identifier("display"),
                 checksPreparing: true,
                 gatesDisplayOnCapability: true
@@ -130,6 +131,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             _ = self.viewModel.selectedInstance?.displayMode
             _ = self.viewModel.selectedInstance?.virtualMachine
             _ = self.viewModel.selectedInstance?.configuration.clipboardSharingEnabled
+            _ = self.viewModel.selectedInstance?.canAttachUSBDevices
+            _ = self.viewModel.selectedInstance?.attachedUSBDevices
         } onChange: {
             Task { @MainActor [weak self] in
                 guard let self, self.observingToolbar else { return }

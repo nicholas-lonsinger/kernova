@@ -1,56 +1,61 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Compact bar at the bottom of the console view for managing USB devices on a running VM.
-struct USBDevicesBar: View {
+/// Popover content for managing runtime USB mass storage devices on a running VM.
+/// Shown from the "Removable Media" toolbar button.
+struct RemovableMediaPopoverView: View {
     @Bindable var instance: VMInstance
     @Bindable var viewModel: VMLibraryViewModel
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "cable.connector")
-                .foregroundStyle(.secondary)
-
+        VStack(alignment: .leading, spacing: 0) {
             if instance.attachedUSBDevices.isEmpty {
-                Text("No USB devices")
-                    .font(.caption)
+                Text("No removable media attached")
                     .foregroundStyle(.secondary)
+                    .padding()
             } else {
                 ForEach(instance.attachedUSBDevices) { device in
-                    HStack(spacing: 4) {
+                    HStack(spacing: 8) {
                         Image(systemName: device.readOnly ? "lock.fill" : "externaldrive.fill")
-                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .frame(width: 16)
+
                         Text(device.displayName)
-                            .font(.caption)
                             .lineLimit(1)
+                            .truncationMode(.middle)
+
+                        Spacer()
+
                         Button {
                             viewModel.detachUSBDevice(device, from: instance)
                         } label: {
                             Image(systemName: "eject.fill")
-                                .font(.caption2)
                         }
                         .buttonStyle(.plain)
                         .help("Eject \(device.displayName)")
                     }
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 4))
+                    .padding(.horizontal)
+                    .padding(.vertical, 6)
                 }
             }
 
-            Spacer()
+            Divider()
 
             Button {
                 browseAndAttach()
             } label: {
-                Label("Attach USB Image", systemImage: "plus.circle")
-                    .font(.caption)
+                Label("Attach Disc Image...", systemImage: "plus.circle")
             }
             .buttonStyle(.plain)
+            .padding()
+
+            Text("Removable media is ejected when the VM stops.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+                .padding(.horizontal)
+                .padding(.bottom, 12)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(.bar)
+        .frame(width: 280)
     }
 
     private func browseAndAttach() {
@@ -59,10 +64,14 @@ struct USBDevicesBar: View {
         panel.canChooseFiles = true
         panel.allowsMultipleSelection = false
         panel.allowedContentTypes = UTType.diskImageTypes
-        panel.message = "Select a disk image to attach as USB storage"
+        panel.message = "Select a disk image to attach as removable media"
         panel.prompt = "Attach"
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        viewModel.attachUSBDevice(diskImagePath: url.path(percentEncoded: false), readOnly: false, to: instance)
+        viewModel.attachUSBDevice(
+            diskImagePath: url.path(percentEncoded: false),
+            readOnly: false,
+            to: instance
+        )
     }
 }
