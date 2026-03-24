@@ -83,7 +83,6 @@ final class SpiceClipboardService {
         outputPipe.fileHandleForReading.readabilityHandler = nil
         pendingOutboundText = nil
         guestSupportsByDemand = false
-        receivedSinceLastProbe = false
         Self.logger.info("SPICE clipboard service stopped")
     }
 
@@ -333,6 +332,7 @@ final class SpiceClipboardService {
         heartbeatTask?.cancel()
         heartbeatTask = nil
         isConnected = false
+        receivedSinceLastProbe = false
     }
 
     // MARK: - Capability Helpers
