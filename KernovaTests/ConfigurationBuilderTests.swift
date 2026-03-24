@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import Virtualization
 @testable import Kernova
 
 @Suite("ConfigurationBuilder Tests")
@@ -631,6 +632,50 @@ struct ConfigurationBuilderTests {
             let result = try builder.build(from: config, bundleURL: bundleURL)
             #expect(result.clipboardInputPipe == nil)
             #expect(result.clipboardOutputPipe == nil)
+        } catch {
+            // VZ framework errors are expected in the test environment
+        }
+    }
+
+    // MARK: - Microphone
+
+    @Test("Audio device includes input stream when microphone is enabled")
+    func audioInputStreamWhenMicEnabled() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        var config = makeLinuxConfig()
+        config.microphoneEnabled = true
+
+        let builder = ConfigurationBuilder()
+        do {
+            let result = try builder.build(from: config, bundleURL: bundleURL)
+            let audioDevice = try #require(result.configuration.audioDevices.first as? VZVirtioSoundDeviceConfiguration)
+            let hasInput = audioDevice.streams.contains { $0 is VZVirtioSoundDeviceInputStreamConfiguration }
+            let hasOutput = audioDevice.streams.contains { $0 is VZVirtioSoundDeviceOutputStreamConfiguration }
+            #expect(hasInput)
+            #expect(hasOutput)
+        } catch {
+            // VZ framework errors are expected in the test environment
+        }
+    }
+
+    @Test("Audio device has output-only streams when microphone is disabled")
+    func audioOutputOnlyWhenMicDisabled() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        var config = makeLinuxConfig()
+        config.microphoneEnabled = false
+
+        let builder = ConfigurationBuilder()
+        do {
+            let result = try builder.build(from: config, bundleURL: bundleURL)
+            let audioDevice = try #require(result.configuration.audioDevices.first as? VZVirtioSoundDeviceConfiguration)
+            let hasInput = audioDevice.streams.contains { $0 is VZVirtioSoundDeviceInputStreamConfiguration }
+            let hasOutput = audioDevice.streams.contains { $0 is VZVirtioSoundDeviceOutputStreamConfiguration }
+            #expect(!hasInput)
+            #expect(hasOutput)
         } catch {
             // VZ framework errors are expected in the test environment
         }

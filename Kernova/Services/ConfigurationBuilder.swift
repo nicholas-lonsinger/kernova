@@ -55,7 +55,7 @@ struct ConfigurationBuilder: Sendable {
         try configureStorage(vzConfig, config: config, bundleURL: bundleURL)
         configureNetwork(vzConfig, config: config)
         configureEntropy(vzConfig)
-        configureAudio(vzConfig)
+        configureAudio(vzConfig, config: config)
         try configureDirectorySharing(vzConfig, config: config)
 
         // Serial port
@@ -319,16 +319,23 @@ struct ConfigurationBuilder: Sendable {
         vzConfig.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]
     }
 
-    private func configureAudio(_ vzConfig: VZVirtualMachineConfiguration) {
+    private func configureAudio(_ vzConfig: VZVirtualMachineConfiguration, config: VMConfiguration) {
+        Self.logger.debug("Configuring audio: microphoneEnabled=\(config.microphoneEnabled, privacy: .public)")
         let audioDevice = VZVirtioSoundDeviceConfiguration()
 
-        let inputStream = VZVirtioSoundDeviceInputStreamConfiguration()
-        inputStream.source = VZHostAudioInputStreamSource()
+        var streams: [VZVirtioSoundDeviceStreamConfiguration] = []
+
+        if config.microphoneEnabled {
+            let inputStream = VZVirtioSoundDeviceInputStreamConfiguration()
+            inputStream.source = VZHostAudioInputStreamSource()
+            streams.append(inputStream)
+        }
 
         let outputStream = VZVirtioSoundDeviceOutputStreamConfiguration()
         outputStream.sink = VZHostAudioOutputStreamSink()
+        streams.append(outputStream)
 
-        audioDevice.streams = [inputStream, outputStream]
+        audioDevice.streams = streams
         vzConfig.audioDevices = [audioDevice]
     }
 

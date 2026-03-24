@@ -44,6 +44,8 @@
 			</dict>
 		</dict>
 	</array>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Kernova passes your microphone to virtual machines when enabled in VM settings.</string>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>

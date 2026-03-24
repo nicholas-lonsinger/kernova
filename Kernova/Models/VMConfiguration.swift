@@ -44,6 +44,13 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
     /// exchange between host and guest via the clipboard panel window.
     var clipboardSharingEnabled: Bool
 
+    // MARK: - Audio
+
+    /// When `true`, the host microphone is passed through to the guest as a
+    /// virtio sound input stream. Defaults to `false` so guests cannot silently
+    /// listen to the host. Speaker output is always enabled regardless of this flag.
+    var microphoneEnabled: Bool
+
     // MARK: - macOS-specific
 
     /// Serialized `VZMacHardwareModel.dataRepresentation`.
@@ -98,6 +105,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         networkEnabled: Bool = true,
         macAddress: String? = nil,
         clipboardSharingEnabled: Bool = false,
+        microphoneEnabled: Bool = false,
         hardwareModelData: Data? = nil,
         machineIdentifierData: Data? = nil,
         genericMachineIdentifierData: Data? = nil,
@@ -124,6 +132,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         self.networkEnabled = networkEnabled
         self.macAddress = macAddress
         self.clipboardSharingEnabled = clipboardSharingEnabled
+        self.microphoneEnabled = microphoneEnabled
         self.hardwareModelData = hardwareModelData
         self.machineIdentifierData = machineIdentifierData
         self.genericMachineIdentifierData = genericMachineIdentifierData
@@ -144,6 +153,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         case displayWidth, displayHeight, displayPPI, displayPreference, lastFullscreenDisplayID
         case networkEnabled, macAddress
         case clipboardSharingEnabled
+        case microphoneEnabled
         case hardwareModelData, machineIdentifierData
         case genericMachineIdentifierData
         case isoPath, bootFromDiscImage
@@ -170,6 +180,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         networkEnabled = try container.decode(Bool.self, forKey: .networkEnabled)
         macAddress = try container.decodeIfPresent(String.self, forKey: .macAddress)
         clipboardSharingEnabled = try container.decodeIfPresent(Bool.self, forKey: .clipboardSharingEnabled) ?? false
+        microphoneEnabled = try container.decodeIfPresent(Bool.self, forKey: .microphoneEnabled) ?? false
         hardwareModelData = try container.decodeIfPresent(Data.self, forKey: .hardwareModelData)
         machineIdentifierData = try container.decodeIfPresent(Data.self, forKey: .machineIdentifierData)
         genericMachineIdentifierData = try container.decodeIfPresent(Data.self, forKey: .genericMachineIdentifierData)

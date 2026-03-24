@@ -1,3 +1,4 @@
+import AVFoundation
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -8,7 +9,17 @@ struct VMSettingsView: View {
 
     @State private var editingName = ""
     @State private var showingDiskInfo = false
+    @State private var showingMicPermissionInfo = false
+    @State private var micPermission: AVAuthorizationStatus = AVCaptureDevice.authorizationStatus(for: .audio)
     @FocusState private var isNameFieldFocused: Bool
+
+    private var currentMicPermission: AVAuthorizationStatus {
+        AVCaptureDevice.authorizationStatus(for: .audio)
+    }
+
+    private func updateMicPermissionStatus() {
+        micPermission = currentMicPermission
+    }
 
     private var isRenaming: Bool {
         viewModel.activeRename == .detail(instance.id)
@@ -29,6 +40,7 @@ struct VMSettingsView: View {
                 discImageSection
                 resourcesSection
                 networkSection
+                audioSection
                 clipboardSection
                 sharedDirectoriesSection
             }
@@ -196,6 +208,60 @@ struct VMSettingsView: View {
     }
 
     @ViewBuilder
+    private var audioSection: some View {
+        Section("Audio") {
+            Toggle("Microphone", isOn: $instance.configuration.microphoneEnabled)
+            Text("Allows the guest to access the host microphone. Speaker output is always enabled.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if instance.configuration.microphoneEnabled {
+                if micPermission == .notDetermined {
+                    Text("macOS will ask for microphone permission the first time a VM uses it.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if micPermission == .denied || micPermission == .restricted {
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.red)
+
+                        Text("Microphone permission is denied. Enable it in System Settings for Kernova to pass your microphone to VMs.")
+                            .font(.caption)
+
+                        Spacer()
+
+                        Button {
+                            showingMicPermissionInfo.toggle()
+                        } label: {
+                            Image(systemName: "info.circle")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .popover(isPresented: $showingMicPermissionInfo, arrowEdge: .trailing) {
+                            micPermissionInfoPopover
+                        }
+                    }
+                    .padding(10)
+                    .background {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.red.opacity(0.1))
+                            .strokeBorder(Color.red.opacity(0.3), lineWidth: 1)
+                    }
+                }
+            }
+        }
+        .onChange(of: instance.configuration.microphoneEnabled) {
+            updateMicPermissionStatus()
+        }
+        .onAppear {
+            updateMicPermissionStatus()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            updateMicPermissionStatus()
+        }
+    }
+
+    @ViewBuilder
     private var clipboardSection: some View {
         Section("Clipboard") {
             Toggle("Clipboard Sharing", isOn: $instance.configuration.clipboardSharingEnabled)
@@ -332,6 +398,35 @@ struct VMSettingsView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 4))
 
             Text("Alternatively, attach an additional ISO or shared directory to transfer data without resizing.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+        .padding()
+        .frame(width: 340)
+    }
+
+    @ViewBuilder
+    private var micPermissionInfoPopover: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Microphone Permission")
+                .font(.headline)
+
+            Text("Kernova needs microphone permission to pass your mic input to virtual machines.")
+
+            Divider()
+
+            Text("How to enable")
+                .font(.subheadline)
+                .fontWeight(.medium)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("1. Open **System Settings**")
+                Text("2. Go to **Privacy & Security → Microphone**")
+                Text("3. Enable the toggle for **Kernova**")
+            }
+            .font(.callout)
+
+            Text("You will need to restart Kernova after granting permission.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }
