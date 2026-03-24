@@ -29,6 +29,7 @@ struct VMSettingsView: View {
                 discImageSection
                 resourcesSection
                 networkSection
+                clipboardSection
                 sharedDirectoriesSection
             }
             .formStyle(.grouped)
@@ -191,6 +192,16 @@ struct VMSettingsView: View {
             if let mac = instance.configuration.macAddress {
                 LabeledContent("MAC Address", value: mac)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var clipboardSection: some View {
+        Section("Clipboard") {
+            Toggle("Clipboard Sharing", isOn: $instance.configuration.clipboardSharingEnabled)
+            Text("Enables a SPICE clipboard channel for exchanging text between host and guest. The guest must have a SPICE agent installed (e.g. spice-vdagent on Linux).")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 

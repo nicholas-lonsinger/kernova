@@ -70,8 +70,11 @@ final class MacOSInstallService {
 
         instance.serialInputPipe = result.serialInputPipe
         instance.serialOutputPipe = result.serialOutputPipe
+        instance.clipboardInputPipe = result.clipboardInputPipe
+        instance.clipboardOutputPipe = result.clipboardOutputPipe
         let vm = instance.attachVirtualMachine(from: result.configuration)
         instance.startSerialReading()
+        instance.startClipboardService()
 
         // 5. Check for cancellation before starting the installer
         try Task.checkCancellation()

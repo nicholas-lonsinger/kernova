@@ -13,11 +13,14 @@ import os
 /// - **Linux Kernel**: `VZGenericPlatformConfiguration` + `VZLinuxBootLoader`
 struct ConfigurationBuilder: Sendable {
 
-    /// Contains the built VZ configuration along with bidirectional serial port pipes.
+    /// Contains the built VZ configuration along with bidirectional serial port pipes
+    /// and optional SPICE clipboard pipes.
     struct BuildResult: @unchecked Sendable {
         let configuration: VZVirtualMachineConfiguration
         let serialInputPipe: Pipe
         let serialOutputPipe: Pipe
+        let clipboardInputPipe: Pipe?
+        let clipboardOutputPipe: Pipe?
     }
 
     private static let logger = Logger(subsystem: "com.kernova.app", category: "ConfigurationBuilder")
@@ -58,11 +61,20 @@ struct ConfigurationBuilder: Sendable {
         // Serial port
         let (inputPipe, outputPipe) = configureSerialPort(vzConfig)
 
+        // Clipboard sharing (SPICE agent console port)
+        let clipboardPipes = configureClipboardSharing(vzConfig, config: config)
+
         // Validate
         try vzConfig.validate()
 
         Self.logger.info("Built VZ configuration for '\(config.name, privacy: .public)' (\(config.bootMode.displayName, privacy: .public))")
-        return BuildResult(configuration: vzConfig, serialInputPipe: inputPipe, serialOutputPipe: outputPipe)
+        return BuildResult(
+            configuration: vzConfig,
+            serialInputPipe: inputPipe,
+            serialOutputPipe: outputPipe,
+            clipboardInputPipe: clipboardPipes?.input,
+            clipboardOutputPipe: clipboardPipes?.output
+        )
     }
 
     // MARK: - macOS Boot
@@ -335,6 +347,43 @@ struct ConfigurationBuilder: Sendable {
         )
         vzConfig.serialPorts = [serialPort]
 
+        return (inputPipe, outputPipe)
+    }
+
+    // MARK: - Clipboard Sharing
+
+    /// Configures a SPICE agent console port for clipboard sharing using raw pipe I/O.
+    ///
+    /// Instead of using `VZSpiceAgentPortAttachment` (which automatically syncs with
+    /// the host `NSPasteboard`), we attach `VZFileHandleSerialPortAttachment` to the
+    /// SPICE-named port. This lets `SpiceClipboardService` speak the SPICE protocol
+    /// directly and present clipboard data in a gated UI rather than hijacking the
+    /// host clipboard.
+    ///
+    /// Returns the (input, output) pipes, or `nil` when clipboard sharing is disabled.
+    private func configureClipboardSharing(
+        _ vzConfig: VZVirtualMachineConfiguration,
+        config: VMConfiguration
+    ) -> (input: Pipe, output: Pipe)? {
+        guard config.clipboardSharingEnabled else { return nil }
+
+        let inputPipe = Pipe()   // host writes → guest reads
+        let outputPipe = Pipe()  // guest writes → host reads
+
+        let consoleDevice = VZVirtioConsoleDeviceConfiguration()
+
+        let spicePort = VZVirtioConsolePortConfiguration()
+        spicePort.name = VZSpiceAgentPortAttachment.spiceAgentPortName
+        spicePort.attachment = VZFileHandleSerialPortAttachment(
+            fileHandleForReading: inputPipe.fileHandleForReading,
+            fileHandleForWriting: outputPipe.fileHandleForWriting
+        )
+        spicePort.isConsole = false
+        consoleDevice.ports[0] = spicePort
+
+        vzConfig.consoleDevices.append(consoleDevice)
+
+        Self.logger.info("Configured SPICE clipboard console port for '\(config.name, privacy: .public)'")
         return (inputPipe, outputPipe)
     }
 

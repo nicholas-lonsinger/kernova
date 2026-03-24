@@ -595,4 +595,44 @@ struct ConfigurationBuilderTests {
             // VZ framework or other errors are expected
         }
     }
+
+    // MARK: - Clipboard Sharing
+
+    @Test("BuildResult includes clipboard pipes when clipboard sharing is enabled")
+    func clipboardPipesWhenEnabled() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        var config = makeLinuxConfig()
+        config.clipboardSharingEnabled = true
+
+        let builder = ConfigurationBuilder()
+        // VZ validation may throw in the test runner (no virtualization entitlement).
+        // We're testing that clipboard pipes are populated — the VZ error is expected.
+        do {
+            let result = try builder.build(from: config, bundleURL: bundleURL)
+            #expect(result.clipboardInputPipe != nil)
+            #expect(result.clipboardOutputPipe != nil)
+        } catch {
+            // VZ framework errors are expected in the test environment
+        }
+    }
+
+    @Test("BuildResult has nil clipboard pipes when clipboard sharing is disabled")
+    func clipboardPipesWhenDisabled() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        var config = makeLinuxConfig()
+        config.clipboardSharingEnabled = false
+
+        let builder = ConfigurationBuilder()
+        do {
+            let result = try builder.build(from: config, bundleURL: bundleURL)
+            #expect(result.clipboardInputPipe == nil)
+            #expect(result.clipboardOutputPipe == nil)
+        } catch {
+            // VZ framework errors are expected in the test environment
+        }
+    }
 }

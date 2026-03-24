@@ -11,9 +11,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private var pendingOpenURLs: [URL] = []
     private var serialConsoleWindows: [UUID: SerialConsoleWindowController] = [:]
     private var serialConsoleObservers: [UUID: Any] = [:]
+    private var clipboardWindows: [UUID: ClipboardWindowController] = [:]
+    private var clipboardObservers: [UUID: Any] = [:]
     private var displayWindows: [UUID: VMDisplayWindowController] = [:]
     private var displayWindowObservers: [UUID: Any] = [:]
     private var serialConsoleMenuItem: NSMenuItem!
+    private var clipboardMenuItem: NSMenuItem!
     /// Set in `applicationWillBecomeActive` and read in `applicationShouldHandleReopen`
     /// to distinguish a dock click that activates the app from one on an already-active app.
     ///
@@ -33,6 +36,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 return controller.instance
             }
             if let controller = serialConsoleWindows.values.first(where: { $0.window === keyWindow }) {
+                return controller.instance
+            }
+            if let controller = clipboardWindows.values.first(where: { $0.window === keyWindow }) {
                 return controller.instance
             }
         }
@@ -301,6 +307,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         controller.showWindow(nil)
     }
 
+    // MARK: - Clipboard
+
+    @objc func showClipboard(_ sender: Any?) {
+        guard let instance = activeInstance,
+              instance.canShowClipboard else { return }
+
+        if let existing = clipboardWindows[instance.instanceID] {
+            existing.window?.makeKeyAndOrderFront(nil)
+            return
+        }
+
+        let controller = ClipboardWindowController(instance: instance)
+        let vmID = instance.instanceID
+        clipboardWindows[vmID] = controller
+
+        // Clean up when window closes
+        let token = NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification,
+            object: controller.window,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                if let token = self?.clipboardObservers.removeValue(forKey: vmID) {
+                    NotificationCenter.default.removeObserver(token)
+                }
+                self?.clipboardWindows.removeValue(forKey: vmID)
+                self?.terminateIfIdle()
+            }
+        }
+        clipboardObservers[vmID] = token
+
+        controller.showWindow(nil)
+    }
+
     // MARK: - Display Window (Pop-Out / Fullscreen)
 
     @objc func togglePopOut(_ sender: Any?) {
@@ -456,6 +496,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         guard isMainWindowDismissed else { return false }
         guard displayWindows.isEmpty else { return false }
         guard serialConsoleWindows.isEmpty else { return false }
+        guard clipboardWindows.isEmpty else { return false }
         return !viewModel.instances.contains(where: \.isKeepingAppAlive)
     }
 
@@ -524,6 +565,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // shortcut validation, which still routes through validateMenuItem(_:).
         case #selector(showSerialConsole(_:)):
             return activeInstance?.canShowSerialConsole ?? false
+        case #selector(showClipboard(_:)):
+            return activeInstance?.canShowClipboard ?? false
         case #selector(togglePopOut(_:)):
             guard let instance = activeInstance else { return false }
             let canUse = instance.canUseExternalDisplay
@@ -543,6 +586,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     func menuNeedsUpdate(_ menu: NSMenu) {
         if menu === NSApp.windowsMenu {
             serialConsoleMenuItem.isEnabled = activeInstance?.canShowSerialConsole ?? false
+            clipboardMenuItem.isEnabled = activeInstance?.canShowClipboard ?? false
         }
     }
 
@@ -645,6 +689,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         serialItem.keyEquivalentModifierMask = [.command, .shift]
         self.serialConsoleMenuItem = serialItem
         windowMenu.addItem(serialItem)
+        let clipboardItem = NSMenuItem(
+            title: "Clipboard",
+            action: #selector(showClipboard(_:)),
+            keyEquivalent: "v"
+        )
+        clipboardItem.keyEquivalentModifierMask = [.command, .shift]
+        self.clipboardMenuItem = clipboardItem
+        windowMenu.addItem(clipboardItem)
         windowMenu.addItem(.separator())
         windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
         windowMenu.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")

@@ -38,6 +38,12 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
     var networkEnabled: Bool
     var macAddress: String?
 
+    // MARK: - Clipboard Sharing
+
+    /// When `true`, a SPICE agent console port is configured to enable clipboard
+    /// exchange between host and guest via the clipboard panel window.
+    var clipboardSharingEnabled: Bool
+
     // MARK: - macOS-specific
 
     /// Serialized `VZMacHardwareModel.dataRepresentation`.
@@ -91,6 +97,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         lastFullscreenDisplayID: UInt32? = nil,
         networkEnabled: Bool = true,
         macAddress: String? = nil,
+        clipboardSharingEnabled: Bool = false,
         hardwareModelData: Data? = nil,
         machineIdentifierData: Data? = nil,
         genericMachineIdentifierData: Data? = nil,
@@ -116,6 +123,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         self.lastFullscreenDisplayID = lastFullscreenDisplayID
         self.networkEnabled = networkEnabled
         self.macAddress = macAddress
+        self.clipboardSharingEnabled = clipboardSharingEnabled
         self.hardwareModelData = hardwareModelData
         self.machineIdentifierData = machineIdentifierData
         self.genericMachineIdentifierData = genericMachineIdentifierData
@@ -135,6 +143,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         case cpuCount, memorySizeInGB, diskSizeInGB
         case displayWidth, displayHeight, displayPPI, displayPreference, lastFullscreenDisplayID
         case networkEnabled, macAddress
+        case clipboardSharingEnabled
         case hardwareModelData, machineIdentifierData
         case genericMachineIdentifierData
         case isoPath, bootFromDiscImage
@@ -160,6 +169,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         lastFullscreenDisplayID = try container.decodeIfPresent(UInt32.self, forKey: .lastFullscreenDisplayID)
         networkEnabled = try container.decode(Bool.self, forKey: .networkEnabled)
         macAddress = try container.decodeIfPresent(String.self, forKey: .macAddress)
+        clipboardSharingEnabled = try container.decodeIfPresent(Bool.self, forKey: .clipboardSharingEnabled) ?? false
         hardwareModelData = try container.decodeIfPresent(Data.self, forKey: .hardwareModelData)
         machineIdentifierData = try container.decodeIfPresent(Data.self, forKey: .machineIdentifierData)
         genericMachineIdentifierData = try container.decodeIfPresent(Data.self, forKey: .genericMachineIdentifierData)

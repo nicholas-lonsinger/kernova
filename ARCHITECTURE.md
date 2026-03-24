@@ -14,6 +14,7 @@ Kernova/
 │   ├── VMDisplayWindowController.swift  # Per-VM display window (pop-out or fullscreen), auto-closes on VM stop
 │   ├── VMToolbarManager.swift          # Shared toolbar logic for lifecycle, save-state, and display groups
 │   ├── SerialConsoleWindowController.swift # Per-VM serial console window, auto-closes on VM stop
+│   ├── ClipboardWindowController.swift   # Per-VM clipboard sharing window, auto-closes on VM stop
 │   └── Info.plist                        # App configuration and metadata
 ├── Models/                             # Data types — all value types or @MainActor-isolated
 │   ├── VMConfiguration.swift           # Codable/Sendable struct persisted as config.json per VM bundle
@@ -32,6 +33,8 @@ Kernova/
 │   ├── MacOSInstallService.swift       # Drives macOS guest install via VZMacOSInstaller (@MainActor)
 │   ├── IPSWService.swift               # Fetches/downloads macOS restore images (Sendable struct)
 │   ├── SystemSleepWatcher.swift        # Observes system sleep/wake, triggers VM pause/resume
+│   ├── SpiceAgentProtocol.swift       # SPICE agent wire format: VDI chunks, message headers, clipboard types
+│   ├── SpiceClipboardService.swift    # Host-side SPICE clipboard: pipe I/O, protocol state machine (@MainActor)
 │   └── Protocols/                      # Service protocol abstractions for DI and testing
 │       ├── VirtualizationProviding.swift
 │       ├── VMStorageProviding.swift
@@ -61,6 +64,8 @@ Kernova/
 │   │   ├── VMTransitionOverlay.swift    # Frosted overlay with spinner for saving/restoring states
 │   │   ├── SerialConsoleContentView.swift # Serial console content wrapper
 │   │   └── SerialTerminalView.swift    # Terminal text view for serial output
+│   ├── Clipboard/
+│   │   └── ClipboardContentView.swift # Per-VM clipboard sharing panel (from-guest / to-guest)
 │   └── Creation/
 │       ├── VMCreationWizardView.swift  # Multi-step wizard container
 │       ├── OSSelectionStep.swift       # Step 1: Choose macOS or Linux
@@ -103,11 +108,12 @@ KernovaTests/
 ├── VMBootModeTests.swift               # Boot mode enum tests
 ├── VMGuestOSTests.swift                # Guest OS enum tests
 ├── MacOSInstallStateTests.swift        # Install state tracking tests
+├── SpiceAgentProtocolTests.swift       # SPICE wire format serialization/deserialization tests
 ├── DataFormattersTests.swift           # Formatting utility tests
 └── NSImageExtensionsTests.swift        # SF Symbol loading utility tests
 ```
 
-**Total: 52 source files, 24 test files (18 suites + 6 mocks).**
+**Total: 56 source files, 25 test files (19 suites + 6 mocks).**
 
 *Note: `ContentView.swift` was removed when `NavigationSplitView` was replaced by `NSSplitViewController` in `MainWindowController`. Its responsibilities were split between `MainWindowController` (toolbar, split view) and `MainDetailView` (detail switching, sheets, alerts).*
 
@@ -115,7 +121,7 @@ KernovaTests/
 
 ### App Layer
 
-**Files:** `AppDelegate.swift`, `MainWindowController.swift`, `VMDisplayWindowController.swift`, `VMToolbarManager.swift`, `SerialConsoleWindowController.swift`
+**Files:** `AppDelegate.swift`, `MainWindowController.swift`, `VMDisplayWindowController.swift`, `VMToolbarManager.swift`, `SerialConsoleWindowController.swift`, `ClipboardWindowController.swift`
 
 `AppDelegate` is the entry point. It creates the `VMLibraryViewModel` and `VMLifecycleCoordinator`, opens the main window, and manages the lifecycle of all windows. It tracks window controllers in dictionaries keyed by VM UUID, enabling one-to-many relationships (a VM can have a main view, a fullscreen window, and a serial console open simultaneously). `AppDelegate` also handles:
 - The application menu (including VM-specific actions, Force Stop with `canForceStop` validation, and Window > Show Library with Cmd+0)
@@ -142,7 +148,7 @@ The remaining models are enums: `VMStatus` (stopped/starting/running/paused/savi
 
 ### Services
 
-**Files:** `ConfigurationBuilder.swift`, `VirtualizationService.swift`, `VMStorageService.swift`, `DiskImageService.swift`, `MacOSInstallService.swift`, `IPSWService.swift`
+**Files:** `ConfigurationBuilder.swift`, `VirtualizationService.swift`, `VMStorageService.swift`, `DiskImageService.swift`, `MacOSInstallService.swift`, `IPSWService.swift`, `SpiceAgentProtocol.swift`, `SpiceClipboardService.swift`
 
 **Protocols:** `VirtualizationProviding`, `VMStorageProviding`, `DiskImageProviding`, `MacOSInstallProviding`, `IPSWProviding`
 
@@ -159,7 +165,11 @@ Services are split by concurrency requirements:
 
 - **`SystemSleepWatcher`** — `@MainActor` observer class that monitors `NSWorkspace.willSleepNotification` and `NSWorkspace.didWakeNotification`. Follows the same pattern as `VMDirectoryWatcher`: callback-driven, `nonisolated(unsafe)` for observer tokens, `start()`/`deinit` lifecycle. Owned by `VMLibraryViewModel`, which uses it to auto-pause running VMs before sleep and resume them on wake.
 
-- **`ConfigurationBuilder`** — Translates a `VMConfiguration` into a `VZVirtualMachineConfiguration`. Handles three boot paths: `VZMacOSBootLoader` (macOS), `VZEFIBootLoader` (EFI/UEFI), and `VZLinuxBootLoader` (direct kernel boot). Configures CPU, memory, storage, network, display, keyboard, trackpad, and audio devices. Resolves symlinks on user-supplied paths (shared directories, kernel/initrd, ISO images) and validates them before passing to VZ. File paths (kernel, initrd, ISO) are checked for existence and rejected if they point to directories. Shared directory validation checks existence, is-directory, readability, and writability (for read-write shares) against the resolved path.
+- **`ConfigurationBuilder`** — Translates a `VMConfiguration` into a `VZVirtualMachineConfiguration`. Handles three boot paths: `VZMacOSBootLoader` (macOS), `VZEFIBootLoader` (EFI/UEFI), and `VZLinuxBootLoader` (direct kernel boot). Configures CPU, memory, storage, network, display, keyboard, trackpad, and audio devices. When `clipboardSharingEnabled` is set, configures a `VZVirtioConsoleDeviceConfiguration` with a SPICE-named port using raw `VZFileHandleSerialPortAttachment` pipes (not `VZSpiceAgentPortAttachment`). Resolves symlinks on user-supplied paths (shared directories, kernel/initrd, ISO images) and validates them before passing to VZ. File paths (kernel, initrd, ISO) are checked for existence and rejected if they point to directories. Shared directory validation checks existence, is-directory, readability, and writability (for read-write shares) against the resolved path.
+
+- **`SpiceAgentProtocol`** — Pure data types and parsing for the SPICE agent wire format. Defines VDI chunk headers, VDAgent message headers, clipboard message types, and capability bitmasks. Includes `SpiceMessageBuilder` (builds wire-ready messages) and `SpiceAgentParser` (incremental parser handling fragmented data across multiple pipe reads). Fully `Sendable`, no I/O.
+
+- **`SpiceClipboardService`** — `@MainActor` service that manages SPICE clipboard sharing for a single VM. Reads from the guest pipe on a background GCD queue, parses messages via `SpiceAgentParser`, and exposes `clipboardText` (observable, editable by the UI) and `isConnected`. When the clipboard window loses focus, `grabIfChanged()` sends a `CLIPBOARD_GRAB` if the text was edited. Uses raw pipes rather than `VZSpiceAgentPortAttachment` so clipboard data flows through the gated UI instead of the host `NSPasteboard`.
 
 All service implementations conform to protocols defined in `Services/Protocols/`. This enables full dependency injection — tests use mock implementations that track call counts and support error injection.
 
@@ -219,7 +229,8 @@ AppDelegate
     │                 └── Detail:  NSHostingController(MainDetailView → VMDetailView)
     │
     ├── manages → VMDisplayWindowController (per VM)
-    └── manages → SerialConsoleWindowController (per VM)
+    ├── manages → SerialConsoleWindowController (per VM)
+    └── manages → ClipboardWindowController (per VM)
 
 SwiftUI views ──observe──→ VMLibraryViewModel ──delegates──→ VMLifecycleCoordinator ──calls──→ Services
                            VMInstance (per VM)
@@ -330,6 +341,7 @@ No external package dependencies. No Swift Package Manager, CocoaPods, or Cartha
 | `VMToolbarManager` | 22 tests | Item creation, state updates, configuration flags, label toggling |
 | `DataFormatters` | Yes | Byte formatting, CPU count formatting |
 | `NSImageExtensions` | Yes | SF Symbol loading with known symbol validation |
+| `SpiceAgentProtocol` | Yes | VDI chunk/message serialization round-trips, parser with multi-message feeds, partial data, unknown types |
 
 ### Mocked but Not Directly Tested
 
@@ -338,6 +350,7 @@ These services interact with system processes, the network, or VZ installer inte
 - `DiskImageService` — decompresses bundled templates (no subprocess; direct testing feasible but requires bundled resources in test target)
 - `IPSWService` — makes network requests to Apple
 - `MacOSInstallService` — requires a real `VZVirtualMachine` and restore image
+- `SpiceClipboardService` — requires active SPICE pipe I/O (protocol parsing tested via `SpiceAgentProtocol` suite)
 
 ### Not Tested
 
@@ -346,7 +359,7 @@ These services interact with system processes, the network, or VZ installer inte
 - `IPSWDownloadViewModel` — wraps async download state
 - `KernovaUTType` — static UTType declaration
 - `FileManagerExtensions` — FileManager convenience methods
-- All window controllers (`MainWindowController`, `VMDisplayWindowController`, `SerialConsoleWindowController`)
+- All window controllers (`MainWindowController`, `VMDisplayWindowController`, `SerialConsoleWindowController`, `ClipboardWindowController`)
 - `AppDelegate` — app lifecycle and window management
 - All SwiftUI views
 

@@ -31,6 +31,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
             configuration: .init(
                 lifecycleID: NSToolbarItem.Identifier("displayLifecycle"),
                 saveStateID: NSToolbarItem.Identifier("displaySaveState"),
+                clipboardID: nil,
                 displayID: NSToolbarItem.Identifier("displayDisplay"),
                 checksPreparing: false,
                 gatesDisplayOnCapability: false
