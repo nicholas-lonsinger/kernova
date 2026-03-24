@@ -142,6 +142,7 @@ EOF
 | `review-debt/test-gap` | Missing or insufficient tests for critical code |
 
 **Guidelines:**
+- **File issues immediately** — do not list qualifying findings as "skipped" and wait for the user to ask. If a finding meets the severity criteria above, create the issue as part of the review flow before summarizing results.
 - Always check for existing issues before creating duplicates
 - Reference the source PR or file context in the issue body
 - Keep issue titles actionable and specific (e.g., "Add error handling for disk-full scenario in BundleManager" not "Improve error handling")
