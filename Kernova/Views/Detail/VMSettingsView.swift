@@ -13,6 +13,10 @@ struct VMSettingsView: View {
     @State private var micPermission: AVAuthorizationStatus = AVCaptureDevice.authorizationStatus(for: .audio)
     @FocusState private var isNameFieldFocused: Bool
 
+    private var currentMicPermission: AVAuthorizationStatus {
+        AVCaptureDevice.authorizationStatus(for: .audio)
+    }
+
     private var isRenaming: Bool {
         viewModel.activeRename == .detail(instance.id)
     }
@@ -243,13 +247,13 @@ struct VMSettingsView: View {
             }
         }
         .onChange(of: instance.configuration.microphoneEnabled) {
-            micPermission = AVCaptureDevice.authorizationStatus(for: .audio)
+            micPermission = currentMicPermission
         }
         .onAppear {
-            micPermission = AVCaptureDevice.authorizationStatus(for: .audio)
+            micPermission = currentMicPermission
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            micPermission = AVCaptureDevice.authorizationStatus(for: .audio)
+            micPermission = currentMicPermission
         }
     }
 
@@ -418,7 +422,7 @@ struct VMSettingsView: View {
             }
             .font(.callout)
 
-            Text("You may need to restart Kernova after granting permission.")
+            Text("You will need to restart Kernova after granting permission.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }

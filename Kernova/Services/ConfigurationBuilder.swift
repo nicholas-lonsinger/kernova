@@ -320,6 +320,7 @@ struct ConfigurationBuilder: Sendable {
     }
 
     private func configureAudio(_ vzConfig: VZVirtualMachineConfiguration, config: VMConfiguration) {
+        Self.logger.debug("Configuring audio: microphoneEnabled=\(config.microphoneEnabled, privacy: .public)")
         let audioDevice = VZVirtioSoundDeviceConfiguration()
 
         var streams: [VZVirtioSoundDeviceStreamConfiguration] = []
