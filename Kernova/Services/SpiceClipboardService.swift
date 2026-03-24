@@ -42,9 +42,6 @@ final class SpiceClipboardService {
     /// Tracks the last text we sent via GRAB to avoid redundant grabs.
     private var lastGrabbedText: String?
 
-    /// Whether the guest has advertised `VD_AGENT_CAP_CLIPBOARD_BY_DEMAND`.
-    private var guestSupportsClipboardByDemand = false
-
     private static let logger = Logger(subsystem: "com.kernova.app", category: "SpiceClipboardService")
 
     // MARK: - Init
@@ -82,11 +79,13 @@ final class SpiceClipboardService {
         guard !clipboardText.isEmpty else { return }
         guard clipboardText != lastGrabbedText else { return }
 
+        let grabMessage = SpiceMessageBuilder.buildClipboardGrab(types: [.utf8Text])
+        guard writeToGuest(grabMessage) else { return }
+
+        // Only update state after successful write — otherwise a failed grab
+        // would permanently prevent retries (clipboardText == lastGrabbedText).
         lastGrabbedText = clipboardText
         pendingOutboundText = clipboardText
-
-        let grabMessage = SpiceMessageBuilder.buildClipboardGrab(types: [.utf8Text])
-        writeToGuest(grabMessage)
         Self.logger.notice("Sent clipboard grab (\(self.clipboardText.utf8.count, privacy: .public) bytes pending)")
     }
 
@@ -99,7 +98,16 @@ final class SpiceClipboardService {
 
         outputPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
-            guard !data.isEmpty else { return }
+            guard !data.isEmpty else {
+                // EOF — pipe closed. Nil-out immediately to prevent GCD spin loop.
+                handle.readabilityHandler = nil
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.isConnected = false
+                    Self.logger.notice("SPICE pipe closed (EOF)")
+                }
+                return
+            }
 
             logger.debug("Received \(data.count, privacy: .public) bytes from guest SPICE agent")
 
@@ -109,9 +117,12 @@ final class SpiceClipboardService {
         }
     }
 
-    /// Parses incoming data and dispatches messages.
     private func handleIncomingData(_ data: Data) {
         let messages = parser.feed(data)
+
+        if parser.didReset {
+            Self.logger.error("SPICE parser buffer reset — stream may be corrupted")
+        }
 
         for message in messages {
             switch message {
@@ -141,13 +152,9 @@ final class SpiceClipboardService {
     private func handleCapabilities(request: Bool, caps: [UInt32]) {
         isConnected = true
 
-        // Check if guest supports clipboard-by-demand
-        guestSupportsClipboardByDemand = hasCapability(
-            caps, .clipboardByDemand
-        )
-
+        let byDemand = hasCapability(caps, .clipboardByDemand)
         Self.logger.notice(
-            "Guest agent connected (caps: \(caps.map { String($0, radix: 16) }, privacy: .public), byDemand: \(self.guestSupportsClipboardByDemand, privacy: .public))"
+            "Guest agent connected (caps: \(caps.map { String($0, radix: 16) }, privacy: .public), byDemand: \(byDemand, privacy: .public))"
         )
 
         // If the guest requested our capabilities, send them back (non-requesting)
@@ -211,11 +218,15 @@ final class SpiceClipboardService {
 
     // MARK: - Writing
 
-    private func writeToGuest(_ data: Data) {
+    @discardableResult
+    private func writeToGuest(_ data: Data) -> Bool {
         do {
             try inputPipe.fileHandleForWriting.write(contentsOf: data)
+            return true
         } catch {
             Self.logger.error("Failed to write to SPICE pipe: \(error.localizedDescription, privacy: .public)")
+            isConnected = false
+            return false
         }
     }
 

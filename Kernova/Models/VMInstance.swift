@@ -331,8 +331,13 @@ final class VMInstance: Identifiable {
 
     /// Creates and starts the SPICE clipboard service using the clipboard pipes.
     func startClipboardService() {
+        guard configuration.clipboardSharingEnabled else { return }
+
         guard let inputPipe = clipboardInputPipe,
-              let outputPipe = clipboardOutputPipe else { return }
+              let outputPipe = clipboardOutputPipe else {
+            Self.logger.error("Clipboard sharing enabled but pipes not configured for '\(self.name, privacy: .public)'")
+            return
+        }
 
         let service = SpiceClipboardService(inputPipe: inputPipe, outputPipe: outputPipe)
         service.start()
@@ -340,10 +345,14 @@ final class VMInstance: Identifiable {
         Self.logger.info("Clipboard service started for '\(self.name, privacy: .public)'")
     }
 
-    /// Stops and releases the clipboard service and pipes.
+    /// Stops and releases the clipboard service and closes pipe file handles.
     func stopClipboardService() {
         clipboardService?.stop()
         clipboardService = nil
+        try? clipboardInputPipe?.fileHandleForReading.close()
+        try? clipboardInputPipe?.fileHandleForWriting.close()
+        try? clipboardOutputPipe?.fileHandleForReading.close()
+        try? clipboardOutputPipe?.fileHandleForWriting.close()
         clipboardInputPipe = nil
         clipboardOutputPipe = nil
     }

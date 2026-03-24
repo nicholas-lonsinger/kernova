@@ -43,9 +43,9 @@ struct VDIChunkHeader: Sendable {
     }
 
     static func deserialize(from data: Data) -> VDIChunkHeader? {
-        guard data.count >= size else { return nil }
-        let port = data.readLittleEndianUInt32(at: 0)
-        let dataSize = data.readLittleEndianUInt32(at: 4)
+        guard data.count >= size,
+              let port = data.readLittleEndianUInt32(at: 0),
+              let dataSize = data.readLittleEndianUInt32(at: 4) else { return nil }
         return VDIChunkHeader(port: port, dataSize: dataSize)
     }
 }
@@ -76,12 +76,11 @@ struct VDAgentMessageHeader: Sendable {
     }
 
     static func deserialize(from data: Data) -> VDAgentMessageHeader? {
-        guard data.count >= size else { return nil }
-        // Skip protocol field (4 bytes) — we don't validate it
-        let typeRaw = data.readLittleEndianUInt32(at: 4)
-        let opaque = data.readLittleEndianUInt64(at: 8)
-        let dataSize = data.readLittleEndianUInt32(at: 16)
-        guard let type = SpiceAgentMessageType(rawValue: typeRaw) else { return nil }
+        guard data.count >= size,
+              let typeRaw = data.readLittleEndianUInt32(at: 4),
+              let opaque = data.readLittleEndianUInt64(at: 8),
+              let dataSize = data.readLittleEndianUInt32(at: 16),
+              let type = SpiceAgentMessageType(rawValue: typeRaw) else { return nil }
         return VDAgentMessageHeader(type: type, opaque: opaque, dataSize: dataSize)
     }
 }
@@ -231,10 +230,29 @@ struct SpiceAgentParser: Sendable {
 
     private var buffer = Data()
 
+    /// Maximum buffer size before the parser resets (guards against malformed streams).
+    private static let maxBufferSize = 1_048_576  // 1 MB
+
+    /// Maximum chunk data size we'll accept (rejects corrupt headers claiming huge sizes).
+    private static let maxChunkDataSize: UInt32 = 1_048_576  // 1 MB
+
+    /// `true` when the buffer was reset due to overflow or corruption.
+    /// Checked by `SpiceClipboardService` to log at the appropriate level.
+    private(set) var didReset = false
+
     /// Feed raw bytes from the pipe into the parser.
     /// Returns zero or more fully parsed messages.
     mutating func feed(_ data: Data) -> [SpiceAgentParsedMessage] {
         buffer.append(data)
+        didReset = false
+
+        // Guard against unbounded growth from malformed streams
+        if buffer.count > Self.maxBufferSize {
+            buffer.removeAll()
+            didReset = true
+            return []
+        }
+
         var messages: [SpiceAgentParsedMessage] = []
 
         while let message = tryParseNext() {
@@ -252,15 +270,27 @@ struct SpiceAgentParser: Sendable {
 
         guard let chunkHeader = VDIChunkHeader.deserialize(from: buffer) else { return nil }
 
+        // Reject corrupt chunk headers claiming unreasonable sizes
+        guard chunkHeader.dataSize <= Self.maxChunkDataSize else {
+            buffer.removeAll()
+            didReset = true
+            return nil
+        }
+
         let totalChunkSize = VDIChunkHeader.size + Int(chunkHeader.dataSize)
         guard buffer.count >= totalChunkSize else { return nil }
 
+        // Consume the chunk from the buffer (trim in-place to avoid full copy)
         let chunkPayload = buffer.subdata(in: VDIChunkHeader.size..<totalChunkSize)
-        buffer = buffer.subdata(in: totalChunkSize..<buffer.count)
+        buffer.removeSubrange(0..<totalChunkSize)
 
-        // Parse the agent message header from the chunk payload
-        guard chunkPayload.count >= VDAgentMessageHeader.size else { return nil }
-        guard let msgHeader = VDAgentMessageHeader.deserialize(from: chunkPayload) else { return nil }
+        // Parse the agent message header from the chunk payload.
+        // If the inner header is malformed or has an unknown type, skip the chunk
+        // but continue parsing — don't halt the loop.
+        guard chunkPayload.count >= VDAgentMessageHeader.size,
+              let msgHeader = VDAgentMessageHeader.deserialize(from: chunkPayload) else {
+            return .other(type: .mouseState)  // Sentinel to keep the while-loop going
+        }
 
         let msgData = chunkPayload.count > VDAgentMessageHeader.size
             ? chunkPayload.subdata(in: VDAgentMessageHeader.size..<chunkPayload.count)
@@ -290,12 +320,13 @@ struct SpiceAgentParser: Sendable {
     }
 
     private func parseAnnounceCapabilities(_ data: Data) -> SpiceAgentParsedMessage {
-        guard data.count >= 4 else { return .announceCapabilities(request: false, caps: []) }
-        let request = data.readLittleEndianUInt32(at: 0)
+        guard let request = data.readLittleEndianUInt32(at: 0) else {
+            return .announceCapabilities(request: false, caps: [])
+        }
         var caps: [UInt32] = []
         var offset = 4
-        while offset + 4 <= data.count {
-            caps.append(data.readLittleEndianUInt32(at: offset))
+        while let value = data.readLittleEndianUInt32(at: offset) {
+            caps.append(value)
             offset += 4
         }
         return .announceCapabilities(request: request != 0, caps: caps)
@@ -304,8 +335,7 @@ struct SpiceAgentParser: Sendable {
     private func parseClipboardGrab(_ data: Data) -> SpiceAgentParsedMessage {
         var types: [SpiceClipboardType] = []
         var offset = 0
-        while offset + 4 <= data.count {
-            let raw = data.readLittleEndianUInt32(at: offset)
+        while let raw = data.readLittleEndianUInt32(at: offset) {
             if let type = SpiceClipboardType(rawValue: raw) {
                 types.append(type)
             }
@@ -315,15 +345,17 @@ struct SpiceAgentParser: Sendable {
     }
 
     private func parseClipboardRequest(_ data: Data) -> SpiceAgentParsedMessage {
-        guard data.count >= 4 else { return .clipboardRequest(type: .none) }
-        let raw = data.readLittleEndianUInt32(at: 0)
+        guard let raw = data.readLittleEndianUInt32(at: 0) else {
+            return .clipboardRequest(type: .none)
+        }
         let type = SpiceClipboardType(rawValue: raw) ?? .none
         return .clipboardRequest(type: type)
     }
 
     private func parseClipboardData(_ data: Data) -> SpiceAgentParsedMessage {
-        guard data.count >= 4 else { return .clipboardData(type: .none, data: Data()) }
-        let raw = data.readLittleEndianUInt32(at: 0)
+        guard let raw = data.readLittleEndianUInt32(at: 0) else {
+            return .clipboardData(type: .none, data: Data())
+        }
         let type = SpiceClipboardType(rawValue: raw) ?? .none
         let clipData = data.count > 4 ? data.subdata(in: 4..<data.count) : Data()
         return .clipboardData(type: type, data: clipData)
@@ -343,23 +375,17 @@ extension Data {
         Swift.withUnsafeBytes(of: &le) { append(contentsOf: $0) }
     }
 
-    func readLittleEndianUInt32(at offset: Int) -> UInt32 {
-        precondition(offset + 4 <= count)
+    func readLittleEndianUInt32(at offset: Int) -> UInt32? {
+        guard offset + 4 <= count else { return nil }
         return subdata(in: offset..<offset + 4).withUnsafeBytes {
             $0.loadUnaligned(as: UInt32.self).littleEndian
         }
     }
 
-    func readLittleEndianUInt64(at offset: Int) -> UInt64 {
-        precondition(offset + 8 <= count)
+    func readLittleEndianUInt64(at offset: Int) -> UInt64? {
+        guard offset + 8 <= count else { return nil }
         return subdata(in: offset..<offset + 8).withUnsafeBytes {
             $0.loadUnaligned(as: UInt64.self).littleEndian
         }
-    }
-
-    /// First 64 bytes as hex string for diagnostic logging.
-    var hexDump: String {
-        prefix(64).map { String(format: "%02x", $0) }.joined(separator: " ")
-            + (count > 64 ? "..." : "")
     }
 }

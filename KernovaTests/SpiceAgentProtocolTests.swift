@@ -86,7 +86,7 @@ struct SpiceAgentProtocolTests {
     // MARK: - Message Builder
 
     @Test("Capabilities message has correct structure")
-    func buildCapabilitiesMessage() {
+    func buildCapabilitiesMessage() throws {
         let message = SpiceMessageBuilder.buildAnnounceCapabilities(request: true)
 
         // Total: VDI header (8) + VDAgent header (20) + request (4) + caps (4) = 36
@@ -105,7 +105,7 @@ struct SpiceAgentProtocolTests {
         #expect(request == 1)
 
         // Check capabilities include clipboard and clipboardByDemand bits
-        let caps = message.readLittleEndianUInt32(at: VDIChunkHeader.size + VDAgentMessageHeader.size + 4)
+        let caps = try #require(message.readLittleEndianUInt32(at: VDIChunkHeader.size + VDAgentMessageHeader.size + 4))
         let clipboardBit: UInt32 = 1 << UInt32(SpiceAgentCapability.clipboard.rawValue)
         let byDemandBit: UInt32 = 1 << UInt32(SpiceAgentCapability.clipboardByDemand.rawValue)
         #expect(caps & clipboardBit != 0)

@@ -32,19 +32,21 @@ struct ClipboardContentView: View {
             statusBar
         }
         .background(.background.secondary)
-        .frame(minWidth: 320, idealWidth: 480, minHeight: 200, idealHeight: 300)
+        .frame(minWidth: 320, idealWidth: 480, minHeight: 250, idealHeight: 300)
     }
 
     // MARK: - Status Bar
 
     @ViewBuilder
     private var statusBar: some View {
+        let isConnected = service?.isConnected ?? false
+
         HStack(spacing: 6) {
             Circle()
-                .fill(service?.isConnected ?? false ? .green : .secondary)
+                .fill(isConnected ? .green : .secondary)
                 .frame(width: 8, height: 8)
 
-            Text(service?.isConnected ?? false ? "Connected" : "Waiting for guest agent")
+            Text(isConnected ? "Connected" : "Waiting for guest agent")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
