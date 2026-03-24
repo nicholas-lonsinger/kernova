@@ -16,6 +16,7 @@ final class VMToolbarManager: NSObject {
         /// Toolbar item identifiers (different strings per controller to avoid AppKit conflicts).
         let lifecycleID: NSToolbarItem.Identifier
         let saveStateID: NSToolbarItem.Identifier
+        let clipboardID: NSToolbarItem.Identifier?
         let displayID: NSToolbarItem.Identifier
 
         /// When `true`, checks `instance.isPreparing` and disables all items while preparing.
@@ -30,7 +31,12 @@ final class VMToolbarManager: NSObject {
 
     /// All shared toolbar item identifiers, for use in `NSToolbarDelegate` methods.
     var sharedItemIdentifiers: [NSToolbarItem.Identifier] {
-        [configuration.lifecycleID, configuration.saveStateID, configuration.displayID]
+        var ids = [configuration.lifecycleID, configuration.saveStateID]
+        if let clipboardID = configuration.clipboardID {
+            ids.append(clipboardID)
+        }
+        ids.append(configuration.displayID)
+        return ids
     }
 
     private let configuration: Configuration
@@ -61,10 +67,10 @@ final class VMToolbarManager: NSObject {
     // MARK: - Init
 
     init(configuration: Configuration, instanceProvider: @escaping () -> VMInstance?) {
-        assert(
-            Set([configuration.lifecycleID, configuration.saveStateID, configuration.displayID]).count == 3,
-            "VMToolbarManager.Configuration identifiers must be distinct"
-        )
+        var ids: Set = [configuration.lifecycleID, configuration.saveStateID, configuration.displayID]
+        if let clipboardID = configuration.clipboardID { ids.insert(clipboardID) }
+        assert(ids.count == (configuration.clipboardID != nil ? 4 : 3),
+               "VMToolbarManager.Configuration identifiers must be distinct")
         self.configuration = configuration
         self.instanceProvider = instanceProvider
         super.init()
@@ -106,6 +112,15 @@ final class VMToolbarManager: NSObject {
                 toolTip: Self.saveStateToolTip
             )
 
+        case configuration.clipboardID:
+            return makeSingleItemGroup(
+                identifier: identifier,
+                label: "Clipboard",
+                symbol: "doc.on.clipboard",
+                action: #selector(AppDelegate.showClipboard(_:)),
+                toolTip: "Open the clipboard sharing window"
+            )
+
         case configuration.displayID:
             let group = NSToolbarItemGroup(
                 itemIdentifier: identifier,
@@ -136,6 +151,7 @@ final class VMToolbarManager: NSObject {
         let instance = resolveActiveInstance()
         updateLifecycleGroup(in: toolbar, instance: instance)
         updateSaveStateItem(in: toolbar, instance: instance)
+        updateClipboardItem(in: toolbar, instance: instance)
         updateDisplayGroup(in: toolbar, instance: instance)
     }
 
@@ -180,6 +196,19 @@ final class VMToolbarManager: NSObject {
         }
 
         subitem.isEnabled = instance.canSave
+    }
+
+    private func updateClipboardItem(in toolbar: NSToolbar, instance: VMInstance?) {
+        guard let clipboardID = configuration.clipboardID,
+              let group = toolbar.items.first(where: { $0.itemIdentifier == clipboardID }) as? NSToolbarItemGroup,
+              let subitem = group.subitems.first else { return }
+
+        guard let instance else {
+            subitem.isEnabled = false
+            return
+        }
+
+        subitem.isEnabled = instance.canShowClipboard
     }
 
     private func updateDisplayGroup(in toolbar: NSToolbar, instance: VMInstance?) {

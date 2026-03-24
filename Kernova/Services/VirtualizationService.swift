@@ -30,8 +30,11 @@ final class VirtualizationService {
                 let result = try await buildConfiguration(for: instance)
                 instance.serialInputPipe = result.serialInputPipe
                 instance.serialOutputPipe = result.serialOutputPipe
+                instance.clipboardInputPipe = result.clipboardInputPipe
+                instance.clipboardOutputPipe = result.clipboardOutputPipe
                 let vm = instance.attachVirtualMachine(from: result.configuration)
                 instance.startSerialReading()
+                instance.startClipboardService()
                 try await vm.start()
             }
 
@@ -240,8 +243,11 @@ final class VirtualizationService {
 
         instance.serialInputPipe = result.serialInputPipe
         instance.serialOutputPipe = result.serialOutputPipe
+        instance.clipboardInputPipe = result.clipboardInputPipe
+        instance.clipboardOutputPipe = result.clipboardOutputPipe
         let vm = instance.attachVirtualMachine(from: result.configuration)
         instance.startSerialReading()
+        instance.startClipboardService()
 
         Self.logger.debug("restoreOrColdBoot: attempting restore from save file")
         do {

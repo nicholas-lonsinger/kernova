@@ -80,6 +80,15 @@ final class VMInstance: Identifiable {
     /// Where the VM display is currently hosted (inline, pop-out window, or fullscreen).
     var displayMode: VMDisplayMode = .inline
 
+    // MARK: - Clipboard Sharing
+
+    /// Bidirectional pipes for the SPICE clipboard console port.
+    var clipboardInputPipe: Pipe?
+    var clipboardOutputPipe: Pipe?
+
+    /// The SPICE clipboard service managing protocol I/O for this VM.
+    var clipboardService: SpiceClipboardService?
+
     // MARK: - Serial Console
 
     /// Observable text buffer driven by serial port output. Capped at 1 MB in memory;
@@ -179,6 +188,11 @@ final class VMInstance: Identifiable {
         (status == .running || status == .paused) && virtualMachine != nil
     }
 
+    /// `true` when the VM has clipboard sharing enabled and is eligible to show the clipboard window.
+    var canShowClipboard: Bool {
+        configuration.clipboardSharingEnabled && (status == .running || status == .paused) && virtualMachine != nil
+    }
+
     // MARK: - Delegate Setup
 
     func setupDelegate() {
@@ -194,6 +208,7 @@ final class VMInstance: Identifiable {
     /// clears the `VZVirtualMachine` reference. Does **not** change `status` —
     /// callers set the appropriate status after calling this.
     func tearDownSession() {
+        stopClipboardService()
         stopSerialReading()
         serialInputPipe = nil
         serialOutputPipe = nil
@@ -310,6 +325,27 @@ final class VMInstance: Identifiable {
             Self.logger.warning("Failed to close serial log file for VM '\(self.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
         }
         serialLogFileHandle = nil
+    }
+
+    // MARK: - Clipboard Service Lifecycle
+
+    /// Creates and starts the SPICE clipboard service using the clipboard pipes.
+    func startClipboardService() {
+        guard let inputPipe = clipboardInputPipe,
+              let outputPipe = clipboardOutputPipe else { return }
+
+        let service = SpiceClipboardService(inputPipe: inputPipe, outputPipe: outputPipe)
+        service.start()
+        clipboardService = service
+        Self.logger.info("Clipboard service started for '\(self.name, privacy: .public)'")
+    }
+
+    /// Stops and releases the clipboard service and pipes.
+    func stopClipboardService() {
+        clipboardService?.stop()
+        clipboardService = nil
+        clipboardInputPipe = nil
+        clipboardOutputPipe = nil
     }
 }
 
