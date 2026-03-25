@@ -147,7 +147,7 @@ final class SpiceClipboardService {
         }
     }
 
-    private func handleIncomingData(_ data: Data) {
+    func handleIncomingData(_ data: Data) {
         let messages = parser.feed(data)
 
         if parser.didReset {
