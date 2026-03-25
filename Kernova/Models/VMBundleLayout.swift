@@ -36,6 +36,15 @@ struct VMBundleLayout: Sendable {
         bundleURL.appendingPathComponent("serial.log")
     }
 
+    var additionalDisksDirectoryURL: URL {
+        bundleURL.appendingPathComponent("AdditionalDisks")
+    }
+
+    /// Returns the URL for an in-bundle additional disk image.
+    func additionalDiskURL(id: UUID) -> URL {
+        additionalDisksDirectoryURL.appendingPathComponent("\(id.uuidString).asif")
+    }
+
     var hasSaveFile: Bool {
         FileManager.default.fileExists(atPath: saveFileURL.path(percentEncoded: false))
     }

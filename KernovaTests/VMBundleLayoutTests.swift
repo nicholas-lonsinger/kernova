@@ -58,6 +58,22 @@ struct VMBundleLayoutTests {
         #expect(layout.serialLogURL.deletingLastPathComponent() == bundleURL)
     }
 
+    @Test("additionalDisksDirectoryURL appends AdditionalDisks to bundle path")
+    func additionalDisksDirectoryURL() {
+        let layout = VMBundleLayout(bundleURL: bundleURL)
+        #expect(layout.additionalDisksDirectoryURL.lastPathComponent == "AdditionalDisks")
+        #expect(layout.additionalDisksDirectoryURL.deletingLastPathComponent() == bundleURL)
+    }
+
+    @Test("additionalDiskURL returns path with UUID and .asif extension")
+    func additionalDiskURL() {
+        let layout = VMBundleLayout(bundleURL: bundleURL)
+        let diskID = UUID()
+        let diskURL = layout.additionalDiskURL(id: diskID)
+        #expect(diskURL.lastPathComponent == "\(diskID.uuidString).asif")
+        #expect(diskURL.path(percentEncoded: false).hasPrefix(layout.additionalDisksDirectoryURL.path(percentEncoded: false)))
+    }
+
     // MARK: - hasSaveFile
 
     @Test("hasSaveFile returns false when no save file exists")

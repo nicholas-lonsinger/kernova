@@ -223,7 +223,7 @@ final class VMCreationViewModel {
             networkEnabled: networkEnabled,
             macAddress: macAddress,
             genericMachineIdentifierData: genericMachineIdentifierData,
-            isoPath: selectedBootMode == .efi ? isoPath : nil,
+            discImagePath: selectedBootMode == .efi ? isoPath : nil,
             kernelPath: selectedBootMode == .linuxKernel ? kernelPath : nil,
             initrdPath: selectedBootMode == .linuxKernel ? initrdPath : nil,
             kernelCommandLine: selectedBootMode == .linuxKernel ? kernelCommandLine : nil

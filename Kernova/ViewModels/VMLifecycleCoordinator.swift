@@ -25,6 +25,7 @@ final class VMLifecycleCoordinator {
     let virtualizationService: any VirtualizationProviding
     let installService: any MacOSInstallProviding
     let ipswService: any IPSWProviding
+    let usbDeviceService: any USBDeviceProviding
 
     /// Maps VM ID → operation token for VMs that currently have a lifecycle operation in flight.
     /// The token allows `defer` blocks to avoid clobbering entries inserted by a later operation.
@@ -33,11 +34,13 @@ final class VMLifecycleCoordinator {
     init(
         virtualizationService: any VirtualizationProviding,
         installService: any MacOSInstallProviding,
-        ipswService: any IPSWProviding
+        ipswService: any IPSWProviding,
+        usbDeviceService: any USBDeviceProviding = USBDeviceService()
     ) {
         self.virtualizationService = virtualizationService
         self.installService = installService
         self.ipswService = ipswService
+        self.usbDeviceService = usbDeviceService
     }
 
     // MARK: - Errors
@@ -217,4 +220,18 @@ final class VMLifecycleCoordinator {
         }
     }
     #endif
+
+    // MARK: - USB Device Management
+
+    /// Attaches a USB mass storage device to a running VM.
+    /// Does not use the lifecycle operation token — USB operations are short
+    /// and independent of start/stop/save lifecycle transitions.
+    func attachUSBDevice(diskImagePath: String, readOnly: Bool, to instance: VMInstance) async throws -> USBDeviceInfo {
+        try await usbDeviceService.attach(diskImagePath: diskImagePath, readOnly: readOnly, to: instance)
+    }
+
+    /// Detaches a USB mass storage device from a running VM.
+    func detachUSBDevice(_ deviceInfo: USBDeviceInfo, from instance: VMInstance) async throws {
+        try await usbDeviceService.detach(deviceInfo: deviceInfo, from: instance)
+    }
 }

@@ -62,6 +62,7 @@ Kernova/
 │   │   ├── VMDisplayView.swift         # NSViewRepresentable wrapping VZVirtualMachineView
 │   │   ├── VMPauseOverlay.swift         # Frosted overlay with play button for live-paused VMs
 │   │   ├── VMTransitionOverlay.swift    # Frosted overlay with spinner for saving/restoring states
+│   │   ├── RemovableMediaPopoverView.swift # Toolbar popover for runtime USB attach/eject
 │   │   ├── SerialConsoleContentView.swift # Serial console content wrapper
 │   │   └── SerialTerminalView.swift    # Terminal text view for serial output
 │   ├── Clipboard/

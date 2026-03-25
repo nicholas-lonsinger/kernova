@@ -501,6 +501,97 @@ final class VMLibraryViewModel {
         }
     }
 
+    // MARK: - USB Device Management
+
+    func attachUSBDevice(diskImagePath: String, readOnly: Bool, to instance: VMInstance) {
+        Self.logger.debug("Attaching USB device '\(URL(fileURLWithPath: diskImagePath).lastPathComponent, privacy: .public)' to '\(instance.name, privacy: .public)' (readOnly: \(readOnly, privacy: .public))")
+        Task {
+            do {
+                _ = try await lifecycle.attachUSBDevice(
+                    diskImagePath: diskImagePath,
+                    readOnly: readOnly,
+                    to: instance
+                )
+            } catch {
+                Self.logger.error("USB attach failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
+                presentError(error)
+            }
+        }
+    }
+
+    func detachUSBDevice(_ device: USBDeviceInfo, from instance: VMInstance) {
+        Self.logger.debug("Detaching USB device '\(device.displayName, privacy: .public)' from '\(instance.name, privacy: .public)'")
+        Task {
+            do {
+                try await lifecycle.detachUSBDevice(device, from: instance)
+            } catch {
+                Self.logger.error("USB detach failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
+                presentError(error)
+            }
+        }
+    }
+
+    // MARK: - Additional Disks
+
+    /// Removes an additional disk from the configuration and trashes the file if internal.
+    func removeAdditionalDisk(_ disk: AdditionalDisk, from instance: VMInstance) {
+        instance.configuration.additionalDisks?.removeAll { $0.id == disk.id }
+        if instance.configuration.additionalDisks?.isEmpty == true {
+            instance.configuration.additionalDisks = nil
+        }
+        saveConfiguration(for: instance)
+
+        if disk.isInternal {
+            let layout = VMBundleLayout(bundleURL: instance.bundleURL)
+            let diskURL = layout.additionalDiskURL(id: disk.id)
+            do {
+                try FileManager.default.trashItem(at: diskURL, resultingItemURL: nil)
+                Self.logger.notice("Trashed internal disk '\(disk.label, privacy: .public)' for VM '\(instance.name, privacy: .public)'")
+            } catch {
+                Self.logger.warning("Failed to trash internal disk '\(disk.label, privacy: .public)' at '\(diskURL.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)")
+                presentError(error)
+            }
+        }
+    }
+
+    /// Creates a new ASIF disk image inside the VM bundle and adds it to the configuration.
+    func createAdditionalDisk(for instance: VMInstance, sizeInGB: Int) {
+        let layout = VMBundleLayout(bundleURL: instance.bundleURL)
+        let diskID = UUID()
+        let diskURL = layout.additionalDiskURL(id: diskID)
+
+        Task {
+            do {
+                try FileManager.default.createDirectory(at: layout.additionalDisksDirectoryURL, withIntermediateDirectories: true)
+
+                try await diskImageService.createDiskImage(at: diskURL, sizeInGB: sizeInGB)
+
+                let disk = AdditionalDisk(
+                    id: diskID,
+                    path: diskURL.path(percentEncoded: false),
+                    readOnly: false,
+                    label: "\(sizeInGB) GB Disk",
+                    isInternal: true
+                )
+                var disks = instance.configuration.additionalDisks ?? []
+                disks.append(disk)
+                instance.configuration.additionalDisks = disks
+                saveConfiguration(for: instance)
+
+                Self.logger.notice("Created in-bundle additional disk '\(disk.label, privacy: .public)' (\(sizeInGB, privacy: .public) GB) for VM '\(instance.name, privacy: .public)'")
+            } catch {
+                // Clean up the disk file if it was created before the failure
+                do {
+                    try FileManager.default.trashItem(at: diskURL, resultingItemURL: nil)
+                } catch let cleanupError {
+                    Self.logger.warning("Failed to clean up partial disk image at '\(diskURL.lastPathComponent, privacy: .public)': \(cleanupError.localizedDescription, privacy: .public)")
+                }
+                Self.logger.error("Failed to create additional disk for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
+                presentError(error)
+            }
+        }
+    }
+
     // MARK: - Clone
 
     func cloneVM(_ instance: VMInstance) {
@@ -541,6 +632,15 @@ final class VMLibraryViewModel {
             }
         }
 
+        // Track internal additional disks that need to be copied and remapped
+        let originalDisks = instance.configuration.additionalDisks ?? []
+        let clonedDisks = clonedConfig.additionalDisks ?? []
+        let internalDiskMapping: [(sourceID: UUID, clonedDisk: AdditionalDisk)] = zip(originalDisks, clonedDisks)
+            .compactMap { original, cloned in
+                guard cloned.isInternal else { return nil }
+                return (sourceID: original.id, clonedDisk: cloned)
+            }
+
         // Derive the destination bundle URL (may touch disk to ensure VMs directory exists)
         let bundleURL: URL
         do {
@@ -562,10 +662,13 @@ final class VMLibraryViewModel {
         let sourceBundleURL = instance.bundleURL
         let config = clonedConfig
         let storage = storageService
+        let diskMapping = internalDiskMapping
+        let bundleFilesToCopy = filesToCopy
         let task = Task { [weak self] in
+            let log = Self.logger
             do {
-                try await Task.detached {
-                    let resultURL = try storage.cloneVMBundle(from: sourceBundleURL, newConfiguration: config, filesToCopy: filesToCopy)
+                let skippedDiskIDs: Set<UUID> = try await Task.detached {
+                    let resultURL = try storage.cloneVMBundle(from: sourceBundleURL, newConfiguration: config, filesToCopy: bundleFilesToCopy)
 
                     // Write regenerated MachineIdentifier file for macOS clones (off main thread)
                     #if arch(arm64)
@@ -574,7 +677,44 @@ final class VMLibraryViewModel {
                         try machineIDData.write(to: layout.machineIdentifierURL, options: .atomic)
                     }
                     #endif
+
+                    // Copy internal additional disk files and track any missing sources
+                    var skipped: Set<UUID> = []
+                    if !diskMapping.isEmpty {
+                        let sourceLayout = VMBundleLayout(bundleURL: sourceBundleURL)
+                        let destLayout = VMBundleLayout(bundleURL: resultURL)
+                        let fm = FileManager.default
+                        try fm.createDirectory(at: destLayout.additionalDisksDirectoryURL, withIntermediateDirectories: true)
+                        for mapping in diskMapping {
+                            let sourceFile = sourceLayout.additionalDiskURL(id: mapping.sourceID)
+                            let destFile = destLayout.additionalDiskURL(id: mapping.clonedDisk.id)
+                            if fm.fileExists(atPath: sourceFile.path(percentEncoded: false)) {
+                                try fm.copyItem(at: sourceFile, to: destFile)
+                            } else {
+                                log.warning("Internal disk '\(mapping.clonedDisk.label, privacy: .public)' source file missing at '\(sourceFile.lastPathComponent, privacy: .public)' — removing from clone")
+                                skipped.insert(mapping.clonedDisk.id)
+                            }
+                        }
+                    }
+                    return skipped
                 }.value
+
+                // Remove skipped disks and remap internal disk paths to the new bundle location
+                if !diskMapping.isEmpty {
+                    let newLayout = VMBundleLayout(bundleURL: phantom.bundleURL)
+                    phantom.configuration.additionalDisks = phantom.configuration.additionalDisks?
+                        .filter { !skippedDiskIDs.contains($0.id) }
+                        .map { disk in
+                            guard disk.isInternal else { return disk }
+                            var updated = disk
+                            updated.path = newLayout.additionalDiskURL(id: disk.id).path(percentEncoded: false)
+                            return updated
+                        }
+                    if phantom.configuration.additionalDisks?.isEmpty == true {
+                        phantom.configuration.additionalDisks = nil
+                    }
+                    try storage.saveConfiguration(phantom.configuration, to: phantom.bundleURL)
+                }
 
                 // Clear preparing state regardless of whether the view model is still alive —
                 // the phantom row's UI should always reflect completion.

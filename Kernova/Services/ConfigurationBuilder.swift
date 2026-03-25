@@ -4,8 +4,8 @@ import os
 
 /// Translates a `VMConfiguration` into a `VZVirtualMachineConfiguration`.
 ///
-/// Resolves symlinks and validates all user-supplied file paths (kernel, initrd, ISO,
-/// shared directories) before passing them to Virtualization.framework.
+/// Resolves symlinks and validates all user-supplied file paths (kernel, initrd, disc image,
+/// additional disks, shared directories) before passing them to Virtualization.framework.
 ///
 /// Supports three boot paths:
 /// - **macOS**: `VZMacPlatformConfiguration` + `VZMacOSBootLoader` (Apple Silicon only)
@@ -56,6 +56,7 @@ struct ConfigurationBuilder: Sendable {
         configureNetwork(vzConfig, config: config)
         configureEntropy(vzConfig)
         configureAudio(vzConfig, config: config)
+        configureUSBControllers(vzConfig)
         try configureDirectorySharing(vzConfig, config: config)
 
         // Serial port
@@ -264,39 +265,83 @@ struct ConfigurationBuilder: Sendable {
         let storage = VZVirtioBlockDeviceConfiguration(attachment: diskAttachment)
         vzConfig.storageDevices = [storage]
 
-        // Attach ISO as USB mass storage device
-        if let isoPath = config.isoPath {
-            let isoURL = URL(fileURLWithPath: isoPath).resolvingSymlinksInPath()
-            let resolvedISOPath = isoURL.path(percentEncoded: false)
+        // Attach disc image as USB mass storage device
+        if let discImagePath = config.discImagePath {
+            let discImageURL = URL(fileURLWithPath: discImagePath).resolvingSymlinksInPath()
+            let resolvedDiscImagePath = discImageURL.path(percentEncoded: false)
 
-            if resolvedISOPath != isoPath {
-                Self.logger.info("ISO path '\(isoPath, privacy: .public)' resolved to '\(resolvedISOPath, privacy: .public)'")
+            if resolvedDiscImagePath != discImagePath {
+                Self.logger.info("Disc image path '\(discImagePath, privacy: .public)' resolved to '\(resolvedDiscImagePath, privacy: .public)'")
             }
 
-            var isISODirectory: ObjCBool = false
-            guard FileManager.default.fileExists(atPath: resolvedISOPath, isDirectory: &isISODirectory) else {
-                Self.logger.error("ISO image not found at '\(isoPath, privacy: .public)' (resolved: '\(resolvedISOPath, privacy: .public)')")
-                throw ConfigurationBuilderError.isoImageNotFound(isoPath)
+            var isDiscImageDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: resolvedDiscImagePath, isDirectory: &isDiscImageDirectory) else {
+                Self.logger.error("Disc image not found at '\(discImagePath, privacy: .public)' (resolved: '\(resolvedDiscImagePath, privacy: .public)')")
+                throw ConfigurationBuilderError.discImageNotFound(discImagePath)
             }
-            guard !isISODirectory.boolValue else {
-                Self.logger.error("ISO path is a directory, not a file: '\(isoPath, privacy: .public)' (resolved: '\(resolvedISOPath, privacy: .public)')")
-                throw ConfigurationBuilderError.isoImagePathIsDirectory(isoPath)
+            guard !isDiscImageDirectory.boolValue else {
+                Self.logger.error("Disc image path is a directory, not a file: '\(discImagePath, privacy: .public)' (resolved: '\(resolvedDiscImagePath, privacy: .public)')")
+                throw ConfigurationBuilderError.discImagePathIsDirectory(discImagePath)
             }
 
-            let isoAttachment: VZDiskImageStorageDeviceAttachment
+            if !config.discImageReadOnly {
+                guard FileManager.default.isWritableFile(atPath: resolvedDiscImagePath) else {
+                    Self.logger.error("Disc image is not writable: '\(discImagePath, privacy: .public)' (resolved: '\(resolvedDiscImagePath, privacy: .public)')")
+                    throw ConfigurationBuilderError.discImageNotWritable(discImagePath)
+                }
+            }
+
+            let discImageAttachment: VZDiskImageStorageDeviceAttachment
             do {
-                isoAttachment = try VZDiskImageStorageDeviceAttachment(url: isoURL, readOnly: true)
+                discImageAttachment = try VZDiskImageStorageDeviceAttachment(url: discImageURL, readOnly: config.discImageReadOnly)
             } catch {
-                Self.logger.error("Failed to attach ISO at '\(isoPath, privacy: .public)' (resolved: '\(resolvedISOPath, privacy: .public)'): \(error.localizedDescription, privacy: .public)")
+                Self.logger.error("Failed to attach disc image at '\(discImagePath, privacy: .public)' (resolved: '\(resolvedDiscImagePath, privacy: .public)'): \(error.localizedDescription, privacy: .public)")
                 throw error
             }
-            let usbStorage = VZUSBMassStorageDeviceConfiguration(attachment: isoAttachment)
+            let usbStorage = VZUSBMassStorageDeviceConfiguration(attachment: discImageAttachment)
             // For EFI boot with boot-from-disc enabled, insert before main disk
-            // so the firmware discovers the ISO first
+            // so the firmware discovers it first
             if config.bootFromDiscImage && config.bootMode == .efi {
                 vzConfig.storageDevices.insert(usbStorage, at: 0)
             } else {
                 vzConfig.storageDevices.append(usbStorage)
+            }
+        }
+
+        // Attach additional virtio block devices
+        if let additionalDisks = config.additionalDisks {
+            for disk in additionalDisks {
+                let diskURL = URL(fileURLWithPath: disk.path).resolvingSymlinksInPath()
+                let resolvedPath = diskURL.path(percentEncoded: false)
+
+                var isDirectory: ObjCBool = false
+                guard FileManager.default.fileExists(atPath: resolvedPath, isDirectory: &isDirectory) else {
+                    Self.logger.error("Additional disk '\(disk.label, privacy: .public)' not found at '\(disk.path, privacy: .public)' (resolved: '\(resolvedPath, privacy: .public)')")
+                    throw ConfigurationBuilderError.additionalDiskNotFound(disk.path, disk.label)
+                }
+                guard !isDirectory.boolValue else {
+                    Self.logger.error("Additional disk '\(disk.label, privacy: .public)' path is a directory: '\(disk.path, privacy: .public)' (resolved: '\(resolvedPath, privacy: .public)')")
+                    throw ConfigurationBuilderError.additionalDiskPathIsDirectory(disk.path, disk.label)
+                }
+                if !disk.readOnly {
+                    guard FileManager.default.isWritableFile(atPath: resolvedPath) else {
+                        Self.logger.error("Additional disk '\(disk.label, privacy: .public)' is not writable: '\(disk.path, privacy: .public)' (resolved: '\(resolvedPath, privacy: .public)')")
+                        throw ConfigurationBuilderError.additionalDiskNotWritable(disk.path, disk.label)
+                    }
+                }
+
+                let attachment: VZDiskImageStorageDeviceAttachment
+                do {
+                    attachment = try VZDiskImageStorageDeviceAttachment(url: diskURL, readOnly: disk.readOnly)
+                } catch {
+                    Self.logger.error("Failed to attach additional disk '\(disk.label, privacy: .public)' at '\(disk.path, privacy: .public)' (resolved: '\(resolvedPath, privacy: .public)'): \(error.localizedDescription, privacy: .public)")
+                    throw error
+                }
+                let blockDevice = VZVirtioBlockDeviceConfiguration(attachment: attachment)
+                blockDevice.blockDeviceIdentifier = disk.blockDeviceIdentifier
+                vzConfig.storageDevices.append(blockDevice)
+
+                Self.logger.debug("Attached additional disk '\(disk.label, privacy: .public)' (id: \(disk.blockDeviceIdentifier, privacy: .public), readOnly: \(disk.readOnly, privacy: .public))")
             }
         }
     }
@@ -337,6 +382,12 @@ struct ConfigurationBuilder: Sendable {
 
         audioDevice.streams = streams
         vzConfig.audioDevices = [audioDevice]
+    }
+
+    /// Configures an XHCI USB controller unconditionally so that runtime USB device hot-plug
+    /// is always available via `USBDeviceService`.
+    private func configureUSBControllers(_ vzConfig: VZVirtualMachineConfiguration) {
+        vzConfig.usbControllers = [VZXHCIControllerConfiguration()]
     }
 
     // MARK: - Serial Port
@@ -499,9 +550,13 @@ enum ConfigurationBuilderError: LocalizedError {
     case kernelPathIsDirectory(String)
     case initrdNotFound(String)
     case initrdPathIsDirectory(String)
-    case isoImageNotFound(String)
-    case isoImagePathIsDirectory(String)
+    case discImageNotFound(String)
+    case discImagePathIsDirectory(String)
+    case discImageNotWritable(String)
     case diskImageNotFound(URL)
+    case additionalDiskNotFound(String, String)
+    case additionalDiskPathIsDirectory(String, String)
+    case additionalDiskNotWritable(String, String)
     case sharedDirectoryNotFound(String)
     case sharedDirectoryNotADirectory(String)
     case sharedDirectoryNotReadable(String)
@@ -525,10 +580,18 @@ enum ConfigurationBuilderError: LocalizedError {
             "Initial ramdisk not found at \(path)."
         case .initrdPathIsDirectory(let path):
             "Initial ramdisk path is a directory, not a file: \(path)."
-        case .isoImageNotFound(let path):
-            "ISO image not found at \(path). Remove the ISO path from your VM configuration if the installation media is no longer needed."
-        case .isoImagePathIsDirectory(let path):
-            "ISO image path is a directory, not a file: \(path)."
+        case .discImageNotFound(let path):
+            "Disc image not found at \(path). Remove the disc image path from your VM configuration if the media is no longer needed."
+        case .discImagePathIsDirectory(let path):
+            "Disc image path is a directory, not a file: \(path)."
+        case .discImageNotWritable(let path):
+            "Disc image is not writable: \(path). Change it to read-only or select a writable file."
+        case .additionalDiskNotFound(let path, let label):
+            "Additional disk '\(label)' not found at \(path)."
+        case .additionalDiskPathIsDirectory(let path, let label):
+            "Additional disk '\(label)' path is a directory, not a file: \(path)."
+        case .additionalDiskNotWritable(let path, let label):
+            "Additional disk '\(label)' is not writable: \(path). Change it to read-only or select a writable file."
         case .diskImageNotFound(let url):
             "Disk image not found at \(url.path(percentEncoded: false))."
         case .sharedDirectoryNotFound(let path):

@@ -151,6 +151,17 @@ final class VMInstance: Identifiable {
     var serialLogURL: URL { bundleLayout.serialLogURL }
     var diskUsageBytes: UInt64? { bundleLayout.diskUsageBytes }
 
+    // MARK: - Runtime USB Devices
+
+    /// USB mass storage devices currently attached via the XHCI controller.
+    /// Populated at runtime only; cleared on VM stop/teardown.
+    var attachedUSBDevices: [USBDeviceInfo] = []
+
+    /// `true` when the VM has a live `VZVirtualMachine` in a running or paused state, enabling USB hot-plug via the XHCI controller.
+    var canAttachUSBDevices: Bool {
+        (status == .running || status == .paused) && virtualMachine != nil
+    }
+
     /// `true` when the VM is paused-to-disk but has no live `VZVirtualMachine` in memory.
     var isColdPaused: Bool {
         status == .paused && virtualMachine == nil
@@ -212,6 +223,7 @@ final class VMInstance: Identifiable {
         stopSerialReading()
         serialInputPipe = nil
         serialOutputPipe = nil
+        attachedUSBDevices = []
         virtualMachine = nil
         delegateAdapter = nil
     }

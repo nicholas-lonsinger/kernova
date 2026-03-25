@@ -29,6 +29,7 @@ struct VMToolbarManagerTests {
                 lifecycleID: NSToolbarItem.Identifier("testLifecycle"),
                 saveStateID: NSToolbarItem.Identifier("testSaveState"),
                 clipboardID: NSToolbarItem.Identifier("testClipboard"),
+                removableMediaID: NSToolbarItem.Identifier("testRemovableMedia"),
                 displayID: NSToolbarItem.Identifier("testDisplay"),
                 checksPreparing: checksPreparing,
                 gatesDisplayOnCapability: gatesDisplayOnCapability
@@ -91,13 +92,14 @@ struct VMToolbarManagerTests {
         #expect(item == nil)
     }
 
-    @Test("sharedItemIdentifiers contains all four identifiers")
+    @Test("sharedItemIdentifiers contains all five identifiers")
     func sharedIdentifiers() {
         let manager = makeManager()
-        #expect(manager.sharedItemIdentifiers.count == 4)
+        #expect(manager.sharedItemIdentifiers.count == 5)
         #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testLifecycle")))
         #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testSaveState")))
         #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testClipboard")))
+        #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testRemovableMedia")))
         #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testDisplay")))
     }
 
