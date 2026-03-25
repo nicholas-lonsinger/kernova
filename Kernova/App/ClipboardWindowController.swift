@@ -24,6 +24,7 @@ final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
 
         let contentView = ClipboardContentView(instance: instance)
         let hostingController = NSHostingController(rootView: contentView)
+        hostingController.sizingOptions = []
 
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 480, height: 300),

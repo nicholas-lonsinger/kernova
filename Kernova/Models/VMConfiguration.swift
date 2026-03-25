@@ -64,12 +64,16 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
     /// Serialized `VZGenericMachineIdentifier.dataRepresentation`.
     var genericMachineIdentifierData: Data?
 
-    // MARK: - Disc Drive
+    // MARK: - Removable Media
 
-    /// Path to an ISO image attached as a USB mass storage device.
-    var isoPath: String?
+    /// Path to a disk image attached as a USB mass storage device at VM start time.
+    /// For runtime hot-plug, see `USBDeviceService`.
+    var discImagePath: String?
 
-    /// When `true` and `bootMode == .efi`, the ISO device is placed before the main disk
+    /// When `true`, the disc image attachment is read-only. Defaults to `true`.
+    var discImageReadOnly: Bool
+
+    /// When `true` and `bootMode == .efi`, the disc image device is placed before the main disk
     /// so the EFI firmware discovers it first.
     var bootFromDiscImage: Bool
 
@@ -78,6 +82,11 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
     var kernelPath: String?
     var initrdPath: String?
     var kernelCommandLine: String?
+
+    // MARK: - Storage Disks
+
+    /// Extra disk images attached as virtio block devices (e.g., /dev/vdb on Linux).
+    var additionalDisks: [AdditionalDisk]?
 
     // MARK: - Shared Directories
 
@@ -109,11 +118,13 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         hardwareModelData: Data? = nil,
         machineIdentifierData: Data? = nil,
         genericMachineIdentifierData: Data? = nil,
-        isoPath: String? = nil,
+        discImagePath: String? = nil,
+        discImageReadOnly: Bool = true,
         bootFromDiscImage: Bool = false,
         kernelPath: String? = nil,
         initrdPath: String? = nil,
         kernelCommandLine: String? = nil,
+        additionalDisks: [AdditionalDisk]? = nil,
         sharedDirectories: [SharedDirectory]? = nil,
         createdAt: Date = Date()
     ) {
@@ -136,11 +147,13 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         self.hardwareModelData = hardwareModelData
         self.machineIdentifierData = machineIdentifierData
         self.genericMachineIdentifierData = genericMachineIdentifierData
-        self.isoPath = isoPath
+        self.discImagePath = discImagePath
+        self.discImageReadOnly = discImageReadOnly
         self.bootFromDiscImage = bootFromDiscImage
         self.kernelPath = kernelPath
         self.initrdPath = initrdPath
         self.kernelCommandLine = kernelCommandLine
+        self.additionalDisks = additionalDisks
         self.sharedDirectories = sharedDirectories
         self.createdAt = createdAt
     }
@@ -156,8 +169,9 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         case microphoneEnabled
         case hardwareModelData, machineIdentifierData
         case genericMachineIdentifierData
-        case isoPath, bootFromDiscImage
+        case discImagePath, discImageReadOnly, bootFromDiscImage
         case kernelPath, initrdPath, kernelCommandLine
+        case additionalDisks
         case sharedDirectories
         case createdAt
     }
@@ -184,11 +198,13 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         hardwareModelData = try container.decodeIfPresent(Data.self, forKey: .hardwareModelData)
         machineIdentifierData = try container.decodeIfPresent(Data.self, forKey: .machineIdentifierData)
         genericMachineIdentifierData = try container.decodeIfPresent(Data.self, forKey: .genericMachineIdentifierData)
-        isoPath = try container.decodeIfPresent(String.self, forKey: .isoPath)
+        discImagePath = try container.decodeIfPresent(String.self, forKey: .discImagePath)
+        discImageReadOnly = try container.decodeIfPresent(Bool.self, forKey: .discImageReadOnly) ?? true
         bootFromDiscImage = try container.decodeIfPresent(Bool.self, forKey: .bootFromDiscImage) ?? false
         kernelPath = try container.decodeIfPresent(String.self, forKey: .kernelPath)
         initrdPath = try container.decodeIfPresent(String.self, forKey: .initrdPath)
         kernelCommandLine = try container.decodeIfPresent(String.self, forKey: .kernelCommandLine)
+        additionalDisks = try container.decodeIfPresent([AdditionalDisk].self, forKey: .additionalDisks)
         sharedDirectories = try container.decodeIfPresent([SharedDirectory].self, forKey: .sharedDirectories)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
     }
@@ -210,6 +226,12 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         clone.name = Self.generateCloneName(baseName: name, existingNames: existingNames)
         clone.displayPreference = .inline
         clone.lastFullscreenDisplayID = nil
+
+        // Regenerate additional disk IDs to avoid blockDeviceIdentifier collisions.
+        // Internal disk paths are updated by the caller after copying files.
+        clone.additionalDisks = additionalDisks?.map { disk in
+            AdditionalDisk(id: UUID(), path: disk.path, readOnly: disk.readOnly, label: disk.label, isInternal: disk.isInternal)
+        }
 
         // Regenerate shared directory IDs to avoid VirtioFS collisions
         clone.sharedDirectories = sharedDirectories?.map { dir in
@@ -256,5 +278,37 @@ struct SharedDirectory: Codable, Sendable, Equatable, Identifiable {
     /// The last path component, used as the display name in the UI and as the share name in VirtioFS.
     var displayName: String {
         URL(fileURLWithPath: path).lastPathComponent
+    }
+}
+
+// MARK: - AdditionalDisk
+
+/// A disk image attached as an additional virtio block device.
+struct AdditionalDisk: Codable, Sendable, Equatable, Identifiable {
+    var id: UUID
+    var path: String
+    var readOnly: Bool
+    var label: String
+    var isInternal: Bool
+
+    init(id: UUID = UUID(), path: String, readOnly: Bool = false, label: String? = nil, isInternal: Bool = false) {
+        self.id = id
+        self.path = path
+        self.readOnly = readOnly
+        self.label = label ?? URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
+        self.isInternal = isInternal
+    }
+
+    /// The last path component, used as the display name in the UI.
+    var displayName: String {
+        URL(fileURLWithPath: path).lastPathComponent
+    }
+
+    /// Block device identifier for the guest (up to 20 ASCII chars).
+    ///
+    /// Derived from the UUID prefix for uniqueness and stability.
+    /// Visible in Linux guests at `/dev/disk/by-id/virtio-<identifier>`.
+    var blockDeviceIdentifier: String {
+        String(id.uuidString.prefix(20))
     }
 }

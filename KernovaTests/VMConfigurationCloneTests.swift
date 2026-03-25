@@ -203,4 +203,47 @@ struct VMConfigurationCloneTests {
         let clone = makeConfig(sharedDirectories: nil).clonedForNewInstance(existingNames: [])
         #expect(clone.sharedDirectories == nil)
     }
+
+    // MARK: - Additional Disks
+
+    @Test("Clone regenerates additional disk IDs")
+    func cloneRegeneratesAdditionalDiskIDs() {
+        let disks = [
+            AdditionalDisk(path: "/tmp/data.asif", readOnly: false, label: "Data", isInternal: true),
+            AdditionalDisk(path: "/ext/backup.img", readOnly: true, label: "Backup", isInternal: false),
+        ]
+        var config = makeConfig()
+        config.additionalDisks = disks
+        let clone = config.clonedForNewInstance(existingNames: [])
+
+        #expect(clone.additionalDisks?.count == 2)
+        #expect(clone.additionalDisks?[0].id != disks[0].id)
+        #expect(clone.additionalDisks?[1].id != disks[1].id)
+    }
+
+    @Test("Clone preserves additional disk paths, labels, readOnly, and isInternal")
+    func clonePreservesAdditionalDiskFields() {
+        let disks = [
+            AdditionalDisk(path: "/tmp/data.asif", readOnly: false, label: "Data", isInternal: true),
+            AdditionalDisk(path: "/ext/backup.img", readOnly: true, label: "Backup", isInternal: false),
+        ]
+        var config = makeConfig()
+        config.additionalDisks = disks
+        let clone = config.clonedForNewInstance(existingNames: [])
+
+        #expect(clone.additionalDisks?[0].path == "/tmp/data.asif")
+        #expect(clone.additionalDisks?[0].readOnly == false)
+        #expect(clone.additionalDisks?[0].label == "Data")
+        #expect(clone.additionalDisks?[0].isInternal == true)
+        #expect(clone.additionalDisks?[1].path == "/ext/backup.img")
+        #expect(clone.additionalDisks?[1].readOnly == true)
+        #expect(clone.additionalDisks?[1].label == "Backup")
+        #expect(clone.additionalDisks?[1].isInternal == false)
+    }
+
+    @Test("Clone with nil additional disks remains nil")
+    func cloneNilAdditionalDisks() {
+        let clone = makeConfig().clonedForNewInstance(existingNames: [])
+        #expect(clone.additionalDisks == nil)
+    }
 }

@@ -220,7 +220,8 @@ struct ConfigurationBuilderTests {
                  .sharedDirectoryNotReadable, .sharedDirectoryNotWritable,
                  .kernelNotFound, .kernelPathIsDirectory,
                  .initrdNotFound, .initrdPathIsDirectory,
-                 .isoImageNotFound, .isoImagePathIsDirectory:
+                 .discImageNotFound, .discImagePathIsDirectory, .discImageNotWritable,
+                 .additionalDiskNotFound, .additionalDiskPathIsDirectory, .additionalDiskNotWritable:
                 Issue.record("Unexpected path validation error: \(error)")
             // Non-path-validation errors — tolerated if they occur:
             case .macOSGuestRequiresAppleSilicon,
@@ -276,23 +277,155 @@ struct ConfigurationBuilderTests {
         }
     }
 
-    // MARK: - ISO Path Validation
+    // MARK: - Disc Image Path Validation
 
-    @Test("Builder throws for nonexistent ISO path")
-    func builderThrowsForNonexistentISOPath() throws {
+    @Test("Builder throws for nonexistent disc image path")
+    func builderThrowsForNonexistentDiscImagePath() throws {
         let bundleURL = try makeTempBundle(withDisk: true)
         defer { try? FileManager.default.removeItem(at: bundleURL) }
 
         var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
-        config.isoPath = "/nonexistent/\(UUID().uuidString)/install.iso"
+        config.discImagePath = "/nonexistent/\(UUID().uuidString)/install.iso"
 
         let builder = ConfigurationBuilder()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
-                  case .isoImageNotFound = e else { return false }
+                  case .discImageNotFound = e else { return false }
             return true
+        }
+    }
+
+    @Test("Builder throws for non-writable disc image when readOnly is false")
+    func builderThrowsForNonWritableDiscImage() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        // Create a read-only file to use as disc image
+        let discImagePath = bundleURL.appendingPathComponent("readonly.iso").path(percentEncoded: false)
+        FileManager.default.createFile(atPath: discImagePath, contents: Data([0]))
+        try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: discImagePath)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: discImagePath) }
+
+        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        config.discImagePath = discImagePath
+        config.discImageReadOnly = false
+
+        let builder = ConfigurationBuilder()
+        #expect {
+            try builder.build(from: config, bundleURL: bundleURL)
+        } throws: { error in
+            guard let e = error as? ConfigurationBuilderError,
+                  case .discImageNotWritable = e else { return false }
+            return true
+        }
+    }
+
+    // MARK: - Additional Disk Validation
+
+    @Test("Builder throws for nonexistent additional disk path")
+    func builderThrowsForNonexistentAdditionalDisk() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        config.additionalDisks = [
+            AdditionalDisk(path: "/nonexistent/\(UUID().uuidString)/data.asif", label: "Data")
+        ]
+
+        let builder = ConfigurationBuilder()
+        #expect {
+            try builder.build(from: config, bundleURL: bundleURL)
+        } throws: { error in
+            guard let e = error as? ConfigurationBuilderError,
+                  case .additionalDiskNotFound = e else { return false }
+            return true
+        }
+    }
+
+    @Test("Builder throws for directory as additional disk path")
+    func builderThrowsForDirectoryAsAdditionalDisk() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        let dirPath = bundleURL.appendingPathComponent("disk-dir")
+        try FileManager.default.createDirectory(at: dirPath, withIntermediateDirectories: true)
+
+        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        config.additionalDisks = [
+            AdditionalDisk(path: dirPath.path(percentEncoded: false), label: "Data")
+        ]
+
+        let builder = ConfigurationBuilder()
+        #expect {
+            try builder.build(from: config, bundleURL: bundleURL)
+        } throws: { error in
+            guard let e = error as? ConfigurationBuilderError,
+                  case .additionalDiskPathIsDirectory = e else { return false }
+            return true
+        }
+    }
+
+    @Test("Builder throws for non-writable read-write additional disk")
+    func builderThrowsForNonWritableAdditionalDisk() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        let diskPath = bundleURL.appendingPathComponent("readonly-data.asif").path(percentEncoded: false)
+        FileManager.default.createFile(atPath: diskPath, contents: Data([0]))
+        try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: diskPath)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: diskPath) }
+
+        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        config.additionalDisks = [
+            AdditionalDisk(path: diskPath, readOnly: false, label: "Data")
+        ]
+
+        let builder = ConfigurationBuilder()
+        #expect {
+            try builder.build(from: config, bundleURL: bundleURL)
+        } throws: { error in
+            guard let e = error as? ConfigurationBuilderError,
+                  case .additionalDiskNotWritable = e else { return false }
+            return true
+        }
+    }
+
+    @Test("Builder accepts read-only additional disk for non-writable file")
+    func builderAcceptsReadOnlyAdditionalDisk() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        let diskPath = bundleURL.appendingPathComponent("readonly-data.asif").path(percentEncoded: false)
+        FileManager.default.createFile(atPath: diskPath, contents: Data([0]))
+        try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: diskPath)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: diskPath) }
+
+        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        config.additionalDisks = [
+            AdditionalDisk(path: diskPath, readOnly: true, label: "Data")
+        ]
+
+        let builder = ConfigurationBuilder()
+        do {
+            _ = try builder.build(from: config, bundleURL: bundleURL)
+        } catch let error as ConfigurationBuilderError {
+            switch error {
+            case .sharedDirectoryNotFound, .sharedDirectoryNotADirectory,
+                 .sharedDirectoryNotReadable, .sharedDirectoryNotWritable,
+                 .kernelNotFound, .kernelPathIsDirectory,
+                 .initrdNotFound, .initrdPathIsDirectory,
+                 .discImageNotFound, .discImagePathIsDirectory, .discImageNotWritable,
+                 .additionalDiskNotFound, .additionalDiskPathIsDirectory, .additionalDiskNotWritable:
+                Issue.record("Unexpected path validation error: \(error)")
+            case .macOSGuestRequiresAppleSilicon,
+                 .invalidHardwareModel, .invalidMachineIdentifier,
+                 .missingKernelPath, .diskImageNotFound:
+                break
+            }
+        } catch {
+            // VZ framework or other errors are expected
         }
     }
 
@@ -323,7 +456,8 @@ struct ConfigurationBuilderTests {
                  .sharedDirectoryNotReadable, .sharedDirectoryNotWritable,
                  .kernelNotFound, .kernelPathIsDirectory,
                  .initrdNotFound, .initrdPathIsDirectory,
-                 .isoImageNotFound, .isoImagePathIsDirectory:
+                 .discImageNotFound, .discImagePathIsDirectory, .discImageNotWritable,
+                 .additionalDiskNotFound, .additionalDiskPathIsDirectory, .additionalDiskNotWritable:
                 Issue.record("Unexpected path validation error: \(error)")
             // Non-path-validation errors — tolerated if they occur:
             case .macOSGuestRequiresAppleSilicon,
@@ -337,7 +471,7 @@ struct ConfigurationBuilderTests {
         }
     }
 
-    // MARK: - Dangling Symlink Tests (Kernel / Initrd / ISO)
+    // MARK: - Dangling Symlink Tests (Kernel / Initrd / Disc Image)
 
     @Test("Builder throws for dangling symlink as kernel path")
     func builderThrowsForDanglingSymlinkKernelPath() throws {
@@ -388,8 +522,8 @@ struct ConfigurationBuilderTests {
         }
     }
 
-    @Test("Builder throws for dangling symlink as ISO path")
-    func builderThrowsForDanglingSymlinkISOPath() throws {
+    @Test("Builder throws for dangling symlink as disc image path")
+    func builderThrowsForDanglingSymlinkDiscImagePath() throws {
         let bundleURL = try makeTempBundle(withDisk: true)
         defer { try? FileManager.default.removeItem(at: bundleURL) }
 
@@ -398,19 +532,19 @@ struct ConfigurationBuilderTests {
         try FileManager.default.createSymbolicLink(atPath: symlinkPath, withDestinationPath: nonexistentTarget)
 
         var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
-        config.isoPath = symlinkPath
+        config.discImagePath = symlinkPath
 
         let builder = ConfigurationBuilder()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
-                  case .isoImageNotFound = e else { return false }
+                  case .discImageNotFound = e else { return false }
             return true
         }
     }
 
-    // MARK: - Directory-as-File Tests (Kernel / Initrd / ISO)
+    // MARK: - Directory-as-File Tests (Kernel / Initrd / Disc Image)
 
     @Test("Builder throws for directory as kernel path")
     func builderThrowsForDirectoryAsKernelPath() throws {
@@ -459,8 +593,8 @@ struct ConfigurationBuilderTests {
         }
     }
 
-    @Test("Builder throws for directory as ISO path")
-    func builderThrowsForDirectoryAsISOPath() throws {
+    @Test("Builder throws for directory as disc image path")
+    func builderThrowsForDirectoryAsDiscImagePath() throws {
         let bundleURL = try makeTempBundle(withDisk: true)
         defer { try? FileManager.default.removeItem(at: bundleURL) }
 
@@ -468,19 +602,19 @@ struct ConfigurationBuilderTests {
         try FileManager.default.createDirectory(at: dirPath, withIntermediateDirectories: true)
 
         var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
-        config.isoPath = dirPath.path(percentEncoded: false)
+        config.discImagePath = dirPath.path(percentEncoded: false)
 
         let builder = ConfigurationBuilder()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
-                  case .isoImagePathIsDirectory = e else { return false }
+                  case .discImagePathIsDirectory = e else { return false }
             return true
         }
     }
 
-    // MARK: - Symlink-to-Directory Tests (Kernel / Initrd / ISO)
+    // MARK: - Symlink-to-Directory Tests (Kernel / Initrd / Disc Image)
 
     @Test("Builder throws for symlink to directory as kernel path")
     func builderThrowsForSymlinkToDirectoryAsKernelPath() throws {
@@ -533,8 +667,8 @@ struct ConfigurationBuilderTests {
         }
     }
 
-    @Test("Builder throws for symlink to directory as ISO path")
-    func builderThrowsForSymlinkToDirectoryAsISOPath() throws {
+    @Test("Builder throws for symlink to directory as disc image path")
+    func builderThrowsForSymlinkToDirectoryAsDiscImagePath() throws {
         let bundleURL = try makeTempBundle(withDisk: true)
         defer { try? FileManager.default.removeItem(at: bundleURL) }
 
@@ -544,14 +678,14 @@ struct ConfigurationBuilderTests {
         try FileManager.default.createSymbolicLink(atPath: symlinkPath, withDestinationPath: dirPath.path(percentEncoded: false))
 
         var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
-        config.isoPath = symlinkPath
+        config.discImagePath = symlinkPath
 
         let builder = ConfigurationBuilder()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
-                  case .isoImagePathIsDirectory = e else { return false }
+                  case .discImagePathIsDirectory = e else { return false }
             return true
         }
     }
@@ -584,7 +718,8 @@ struct ConfigurationBuilderTests {
                  .sharedDirectoryNotReadable, .sharedDirectoryNotWritable,
                  .kernelNotFound, .kernelPathIsDirectory,
                  .initrdNotFound, .initrdPathIsDirectory,
-                 .isoImageNotFound, .isoImagePathIsDirectory:
+                 .discImageNotFound, .discImagePathIsDirectory, .discImageNotWritable,
+                 .additionalDiskNotFound, .additionalDiskPathIsDirectory, .additionalDiskNotWritable:
                 Issue.record("Unexpected path validation error: \(error)")
             // Non-path-validation errors — tolerated if they occur:
             case .macOSGuestRequiresAppleSilicon,

@@ -274,7 +274,7 @@ struct VMCreationViewModelTests {
         #expect(config.networkEnabled == true)
         #expect(config.macAddress != nil)  // generated for networking
         #expect(config.genericMachineIdentifierData != nil)  // generated for EFI
-        #expect(config.isoPath == "/path/to/ubuntu.iso")
+        #expect(config.discImagePath == "/path/to/ubuntu.iso")
         #expect(config.kernelPath == nil)
         #expect(config.initrdPath == nil)
         #expect(config.kernelCommandLine == nil)
@@ -302,7 +302,7 @@ struct VMCreationViewModelTests {
         #expect(config.networkEnabled == false)
         #expect(config.macAddress == nil)  // no networking
         #expect(config.genericMachineIdentifierData != nil)  // generated for linuxKernel
-        #expect(config.isoPath == nil)  // not EFI
+        #expect(config.discImagePath == nil)  // not EFI
         #expect(config.kernelPath == "/path/to/vmlinuz")
         #expect(config.initrdPath == "/path/to/initrd")
         #expect(config.kernelCommandLine == "console=hvc0")
@@ -320,8 +320,8 @@ struct VMCreationViewModelTests {
         #expect(config.name == "Spaces Around")
     }
 
-    @Test("buildConfiguration sets isoPath only for EFI boot mode")
-    func buildConfigurationIsoPathOnlyForEFI() {
+    @Test("buildConfiguration sets discImagePath only for EFI boot mode")
+    func buildConfigurationDiscImagePathOnlyForEFI() {
         let vm = VMCreationViewModel()
         vm.selectedOS = .linux
         vm.selectedBootMode = .linuxKernel
@@ -330,7 +330,7 @@ struct VMCreationViewModelTests {
         vm.kernelPath = "/path/to/vmlinuz"
 
         let config = vm.buildConfiguration()
-        #expect(config.isoPath == nil)
+        #expect(config.discImagePath == nil)
     }
 
     @Test("buildConfiguration sets kernel fields only for linuxKernel boot mode")

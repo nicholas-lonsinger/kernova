@@ -220,13 +220,13 @@ struct VMConfigurationTests {
         #expect(decoded.sharedDirectories?[1].readOnly == true)
     }
 
-    @Test("Configuration preserves isoPath for EFI boot")
-    func isoPathRoundTrip() throws {
+    @Test("Configuration preserves discImagePath for EFI boot")
+    func discImagePathRoundTrip() throws {
         let config = VMConfiguration(
             name: "EFI Linux VM",
             guestOS: .linux,
             bootMode: .efi,
-            isoPath: "/Users/test/Downloads/ubuntu.iso"
+            discImagePath: "/Users/test/Downloads/ubuntu.iso"
         )
 
         let encoder = JSONEncoder()
@@ -237,11 +237,11 @@ struct VMConfigurationTests {
         decoder.dateDecodingStrategy = .iso8601
         let decoded = try decoder.decode(VMConfiguration.self, from: data)
 
-        #expect(decoded.isoPath == "/Users/test/Downloads/ubuntu.iso")
+        #expect(decoded.discImagePath == "/Users/test/Downloads/ubuntu.iso")
     }
 
-    @Test("Backward compatibility: decoding JSON without isoPath field")
-    func backwardCompatibilityIsoPath() throws {
+    @Test("Backward compatibility: decoding JSON without discImagePath field")
+    func backwardCompatibilityDiscImagePath() throws {
         let json = """
         {
             "id": "12345678-1234-1234-1234-123456789012",
@@ -264,7 +264,7 @@ struct VMConfigurationTests {
         let config = try decoder.decode(VMConfiguration.self, from: Data(json.utf8))
 
         #expect(config.name == "Old EFI VM")
-        #expect(config.isoPath == nil)
+        #expect(config.discImagePath == nil)
     }
 
     @Test("Backward compatibility: decoding JSON without sharedDirectories field")
@@ -347,7 +347,7 @@ struct VMConfigurationTests {
             name: "EFI Boot VM",
             guestOS: .linux,
             bootMode: .efi,
-            isoPath: "/Users/test/Downloads/ubuntu.iso",
+            discImagePath: "/Users/test/Downloads/ubuntu.iso",
             bootFromDiscImage: true
         )
 
@@ -360,7 +360,7 @@ struct VMConfigurationTests {
         let decoded = try decoder.decode(VMConfiguration.self, from: data)
 
         #expect(decoded.bootFromDiscImage == true)
-        #expect(decoded.isoPath == "/Users/test/Downloads/ubuntu.iso")
+        #expect(decoded.discImagePath == "/Users/test/Downloads/ubuntu.iso")
     }
 
     @Test("Backward compatibility: decoding JSON without bootFromDiscImage defaults to false")
@@ -378,7 +378,7 @@ struct VMConfigurationTests {
             "displayHeight": 1200,
             "displayPPI": 144,
             "networkEnabled": true,
-            "isoPath": "/path/to/old.iso",
+            "discImagePath": "/path/to/old.iso",
             "createdAt": "2025-01-01T00:00:00Z"
         }
         """
@@ -388,7 +388,7 @@ struct VMConfigurationTests {
         let config = try decoder.decode(VMConfiguration.self, from: Data(json.utf8))
 
         #expect(config.name == "Old EFI VM")
-        #expect(config.isoPath == "/path/to/old.iso")
+        #expect(config.discImagePath == "/path/to/old.iso")
         #expect(config.bootFromDiscImage == false)
     }
 
@@ -400,6 +400,178 @@ struct VMConfigurationTests {
             bootMode: .efi
         )
         #expect(config.bootFromDiscImage == false)
+    }
+
+    // MARK: - discImageReadOnly Tests
+
+    @Test("Default discImageReadOnly is true")
+    func defaultDiscImageReadOnly() {
+        let config = VMConfiguration(
+            name: "Test VM",
+            guestOS: .linux,
+            bootMode: .efi
+        )
+        #expect(config.discImageReadOnly == true)
+    }
+
+    @Test("discImageReadOnly round-trips false")
+    func discImageReadOnlyRoundTrips() throws {
+        let config = VMConfiguration(
+            name: "Writable Disc VM",
+            guestOS: .linux,
+            bootMode: .efi,
+            discImagePath: "/tmp/data.dmg",
+            discImageReadOnly: false
+        )
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(config)
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(VMConfiguration.self, from: data)
+
+        #expect(decoded.discImageReadOnly == false)
+        #expect(decoded.discImagePath == "/tmp/data.dmg")
+    }
+
+    @Test("Backward compatibility: decoding JSON without discImageReadOnly defaults to true")
+    func backwardCompatibilityDiscImageReadOnly() throws {
+        let json = """
+        {
+            "id": "12345678-1234-1234-1234-123456789012",
+            "name": "Old VM",
+            "guestOS": "linux",
+            "bootMode": "efi",
+            "cpuCount": 4,
+            "memorySizeInGB": 8,
+            "diskSizeInGB": 64,
+            "displayWidth": 1920,
+            "displayHeight": 1200,
+            "displayPPI": 144,
+            "networkEnabled": true,
+            "discImagePath": "/path/to/image.iso",
+            "createdAt": "2025-01-01T00:00:00Z"
+        }
+        """
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let config = try decoder.decode(VMConfiguration.self, from: Data(json.utf8))
+
+        #expect(config.discImageReadOnly == true)
+        #expect(config.discImagePath == "/path/to/image.iso")
+    }
+
+    // MARK: - AdditionalDisk Tests
+
+    @Test("AdditionalDisk blockDeviceIdentifier fits within 20 characters")
+    func additionalDiskBlockDeviceIdentifierLength() {
+        let disk = AdditionalDisk(path: "/tmp/data.asif")
+        #expect(disk.blockDeviceIdentifier.count <= 20)
+        #expect(!disk.blockDeviceIdentifier.isEmpty)
+    }
+
+    @Test("AdditionalDisk auto-generates label from filename")
+    func additionalDiskAutoLabel() {
+        let disk = AdditionalDisk(path: "/Users/test/Downloads/my-data.asif")
+        #expect(disk.label == "my-data")
+    }
+
+    @Test("AdditionalDisk default readOnly is false")
+    func additionalDiskDefaultReadOnly() {
+        let disk = AdditionalDisk(path: "/tmp/test.asif")
+        #expect(disk.readOnly == false)
+    }
+
+    @Test("AdditionalDisk default isInternal is false")
+    func additionalDiskDefaultIsInternal() {
+        let disk = AdditionalDisk(path: "/tmp/test.asif")
+        #expect(disk.isInternal == false)
+    }
+
+    @Test("Configuration round-trips additionalDisks")
+    func additionalDisksRoundTrip() throws {
+        let config = VMConfiguration(
+            name: "Multi-Disk VM",
+            guestOS: .linux,
+            bootMode: .efi,
+            additionalDisks: [
+                AdditionalDisk(path: "/tmp/data.asif", readOnly: false, label: "Data"),
+                AdditionalDisk(path: "/tmp/backup.img", readOnly: true, label: "Backup", isInternal: false),
+            ]
+        )
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(config)
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(VMConfiguration.self, from: data)
+
+        #expect(decoded.additionalDisks?.count == 2)
+        #expect(decoded.additionalDisks?[0].label == "Data")
+        #expect(decoded.additionalDisks?[0].readOnly == false)
+        #expect(decoded.additionalDisks?[0].isInternal == false)
+        #expect(decoded.additionalDisks?[0].id == config.additionalDisks?[0].id)
+        #expect(decoded.additionalDisks?[0].blockDeviceIdentifier == config.additionalDisks?[0].blockDeviceIdentifier)
+        #expect(decoded.additionalDisks?[1].label == "Backup")
+        #expect(decoded.additionalDisks?[1].readOnly == true)
+        #expect(decoded.additionalDisks?[1].isInternal == false)
+        #expect(decoded.additionalDisks?[1].id == config.additionalDisks?[1].id)
+        #expect(decoded.additionalDisks?[1].blockDeviceIdentifier == config.additionalDisks?[1].blockDeviceIdentifier)
+    }
+
+    @Test("AdditionalDisk displayName returns last path component")
+    func additionalDiskDisplayName() {
+        let disk = AdditionalDisk(path: "/Users/test/VMs/data.asif")
+        #expect(disk.displayName == "data.asif")
+    }
+
+    @Test("Backward compatibility: decoding JSON without additionalDisks defaults to nil")
+    func backwardCompatibilityAdditionalDisks() throws {
+        let json = """
+        {
+            "id": "12345678-1234-1234-1234-123456789012",
+            "name": "Old VM",
+            "guestOS": "linux",
+            "bootMode": "efi",
+            "cpuCount": 4,
+            "memorySizeInGB": 8,
+            "diskSizeInGB": 64,
+            "displayWidth": 1920,
+            "displayHeight": 1200,
+            "displayPPI": 144,
+            "networkEnabled": true,
+            "createdAt": "2025-01-01T00:00:00Z"
+        }
+        """
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let config = try decoder.decode(VMConfiguration.self, from: Data(json.utf8))
+
+        #expect(config.additionalDisks == nil)
+    }
+
+    @Test("Clone regenerates additionalDisk IDs")
+    func cloneRegeneratesAdditionalDiskIDs() {
+        let originalDisk = AdditionalDisk(path: "/tmp/data.asif", label: "Data")
+        let config = VMConfiguration(
+            name: "Test VM",
+            guestOS: .linux,
+            bootMode: .efi,
+            additionalDisks: [originalDisk]
+        )
+
+        let clone = config.clonedForNewInstance(existingNames: [])
+
+        #expect(clone.additionalDisks?.count == 1)
+        #expect(clone.additionalDisks?[0].id != originalDisk.id)
+        #expect(clone.additionalDisks?[0].path == originalDisk.path)
+        #expect(clone.additionalDisks?[0].label == originalDisk.label)
     }
 
     // MARK: - displayPreference Tests
