@@ -1,12 +1,11 @@
 import Cocoa
 import os
-import SwiftUI
 import Virtualization
 
 /// Manages a dedicated window displaying a single VM's screen, either as a
 /// resizable pop-out window or in native macOS fullscreen.
 ///
-/// On show the inline `VMDisplayView` in the main window is replaced by a placeholder
+/// On show the inline display in the main window is replaced by a placeholder
 /// (via `VMInstance.displayMode`), and this controller creates its own
 /// `VZVirtualMachineView` bound to the same `VZVirtualMachine`. On close the process
 /// reverses so the inline display re-appears.
@@ -20,6 +19,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
     private let toolbarManager: VMToolbarManager
     private let enterFullscreen: Bool
     private let onSaveConfiguration: () -> Void
+    private let backingView: VMDisplayBackingView
     private var observingInstance = false
 
     private static let logger = Logger(subsystem: "com.kernova.app", category: "VMDisplayWindowController")
@@ -42,9 +42,14 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         self.enterFullscreen = enterFullscreen
         self.onSaveConfiguration = onSaveConfiguration
 
-        let contentView = DetachedVMView(instance: instance, onResume: onResume)
-        let hostingController = NSHostingController(rootView: contentView)
-        hostingController.sizingOptions = []
+        let backing = VMDisplayBackingView()
+        backing.onResume = onResume
+        backing.update(
+            virtualMachine: instance.virtualMachine,
+            isPaused: instance.status == .paused,
+            transitionText: instance.status.transitionLabel
+        )
+        self.backingView = backing
 
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1280, height: 800),
@@ -52,8 +57,9 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
             backing: .buffered,
             defer: false
         )
-        window.contentViewController = hostingController
+        window.contentView = backing
         window.title = "\(instance.name) — Display"
+        window.minSize = NSSize(width: 640, height: 400)
         window.collectionBehavior = [.fullScreenPrimary]
         window.restoreFrame(named: "VMDisplay-\(instance.instanceID)")
 
@@ -120,8 +126,8 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: - Instance Observation
 
-    /// Observes VM state changes to auto-close the window when the VM stops/errors/saves
-    /// and to keep toolbar items in sync with current status.
+    /// Observes VM state changes to auto-close the window when the VM stops/errors/saves,
+    /// keep toolbar items in sync, and update the backing view's overlay state.
     private func observeInstance() {
         observingInstance = true
         withObservationTracking {
@@ -137,6 +143,11 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
                     self.closedProgrammatically = true
                     self.window?.close()
                 } else {
+                    self.backingView.update(
+                        virtualMachine: self.instance.virtualMachine,
+                        isPaused: status == .paused,
+                        transitionText: status.transitionLabel
+                    )
                     self.updateToolbarItems()
                     self.observeInstance()
                 }
@@ -153,6 +164,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         }
         toolbarManager.updateToolbarItems(in: toolbar)
     }
+
 }
 
 // MARK: - NSToolbarDelegate
@@ -181,39 +193,5 @@ extension VMDisplayWindowController: NSToolbarDelegate {
 extension NSScreen {
     var displayID: CGDirectDisplayID? {
         deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
-    }
-}
-
-// MARK: - Detached VM SwiftUI View
-
-/// SwiftUI view used inside the display window. Shows the VM display when a
-/// `VZVirtualMachine` is available (with a pause overlay when live-paused), or a placeholder otherwise.
-private struct DetachedVMView: View {
-    let instance: VMInstance
-    var onResume: () -> Void
-
-    var body: some View {
-        if let vm = instance.virtualMachine {
-            VMDisplayView(virtualMachine: vm)
-                .ignoresSafeArea()
-                .vmPauseOverlay(isPaused: instance.status == .paused, onResume: onResume)
-                .vmTransitionOverlay(status: instance.status)
-        } else if instance.status.isTransitioning || instance.isColdPaused {
-            VStack(spacing: 12) {
-                ProgressView()
-                    .controlSize(.large)
-                Text(instance.isColdPaused ? "Restoring" : instance.status.displayName)
-                    .font(.headline)
-                    .foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(.black)
-        } else {
-            ContentUnavailableView(
-                "No Display",
-                systemImage: "display",
-                description: Text("The virtual machine display is not available.")
-            )
-        }
     }
 }

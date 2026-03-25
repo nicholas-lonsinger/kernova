@@ -1,13 +1,13 @@
 import SwiftUI
 
-/// Console view that displays the VM screen, pause overlay, or a placeholder depending on VM state.
+/// Console view that displays placeholder content when the VM display is popped out or fullscreen.
+/// When the display is inline, the AppKit `VMDisplayBackingView` layer covers this view, so
+/// the inline branch shows an inert black background.
 struct VMConsoleView: View {
     @Bindable var instance: VMInstance
-    var onResume: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
-            // VM Display
             if instance.displayMode == .fullscreen {
                 ContentUnavailableView {
                     Label("Fullscreen", systemImage: "arrow.up.left.and.arrow.down.right")
@@ -28,22 +28,9 @@ struct VMConsoleView: View {
                         NSApp.sendAction(#selector(AppDelegate.togglePopOut(_:)), to: nil, from: nil)
                     }
                 }
-            } else if let vm = instance.virtualMachine {
-                VMDisplayView(virtualMachine: vm)
-                    .vmPauseOverlay(isPaused: instance.status == .paused, onResume: onResume)
-                    .vmTransitionOverlay(status: instance.status)
-            } else if instance.isColdPaused {
-                ContentUnavailableView(
-                    "Suspended",
-                    systemImage: "pause.circle",
-                    description: Text("This virtual machine's state is saved to disk. Resume to continue.")
-                )
             } else {
-                ContentUnavailableView(
-                    "No Display",
-                    systemImage: "display",
-                    description: Text("The virtual machine display is not available.")
-                )
+                // Covered by the AppKit VMDisplayBackingView layer in DetailContainerViewController.
+                Color.black
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

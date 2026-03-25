@@ -119,6 +119,20 @@ struct VMStatusTests {
         #expect(VMStatus.error.isTransitioning == false)
     }
 
+    // MARK: - Transition Label
+
+    @Test("transitionLabel returns label for saving and restoring, nil otherwise")
+    func transitionLabel() {
+        #expect(VMStatus.saving.transitionLabel == "Suspending\u{2026}")
+        #expect(VMStatus.restoring.transitionLabel == "Restoring\u{2026}")
+        #expect(VMStatus.stopped.transitionLabel == nil)
+        #expect(VMStatus.starting.transitionLabel == nil)
+        #expect(VMStatus.running.transitionLabel == nil)
+        #expect(VMStatus.paused.transitionLabel == nil)
+        #expect(VMStatus.installing.transitionLabel == nil)
+        #expect(VMStatus.error.transitionLabel == nil)
+    }
+
     // MARK: - Display Name
 
     @Test("displayName returns expected string for each status")

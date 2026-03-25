@@ -41,9 +41,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         sidebarItem.maximumThickness = 350
         splitViewController.addSplitViewItem(sidebarItem)
 
-        let detailHost = NSHostingController(rootView: MainDetailView(viewModel: viewModel))
-        detailHost.sizingOptions = []
-        let detailItem = NSSplitViewItem(viewController: detailHost)
+        let detailContainer = DetailContainerViewController(viewModel: viewModel)
+        let detailItem = NSSplitViewItem(viewController: detailContainer)
         detailItem.minimumThickness = 400
         splitViewController.addSplitViewItem(detailItem)
 

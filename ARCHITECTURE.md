@@ -12,6 +12,7 @@ Kernova/
 │   ├── AppDelegate.swift               # NSApplicationDelegate — startup, window tracking, menu, suspend-on-quit
 │   ├── MainWindowController.swift      # NSSplitViewController + NSToolbar with native items
 │   ├── VMDisplayWindowController.swift  # Per-VM display window (pop-out or fullscreen), auto-closes on VM stop
+│   ├── DetailContainerViewController.swift # Layers AppKit VM display over SwiftUI detail content
 │   ├── VMToolbarManager.swift          # Shared toolbar logic for lifecycle, suspend, and display groups
 │   ├── SerialConsoleWindowController.swift # Per-VM serial console window, auto-closes on VM stop
 │   ├── ClipboardWindowController.swift   # Per-VM clipboard sharing window, auto-closes on VM stop
@@ -58,10 +59,8 @@ Kernova/
 │   │   ├── VMSettingsView.swift        # VM configuration editor
 │   │   └── MacOSInstallProgressView.swift # Two-phase install progress (download + install)
 │   ├── Console/
-│   │   ├── VMConsoleView.swift         # VM display container
-│   │   ├── VMDisplayView.swift         # NSViewRepresentable wrapping VZVirtualMachineView
-│   │   ├── VMPauseOverlay.swift         # Frosted overlay with play button for live-paused VMs
-│   │   ├── VMTransitionOverlay.swift    # Frosted overlay with spinner for saving/restoring states
+│   │   ├── VMConsoleView.swift         # Placeholder shown when VM display is popped out or fullscreen
+│   │   ├── VMDisplayBackingView.swift  # Pure AppKit VM display with pause/transition overlays
 │   │   ├── RemovableMediaPopoverView.swift # Toolbar popover for runtime USB attach/eject
 │   │   ├── SerialConsoleContentView.swift # Serial console content wrapper
 │   │   └── SerialTerminalView.swift    # Terminal text view for serial output
@@ -77,7 +76,8 @@ Kernova/
 ├── Utilities/
 │   ├── DataFormatters.swift            # Human-readable formatting for bytes, CPU counts, etc.
 │   ├── FileManagerExtensions.swift     # FileManager convenience methods
-│   └── NSImageExtensions.swift         # Nil-safe SF Symbol image loading
+│   ├── NSImageExtensions.swift         # Nil-safe SF Symbol image loading
+│   └── NSViewExtensions.swift          # Full-size subview constraint helper
 └── Resources/
     ├── Assets.xcassets/                # App icons and image assets
     └── Kernova.entitlements            # com.apple.security.virtualization entitlement
@@ -122,7 +122,7 @@ KernovaTests/
 
 ### App Layer
 
-**Files:** `AppDelegate.swift`, `MainWindowController.swift`, `VMDisplayWindowController.swift`, `VMToolbarManager.swift`, `SerialConsoleWindowController.swift`, `ClipboardWindowController.swift`
+**Files:** `AppDelegate.swift`, `MainWindowController.swift`, `DetailContainerViewController.swift`, `VMDisplayWindowController.swift`, `VMToolbarManager.swift`, `SerialConsoleWindowController.swift`, `ClipboardWindowController.swift`
 
 `AppDelegate` is the entry point. It creates the `VMLibraryViewModel` and `VMLifecycleCoordinator`, opens the main window, and manages the lifecycle of all windows. It tracks window controllers in dictionaries keyed by VM UUID, enabling one-to-many relationships (a VM can have a main view, a fullscreen window, and a serial console open simultaneously). `AppDelegate` also handles:
 - The application menu (including VM-specific actions, Force Stop with `canForceStop` validation, and Window > Show Library with Cmd+0)
@@ -192,18 +192,21 @@ All service implementations conform to protocols defined in `Services/Protocols/
 
 ### Views
 
-**Files:** 18 SwiftUI views across 4 subdirectories
+**Files:** 16 SwiftUI views + 1 AppKit view across 4 subdirectories
 
 Views observe `VMLibraryViewModel` and individual `VMInstance`s via the Observation framework. The view hierarchy (AppKit owns the structural layout, SwiftUI renders content):
 
 ```
 NSSplitViewController (MainWindowController)
 ├── Sidebar pane: SidebarView → VMRowView (per VM)
-└── Detail pane: MainDetailView
-    └── VMDetailView
-        ├── VMConsoleView → VMDisplayView (NSViewRepresentable for VZVirtualMachineView) + VMPauseOverlay + VMTransitionOverlay
-        ├── VMSettingsView
-        └── MacOSInstallProgressView
+└── Detail pane: DetailContainerViewController
+    ├── VMDisplayBackingView (AppKit, layered on top — shown when VM running inline)
+    │   └── VZVirtualMachineView + pause/transition overlays
+    └── NSHostingController (SwiftUI, always present behind)
+        └── MainDetailView → VMDetailView
+            ├── VMConsoleView (placeholder when popped out/fullscreen)
+            ├── VMSettingsView
+            └── MacOSInstallProgressView
 VMCreationWizardView (modal sheet on detail pane)
 ├── OSSelectionStep
 ├── IPSWSelectionStep / BootConfigStep
@@ -227,7 +230,9 @@ AppDelegate
     │
     ├── creates → MainWindowController (NSSplitViewController + NSToolbar)
     │                 ├── Sidebar: NSHostingController(SidebarView)
-    │                 └── Detail:  NSHostingController(MainDetailView → VMDetailView)
+    │                 └── Detail:  DetailContainerViewController
+    │                              ├── VMDisplayBackingView (AppKit VM display, layered on top)
+    │                              └── NSHostingController(MainDetailView → VMDetailView)
     │
     ├── manages → VMDisplayWindowController (per VM)
     ├── manages → SerialConsoleWindowController (per VM)
@@ -241,7 +246,7 @@ SystemSleepWatcher ──sleep/wake──→ VMLibraryViewModel ──pause/resu
 
 ### Utilities
 
-**Files:** `DataFormatters.swift`, `FileManagerExtensions.swift`, `NSImageExtensions.swift`
+**Files:** `DataFormatters.swift`, `FileManagerExtensions.swift`, `NSImageExtensions.swift`, `NSViewExtensions.swift`
 
 - `DataFormatters` — human-readable formatting for bytes (e.g., "107.4 GB"), CPU counts, etc.
 - `FileManagerExtensions` — convenience methods on `FileManager`
@@ -251,7 +256,7 @@ SystemSleepWatcher ──sleep/wake──→ VMLibraryViewModel ──pause/resu
 
 ### 1. AppKit-owned structural layout
 
-**What:** AppKit owns all structural elements: `NSSplitViewController` for sidebar/detail layout, `NSToolbar` with native `NSToolbarItem`s for the toolbar, and `NSWindow` for window management. SwiftUI renders content inside each pane via `NSHostingController`.
+**What:** AppKit owns all structural elements: `NSSplitViewController` for sidebar/detail layout, `NSToolbar` with native `NSToolbarItem`s for the toolbar, and `NSWindow` for window management. SwiftUI renders content inside each pane via `NSHostingController`. The VM display (`VZVirtualMachineView`) is always managed by pure AppKit — in the detail pane, `DetailContainerViewController` layers the AppKit display on top of the SwiftUI content, and in pop-out/fullscreen windows, `VMDisplayWindowController` uses `VMDisplayBackingView` directly as the window's content view. All AppKit↔SwiftUI bridges are unidirectional (AppKit→SwiftUI only).
 
 **Why:** The app needs precise control over native macOS chrome — toolbar items, split view behavior, sidebar collapsibility. SwiftUI's `NavigationSplitView` and `.toolbar` modifiers add an abstraction layer that creates fragile boundaries and toolbar layout limitations. With AppKit owning the structure, toolbar state is validated via `NSToolbarItemValidation`, sidebar appearance matches Mail/Finder, and there are no SwiftUI-toolbar quirks.
 
@@ -313,7 +318,7 @@ SystemSleepWatcher ──sleep/wake──→ VMLibraryViewModel ──pause/resu
 |-----------|------|
 | **Virtualization** | Core VM lifecycle — create, configure, start, stop, pause, resume VMs. Requires `com.apple.security.virtualization` entitlement. |
 | **AppKit** | Window management (`NSWindowController`, `NSSplitViewController`), toolbar (`NSToolbar`), menus, app delegate. |
-| **SwiftUI** | All views, hosted in `NSHostingController` children within AppKit window controllers. |
+| **SwiftUI** | UI views (settings, sidebar, wizards), hosted in `NSHostingController` children within AppKit window controllers. VM display is pure AppKit via `VMDisplayBackingView`. |
 | **Observation** | `@Observable` macro for `VMInstance`, `VMLibraryViewModel`, `VMCreationViewModel`, `IPSWDownloadViewModel`. |
 | **UniformTypeIdentifiers** | `UTType` declaration for `.kernova` VM bundles. |
 | **os** | Unified logging via `os.Logger`. |
