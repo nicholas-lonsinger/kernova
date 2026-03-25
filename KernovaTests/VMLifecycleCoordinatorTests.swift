@@ -443,6 +443,8 @@ struct VMLifecycleCoordinatorTests {
         #expect(usbService.lastAttachedReadOnly == true)
         #expect(info.path == "/tmp/test.dmg")
         #expect(info.readOnly == true)
+        #expect(instance.attachedUSBDevices.count == 1)
+        #expect(instance.attachedUSBDevices[0].id == info.id)
     }
 
     @Test("detachUSBDevice forwards to USB device service")

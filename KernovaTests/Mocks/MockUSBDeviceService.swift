@@ -19,9 +19,7 @@ final class MockUSBDeviceService: USBDeviceProviding {
         lastAttachedPath = diskImagePath
         lastAttachedReadOnly = readOnly
         if let error = attachError { throw error }
-        let info = USBDeviceInfo(path: diskImagePath, readOnly: readOnly)
-        instance.attachedUSBDevices.append(info)
-        return info
+        return USBDeviceInfo(path: diskImagePath, readOnly: readOnly)
     }
 
     func detach(
@@ -30,6 +28,5 @@ final class MockUSBDeviceService: USBDeviceProviding {
     ) async throws {
         detachCallCount += 1
         if let error = detachError { throw error }
-        instance.attachedUSBDevices.removeAll { $0.id == deviceInfo.id }
     }
 }

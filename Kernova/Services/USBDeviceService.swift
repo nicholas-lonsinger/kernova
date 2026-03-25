@@ -60,7 +60,6 @@ final class USBDeviceService: USBDeviceProviding {
         }
 
         let info = USBDeviceInfo(id: usbConfig.uuid, path: diskImagePath, readOnly: readOnly)
-        instance.attachedUSBDevices.append(info)
 
         Self.logger.notice("Attached USB device '\(resolved.url.lastPathComponent, privacy: .public)' to VM '\(instance.name, privacy: .public)' (readOnly: \(readOnly, privacy: .public))")
         return info
@@ -90,8 +89,6 @@ final class USBDeviceService: USBDeviceProviding {
             Self.logger.error("Failed to detach USB device '\(deviceInfo.displayName, privacy: .public)' from VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
             throw error
         }
-
-        instance.attachedUSBDevices.removeAll { $0.id == deviceInfo.id }
 
         Self.logger.notice("Detached USB device '\(deviceInfo.displayName, privacy: .public)' from VM '\(instance.name, privacy: .public)'")
     }
