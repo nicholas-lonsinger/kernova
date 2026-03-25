@@ -347,17 +347,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         guard let instance = activeInstance,
               instance.canAttachUSBDevices else { return }
 
-        let menu = NSMenu()
-        let menuItem = NSMenuItem()
-        menuItem.view = NSHostingView(
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentViewController = NSHostingController(
             rootView: RemovableMediaPopoverView(instance: instance, viewModel: viewModel)
         )
-        menu.addItem(menuItem)
 
-        // RATIONALE: NSMenu popup is used instead of NSPopover because toolbar
-        // view hierarchy makes NSPopover positioning unreliable.
-        if let event = NSApp.currentEvent, let contentView = event.window?.contentView {
-            menu.popUp(positioning: nil, at: event.locationInWindow, in: contentView)
+        if let toolbarItem = sender as? NSToolbarItem {
+            popover.show(relativeTo: toolbarItem)
+        } else if let contentView = NSApp.keyWindow?.contentView {
+            popover.show(relativeTo: contentView.bounds, of: contentView, preferredEdge: .minY)
         }
     }
 

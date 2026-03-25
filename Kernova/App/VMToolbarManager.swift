@@ -127,13 +127,18 @@ final class VMToolbarManager: NSObject {
             )
 
         case configuration.removableMediaID:
-            return makeSingleItemGroup(
-                identifier: identifier,
-                label: "Removable Media",
-                symbol: "opticaldisc",
-                action: #selector(AppDelegate.showRemovableMedia(_:)),
-                toolTip: "Attach or eject removable media"
+            let group = NSToolbarItemGroup(
+                itemIdentifier: identifier,
+                images: [.systemSymbol("opticaldisc", accessibilityDescription: "Removable Media")],
+                selectionMode: .momentary,
+                labels: ["Removable Media"],
+                target: self,
+                action: #selector(removableMediaAction(_:))
             )
+            group.label = "Removable Media"
+            group.subitems.first?.toolTip = "Attach or eject removable media"
+            group.autovalidates = false
+            return group
 
         case configuration.displayID:
             let group = NSToolbarItemGroup(
@@ -289,6 +294,14 @@ final class VMToolbarManager: NSObject {
     }
 
     // MARK: - Actions
+
+    @objc private func removableMediaAction(_ group: NSToolbarItemGroup) {
+        NSApp.sendAction(
+            #selector(AppDelegate.showRemovableMedia(_:)),
+            to: nil,
+            from: group
+        )
+    }
 
     @objc private func lifecycleAction(_ group: NSToolbarItemGroup) {
         guard let segment = LifecycleSegment(rawValue: group.selectedIndex) else {
