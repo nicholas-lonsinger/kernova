@@ -2,7 +2,7 @@ import Cocoa
 import os
 
 /// Shared toolbar logic for VM window controllers. Creates and manages the lifecycle,
-/// save-state, and display toolbar item groups that appear in both the main window
+/// suspend, and display toolbar item groups that appear in both the main window
 /// and per-VM display windows.
 ///
 /// Each window controller creates its own `VMToolbarManager` with a ``Configuration``
@@ -54,7 +54,7 @@ final class VMToolbarManager: NSObject {
     private static let resumeToolTip = "Resume the virtual machine"
     private static let pauseToolTip = "Pause the virtual machine"
     private static let stopToolTip = "Stop the virtual machine"
-    private static let saveStateToolTip = "Save the virtual machine state to disk"
+    private static let saveStateToolTip = "Suspend the virtual machine"
     private static let popOutToolTip = "Open display in a separate window"
     private static let popInToolTip = "Return display to the main window"
     private static let fullscreenToolTip = "Enter fullscreen display"
@@ -111,7 +111,7 @@ final class VMToolbarManager: NSObject {
         case configuration.saveStateID:
             return makeSingleItemGroup(
                 identifier: identifier,
-                label: "Save State",
+                label: "Suspend",
                 symbol: "square.and.arrow.down",
                 action: #selector(AppDelegate.saveVM(_:)),
                 toolTip: Self.saveStateToolTip
