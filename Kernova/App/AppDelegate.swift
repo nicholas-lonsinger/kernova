@@ -300,17 +300,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let controller = factory(instance)
         self[keyPath: windowsPath][vmID] = controller
 
+        // RATIONALE: ReferenceWritableKeyPath is not Sendable, but the observer closure
+        // runs on queue: .main where AppDelegate is @MainActor-isolated. We use
+        // nonisolated(unsafe) to suppress the false-positive data-race diagnostic.
+        nonisolated(unsafe) let observersKP = observersPath
+        nonisolated(unsafe) let windowsKP = windowsPath
         let token = NotificationCenter.default.addObserver(
             forName: NSWindow.willCloseNotification,
             object: controller.window,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in
+            MainActor.assumeIsolated {
                 guard let self else { return }
-                if let token = self[keyPath: observersPath].removeValue(forKey: vmID) {
+                if let token = self[keyPath: observersKP].removeValue(forKey: vmID) {
                     NotificationCenter.default.removeObserver(token)
                 }
-                self[keyPath: windowsPath].removeValue(forKey: vmID)
+                self[keyPath: windowsKP].removeValue(forKey: vmID)
                 self.terminateIfIdle()
             }
         }
