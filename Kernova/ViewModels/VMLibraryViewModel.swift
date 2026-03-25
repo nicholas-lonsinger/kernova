@@ -94,16 +94,10 @@ final class VMLibraryViewModel {
             var failedBundles: [String] = []
             instances = bundles.compactMap { bundleURL in
                 do {
-                    let migratedURL = try storageService.migrateBundleIfNeeded(at: bundleURL)
-                    var config = try storageService.loadConfiguration(from: migratedURL)
-                    let needsMigration = migrateConfigurationIfNeeded(&config)
-                    let layout = VMBundleLayout(bundleURL: migratedURL)
+                    let config = try storageService.loadConfiguration(from: bundleURL)
+                    let layout = VMBundleLayout(bundleURL: bundleURL)
                     let initialStatus: VMStatus = layout.hasSaveFile ? .paused : .stopped
-                    let instance = VMInstance(configuration: config, bundleURL: migratedURL, status: initialStatus)
-                    if needsMigration {
-                        try storageService.saveConfiguration(config, to: migratedURL)
-                        Self.logger.info("Migrated VM '\(config.name, privacy: .public)': persisted stable identifiers")
-                    }
+                    let instance = VMInstance(configuration: config, bundleURL: bundleURL, status: initialStatus)
                     return instance
                 } catch {
                     Self.logger.error("Failed to load VM from \(bundleURL.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
@@ -141,27 +135,6 @@ final class VMLibraryViewModel {
             Self.logger.error("Failed to load VM library: \(error.localizedDescription, privacy: .public)")
             presentError(error)
         }
-    }
-
-    /// Fills in missing stable identifiers for VMs created before these fields were persisted.
-    /// Returns `true` if the configuration was modified and needs to be saved.
-    private func migrateConfigurationIfNeeded(_ config: inout VMConfiguration) -> Bool {
-        var migrated = false
-
-        // Generate a stable MAC address if networking is enabled but none was persisted
-        if config.networkEnabled && config.macAddress == nil {
-            config.macAddress = VZMACAddress.randomLocallyAdministered().string
-            migrated = true
-        }
-
-        // Generate a stable generic machine identifier for EFI/Linux VMs
-        if (config.bootMode == .efi || config.bootMode == .linuxKernel)
-            && config.genericMachineIdentifierData == nil {
-            config.genericMachineIdentifierData = VZGenericMachineIdentifier().dataRepresentation
-            migrated = true
-        }
-
-        return migrated
     }
 
     // MARK: - Create
@@ -844,18 +817,11 @@ final class VMLibraryViewModel {
             // Build a map of UUID → bundle URL for bundles currently on disk
             var diskConfigs: [(VMConfiguration, URL)] = []
             for bundleURL in diskBundles {
-                let migratedURL: URL
                 do {
-                    migratedURL = try storageService.migrateBundleIfNeeded(at: bundleURL)
+                    let config = try storageService.loadConfiguration(from: bundleURL)
+                    diskConfigs.append((config, bundleURL))
                 } catch {
-                    Self.logger.warning("Failed to migrate bundle at \(bundleURL.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
-                    migratedURL = bundleURL
-                }
-                do {
-                    let config = try storageService.loadConfiguration(from: migratedURL)
-                    diskConfigs.append((config, migratedURL))
-                } catch {
-                    Self.logger.warning("Failed to load config from \(migratedURL.lastPathComponent, privacy: .public) during reconciliation: \(error.localizedDescription, privacy: .public)")
+                    Self.logger.error("Failed to load config from \(bundleURL.lastPathComponent, privacy: .public) during reconciliation: \(error.localizedDescription, privacy: .public)")
                 }
             }
             let diskIDs = Set(diskConfigs.map(\.0.id))
@@ -864,12 +830,10 @@ final class VMLibraryViewModel {
             // Additions: bundles on disk that aren't in memory
             var didChange = false
             for (config, bundleURL) in diskConfigs where !memoryIDs.contains(config.id) {
-                var mutableConfig = config
-                let _ = migrateConfigurationIfNeeded(&mutableConfig)
                 let layout = VMBundleLayout(bundleURL: bundleURL)
                 let initialStatus: VMStatus = layout.hasSaveFile ? .paused : .stopped
                 let instance = VMInstance(
-                    configuration: mutableConfig,
+                    configuration: config,
                     bundleURL: bundleURL,
                     status: initialStatus
                 )

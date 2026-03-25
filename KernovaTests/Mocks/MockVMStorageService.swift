@@ -81,7 +81,4 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
         bundles.removeValue(forKey: bundleURL)
     }
 
-    func migrateBundleIfNeeded(at bundleURL: URL) throws -> URL {
-        bundleURL
-    }
 }
