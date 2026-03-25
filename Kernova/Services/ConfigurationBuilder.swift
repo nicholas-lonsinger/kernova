@@ -193,43 +193,16 @@ struct ConfigurationBuilder: Sendable {
             throw ConfigurationBuilderError.missingKernelPath
         }
 
-        let fileManager = FileManager.default
-        let kernelURL = URL(fileURLWithPath: kernelPath).resolvingSymlinksInPath()
-        let resolvedKernelPath = kernelURL.path(percentEncoded: false)
+        let kernel = try Self.resolveFile(at: kernelPath, context: "Kernel",
+                                          notFound: .kernelNotFound(kernelPath),
+                                          isDirectory: .kernelPathIsDirectory(kernelPath))
 
-        if resolvedKernelPath != kernelPath {
-            Self.logger.info("Kernel path '\(kernelPath, privacy: .public)' resolved to '\(resolvedKernelPath, privacy: .public)'")
-        }
-
-        var isDirectory: ObjCBool = false
-        guard fileManager.fileExists(atPath: resolvedKernelPath, isDirectory: &isDirectory) else {
-            Self.logger.error("Kernel image not found at '\(kernelPath, privacy: .public)' (resolved: '\(resolvedKernelPath, privacy: .public)')")
-            throw ConfigurationBuilderError.kernelNotFound(kernelPath)
-        }
-        guard !isDirectory.boolValue else {
-            Self.logger.error("Kernel path is a directory, not a file: '\(kernelPath, privacy: .public)' (resolved: '\(resolvedKernelPath, privacy: .public)')")
-            throw ConfigurationBuilderError.kernelPathIsDirectory(kernelPath)
-        }
-
-        let bootLoader = VZLinuxBootLoader(kernelURL: kernelURL)
+        let bootLoader = VZLinuxBootLoader(kernelURL: kernel.url)
         if let initrdPath = config.initrdPath {
-            let initrdURL = URL(fileURLWithPath: initrdPath).resolvingSymlinksInPath()
-            let resolvedInitrdPath = initrdURL.path(percentEncoded: false)
-
-            if resolvedInitrdPath != initrdPath {
-                Self.logger.info("Initrd path '\(initrdPath, privacy: .public)' resolved to '\(resolvedInitrdPath, privacy: .public)'")
-            }
-
-            var isInitrdDirectory: ObjCBool = false
-            guard fileManager.fileExists(atPath: resolvedInitrdPath, isDirectory: &isInitrdDirectory) else {
-                Self.logger.error("Initial ramdisk not found at '\(initrdPath, privacy: .public)' (resolved: '\(resolvedInitrdPath, privacy: .public)')")
-                throw ConfigurationBuilderError.initrdNotFound(initrdPath)
-            }
-            guard !isInitrdDirectory.boolValue else {
-                Self.logger.error("Initrd path is a directory, not a file: '\(initrdPath, privacy: .public)' (resolved: '\(resolvedInitrdPath, privacy: .public)')")
-                throw ConfigurationBuilderError.initrdPathIsDirectory(initrdPath)
-            }
-            bootLoader.initialRamdiskURL = initrdURL
+            let initrd = try Self.resolveFile(at: initrdPath, context: "Initrd",
+                                              notFound: .initrdNotFound(initrdPath),
+                                              isDirectory: .initrdPathIsDirectory(initrdPath))
+            bootLoader.initialRamdiskURL = initrd.url
         }
         bootLoader.commandLine = config.kernelCommandLine ?? "console=hvc0"
         vzConfig.bootLoader = bootLoader
@@ -267,35 +240,17 @@ struct ConfigurationBuilder: Sendable {
 
         // Attach disc image as USB mass storage device
         if let discImagePath = config.discImagePath {
-            let discImageURL = URL(fileURLWithPath: discImagePath).resolvingSymlinksInPath()
-            let resolvedDiscImagePath = discImageURL.path(percentEncoded: false)
-
-            if resolvedDiscImagePath != discImagePath {
-                Self.logger.info("Disc image path '\(discImagePath, privacy: .public)' resolved to '\(resolvedDiscImagePath, privacy: .public)'")
-            }
-
-            var isDiscImageDirectory: ObjCBool = false
-            guard FileManager.default.fileExists(atPath: resolvedDiscImagePath, isDirectory: &isDiscImageDirectory) else {
-                Self.logger.error("Disc image not found at '\(discImagePath, privacy: .public)' (resolved: '\(resolvedDiscImagePath, privacy: .public)')")
-                throw ConfigurationBuilderError.discImageNotFound(discImagePath)
-            }
-            guard !isDiscImageDirectory.boolValue else {
-                Self.logger.error("Disc image path is a directory, not a file: '\(discImagePath, privacy: .public)' (resolved: '\(resolvedDiscImagePath, privacy: .public)')")
-                throw ConfigurationBuilderError.discImagePathIsDirectory(discImagePath)
-            }
-
-            if !config.discImageReadOnly {
-                guard FileManager.default.isWritableFile(atPath: resolvedDiscImagePath) else {
-                    Self.logger.error("Disc image is not writable: '\(discImagePath, privacy: .public)' (resolved: '\(resolvedDiscImagePath, privacy: .public)')")
-                    throw ConfigurationBuilderError.discImageNotWritable(discImagePath)
-                }
-            }
+            let discImage = try Self.resolveFile(at: discImagePath, context: "Disc image",
+                                                 requireWritable: !config.discImageReadOnly,
+                                                 notFound: .discImageNotFound(discImagePath),
+                                                 isDirectory: .discImagePathIsDirectory(discImagePath),
+                                                 notWritable: .discImageNotWritable(discImagePath))
 
             let discImageAttachment: VZDiskImageStorageDeviceAttachment
             do {
-                discImageAttachment = try VZDiskImageStorageDeviceAttachment(url: discImageURL, readOnly: config.discImageReadOnly)
+                discImageAttachment = try VZDiskImageStorageDeviceAttachment(url: discImage.url, readOnly: config.discImageReadOnly)
             } catch {
-                Self.logger.error("Failed to attach disc image at '\(discImagePath, privacy: .public)' (resolved: '\(resolvedDiscImagePath, privacy: .public)'): \(error.localizedDescription, privacy: .public)")
+                Self.logger.error("Failed to attach disc image at '\(discImagePath, privacy: .public)': \(error.localizedDescription, privacy: .public)")
                 throw error
             }
             let usbStorage = VZUSBMassStorageDeviceConfiguration(attachment: discImageAttachment)
@@ -311,30 +266,18 @@ struct ConfigurationBuilder: Sendable {
         // Attach additional virtio block devices
         if let additionalDisks = config.additionalDisks {
             for disk in additionalDisks {
-                let diskURL = URL(fileURLWithPath: disk.path).resolvingSymlinksInPath()
-                let resolvedPath = diskURL.path(percentEncoded: false)
-
-                var isDirectory: ObjCBool = false
-                guard FileManager.default.fileExists(atPath: resolvedPath, isDirectory: &isDirectory) else {
-                    Self.logger.error("Additional disk '\(disk.label, privacy: .public)' not found at '\(disk.path, privacy: .public)' (resolved: '\(resolvedPath, privacy: .public)')")
-                    throw ConfigurationBuilderError.additionalDiskNotFound(disk.path, disk.label)
-                }
-                guard !isDirectory.boolValue else {
-                    Self.logger.error("Additional disk '\(disk.label, privacy: .public)' path is a directory: '\(disk.path, privacy: .public)' (resolved: '\(resolvedPath, privacy: .public)')")
-                    throw ConfigurationBuilderError.additionalDiskPathIsDirectory(disk.path, disk.label)
-                }
-                if !disk.readOnly {
-                    guard FileManager.default.isWritableFile(atPath: resolvedPath) else {
-                        Self.logger.error("Additional disk '\(disk.label, privacy: .public)' is not writable: '\(disk.path, privacy: .public)' (resolved: '\(resolvedPath, privacy: .public)')")
-                        throw ConfigurationBuilderError.additionalDiskNotWritable(disk.path, disk.label)
-                    }
-                }
+                let resolved = try Self.resolveFile(
+                    at: disk.path, context: "Additional disk '\(disk.label)'",
+                    requireWritable: !disk.readOnly,
+                    notFound: .additionalDiskNotFound(disk.path, disk.label),
+                    isDirectory: .additionalDiskPathIsDirectory(disk.path, disk.label),
+                    notWritable: .additionalDiskNotWritable(disk.path, disk.label))
 
                 let attachment: VZDiskImageStorageDeviceAttachment
                 do {
-                    attachment = try VZDiskImageStorageDeviceAttachment(url: diskURL, readOnly: disk.readOnly)
+                    attachment = try VZDiskImageStorageDeviceAttachment(url: resolved.url, readOnly: disk.readOnly)
                 } catch {
-                    Self.logger.error("Failed to attach additional disk '\(disk.label, privacy: .public)' at '\(disk.path, privacy: .public)' (resolved: '\(resolvedPath, privacy: .public)'): \(error.localizedDescription, privacy: .public)")
+                    Self.logger.error("Failed to attach additional disk '\(disk.label, privacy: .public)' at '\(disk.path, privacy: .public)': \(error.localizedDescription, privacy: .public)")
                     throw error
                 }
                 let blockDevice = VZVirtioBlockDeviceConfiguration(attachment: attachment)
@@ -462,36 +405,16 @@ struct ConfigurationBuilder: Sendable {
 
     /// Validates shared directories and returns resolved URLs (symlinks followed).
     private func validateSharedDirectories(_ directories: [SharedDirectory]) throws -> [URL] {
-        let fileManager = FileManager.default
         var resolvedURLs: [URL] = []
         for directory in directories {
-            let resolvedURL = URL(fileURLWithPath: directory.path).resolvingSymlinksInPath()
-            let resolvedPath = resolvedURL.path(percentEncoded: false)
-
-            if resolvedPath != directory.path {
-                Self.logger.info("Shared directory '\(directory.path, privacy: .public)' resolved to '\(resolvedPath, privacy: .public)'")
-            }
-
-            var isDirectory: ObjCBool = false
-            guard fileManager.fileExists(atPath: resolvedPath, isDirectory: &isDirectory) else {
-                Self.logger.error("Shared directory not found at '\(directory.path, privacy: .public)' (resolved: '\(resolvedPath, privacy: .public)')")
-                throw ConfigurationBuilderError.sharedDirectoryNotFound(directory.path)
-            }
-            guard isDirectory.boolValue else {
-                Self.logger.error("Shared path is not a directory: '\(directory.path, privacy: .public)' (resolved: '\(resolvedPath, privacy: .public)')")
-                throw ConfigurationBuilderError.sharedDirectoryNotADirectory(directory.path)
-            }
-            guard fileManager.isReadableFile(atPath: resolvedPath) else {
-                Self.logger.error("Shared directory is not readable: '\(directory.path, privacy: .public)' (resolved: '\(resolvedPath, privacy: .public)')")
-                throw ConfigurationBuilderError.sharedDirectoryNotReadable(directory.path)
-            }
-            if !directory.readOnly {
-                guard fileManager.isWritableFile(atPath: resolvedPath) else {
-                    Self.logger.error("Shared directory is not writable: '\(directory.path, privacy: .public)' (resolved: '\(resolvedPath, privacy: .public)')")
-                    throw ConfigurationBuilderError.sharedDirectoryNotWritable(directory.path)
-                }
-            }
-            resolvedURLs.append(resolvedURL)
+            let resolved = try Self.resolveDirectory(
+                at: directory.path, context: "Shared directory",
+                requireReadable: true, requireWritable: !directory.readOnly,
+                notFound: .sharedDirectoryNotFound(directory.path),
+                notADirectory: .sharedDirectoryNotADirectory(directory.path),
+                notReadable: .sharedDirectoryNotReadable(directory.path),
+                notWritable: .sharedDirectoryNotWritable(directory.path))
+            resolvedURLs.append(resolved.url)
         }
         return resolvedURLs
     }
@@ -536,6 +459,89 @@ struct ConfigurationBuilder: Sendable {
             devices.append(device)
         }
         vzConfig.directorySharingDevices = devices
+    }
+
+    // MARK: - Path Validation Helpers
+
+    /// Resolves and validates a file path, mapping `PathValidation.Failure` to `ConfigurationBuilderError`.
+    private static func resolveFile(
+        at path: String,
+        context: String,
+        requireWritable: Bool = false,
+        notFound: ConfigurationBuilderError,
+        isDirectory: ConfigurationBuilderError,
+        notWritable: ConfigurationBuilderError? = nil
+    ) throws -> PathValidation.ResolvedPath {
+        do {
+            let resolved = try PathValidation.resolveFile(at: path, requireWritable: requireWritable)
+            resolved.logResolution(logger: logger, context: context)
+            return resolved
+        } catch let error as PathValidation.Failure {
+            switch error {
+            case .notFound:
+                logger.error("\(context, privacy: .public) not found at '\(path, privacy: .public)'")
+                throw notFound
+            case .unexpectedType:
+                logger.error("\(context, privacy: .public) path is a directory: '\(path, privacy: .public)'")
+                throw isDirectory
+            case .notWritable:
+                logger.error("\(context, privacy: .public) is not writable: '\(path, privacy: .public)'")
+                guard let notWritableError = notWritable else {
+                    logger.fault("resolveFile called with requireWritable but no notWritable error for '\(path, privacy: .public)'")
+                    assertionFailure("'notWritable' error must be provided when 'requireWritable' is true")
+                    throw notFound
+                }
+                throw notWritableError
+            case .notReadable:
+                logger.fault("Unexpected .notReadable from resolveFile for '\(path, privacy: .public)'")
+                assertionFailure("resolveFile should never throw .notReadable")
+                throw notFound
+            }
+        }
+    }
+
+    /// Resolves and validates a directory path, mapping `PathValidation.Failure` to `ConfigurationBuilderError`.
+    private static func resolveDirectory(
+        at path: String,
+        context: String,
+        requireReadable: Bool = false,
+        requireWritable: Bool = false,
+        notFound: ConfigurationBuilderError,
+        notADirectory: ConfigurationBuilderError,
+        notReadable: ConfigurationBuilderError? = nil,
+        notWritable: ConfigurationBuilderError? = nil
+    ) throws -> PathValidation.ResolvedPath {
+        do {
+            let resolved = try PathValidation.resolveDirectory(
+                at: path, requireReadable: requireReadable, requireWritable: requireWritable)
+            resolved.logResolution(logger: logger, context: context)
+            return resolved
+        } catch let error as PathValidation.Failure {
+            switch error {
+            case .notFound:
+                logger.error("\(context, privacy: .public) not found at '\(path, privacy: .public)'")
+                throw notFound
+            case .unexpectedType:
+                logger.error("\(context, privacy: .public) path is not a directory: '\(path, privacy: .public)'")
+                throw notADirectory
+            case .notReadable:
+                logger.error("\(context, privacy: .public) is not readable: '\(path, privacy: .public)'")
+                guard let notReadableError = notReadable else {
+                    logger.fault("resolveDirectory called with requireReadable but no notReadable error for '\(path, privacy: .public)'")
+                    assertionFailure("'notReadable' error must be provided when 'requireReadable' is true")
+                    throw notFound
+                }
+                throw notReadableError
+            case .notWritable:
+                logger.error("\(context, privacy: .public) is not writable: '\(path, privacy: .public)'")
+                guard let notWritableError = notWritable else {
+                    logger.fault("resolveDirectory called with requireWritable but no notWritable error for '\(path, privacy: .public)'")
+                    assertionFailure("'notWritable' error must be provided when 'requireWritable' is true")
+                    throw notFound
+                }
+                throw notWritableError
+            }
+        }
     }
 }
 

@@ -22,30 +22,33 @@ final class USBDeviceService: USBDeviceProviding {
             throw USBDeviceError.noUSBController
         }
 
-        let url = URL(fileURLWithPath: diskImagePath).resolvingSymlinksInPath()
-        let resolvedPath = url.path(percentEncoded: false)
-
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: resolvedPath, isDirectory: &isDirectory) else {
-            Self.logger.error("USB disk image not found at '\(diskImagePath, privacy: .public)' (resolved: '\(resolvedPath, privacy: .public)')")
-            throw USBDeviceError.diskImageNotFound(diskImagePath)
-        }
-        guard !isDirectory.boolValue else {
-            Self.logger.error("USB disk image path is a directory: '\(diskImagePath, privacy: .public)' (resolved: '\(resolvedPath, privacy: .public)')")
-            throw USBDeviceError.diskImageIsDirectory(diskImagePath)
-        }
-        if !readOnly {
-            guard FileManager.default.isWritableFile(atPath: resolvedPath) else {
-                Self.logger.error("USB disk image is not writable: '\(diskImagePath, privacy: .public)' (resolved: '\(resolvedPath, privacy: .public)')")
+        let resolved: PathValidation.ResolvedPath
+        do {
+            resolved = try PathValidation.resolveFile(at: diskImagePath, requireWritable: !readOnly)
+            resolved.logResolution(logger: Self.logger, context: "USB disk image")
+        } catch let error as PathValidation.Failure {
+            switch error {
+            case .notFound:
+                Self.logger.error("USB disk image not found at '\(diskImagePath, privacy: .public)'")
+                throw USBDeviceError.diskImageNotFound(diskImagePath)
+            case .unexpectedType:
+                Self.logger.error("USB disk image path is a directory: '\(diskImagePath, privacy: .public)'")
+                throw USBDeviceError.diskImageIsDirectory(diskImagePath)
+            case .notWritable:
+                Self.logger.error("USB disk image is not writable: '\(diskImagePath, privacy: .public)'")
                 throw USBDeviceError.diskImageNotWritable(diskImagePath)
+            case .notReadable:
+                Self.logger.fault("Unexpected .notReadable from resolveFile for '\(diskImagePath, privacy: .public)'")
+                assertionFailure("resolveFile should never throw .notReadable")
+                throw USBDeviceError.diskImageNotFound(diskImagePath)
             }
         }
 
         let attachment: VZDiskImageStorageDeviceAttachment
         do {
-            attachment = try VZDiskImageStorageDeviceAttachment(url: url, readOnly: readOnly)
+            attachment = try VZDiskImageStorageDeviceAttachment(url: resolved.url, readOnly: readOnly)
         } catch {
-            Self.logger.error("Failed to create disk attachment for '\(diskImagePath, privacy: .public)' (resolved: '\(resolvedPath, privacy: .public)'): \(error.localizedDescription, privacy: .public)")
+            Self.logger.error("Failed to create disk attachment for '\(diskImagePath, privacy: .public)': \(error.localizedDescription, privacy: .public)")
             throw error
         }
         let usbConfig = VZUSBMassStorageDeviceConfiguration(attachment: attachment)
@@ -54,14 +57,13 @@ final class USBDeviceService: USBDeviceProviding {
         do {
             try await controller.attach(device: usbDevice)
         } catch {
-            Self.logger.error("Failed to attach USB device '\(url.lastPathComponent, privacy: .public)' to VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
+            Self.logger.error("Failed to attach USB device '\(resolved.url.lastPathComponent, privacy: .public)' to VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
             throw error
         }
 
         let info = USBDeviceInfo(id: usbConfig.uuid, path: diskImagePath, readOnly: readOnly)
-        instance.attachedUSBDevices.append(info)
 
-        Self.logger.notice("Attached USB device '\(url.lastPathComponent, privacy: .public)' to VM '\(instance.name, privacy: .public)' (readOnly: \(readOnly, privacy: .public))")
+        Self.logger.notice("Attached USB device '\(resolved.url.lastPathComponent, privacy: .public)' to VM '\(instance.name, privacy: .public)' (readOnly: \(readOnly, privacy: .public))")
         return info
     }
 
@@ -89,8 +91,6 @@ final class USBDeviceService: USBDeviceProviding {
             Self.logger.error("Failed to detach USB device '\(deviceInfo.displayName, privacy: .public)' from VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
             throw error
         }
-
-        instance.attachedUSBDevices.removeAll { $0.id == deviceInfo.id }
 
         Self.logger.notice("Detached USB device '\(deviceInfo.displayName, privacy: .public)' from VM '\(instance.name, privacy: .public)'")
     }

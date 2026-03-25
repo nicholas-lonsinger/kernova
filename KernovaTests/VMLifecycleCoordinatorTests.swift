@@ -402,7 +402,7 @@ struct VMLifecycleCoordinatorTests {
     @Test("installMacOS sets status to error on service failure")
     func installMacOSError() async {
         let (coordinator, _, installService, _, _) = makeCoordinator()
-        installService.installError = IPSWError.downloadFailed("test failure")
+        installService.installError = IPSWError.downloadFailed(URLError(.badServerResponse))
         let instance = makeInstance()
         let wizard = VMCreationViewModel()
         wizard.selectedOS = .macOS
@@ -443,6 +443,8 @@ struct VMLifecycleCoordinatorTests {
         #expect(usbService.lastAttachedReadOnly == true)
         #expect(info.path == "/tmp/test.dmg")
         #expect(info.readOnly == true)
+        #expect(instance.attachedUSBDevices.count == 1)
+        #expect(instance.attachedUSBDevices[0].id == info.id)
     }
 
     @Test("detachUSBDevice forwards to USB device service")

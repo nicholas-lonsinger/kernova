@@ -227,11 +227,14 @@ final class VMLifecycleCoordinator {
     /// Does not use the lifecycle operation token — USB operations are short
     /// and independent of start/stop/save lifecycle transitions.
     func attachUSBDevice(diskImagePath: String, readOnly: Bool, to instance: VMInstance) async throws -> USBDeviceInfo {
-        try await usbDeviceService.attach(diskImagePath: diskImagePath, readOnly: readOnly, to: instance)
+        let info = try await usbDeviceService.attach(diskImagePath: diskImagePath, readOnly: readOnly, to: instance)
+        instance.attachedUSBDevices.append(info)
+        return info
     }
 
     /// Detaches a USB mass storage device from a running VM.
     func detachUSBDevice(_ deviceInfo: USBDeviceInfo, from instance: VMInstance) async throws {
         try await usbDeviceService.detach(deviceInfo: deviceInfo, from: instance)
+        instance.attachedUSBDevices.removeAll { $0.id == deviceInfo.id }
     }
 }
