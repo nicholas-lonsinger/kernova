@@ -171,7 +171,7 @@ private final class IPSWDownloadDelegate: NSObject, URLSessionDownloadDelegate, 
                 continuation.resume(throwing: CancellationError())
             } else {
                 Self.logger.error("Restore image download failed: \(error.localizedDescription, privacy: .public)")
-                continuation.resume(throwing: IPSWError.downloadFailed(error.localizedDescription))
+                continuation.resume(throwing: IPSWError.downloadFailed(error))
             }
         } else {
             let handler = self.progressHandler
@@ -188,14 +188,14 @@ private final class IPSWDownloadDelegate: NSObject, URLSessionDownloadDelegate, 
 
 enum IPSWError: LocalizedError {
     case noDownloadURL
-    case downloadFailed(String)
+    case downloadFailed(any Error)
 
     var errorDescription: String? {
         switch self {
         case .noDownloadURL:
             "The restore image does not have a download URL."
-        case .downloadFailed(let message):
-            "Failed to download restore image: \(message)"
+        case .downloadFailed(let underlyingError):
+            "Failed to download restore image: \(underlyingError.localizedDescription)"
         }
     }
 }

@@ -402,7 +402,7 @@ struct VMLifecycleCoordinatorTests {
     @Test("installMacOS sets status to error on service failure")
     func installMacOSError() async {
         let (coordinator, _, installService, _, _) = makeCoordinator()
-        installService.installError = IPSWError.downloadFailed("test failure")
+        installService.installError = IPSWError.downloadFailed(URLError(.badServerResponse))
         let instance = makeInstance()
         let wizard = VMCreationViewModel()
         wizard.selectedOS = .macOS
