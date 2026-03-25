@@ -47,6 +47,13 @@ final class VMLibraryViewModel {
     /// Current VM ordering used by sortInstances(); synchronized with UserDefaults via persistOrder().
     private var customOrder: [UUID] = []
 
+    /// Bundle names whose load failures have already been reported to the user.
+    /// Prevents repeated error dialogs for persistently corrupted bundles across successive
+    /// `reconcileWithDisk()` calls. Populated by both `loadVMs()` and `reconcileWithDisk()`.
+    /// Reset on full reload (`loadVMs`), when a previously-failed bundle loads successfully,
+    /// or when a bundle is removed from disk.
+    private var reportedFailedBundles: Set<String> = []
+
     /// Called when a VM with a non-inline `displayPreference` is about to start or resume,
     /// allowing the app delegate to pre-create the display window with a spinner.
     @ObservationIgnored var onOpenDisplayWindow: ((VMInstance) -> Void)?
@@ -89,6 +96,7 @@ final class VMLibraryViewModel {
     // MARK: - Load
 
     func loadVMs() {
+        reportedFailedBundles.removeAll()
         do {
             let bundles = try storageService.listVMBundles()
             var failedBundles: [String] = []
@@ -106,6 +114,7 @@ final class VMLibraryViewModel {
                 }
             }
             if !failedBundles.isEmpty {
+                reportedFailedBundles.formUnion(failedBundles)
                 presentError(LoadError.bundleLoadFailed(names: failedBundles))
             }
 
@@ -818,12 +827,14 @@ final class VMLibraryViewModel {
             var diskConfigs: [(VMConfiguration, URL)] = []
             var failedBundles: [String] = []
             for bundleURL in diskBundles {
+                let bundleName = bundleURL.deletingPathExtension().lastPathComponent
                 do {
                     let config = try storageService.loadConfiguration(from: bundleURL)
                     diskConfigs.append((config, bundleURL))
+                    reportedFailedBundles.remove(bundleName)
                 } catch {
                     Self.logger.error("Failed to load config from \(bundleURL.lastPathComponent, privacy: .public) during reconciliation: \(error.localizedDescription, privacy: .public)")
-                    failedBundles.append(bundleURL.deletingPathExtension().lastPathComponent)
+                    failedBundles.append(bundleName)
                 }
             }
             let diskIDs = Set(diskConfigs.map(\.0.id))
@@ -865,9 +876,20 @@ final class VMLibraryViewModel {
                 persistOrder()
             }
 
-            if !failedBundles.isEmpty {
-                presentError(LoadError.bundleLoadFailed(names: failedBundles))
+            let newFailures = failedBundles.filter { !reportedFailedBundles.contains($0) }
+            let suppressedCount = failedBundles.count - newFailures.count
+            if suppressedCount > 0 {
+                Self.logger.debug("reconcileWithDisk: suppressed \(suppressedCount, privacy: .public) already-reported bundle failure(s)")
             }
+            if !newFailures.isEmpty {
+                reportedFailedBundles.formUnion(newFailures)
+                presentError(LoadError.bundleLoadFailed(names: newFailures))
+            }
+
+            // Prune names of bundles no longer on disk so a new bundle with the same name
+            // is not silently suppressed.
+            let currentDiskNames = Set(diskBundles.map { $0.deletingPathExtension().lastPathComponent })
+            reportedFailedBundles.formIntersection(currentDiskNames)
 
             Self.logger.debug("reconcileWithDisk: complete — \(self.instances.count, privacy: .public) VM(s) in library")
         } catch {
