@@ -321,6 +321,95 @@ struct SpiceAgentProtocolTests {
         }
     }
 
+    // MARK: - Buffer Overflow and Corruption Guards
+
+    /// Must match SpiceAgentParser.maxBufferSize / maxChunkDataSize (both 1 MB).
+    private static let parserSizeLimit = 1_048_576
+
+    @Test("Parser resets buffer when it exceeds maxBufferSize")
+    func bufferOverflowTriggersReset() {
+        var parser = SpiceAgentParser()
+        let oversized = Data(repeating: 0xFF, count: Self.parserSizeLimit + 1)
+        let results = parser.feed(oversized)
+
+        #expect(results.isEmpty)
+        #expect(parser.didReset == true)
+    }
+
+    @Test("Parser accepts chunk header with dataSize at exactly maxChunkDataSize")
+    func chunkDataSizeAtExactLimitDoesNotReset() {
+        var parser = SpiceAgentParser()
+
+        let header = VDIChunkHeader(port: SpiceConstants.serverPort, dataSize: UInt32(Self.parserSizeLimit))
+        // Don't supply the full payload — parser will wait for more data, not reset
+        let results = parser.feed(header.serialize())
+
+        #expect(results.isEmpty)
+        #expect(parser.didReset == false)
+    }
+
+    @Test("Parser resets buffer when chunk header claims unreasonable dataSize")
+    func corruptChunkHeaderTriggersReset() {
+        var parser = SpiceAgentParser()
+
+        let corruptHeader = VDIChunkHeader(port: SpiceConstants.serverPort, dataSize: UInt32(Self.parserSizeLimit + 1))
+        var data = corruptHeader.serialize()
+        // Extra bytes so the parser can read the full chunk header
+        data.append(Data(repeating: 0, count: 8))
+
+        let results = parser.feed(data)
+
+        #expect(results.isEmpty)
+        #expect(parser.didReset == true)
+    }
+
+    @Test("Parser recovers and parses correctly after a reset")
+    func parserRecoveryAfterReset() {
+        var parser = SpiceAgentParser()
+
+        // Trigger a reset via buffer overflow
+        _ = parser.feed(Data(repeating: 0xFF, count: Self.parserSizeLimit + 1))
+        #expect(parser.didReset == true)
+
+        // Parser should recover on next valid feed
+        var payload = Data()
+        payload.appendLittleEndian(SpiceClipboardType.utf8Text.rawValue)
+        let validMessage = buildGuestMessage(type: .clipboardGrab, payload: payload)
+        let results = parser.feed(validMessage)
+
+        #expect(parser.didReset == false)
+        #expect(results.count == 1)
+        if case .clipboardGrab(let types) = results[0] {
+            #expect(types == [.utf8Text])
+        } else {
+            Issue.record("Expected clipboardGrab message after recovery")
+        }
+    }
+
+    @Test("Parser returns malformedChunk for invalid payloads",
+          arguments: [
+              Data(repeating: 0, count: 4),  // truncated: needs 20 bytes, only 4
+              Data(),                          // empty payload
+          ])
+    func malformedPayloadReturnsMalformed(payload: Data) {
+        var parser = SpiceAgentParser()
+
+        let chunk = VDIChunkHeader(
+            port: SpiceConstants.serverPort,
+            dataSize: UInt32(payload.count)
+        )
+        let message = chunk.serialize() + payload
+
+        let results = parser.feed(message)
+
+        #expect(results.count == 1)
+        if case .malformedChunk = results[0] {
+            // pass
+        } else {
+            Issue.record("Expected malformedChunk")
+        }
+    }
+
     // MARK: - Data Extension Helpers
 
     @Test("Little-endian UInt32 read/write round-trips")
