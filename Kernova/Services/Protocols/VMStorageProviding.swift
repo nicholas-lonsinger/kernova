@@ -10,5 +10,4 @@ protocol VMStorageProviding: Sendable {
     func createVMBundle(for configuration: VMConfiguration) throws -> URL
     func deleteVMBundle(at bundleURL: URL) throws
     func cloneVMBundle(from sourceBundleURL: URL, newConfiguration: VMConfiguration, filesToCopy: [String]) throws -> URL
-    func migrateBundleIfNeeded(at bundleURL: URL) throws -> URL
 }

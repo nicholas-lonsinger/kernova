@@ -129,37 +129,6 @@ struct VMStorageService: Sendable {
         Self.logger.notice("Moved VM bundle to Trash: \(bundleURL.lastPathComponent, privacy: .public)")
     }
 
-    /// Migrates a legacy bare-UUID bundle directory to the `.kernova` package format.
-    ///
-    /// - If the URL already has the `.kernova` extension, returns it unchanged.
-    /// - If a bare `{UUID}` directory exists without a `.kernova` counterpart, renames it.
-    /// - If both `{UUID}` and `{UUID}.kernova` exist, throws `migrationConflict`.
-    func migrateBundleIfNeeded(at bundleURL: URL) throws -> URL {
-        if bundleURL.pathExtension == Self.bundleExtension {
-            return bundleURL
-        }
-
-        let migratedURL = bundleURL.deletingLastPathComponent()
-            .appendingPathComponent(
-                "\(bundleURL.lastPathComponent).\(Self.bundleExtension)",
-                isDirectory: true
-            )
-
-        let fm = FileManager.default
-        let legacyExists = fm.fileExists(atPath: bundleURL.path(percentEncoded: false))
-        let migratedExists = fm.fileExists(atPath: migratedURL.path(percentEncoded: false))
-
-        if legacyExists && migratedExists {
-            throw VMStorageError.migrationConflict(bundleURL)
-        }
-
-        if legacyExists {
-            try fm.moveItem(at: bundleURL, to: migratedURL)
-            Self.logger.notice("Migrated VM bundle: \(bundleURL.lastPathComponent, privacy: .public) → \(migratedURL.lastPathComponent, privacy: .public)")
-        }
-
-        return migratedURL
-    }
 }
 
 // MARK: - VMStorageProviding
@@ -171,7 +140,6 @@ extension VMStorageService: VMStorageProviding {}
 enum VMStorageError: LocalizedError {
     case bundleAlreadyExists(UUID)
     case bundleNotFound(URL)
-    case migrationConflict(URL)
 
     var errorDescription: String? {
         switch self {
@@ -179,8 +147,6 @@ enum VMStorageError: LocalizedError {
             "A VM bundle already exists for ID \(id.uuidString)."
         case .bundleNotFound(let url):
             "VM bundle not found at \(url.path(percentEncoded: false))."
-        case .migrationConflict(let url):
-            "Migration conflict: both legacy and .kernova bundles exist for \(url.lastPathComponent)."
         }
     }
 }

@@ -158,57 +158,6 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         self.createdAt = createdAt
     }
 
-    // MARK: - Codable
-
-    private enum CodingKeys: String, CodingKey {
-        case id, name, guestOS, bootMode
-        case cpuCount, memorySizeInGB, diskSizeInGB
-        case displayWidth, displayHeight, displayPPI, displayPreference, lastFullscreenDisplayID
-        case networkEnabled, macAddress
-        case clipboardSharingEnabled
-        case microphoneEnabled
-        case hardwareModelData, machineIdentifierData
-        case genericMachineIdentifierData
-        case discImagePath, discImageReadOnly, bootFromDiscImage
-        case kernelPath, initrdPath, kernelCommandLine
-        case additionalDisks
-        case sharedDirectories
-        case createdAt
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-
-        id = try container.decode(UUID.self, forKey: .id)
-        name = try container.decode(String.self, forKey: .name)
-        guestOS = try container.decode(VMGuestOS.self, forKey: .guestOS)
-        bootMode = try container.decode(VMBootMode.self, forKey: .bootMode)
-        cpuCount = try container.decode(Int.self, forKey: .cpuCount)
-        memorySizeInGB = try container.decode(Int.self, forKey: .memorySizeInGB)
-        diskSizeInGB = try container.decode(Int.self, forKey: .diskSizeInGB)
-        displayWidth = try container.decode(Int.self, forKey: .displayWidth)
-        displayHeight = try container.decode(Int.self, forKey: .displayHeight)
-        displayPPI = try container.decode(Int.self, forKey: .displayPPI)
-        displayPreference = try container.decodeIfPresent(VMDisplayPreference.self, forKey: .displayPreference) ?? .inline
-        lastFullscreenDisplayID = try container.decodeIfPresent(UInt32.self, forKey: .lastFullscreenDisplayID)
-        networkEnabled = try container.decode(Bool.self, forKey: .networkEnabled)
-        macAddress = try container.decodeIfPresent(String.self, forKey: .macAddress)
-        clipboardSharingEnabled = try container.decodeIfPresent(Bool.self, forKey: .clipboardSharingEnabled) ?? false
-        microphoneEnabled = try container.decodeIfPresent(Bool.self, forKey: .microphoneEnabled) ?? false
-        hardwareModelData = try container.decodeIfPresent(Data.self, forKey: .hardwareModelData)
-        machineIdentifierData = try container.decodeIfPresent(Data.self, forKey: .machineIdentifierData)
-        genericMachineIdentifierData = try container.decodeIfPresent(Data.self, forKey: .genericMachineIdentifierData)
-        discImagePath = try container.decodeIfPresent(String.self, forKey: .discImagePath)
-        discImageReadOnly = try container.decodeIfPresent(Bool.self, forKey: .discImageReadOnly) ?? true
-        bootFromDiscImage = try container.decodeIfPresent(Bool.self, forKey: .bootFromDiscImage) ?? false
-        kernelPath = try container.decodeIfPresent(String.self, forKey: .kernelPath)
-        initrdPath = try container.decodeIfPresent(String.self, forKey: .initrdPath)
-        kernelCommandLine = try container.decodeIfPresent(String.self, forKey: .kernelCommandLine)
-        additionalDisks = try container.decodeIfPresent([AdditionalDisk].self, forKey: .additionalDisks)
-        sharedDirectories = try container.decodeIfPresent([SharedDirectory].self, forKey: .sharedDirectories)
-        createdAt = try container.decode(Date.self, forKey: .createdAt)
-    }
-
     // MARK: - Cloning
 
     /// Returns a new configuration suitable for a cloned VM instance.

@@ -5,6 +5,36 @@ import Foundation
 @Suite("VMConfiguration Tests")
 struct VMConfigurationTests {
 
+    /// Builds a complete `VMConfiguration` JSON string with all required fields populated.
+    /// Pass extra comma-separated JSON fields via `extraFields` to add or override entries.
+    private static func makeBaseJSON(
+        name: String = "Old VM",
+        extraFields: String = ""
+    ) -> String {
+        let extra = extraFields.isEmpty ? "" : ",\n            \(extraFields)"
+        return """
+        {
+            "id": "12345678-1234-1234-1234-123456789012",
+            "name": "\(name)",
+            "guestOS": "linux",
+            "bootMode": "efi",
+            "cpuCount": 4,
+            "memorySizeInGB": 8,
+            "diskSizeInGB": 64,
+            "displayWidth": 1920,
+            "displayHeight": 1200,
+            "displayPPI": 144,
+            "displayPreference": "inline",
+            "networkEnabled": true,
+            "clipboardSharingEnabled": false,
+            "microphoneEnabled": false,
+            "discImageReadOnly": true,
+            "bootFromDiscImage": false,
+            "createdAt": "2025-01-01T00:00:00Z"\(extra)
+        }
+        """
+    }
+
     @Test("Default macOS configuration has correct defaults")
     func defaultMacOSConfig() {
         let config = VMConfiguration(
@@ -140,29 +170,11 @@ struct VMConfigurationTests {
         #expect(decoded.genericMachineIdentifierData == identifierData)
     }
 
-    @Test("Backward compatibility: decoding JSON without genericMachineIdentifierData")
-    func backwardCompatibilityGenericMachineIdentifier() throws {
-        // Simulate a config.json from before the genericMachineIdentifierData field existed
-        let json = """
-        {
-            "id": "12345678-1234-1234-1234-123456789012",
-            "name": "Old VM",
-            "guestOS": "linux",
-            "bootMode": "efi",
-            "cpuCount": 4,
-            "memorySizeInGB": 8,
-            "diskSizeInGB": 64,
-            "displayWidth": 1920,
-            "displayHeight": 1200,
-            "displayPPI": 144,
-            "networkEnabled": true,
-            "createdAt": "2025-01-01T00:00:00Z"
-        }
-        """
-
+    @Test("Missing optional genericMachineIdentifierData decodes as nil")
+    func missingOptionalGenericMachineIdentifier() throws {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        let config = try decoder.decode(VMConfiguration.self, from: Data(json.utf8))
+        let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
 
         #expect(config.name == "Old VM")
         #expect(config.genericMachineIdentifierData == nil)
@@ -240,84 +252,34 @@ struct VMConfigurationTests {
         #expect(decoded.discImagePath == "/Users/test/Downloads/ubuntu.iso")
     }
 
-    @Test("Backward compatibility: decoding JSON without discImagePath field")
-    func backwardCompatibilityDiscImagePath() throws {
-        let json = """
-        {
-            "id": "12345678-1234-1234-1234-123456789012",
-            "name": "Old EFI VM",
-            "guestOS": "linux",
-            "bootMode": "efi",
-            "cpuCount": 4,
-            "memorySizeInGB": 8,
-            "diskSizeInGB": 64,
-            "displayWidth": 1920,
-            "displayHeight": 1200,
-            "displayPPI": 144,
-            "networkEnabled": true,
-            "createdAt": "2025-01-01T00:00:00Z"
-        }
-        """
-
+    @Test("Missing optional discImagePath decodes as nil")
+    func missingOptionalDiscImagePath() throws {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        let config = try decoder.decode(VMConfiguration.self, from: Data(json.utf8))
+        let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
 
-        #expect(config.name == "Old EFI VM")
         #expect(config.discImagePath == nil)
     }
 
-    @Test("Backward compatibility: decoding JSON without sharedDirectories field")
-    func backwardCompatibilitySharedDirectories() throws {
-        let json = """
-        {
-            "id": "12345678-1234-1234-1234-123456789012",
-            "name": "Old VM",
-            "guestOS": "linux",
-            "bootMode": "efi",
-            "cpuCount": 4,
-            "memorySizeInGB": 8,
-            "diskSizeInGB": 64,
-            "displayWidth": 1920,
-            "displayHeight": 1200,
-            "displayPPI": 144,
-            "networkEnabled": true,
-            "createdAt": "2025-01-01T00:00:00Z"
-        }
-        """
-
+    @Test("Missing optional sharedDirectories decodes as nil")
+    func missingOptionalSharedDirectories() throws {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        let config = try decoder.decode(VMConfiguration.self, from: Data(json.utf8))
+        let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
 
         #expect(config.sharedDirectories == nil)
     }
 
-    @Test("Backward compatibility: decoding JSON with removed notes field is silently ignored")
-    func backwardCompatibilityRemovedNotesField() throws {
-        let json = """
-        {
-            "id": "12345678-1234-1234-1234-123456789012",
-            "name": "Old VM With Notes",
-            "guestOS": "linux",
-            "bootMode": "efi",
-            "cpuCount": 4,
-            "memorySizeInGB": 8,
-            "diskSizeInGB": 64,
-            "displayWidth": 1920,
-            "displayHeight": 1200,
-            "displayPPI": 144,
-            "networkEnabled": true,
-            "createdAt": "2025-01-01T00:00:00Z",
-            "notes": "These are old notes that should be ignored"
-        }
-        """
+    @Test("Unknown JSON keys are silently ignored")
+    func unknownKeysIgnored() throws {
+        let json = Self.makeBaseJSON(
+            extraFields: "\"notes\": \"These are old notes that should be ignored\""
+        )
 
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         let config = try decoder.decode(VMConfiguration.self, from: Data(json.utf8))
 
-        #expect(config.name == "Old VM With Notes")
         #expect(config.guestOS == .linux)
     }
 
@@ -363,35 +325,6 @@ struct VMConfigurationTests {
         #expect(decoded.discImagePath == "/Users/test/Downloads/ubuntu.iso")
     }
 
-    @Test("Backward compatibility: decoding JSON without bootFromDiscImage defaults to false")
-    func backwardCompatibilityBootFromDiscImage() throws {
-        let json = """
-        {
-            "id": "12345678-1234-1234-1234-123456789012",
-            "name": "Old EFI VM",
-            "guestOS": "linux",
-            "bootMode": "efi",
-            "cpuCount": 4,
-            "memorySizeInGB": 8,
-            "diskSizeInGB": 64,
-            "displayWidth": 1920,
-            "displayHeight": 1200,
-            "displayPPI": 144,
-            "networkEnabled": true,
-            "discImagePath": "/path/to/old.iso",
-            "createdAt": "2025-01-01T00:00:00Z"
-        }
-        """
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let config = try decoder.decode(VMConfiguration.self, from: Data(json.utf8))
-
-        #expect(config.name == "Old EFI VM")
-        #expect(config.discImagePath == "/path/to/old.iso")
-        #expect(config.bootFromDiscImage == false)
-    }
-
     @Test("Default bootFromDiscImage is false")
     func defaultBootFromDiscImage() {
         let config = VMConfiguration(
@@ -434,34 +367,6 @@ struct VMConfigurationTests {
 
         #expect(decoded.discImageReadOnly == false)
         #expect(decoded.discImagePath == "/tmp/data.dmg")
-    }
-
-    @Test("Backward compatibility: decoding JSON without discImageReadOnly defaults to true")
-    func backwardCompatibilityDiscImageReadOnly() throws {
-        let json = """
-        {
-            "id": "12345678-1234-1234-1234-123456789012",
-            "name": "Old VM",
-            "guestOS": "linux",
-            "bootMode": "efi",
-            "cpuCount": 4,
-            "memorySizeInGB": 8,
-            "diskSizeInGB": 64,
-            "displayWidth": 1920,
-            "displayHeight": 1200,
-            "displayPPI": 144,
-            "networkEnabled": true,
-            "discImagePath": "/path/to/image.iso",
-            "createdAt": "2025-01-01T00:00:00Z"
-        }
-        """
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let config = try decoder.decode(VMConfiguration.self, from: Data(json.utf8))
-
-        #expect(config.discImageReadOnly == true)
-        #expect(config.discImagePath == "/path/to/image.iso")
     }
 
     // MARK: - AdditionalDisk Tests
@@ -530,28 +435,11 @@ struct VMConfigurationTests {
         #expect(disk.displayName == "data.asif")
     }
 
-    @Test("Backward compatibility: decoding JSON without additionalDisks defaults to nil")
-    func backwardCompatibilityAdditionalDisks() throws {
-        let json = """
-        {
-            "id": "12345678-1234-1234-1234-123456789012",
-            "name": "Old VM",
-            "guestOS": "linux",
-            "bootMode": "efi",
-            "cpuCount": 4,
-            "memorySizeInGB": 8,
-            "diskSizeInGB": 64,
-            "displayWidth": 1920,
-            "displayHeight": 1200,
-            "displayPPI": 144,
-            "networkEnabled": true,
-            "createdAt": "2025-01-01T00:00:00Z"
-        }
-        """
-
+    @Test("Missing optional additionalDisks decodes as nil")
+    func missingOptionalAdditionalDisks() throws {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        let config = try decoder.decode(VMConfiguration.self, from: Data(json.utf8))
+        let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
 
         #expect(config.additionalDisks == nil)
     }
@@ -626,32 +514,6 @@ struct VMConfigurationTests {
         #expect(decoded.displayPreference == .popOut)
     }
 
-    @Test("Decoding JSON without displayPreference defaults to inline")
-    func missingDisplayPreferenceDefaultsToInline() throws {
-        let json = """
-        {
-            "id": "12345678-1234-1234-1234-123456789012",
-            "name": "Old VM",
-            "guestOS": "linux",
-            "bootMode": "efi",
-            "cpuCount": 4,
-            "memorySizeInGB": 8,
-            "diskSizeInGB": 64,
-            "displayWidth": 1920,
-            "displayHeight": 1200,
-            "displayPPI": 144,
-            "networkEnabled": true,
-            "createdAt": "2025-01-01T00:00:00Z"
-        }
-        """
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let config = try decoder.decode(VMConfiguration.self, from: Data(json.utf8))
-
-        #expect(config.displayPreference == .inline)
-    }
-
     // MARK: - lastFullscreenDisplayID Tests
 
     @Test("Default lastFullscreenDisplayID is nil")
@@ -684,28 +546,11 @@ struct VMConfigurationTests {
         #expect(decoded.lastFullscreenDisplayID == 4_280_803_137)
     }
 
-    @Test("Backward compatibility: decoding JSON without lastFullscreenDisplayID defaults to nil")
-    func backwardCompatibilityLastFullscreenDisplayID() throws {
-        let json = """
-        {
-            "id": "12345678-1234-1234-1234-123456789012",
-            "name": "Old VM",
-            "guestOS": "linux",
-            "bootMode": "efi",
-            "cpuCount": 4,
-            "memorySizeInGB": 8,
-            "diskSizeInGB": 64,
-            "displayWidth": 1920,
-            "displayHeight": 1200,
-            "displayPPI": 144,
-            "networkEnabled": true,
-            "createdAt": "2025-01-01T00:00:00Z"
-        }
-        """
-
+    @Test("Missing optional lastFullscreenDisplayID decodes as nil")
+    func missingOptionalLastFullscreenDisplayID() throws {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        let config = try decoder.decode(VMConfiguration.self, from: Data(json.utf8))
+        let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
 
         #expect(config.lastFullscreenDisplayID == nil)
     }
@@ -742,32 +587,6 @@ struct VMConfigurationTests {
         #expect(decoded.clipboardSharingEnabled == true)
     }
 
-    @Test("Backward compatibility: decoding JSON without clipboardSharingEnabled defaults to false")
-    func backwardCompatibilityClipboardSharingEnabled() throws {
-        let json = """
-        {
-            "id": "00000000-0000-0000-0000-000000000001",
-            "name": "Old VM",
-            "guestOS": "linux",
-            "bootMode": "efi",
-            "cpuCount": 4,
-            "memorySizeInGB": 4,
-            "diskSizeInGB": 64,
-            "displayWidth": 1920,
-            "displayHeight": 1200,
-            "displayPPI": 144,
-            "networkEnabled": true,
-            "createdAt": "2025-01-01T00:00:00Z"
-        }
-        """
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let config = try decoder.decode(VMConfiguration.self, from: Data(json.utf8))
-
-        #expect(config.clipboardSharingEnabled == false)
-    }
-
     // MARK: - microphoneEnabled Tests
 
     @Test("Default microphoneEnabled is false")
@@ -800,16 +619,20 @@ struct VMConfigurationTests {
         #expect(decoded.microphoneEnabled == true)
     }
 
-    @Test("Backward compatibility: decoding JSON without microphoneEnabled defaults to false")
-    func backwardCompatibilityMicrophoneEnabled() throws {
+    // MARK: - Missing Required Fields
+
+    @Test("Decoding JSON missing a required field throws DecodingError")
+    func missingRequiredFieldThrows() {
+        // Intentionally omits: displayPreference, clipboardSharingEnabled,
+        // microphoneEnabled, discImageReadOnly, bootFromDiscImage
         let json = """
         {
-            "id": "00000000-0000-0000-0000-000000000002",
-            "name": "Old VM",
+            "id": "12345678-1234-1234-1234-123456789012",
+            "name": "Incomplete VM",
             "guestOS": "linux",
             "bootMode": "efi",
             "cpuCount": 4,
-            "memorySizeInGB": 4,
+            "memorySizeInGB": 8,
             "diskSizeInGB": 64,
             "displayWidth": 1920,
             "displayHeight": 1200,
@@ -821,9 +644,9 @@ struct VMConfigurationTests {
 
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        let config = try decoder.decode(VMConfiguration.self, from: Data(json.utf8))
-
-        #expect(config.microphoneEnabled == false)
+        #expect(throws: DecodingError.self) {
+            _ = try decoder.decode(VMConfiguration.self, from: Data(json.utf8))
+        }
     }
 
 }

@@ -28,7 +28,7 @@ Kernova/
 ├── Services/                           # Business logic — stateless or @MainActor
 │   ├── ConfigurationBuilder.swift      # VMConfiguration → VZVirtualMachineConfiguration (3 boot paths)
 │   ├── VirtualizationService.swift     # VM lifecycle: start/stop/pause/resume/save/restore (@MainActor)
-│   ├── VMStorageService.swift          # CRUD for VM bundles + cloning + migration (Sendable struct)
+│   ├── VMStorageService.swift          # CRUD for VM bundles + cloning (Sendable struct)
 │   ├── DiskImageService.swift          # Creates ASIF disk images from bundled templates (Sendable struct)
 │   ├── MacOSInstallService.swift       # Drives macOS guest install via VZMacOSInstaller (@MainActor)
 │   ├── IPSWService.swift               # Fetches/downloads macOS restore images (Sendable struct)
@@ -102,7 +102,7 @@ KernovaTests/
 ├── VMInstanceTests.swift               # Runtime instance behavior tests
 ├── ConfigurationBuilderTests.swift     # VZ configuration translation tests
 ├── VirtualizationServiceTests.swift    # VM lifecycle operation tests
-├── VMStorageServiceTests.swift         # Storage CRUD and migration tests
+├── VMStorageServiceTests.swift         # Storage CRUD tests
 ├── VMBundleLayoutTests.swift           # Bundle path calculation tests
 ├── VMStatusTests.swift                 # Status enum behavior tests
 ├── VMStatusSerialConsoleTests.swift    # Serial console status tests
@@ -160,7 +160,7 @@ Services are split by concurrency requirements:
   - `MacOSInstallService` — loads restore image, creates platform files (aux storage, hardware model, machine identifier), runs `VZMacOSInstaller` with KVO progress tracking
 
 - **`Sendable` struct services** (no mutable state, safe to call from anywhere):
-  - `VMStorageService` — creates/deletes/lists VM bundle directories at `~/Library/Application Support/Kernova/VMs/`, handles cloning (deep copy with new UUID), and bundle migration for schema changes
+  - `VMStorageService` — creates/deletes/lists VM bundle directories at `~/Library/Application Support/Kernova/VMs/` and handles cloning (deep copy with new UUID)
   - `DiskImageService` — creates ASIF disk images by decompressing bundled lzfse-compressed templates (sandbox-safe, no subprocess)
   - `IPSWService` — fetches available macOS restore images from Apple's catalog and downloads IPSW files
 
@@ -333,7 +333,7 @@ No external package dependencies. No Swift Package Manager, CocoaPods, or Cartha
 | `VMInstance` | Yes | Status transitions, configuration updates, bundle layout, preparing state display properties |
 | `ConfigurationBuilder` | Yes | All three boot paths, device configuration, path validation (symlinks, missing kernel/initrd/ISO, directory rejection for file paths) |
 | `VirtualizationService` | Yes | Start/stop/pause/resume via mock VZ objects |
-| `VMStorageService` | Yes | CRUD operations, cloning, migration |
+| `VMStorageService` | Yes | CRUD operations, cloning |
 | `VMBundleLayout` | Yes | Path derivation from bundle root |
 | `VMStatus` | Yes | Enum behavior, transitions, `canForceStop` |
 | `VMBootMode` | Yes | Enum cases and properties |
