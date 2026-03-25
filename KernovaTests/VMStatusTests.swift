@@ -127,7 +127,7 @@ struct VMStatusTests {
         #expect(VMStatus.starting.displayName == "Starting")
         #expect(VMStatus.running.displayName == "Running")
         #expect(VMStatus.paused.displayName == "Paused")
-        #expect(VMStatus.saving.displayName == "Saving")
+        #expect(VMStatus.saving.displayName == "Suspending")
         #expect(VMStatus.restoring.displayName == "Restoring")
         #expect(VMStatus.installing.displayName == "Installing")
         #expect(VMStatus.error.displayName == "Error")

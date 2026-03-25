@@ -7,10 +7,10 @@ A macOS GUI application for creating and managing virtual machines using Apple's
 ### Virtual Machines
 
 - **macOS & Linux guests** — Run macOS virtual machines on Apple Silicon and Linux VMs with EFI or direct kernel boot
-- **Full VM lifecycle** — Start, stop, pause, resume, save state, and restore
+- **Full VM lifecycle** — Start, stop, pause, resume, suspend, and restore
 - **VM cloning** — Clone existing VMs with automatic naming
 - **Bundle import** — Import VM bundles (`.kernova`) via double-click or drag-and-drop
-- **Graceful shutdown** — Saves running VM state automatically on app termination
+- **Graceful shutdown** — Suspends running VMs automatically on app termination
 
 ### Guest Configuration
 

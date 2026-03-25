@@ -18,7 +18,7 @@ enum VMStatus: String, Codable, Sendable {
         case .starting: "Starting"
         case .running: "Running"
         case .paused: "Paused"
-        case .saving: "Saving"
+        case .saving: "Suspending"
         case .restoring: "Restoring"
         case .installing: "Installing"
         case .error: "Error"

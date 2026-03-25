@@ -678,7 +678,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         vmMenu.addItem(withTitle: "Stop", action: #selector(stopVM(_:)), keyEquivalent: "")
         vmMenu.addItem(withTitle: "Force Stop", action: #selector(forceStopVM(_:)), keyEquivalent: "")
         vmMenu.addItem(.separator())
-        let saveItem = vmMenu.addItem(withTitle: "Save State", action: #selector(saveVM(_:)), keyEquivalent: "s")
+        let saveItem = vmMenu.addItem(withTitle: "Suspend", action: #selector(saveVM(_:)), keyEquivalent: "s")
         saveItem.keyEquivalentModifierMask = [.command, .option]
         vmMenu.addItem(.separator())
         let popOutItem = vmMenu.addItem(

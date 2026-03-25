@@ -72,7 +72,7 @@ struct VMToolbarManagerTests {
         let group = item as? NSToolbarItemGroup
         #expect(group != nil)
         #expect(group?.subitems.count == 1)
-        #expect(group?.label == "Save State")
+        #expect(group?.label == "Suspend")
     }
 
     @Test("makeToolbarItem returns display group with 2 subitems")

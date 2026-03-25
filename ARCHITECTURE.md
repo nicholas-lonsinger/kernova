@@ -9,10 +9,10 @@ Kernova is a macOS application for creating and managing virtual machines via Ap
 ```
 Kernova/
 ├── App/                                # App lifecycle and window management
-│   ├── AppDelegate.swift               # NSApplicationDelegate — startup, window tracking, menu, save-on-quit
+│   ├── AppDelegate.swift               # NSApplicationDelegate — startup, window tracking, menu, suspend-on-quit
 │   ├── MainWindowController.swift      # NSSplitViewController + NSToolbar with native items
 │   ├── VMDisplayWindowController.swift  # Per-VM display window (pop-out or fullscreen), auto-closes on VM stop
-│   ├── VMToolbarManager.swift          # Shared toolbar logic for lifecycle, save-state, and display groups
+│   ├── VMToolbarManager.swift          # Shared toolbar logic for lifecycle, suspend, and display groups
 │   ├── SerialConsoleWindowController.swift # Per-VM serial console window, auto-closes on VM stop
 │   ├── ClipboardWindowController.swift   # Per-VM clipboard sharing window, auto-closes on VM stop
 │   └── Info.plist                        # App configuration and metadata
@@ -126,12 +126,12 @@ KernovaTests/
 
 `AppDelegate` is the entry point. It creates the `VMLibraryViewModel` and `VMLifecycleCoordinator`, opens the main window, and manages the lifecycle of all windows. It tracks window controllers in dictionaries keyed by VM UUID, enabling one-to-many relationships (a VM can have a main view, a fullscreen window, and a serial console open simultaneously). `AppDelegate` also handles:
 - The application menu (including VM-specific actions, Force Stop with `canForceStop` validation, and Window > Show Library with Cmd+0)
-- Save-on-quit behavior (saving VM state before termination)
+- Suspend-on-quit behavior (suspending VMs before termination)
 - Conditional termination: `applicationShouldTerminateAfterLastWindowClosed` returns `false` when VMs are active or fullscreen windows exist, preventing premature exit on fullscreen-to-inline transitions
 - Dock icon reopen: `applicationShouldHandleReopen` restores the main window when clicked with no visible windows, or when clicked while the app is already active and the library window has been closed
 - Fullscreen exit recovery: closing a fullscreen window automatically re-shows the main library window via `showLibrary(_:)`
 
-`MainWindowController` creates an `NSWindow` with an `NSSplitViewController` as the content view controller. The split view has two panes: a sidebar (`NSSplitViewItem(sidebarWithViewController:)` wrapping `SidebarView`) and a detail pane (wrapping `MainDetailView`). Both panes use `NSHostingController` to embed SwiftUI content. An `NSToolbar` with native `NSToolbarItem`s provides lifecycle controls (Start/Resume, Pause, Stop), Save State, Fullscreen, and New VM buttons. Shared toolbar groups (lifecycle, save-state, display) are managed by `VMToolbarManager`; the New VM button and sidebar items remain controller-specific. Toolbar state is observed via `withObservationTracking` and items are validated through `NSToolbarItemValidation`. The `.fullSizeContentView` style mask and `.sidebarTrackingSeparator` preserve the full-height sidebar appearance matching Mail/Finder.
+`MainWindowController` creates an `NSWindow` with an `NSSplitViewController` as the content view controller. The split view has two panes: a sidebar (`NSSplitViewItem(sidebarWithViewController:)` wrapping `SidebarView`) and a detail pane (wrapping `MainDetailView`). Both panes use `NSHostingController` to embed SwiftUI content. An `NSToolbar` with native `NSToolbarItem`s provides lifecycle controls (Start/Resume, Pause, Stop), Suspend, Fullscreen, and New VM buttons. Shared toolbar groups (lifecycle, suspend, display) are managed by `VMToolbarManager`; the New VM button and sidebar items remain controller-specific. Toolbar state is observed via `withObservationTracking` and items are validated through `NSToolbarItemValidation`. The `.fullSizeContentView` style mask and `.sidebarTrackingSeparator` preserve the full-height sidebar appearance matching Mail/Finder.
 
 ### Models
 
@@ -301,7 +301,7 @@ SystemSleepWatcher ──sleep/wake──→ VMLibraryViewModel ──pause/resu
 
 ### 7. Native NSToolbar with observation-driven validation
 
-**What:** The main window and display window use `NSToolbar` with `NSToolbarDelegate` creating native `NSToolbarItem`s. Shared toolbar groups (lifecycle, save-state, display) are managed by `VMToolbarManager`, a `@MainActor` `NSObject` subclass that handles item creation, state updates, and action routing for both controllers. Each controller configures it with an `instanceProvider` closure and a `Configuration` struct that captures per-controller differences (identifier strings, `isPreparing` checks, display capability gating). Toolbar state is driven by `withObservationTracking` on the view model, directly setting `isEnabled` on subitems on change. All toolbar item groups use `autovalidates = false` to prevent AppKit's automatic validation from overriding the observation-driven state.
+**What:** The main window and display window use `NSToolbar` with `NSToolbarDelegate` creating native `NSToolbarItem`s. Shared toolbar groups (lifecycle, suspend, display) are managed by `VMToolbarManager`, a `@MainActor` `NSObject` subclass that handles item creation, state updates, and action routing for both controllers. Each controller configures it with an `instanceProvider` closure and a `Configuration` struct that captures per-controller differences (identifier strings, `isPreparing` checks, display capability gating). Toolbar state is driven by `withObservationTracking` on the view model, directly setting `isEnabled` on subitems on change. All toolbar item groups use `autovalidates = false` to prevent AppKit's automatic validation from overriding the observation-driven state.
 
 **Why:** Native `NSToolbarItem`s provide reliable layout, proper `.sidebarTrackingSeparator` support, and standard macOS toolbar appearance. The `withObservationTracking` pattern (used in all three window controllers) re-evaluates on any observed property change and re-registers itself, providing reactive updates without SwiftUI. The shared `VMToolbarManager` eliminates ~150 lines of duplicated toolbar logic between `MainWindowController` and `VMDisplayWindowController`, ensuring toolbar changes are applied in one place.
 
