@@ -1,5 +1,4 @@
 import SwiftUI
-import UniformTypeIdentifiers
 
 /// Popover content for managing runtime USB mass storage devices on a running VM.
 /// Shown from the "Removable Media" toolbar button.
@@ -59,15 +58,9 @@ struct RemovableMediaPopoverView: View {
     }
 
     private func browseAndAttach() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = false
-        panel.canChooseFiles = true
-        panel.allowsMultipleSelection = false
-        panel.allowedContentTypes = UTType.diskImageTypes
-        panel.message = "Select a disk image to attach as removable media"
-        panel.prompt = "Attach"
-
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let url = NSOpenPanel.browseDiskImages(
+            message: "Select a disk image to attach as removable media"
+        ).first else { return }
         viewModel.attachUSBDevice(
             diskImagePath: url.path(percentEncoded: false),
             readOnly: true,

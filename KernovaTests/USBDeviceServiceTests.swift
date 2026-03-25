@@ -27,37 +27,33 @@ struct USBDeviceServiceTests {
 
     // MARK: - Mock Service Tests
 
-    @Test("Attach adds device to instance tracking")
-    func attachAddsToTracking() async throws {
+    @Test("Mock service records attach call parameters")
+    func mockServiceRecordsAttach() async throws {
         let service = MockUSBDeviceService()
         let instance = makeInstance()
 
         let info = try await service.attach(diskImagePath: "/tmp/test.dmg", readOnly: false, to: instance)
 
-        #expect(instance.attachedUSBDevices.count == 1)
-        #expect(instance.attachedUSBDevices[0].id == info.id)
-        #expect(instance.attachedUSBDevices[0].path == "/tmp/test.dmg")
-        #expect(instance.attachedUSBDevices[0].readOnly == false)
+        #expect(info.path == "/tmp/test.dmg")
+        #expect(info.readOnly == false)
         #expect(service.attachCallCount == 1)
         #expect(service.lastAttachedPath == "/tmp/test.dmg")
         #expect(service.lastAttachedReadOnly == false)
+        #expect(instance.attachedUSBDevices.isEmpty)
     }
 
-    @Test("Detach removes device from instance tracking")
-    func detachRemovesFromTracking() async throws {
+    @Test("Mock service records detach call")
+    func mockServiceRecordsDetach() async throws {
         let service = MockUSBDeviceService()
         let instance = makeInstance()
 
         let info = try await service.attach(diskImagePath: "/tmp/test.dmg", readOnly: false, to: instance)
-        #expect(instance.attachedUSBDevices.count == 1)
-
         try await service.detach(deviceInfo: info, from: instance)
 
-        #expect(instance.attachedUSBDevices.isEmpty)
         #expect(service.detachCallCount == 1)
     }
 
-    @Test("Attach propagates errors")
+    @Test("Attach propagates errors without modifying tracking")
     func attachPropagatesErrors() async {
         let service = MockUSBDeviceService()
         service.attachError = USBDeviceError.noVirtualMachine
@@ -79,7 +75,7 @@ struct USBDeviceServiceTests {
         let service = MockUSBDeviceService()
         let instance = makeInstance()
 
-        let info = try await service.attach(diskImagePath: "/tmp/test.dmg", readOnly: false, to: instance)
+        let info = USBDeviceInfo(path: "/tmp/test.dmg", readOnly: false)
         service.detachError = USBDeviceError.deviceNotFound
 
         await #expect {
@@ -89,20 +85,16 @@ struct USBDeviceServiceTests {
                   case .deviceNotFound = e else { return false }
             return true
         }
-
-        // Device should still be tracked since detach failed
-        #expect(instance.attachedUSBDevices.count == 1)
     }
 
     // MARK: - VMInstance State Tests
 
     @Test("tearDownSession clears attachedUSBDevices")
-    func tearDownClearsUSBDevices() async throws {
-        let service = MockUSBDeviceService()
+    func tearDownClearsUSBDevices() {
         let instance = makeInstance()
 
-        _ = try await service.attach(diskImagePath: "/tmp/a.dmg", readOnly: false, to: instance)
-        _ = try await service.attach(diskImagePath: "/tmp/b.dmg", readOnly: true, to: instance)
+        instance.attachedUSBDevices.append(USBDeviceInfo(path: "/tmp/a.dmg", readOnly: false))
+        instance.attachedUSBDevices.append(USBDeviceInfo(path: "/tmp/b.dmg", readOnly: true))
         #expect(instance.attachedUSBDevices.count == 2)
 
         instance.tearDownSession()
@@ -115,26 +107,11 @@ struct USBDeviceServiceTests {
         let instance = makeInstance(status: .running)
         // Without a real VZVirtualMachine, this is false
         #expect(instance.canAttachUSBDevices == false)
-
-        // When running + VM present, it would be true, but we can't mock VZVirtualMachine
     }
 
     @Test("canAttachUSBDevices is false when stopped")
     func cannotAttachWhenStopped() {
         let instance = makeInstance(status: .stopped)
         #expect(instance.canAttachUSBDevices == false)
-    }
-
-    @Test("Multiple attach calls accumulate devices")
-    func multipleAttaches() async throws {
-        let service = MockUSBDeviceService()
-        let instance = makeInstance()
-
-        _ = try await service.attach(diskImagePath: "/tmp/a.dmg", readOnly: false, to: instance)
-        _ = try await service.attach(diskImagePath: "/tmp/b.iso", readOnly: true, to: instance)
-        _ = try await service.attach(diskImagePath: "/tmp/c.img", readOnly: false, to: instance)
-
-        #expect(instance.attachedUSBDevices.count == 3)
-        #expect(service.attachCallCount == 3)
     }
 }

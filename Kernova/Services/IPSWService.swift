@@ -34,18 +34,38 @@ struct IPSWService: Sendable {
             // No existing file to clean up — expected on first download.
         }
 
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
-            let delegate = IPSWDownloadDelegate(
-                destinationURL: destinationURL,
-                progressHandler: progressHandler,
-                continuation: continuation
-            )
-            let session = URLSession(
-                configuration: .default,
-                delegate: delegate,
-                delegateQueue: nil
-            )
-            session.downloadTask(with: remoteURL).resume()
+        // nonisolated(unsafe) is needed because URLSessionDownloadTask is not Sendable,
+        // but URLSessionTask.cancel() is documented as thread-safe. The onCancel closure
+        // runs on an arbitrary thread; this is the only safe operation we perform on it.
+        nonisolated(unsafe) var downloadTask: URLSessionDownloadTask?
+
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+                let delegate = IPSWDownloadDelegate(
+                    destinationURL: destinationURL,
+                    progressHandler: progressHandler,
+                    continuation: continuation
+                )
+                let session = URLSession(
+                    configuration: .default,
+                    delegate: delegate,
+                    delegateQueue: nil
+                )
+                let task = session.downloadTask(with: remoteURL)
+                downloadTask = task
+
+                // Close the race where the Task was cancelled before downloadTask
+                // was assigned — onCancel would have seen nil and done nothing.
+                // Resume the continuation directly because a never-started task
+                // won't fire didCompleteWithError.
+                guard !Task.isCancelled else {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                task.resume()
+            }
+        } onCancel: {
+            downloadTask?.cancel()
         }
 
         Self.logger.info("Restore image downloaded to \(destinationURL.lastPathComponent, privacy: .public)")
@@ -138,13 +158,23 @@ private final class IPSWDownloadDelegate: NSObject, URLSessionDownloadDelegate, 
         session.finishTasksAndInvalidate()
 
         if let error = error ?? moveError {
-            Self.logger.error("Restore image download failed: \(error.localizedDescription, privacy: .public)")
             do {
                 try FileManager.default.removeItem(at: destinationURL)
             } catch {
                 Self.logger.warning("Failed to clean up partial download at '\(self.destinationURL.path(percentEncoded: false), privacy: .public)': \(error.localizedDescription, privacy: .public)")
             }
-            continuation.resume(throwing: IPSWError.downloadFailed(error.localizedDescription))
+
+            // Propagate cancellation as CancellationError so callers can distinguish
+            // user-initiated cancellation from genuine download failures.
+            if let nsError = error as NSError?,
+               nsError.domain == NSURLErrorDomain,
+               nsError.code == NSURLErrorCancelled {
+                Self.logger.info("Restore image download cancelled")
+                continuation.resume(throwing: CancellationError())
+            } else {
+                Self.logger.error("Restore image download failed: \(error.localizedDescription, privacy: .public)")
+                continuation.resume(throwing: IPSWError.downloadFailed(error))
+            }
         } else {
             let handler = self.progressHandler
             let received = task.countOfBytesReceived
@@ -160,14 +190,14 @@ private final class IPSWDownloadDelegate: NSObject, URLSessionDownloadDelegate, 
 
 enum IPSWError: LocalizedError {
     case noDownloadURL
-    case downloadFailed(String)
+    case downloadFailed(any Error)
 
     var errorDescription: String? {
         switch self {
         case .noDownloadURL:
             "The restore image does not have a download URL."
-        case .downloadFailed(let message):
-            "Failed to download restore image: \(message)"
+        case .downloadFailed(let underlyingError):
+            "Failed to download restore image: \(underlyingError.localizedDescription)"
         }
     }
 }

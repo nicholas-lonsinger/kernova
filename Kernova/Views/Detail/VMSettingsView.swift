@@ -1,6 +1,5 @@
 import AVFoundation
 import SwiftUI
-import UniformTypeIdentifiers
 
 /// Settings form for editing a stopped VM's configuration.
 struct VMSettingsView: View {
@@ -152,15 +151,9 @@ struct VMSettingsView: View {
     }
 
     private func browseRemovableMedia() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = false
-        panel.canChooseFiles = true
-        panel.allowsMultipleSelection = false
-        panel.allowedContentTypes = UTType.diskImageTypes
-        panel.message = "Select a disk image to attach to the VM"
-        panel.prompt = "Attach"
-
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let url = NSOpenPanel.browseDiskImages(
+            message: "Select a disk image to attach to the VM"
+        ).first else { return }
         instance.configuration.discImagePath = url.path(percentEncoded: false)
     }
 
@@ -246,20 +239,16 @@ struct VMSettingsView: View {
     }
 
     private func addExternalDisk() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = false
-        panel.canChooseFiles = true
-        panel.allowsMultipleSelection = true
-        panel.allowedContentTypes = UTType.diskImageTypes
-        panel.message = "Select disk images to attach to the VM"
-        panel.prompt = "Attach"
-
-        guard panel.runModal() == .OK else { return }
+        let urls = NSOpenPanel.browseDiskImages(
+            message: "Select disk images to attach to the VM",
+            allowsMultipleSelection: true
+        )
+        guard !urls.isEmpty else { return }
 
         var current = storageDiskBinding.wrappedValue
         let existingPaths = Set(current.map(\.path))
 
-        for url in panel.urls {
+        for url in urls {
             let path = url.path(percentEncoded: false)
             guard !existingPaths.contains(path) else { continue }
             current.append(AdditionalDisk(path: path))
