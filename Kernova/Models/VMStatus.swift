@@ -42,6 +42,15 @@ enum VMStatus: String, Codable, Sendable {
         }
     }
 
+    /// Overlay label for save/restore transitions, or `nil` for non-transitional states.
+    var transitionLabel: String? {
+        switch self {
+        case .saving: "Suspending…"
+        case .restoring: "Restoring…"
+        default: nil
+        }
+    }
+
     var canStart: Bool { self == .stopped || self == .error }
     /// Status-level stop eligibility. Does not account for cold-paused state;
     /// prefer `VMInstance.canStop` for runtime checks.
