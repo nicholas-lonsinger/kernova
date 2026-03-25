@@ -609,6 +609,46 @@ struct VMLibraryViewModelTests {
         #expect(viewModel.selectedID == remaining.id || viewModel.selectedID != removed.id)
     }
 
+    @Test("reconcileWithDisk presents error when config loading fails")
+    func reconcilePresentsErrorForFailedConfigs() {
+        let storage = MockVMStorageService()
+        let config = VMConfiguration(name: "Good VM", guestOS: .linux, bootMode: .efi)
+        let goodURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
+        storage.bundles[goodURL] = config
+
+        let badURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("corrupted.kernova", isDirectory: true)
+        storage.bundles[badURL] = VMConfiguration(name: "Bad VM", guestOS: .linux, bootMode: .efi)
+        storage.loadConfigurationFailURLs.insert(badURL)
+
+        let (viewModel, _, _, _) = makeViewModel(storageService: storage)
+        viewModel.showError = false
+        viewModel.errorMessage = nil
+
+        viewModel.reconcileWithDisk()
+
+        #expect(viewModel.showError == true)
+        #expect(viewModel.errorMessage?.contains("corrupted") == true)
+        #expect(viewModel.instances.contains { $0.name == "Good VM" })
+    }
+
+    @Test("reconcileWithDisk presents error when listing bundles fails")
+    func reconcilePresentsErrorForFilesystemFailure() {
+        let (viewModel, storage, _, _) = makeViewModel()
+        viewModel.showError = false
+        viewModel.errorMessage = nil
+
+        storage.listVMBundlesError = VMStorageError.bundleNotFound(
+            FileManager.default.temporaryDirectory
+        )
+
+        viewModel.reconcileWithDisk()
+
+        #expect(viewModel.showError == true)
+        #expect(viewModel.errorMessage?.contains("VM bundle not found") == true)
+    }
+
     // MARK: - Cancel Installation
 
     #if arch(arm64)

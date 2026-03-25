@@ -816,12 +816,14 @@ final class VMLibraryViewModel {
 
             // Build a map of UUID → bundle URL for bundles currently on disk
             var diskConfigs: [(VMConfiguration, URL)] = []
+            var failedBundles: [String] = []
             for bundleURL in diskBundles {
                 do {
                     let config = try storageService.loadConfiguration(from: bundleURL)
                     diskConfigs.append((config, bundleURL))
                 } catch {
                     Self.logger.error("Failed to load config from \(bundleURL.lastPathComponent, privacy: .public) during reconciliation: \(error.localizedDescription, privacy: .public)")
+                    failedBundles.append(bundleURL.deletingPathExtension().lastPathComponent)
                 }
             }
             let diskIDs = Set(diskConfigs.map(\.0.id))
@@ -863,9 +865,14 @@ final class VMLibraryViewModel {
                 persistOrder()
             }
 
+            if !failedBundles.isEmpty {
+                presentError(LoadError.bundleLoadFailed(names: failedBundles))
+            }
+
             Self.logger.debug("reconcileWithDisk: complete — \(self.instances.count, privacy: .public) VM(s) in library")
         } catch {
             Self.logger.error("Directory reconciliation failed: \(error.localizedDescription, privacy: .public)")
+            presentError(error)
         }
     }
 

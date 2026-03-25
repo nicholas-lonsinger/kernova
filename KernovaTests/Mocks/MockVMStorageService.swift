@@ -23,6 +23,7 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
     var cloneVMBundleError: (any Error)?
     var saveConfigurationError: (any Error)?
     var deleteVMBundleError: (any Error)?
+    var listVMBundlesError: (any Error)?
     /// Set of bundle URLs whose loadConfiguration should throw.
     var loadConfigurationFailURLs: Set<URL> = []
 
@@ -40,7 +41,8 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
     }
 
     func listVMBundles() throws -> [URL] {
-        Array(bundles.keys)
+        if let error = listVMBundlesError { throw error }
+        return Array(bundles.keys)
     }
 
     func loadConfiguration(from bundleURL: URL) throws -> VMConfiguration {
