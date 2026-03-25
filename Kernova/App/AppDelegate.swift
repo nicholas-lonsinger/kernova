@@ -273,72 +273,72 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         viewModel.confirmDelete(instance)
     }
 
-    // MARK: - Serial Console
+    // MARK: - Auxiliary Windows (Serial Console, Clipboard)
 
-    @objc func showSerialConsole(_ sender: Any?) {
-        guard let instance = activeInstance,
-              instance.canShowSerialConsole else { return }
+    /// Shows or focuses an auxiliary window for the given VM instance.
+    ///
+    /// This method manages the full lifecycle: reuse an existing window if one
+    /// is already open for this VM, otherwise create one via `factory`, register
+    /// a `willCloseNotification` observer for cleanup, and store both the
+    /// controller and observer token in the provided dictionary pair.
+    private func showAuxiliaryWindow<C: NSWindowController>(
+        for instance: VMInstance,
+        isEligible: Bool,
+        windowsPath: ReferenceWritableKeyPath<AppDelegate, [UUID: C]>,
+        observersPath: ReferenceWritableKeyPath<AppDelegate, [UUID: Any]>,
+        factory: (VMInstance) -> C
+    ) {
+        guard isEligible else { return }
 
-        if let existing = serialConsoleWindows[instance.instanceID] {
+        let vmID = instance.instanceID
+
+        if let existing = self[keyPath: windowsPath][vmID] {
             existing.window?.makeKeyAndOrderFront(nil)
             return
         }
 
-        let controller = SerialConsoleWindowController(instance: instance)
-        let vmID = instance.instanceID
-        serialConsoleWindows[vmID] = controller
+        let controller = factory(instance)
+        self[keyPath: windowsPath][vmID] = controller
 
-        // Clean up when window closes
         let token = NotificationCenter.default.addObserver(
             forName: NSWindow.willCloseNotification,
             object: controller.window,
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
-                if let token = self?.serialConsoleObservers.removeValue(forKey: vmID) {
+                guard let self else { return }
+                if let token = self[keyPath: observersPath].removeValue(forKey: vmID) {
                     NotificationCenter.default.removeObserver(token)
                 }
-                self?.serialConsoleWindows.removeValue(forKey: vmID)
-                self?.terminateIfIdle()
+                self[keyPath: windowsPath].removeValue(forKey: vmID)
+                self.terminateIfIdle()
             }
         }
-        serialConsoleObservers[vmID] = token
+        self[keyPath: observersPath][vmID] = token
 
         controller.showWindow(nil)
     }
 
-    // MARK: - Clipboard
+    @objc func showSerialConsole(_ sender: Any?) {
+        guard let instance = activeInstance else { return }
+        showAuxiliaryWindow(
+            for: instance,
+            isEligible: instance.canShowSerialConsole,
+            windowsPath: \.serialConsoleWindows,
+            observersPath: \.serialConsoleObservers,
+            factory: SerialConsoleWindowController.init
+        )
+    }
 
     @objc func showClipboard(_ sender: Any?) {
-        guard let instance = activeInstance,
-              instance.canShowClipboard else { return }
-
-        if let existing = clipboardWindows[instance.instanceID] {
-            existing.window?.makeKeyAndOrderFront(nil)
-            return
-        }
-
-        let controller = ClipboardWindowController(instance: instance)
-        let vmID = instance.instanceID
-        clipboardWindows[vmID] = controller
-
-        // Clean up when window closes
-        let token = NotificationCenter.default.addObserver(
-            forName: NSWindow.willCloseNotification,
-            object: controller.window,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                if let token = self?.clipboardObservers.removeValue(forKey: vmID) {
-                    NotificationCenter.default.removeObserver(token)
-                }
-                self?.clipboardWindows.removeValue(forKey: vmID)
-                self?.terminateIfIdle()
-            }
-        }
-        clipboardObservers[vmID] = token
-
-        controller.showWindow(nil)
+        guard let instance = activeInstance else { return }
+        showAuxiliaryWindow(
+            for: instance,
+            isEligible: instance.canShowClipboard,
+            windowsPath: \.clipboardWindows,
+            observersPath: \.clipboardObservers,
+            factory: ClipboardWindowController.init
+        )
     }
 
     // MARK: - Removable Media
