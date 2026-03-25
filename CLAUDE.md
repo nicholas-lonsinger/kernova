@@ -239,6 +239,8 @@ When merging PRs with `gh pr merge`, always squash-merge with `--squash --subjec
 
 **Do not use `--delete-branch`.** The repo has `delete_branch_on_merge` enabled on GitHub, so remote branches are auto-deleted. The `--delete-branch` flag causes `gh` to run `git checkout main` locally, which fails in worktree contexts.
 
+**Linking issues for auto-close:** When a PR resolves GitHub issues, include `Closes #N` (or `Fixes #N`) in the PR body — not just a table reference like `| #N |`. GitHub only auto-closes issues when the merge commit or PR body contains the exact keywords `closes`, `fixes`, or `resolves` followed by `#N`. Place them in the summary section or as a standalone line (e.g., `Closes #12, #34, #56`).
+
 #### Post-merge cleanup
 
 After a successful merge, run the following steps to clean up the local branch and sync:
