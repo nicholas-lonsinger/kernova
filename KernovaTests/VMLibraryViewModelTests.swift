@@ -678,29 +678,33 @@ struct VMLibraryViewModelTests {
         #expect(viewModel.errorMessage == nil)
     }
 
-    @Test("reconcileWithDisk re-presents error after loadVMs resets reported failures")
-    func reconcileReReportsAfterFullReload() {
+    @Test("reconcileWithDisk suppression is maintained after full reload")
+    func reconcileSuppressionMaintainedAfterReload() {
         let storage = MockVMStorageService()
         let badURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("broken-vm.kernova", isDirectory: true)
         storage.bundles[badURL] = VMConfiguration(name: "Bad VM", guestOS: .linux, bootMode: .efi)
         storage.loadConfigurationFailURLs.insert(badURL)
 
+        // loadVMs() in init reports the error and seeds reportedFailedBundles
         let (viewModel, _, _, _) = makeViewModel(storageService: storage)
+        #expect(viewModel.showError == true)
+        #expect(viewModel.errorMessage?.contains("broken-vm") == true)
 
-        // First reconciliation reports the error (loadVMs already seeded reportedFailedBundles,
-        // so the first reconcile is actually suppressed — verify that)
+        // First reconcile after init is suppressed
         viewModel.showError = false
         viewModel.errorMessage = nil
         viewModel.reconcileWithDisk()
         #expect(viewModel.showError == false)
 
-        // Full reload resets the tracking, then re-seeds it from its own failures
+        // Full reload resets suppression, then re-seeds from its own failures
         viewModel.loadVMs()
-        viewModel.showError = false
-        viewModel.errorMessage = nil
+        #expect(viewModel.showError == true)
+        #expect(viewModel.errorMessage?.contains("broken-vm") == true)
 
         // Reconciliation should still be suppressed since loadVMs re-seeded the set
+        viewModel.showError = false
+        viewModel.errorMessage = nil
         viewModel.reconcileWithDisk()
         #expect(viewModel.showError == false)
     }
