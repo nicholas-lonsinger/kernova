@@ -359,6 +359,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             popover.show(relativeTo: toolbarItem)
         } else if let contentView = NSApp.keyWindow?.contentView {
             popover.show(relativeTo: contentView.bounds, of: contentView, preferredEdge: .minY)
+        } else {
+            Self.logger.warning("Cannot show removable media popover: no anchor view available")
         }
     }
 

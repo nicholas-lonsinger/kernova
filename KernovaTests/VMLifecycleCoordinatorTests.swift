@@ -10,17 +10,20 @@ struct VMLifecycleCoordinatorTests {
         VMLifecycleCoordinator,
         MockVirtualizationService,
         MockMacOSInstallService,
-        MockIPSWService
+        MockIPSWService,
+        MockUSBDeviceService
     ) {
         let virtService = MockVirtualizationService()
         let installService = MockMacOSInstallService()
         let ipswService = MockIPSWService()
+        let usbService = MockUSBDeviceService()
         let coordinator = VMLifecycleCoordinator(
             virtualizationService: virtService,
             installService: installService,
-            ipswService: ipswService
+            ipswService: ipswService,
+            usbDeviceService: usbService
         )
-        return (coordinator, virtService, installService, ipswService)
+        return (coordinator, virtService, installService, ipswService, usbService)
     }
 
     private func makeSuspendingCoordinator() -> (
@@ -31,7 +34,8 @@ struct VMLifecycleCoordinatorTests {
         let coordinator = VMLifecycleCoordinator(
             virtualizationService: suspendingService,
             installService: MockMacOSInstallService(),
-            ipswService: MockIPSWService()
+            ipswService: MockIPSWService(),
+            usbDeviceService: MockUSBDeviceService()
         )
         return (coordinator, suspendingService)
     }
@@ -51,7 +55,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("start forwards to virtualization service")
     func startForwards() async throws {
-        let (coordinator, virtService, _, _) = makeCoordinator()
+        let (coordinator, virtService, _, _, _) = makeCoordinator()
         let instance = makeInstance()
 
         try await coordinator.start(instance)
@@ -61,7 +65,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("stop forwards to virtualization service")
     func stopForwards() throws {
-        let (coordinator, virtService, _, _) = makeCoordinator()
+        let (coordinator, virtService, _, _, _) = makeCoordinator()
         let instance = makeInstance()
         instance.status = .running
 
@@ -72,7 +76,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("forceStop forwards to virtualization service")
     func forceStopForwards() async throws {
-        let (coordinator, virtService, _, _) = makeCoordinator()
+        let (coordinator, virtService, _, _, _) = makeCoordinator()
         let instance = makeInstance()
         instance.status = .running
 
@@ -83,7 +87,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("pause forwards to virtualization service")
     func pauseForwards() async throws {
-        let (coordinator, virtService, _, _) = makeCoordinator()
+        let (coordinator, virtService, _, _, _) = makeCoordinator()
         let instance = makeInstance()
         instance.status = .running
 
@@ -94,7 +98,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("resume forwards to virtualization service")
     func resumeForwards() async throws {
-        let (coordinator, virtService, _, _) = makeCoordinator()
+        let (coordinator, virtService, _, _, _) = makeCoordinator()
         let instance = makeInstance()
         instance.status = .paused
 
@@ -105,7 +109,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("save forwards to virtualization service")
     func saveForwards() async throws {
-        let (coordinator, virtService, _, _) = makeCoordinator()
+        let (coordinator, virtService, _, _, _) = makeCoordinator()
         let instance = makeInstance()
         instance.status = .running
 
@@ -118,7 +122,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("start propagates error from virtualization service")
     func startPropagatesError() async {
-        let (coordinator, virtService, _, _) = makeCoordinator()
+        let (coordinator, virtService, _, _, _) = makeCoordinator()
         virtService.startError = VirtualizationError.noVirtualMachine
         let instance = makeInstance()
 
@@ -129,7 +133,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("stop propagates error from virtualization service")
     func stopPropagatesError() {
-        let (coordinator, virtService, _, _) = makeCoordinator()
+        let (coordinator, virtService, _, _, _) = makeCoordinator()
         virtService.stopError = VirtualizationError.noVirtualMachine
         let instance = makeInstance()
 
@@ -142,7 +146,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("hasActiveOperation returns false when no operation is running")
     func hasActiveOperationInitiallyFalse() {
-        let (coordinator, _, _, _) = makeCoordinator()
+        let (coordinator, _, _, _, _) = makeCoordinator()
         let instance = makeInstance()
 
         #expect(!coordinator.hasActiveOperation(for: instance.id))
@@ -214,7 +218,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("lock is released after operation completes successfully")
     func lockReleasedAfterSuccess() async throws {
-        let (coordinator, _, _, _) = makeCoordinator()
+        let (coordinator, _, _, _, _) = makeCoordinator()
         let instance = makeInstance()
 
         try await coordinator.start(instance)
@@ -228,7 +232,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("lock is released after operation fails")
     func lockReleasedAfterError() async throws {
-        let (coordinator, virtService, _, _) = makeCoordinator()
+        let (coordinator, virtService, _, _, _) = makeCoordinator()
         virtService.startError = VirtualizationError.noVirtualMachine
         let instance = makeInstance()
 
@@ -294,7 +298,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("stop does not affect active operation tracking")
     func stopDoesNotAffectActiveOperationTracking() throws {
-        let (coordinator, virtService, _, _) = makeCoordinator()
+        let (coordinator, virtService, _, _, _) = makeCoordinator()
         let instance = makeInstance()
         instance.status = .running
 
@@ -305,7 +309,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("stop error does not affect active operation tracking")
     func stopErrorDoesNotAffectActiveOperationTracking() async throws {
-        let (coordinator, virtService, _, _) = makeCoordinator()
+        let (coordinator, virtService, _, _, _) = makeCoordinator()
         virtService.stopError = VirtualizationError.noVirtualMachine
         let instance = makeInstance()
 
@@ -354,7 +358,7 @@ struct VMLifecycleCoordinatorTests {
     #if arch(arm64)
     @Test("installMacOS with localFile sets hasDownloadStep to false")
     func installMacOSLocalFile() async throws {
-        let (coordinator, _, installService, _) = makeCoordinator()
+        let (coordinator, _, installService, _, _) = makeCoordinator()
         let instance = makeInstance()
         let wizard = VMCreationViewModel()
         wizard.selectedOS = .macOS
@@ -374,7 +378,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("installMacOS with downloadLatest calls fetch and download")
     func installMacOSDownload() async throws {
-        let (coordinator, _, installService, ipswService) = makeCoordinator()
+        let (coordinator, _, installService, ipswService, _) = makeCoordinator()
         let instance = makeInstance()
         let wizard = VMCreationViewModel()
         wizard.selectedOS = .macOS
@@ -397,7 +401,7 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("installMacOS sets status to error on service failure")
     func installMacOSError() async {
-        let (coordinator, _, installService, _) = makeCoordinator()
+        let (coordinator, _, installService, _, _) = makeCoordinator()
         installService.installError = IPSWError.downloadFailed("test failure")
         let instance = makeInstance()
         let wizard = VMCreationViewModel()
@@ -420,4 +424,77 @@ struct VMLifecycleCoordinatorTests {
         }
     }
     #endif
+
+    // MARK: - USB Device Pass-Through
+
+    @Test("attachUSBDevice forwards to USB device service")
+    func attachUSBDeviceForwards() async throws {
+        let (coordinator, _, _, _, usbService) = makeCoordinator()
+        let instance = makeInstance()
+
+        let info = try await coordinator.attachUSBDevice(
+            diskImagePath: "/tmp/test.dmg",
+            readOnly: true,
+            to: instance
+        )
+
+        #expect(usbService.attachCallCount == 1)
+        #expect(usbService.lastAttachedPath == "/tmp/test.dmg")
+        #expect(usbService.lastAttachedReadOnly == true)
+        #expect(info.path == "/tmp/test.dmg")
+        #expect(info.readOnly == true)
+    }
+
+    @Test("detachUSBDevice forwards to USB device service")
+    func detachUSBDeviceForwards() async throws {
+        let (coordinator, _, _, _, usbService) = makeCoordinator()
+        let instance = makeInstance()
+
+        let info = try await coordinator.attachUSBDevice(
+            diskImagePath: "/tmp/test.dmg",
+            readOnly: false,
+            to: instance
+        )
+
+        try await coordinator.detachUSBDevice(info, from: instance)
+
+        #expect(usbService.detachCallCount == 1)
+        #expect(instance.attachedUSBDevices.isEmpty)
+    }
+
+    @Test("attachUSBDevice propagates error from USB device service")
+    func attachUSBDevicePropagatesError() async {
+        let (coordinator, _, _, _, usbService) = makeCoordinator()
+        usbService.attachError = USBDeviceError.noVirtualMachine
+        let instance = makeInstance()
+
+        await #expect(throws: USBDeviceError.self) {
+            try await coordinator.attachUSBDevice(
+                diskImagePath: "/tmp/test.dmg",
+                readOnly: false,
+                to: instance
+            )
+        }
+    }
+
+    @Test("detachUSBDevice propagates error from USB device service")
+    func detachUSBDevicePropagatesError() async throws {
+        let (coordinator, _, _, _, usbService) = makeCoordinator()
+        let instance = makeInstance()
+
+        let info = try await coordinator.attachUSBDevice(
+            diskImagePath: "/tmp/test.dmg",
+            readOnly: false,
+            to: instance
+        )
+
+        usbService.detachError = USBDeviceError.deviceNotFound
+
+        await #expect(throws: USBDeviceError.self) {
+            try await coordinator.detachUSBDevice(info, from: instance)
+        }
+
+        // Device should still be tracked since detach failed
+        #expect(instance.attachedUSBDevices.count == 1)
+    }
 }

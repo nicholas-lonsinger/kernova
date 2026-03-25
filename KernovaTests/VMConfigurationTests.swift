@@ -514,8 +514,20 @@ struct VMConfigurationTests {
         #expect(decoded.additionalDisks?.count == 2)
         #expect(decoded.additionalDisks?[0].label == "Data")
         #expect(decoded.additionalDisks?[0].readOnly == false)
+        #expect(decoded.additionalDisks?[0].isInternal == false)
+        #expect(decoded.additionalDisks?[0].id == config.additionalDisks?[0].id)
+        #expect(decoded.additionalDisks?[0].blockDeviceIdentifier == config.additionalDisks?[0].blockDeviceIdentifier)
         #expect(decoded.additionalDisks?[1].label == "Backup")
         #expect(decoded.additionalDisks?[1].readOnly == true)
+        #expect(decoded.additionalDisks?[1].isInternal == false)
+        #expect(decoded.additionalDisks?[1].id == config.additionalDisks?[1].id)
+        #expect(decoded.additionalDisks?[1].blockDeviceIdentifier == config.additionalDisks?[1].blockDeviceIdentifier)
+    }
+
+    @Test("AdditionalDisk displayName returns last path component")
+    func additionalDiskDisplayName() {
+        let disk = AdditionalDisk(path: "/Users/test/VMs/data.asif")
+        #expect(disk.displayName == "data.asif")
     }
 
     @Test("Backward compatibility: decoding JSON without additionalDisks defaults to nil")

@@ -157,7 +157,7 @@ final class VMInstance: Identifiable {
     /// Populated at runtime only; cleared on VM stop/teardown.
     var attachedUSBDevices: [USBDeviceInfo] = []
 
-    /// `true` when the VM has a live XHCI controller available for USB hot-plug.
+    /// `true` when the VM has a live `VZVirtualMachine` in a running or paused state, enabling USB hot-plug via the XHCI controller.
     var canAttachUSBDevices: Bool {
         (status == .running || status == .paused) && virtualMachine != nil
     }

@@ -70,7 +70,7 @@ struct RemovableMediaPopoverView: View {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         viewModel.attachUSBDevice(
             diskImagePath: url.path(percentEncoded: false),
-            readOnly: false,
+            readOnly: true,
             to: instance
         )
     }

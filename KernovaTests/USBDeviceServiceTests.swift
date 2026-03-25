@@ -17,6 +17,14 @@ struct USBDeviceServiceTests {
         return VMInstance(configuration: config, bundleURL: bundleURL, status: status)
     }
 
+    // MARK: - USBDeviceInfo Model Tests
+
+    @Test("USBDeviceInfo displayName returns last path component")
+    func usbDeviceInfoDisplayName() {
+        let info = USBDeviceInfo(path: "/Users/test/disk.dmg", readOnly: true)
+        #expect(info.displayName == "disk.dmg")
+    }
+
     // MARK: - Mock Service Tests
 
     @Test("Attach adds device to instance tracking")
@@ -32,6 +40,7 @@ struct USBDeviceServiceTests {
         #expect(instance.attachedUSBDevices[0].readOnly == false)
         #expect(service.attachCallCount == 1)
         #expect(service.lastAttachedPath == "/tmp/test.dmg")
+        #expect(service.lastAttachedReadOnly == false)
     }
 
     @Test("Detach removes device from instance tracking")

@@ -4,7 +4,7 @@ import Foundation
 ///
 /// This is a runtime-only type — not persisted to disk. USB devices are
 /// transient and detach automatically when the VM stops.
-struct USBDeviceInfo: Identifiable, Sendable {
+struct USBDeviceInfo: Identifiable, Sendable, Equatable {
     let id: UUID
     let path: String
     let readOnly: Bool

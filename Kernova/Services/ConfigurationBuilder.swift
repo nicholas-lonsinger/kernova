@@ -5,7 +5,7 @@ import os
 /// Translates a `VMConfiguration` into a `VZVirtualMachineConfiguration`.
 ///
 /// Resolves symlinks and validates all user-supplied file paths (kernel, initrd, disc image,
-/// shared directories) before passing them to Virtualization.framework.
+/// additional disks, shared directories) before passing them to Virtualization.framework.
 ///
 /// Supports three boot paths:
 /// - **macOS**: `VZMacPlatformConfiguration` + `VZMacOSBootLoader` (Apple Silicon only)
@@ -384,6 +384,8 @@ struct ConfigurationBuilder: Sendable {
         vzConfig.audioDevices = [audioDevice]
     }
 
+    /// Configures an XHCI USB controller unconditionally so that runtime USB device hot-plug
+    /// is always available via `USBDeviceService`.
     private func configureUSBControllers(_ vzConfig: VZVirtualMachineConfiguration) {
         vzConfig.usbControllers = [VZXHCIControllerConfiguration()]
     }

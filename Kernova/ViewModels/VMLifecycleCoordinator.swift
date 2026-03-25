@@ -224,8 +224,8 @@ final class VMLifecycleCoordinator {
     // MARK: - USB Device Management
 
     /// Attaches a USB mass storage device to a running VM.
-    /// Does not use serialization — USB operations are short and should not
-    /// block or be blocked by lifecycle operations.
+    /// Does not use the lifecycle operation token — USB operations are short
+    /// and independent of start/stop/save lifecycle transitions.
     func attachUSBDevice(diskImagePath: String, readOnly: Bool, to instance: VMInstance) async throws -> USBDeviceInfo {
         try await usbDeviceService.attach(diskImagePath: diskImagePath, readOnly: readOnly, to: instance)
     }

@@ -8,6 +8,7 @@ final class MockUSBDeviceService: USBDeviceProviding {
     var attachError: (any Error)?
     var detachError: (any Error)?
     var lastAttachedPath: String?
+    var lastAttachedReadOnly: Bool?
 
     func attach(
         diskImagePath: String,
@@ -16,6 +17,7 @@ final class MockUSBDeviceService: USBDeviceProviding {
     ) async throws -> USBDeviceInfo {
         attachCallCount += 1
         lastAttachedPath = diskImagePath
+        lastAttachedReadOnly = readOnly
         if let error = attachError { throw error }
         let info = USBDeviceInfo(path: diskImagePath, readOnly: readOnly)
         instance.attachedUSBDevices.append(info)

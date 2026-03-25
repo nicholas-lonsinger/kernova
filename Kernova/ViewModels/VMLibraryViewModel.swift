@@ -504,6 +504,7 @@ final class VMLibraryViewModel {
     // MARK: - USB Device Management
 
     func attachUSBDevice(diskImagePath: String, readOnly: Bool, to instance: VMInstance) {
+        Self.logger.debug("Attaching USB device '\(URL(fileURLWithPath: diskImagePath).lastPathComponent, privacy: .public)' to '\(instance.name, privacy: .public)' (readOnly: \(readOnly, privacy: .public))")
         Task {
             do {
                 _ = try await lifecycle.attachUSBDevice(
@@ -512,16 +513,19 @@ final class VMLibraryViewModel {
                     to: instance
                 )
             } catch {
+                Self.logger.error("USB attach failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
                 presentError(error)
             }
         }
     }
 
     func detachUSBDevice(_ device: USBDeviceInfo, from instance: VMInstance) {
+        Self.logger.debug("Detaching USB device '\(device.displayName, privacy: .public)' from '\(instance.name, privacy: .public)'")
         Task {
             do {
                 try await lifecycle.detachUSBDevice(device, from: instance)
             } catch {
+                Self.logger.error("USB detach failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
                 presentError(error)
             }
         }
@@ -545,6 +549,7 @@ final class VMLibraryViewModel {
                 Self.logger.notice("Trashed internal disk '\(disk.label, privacy: .public)' for VM '\(instance.name, privacy: .public)'")
             } catch {
                 Self.logger.warning("Failed to trash internal disk '\(disk.label, privacy: .public)' at '\(diskURL.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)")
+                presentError(error)
             }
         }
     }
@@ -578,8 +583,8 @@ final class VMLibraryViewModel {
                 // Clean up the disk file if it was created before the failure
                 do {
                     try FileManager.default.trashItem(at: diskURL, resultingItemURL: nil)
-                } catch {
-                    Self.logger.warning("Failed to clean up partial disk image at '\(diskURL.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)")
+                } catch let cleanupError {
+                    Self.logger.warning("Failed to clean up partial disk image at '\(diskURL.lastPathComponent, privacy: .public)': \(cleanupError.localizedDescription, privacy: .public)")
                 }
                 Self.logger.error("Failed to create additional disk for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
                 presentError(error)
@@ -660,8 +665,9 @@ final class VMLibraryViewModel {
         let diskMapping = internalDiskMapping
         let bundleFilesToCopy = filesToCopy
         let task = Task { [weak self] in
+            let log = Self.logger
             do {
-                try await Task.detached {
+                let skippedDiskIDs: Set<UUID> = try await Task.detached {
                     let resultURL = try storage.cloneVMBundle(from: sourceBundleURL, newConfiguration: config, filesToCopy: bundleFilesToCopy)
 
                     // Write regenerated MachineIdentifier file for macOS clones (off main thread)
@@ -672,7 +678,8 @@ final class VMLibraryViewModel {
                     }
                     #endif
 
-                    // Copy internal additional disk files and remap paths
+                    // Copy internal additional disk files and track any missing sources
+                    var skipped: Set<UUID> = []
                     if !diskMapping.isEmpty {
                         let sourceLayout = VMBundleLayout(bundleURL: sourceBundleURL)
                         let destLayout = VMBundleLayout(bundleURL: resultURL)
@@ -684,21 +691,27 @@ final class VMLibraryViewModel {
                             if fm.fileExists(atPath: sourceFile.path(percentEncoded: false)) {
                                 try fm.copyItem(at: sourceFile, to: destFile)
                             } else {
-                                let logger = Logger(subsystem: "com.kernova.app", category: "VMLibraryViewModel")
-                                logger.warning("Internal disk '\(mapping.clonedDisk.label, privacy: .public)' source file missing at '\(sourceFile.lastPathComponent, privacy: .public)' — skipping from clone")
+                                log.warning("Internal disk '\(mapping.clonedDisk.label, privacy: .public)' source file missing at '\(sourceFile.lastPathComponent, privacy: .public)' — removing from clone")
+                                skipped.insert(mapping.clonedDisk.id)
                             }
                         }
                     }
+                    return skipped
                 }.value
 
-                // Remap internal disk paths to the new bundle location
+                // Remove skipped disks and remap internal disk paths to the new bundle location
                 if !diskMapping.isEmpty {
                     let newLayout = VMBundleLayout(bundleURL: phantom.bundleURL)
-                    phantom.configuration.additionalDisks = phantom.configuration.additionalDisks?.map { disk in
-                        guard disk.isInternal else { return disk }
-                        var updated = disk
-                        updated.path = newLayout.additionalDiskURL(id: disk.id).path(percentEncoded: false)
-                        return updated
+                    phantom.configuration.additionalDisks = phantom.configuration.additionalDisks?
+                        .filter { !skippedDiskIDs.contains($0.id) }
+                        .map { disk in
+                            guard disk.isInternal else { return disk }
+                            var updated = disk
+                            updated.path = newLayout.additionalDiskURL(id: disk.id).path(percentEncoded: false)
+                            return updated
+                        }
+                    if phantom.configuration.additionalDisks?.isEmpty == true {
+                        phantom.configuration.additionalDisks = nil
                     }
                     try storage.saveConfiguration(phantom.configuration, to: phantom.bundleURL)
                 }

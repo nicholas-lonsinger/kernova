@@ -66,7 +66,8 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
 
     // MARK: - Removable Media
 
-    /// Path to a disk image attached as a USB mass storage device.
+    /// Path to a disk image attached as a USB mass storage device at VM start time.
+    /// For runtime hot-plug, see `USBDeviceService`.
     var discImagePath: String?
 
     /// When `true`, the disc image attachment is read-only. Defaults to `true`.
