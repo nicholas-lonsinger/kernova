@@ -26,6 +26,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// reading a stale `true` before the async Task has run.
     private var wasJustActivated = false
 
+    /// Set by `handleQuitAppleEvent` when the sender is System Settings / TCC.
+    private var terminationIsTCCRevocation = false
+
+    /// Set in `applicationShouldTerminate` when TCC revocation is detected AND
+    /// running VMs require an async save (`.terminateLater`). Checked in
+    /// `applicationWillTerminate` to launch the relaunch helper at the last moment.
+    private var relaunchAfterTermination = false
+
+    /// Bundle identifiers that indicate a TCC-initiated quit.
+    /// Stable since macOS 13 (Ventura) when System Preferences was replaced by
+    /// System Settings with per-pane extensions. May differ on earlier versions.
+    private static let tccSenderBundleIDs: Set<String> = [
+        "com.apple.settings.PrivacySecurity.extension",
+    ]
+
     private static let logger = Logger(subsystem: "com.kernova.app", category: "AppDelegate")
 
     /// Returns the VM that menu actions should target: the display or serial console
@@ -74,6 +89,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         pendingOpenURLs.removeAll()
 
         observeForTermination()
+
+        // Intercept the Quit Apple Event to inspect its sender. TCC revocations
+        // arrive from System Settings or tccd; Dock Quit, AppleScript, and system
+        // shutdown arrive from other senders. This lets us positively identify TCC.
+        NSAppleEventManager.shared().setEventHandler(
+            self,
+            andSelector: #selector(handleQuitAppleEvent(_:withReplyEvent:)),
+            forEventClass: AEEventClass(kCoreEventClass),
+            andEventID: AEEventID(kAEQuitApplication)
+        )
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -153,6 +178,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             return .terminateNow
         }
 
+        // When a TCC permission is revoked (e.g., microphone toggled in System Settings),
+        // macOS quits and relaunches the app. The built-in relaunch times out while VMs
+        // are saving. Mark for relaunch so applicationWillTerminate can launch the helper
+        // at the last moment, after saves are complete.
+        if terminationIsTCCRevocation {
+            relaunchAfterTermination = true
+        }
+
         Task { @MainActor in
             for instance in runningInstances {
                 do {
@@ -171,6 +204,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
 
         return .terminateLater
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        if relaunchAfterTermination {
+            launchRelaunchHelper()
+        }
+    }
+
+    /// Handles the `kAEQuitApplication` Apple Event by inspecting the sender.
+    /// If the sender is System Settings or the TCC daemon, sets `terminationIsTCCRevocation`
+    /// so that `applicationShouldTerminate` knows to launch the relaunch helper.
+    @objc private func handleQuitAppleEvent(
+        _ event: NSAppleEventDescriptor,
+        withReplyEvent reply: NSAppleEventDescriptor
+    ) {
+        // Extract the sender's PID from the Apple Event and resolve its bundle ID.
+        if let senderPIDDescriptor = event.attributeDescriptor(forKeyword: keySenderPIDAttr) {
+            let senderPID = senderPIDDescriptor.int32Value
+            if let senderApp = NSRunningApplication(processIdentifier: senderPID),
+               let bundleID = senderApp.bundleIdentifier {
+                Self.logger.debug("Quit Apple Event received from '\(bundleID, privacy: .public)' (PID \(senderPID, privacy: .public))")
+                if Self.tccSenderBundleIDs.contains(bundleID) {
+                    terminationIsTCCRevocation = true
+                }
+            }
+        }
+
+        NSApp.terminate(nil)
+    }
+
+    /// Launches the relaunch helper, which monitors this process and re-opens
+    /// the app after it terminates. Used for TCC permission revocations where
+    /// the built-in relaunch mechanism times out during VM save.
+    private func launchRelaunchHelper() {
+        guard let helperURL = Bundle.main.url(
+            forAuxiliaryExecutable: "KernovaRelaunchHelper"
+        ) else {
+            Self.logger.warning("Relaunch helper not found in app bundle")
+            return
+        }
+
+        let pid = ProcessInfo.processInfo.processIdentifier
+        let bundlePath = Bundle.main.bundlePath
+
+        do {
+            let process = Process()
+            process.executableURL = helperURL
+            process.arguments = [String(pid), bundlePath]
+            try process.run()
+            Self.logger.notice("Launched relaunch helper (watching PID \(pid, privacy: .public))")
+        } catch {
+            Self.logger.error("Failed to launch relaunch helper: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     // MARK: - Open URLs (Finder double-click / dock icon drop)
