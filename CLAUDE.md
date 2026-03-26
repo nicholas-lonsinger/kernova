@@ -174,9 +174,27 @@ nonisolated(unsafe) func guestDidStop(_ virtualMachine: VZVirtualMachine) {
 
 ## Git Workflow
 
-These conventions apply to **all** forms of committing: local commits, PR squash/merge commits, and any other git operations that produce commits.
+### Branch Naming
+
+Before starting work in a worktree, create a descriptively-named branch. Use the format `<type>/<short-description>`, where `<type>` matches the commit type prefixes (e.g., `feat`, `fix`, `refactor`):
+
+```
+feat/vm-snapshot-support
+fix/display-sizing-on-switch
+refactor/extract-lifecycle-coordinator
+```
+
+Create and switch to the branch before making any changes:
+
+```bash
+git checkout -b feat/vm-snapshot-support
+```
+
+Keep descriptions concise (2-4 words, kebab-case). The branch name should make the PR's purpose clear at a glance.
 
 ### Commit Messages
+
+These conventions apply to **all** forms of committing: local commits, PR squash/merge commits, and any other git operations that produce commits.
 
 Use the following format for all commits:
 
