@@ -227,14 +227,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // Extract the sender's PID from the Apple Event and resolve its bundle ID.
         if let senderPIDDescriptor = event.attributeDescriptor(forKeyword: keySenderPIDAttr) {
             let senderPID = senderPIDDescriptor.int32Value
-            if let senderApp = NSRunningApplication(processIdentifier: senderPID),
-               let bundleID = senderApp.bundleIdentifier {
-                Self.logger.debug("Quit Apple Event received from '\(bundleID, privacy: .public)' (PID \(senderPID, privacy: .public))")
-                if Self.tccSenderBundleIDs.contains(bundleID) {
-                    terminationIsTCCRevocation = true
+            if let senderApp = NSRunningApplication(processIdentifier: senderPID) {
+                if let bundleID = senderApp.bundleIdentifier {
+                    Self.logger.debug("Quit Apple Event received from '\(bundleID, privacy: .public)' (PID \(senderPID, privacy: .public))")
+                    if Self.tccSenderBundleIDs.contains(bundleID) {
+                        terminationIsTCCRevocation = true
+                    }
+                } else {
+                    Self.logger.warning("Quit Apple Event: sender PID \(senderPID, privacy: .public) resolved to an application with no bundle identifier — TCC detection may miss this event")
                 }
             } else {
-                Self.logger.warning("Quit Apple Event: could not resolve sender PID \(senderPID, privacy: .public) to a running application — TCC detection may miss this event")
+                Self.logger.warning("Quit Apple Event: sender PID \(senderPID, privacy: .public) could not be resolved to a running application (process may have already exited) — TCC detection may miss this event")
             }
         } else {
             Self.logger.debug("Quit Apple Event received with no sender PID attribute")
