@@ -85,6 +85,9 @@ Kernova/
 DiskTemplates/                             # Bundled ASIF disk image templates (22 lzfse-compressed files)
                                            # Decompressed at VM creation time by DiskImageService
 
+KernovaRelaunchHelper/
+└── main.swift                          # Lightweight CLI watchdog for TCC-forced restarts
+
 KernovaTests/
 ├── Mocks/                              # Mock service implementations (6 files)
 │   ├── MockVirtualizationService.swift
@@ -114,7 +117,7 @@ KernovaTests/
 └── NSImageExtensionsTests.swift        # SF Symbol loading utility tests
 ```
 
-**Total: 56 source files, 25 test files (19 suites + 6 mocks).**
+**Total: 56 source files + 1 helper, 25 test files (19 suites + 6 mocks).**
 
 *Note: `ContentView.swift` was removed when `NavigationSplitView` was replaced by `NSSplitViewController` in `MainWindowController`. Its responsibilities were split between `MainWindowController` (toolbar, split view) and `MainDetailView` (detail switching, sheets, alerts).*
 
@@ -130,6 +133,7 @@ KernovaTests/
 - Conditional termination: `applicationShouldTerminateAfterLastWindowClosed` returns `false` when VMs are active or fullscreen windows exist, preventing premature exit on fullscreen-to-inline transitions
 - Dock icon reopen: `applicationShouldHandleReopen` restores the main window when clicked with no visible windows, or when clicked while the app is already active and the library window has been closed
 - Fullscreen exit recovery: closing a fullscreen window automatically re-shows the main library window via `showLibrary(_:)`
+- TCC relaunch: when macOS force-quits the app for a TCC permission change while VMs are running, `applicationShouldTerminate` launches `KernovaRelaunchHelper` (a CLI embedded in `Contents/MacOS/`) before beginning the async VM save. The helper monitors the app's PID via `DispatchSource` and relaunches the app via `NSWorkspace` after it exits, working around macOS's TCC relaunch timeout. TCC is positively identified by intercepting the `kAEQuitApplication` Apple Event and checking if the sender is System Settings or `tccd`.
 
 `MainWindowController` creates an `NSWindow` with an `NSSplitViewController` as the content view controller. The split view has two panes: a sidebar (`NSSplitViewItem(sidebarWithViewController:)` wrapping `SidebarView`) and a detail pane (wrapping `MainDetailView`). Both panes use `NSHostingController` to embed SwiftUI content. An `NSToolbar` with native `NSToolbarItem`s provides lifecycle controls (Start/Resume, Pause, Stop), Suspend, Fullscreen, and New VM buttons. Shared toolbar groups (lifecycle, suspend, display) are managed by `VMToolbarManager`; the New VM button and sidebar items remain controller-specific. Toolbar state is observed via `withObservationTracking` and items are validated through `NSToolbarItemValidation`. The `.fullSizeContentView` style mask and `.sidebarTrackingSeparator` preserve the full-height sidebar appearance matching Mail/Finder.
 
