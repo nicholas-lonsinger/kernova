@@ -30,7 +30,7 @@ struct VMDetailView: View {
                         transitionView
                     }
 
-                case .running, .paused, .saving, .restoring:
+                case _ where instance.status.hasActiveDisplay:
                     VMConsoleView(instance: instance)
 
                 default:
