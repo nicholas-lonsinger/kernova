@@ -90,7 +90,9 @@ final class VMDisplayBackingView: NSView {
             context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
             overlay.animator().alphaValue = visible ? 1 : 0
         } completionHandler: { [weak overlay] in
-            if !visible { overlay?.isHidden = true }
+            MainActor.assumeIsolated {
+                if !visible { overlay?.isHidden = true }
+            }
         }
     }
 
