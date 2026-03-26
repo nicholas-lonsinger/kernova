@@ -82,6 +82,86 @@ struct DataFormattersTests {
         #expect(result.contains("GB"))
     }
 
+    // MARK: - formatSpeed
+
+    @Test("formatSpeed formats KB/s for low speeds")
+    func formatSpeedKB() {
+        let result = DataFormatters.formatSpeed(500_000)
+        #expect(result.contains("KB/s"))
+        #expect(result.contains("500.0"))
+    }
+
+    @Test("formatSpeed formats MB/s for typical download speeds")
+    func formatSpeedMB() {
+        let result = DataFormatters.formatSpeed(42_500_000)
+        #expect(result.contains("MB/s"))
+        #expect(result.contains("42.5"))
+    }
+
+    @Test("formatSpeed formats GB/s for very high speeds")
+    func formatSpeedGB() {
+        let result = DataFormatters.formatSpeed(2_500_000_000)
+        #expect(result.contains("GB/s"))
+        #expect(result.contains("2.5"))
+    }
+
+    @Test("formatSpeed uses figure spaces instead of regular spaces")
+    func formatSpeedFigureSpaces() {
+        let result = DataFormatters.formatSpeed(42_500_000)
+        #expect(!result.contains(" "))
+        #expect(result.contains("\u{2007}"))
+    }
+
+    // MARK: - formatETA
+
+    @Test("formatETA returns nil for zero speed")
+    func formatETAZeroSpeed() {
+        let result = DataFormatters.formatETA(remainingBytes: 1_000_000, bytesPerSecond: 0)
+        #expect(result == nil)
+    }
+
+    @Test("formatETA returns nil for negligible speed")
+    func formatETANegligibleSpeed() {
+        let result = DataFormatters.formatETA(remainingBytes: 1_000_000, bytesPerSecond: 500)
+        #expect(result == nil)
+    }
+
+    @Test("formatETA returns formatted duration for valid inputs")
+    func formatETAValid() {
+        // 100 MB remaining at 10 MB/s = 10 seconds
+        let result = DataFormatters.formatETA(remainingBytes: 100_000_000, bytesPerSecond: 10_000_000)
+        #expect(result != nil)
+        #expect(result!.contains("s"))
+    }
+
+    @Test("formatETA handles large remaining time")
+    func formatETALargeTime() {
+        // 10 GB remaining at 1 MB/s = ~10000 seconds
+        let result = DataFormatters.formatETA(remainingBytes: 10_000_000_000, bytesPerSecond: 1_000_000)
+        #expect(result != nil)
+        #expect(result!.contains("h"))
+    }
+
+    @Test("formatETA returns nil when estimate exceeds upper bound")
+    func formatETAExceedsUpperBound() {
+        // 360_001 seconds at 1 KB/s
+        let result = DataFormatters.formatETA(remainingBytes: 360_001_000, bytesPerSecond: 1_000)
+        #expect(result == nil)
+    }
+
+    @Test("formatETA returns nil for negative remaining bytes")
+    func formatETANegativeRemaining() {
+        let result = DataFormatters.formatETA(remainingBytes: -1000, bytesPerSecond: 10_000_000)
+        #expect(result == nil)
+    }
+
+    @Test("formatSpeed handles zero input")
+    func formatSpeedZero() {
+        let result = DataFormatters.formatSpeed(0)
+        #expect(result.contains("KB/s"))
+        #expect(result.contains("0.0"))
+    }
+
     // MARK: - formatDiskSize
 
     @Test("formatDiskSize formats GB values with figure-space padding")

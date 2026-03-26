@@ -139,8 +139,8 @@ struct MacOSInstallProgressView: View {
     @ViewBuilder
     private var activeProgressBar: some View {
         switch installState.currentPhase {
-        case .downloading(let progress, _, _):
-            ProgressView(value: progress)
+        case .downloading(let dl):
+            ProgressView(value: dl.fraction)
                 .progressViewStyle(.linear)
 
         case .installing(let progress):
@@ -154,12 +154,26 @@ struct MacOSInstallProgressView: View {
     @ViewBuilder
     private var activeDetailText: some View {
         switch installState.currentPhase {
-        case .downloading(let progress, let bytesWritten, let totalBytes):
-            let written = DataFormatters.formatBytesFixedWidth(UInt64(bytesWritten))
-            let total = DataFormatters.formatBytesFixedWidth(UInt64(totalBytes))
-            let pct = String(format: "%3d", Int(progress * 100))
+        case .downloading(let dl):
+            let written = DataFormatters.formatBytesFixedWidth(UInt64(dl.bytesWritten))
+            let total = DataFormatters.formatBytesFixedWidth(UInt64(dl.totalBytes))
+            let pct = String(format: "%3d", Int(dl.fraction * 100))
                 .replacingOccurrences(of: " ", with: "\u{2007}")
-            Text("Downloading:\u{2007}\(written) / \(total) — \(pct)%")
+            VStack(spacing: 4) {
+                Text("Downloading:\u{2007}\(written) / \(total) — \(pct)%")
+                if dl.bytesPerSecond > 0 {
+                    let speed = DataFormatters.formatSpeed(dl.bytesPerSecond)
+                    let eta = DataFormatters.formatETA(
+                        remainingBytes: dl.totalBytes - dl.bytesWritten,
+                        bytesPerSecond: dl.bytesPerSecond
+                    )
+                    if let eta {
+                        Text("\(speed) — \(eta)\u{2007}remaining")
+                    } else {
+                        Text(speed)
+                    }
+                }
+            }
 
         case .installing(let progress):
             Text("Installing macOS: \(Int(progress * 100))%")

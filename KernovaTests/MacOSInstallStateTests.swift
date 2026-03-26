@@ -11,15 +11,16 @@ struct MacOSInstallStateTests {
     func initialStateWithDownload() {
         let state = MacOSInstallState(
             hasDownloadStep: true,
-            currentPhase: .downloading(progress: 0, bytesWritten: 0, totalBytes: 0)
+            currentPhase: .downloading(.zero)
         )
 
         #expect(state.hasDownloadStep == true)
         #expect(state.downloadCompleted == false)
-        if case .downloading(let progress, let bytesWritten, let totalBytes) = state.currentPhase {
-            #expect(progress == 0)
-            #expect(bytesWritten == 0)
-            #expect(totalBytes == 0)
+        if case .downloading(let dl) = state.currentPhase {
+            #expect(dl.fraction == 0)
+            #expect(dl.bytesWritten == 0)
+            #expect(dl.totalBytes == 0)
+            #expect(dl.bytesPerSecond == 0)
         } else {
             Issue.record("Expected downloading phase")
         }
@@ -47,7 +48,7 @@ struct MacOSInstallStateTests {
     func phaseTransition() {
         var state = MacOSInstallState(
             hasDownloadStep: true,
-            currentPhase: .downloading(progress: 0, bytesWritten: 0, totalBytes: 1000)
+            currentPhase: .downloading(DownloadProgress(bytesWritten: 0, totalBytes: 1000, bytesPerSecond: 0))
         )
 
         // Simulate download completion
@@ -68,22 +69,34 @@ struct MacOSInstallStateTests {
     func downloadProgress() {
         var state = MacOSInstallState(
             hasDownloadStep: true,
-            currentPhase: .downloading(progress: 0, bytesWritten: 0, totalBytes: 1_000_000)
+            currentPhase: .downloading(.zero)
         )
 
-        state.currentPhase = .downloading(
-            progress: 0.5,
+        state.currentPhase = .downloading(DownloadProgress(
             bytesWritten: 500_000,
-            totalBytes: 1_000_000
-        )
+            totalBytes: 1_000_000,
+            bytesPerSecond: 42_500_000
+        ))
 
-        if case .downloading(let progress, let bytesWritten, let totalBytes) = state.currentPhase {
-            #expect(progress == 0.5)
-            #expect(bytesWritten == 500_000)
-            #expect(totalBytes == 1_000_000)
+        if case .downloading(let dl) = state.currentPhase {
+            #expect(dl.fraction == 0.5)
+            #expect(dl.bytesWritten == 500_000)
+            #expect(dl.totalBytes == 1_000_000)
+            #expect(dl.bytesPerSecond == 42_500_000)
         } else {
             Issue.record("Expected downloading phase")
         }
+    }
+
+    @Test("Download progress fraction is derived from bytes")
+    func downloadProgressFraction() {
+        let dl = DownloadProgress(bytesWritten: 750_000, totalBytes: 1_000_000, bytesPerSecond: 0)
+        #expect(dl.fraction == 0.75)
+    }
+
+    @Test("Download progress fraction is zero when totalBytes is zero")
+    func downloadProgressFractionZeroTotal() {
+        #expect(DownloadProgress.zero.fraction == 0)
     }
 
     @Test("Install progress tracks completion percentage")
