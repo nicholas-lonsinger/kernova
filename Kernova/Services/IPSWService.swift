@@ -21,7 +21,7 @@ struct IPSWService: Sendable {
     func downloadRestoreImage(
         from remoteURL: URL,
         to destinationURL: URL,
-        progressHandler: @MainActor @Sendable @escaping (Double, Int64, Int64, Double) -> Void
+        progressHandler: @MainActor @Sendable @escaping (DownloadProgress) -> Void
     ) async throws {
         Self.logger.info("Downloading restore image from \(remoteURL, privacy: .public)")
 
@@ -95,21 +95,20 @@ private final class IPSWDownloadDelegate: NSObject, URLSessionDownloadDelegate, 
     private static let progressInterval: TimeInterval = 0.1  // 100 ms
 
     private let destinationURL: URL
-    private let progressHandler: @MainActor @Sendable (Double, Int64, Int64, Double) -> Void
+    private let progressHandler: @MainActor @Sendable (DownloadProgress) -> Void
     // RATIONALE: URLSession guarantees exactly one didCompleteWithError call per task,
     // so this continuation is always resumed exactly once.
     private let continuation: CheckedContinuation<Void, any Error>
     private var moveError: (any Error)?
     private var lastProgressReport: TimeInterval = 0
     private var previousBytesWritten: Int64 = 0
-    private var previousTimestamp: TimeInterval = 0
     private var smoothedBytesPerSecond: Double = 0
     /// EWMA smoothing factor — lower values produce smoother output.
     private static let smoothingAlpha: Double = 0.2
 
     init(
         destinationURL: URL,
-        progressHandler: @MainActor @Sendable @escaping (Double, Int64, Int64, Double) -> Void,
+        progressHandler: @MainActor @Sendable @escaping (DownloadProgress) -> Void,
         continuation: CheckedContinuation<Void, any Error>
     ) {
         self.destinationURL = destinationURL
@@ -131,7 +130,6 @@ private final class IPSWDownloadDelegate: NSObject, URLSessionDownloadDelegate, 
         let now = ProcessInfo.processInfo.systemUptime
         guard now - lastProgressReport >= Self.progressInterval else { return }
 
-        // Calculate instantaneous speed and apply EWMA smoothing
         let elapsed = now - lastProgressReport
         if elapsed > 0, lastProgressReport > 0 {
             let deltaBytes = Double(totalBytesWritten - previousBytesWritten)
@@ -146,10 +144,14 @@ private final class IPSWDownloadDelegate: NSObject, URLSessionDownloadDelegate, 
         previousBytesWritten = totalBytesWritten
         lastProgressReport = now
 
-        let fraction = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
-        let speed = smoothedBytesPerSecond
+        let progress = DownloadProgress(
+            fraction: Double(totalBytesWritten) / Double(totalBytesExpectedToWrite),
+            bytesWritten: totalBytesWritten,
+            totalBytes: totalBytesExpectedToWrite,
+            bytesPerSecond: smoothedBytesPerSecond
+        )
         let handler = self.progressHandler
-        Task { @MainActor in handler(fraction, totalBytesWritten, totalBytesExpectedToWrite, speed) }
+        Task { @MainActor in handler(progress) }
     }
 
     func urlSession(
@@ -197,9 +199,13 @@ private final class IPSWDownloadDelegate: NSObject, URLSessionDownloadDelegate, 
             }
         } else {
             let handler = self.progressHandler
-            let received = task.countOfBytesReceived
-            let expected = task.countOfBytesExpectedToReceive
-            Task { @MainActor in handler(1.0, received, expected, 0) }
+            let progress = DownloadProgress(
+                fraction: 1.0,
+                bytesWritten: task.countOfBytesReceived,
+                totalBytes: task.countOfBytesExpectedToReceive,
+                bytesPerSecond: 0
+            )
+            Task { @MainActor in handler(progress) }
             continuation.resume()
         }
     }

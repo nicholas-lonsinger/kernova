@@ -1,8 +1,16 @@
 import Foundation
 
+/// Snapshot of download progress reported by the IPSW download delegate.
+struct DownloadProgress: Sendable {
+    let fraction: Double
+    let bytesWritten: Int64
+    let totalBytes: Int64
+    let bytesPerSecond: Double
+}
+
 /// Represents the current phase of a macOS installation.
 enum MacOSInstallPhase: Sendable {
-    case downloading(progress: Double, bytesWritten: Int64, totalBytes: Int64, bytesPerSecond: Double)
+    case downloading(DownloadProgress)
     case installing(progress: Double)
 }
 

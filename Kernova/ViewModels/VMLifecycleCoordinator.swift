@@ -163,7 +163,7 @@ final class VMLifecycleCoordinator {
                     // Set up two-step install state before changing status
                     instance.installState = MacOSInstallState(
                         hasDownloadStep: true,
-                        currentPhase: .downloading(progress: 0, bytesWritten: 0, totalBytes: 0, bytesPerSecond: 0)
+                        currentPhase: .downloading(DownloadProgress(fraction: 0, bytesWritten: 0, totalBytes: 0, bytesPerSecond: 0))
                     )
                     instance.status = .installing
 
@@ -172,13 +172,8 @@ final class VMLifecycleCoordinator {
                     try await ipswService.downloadRestoreImage(
                         from: remoteURL,
                         to: downloadDestination
-                    ) { progress, bytesWritten, totalBytes, bytesPerSecond in
-                        instance.installState?.currentPhase = .downloading(
-                            progress: progress,
-                            bytesWritten: bytesWritten,
-                            totalBytes: totalBytes,
-                            bytesPerSecond: bytesPerSecond
-                        )
+                    ) { progress in
+                        instance.installState?.currentPhase = .downloading(progress)
                     }
 
                     // Mark download complete, transition to install phase

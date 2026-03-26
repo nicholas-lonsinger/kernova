@@ -87,11 +87,15 @@ enum DataFormatters {
         count == 1 ? "1 core" : "\(count) cores"
     }
 
-    /// Formats a duration in seconds into a human-readable string.
-    static func formatDuration(_ seconds: TimeInterval) -> String {
+    private nonisolated(unsafe) static let durationFormatter: DateComponentsFormatter = {
         let formatter = DateComponentsFormatter()
         formatter.allowedUnits = [.hour, .minute, .second]
         formatter.unitsStyle = .abbreviated
-        return formatter.string(from: seconds) ?? "\(Int(seconds))s"
+        return formatter
+    }()
+
+    /// Formats a duration in seconds into a human-readable string.
+    static func formatDuration(_ seconds: TimeInterval) -> String {
+        durationFormatter.string(from: seconds) ?? "\(Int(seconds))s"
     }
 }

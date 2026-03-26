@@ -20,7 +20,7 @@ final class MockIPSWService: IPSWProviding, @unchecked Sendable {
     func downloadRestoreImage(
         from remoteURL: URL,
         to destinationURL: URL,
-        progressHandler: @MainActor @Sendable @escaping (Double, Int64, Int64, Double) -> Void
+        progressHandler: @MainActor @Sendable @escaping (DownloadProgress) -> Void
     ) async throws {
         downloadCallCount += 1
         if let error = downloadError { throw error }

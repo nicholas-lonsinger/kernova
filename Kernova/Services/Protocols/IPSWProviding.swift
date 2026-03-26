@@ -7,7 +7,7 @@ protocol IPSWProviding: Sendable {
     func downloadRestoreImage(
         from remoteURL: URL,
         to destinationURL: URL,
-        progressHandler: @MainActor @Sendable @escaping (Double, Int64, Int64, Double) -> Void
+        progressHandler: @MainActor @Sendable @escaping (DownloadProgress) -> Void
     ) async throws
     #endif
 }
