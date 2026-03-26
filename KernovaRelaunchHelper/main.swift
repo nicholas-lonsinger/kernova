@@ -85,7 +85,7 @@ if kill(pid, 0) != 0, errno == ESRCH {
     Task { @MainActor in
         await relaunchApp()
     }
-    RunLoop.main.run(until: Date(timeIntervalSinceNow: 30))
+    RunLoop.main.run(until: Date(timeIntervalSinceNow: 10))
     exit(0)
 }
 
@@ -100,12 +100,5 @@ source.setEventHandler {
 }
 
 source.resume()
-
-// Safety timeout — prevent the helper from lingering indefinitely.
-DispatchQueue.main.asyncAfter(deadline: .now() + 30) {
-    logger.warning("Timeout waiting for PID \(pid, privacy: .public) to exit, giving up")
-    source.cancel()
-    exit(1)
-}
 
 RunLoop.main.run()
