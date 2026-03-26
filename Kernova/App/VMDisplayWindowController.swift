@@ -7,8 +7,8 @@ import Virtualization
 ///
 /// On show the inline display in the main window is replaced by a placeholder
 /// (via `VMInstance.displayMode`), and this controller creates its own
-/// `VZVirtualMachineView` bound to the same `VZVirtualMachine`. On close the process
-/// reverses so the inline display re-appears.
+/// `VMDisplayBackingView` (containing a `VZVirtualMachineView`) bound to the same
+/// `VZVirtualMachine`. On close the process reverses so the inline display re-appears.
 @MainActor
 final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
 

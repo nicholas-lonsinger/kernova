@@ -59,7 +59,7 @@ Kernova/
 │   │   ├── VMSettingsView.swift        # VM configuration editor
 │   │   └── MacOSInstallProgressView.swift # Two-phase install progress (download + install)
 │   ├── Console/
-│   │   ├── VMConsoleView.swift         # Placeholder shown when VM display is popped out or fullscreen
+│   │   ├── VMConsoleView.swift         # Placeholder for non-inline display states (popped out, fullscreen, suspended, no display)
 │   │   ├── VMDisplayBackingView.swift  # Pure AppKit VM display with pause/transition overlays
 │   │   ├── RemovableMediaPopoverView.swift # Toolbar popover for runtime USB attach/eject
 │   │   ├── SerialConsoleContentView.swift # Serial console content wrapper
@@ -208,7 +208,7 @@ NSSplitViewController (MainWindowController)
     │   └── VZVirtualMachineView + pause/transition overlays
     └── NSHostingController (SwiftUI, always present behind)
         └── MainDetailView → VMDetailView
-            ├── VMConsoleView (placeholder when popped out/fullscreen)
+            ├── VMConsoleView (placeholder when display is external, suspended, or unavailable)
             ├── VMSettingsView
             └── MacOSInstallProgressView
 VMCreationWizardView (modal sheet on detail pane)

@@ -187,12 +187,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
 
         Task { @MainActor in
+            var savedCount = 0
+            var failedCount = 0
             for instance in runningInstances {
                 do {
                     try await viewModel.trySave(instance)
                     viewModel.saveConfiguration(for: instance)
+                    savedCount += 1
                 } catch {
                     Self.logger.error("Failed to save '\(instance.name, privacy: .public)' during termination: \(error.localizedDescription, privacy: .public)")
+                    failedCount += 1
                     do {
                         try await viewModel.tryForceStop(instance)
                     } catch {
@@ -200,6 +204,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                     }
                 }
             }
+            Self.logger.notice("Termination save complete: \(savedCount, privacy: .public) saved, \(failedCount, privacy: .public) failed of \(runningInstances.count, privacy: .public) total")
             NSApplication.shared.reply(toApplicationShouldTerminate: true)
         }
 
@@ -228,7 +233,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 if Self.tccSenderBundleIDs.contains(bundleID) {
                     terminationIsTCCRevocation = true
                 }
+            } else {
+                Self.logger.warning("Quit Apple Event: could not resolve sender PID \(senderPID, privacy: .public) to a running application — TCC detection may miss this event")
             }
+        } else {
+            Self.logger.debug("Quit Apple Event received with no sender PID attribute")
         }
 
         NSApp.terminate(nil)
@@ -241,7 +250,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         guard let helperURL = Bundle.main.url(
             forAuxiliaryExecutable: "KernovaRelaunchHelper"
         ) else {
-            Self.logger.warning("Relaunch helper not found in app bundle")
+            Self.logger.fault("Relaunch helper not found in app bundle")
+            assertionFailure("Relaunch helper not found in app bundle")
             return
         }
 

@@ -15,7 +15,7 @@ private let logger = Logger(subsystem: "com.kernova.app", category: "RelaunchHel
 
 guard CommandLine.arguments.count == 3,
       let pid = pid_t(CommandLine.arguments[1]) else {
-    print("Usage: KernovaRelaunchHelper <pid> <app-bundle-path>", to: &standardError)
+    logger.error("Usage: KernovaRelaunchHelper <pid> <app-bundle-path>")
     exit(1)
 }
 
@@ -23,18 +23,9 @@ let appPath = CommandLine.arguments[2]
 let appURL = URL(fileURLWithPath: appPath)
 
 guard FileManager.default.fileExists(atPath: appPath) else {
-    print("App bundle not found: \(appPath)", to: &standardError)
+    logger.error("App bundle not found: \(appPath, privacy: .public)")
     exit(1)
 }
-
-/// A `TextOutputStream` that writes to stderr, used with `print(..., to:)`.
-private struct StandardError: TextOutputStream {
-    mutating func write(_ string: String) {
-        FileHandle.standardError.write(Data(string.utf8))
-    }
-}
-
-private var standardError = StandardError()
 
 // MARK: - Relaunch
 
@@ -81,7 +72,7 @@ func relaunchApp() async {
         logger.error("Failed to launch via /usr/bin/open: \(error.localizedDescription, privacy: .public)")
     }
 
-    exit(0)
+    exit(1)
 }
 
 // MARK: - PID monitoring

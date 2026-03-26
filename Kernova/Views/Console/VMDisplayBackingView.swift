@@ -9,7 +9,7 @@ import Virtualization
 @MainActor
 final class VMDisplayBackingView: NSView {
 
-    let machineView: VZVirtualMachineView = {
+    private(set) var machineView: VZVirtualMachineView = {
         let view = VZVirtualMachineView()
         view.capturesSystemKeys = true
         view.automaticallyReconfiguresDisplay = true
@@ -90,6 +90,8 @@ final class VMDisplayBackingView: NSView {
             context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
             overlay.animator().alphaValue = visible ? 1 : 0
         } completionHandler: { [weak overlay] in
+            // RATIONALE: NSAnimationContext completion handlers are not actor-isolated by the
+            // framework, but always execute on the main thread. We bridge back via assumeIsolated.
             MainActor.assumeIsolated {
                 if !visible { overlay?.isHidden = true }
             }

@@ -121,7 +121,10 @@ final class DetailContainerViewController: NSViewController {
             }
         } onChange: {
             Task { @MainActor [weak self] in
-                guard let self, self.observing else { return }
+                guard let self, self.observing else {
+                    Self.logger.debug("observeState: observation chain ended (self deallocated or observing stopped)")
+                    return
+                }
                 self.updateDisplayState()
                 self.observeState()
             }

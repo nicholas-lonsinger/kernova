@@ -42,7 +42,8 @@ enum VMStatus: String, Codable, Sendable {
         }
     }
 
-    /// Overlay label for save/restore transitions, or `nil` for non-transitional states.
+    /// Overlay label for save/restore transitions, or `nil` for all other states
+    /// (including `.starting` and `.installing`, which use a generic progress view instead).
     var transitionLabel: String? {
         switch self {
         case .saving: "Suspending…"
@@ -57,6 +58,8 @@ enum VMStatus: String, Codable, Sendable {
     var canStop: Bool { self == .running || self == .paused }
     var canPause: Bool { self == .running }
     var canResume: Bool { self == .paused }
+    /// Status-level save eligibility. Does not account for cold-paused state;
+    /// prefer `VMInstance.canSave` for runtime checks.
     var canSave: Bool { self == .running || self == .paused }
     var canEditSettings: Bool { self == .stopped || self == .error }
 
