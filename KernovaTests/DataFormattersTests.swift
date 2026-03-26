@@ -51,16 +51,19 @@ struct DataFormattersTests {
         #expect(result.contains("MB"))
     }
 
-    @Test("formatBytesFixedWidth formats GB values")
+    @Test("formatBytesFixedWidth formats GB values with 3 decimal places")
     func formatBytesFixedWidthGB() {
         let result = DataFormatters.formatBytesFixedWidth(4_200_000_000)
         #expect(result.contains("GB"))
+        // Verify 3 decimal places (e.g., "4.200")
+        #expect(result.contains("4.200"))
     }
 
-    @Test("formatBytesFixedWidth formats TB values")
+    @Test("formatBytesFixedWidth formats TB values with 3 decimal places")
     func formatBytesFixedWidthTB() {
         let result = DataFormatters.formatBytesFixedWidth(2_000_000_000_000)
         #expect(result.contains("TB"))
+        #expect(result.contains("2.000"))
     }
 
     @Test("formatBytesFixedWidth uses figure spaces instead of regular spaces")
@@ -69,6 +72,14 @@ struct DataFormattersTests {
         // Should use figure space U+2007, not regular space U+0020
         #expect(!result.contains(" "))
         #expect(result.contains("\u{2007}"))
+    }
+
+    @Test("formatBytesFixedWidth shows 3 decimal places for sub-unit precision")
+    func formatBytesFixedWidthPrecision() {
+        // 10.642 GB = 10_642_000_000 bytes
+        let result = DataFormatters.formatBytesFixedWidth(10_642_000_000)
+        #expect(result.contains("10.642"))
+        #expect(result.contains("GB"))
     }
 
     // MARK: - formatDiskSize

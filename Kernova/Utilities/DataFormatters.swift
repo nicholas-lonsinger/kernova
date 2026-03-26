@@ -14,8 +14,8 @@ enum DataFormatters {
         byteFormatter.string(fromByteCount: Int64(bytes))
     }
 
-    /// Formats a byte count with fixed width for stable progress display (e.g., "861.9 MB").
-    /// Uses `%5.1f` padding so the numeric part is always 5 characters wide, preventing
+    /// Formats a byte count with fixed width for stable progress display (e.g., "861.900 MB").
+    /// Uses `%7.3f` padding so the numeric part is always 7 characters wide, preventing
     /// horizontal jitter as values change during downloads.
     static func formatBytesFixedWidth(_ bytes: UInt64) -> String {
         let kb = Double(bytes) / 1_000
@@ -33,7 +33,7 @@ enum DataFormatters {
         } else {
             (value, unit) = (kb, "KB")
         }
-        return String(format: "%5.1f %@", value, unit)
+        return String(format: "%7.3f %@", value, unit)
             .replacingOccurrences(of: " ", with: "\u{2007}")
     }
 
