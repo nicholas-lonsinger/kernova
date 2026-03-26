@@ -105,6 +105,20 @@ struct VMStatusTests {
         #expect(VMStatus.error.isActive == false)
     }
 
+    // MARK: - Active Display
+
+    @Test("hasActiveDisplay returns true for running, paused, saving, restoring")
+    func hasActiveDisplay() {
+        #expect(VMStatus.running.hasActiveDisplay == true)
+        #expect(VMStatus.paused.hasActiveDisplay == true)
+        #expect(VMStatus.saving.hasActiveDisplay == true)
+        #expect(VMStatus.restoring.hasActiveDisplay == true)
+        #expect(VMStatus.stopped.hasActiveDisplay == false)
+        #expect(VMStatus.starting.hasActiveDisplay == false)
+        #expect(VMStatus.installing.hasActiveDisplay == false)
+        #expect(VMStatus.error.hasActiveDisplay == false)
+    }
+
     // MARK: - Transitioning
 
     @Test("isTransitioning returns true for starting, saving, restoring, and installing")

@@ -60,6 +60,14 @@ enum VMStatus: String, Codable, Sendable {
     var canSave: Bool { self == .running || self == .paused }
     var canEditSettings: Bool { self == .stopped || self == .error }
 
+    /// Whether the VM has a live display session that a backing view should present.
+    var hasActiveDisplay: Bool {
+        switch self {
+        case .running, .paused, .saving, .restoring: true
+        default: false
+        }
+    }
+
     var canForceStop: Bool {
         switch self {
         case .running, .paused, .starting, .saving, .restoring: true
