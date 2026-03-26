@@ -28,9 +28,21 @@ struct VMConsoleView: View {
                         NSApp.sendAction(#selector(AppDelegate.togglePopOut(_:)), to: nil, from: nil)
                     }
                 }
-            } else {
+            } else if instance.isColdPaused {
+                ContentUnavailableView(
+                    "Suspended",
+                    systemImage: "pause.circle",
+                    description: Text("This virtual machine's state is saved to disk. Resume to continue.")
+                )
+            } else if instance.virtualMachine != nil {
                 // Covered by the AppKit VMDisplayBackingView layer in DetailContainerViewController.
                 Color.black
+            } else {
+                ContentUnavailableView(
+                    "No Display",
+                    systemImage: "display",
+                    description: Text("The virtual machine display is not available.")
+                )
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
