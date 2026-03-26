@@ -57,7 +57,7 @@ enum DataFormatters {
     }
 
     /// Formats an ETA from remaining bytes and current speed into a human-readable string.
-    /// Returns `nil` if speed is zero or negligible.
+    /// Returns `nil` if speed is negligible, the estimate exceeds 100 hours, or the result is non-finite.
     static func formatETA(remainingBytes: Int64, bytesPerSecond: Double) -> String? {
         guard bytesPerSecond > 1_000 else { return nil }
         let seconds = Double(remainingBytes) / bytesPerSecond
@@ -87,6 +87,8 @@ enum DataFormatters {
         count == 1 ? "1 core" : "\(count) cores"
     }
 
+    // RATIONALE: nonisolated(unsafe) is safe because all callers of DataFormatters
+    // are @MainActor-isolated (SwiftUI view bodies). Matches the existing byteFormatter pattern.
     private nonisolated(unsafe) static let durationFormatter: DateComponentsFormatter = {
         let formatter = DateComponentsFormatter()
         formatter.allowedUnits = [.hour, .minute, .second]

@@ -142,6 +142,26 @@ struct DataFormattersTests {
         #expect(result!.contains("h"))
     }
 
+    @Test("formatETA returns nil when estimate exceeds upper bound")
+    func formatETAExceedsUpperBound() {
+        // 360_001 seconds at 1 KB/s
+        let result = DataFormatters.formatETA(remainingBytes: 360_001_000, bytesPerSecond: 1_000)
+        #expect(result == nil)
+    }
+
+    @Test("formatETA returns nil for negative remaining bytes")
+    func formatETANegativeRemaining() {
+        let result = DataFormatters.formatETA(remainingBytes: -1000, bytesPerSecond: 10_000_000)
+        #expect(result == nil)
+    }
+
+    @Test("formatSpeed handles zero input")
+    func formatSpeedZero() {
+        let result = DataFormatters.formatSpeed(0)
+        #expect(result.contains("KB/s"))
+        #expect(result.contains("0.0"))
+    }
+
     // MARK: - formatDiskSize
 
     @Test("formatDiskSize formats GB values with figure-space padding")

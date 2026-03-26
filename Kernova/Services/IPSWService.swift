@@ -133,6 +133,12 @@ private final class IPSWDownloadDelegate: NSObject, URLSessionDownloadDelegate, 
         let elapsed = now - lastProgressReport
         if elapsed > 0, lastProgressReport > 0 {
             let deltaBytes = Double(totalBytesWritten - previousBytesWritten)
+            guard deltaBytes >= 0 else {
+                Self.logger.warning("Negative byte delta detected (\(totalBytesWritten) < \(self.previousBytesWritten)) — skipping speed sample")
+                previousBytesWritten = totalBytesWritten
+                lastProgressReport = now
+                return
+            }
             let instantSpeed = deltaBytes / elapsed
             if smoothedBytesPerSecond == 0 {
                 smoothedBytesPerSecond = instantSpeed
@@ -145,7 +151,6 @@ private final class IPSWDownloadDelegate: NSObject, URLSessionDownloadDelegate, 
         lastProgressReport = now
 
         let progress = DownloadProgress(
-            fraction: Double(totalBytesWritten) / Double(totalBytesExpectedToWrite),
             bytesWritten: totalBytesWritten,
             totalBytes: totalBytesExpectedToWrite,
             bytesPerSecond: smoothedBytesPerSecond
@@ -200,9 +205,8 @@ private final class IPSWDownloadDelegate: NSObject, URLSessionDownloadDelegate, 
         } else {
             let handler = self.progressHandler
             let progress = DownloadProgress(
-                fraction: 1.0,
-                bytesWritten: task.countOfBytesReceived,
-                totalBytes: task.countOfBytesExpectedToReceive,
+                bytesWritten: max(0, task.countOfBytesReceived),
+                totalBytes: max(0, task.countOfBytesExpectedToReceive),
                 bytesPerSecond: 0
             )
             Task { @MainActor in handler(progress) }

@@ -163,7 +163,7 @@ final class VMLifecycleCoordinator {
                     // Set up two-step install state before changing status
                     instance.installState = MacOSInstallState(
                         hasDownloadStep: true,
-                        currentPhase: .downloading(DownloadProgress(fraction: 0, bytesWritten: 0, totalBytes: 0, bytesPerSecond: 0))
+                        currentPhase: .downloading(.zero)
                     )
                     instance.status = .installing
 
