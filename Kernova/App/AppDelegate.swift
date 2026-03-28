@@ -677,37 +677,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     // MARK: - Menu Validation
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        // Preparing instances disable all VM menu bar actions (cancel is only available via sidebar context menu)
-        if let instance = activeInstance, instance.isPreparing {
-            switch menuItem.action {
-            case #selector(showLibrary(_:)), #selector(newVM(_:)):
-                return true
-            default:
-                return false
-            }
-        }
-
         switch menuItem.action {
         case #selector(startVM(_:)):
-            return activeInstance?.status.canStart ?? false
+            guard let instance = activeInstance else { return false }
+            return instance.status.canStart && !instance.isPreparing
         case #selector(pauseVM(_:)):
             return activeInstance?.status.canPause ?? false
         case #selector(resumeVM(_:)):
-            return activeInstance?.status.canResume ?? false
+            guard let instance = activeInstance else { return false }
+            return instance.status.canResume && !instance.isPreparing
         case #selector(stopVM(_:)):
             guard let instance = activeInstance else { return false }
-            return instance.canStop || instance.isColdPaused
+            return (instance.canStop || instance.isColdPaused) && !instance.isPreparing
         case #selector(forceStopVM(_:)):
-            return activeInstance?.status.canForceStop ?? false
+            guard let instance = activeInstance else { return false }
+            return instance.status.canForceStop && !instance.isPreparing
         case #selector(saveVM(_:)):
             return activeInstance?.canSave ?? false
         case #selector(renameVM(_:)):
-            return activeInstance?.status.canRename ?? false
+            guard let instance = activeInstance else { return false }
+            return instance.status.canRename && !instance.isPreparing
         case #selector(cloneVM(_:)):
             guard let instance = activeInstance else { return false }
             return instance.status.canEditSettings && !viewModel.hasPreparing
         case #selector(deleteVM(_:)):
-            return activeInstance?.status.canEditSettings ?? false
+            guard let instance = activeInstance else { return false }
+            return instance.status.canEditSettings && !instance.isPreparing
         // AppKit bypasses NSMenuItemValidation for windowsMenu items, so
         // menuNeedsUpdate(_:) handles visual state. This case covers keyboard
         // shortcut validation, which still routes through validateMenuItem(_:).
