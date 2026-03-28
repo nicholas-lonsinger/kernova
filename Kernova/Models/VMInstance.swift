@@ -102,6 +102,10 @@ final class VMInstance: Identifiable {
     /// File handle for writing serial output to the on-disk log.
     private var serialLogFileHandle: FileHandle?
 
+    /// Serial queue for pipe writes, keeping the main thread free if the guest
+    /// stops reading and the kernel buffer fills up.
+    private let serialInputQueue = DispatchQueue(label: "com.kernova.serial-input", qos: .userInteractive)
+
     private static let logger = Logger(subsystem: "com.kernova.app", category: "VMInstance")
 
     /// Maximum in-memory serial buffer size (1 MB).
@@ -318,13 +322,24 @@ final class VMInstance: Identifiable {
     }
 
     /// Sends a string to the guest via the serial input pipe.
+    ///
+    /// The write is dispatched to a dedicated serial queue so that a full
+    /// kernel pipe buffer (~64 KB on macOS) never blocks the main thread.
     func sendSerialInput(_ string: String) {
         guard let data = string.data(using: .utf8),
               let inputPipe = serialInputPipe else { return }
-        do {
-            try inputPipe.fileHandleForWriting.write(contentsOf: data)
-        } catch {
-            Self.logger.error("Failed to send serial input to VM '\(self.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
+        let fileHandle = inputPipe.fileHandleForWriting
+        let vmName = self.name
+        let logger = Self.logger
+        // inputPipe is captured strongly so its file descriptors remain valid
+        // even if tearDownSession() nils the instance property mid-write.
+        serialInputQueue.async { [inputPipe] in
+            do {
+                try fileHandle.write(contentsOf: data)
+            } catch {
+                logger.error("Failed to send serial input to VM '\(vmName, privacy: .public)': \(error.localizedDescription, privacy: .public)")
+            }
+            withExtendedLifetime(inputPipe) {}
         }
     }
 

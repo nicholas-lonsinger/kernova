@@ -269,16 +269,57 @@ struct VMInstanceTests {
         #expect(instance.serialOutputText.isEmpty)
     }
 
-    @Test("sendSerialInput writes to input pipe")
-    func sendSerialInputWritesToPipe() {
+    @Test("sendSerialInput writes to input pipe off main thread")
+    func sendSerialInputWritesToPipe() async {
         let instance = makeInstance()
         let pipe = Pipe()
         instance.serialInputPipe = pipe
 
         instance.sendSerialInput("hello")
 
-        let data = pipe.fileHandleForReading.availableData
-        #expect(String(data: data, encoding: .utf8) == "hello")
+        // availableData blocks until bytes arrive, so no arbitrary sleep needed.
+        let text = await Task.detached {
+            let expectedCount = "hello".utf8.count
+            var accumulated = Data()
+            while accumulated.count < expectedCount {
+                let chunk = pipe.fileHandleForReading.availableData
+                if chunk.isEmpty { break }
+                accumulated.append(chunk)
+            }
+            return String(data: accumulated, encoding: .utf8)
+        }.value
+
+        #expect(text == "hello")
+    }
+
+    @Test("sendSerialInput is a no-op when input pipe is nil")
+    func sendSerialInputNilPipe() {
+        let instance = makeInstance()
+        #expect(instance.serialInputPipe == nil)
+        instance.sendSerialInput("hello")
+    }
+
+    @Test("sendSerialInput preserves write ordering")
+    func sendSerialInputOrdering() async {
+        let instance = makeInstance()
+        let pipe = Pipe()
+        instance.serialInputPipe = pipe
+
+        instance.sendSerialInput("A")
+        instance.sendSerialInput("B")
+        instance.sendSerialInput("C")
+
+        let text = await Task.detached {
+            var accumulated = Data()
+            while accumulated.count < 3 {
+                let chunk = pipe.fileHandleForReading.availableData
+                if chunk.isEmpty { break }
+                accumulated.append(chunk)
+            }
+            return String(data: accumulated, encoding: .utf8)
+        }.value
+
+        #expect(text == "ABC")
     }
 
     @Test("resetToStopped clears serial pipes")
