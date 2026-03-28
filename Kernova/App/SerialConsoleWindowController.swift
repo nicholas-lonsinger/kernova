@@ -20,20 +20,24 @@ final class SerialConsoleWindowController: NSWindowController, NSWindowDelegate 
         self.instance = instance
 
         let viewController = SerialConsoleContentViewController(instance: instance)
+        let initialSize = NSSize(width: 720, height: 480)
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 720, height: 480),
+            contentRect: NSRect(origin: .zero, size: initialSize),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.contentViewController = viewController
+        // RATIONALE: contentViewController assignment resizes the window to fit
+        // the content view's auto layout, which allows near-zero height.
+        // Re-establish the intended initial size before setFrameAutosaveName.
+        window.setContentSize(initialSize)
         window.title = "\(instance.name) — Serial Console"
         window.minSize = NSSize(width: 400, height: 200)
-        window.setFrameAutosaveName("SerialConsole-\(instance.instanceID.uuidString)")
-
         super.init(window: window)
         window.delegate = self
+        window.setFrameAutosaveName("SerialConsole-\(instance.instanceID.uuidString)")
     }
 
     required init?(coder: NSCoder) {
