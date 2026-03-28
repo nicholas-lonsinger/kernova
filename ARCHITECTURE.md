@@ -86,8 +86,10 @@ DiskTemplates/                             # Bundled ASIF disk image templates (
 KernovaRelaunchHelper/
 └── main.swift                          # Lightweight CLI watchdog for TCC-forced restarts
 
-KernovaGuestAgent/                      # Guest-side agent stub + DMG packaging resources
-├── main.swift                          # Stub binary: blocks via dispatchMain() (placeholder for SPICE agent)
+KernovaGuestAgent/                      # Guest-side SPICE agent for macOS VMs + DMG packaging resources
+├── main.swift                          # Entry point: signal handling, device discovery, reconnect loop
+├── GuestClipboardAgent.swift           # SPICE clipboard protocol state machine + NSPasteboard polling
+├── SerialPortDiscovery.swift           # Opens the SPICE agent console port character device
 ├── Info.plist                          # Explicit Info.plist with preprocessor macro for CFBundleVersion
 ├── install.command                     # Guest-side installer: copies binary, registers LaunchAgent
 ├── uninstall.command                   # Guest-side uninstaller: stops agent, removes files
@@ -177,7 +179,7 @@ Services are split by concurrency requirements:
 
 - **`ConfigurationBuilder`** — Translates a `VMConfiguration` into a `VZVirtualMachineConfiguration`. Handles three boot paths: `VZMacOSBootLoader` (macOS), `VZEFIBootLoader` (EFI/UEFI), and `VZLinuxBootLoader` (direct kernel boot). Configures CPU, memory, storage, network, display, keyboard, trackpad, and audio devices. When `clipboardSharingEnabled` is set, configures a `VZVirtioConsoleDeviceConfiguration` with a SPICE-named port using raw `VZFileHandleSerialPortAttachment` pipes (not `VZSpiceAgentPortAttachment`). Resolves symlinks on user-supplied paths (shared directories, kernel/initrd, ISO images) and validates them before passing to VZ. File paths (kernel, initrd, ISO) are checked for existence and rejected if they point to directories. Shared directory validation checks existence, is-directory, readability, and writability (for read-write shares) against the resolved path.
 
-- **`SpiceAgentProtocol`** — Pure data types and parsing for the SPICE agent wire format. Defines VDI chunk headers, VDAgent message headers, clipboard message types, and capability bitmasks. Includes `SpiceMessageBuilder` (builds wire-ready messages) and `SpiceAgentParser` (incremental parser handling fragmented data across multiple pipe reads). Fully `Sendable`, no I/O.
+- **`SpiceAgentProtocol`** — Pure data types and parsing for the SPICE agent wire format. Defines VDI chunk headers, VDAgent message headers, clipboard message types, and capability bitmasks. Includes `SpiceMessageBuilder` (builds wire-ready messages with a `port` parameter defaulting to `serverPort` for host-side use; guest-side code passes `clientPort`) and `SpiceAgentParser` (incremental parser handling fragmented data across multiple pipe reads). Fully `Sendable`, no I/O. Shared between the Kernova app and KernovaGuestAgent targets via multi-target membership.
 
 - **`SpiceClipboardService`** — `@MainActor` service that manages SPICE clipboard sharing for a single VM. Reads from the guest pipe on a background GCD queue, parses messages via `SpiceAgentParser`, and exposes `clipboardText` (observable, editable by the UI) and `isConnected`. When the clipboard window loses focus, `grabIfChanged()` sends a `CLIPBOARD_GRAB` if the text was edited. Uses raw pipes rather than `VZSpiceAgentPortAttachment` so clipboard data flows through the gated UI instead of the host `NSPasteboard`.
 
@@ -327,7 +329,7 @@ Two standalone command-line tool targets are built alongside the main app:
 
 - **KernovaRelaunchHelper** — Embedded in `Contents/MacOS/`. A watchdog that monitors the main app's PID and relaunches it after TCC-forced terminations. Launched by `AppDelegate` during quit when a TCC revocation is detected.
 
-- **KernovaGuestAgent** — Not embedded directly. A stub binary (blocks via `dispatchMain()` for launchd supervision) that is packaged into a disk image at build time by the "Package Guest Agent DMG" Run Script build phase. The disk image (containing the binary, `install.command`, `uninstall.command`, and a LaunchAgent plist) is placed in `Contents/Resources/KernovaGuestAgent.dmg`. At runtime, the "Install Guest Agent..." menu item in the Virtual Machine menu attaches it to a guest VM as USB mass storage. The guest user runs `install.command` to install the agent as a LaunchAgent in user-space (`~/Library/Application Support/Kernova/`). The build number is injected via `INFOPLIST_PREPROCESS`: a pre-Sources build phase ("Set Build Number from Git") writes `#define AGENT_BUILD_NUMBER` (set to the git commit count scoped to `KernovaGuestAgent/`) to a header in `DERIVED_FILE_DIR`, and the explicit `Info.plist` references that macro for `CFBundleVersion`. The preprocessed plist is embedded in the binary via `CREATE_INFOPLIST_SECTION_IN_BINARY`. This is a pipeline stub — the real agent will implement host-guest communication via SPICE.
+- **KernovaGuestAgent** — Not embedded directly. A SPICE guest agent that runs inside macOS VMs and speaks the VDAgent clipboard protocol over the virtio console port (`com.redhat.spice.0`), enabling bidirectional text clipboard sharing with the host-side `SpiceClipboardService`. Packaged into a disk image at build time by the "Package Guest Agent DMG" Run Script build phase. The disk image (containing the binary, `install.command`, `uninstall.command`, and a LaunchAgent plist) is placed in `Contents/Resources/KernovaGuestAgent.dmg`. At runtime, the "Install Guest Agent..." menu item in the Virtual Machine menu attaches it to a guest VM as USB mass storage. The guest user runs `install.command` to install the agent as a LaunchAgent in user-space (`~/Library/Application Support/Kernova/`). The agent discovers the serial device via `/dev/` scan, performs a capabilities handshake, polls `NSPasteboard.general` for clipboard changes (500ms interval), and reconnects automatically if the device disappears. Shares `SpiceAgentProtocol.swift` with the host app via multi-target membership. The build number is injected via `INFOPLIST_PREPROCESS`: a pre-Sources build phase ("Set Build Number from Git") writes `#define AGENT_BUILD_NUMBER` (set to the git commit count scoped to `KernovaGuestAgent/`) to a header in `DERIVED_FILE_DIR`, and the explicit `Info.plist` references that macro for `CFBundleVersion`. The preprocessed plist is embedded in the binary via `CREATE_INFOPLIST_SECTION_IN_BINARY`.
 
 ## Dependencies
 
@@ -364,7 +366,7 @@ No external package dependencies. No Swift Package Manager, CocoaPods, or Cartha
 | `VMToolbarManager` | 22 tests | Item creation, state updates, configuration flags, label toggling |
 | `DataFormatters` | Yes | Byte formatting, CPU count formatting |
 | `NSImageExtensions` | Yes | SF Symbol loading with known symbol validation |
-| `SpiceAgentProtocol` | Yes | VDI chunk/message serialization round-trips, parser with multi-message feeds, partial data, unknown types |
+| `SpiceAgentProtocol` | Yes | VDI chunk/message serialization round-trips, parser with multi-message feeds, partial data, unknown types, clientPort constant, port-parameterized builders |
 
 ### Mocked but Not Directly Tested
 
@@ -374,6 +376,7 @@ These services interact with system processes, the network, or VZ installer inte
 - `IPSWService` — makes network requests to Apple
 - `MacOSInstallService` — requires a real `VZVirtualMachine` and restore image
 - `SpiceClipboardService` — requires active SPICE pipe I/O (protocol parsing tested via `SpiceAgentProtocol` suite)
+- `GuestClipboardAgent` — runs inside guest VMs; mirrors `SpiceClipboardService` logic (protocol layer tested via shared `SpiceAgentProtocol` suite)
 
 ### Not Tested
 

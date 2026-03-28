@@ -7,8 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		A100010B /* KernovaRelaunchHelper in Embed Helpers */ = {isa = PBXBuildFile; fileRef = A1000100 /* KernovaRelaunchHelper */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		A10000F1 /* DiskTemplates in Resources */ = {isa = PBXBuildFile; fileRef = A10000F0 /* DiskTemplates */; };
+		A100010B /* KernovaRelaunchHelper in Embed Helpers */ = {isa = PBXBuildFile; fileRef = A1000100 /* KernovaRelaunchHelper */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -35,12 +35,26 @@
 		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		A100010A /* Embed Helpers */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 6;
+			files = (
+				A100010B /* KernovaRelaunchHelper in Embed Helpers */,
+			);
+			name = "Embed Helpers";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		A1000004 /* Kernova.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Kernova.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000005 /* KernovaTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KernovaTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000F0 /* DiskTemplates */ = {isa = PBXFileReference; lastKnownFileType = folder; path = DiskTemplates; sourceTree = "<group>"; };
 		A1000100 /* KernovaRelaunchHelper */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = KernovaRelaunchHelper; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000200 /* KernovaGuestAgent */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = KernovaGuestAgent; sourceTree = BUILT_PRODUCTS_DIR; };
-		A10000F0 /* DiskTemplates */ = {isa = PBXFileReference; lastKnownFileType = folder; path = DiskTemplates; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -51,13 +65,10 @@
 			);
 			target = A1000003 /* Kernova */;
 		};
-		A100020B /* Exceptions for "KernovaGuestAgent" folder in "KernovaGuestAgent" target */ = {
+		A1000300 /* Exceptions for "Kernova" folder in "KernovaGuestAgent" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
-				Info.plist,
-				com.kernova.agent.plist,
-				install.command,
-				uninstall.command,
+				Services/SpiceAgentProtocol.swift,
 			);
 			target = A1000204 /* KernovaGuestAgent */;
 		};
@@ -68,6 +79,7 @@
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				A10000E0 /* Exceptions for "Kernova" folder in "Kernova" target */,
+				A1000300 /* Exceptions for "Kernova" folder in "KernovaGuestAgent" target */,
 			);
 			path = Kernova;
 			sourceTree = "<group>";
@@ -84,9 +96,6 @@
 		};
 		A1000201 /* KernovaGuestAgent */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-				A100020B /* Exceptions for "KernovaGuestAgent" folder in "KernovaGuestAgent" target */,
-			);
 			path = KernovaGuestAgent;
 			sourceTree = "<group>";
 		};
@@ -177,6 +186,29 @@
 			productReference = A1000004 /* Kernova.app */;
 			productType = "com.apple.product-type.application";
 		};
+		A1000060 /* KernovaTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A1000031 /* Build configuration list for PBXNativeTarget "KernovaTests" */;
+			buildPhases = (
+				A1000041 /* Sources */,
+				A1000011 /* Frameworks */,
+				A1000051 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A1000070 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				A1000007 /* KernovaTests */,
+			);
+			name = KernovaTests;
+			packageProductDependencies = (
+			);
+			productName = KernovaTests;
+			productReference = A1000005 /* KernovaTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 		A1000102 /* KernovaRelaunchHelper */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = A1000107 /* Build configuration list for PBXNativeTarget "KernovaRelaunchHelper" */;
@@ -220,29 +252,6 @@
 			productReference = A1000200 /* KernovaGuestAgent */;
 			productType = "com.apple.product-type.tool";
 		};
-		A1000060 /* KernovaTests */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = A1000031 /* Build configuration list for PBXNativeTarget "KernovaTests" */;
-			buildPhases = (
-				A1000041 /* Sources */,
-				A1000011 /* Frameworks */,
-				A1000051 /* Resources */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-				A1000070 /* PBXTargetDependency */,
-			);
-			fileSystemSynchronizedGroups = (
-				A1000007 /* KernovaTests */,
-			);
-			name = KernovaTests;
-			packageProductDependencies = (
-			);
-			productName = KernovaTests;
-			productReference = A1000005 /* KernovaTests.xctest */;
-			productType = "com.apple.product-type.bundle.unit-test";
-		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -255,15 +264,15 @@
 					A1000003 = {
 						CreatedOnToolsVersion = 16.0;
 					};
+					A1000060 = {
+						CreatedOnToolsVersion = 16.0;
+						TestTargetID = A1000003;
+					};
 					A1000102 = {
 						CreatedOnToolsVersion = 16.0;
 					};
 					A1000204 = {
 						CreatedOnToolsVersion = 16.0;
-					};
-					A1000060 = {
-						CreatedOnToolsVersion = 16.0;
-						TestTargetID = A1000003;
 					};
 				};
 			};
@@ -288,20 +297,6 @@
 			);
 		};
 /* End PBXProject section */
-
-/* Begin PBXCopyFilesBuildPhase section */
-		A100010A /* Embed Helpers */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = "";
-			dstSubfolderSpec = 6;
-			files = (
-				A100010B /* KernovaRelaunchHelper in Embed Helpers */,
-			);
-			name = "Embed Helpers";
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXResourcesBuildPhase section */
 		A1000050 /* Resources */ = {
@@ -341,26 +336,6 @@
 			shellPath = /bin/sh;
 			shellScript = "BUILD_NUMBER=$(git rev-list --count HEAD)\n/usr/libexec/PlistBuddy -c \"Set :CFBundleVersion $BUILD_NUMBER\" \"${BUILT_PRODUCTS_DIR}/${INFOPLIST_PATH}\"\n";
 		};
-		A100020C /* Set Build Number from Git */ = {
-			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-			);
-			inputPaths = (
-			);
-			name = "Set Build Number from Git";
-			outputFileListPaths = (
-			);
-			outputPaths = (
-				"$(DERIVED_FILE_DIR)/AgentBuildNumber.h",
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "set -euo pipefail\nBUILD_NUMBER=$(git rev-list --count HEAD -- KernovaGuestAgent/)\nif [ -z \"${BUILD_NUMBER}\" ]; then\n    echo \"error: Could not determine agent build number from git history\" >&2\n    exit 1\nfi\nmkdir -p \"${DERIVED_FILE_DIR}\"\necho \"#define AGENT_BUILD_NUMBER ${BUILD_NUMBER}\" > \"${DERIVED_FILE_DIR}/AgentBuildNumber.h\"\n";
-		};
 		A100020A /* Package Guest Agent DMG */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
@@ -383,6 +358,26 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;
 			shellScript = "set -euo pipefail\n\nSTAGING_DIR=$(mktemp -d \"${DERIVED_FILE_DIR}/guest-agent-dmg-staging.XXXXXX\")\nTEMP_DMG=$(mktemp \"${DERIVED_FILE_DIR}/guest-agent-temp.XXXXXX.dmg\")\ntrap 'rm -rf \"${STAGING_DIR}\" \"${TEMP_DMG}\"' EXIT\n\nRAW_PREFIX=\"${DERIVED_FILE_DIR}/guest-agent-raw\"\nDMG_OUTPUT=\"${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources/KernovaGuestAgent.dmg\"\n\ncp \"${BUILT_PRODUCTS_DIR}/KernovaGuestAgent\" \"${STAGING_DIR}/kernova-agent\"\ncp \"${SRCROOT}/KernovaGuestAgent/install.command\" \"${STAGING_DIR}/install.command\"\ncp \"${SRCROOT}/KernovaGuestAgent/uninstall.command\" \"${STAGING_DIR}/uninstall.command\"\nchmod +x \"${STAGING_DIR}/install.command\" \"${STAGING_DIR}/uninstall.command\"\ncp \"${SRCROOT}/KernovaGuestAgent/com.kernova.agent.plist\" \"${STAGING_DIR}/com.kernova.agent.plist\"\n\nmkdir -p \"$(dirname \"${DMG_OUTPUT}\")\"\n\n# Create a UDRW DMG then convert to DVD/CD-R master (UDTO/.cdr).\n# VZDiskImageStorageDeviceAttachment needs a format it can present as a\n# USB block device — the .cdr export works reliably for guest-mountable volumes.\nhdiutil create \\\n    -volname \"Kernova Guest Agent\" \\\n    -srcfolder \"${STAGING_DIR}\" \\\n    -ov -format UDRW \\\n    \"${TEMP_DMG}\"\nhdiutil convert \"${TEMP_DMG}\" -format UDTO -ov -o \"${RAW_PREFIX}\"\nmv \"${RAW_PREFIX}.cdr\" \"${DMG_OUTPUT}\"\n\n# Strip extended attributes that break code signing\nxattr -cr \"${DMG_OUTPUT}\"\n";
+		};
+		A100020C /* Set Build Number from Git */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Set Build Number from Git";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/AgentBuildNumber.h",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -euo pipefail\nBUILD_NUMBER=$(git rev-list --count HEAD -- KernovaGuestAgent/)\nif [ -z \"${BUILD_NUMBER}\" ]; then\n    echo \"error: Could not determine agent build number from git history\" >&2\n    exit 1\nfi\nmkdir -p \"${DERIVED_FILE_DIR}\"\necho \"#define AGENT_BUILD_NUMBER ${BUILD_NUMBER}\" > \"${DERIVED_FILE_DIR}/AgentBuildNumber.h\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
