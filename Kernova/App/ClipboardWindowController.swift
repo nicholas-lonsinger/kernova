@@ -1,29 +1,25 @@
 import Cocoa
 import os
-import SwiftUI
 
 /// Manages a clipboard sharing window for a single VM instance.
 ///
-/// Each VM gets its own window controller. The window hosts a `ClipboardContentView`
-/// via `NSHostingController` and persists its frame position per VM ID.
+/// Each VM gets its own window controller. The window hosts a
+/// `ClipboardContentViewController` and persists its frame position per VM ID.
 ///
 /// The controller observes the VM's status and automatically closes the window when
-/// the VM stops or enters an error state, mirroring `SerialConsoleWindowController` behavior.
+/// the VM stops or enters an error state.
 @MainActor
 final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
 
     private static let logger = Logger(subsystem: "com.kernova.app", category: "ClipboardWindowController")
 
-    let vmID: UUID
     let instance: VMInstance
     private var observingStatus = false
 
     init(instance: VMInstance) {
-        self.vmID = instance.instanceID
         self.instance = instance
 
-        let contentView = ClipboardContentView(instance: instance)
-        let hostingController = NSHostingController(rootView: contentView)
+        let viewController = ClipboardContentViewController(instance: instance)
 
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 480, height: 300),
@@ -31,7 +27,7 @@ final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
             backing: .buffered,
             defer: false
         )
-        window.contentViewController = hostingController
+        window.contentViewController = viewController
         window.title = "\(instance.name) — Clipboard"
         window.minSize = NSSize(width: 320, height: 250)
         window.setFrameAutosaveName("Clipboard-\(instance.instanceID.uuidString)")
