@@ -62,6 +62,7 @@ enum VMStatus: String, Codable, Sendable {
     /// prefer `VMInstance.canSave` for runtime checks.
     var canSave: Bool { self == .running || self == .paused }
     var canEditSettings: Bool { self == .stopped || self == .error }
+    var canRename: Bool { !isTransitioning }
 
     /// Whether the VM has a live display session that a backing view should present.
     var hasActiveDisplay: Bool {

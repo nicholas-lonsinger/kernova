@@ -681,7 +681,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         case #selector(saveVM(_:)):
             return activeInstance?.canSave ?? false
         case #selector(renameVM(_:)):
-            return activeInstance?.status.canEditSettings ?? false
+            return activeInstance?.status.canRename ?? false
         case #selector(cloneVM(_:)):
             guard let instance = activeInstance else { return false }
             return instance.status.canEditSettings && !viewModel.hasPreparing

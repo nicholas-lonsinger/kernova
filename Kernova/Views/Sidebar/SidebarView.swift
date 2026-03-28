@@ -124,7 +124,7 @@ struct SidebarView: View {
             Button("Rename") {
                 viewModel.renameVMInSidebar(instance)
             }
-            .disabled(!instance.status.canEditSettings)
+            .disabled(!instance.status.canRename)
 
             Button("Clone") {
                 viewModel.cloneVM(instance)

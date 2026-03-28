@@ -83,6 +83,7 @@ struct VMSettingsView: View {
                     }
                 }
                 .buttonStyle(.plain)
+                .disabled(!instance.status.canRename)
             }
             LabeledContent("Type", value: instance.configuration.guestOS.displayName)
             LabeledContent("Boot Mode", value: instance.configuration.bootMode.displayName)

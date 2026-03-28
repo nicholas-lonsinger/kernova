@@ -79,6 +79,18 @@ struct VMStatusTests {
         #expect(VMStatus.installing.canEditSettings == false)
     }
 
+    @Test("canRename returns true for all non-transitioning states")
+    func canRename() {
+        #expect(VMStatus.stopped.canRename == true)
+        #expect(VMStatus.running.canRename == true)
+        #expect(VMStatus.paused.canRename == true)
+        #expect(VMStatus.error.canRename == true)
+        #expect(VMStatus.starting.canRename == false)
+        #expect(VMStatus.saving.canRename == false)
+        #expect(VMStatus.restoring.canRename == false)
+        #expect(VMStatus.installing.canRename == false)
+    }
+
     @Test("canForceStop returns true for running, paused, starting, saving, restoring")
     func canForceStop() {
         #expect(VMStatus.running.canForceStop == true)
