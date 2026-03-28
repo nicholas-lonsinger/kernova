@@ -4,7 +4,9 @@ Design philosophy and guidelines for Kernova.
 
 ## Code Approach
 
-- Prefer the most standard/optimal solution, even if it means larger changes to the codebase. Don't settle for workarounds or hacks to minimize diff size.
+- Do not settle for workarounds or hacks. Fix root causes with proper refactors, even when the change is larger than a quick patch.
+- Aggressively identify code that looks like a shortcut or band-aid. Either fix it in scope or file a GitHub issue for a future pass.
+- GitHub issues serve as durable context — when a fix is deferred, the issue should capture enough detail to address it later without rediscovery.
 
 ## GUI Design
 
