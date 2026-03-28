@@ -190,8 +190,8 @@ final class SpiceClipboardService {
     // (bit 5) — the legacy VD_AGENT_CAP_CLIPBOARD (bit 3) is the old "always-sync" mode that
     // no current agent advertises. We accept either bit as proof of clipboard support.
     private func handleCapabilities(request: Bool, caps: [UInt32]) {
-        let hasClipboard = hasCapability(caps, .clipboard)
-        let byDemand = hasCapability(caps, .clipboardByDemand)
+        let hasClipboard = SpiceMessageBuilder.hasCapability(caps, .clipboard)
+        let byDemand = SpiceMessageBuilder.hasCapability(caps, .clipboardByDemand)
 
         guard hasClipboard || byDemand else {
             Self.logger.warning("Guest agent does not support clipboard (caps: \(caps.map { String($0, radix: 16) }, privacy: .public))")
@@ -343,10 +343,4 @@ final class SpiceClipboardService {
         Self.logger.debug("Sent ANNOUNCE_CAPABILITIES (requesting guest reply)")
     }
 
-    private func hasCapability(_ caps: [UInt32], _ cap: SpiceAgentCapability) -> Bool {
-        let wordIndex = cap.rawValue / 32
-        let bitIndex = cap.rawValue % 32
-        guard wordIndex < caps.count else { return false }
-        return (caps[wordIndex] & (1 << UInt32(bitIndex))) != 0
-    }
 }
