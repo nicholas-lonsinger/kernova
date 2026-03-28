@@ -79,15 +79,21 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
     func textDidChange(_ notification: Notification) {
         guard !isUpdatingFromService else { return }
-        instance.clipboardService?.clipboardText = textView.string
+        guard let service = instance.clipboardService else {
+            Self.logger.warning("Clipboard edit ignored — clipboardService is nil for VM '\(self.instance.name, privacy: .public)'")
+            return
+        }
+        service.clipboardText = textView.string
     }
 
     // MARK: - Observation
 
     private func observeServiceChanges() {
         withObservationTracking {
-            _ = self.instance.clipboardService?.clipboardText
-            _ = self.instance.clipboardService?.isConnected
+            // Read clipboardService itself so observation re-fires when it transitions nil → non-nil
+            let service = self.instance.clipboardService
+            _ = service?.clipboardText
+            _ = service?.isConnected
         } onChange: {
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -101,6 +107,8 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         let service = instance.clipboardService
         let isConnected = service?.isConnected ?? false
 
+        textView.isEditable = service != nil
+
         // Update text view only if the service's text differs from what's displayed
         // (avoids clobbering the user's in-progress edits)
         if let serviceText = service?.clipboardText, serviceText != textView.string {
@@ -109,7 +117,6 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             isUpdatingFromService = false
         }
 
-        // Update status bar
         statusCircle.layer?.backgroundColor = isConnected
             ? NSColor.systemGreen.cgColor
             : NSColor.secondaryLabelColor.cgColor

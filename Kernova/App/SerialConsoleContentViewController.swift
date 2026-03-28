@@ -1,5 +1,4 @@
 import Cocoa
-import os
 
 /// Pure AppKit view controller for the serial console window content.
 ///
@@ -9,8 +8,6 @@ import os
 /// `withObservationTracking`.
 @MainActor
 final class SerialConsoleContentViewController: NSViewController {
-
-    private static let logger = Logger(subsystem: "com.kernova.app", category: "SerialConsoleContentViewController")
 
     private let instance: VMInstance
     private var textView: SerialTextView!
