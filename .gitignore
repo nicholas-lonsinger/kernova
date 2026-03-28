@@ -28,9 +28,6 @@ Pods/
 # Carthage
 Carthage/Build/
 
-# Generated at build time
-KernovaGuestAgent/BuildNumber.generated.swift
-
 # OS files
 .DS_Store
 .DS_Store?
