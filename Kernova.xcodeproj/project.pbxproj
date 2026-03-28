@@ -26,12 +26,20 @@
 			remoteGlobalIDString = A1000102;
 			remoteInfo = KernovaRelaunchHelper;
 		};
+		A1000205 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A1000002 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A1000204;
+			remoteInfo = KernovaGuestAgent;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		A1000004 /* Kernova.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Kernova.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000005 /* KernovaTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KernovaTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000100 /* KernovaRelaunchHelper */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = KernovaRelaunchHelper; sourceTree = BUILT_PRODUCTS_DIR; };
+		A1000200 /* KernovaGuestAgent */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = KernovaGuestAgent; sourceTree = BUILT_PRODUCTS_DIR; };
 		A10000F0 /* DiskTemplates */ = {isa = PBXFileReference; lastKnownFileType = folder; path = DiskTemplates; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -42,6 +50,15 @@
 				App/Info.plist,
 			);
 			target = A1000003 /* Kernova */;
+		};
+		A100020B /* Exceptions for "KernovaGuestAgent" folder in "KernovaGuestAgent" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				com.kernova.agent.plist,
+				install.command,
+				uninstall.command,
+			);
+			target = A1000204 /* KernovaGuestAgent */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -62,6 +79,14 @@
 		A1000101 /* KernovaRelaunchHelper */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = KernovaRelaunchHelper;
+			sourceTree = "<group>";
+		};
+		A1000201 /* KernovaGuestAgent */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				A100020B /* Exceptions for "KernovaGuestAgent" folder in "KernovaGuestAgent" target */,
+			);
+			path = KernovaGuestAgent;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -88,6 +113,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A1000203 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -97,6 +129,7 @@
 				A1000006 /* Kernova */,
 				A1000007 /* KernovaTests */,
 				A1000101 /* KernovaRelaunchHelper */,
+				A1000201 /* KernovaGuestAgent */,
 				A10000F0 /* DiskTemplates */,
 				A1000021 /* Products */,
 			);
@@ -108,6 +141,7 @@
 				A1000004 /* Kernova.app */,
 				A1000005 /* KernovaTests.xctest */,
 				A1000100 /* KernovaRelaunchHelper */,
+				A1000200 /* KernovaGuestAgent */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -124,11 +158,13 @@
 				A1000050 /* Resources */,
 				A10000D0 /* Set Build Number from Git */,
 				A100010A /* Embed Helpers */,
+				A100020A /* Package Guest Agent DMG */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 				A1000109 /* PBXTargetDependency */,
+				A1000206 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				A1000006 /* Kernova */,
@@ -159,6 +195,28 @@
 			);
 			productName = KernovaRelaunchHelper;
 			productReference = A1000100 /* KernovaRelaunchHelper */;
+			productType = "com.apple.product-type.tool";
+		};
+		A1000204 /* KernovaGuestAgent */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A1000209 /* Build configuration list for PBXNativeTarget "KernovaGuestAgent" */;
+			buildPhases = (
+				A100020C /* Set Agent Build Number from Git */,
+				A1000202 /* Sources */,
+				A1000203 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				A1000201 /* KernovaGuestAgent */,
+			);
+			name = KernovaGuestAgent;
+			packageProductDependencies = (
+			);
+			productName = KernovaGuestAgent;
+			productReference = A1000200 /* KernovaGuestAgent */;
 			productType = "com.apple.product-type.tool";
 		};
 		A1000060 /* KernovaTests */ = {
@@ -199,6 +257,9 @@
 					A1000102 = {
 						CreatedOnToolsVersion = 16.0;
 					};
+					A1000204 = {
+						CreatedOnToolsVersion = 16.0;
+					};
 					A1000060 = {
 						CreatedOnToolsVersion = 16.0;
 						TestTargetID = A1000003;
@@ -221,6 +282,7 @@
 			targets = (
 				A1000003 /* Kernova */,
 				A1000102 /* KernovaRelaunchHelper */,
+				A1000204 /* KernovaGuestAgent */,
 				A1000060 /* KernovaTests */,
 			);
 		};
@@ -278,6 +340,48 @@
 			shellPath = /bin/sh;
 			shellScript = "BUILD_NUMBER=$(git rev-list --count HEAD)\n/usr/libexec/PlistBuddy -c \"Set :CFBundleVersion $BUILD_NUMBER\" \"${BUILT_PRODUCTS_DIR}/${INFOPLIST_PATH}\"\n";
 		};
+		A100020C /* Set Agent Build Number from Git */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Set Agent Build Number from Git";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -euo pipefail\nBUILD_NUMBER=$(git rev-list --count HEAD -- KernovaGuestAgent/)\nif [ -z \"${BUILD_NUMBER}\" ]; then\n    echo \"error: Could not determine agent build number from git history\" >&2\n    exit 1\nfi\necho \"let agentBuildNumber = \\\"${BUILD_NUMBER}\\\"\" > \"${SRCROOT}/KernovaGuestAgent/BuildNumber.generated.swift\"\n";
+		};
+		A100020A /* Package Guest Agent DMG */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(BUILT_PRODUCTS_DIR)/KernovaGuestAgent",
+				"$(SRCROOT)/KernovaGuestAgent/install.command",
+				"$(SRCROOT)/KernovaGuestAgent/uninstall.command",
+				"$(SRCROOT)/KernovaGuestAgent/com.kernova.agent.plist",
+			);
+			name = "Package Guest Agent DMG";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(BUILT_PRODUCTS_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/KernovaGuestAgent.dmg",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "set -euo pipefail\n\nSTAGING_DIR=$(mktemp -d \"${DERIVED_FILE_DIR}/guest-agent-dmg-staging.XXXXXX\")\nTEMP_DMG=$(mktemp \"${DERIVED_FILE_DIR}/guest-agent-temp.XXXXXX.dmg\")\ntrap 'rm -rf \"${STAGING_DIR}\" \"${TEMP_DMG}\"' EXIT\n\nRAW_PREFIX=\"${DERIVED_FILE_DIR}/guest-agent-raw\"\nDMG_OUTPUT=\"${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources/KernovaGuestAgent.dmg\"\n\ncp \"${BUILT_PRODUCTS_DIR}/KernovaGuestAgent\" \"${STAGING_DIR}/kernova-agent\"\ncp \"${SRCROOT}/KernovaGuestAgent/install.command\" \"${STAGING_DIR}/install.command\"\ncp \"${SRCROOT}/KernovaGuestAgent/uninstall.command\" \"${STAGING_DIR}/uninstall.command\"\nchmod +x \"${STAGING_DIR}/install.command\" \"${STAGING_DIR}/uninstall.command\"\ncp \"${SRCROOT}/KernovaGuestAgent/com.kernova.agent.plist\" \"${STAGING_DIR}/com.kernova.agent.plist\"\n\nmkdir -p \"$(dirname \"${DMG_OUTPUT}\")\"\n\n# Create a UDRW DMG then convert to DVD/CD-R master (UDTO/.cdr).\n# VZDiskImageStorageDeviceAttachment needs a format it can present as a\n# USB block device — the .cdr export works reliably for guest-mountable volumes.\nhdiutil create \\\n    -volname \"Kernova Guest Agent\" \\\n    -srcfolder \"${STAGING_DIR}\" \\\n    -ov -format UDRW \\\n    \"${TEMP_DMG}\"\nhdiutil convert \"${TEMP_DMG}\" -format UDTO -ov -o \"${RAW_PREFIX}\"\nmv \"${RAW_PREFIX}.cdr\" \"${DMG_OUTPUT}\"\n\n# Strip extended attributes that break code signing\nxattr -cr \"${DMG_OUTPUT}\"\n";
+		};
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -302,6 +406,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A1000202 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -314,6 +425,11 @@
 			isa = PBXTargetDependency;
 			target = A1000102 /* KernovaRelaunchHelper */;
 			targetProxy = A1000108 /* PBXContainerItemProxy */;
+		};
+		A1000206 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A1000204 /* KernovaGuestAgent */;
+			targetProxy = A1000205 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -459,7 +575,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 0.9.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.kernova.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -484,7 +600,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 0.9.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.kernova.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -500,7 +616,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 0.9.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.kernova.app.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
@@ -517,7 +633,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 0.9.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.kernova.app.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
@@ -541,6 +657,33 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				DEAD_CODE_STRIPPING = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		A1000207 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_INSTRUMENT_FOR_OPTIMIZATION_PROFILING = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
+				DEAD_CODE_STRIPPING = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 0.9.0;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		A1000208 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
+				DEAD_CODE_STRIPPING = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 0.9.0;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 6.0;
 			};
@@ -581,6 +724,15 @@
 			buildConfigurations = (
 				A1000105 /* Debug */,
 				A1000106 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A1000209 /* Build configuration list for PBXNativeTarget "KernovaGuestAgent" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A1000207 /* Debug */,
+				A1000208 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

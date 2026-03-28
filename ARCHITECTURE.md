@@ -88,6 +88,12 @@ DiskTemplates/                             # Bundled ASIF disk image templates (
 KernovaRelaunchHelper/
 └── main.swift                          # Lightweight CLI watchdog for TCC-forced restarts
 
+KernovaGuestAgent/                      # Guest-side agent stub + DMG packaging resources
+├── main.swift                          # Stub binary: blocks via dispatchMain() (placeholder for SPICE agent)
+├── install.command                     # Guest-side installer: copies binary, registers LaunchAgent
+├── uninstall.command                   # Guest-side uninstaller: stops agent, removes files
+└── com.kernova.agent.plist             # LaunchAgent template (__INSTALL_DIR__ replaced at install time)
+
 KernovaTests/
 ├── Mocks/                              # Mock service implementations (6 files)
 │   ├── MockVirtualizationService.swift
@@ -117,7 +123,7 @@ KernovaTests/
 └── NSImageExtensionsTests.swift        # SF Symbol loading utility tests
 ```
 
-**Total: 56 source files + 1 helper, 25 test files (19 suites + 6 mocks).**
+**Total: 56 source files + 2 helpers, 25 test files (19 suites + 6 mocks).**
 
 *Note: `ContentView.swift` was removed when `NavigationSplitView` was replaced by `NSSplitViewController` in `MainWindowController`. Its responsibilities were split between `MainWindowController` (toolbar, split view) and `MainDetailView` (detail switching, sheets, alerts).*
 
@@ -315,6 +321,14 @@ SystemSleepWatcher ──sleep/wake──→ VMLibraryViewModel ──pause/resu
 **Why:** Native `NSToolbarItem`s provide reliable layout, proper `.sidebarTrackingSeparator` support, and standard macOS toolbar appearance. The `withObservationTracking` pattern (used in all three window controllers) re-evaluates on any observed property change and re-registers itself, providing reactive updates without SwiftUI. The shared `VMToolbarManager` eliminates ~150 lines of duplicated toolbar logic between `MainWindowController` and `VMDisplayWindowController`, ensuring toolbar changes are applied in one place.
 
 **Alternatives:** SwiftUI `.toolbar` modifiers on a hosting controller — simpler declarative API but caused persistent layout issues with grouped items and sidebar tracking.
+
+## Helper Targets
+
+Two standalone command-line tool targets are built alongside the main app:
+
+- **KernovaRelaunchHelper** — Embedded in `Contents/MacOS/`. A watchdog that monitors the main app's PID and relaunches it after TCC-forced terminations. Launched by `AppDelegate` during quit when a TCC revocation is detected.
+
+- **KernovaGuestAgent** — Not embedded directly. A stub binary (blocks via `dispatchMain()` for launchd supervision) that is packaged into a disk image at build time by the "Package Guest Agent DMG" Run Script build phase. The disk image (containing the binary, `install.command`, `uninstall.command`, and a LaunchAgent plist) is placed in `Contents/Resources/KernovaGuestAgent.dmg`. At runtime, the "Install Guest Agent..." menu item in the Virtual Machine menu attaches it to a guest VM as USB mass storage. The guest user runs `install.command` to install the agent as a LaunchAgent in user-space (`~/Library/Application Support/Kernova/`). This is a pipeline stub — the real agent will implement host-guest communication via SPICE.
 
 ## Dependencies
 

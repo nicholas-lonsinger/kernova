@@ -42,6 +42,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     ]
 
     private static let logger = Logger(subsystem: "com.kernova.app", category: "AppDelegate")
+    private static let guestAgentDiskPath: String? = {
+        guard let path = Bundle.main.url(forResource: "KernovaGuestAgent", withExtension: "dmg")?.path(percentEncoded: false) else {
+            logger.warning("Guest agent disk image not found in app bundle — 'Install Guest Agent' will be unavailable")
+            return nil
+        }
+        return path
+    }()
 
     /// Returns the VM that menu actions should target: the display or serial console
     /// window's VM if its window is key, otherwise the sidebar-selected VM.
@@ -468,6 +475,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
     }
 
+    @objc func attachGuestAgentDisk(_ sender: Any?) {
+        guard let instance = activeInstance else { return }
+        guard let path = Self.guestAgentDiskPath else {
+            Self.logger.fault("Guest agent disk image not found in app bundle")
+            assertionFailure("Guest agent disk image not found in app bundle")
+            return
+        }
+        viewModel.attachUSBDevice(
+            diskImagePath: path,
+            readOnly: true,
+            to: instance
+        )
+    }
+
     // MARK: - Display Window (Pop-Out / Fullscreen)
 
     @objc func togglePopOut(_ sender: Any?) {
@@ -696,6 +717,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             return activeInstance?.canShowClipboard ?? false
         case #selector(showRemovableMedia(_:)):
             return activeInstance?.canAttachUSBDevices ?? false
+        case #selector(attachGuestAgentDisk(_:)):
+            guard let instance = activeInstance, instance.canAttachUSBDevices else { return false }
+            guard let agentPath = Self.guestAgentDiskPath else { return false }
+            return !instance.attachedUSBDevices.contains { $0.path == agentPath }
         case #selector(togglePopOut(_:)):
             guard let instance = activeInstance else { return false }
             let canUse = instance.canUseExternalDisplay
@@ -797,6 +822,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         vmMenu.addItem(withTitle: "Clone", action: #selector(cloneVM(_:)), keyEquivalent: "d")
         let deleteItem = vmMenu.addItem(withTitle: "Move to Trash", action: #selector(deleteVM(_:)), keyEquivalent: "\u{08}")
         deleteItem.keyEquivalentModifierMask = [.command]
+        vmMenu.addItem(.separator())
+        vmMenu.addItem(NSMenuItem(
+            title: "Install Guest Agent…",
+            action: #selector(attachGuestAgentDisk(_:)),
+            keyEquivalent: ""
+        ))
         vmMenuItem.submenu = vmMenu
         mainMenu.addItem(vmMenuItem)
 
