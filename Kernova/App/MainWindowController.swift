@@ -68,7 +68,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         window.toolbar = toolbar
         window.toolbarStyle = .unified
 
-        window.restoreFrame(named: "KernovaMainWindow")
+        window.setFrameAutosaveName("KernovaMainWindow")
 
         updateToolbarItems()
         observeToolbarState()
@@ -230,23 +230,3 @@ extension MainWindowController: NSToolbarItemValidation {
     }
 }
 
-// MARK: - NSWindow Frame Restoration
-
-extension NSWindow {
-    private static let frameLogger = Logger(subsystem: "com.kernova.app", category: "NSWindow+FrameRestore")
-
-    /// Restores a previously saved frame, validates it's visible on a connected screen,
-    /// and enables autosave for future changes. Centers the window if no saved frame exists
-    /// or the saved frame doesn't intersect any connected screen.
-    func restoreFrame(named name: String) {
-        if !setFrameUsingName(name) {
-            center()
-        }
-        let screens = NSScreen.screens
-        if !screens.isEmpty, !screens.contains(where: { $0.visibleFrame.intersects(frame) }) {
-            Self.frameLogger.warning("Restored frame for '\(name, privacy: .public)' is off-screen, centering window")
-            center()
-        }
-        setFrameAutosaveName(name)
-    }
-}

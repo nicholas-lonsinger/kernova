@@ -15,7 +15,9 @@ Kernova/
 │   ├── DetailContainerViewController.swift # Layers AppKit VM display over SwiftUI detail content
 │   ├── VMToolbarManager.swift          # Shared toolbar logic for lifecycle, suspend, and display groups
 │   ├── SerialConsoleWindowController.swift # Per-VM serial console window, auto-closes on VM stop
+│   ├── SerialConsoleContentViewController.swift # Pure AppKit serial terminal + status bar (contains SerialTextView)
 │   ├── ClipboardWindowController.swift   # Per-VM clipboard sharing window, auto-closes on VM stop
+│   ├── ClipboardContentViewController.swift # Pure AppKit clipboard text editor + status bar
 │   └── Info.plist                        # App configuration and metadata
 ├── Models/                             # Data types — all value types or @MainActor-isolated
 │   ├── VMConfiguration.swift           # Codable/Sendable struct persisted as config.json per VM bundle
@@ -61,11 +63,7 @@ Kernova/
 │   ├── Console/
 │   │   ├── VMConsoleView.swift         # Placeholder for non-inline display states (popped out, fullscreen, suspended, no display)
 │   │   ├── VMDisplayBackingView.swift  # Pure AppKit VM display with pause/transition overlays
-│   │   ├── RemovableMediaPopoverView.swift # Toolbar popover for runtime USB attach/eject
-│   │   ├── SerialConsoleContentView.swift # Serial console content wrapper
-│   │   └── SerialTerminalView.swift    # Terminal text view for serial output
-│   ├── Clipboard/
-│   │   └── ClipboardContentView.swift # Per-VM clipboard sharing panel (from-guest / to-guest)
+│   │   └── RemovableMediaPopoverView.swift # Toolbar popover for runtime USB attach/eject
 │   └── Creation/
 │       ├── VMCreationWizardView.swift  # Multi-step wizard container
 │       ├── OSSelectionStep.swift       # Step 1: Choose macOS or Linux
@@ -223,7 +221,7 @@ VMCreationWizardView (modal sheet on detail pane)
 ├── IPSWSelectionStep / BootConfigStep
 ├── ResourceConfigStep
 └── ReviewStep
-SerialConsoleContentView → SerialTerminalView (in separate window)
+SerialConsoleContentViewController → SerialTextView (in separate window)
 ```
 
 ### Data Flow
