@@ -215,9 +215,10 @@ final class VMInstance: Identifiable {
 
     // MARK: - State Helpers
 
-    /// Tears down the live VM session: stops serial I/O, releases pipes, and
-    /// clears the `VZVirtualMachine` reference. Does **not** change `status` —
-    /// callers set the appropriate status after calling this.
+    /// Tears down the live VM session: stops clipboard and serial I/O, releases
+    /// pipes, clears attached USB devices, and nils the delegate adapter and
+    /// `VZVirtualMachine` reference. Does **not** change `status` — callers set
+    /// the appropriate status after calling this.
     func tearDownSession() {
         stopClipboardService()
         stopSerialReading()
@@ -361,10 +362,28 @@ final class VMInstance: Identifiable {
     func stopClipboardService() {
         clipboardService?.stop()
         clipboardService = nil
-        try? clipboardInputPipe?.fileHandleForReading.close()
-        try? clipboardInputPipe?.fileHandleForWriting.close()
-        try? clipboardOutputPipe?.fileHandleForReading.close()
-        try? clipboardOutputPipe?.fileHandleForWriting.close()
+
+        do {
+            try clipboardInputPipe?.fileHandleForReading.close()
+        } catch {
+            Self.logger.warning("Failed to close clipboard input read handle for VM '\(self.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
+        }
+        do {
+            try clipboardInputPipe?.fileHandleForWriting.close()
+        } catch {
+            Self.logger.warning("Failed to close clipboard input write handle for VM '\(self.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
+        }
+        do {
+            try clipboardOutputPipe?.fileHandleForReading.close()
+        } catch {
+            Self.logger.warning("Failed to close clipboard output read handle for VM '\(self.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
+        }
+        do {
+            try clipboardOutputPipe?.fileHandleForWriting.close()
+        } catch {
+            Self.logger.warning("Failed to close clipboard output write handle for VM '\(self.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
+        }
+
         clipboardInputPipe = nil
         clipboardOutputPipe = nil
     }
