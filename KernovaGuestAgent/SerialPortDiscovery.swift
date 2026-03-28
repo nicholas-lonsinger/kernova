@@ -10,12 +10,10 @@ enum SerialPortDiscovery {
 
     private static let logger = Logger(subsystem: "com.kernova.agent", category: "SerialPortDiscovery")
 
-    /// Known device path patterns for the SPICE agent console port.
-    /// The port is configured at index 0 of a `VZVirtioConsoleDeviceConfiguration`.
-    private static let candidatePaths = [
-        "/dev/cu.virtio-port0",
-        "/dev/cu.virtio",
-    ]
+    /// Device path for the SPICE agent console port.
+    /// The host names the port `VZSpiceAgentPortAttachment.spiceAgentPortName`
+    /// ("com.redhat.spice.0"); the guest kernel exposes it as `/dev/cu.<name>`.
+    private static let devicePath = "/dev/cu.com.redhat.spice.0"
 
     // RATIONALE: nonisolated(unsafe) is safe here because openDevice() is only called
     // from the main dispatch queue in main.swift's connection retry loop.
@@ -33,16 +31,13 @@ enum SerialPortDiscovery {
             hasLoggedDevices = true
         }
 
-        for path in candidatePaths {
-            let fd = open(path, O_RDWR | O_NOCTTY | O_NONBLOCK)
-            if fd >= 0 {
-                logger.notice("Opened SPICE device at '\(path, privacy: .public)' (fd=\(fd, privacy: .public))")
-                return FileHandle(fileDescriptor: fd, closeOnDealloc: true)
-            }
+        let fd = open(devicePath, O_RDWR | O_NOCTTY | O_NONBLOCK)
+        guard fd >= 0 else {
+            logger.debug("SPICE device not available at '\(devicePath, privacy: .public)'")
+            return nil
         }
-
-        logger.debug("No SPICE serial device found")
-        return nil
+        logger.notice("Opened SPICE device at '\(devicePath, privacy: .public)' (fd=\(fd, privacy: .public))")
+        return FileHandle(fileDescriptor: fd, closeOnDealloc: true)
     }
 
     /// Logs all `/dev/cu.*` devices at debug level to aid device path discovery during development.
