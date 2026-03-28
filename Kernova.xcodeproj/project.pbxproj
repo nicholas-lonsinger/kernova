@@ -54,6 +54,7 @@
 		A100020B /* Exceptions for "KernovaGuestAgent" folder in "KernovaGuestAgent" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				Info.plist,
 				com.kernova.agent.plist,
 				install.command,
 				uninstall.command,
@@ -201,7 +202,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = A1000209 /* Build configuration list for PBXNativeTarget "KernovaGuestAgent" */;
 			buildPhases = (
-				A100020C /* Set Agent Build Number from Git */,
+				A100020C /* Set Build Number from Git */,
 				A1000202 /* Sources */,
 				A1000203 /* Frameworks */,
 			);
@@ -340,7 +341,7 @@
 			shellPath = /bin/sh;
 			shellScript = "BUILD_NUMBER=$(git rev-list --count HEAD)\n/usr/libexec/PlistBuddy -c \"Set :CFBundleVersion $BUILD_NUMBER\" \"${BUILT_PRODUCTS_DIR}/${INFOPLIST_PATH}\"\n";
 		};
-		A100020C /* Set Agent Build Number from Git */ = {
+		A100020C /* Set Build Number from Git */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
@@ -350,14 +351,15 @@
 			);
 			inputPaths = (
 			);
-			name = "Set Agent Build Number from Git";
+			name = "Set Build Number from Git";
 			outputFileListPaths = (
 			);
 			outputPaths = (
+				"$(DERIVED_FILE_DIR)/AgentBuildNumber.h",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -euo pipefail\nBUILD_NUMBER=$(git rev-list --count HEAD -- KernovaGuestAgent/)\nif [ -z \"${BUILD_NUMBER}\" ]; then\n    echo \"error: Could not determine agent build number from git history\" >&2\n    exit 1\nfi\necho \"let agentBuildNumber = \\\"${BUILD_NUMBER}\\\"\" > \"${SRCROOT}/KernovaGuestAgent/BuildNumber.generated.swift\"\n";
+			shellScript = "set -euo pipefail\nBUILD_NUMBER=$(git rev-list --count HEAD -- KernovaGuestAgent/)\nif [ -z \"${BUILD_NUMBER}\" ]; then\n    echo \"error: Could not determine agent build number from git history\" >&2\n    exit 1\nfi\nmkdir -p \"${DERIVED_FILE_DIR}\"\necho \"#define AGENT_BUILD_NUMBER ${BUILD_NUMBER}\" > \"${DERIVED_FILE_DIR}/AgentBuildNumber.h\"\n";
 		};
 		A100020A /* Package Guest Agent DMG */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -669,8 +671,12 @@
 				CODE_SIGN_STYLE = Automatic;
 				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
 				DEAD_CODE_STRIPPING = YES;
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = KernovaGuestAgent/Info.plist;
+				INFOPLIST_PREFIX_HEADER = "$(DERIVED_FILE_DIR)/AgentBuildNumber.h";
+				INFOPLIST_PREPROCESS = YES;
 				MARKETING_VERSION = 0.9.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.kernova.agent;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 6.0;
 			};
@@ -682,8 +688,12 @@
 				CODE_SIGN_STYLE = Automatic;
 				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
 				DEAD_CODE_STRIPPING = YES;
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = KernovaGuestAgent/Info.plist;
+				INFOPLIST_PREFIX_HEADER = "$(DERIVED_FILE_DIR)/AgentBuildNumber.h";
+				INFOPLIST_PREPROCESS = YES;
 				MARKETING_VERSION = 0.9.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.kernova.agent;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 6.0;
 			};

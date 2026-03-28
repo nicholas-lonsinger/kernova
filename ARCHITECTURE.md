@@ -90,6 +90,7 @@ KernovaRelaunchHelper/
 
 KernovaGuestAgent/                      # Guest-side agent stub + DMG packaging resources
 ├── main.swift                          # Stub binary: blocks via dispatchMain() (placeholder for SPICE agent)
+├── Info.plist                          # Explicit Info.plist with preprocessor macro for CFBundleVersion
 ├── install.command                     # Guest-side installer: copies binary, registers LaunchAgent
 ├── uninstall.command                   # Guest-side uninstaller: stops agent, removes files
 └── com.kernova.agent.plist             # LaunchAgent template (__INSTALL_DIR__ replaced at install time)
@@ -328,7 +329,7 @@ Two standalone command-line tool targets are built alongside the main app:
 
 - **KernovaRelaunchHelper** — Embedded in `Contents/MacOS/`. A watchdog that monitors the main app's PID and relaunches it after TCC-forced terminations. Launched by `AppDelegate` during quit when a TCC revocation is detected.
 
-- **KernovaGuestAgent** — Not embedded directly. A stub binary (blocks via `dispatchMain()` for launchd supervision) that is packaged into a disk image at build time by the "Package Guest Agent DMG" Run Script build phase. The disk image (containing the binary, `install.command`, `uninstall.command`, and a LaunchAgent plist) is placed in `Contents/Resources/KernovaGuestAgent.dmg`. At runtime, the "Install Guest Agent..." menu item in the Virtual Machine menu attaches it to a guest VM as USB mass storage. The guest user runs `install.command` to install the agent as a LaunchAgent in user-space (`~/Library/Application Support/Kernova/`). This is a pipeline stub — the real agent will implement host-guest communication via SPICE.
+- **KernovaGuestAgent** — Not embedded directly. A stub binary (blocks via `dispatchMain()` for launchd supervision) that is packaged into a disk image at build time by the "Package Guest Agent DMG" Run Script build phase. The disk image (containing the binary, `install.command`, `uninstall.command`, and a LaunchAgent plist) is placed in `Contents/Resources/KernovaGuestAgent.dmg`. At runtime, the "Install Guest Agent..." menu item in the Virtual Machine menu attaches it to a guest VM as USB mass storage. The guest user runs `install.command` to install the agent as a LaunchAgent in user-space (`~/Library/Application Support/Kernova/`). The build number is injected via `INFOPLIST_PREPROCESS`: a pre-Sources build phase ("Set Build Number from Git") writes `#define AGENT_BUILD_NUMBER` (set to the git commit count scoped to `KernovaGuestAgent/`) to a header in `DERIVED_FILE_DIR`, and the explicit `Info.plist` references that macro for `CFBundleVersion`. The preprocessed plist is embedded in the binary via `CREATE_INFOPLIST_SECTION_IN_BINARY`. This is a pipeline stub — the real agent will implement host-guest communication via SPICE.
 
 ## Dependencies
 
