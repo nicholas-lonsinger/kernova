@@ -61,7 +61,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         window.title = "\(instance.name) — Display"
         window.minSize = NSSize(width: 640, height: 400)
         window.collectionBehavior = [.fullScreenPrimary]
-        window.restoreFrame(named: "VMDisplay-\(instance.instanceID)")
+        window.setFrameAutosaveName("VMDisplay-\(instance.instanceID)")
 
         super.init(window: window)
         window.delegate = self

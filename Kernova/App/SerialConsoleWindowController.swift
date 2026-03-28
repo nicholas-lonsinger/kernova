@@ -1,30 +1,25 @@
 import Cocoa
 import os
-import SwiftUI
 
 /// Manages a serial console window for a single VM instance.
 ///
-/// Each VM gets its own window controller. The window hosts a `SerialConsoleContentView`
-/// via `NSHostingController` and persists its frame position per VM ID.
+/// Each VM gets its own window controller. The window hosts a
+/// `SerialConsoleContentViewController` and persists its frame position per VM ID.
 ///
 /// The controller observes the VM's status and automatically closes the window when
-/// the VM stops or enters an error state, mirroring `VMDisplayWindowController` behavior.
+/// the VM stops or enters an error state.
 @MainActor
 final class SerialConsoleWindowController: NSWindowController, NSWindowDelegate {
 
     private static let logger = Logger(subsystem: "com.kernova.app", category: "SerialConsoleWindowController")
 
-    let vmID: UUID
     let instance: VMInstance
     private var observingStatus = false
 
     init(instance: VMInstance) {
-        self.vmID = instance.instanceID
         self.instance = instance
 
-        let contentView = SerialConsoleContentView(instance: instance)
-        let hostingController = NSHostingController(rootView: contentView)
-        hostingController.sizingOptions = []
+        let viewController = SerialConsoleContentViewController(instance: instance)
 
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 720, height: 480),
@@ -32,14 +27,13 @@ final class SerialConsoleWindowController: NSWindowController, NSWindowDelegate 
             backing: .buffered,
             defer: false
         )
-        window.contentViewController = hostingController
+        window.contentViewController = viewController
         window.title = "\(instance.name) — Serial Console"
         window.minSize = NSSize(width: 400, height: 200)
+        window.setFrameAutosaveName("SerialConsole-\(instance.instanceID.uuidString)")
 
         super.init(window: window)
         window.delegate = self
-
-        window.restoreFrame(named: "SerialConsole-\(instance.instanceID.uuidString)")
     }
 
     required init?(coder: NSCoder) {
