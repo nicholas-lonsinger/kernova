@@ -25,7 +25,7 @@ private let buildNumber: String = {
     guard let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String else {
         logger.fault("Build number not found in embedded Info.plist")
         assertionFailure("Build number not found in embedded Info.plist")
-        return "0"
+        return "unknown"
     }
     return b
 }()
