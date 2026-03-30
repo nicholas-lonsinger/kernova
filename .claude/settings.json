@@ -1,1 +1,18 @@
-{}
+{
+  "permissions": {
+    "allow": [
+      "Bash(/Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild build:*)",
+      "Bash(/Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild:*)"
+    ]
+  }, 
+  "enabledPlugins": {
+    "swift-lsp@claude-plugins-official": true,
+    "pr-review-toolkit@claude-plugins-official": true
+  },
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true,
+    "allowUnsandboxedCommands": false,
+    "enableWeakerNetworkIsolation": true
+  }
+}
