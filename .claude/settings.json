@@ -1,8 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(/Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild build:*)",
-      "Bash(/Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild:*)"
+      "Bash(/Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild *)",
+      "WebFetch(domain:api.github.com)"
     ]
   }, 
   "enabledPlugins": {
@@ -13,6 +13,7 @@
     "enabled": true,
     "autoAllowBashIfSandboxed": true,
     "allowUnsandboxedCommands": false,
-    "enableWeakerNetworkIsolation": true
+    "enableWeakerNetworkIsolation": true,
+    "excludedCommands": ["xcodebuild*"]
   }
 }
