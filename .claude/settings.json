@@ -3,19 +3,9 @@
     "allow": [
       "WebFetch(domain:api.github.com)",
       "WebFetch(domain:github.com)"
-    ],
-    "additionalDirectories": [
-      "/Users/nlonsinger/Downloads/Kernova"
     ]
   },
   "enabledPlugins": {
     "swift-lsp@claude-plugins-official": true
-  },
-  "sandbox": {
-    "enabled": true,
-    "autoAllowBashIfSandboxed": true,
-    "allowUnsandboxedCommands": false,
-    "enableWeakerNetworkIsolation": true,
-    "excludedCommands": ["xcodebuild*"]
   }
 }
