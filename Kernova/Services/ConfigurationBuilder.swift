@@ -476,7 +476,7 @@ struct ConfigurationBuilder: Sendable {
             let resolved = try PathValidation.resolveFile(at: path, requireWritable: requireWritable)
             resolved.logResolution(logger: logger, context: context)
             return resolved
-        } catch let error as PathValidation.Failure {
+        } catch {
             switch error {
             case .notFound:
                 logger.error("\(context, privacy: .public) not found at '\(path, privacy: .public)'")
@@ -516,7 +516,7 @@ struct ConfigurationBuilder: Sendable {
                 at: path, requireReadable: requireReadable, requireWritable: requireWritable)
             resolved.logResolution(logger: logger, context: context)
             return resolved
-        } catch let error as PathValidation.Failure {
+        } catch {
             switch error {
             case .notFound:
                 logger.error("\(context, privacy: .public) not found at '\(path, privacy: .public)'")

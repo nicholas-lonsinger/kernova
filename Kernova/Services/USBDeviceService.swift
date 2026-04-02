@@ -26,7 +26,7 @@ final class USBDeviceService: USBDeviceProviding {
         do {
             resolved = try PathValidation.resolveFile(at: diskImagePath, requireWritable: !readOnly)
             resolved.logResolution(logger: Self.logger, context: "USB disk image")
-        } catch let error as PathValidation.Failure {
+        } catch {
             switch error {
             case .notFound:
                 Self.logger.error("USB disk image not found at '\(diskImagePath, privacy: .public)'")
