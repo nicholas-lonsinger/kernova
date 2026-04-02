@@ -87,9 +87,7 @@ enum DataFormatters {
         count == 1 ? "1 core" : "\(count) cores"
     }
 
-    // RATIONALE: nonisolated(unsafe) is safe because all callers of DataFormatters
-    // are @MainActor-isolated (SwiftUI view bodies). Matches the existing byteFormatter pattern.
-    private nonisolated(unsafe) static let durationFormatter: DateComponentsFormatter = {
+    private static let durationFormatter: DateComponentsFormatter = {
         let formatter = DateComponentsFormatter()
         formatter.allowedUnits = [.hour, .minute, .second]
         formatter.unitsStyle = .abbreviated

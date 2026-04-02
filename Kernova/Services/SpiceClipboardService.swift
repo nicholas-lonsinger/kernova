@@ -339,7 +339,7 @@ final class SpiceClipboardService {
 
     private func sendCapabilities() {
         let message = SpiceMessageBuilder.buildAnnounceCapabilities(request: true)
-        writeToGuest(message)
+        _ = writeToGuest(message)
         Self.logger.debug("Sent ANNOUNCE_CAPABILITIES (requesting guest reply)")
     }
 
