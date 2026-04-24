@@ -15,6 +15,7 @@ final class SerialConsoleContentViewController: NSViewController {
     private var statusCircle: NSView!
     private var statusLabel: NSTextField!
     private var characterCountLabel: NSTextField!
+    private var instanceObservation: ObservationLoop?
 
     init(instance: VMInstance) {
         self.instance = instance
@@ -77,16 +78,16 @@ final class SerialConsoleContentViewController: NSViewController {
     // MARK: - Observation
 
     private func observeInstanceChanges() {
-        withObservationTracking {
-            _ = self.instance.serialOutputText
-            _ = self.instance.status
-        } onChange: {
-            Task { @MainActor [weak self] in
+        instanceObservation = observeRecurring(
+            track: { [weak self] in
                 guard let self else { return }
-                self.updateUI()
-                self.observeInstanceChanges()
+                _ = self.instance.serialOutputText
+                _ = self.instance.status
+            },
+            apply: { [weak self] in
+                self?.updateUI()
             }
-        }
+        )
     }
 
     private func updateUI() {

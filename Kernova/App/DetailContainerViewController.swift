@@ -17,7 +17,7 @@ final class DetailContainerViewController: NSViewController {
     private var backingViews: [UUID: VMDisplayBackingView] = [:]
     private var activeBackingViewID: UUID?
     private let swiftUIHost: NSHostingController<MainDetailView>
-    private var observing = false
+    private var stateObservation: ObservationLoop?
 
     private static let logger = Logger(subsystem: "com.kernova.app", category: "DetailContainerVC")
 
@@ -51,12 +51,13 @@ final class DetailContainerViewController: NSViewController {
     override func viewDidAppear() {
         super.viewDidAppear()
         updateDisplayState()
-        if !observing { observeState() }
+        if stateObservation == nil { observeState() }
     }
 
     override func viewWillDisappear() {
         super.viewWillDisappear()
-        observing = false
+        stateObservation?.cancel()
+        stateObservation = nil
         for id in Array(backingViews.keys) {
             removeBackingView(for: id)
         }
@@ -103,32 +104,28 @@ final class DetailContainerViewController: NSViewController {
     // MARK: - State Observation
 
     private func observeState() {
-        observing = true
-        withObservationTracking {
-            _ = self.viewModel.selectedInstance
-            _ = self.viewModel.selectedInstance?.status
-            _ = self.viewModel.selectedInstance?.displayMode
-            _ = self.viewModel.selectedInstance?.virtualMachine
-            // Track instances with backing views so we detect when they stop or leave inline mode.
-            // Also track the instances array itself so we detect additions/removals.
-            _ = self.viewModel.instances.count
-            for id in self.backingViews.keys {
-                if let inst = self.viewModel.instances.first(where: { $0.id == id }) {
-                    _ = inst.status
-                    _ = inst.virtualMachine
-                    _ = inst.displayMode
+        stateObservation = observeRecurring(
+            track: { [weak self] in
+                guard let self else { return }
+                _ = self.viewModel.selectedInstance
+                _ = self.viewModel.selectedInstance?.status
+                _ = self.viewModel.selectedInstance?.displayMode
+                _ = self.viewModel.selectedInstance?.virtualMachine
+                // Track instances with backing views so we detect when they stop or leave inline mode.
+                // Also track the instances array itself so we detect additions/removals.
+                _ = self.viewModel.instances.count
+                for id in self.backingViews.keys {
+                    if let inst = self.viewModel.instances.first(where: { $0.id == id }) {
+                        _ = inst.status
+                        _ = inst.virtualMachine
+                        _ = inst.displayMode
+                    }
                 }
+            },
+            apply: { [weak self] in
+                self?.updateDisplayState()
             }
-        } onChange: {
-            Task { @MainActor [weak self] in
-                guard let self, self.observing else {
-                    Self.logger.debug("observeState: observation chain ended (self deallocated or observing stopped)")
-                    return
-                }
-                self.updateDisplayState()
-                self.observeState()
-            }
-        }
+        )
     }
 
     private func updateDisplayState() {

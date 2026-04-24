@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private var clipboardObservers: [UUID: Any] = [:]
     private var displayWindows: [UUID: VMDisplayWindowController] = [:]
     private var displayWindowObservers: [UUID: Any] = [:]
+    private var terminationObservation: ObservationLoop?
     private var serialConsoleMenuItem: NSMenuItem!
     private var clipboardMenuItem: NSMenuItem!
     /// Set in `applicationWillBecomeActive` and read in `applicationShouldHandleReopen`
@@ -655,23 +656,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         NSApp.terminate(nil)
     }
 
-    /// Registers a one-shot observation on the instances list and each instance's
-    /// `isKeepingAppAlive` state. Re-subscribes after each change for continuous observation.
+    /// Observes each instance's `isKeepingAppAlive` state so the app can terminate
+    /// when the last one flips to inactive.
     private func observeForTermination() {
-        withObservationTracking {
-            for instance in viewModel.instances {
-                _ = instance.isKeepingAppAlive
-            }
-        } onChange: {
-            Task { @MainActor [weak self] in
-                guard let self else {
-                    Self.logger.warning("observeForTermination: observation chain ended (self deallocated)")
-                    return
+        terminationObservation = observeRecurring(
+            track: { [weak self] in
+                guard let self else { return }
+                for instance in self.viewModel.instances {
+                    _ = instance.isKeepingAppAlive
                 }
-                self.terminateIfIdle()
-                self.observeForTermination()
+            },
+            apply: { [weak self] in
+                self?.terminateIfIdle()
             }
-        }
+        )
     }
 
     // MARK: - Menu Validation

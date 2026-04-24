@@ -12,6 +12,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     private let splitViewController = NSSplitViewController()
     private let sidebarItem: NSSplitViewItem
     private var sidebarCollapseObservation: NSKeyValueObservation?
+    private var toolbarObservation: ObservationLoop?
 
     private static let logger = Logger(subsystem: "com.kernova.app", category: "MainWindowController")
     private static let toolbarNewVM = NSToolbarItem.Identifier("newVM")
@@ -113,27 +114,21 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     // MARK: - Toolbar State Observation
 
-    // RATIONALE: No `observing` gate flag here. A previous `observingToolbar`
-    // flag cleared in windowWillClose stranded the toolbar on stale state after
-    // the main window was hidden and re-shown from the Dock (one-shot
-    // re-registration never resumed). [weak self] already handles the only real
-    // teardown case (controller deallocation); writes against a hidden toolbar
-    // are harmless no-ops.
     private func observeToolbarState() {
-        withObservationTracking {
-            _ = self.viewModel.selectedID
-            _ = self.viewModel.selectedInstance?.status
-            _ = self.viewModel.selectedInstance?.isPreparing
-            _ = self.viewModel.selectedInstance?.displayMode
-            _ = self.viewModel.selectedInstance?.virtualMachine
-            _ = self.viewModel.selectedInstance?.configuration.clipboardSharingEnabled
-        } onChange: {
-            Task { @MainActor [weak self] in
+        toolbarObservation = observeRecurring(
+            track: { [weak self] in
                 guard let self else { return }
-                self.updateToolbarItems()
-                self.observeToolbarState()
+                _ = self.viewModel.selectedID
+                _ = self.viewModel.selectedInstance?.status
+                _ = self.viewModel.selectedInstance?.isPreparing
+                _ = self.viewModel.selectedInstance?.displayMode
+                _ = self.viewModel.selectedInstance?.virtualMachine
+                _ = self.viewModel.selectedInstance?.configuration.clipboardSharingEnabled
+            },
+            apply: { [weak self] in
+                self?.updateToolbarItems()
             }
-        }
+        )
     }
 
     private func updateToolbarItems() {
