@@ -69,7 +69,6 @@ final class ObservationLoop {
 /// }
 /// ```
 @MainActor
-@discardableResult
 func observeRecurring(
     track: @escaping () -> Void,
     apply: @escaping () -> Void
