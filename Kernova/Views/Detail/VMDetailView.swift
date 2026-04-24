@@ -19,7 +19,7 @@ struct VMDetailView: View {
             } else {
                 switch instance.status {
                 case .stopped, .error:
-                    VMSettingsView(instance: instance, viewModel: viewModel)
+                    VMSettingsView(instance: instance, viewModel: viewModel, isReadOnly: false)
 
                 case .installing:
                     if let installState = instance.installState {
@@ -31,7 +31,11 @@ struct VMDetailView: View {
                     }
 
                 case _ where instance.status.hasActiveDisplay:
-                    VMConsoleView(instance: instance)
+                    if instance.detailPaneMode == .settings {
+                        VMSettingsView(instance: instance, viewModel: viewModel, isReadOnly: true)
+                    } else {
+                        VMConsoleView(instance: instance)
+                    }
 
                 default:
                     transitionView

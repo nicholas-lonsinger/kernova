@@ -19,6 +19,10 @@ final class VMToolbarManager: NSObject {
         let clipboardID: NSToolbarItem.Identifier?
         let removableMediaID: NSToolbarItem.Identifier?
         let displayID: NSToolbarItem.Identifier
+        /// When non-nil, a gear-icon button that toggles the detail pane between the live
+        /// display and the (read-only) settings form. Only the main window sets this; the
+        /// pop-out window has no settings pane.
+        let settingsToggleID: NSToolbarItem.Identifier?
 
         /// When `true`, checks `instance.isPreparing` and disables all items while preparing.
         /// `MainWindowController` sets this to `true`; `VMDisplayWindowController` sets it to `false`.
@@ -40,6 +44,9 @@ final class VMToolbarManager: NSObject {
             ids.append(removableMediaID)
         }
         ids.append(configuration.displayID)
+        if let settingsToggleID = configuration.settingsToggleID {
+            ids.append(settingsToggleID)
+        }
         return ids
     }
 
@@ -59,6 +66,8 @@ final class VMToolbarManager: NSObject {
     private static let popInToolTip = "Return display to the main window"
     private static let fullscreenToolTip = "Enter fullscreen display"
     private static let exitFullscreenToolTip = "Exit fullscreen display"
+    private static let showSettingsToolTip = "Show settings (read-only while the VM is running)"
+    private static let showDisplayToolTip = "Return to the VM display"
 
     private enum LifecycleSegment: Int {
         case play = 0, pause = 1, stop = 2
@@ -74,6 +83,7 @@ final class VMToolbarManager: NSObject {
         var allIDs = [configuration.lifecycleID, configuration.saveStateID, configuration.displayID]
         if let clipboardID = configuration.clipboardID { allIDs.append(clipboardID) }
         if let removableMediaID = configuration.removableMediaID { allIDs.append(removableMediaID) }
+        if let settingsToggleID = configuration.settingsToggleID { allIDs.append(settingsToggleID) }
         assert(Set(allIDs).count == allIDs.count,
                "VMToolbarManager.Configuration identifiers must be distinct")
         self.configuration = configuration
@@ -158,6 +168,20 @@ final class VMToolbarManager: NSObject {
             group.autovalidates = false
             return group
 
+        case configuration.settingsToggleID:
+            let item = NSToolbarItem(itemIdentifier: identifier)
+            item.label = "Show Settings"
+            item.image = .systemSymbol("gearshape", accessibilityDescription: "Show Settings")
+            item.action = #selector(AppDelegate.toggleSettingsPane(_:))
+            item.toolTip = Self.showSettingsToolTip
+            item.isBordered = true
+            // RATIONALE: `updateSettingsToggleItem` owns the enabled state; with
+            // autovalidation on, AppKit would force isEnabled=true (validateToolbarItem
+            // returns true for any shared identifier) and fight our manual updates,
+            // producing a visible flicker when switching between stopped VMs.
+            item.autovalidates = false
+            return item
+
         default:
             return nil
         }
@@ -173,6 +197,7 @@ final class VMToolbarManager: NSObject {
         updateClipboardItem(in: toolbar, instance: instance)
         updateRemovableMediaItem(in: toolbar, instance: instance)
         updateDisplayGroup(in: toolbar, instance: instance)
+        updateSettingsToggleItem(in: toolbar, instance: instance)
     }
 
     private func updateLifecycleGroup(in toolbar: NSToolbar, instance: VMInstance?) {
@@ -242,6 +267,32 @@ final class VMToolbarManager: NSObject {
         }
 
         subitem.isEnabled = instance.canAttachUSBDevices
+    }
+
+    private func updateSettingsToggleItem(in toolbar: NSToolbar, instance: VMInstance?) {
+        guard let settingsToggleID = configuration.settingsToggleID,
+              let item = toolbar.items.first(where: { $0.itemIdentifier == settingsToggleID }) else {
+            return
+        }
+
+        // Only meaningful when there's an actual display the user could be looking at.
+        // In other states (stopped, starting, installing) the settings form is already
+        // — or is about to become — the only view, so there's nothing to toggle to.
+        item.isEnabled = instance?.status.hasActiveDisplay ?? false
+
+        let inSettingsMode = instance?.detailPaneMode == .settings
+        let desiredLabel = inSettingsMode ? "Hide Settings" : "Show Settings"
+
+        // Guard reassignment behind the label check so no-op updates don't trigger
+        // an AppKit redraw (matches the pattern used by the lifecycle and display groups).
+        if item.label != desiredLabel {
+            item.label = desiredLabel
+            item.image = .systemSymbol(
+                inSettingsMode ? "gearshape.fill" : "gearshape",
+                accessibilityDescription: desiredLabel
+            )
+            item.toolTip = inSettingsMode ? Self.showDisplayToolTip : Self.showSettingsToolTip
+        }
     }
 
     private func updateDisplayGroup(in toolbar: NSToolbar, instance: VMInstance?) {

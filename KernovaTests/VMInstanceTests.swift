@@ -18,6 +18,34 @@ struct VMInstanceTests {
         return VMInstance(configuration: config, bundleURL: bundleURL, status: status)
     }
 
+    // MARK: - detailPaneMode
+
+    @Test("detailPaneMode defaults to .display on a new instance")
+    func detailPaneModeDefaultsToDisplay() {
+        let instance = makeInstance()
+        #expect(instance.detailPaneMode == .display)
+    }
+
+    @Test("detailPaneMode is per-instance (independent between VMs)")
+    func detailPaneModeIsPerInstance() {
+        let a = makeInstance()
+        let b = makeInstance()
+        a.detailPaneMode = .settings
+        #expect(a.detailPaneMode == .settings)
+        #expect(b.detailPaneMode == .display)
+    }
+
+    @Test("resetToStopped clears detailPaneMode back to .display")
+    func resetToStoppedClearsDetailPaneMode() {
+        let instance = makeInstance(status: .running)
+        instance.detailPaneMode = .settings
+
+        instance.resetToStopped()
+
+        #expect(instance.detailPaneMode == .display)
+        #expect(instance.status == .stopped)
+    }
+
     // MARK: - tearDownSession
 
     @Test("tearDownSession clears pipes and virtualMachine without changing status")
