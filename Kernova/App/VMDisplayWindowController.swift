@@ -20,7 +20,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
     private let enterFullscreen: Bool
     private let onSaveConfiguration: () -> Void
     private let backingView: VMDisplayBackingView
-    private var observingInstance = false
+    private var instanceObservation: ObservationLoop?
 
     private static let logger = Logger(subsystem: "com.kernova.app", category: "VMDisplayWindowController")
 
@@ -96,7 +96,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         if lastDisplayID == nil {
             lastDisplayID = window?.screen?.displayID
         }
-        observingInstance = false
+        instanceObservation?.cancel()
         window?.toolbar?.isVisible = true
         instance.displayMode = .inline
     }
@@ -129,14 +129,15 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
     /// Observes VM state changes to auto-close the window when the VM stops/errors/saves,
     /// keep toolbar items in sync, and update the backing view's overlay state.
     private func observeInstance() {
-        observingInstance = true
-        withObservationTracking {
-            _ = self.instance.status
-            _ = self.instance.virtualMachine
-            _ = self.instance.displayMode
-        } onChange: {
-            Task { @MainActor [weak self] in
-                guard let self, self.observingInstance else { return }
+        instanceObservation = observeRecurring(
+            track: { [weak self] in
+                guard let self else { return }
+                _ = self.instance.status
+                _ = self.instance.virtualMachine
+                _ = self.instance.displayMode
+            },
+            apply: { [weak self] in
+                guard let self else { return }
                 let status = self.instance.status
                 if status == .stopped || status == .error || self.instance.isColdPaused {
                     self.lastDisplayID = self.window?.screen?.displayID
@@ -149,10 +150,9 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
                         transitionText: status.transitionLabel
                     )
                     self.updateToolbarItems()
-                    self.observeInstance()
                 }
             }
-        }
+        )
     }
 
     // MARK: - Toolbar State

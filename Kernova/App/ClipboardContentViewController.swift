@@ -16,6 +16,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     private var statusCircle: NSView!
     private var statusLabel: NSTextField!
     private var isUpdatingFromService = false
+    private var serviceObservation: ObservationLoop?
 
     init(instance: VMInstance) {
         self.instance = instance
@@ -89,18 +90,17 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     // MARK: - Observation
 
     private func observeServiceChanges() {
-        withObservationTracking {
-            // Read clipboardService itself so observation re-fires when it transitions nil → non-nil
-            let service = self.instance.clipboardService
-            _ = service?.clipboardText
-            _ = service?.isConnected
-        } onChange: {
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                self.updateUI()
-                self.observeServiceChanges()
+        serviceObservation = observeRecurring(
+            track: { [weak self] in
+                // Read clipboardService itself so observation re-fires when it transitions nil → non-nil
+                let service = self?.instance.clipboardService
+                _ = service?.clipboardText
+                _ = service?.isConnected
+            },
+            apply: { [weak self] in
+                self?.updateUI()
             }
-        }
+        )
     }
 
     private func updateUI() {

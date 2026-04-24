@@ -75,7 +75,8 @@ Kernova/
 │   ├── DataFormatters.swift            # Human-readable formatting for bytes, CPU counts, etc.
 │   ├── FileManagerExtensions.swift     # FileManager convenience methods
 │   ├── NSImageExtensions.swift         # Nil-safe SF Symbol image loading
-│   └── NSViewExtensions.swift          # Full-size subview constraint helper
+│   ├── NSViewExtensions.swift          # Full-size subview constraint helper
+│   └── ObservationLoop.swift           # observeRecurring(track:apply:) helper wrapping withObservationTracking
 └── Resources/
     ├── Assets.xcassets/                # App icons and image assets
     └── Kernova.entitlements            # com.apple.security.virtualization entitlement
@@ -257,11 +258,12 @@ SystemSleepWatcher ──sleep/wake──→ VMLibraryViewModel ──pause/resu
 
 ### Utilities
 
-**Files:** `DataFormatters.swift`, `FileManagerExtensions.swift`, `NSImageExtensions.swift`, `NSViewExtensions.swift`
+**Files:** `DataFormatters.swift`, `FileManagerExtensions.swift`, `NSImageExtensions.swift`, `NSViewExtensions.swift`, `ObservationLoop.swift`
 
 - `DataFormatters` — human-readable formatting for bytes (e.g., "107.4 GB"), CPU counts, etc.
 - `FileManagerExtensions` — convenience methods on `FileManager`
 - `NSImageExtensions` — `NSImage.systemSymbol(_:accessibilityDescription:)` for nil-safe SF Symbol loading with error logging
+- `ObservationLoop` — `observeRecurring(track:apply:) -> ObservationLoop` helper that encapsulates the `withObservationTracking` + `Task { @MainActor }` + recursive re-register dance. Returns a cancel token stored by the caller; the loop stops when the token is deallocated or `cancel()` is called. Used by all 8 observation sites (`MainWindowController`, `VMDisplayWindowController`, `ClipboardWindowController`, `SerialConsoleWindowController`, `DetailContainerViewController`, `ClipboardContentViewController`, `SerialConsoleContentViewController`, `AppDelegate.observeForTermination`) so each site only declares *what* to track and *what* to do — not how to sustain the loop.
 
 ## Key Design Decisions
 
@@ -317,9 +319,9 @@ SystemSleepWatcher ──sleep/wake──→ VMLibraryViewModel ──pause/resu
 
 ### 7. Native NSToolbar with observation-driven validation
 
-**What:** The main window and display window use `NSToolbar` with `NSToolbarDelegate` creating native `NSToolbarItem`s. Shared toolbar groups (lifecycle, suspend, display) are managed by `VMToolbarManager`, a `@MainActor` `NSObject` subclass that handles item creation, state updates, and action routing for both controllers. Each controller configures it with an `instanceProvider` closure and a `Configuration` struct that captures per-controller differences (identifier strings, `isPreparing` checks, display capability gating). Toolbar state is driven by `withObservationTracking` on the view model, directly setting `isEnabled` on subitems on change. All toolbar item groups use `autovalidates = false` to prevent AppKit's automatic validation from overriding the observation-driven state.
+**What:** The main window and display window use `NSToolbar` with `NSToolbarDelegate` creating native `NSToolbarItem`s. Shared toolbar groups (lifecycle, suspend, display) are managed by `VMToolbarManager`, a `@MainActor` `NSObject` subclass that handles item creation, state updates, and action routing for both controllers. Each controller configures it with an `instanceProvider` closure and a `Configuration` struct that captures per-controller differences (identifier strings, `isPreparing` checks, display capability gating). Toolbar state is driven by the shared `observeRecurring` helper (see Utilities), directly setting `isEnabled` on subitems on change. All toolbar item groups use `autovalidates = false` to prevent AppKit's automatic validation from overriding the observation-driven state.
 
-**Why:** Native `NSToolbarItem`s provide reliable layout, proper `.sidebarTrackingSeparator` support, and standard macOS toolbar appearance. The `withObservationTracking` pattern (used in all three window controllers) re-evaluates on any observed property change and re-registers itself, providing reactive updates without SwiftUI. The shared `VMToolbarManager` eliminates ~150 lines of duplicated toolbar logic between `MainWindowController` and `VMDisplayWindowController`, ensuring toolbar changes are applied in one place.
+**Why:** Native `NSToolbarItem`s provide reliable layout, proper `.sidebarTrackingSeparator` support, and standard macOS toolbar appearance. The `observeRecurring` helper handles re-registration after each change and `[weak self]` teardown uniformly across every window controller, so toolbar updates stay reactive without SwiftUI and without duplicating the observation-loop boilerplate at each site. The shared `VMToolbarManager` eliminates ~150 lines of duplicated toolbar logic between `MainWindowController` and `VMDisplayWindowController`, ensuring toolbar changes are applied in one place.
 
 **Alternatives:** SwiftUI `.toolbar` modifiers on a hosting controller — simpler declarative API but caused persistent layout issues with grouped items and sidebar tracking.
 

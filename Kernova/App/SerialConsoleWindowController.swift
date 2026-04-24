@@ -14,7 +14,7 @@ final class SerialConsoleWindowController: NSWindowController, NSWindowDelegate 
     private static let logger = Logger(subsystem: "com.kernova.app", category: "SerialConsoleWindowController")
 
     let instance: VMInstance
-    private var observingStatus = false
+    private var statusObservation: ObservationLoop?
 
     init(instance: VMInstance) {
         self.instance = instance
@@ -48,14 +48,14 @@ final class SerialConsoleWindowController: NSWindowController, NSWindowDelegate 
 
     override func showWindow(_ sender: Any?) {
         super.showWindow(sender)
-        if !observingStatus { observeStatus() }
+        if statusObservation == nil { observeStatus() }
         Self.logger.debug("Serial console window shown for VM '\(self.instance.name, privacy: .public)'")
     }
 
     // MARK: - NSWindowDelegate
 
     func windowWillClose(_ notification: Notification) {
-        observingStatus = false
+        statusObservation?.cancel()
         Self.logger.debug("Serial console window closing for VM '\(self.instance.name, privacy: .public)'")
     }
 
@@ -63,20 +63,18 @@ final class SerialConsoleWindowController: NSWindowController, NSWindowDelegate 
 
     /// Automatically closes the serial console window when the VM stops or errors out.
     private func observeStatus() {
-        observingStatus = true
-        withObservationTracking {
-            _ = self.instance.status
-        } onChange: {
-            Task { @MainActor [weak self] in
-                guard let self, self.observingStatus else { return }
+        statusObservation = observeRecurring(
+            track: { [weak self] in
+                _ = self?.instance.status
+            },
+            apply: { [weak self] in
+                guard let self else { return }
                 let status = self.instance.status
                 if status == .stopped || status == .error {
                     Self.logger.notice("Auto-closing serial console for VM '\(self.instance.name, privacy: .public)' (status: \(status.displayName, privacy: .public))")
                     self.window?.close()
-                } else {
-                    self.observeStatus()
                 }
             }
-        }
+        )
     }
 }
