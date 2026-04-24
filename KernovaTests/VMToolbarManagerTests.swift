@@ -22,7 +22,8 @@ struct VMToolbarManagerTests {
     private func makeManager(
         instance: VMInstance? = nil,
         checksPreparing: Bool = true,
-        gatesDisplayOnCapability: Bool = true
+        gatesDisplayOnCapability: Bool = true,
+        includeSettingsToggle: Bool = true
     ) -> VMToolbarManager {
         VMToolbarManager(
             configuration: .init(
@@ -31,6 +32,7 @@ struct VMToolbarManagerTests {
                 clipboardID: NSToolbarItem.Identifier("testClipboard"),
                 removableMediaID: NSToolbarItem.Identifier("testRemovableMedia"),
                 displayID: NSToolbarItem.Identifier("testDisplay"),
+                settingsToggleID: includeSettingsToggle ? NSToolbarItem.Identifier("testSettingsToggle") : nil,
                 checksPreparing: checksPreparing,
                 gatesDisplayOnCapability: gatesDisplayOnCapability
             ),
@@ -92,15 +94,23 @@ struct VMToolbarManagerTests {
         #expect(item == nil)
     }
 
-    @Test("sharedItemIdentifiers contains all five identifiers")
+    @Test("sharedItemIdentifiers contains all configured identifiers")
     func sharedIdentifiers() {
         let manager = makeManager()
-        #expect(manager.sharedItemIdentifiers.count == 5)
+        #expect(manager.sharedItemIdentifiers.count == 6)
         #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testLifecycle")))
         #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testSaveState")))
         #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testClipboard")))
         #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testRemovableMedia")))
         #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testDisplay")))
+        #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testSettingsToggle")))
+    }
+
+    @Test("sharedItemIdentifiers omits settings toggle when not configured")
+    func sharedIdentifiersWithoutSettingsToggle() {
+        let manager = makeManager(includeSettingsToggle: false)
+        #expect(manager.sharedItemIdentifiers.count == 5)
+        #expect(!manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testSettingsToggle")))
     }
 
     // MARK: - Nil Instance
@@ -347,6 +357,80 @@ struct VMToolbarManagerTests {
 
         let display = toolbar.items.first { $0.itemIdentifier.rawValue == "testDisplay" } as? NSToolbarItemGroup
         #expect(display?.subitems[1].label == "Exit Fullscreen")
+    }
+
+    // MARK: - Settings Toggle
+
+    @Test("Settings toggle is created as a plain NSToolbarItem (not a group)")
+    func settingsToggleItemStructure() {
+        let manager = makeManager()
+        let item = manager.makeToolbarItem(for: NSToolbarItem.Identifier("testSettingsToggle"))
+        #expect(item != nil)
+        #expect(!(item is NSToolbarItemGroup))
+        #expect(item?.label == "Show Settings")
+    }
+
+    @Test("Settings toggle is disabled when status has no active display")
+    func settingsToggleDisabledWhenStopped() {
+        let instance = makeInstance(status: .stopped)
+        let manager = makeManager(instance: instance)
+        let (toolbar, _, _) = makeToolbar(manager: manager)
+
+        manager.updateToolbarItems(in: toolbar)
+
+        let item = toolbar.items.first { $0.itemIdentifier.rawValue == "testSettingsToggle" }
+        #expect(item?.isEnabled == false)
+    }
+
+    @Test("Settings toggle is enabled when status has active display")
+    func settingsToggleEnabledWhenRunning() {
+        let instance = makeInstance(status: .running)
+        let manager = makeManager(instance: instance)
+        let (toolbar, _, _) = makeToolbar(manager: manager)
+
+        manager.updateToolbarItems(in: toolbar)
+
+        let item = toolbar.items.first { $0.itemIdentifier.rawValue == "testSettingsToggle" }
+        #expect(item?.isEnabled == true)
+    }
+
+    @Test("Settings toggle shows 'Show Settings' label when in display mode")
+    func settingsToggleLabelInDisplayMode() {
+        let instance = makeInstance(status: .running)
+        instance.detailPaneMode = .display
+        let manager = makeManager(instance: instance)
+        let (toolbar, _, _) = makeToolbar(manager: manager)
+
+        manager.updateToolbarItems(in: toolbar)
+
+        let item = toolbar.items.first { $0.itemIdentifier.rawValue == "testSettingsToggle" }
+        #expect(item?.label == "Show Settings")
+        #expect(item?.image?.accessibilityDescription == "Show Settings")
+    }
+
+    @Test("Settings toggle shows 'Hide Settings' label when in settings mode")
+    func settingsToggleLabelInSettingsMode() {
+        let instance = makeInstance(status: .running)
+        instance.detailPaneMode = .settings
+        let manager = makeManager(instance: instance)
+        let (toolbar, _, _) = makeToolbar(manager: manager)
+
+        manager.updateToolbarItems(in: toolbar)
+
+        let item = toolbar.items.first { $0.itemIdentifier.rawValue == "testSettingsToggle" }
+        #expect(item?.label == "Hide Settings")
+        #expect(item?.image?.accessibilityDescription == "Hide Settings")
+    }
+
+    @Test("Settings toggle is disabled when instance is nil")
+    func settingsToggleDisabledWhenNilInstance() {
+        let manager = makeManager(instance: nil)
+        let (toolbar, _, _) = makeToolbar(manager: manager)
+
+        manager.updateToolbarItems(in: toolbar)
+
+        let item = toolbar.items.first { $0.itemIdentifier.rawValue == "testSettingsToggle" }
+        #expect(item?.isEnabled == false)
     }
 }
 

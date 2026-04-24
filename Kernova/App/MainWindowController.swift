@@ -28,6 +28,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
                 clipboardID: NSToolbarItem.Identifier("clipboard"),
                 removableMediaID: NSToolbarItem.Identifier("removableMedia"),
                 displayID: NSToolbarItem.Identifier("display"),
+                settingsToggleID: NSToolbarItem.Identifier("settingsToggle"),
                 checksPreparing: true,
                 gatesDisplayOnCapability: true
             ),
@@ -124,6 +125,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
                 _ = self.viewModel.selectedInstance?.displayMode
                 _ = self.viewModel.selectedInstance?.virtualMachine
                 _ = self.viewModel.selectedInstance?.configuration.clipboardSharingEnabled
+                _ = self.viewModel.selectedInstance?.detailPaneMode
             },
             apply: { [weak self] in
                 self?.updateToolbarItems()

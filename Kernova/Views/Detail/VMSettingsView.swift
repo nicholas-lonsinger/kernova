@@ -1,10 +1,14 @@
 import AVFoundation
 import SwiftUI
 
-/// Settings form for editing a stopped VM's configuration.
+/// Settings form for editing a stopped VM's configuration, or viewing a running VM's
+/// configuration in read-only mode.
 struct VMSettingsView: View {
     @Bindable var instance: VMInstance
     @Bindable var viewModel: VMLibraryViewModel
+    /// When `true`, all controls are disabled and a banner explains why. Used when the
+    /// user toggles the detail pane to settings while the VM is running.
+    let isReadOnly: Bool
 
     @State private var editingName = ""
     @State private var showingDiskInfo = false
@@ -44,21 +48,51 @@ struct VMSettingsView: View {
 
     var body: some View {
         ScrollView {
-            Form {
-                generalSection
-                resourcesSection
-                storageDiskSection
-                removableMediaSection
-                sharedDirectoriesSection
-                networkSection
-                audioSection
-                clipboardSection
+            VStack(spacing: 0) {
+                if isReadOnly {
+                    readOnlyBanner
+                        .padding(.horizontal)
+                        .padding(.top)
+                }
+                Form {
+                    generalSection
+                    resourcesSection
+                    storageDiskSection
+                    removableMediaSection
+                    sharedDirectoriesSection
+                    networkSection
+                    audioSection
+                    clipboardSection
+                }
+                .formStyle(.grouped)
+                .padding()
+                .disabled(isReadOnly)
             }
-            .formStyle(.grouped)
-            .padding()
         }
         .onChange(of: instance.configuration) { _, _ in
+            // RATIONALE: In read-only mode no control can mutate the configuration, but
+            // SwiftUI may still invoke onChange when the instance itself is swapped in.
+            // Guarding here avoids a spurious write during that transition.
+            guard !isReadOnly else { return }
             viewModel.saveConfiguration(for: instance)
+        }
+    }
+
+    @ViewBuilder
+    private var readOnlyBanner: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "lock.fill")
+                .foregroundStyle(.orange)
+            Text("Settings are read-only while the VM is running. Stop the VM to make changes.")
+                .font(.callout)
+            Spacer()
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.orange.opacity(0.1))
+                .strokeBorder(Color.orange.opacity(0.3), lineWidth: 1)
         }
     }
 

@@ -12,6 +12,13 @@ enum VMDisplayMode: Sendable {
     case fullscreen
 }
 
+/// Which inline detail pane the user has chosen to view for a running VM.
+/// Ignored when the VM is stopped (settings are always shown then).
+enum DetailPaneMode: Sendable {
+    case display
+    case settings
+}
+
 /// Runtime wrapper around a VM configuration, its backing virtual machine, and current status.
 @MainActor
 @Observable
@@ -79,6 +86,10 @@ final class VMInstance: Identifiable {
 
     /// Where the VM display is currently hosted (inline, pop-out window, or fullscreen).
     var displayMode: VMDisplayMode = .inline
+
+    /// Which inline detail pane is shown for this VM while it has an active display.
+    /// When the VM is stopped, the settings pane is always shown regardless of this value.
+    var detailPaneMode: DetailPaneMode = .display
 
     // MARK: - Clipboard Sharing
 
