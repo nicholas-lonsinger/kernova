@@ -365,6 +365,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         Task { await viewModel.save(instance) }
     }
 
+    @objc func toggleSettingsPane(_ sender: Any?) {
+        guard let instance = activeInstance,
+              instance.status.hasActiveDisplay else { return }
+        instance.detailPaneMode = instance.detailPaneMode == .settings ? .display : .settings
+    }
+
     @objc func renameVM(_ sender: Any?) {
         guard let instance = activeInstance else { return }
         viewModel.renameVM(instance)

@@ -110,6 +110,7 @@ final class DetailContainerViewController: NSViewController {
                 _ = self.viewModel.selectedInstance
                 _ = self.viewModel.selectedInstance?.status
                 _ = self.viewModel.selectedInstance?.displayMode
+                _ = self.viewModel.selectedInstance?.detailPaneMode
                 _ = self.viewModel.selectedInstance?.virtualMachine
                 // Track instances with backing views so we detect when they stop or leave inline mode.
                 // Also track the instances array itself so we detect additions/removals.
@@ -145,7 +146,8 @@ final class DetailContainerViewController: NSViewController {
         guard let instance = viewModel.selectedInstance,
               let vm = instance.virtualMachine,
               instance.displayMode == .inline,
-              instance.status.hasActiveDisplay
+              instance.status.hasActiveDisplay,
+              instance.detailPaneMode == .display
         else {
             if let currentID = activeBackingViewID, let current = backingViews[currentID] {
                 current.isHidden = true
