@@ -113,6 +113,12 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     // MARK: - Toolbar State Observation
 
+    // RATIONALE: No `observing` gate flag here. A previous `observingToolbar`
+    // flag cleared in windowWillClose stranded the toolbar on stale state after
+    // the main window was hidden and re-shown from the Dock (one-shot
+    // re-registration never resumed). [weak self] already handles the only real
+    // teardown case (controller deallocation); writes against a hidden toolbar
+    // are harmless no-ops.
     private func observeToolbarState() {
         withObservationTracking {
             _ = self.viewModel.selectedID
