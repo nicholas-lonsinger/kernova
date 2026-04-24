@@ -11,7 +11,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     private let toolbarManager: VMToolbarManager
     private let splitViewController = NSSplitViewController()
     private let sidebarItem: NSSplitViewItem
-    private var observingToolbar = false
     private var sidebarCollapseObservation: NSKeyValueObservation?
 
     private static let logger = Logger(subsystem: "com.kernova.app", category: "MainWindowController")
@@ -85,13 +84,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         window?.orderBack(nil)
     }
 
-    // MARK: - NSWindowDelegate
-
-    func windowWillClose(_ notification: Notification) {
-        observingToolbar = false
-        Self.logger.debug("Main window closing, toolbar observation stopped")
-    }
-
     // MARK: - Sidebar Collapse Observation
 
     private func observeSidebarCollapse() {
@@ -122,7 +114,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     // MARK: - Toolbar State Observation
 
     private func observeToolbarState() {
-        observingToolbar = true
         withObservationTracking {
             _ = self.viewModel.selectedID
             _ = self.viewModel.selectedInstance?.status
@@ -132,7 +123,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             _ = self.viewModel.selectedInstance?.configuration.clipboardSharingEnabled
         } onChange: {
             Task { @MainActor [weak self] in
-                guard let self, self.observingToolbar else { return }
+                guard let self else { return }
                 self.updateToolbarItems()
                 self.observeToolbarState()
             }
