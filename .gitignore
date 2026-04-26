@@ -47,6 +47,7 @@ Thumbs.db
 # Claude Code
 .claude/*.local.*
 .claude/worktrees/
+.claude/scheduled_tasks.lock
 CLAUDE.local.md
 
 # Secrets
