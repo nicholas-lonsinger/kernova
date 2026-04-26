@@ -381,6 +381,37 @@ struct VMLibraryViewModelTests {
         #expect(virtService.stopCallCount == 1)
     }
 
+    @Test("resumeAndStop clears confirmation state after dispatch")
+    func resumeAndStopClearsConfirmationState() async {
+        let (viewModel, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        instance.status = .paused
+        viewModel.instances.append(instance)
+        viewModel.instanceToStopPaused = instance
+        viewModel.showStopPausedConfirmation = true
+
+        await viewModel.resumeAndStop(instance)
+
+        #expect(viewModel.instanceToStopPaused == nil)
+        #expect(viewModel.showStopPausedConfirmation == false)
+    }
+
+    @Test("forceStopFromPaused dispatches forceStop and clears state")
+    func forceStopFromPausedDispatches() async {
+        let (viewModel, _, _, virtService) = makeViewModel()
+        let instance = makeInstance()
+        instance.status = .paused
+        viewModel.instances.append(instance)
+        viewModel.instanceToStopPaused = instance
+        viewModel.showStopPausedConfirmation = true
+
+        await viewModel.forceStopFromPaused(instance)
+
+        #expect(virtService.forceStopCallCount == 1)
+        #expect(viewModel.instanceToStopPaused == nil)
+        #expect(viewModel.showStopPausedConfirmation == false)
+    }
+
     @Test("resumeAndStop presents error if resume fails")
     func resumeAndStopPresentsErrorOnResumeFailure() async {
         let virtService = MockVirtualizationService()

@@ -131,7 +131,7 @@ private struct LifecycleAlerts: ViewModifier {
                 // alert. The message text below makes the destructive nature
                 // explicit so one confirmation is sufficient.
                 Button("Force Stop", role: .destructive) {
-                    Task { await viewModel.forceStop(vm) }
+                    Task { await viewModel.forceStopFromPaused(vm) }
                 }
                 Button("Cancel", role: .cancel) {}
             } message: { vm in

@@ -273,6 +273,16 @@ final class VMLibraryViewModel {
             Self.logger.error("Failed to resume-and-stop '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
             presentError(error)
         }
+        instanceToStopPaused = nil
+        showStopPausedConfirmation = false
+    }
+
+    /// Force-stops a paused VM via the stop-paused confirmation sheet's "Force Stop" action.
+    /// Wrapper around `forceStop` that clears the alert state, matching `deleteConfirmed`'s pattern.
+    func forceStopFromPaused(_ instance: VMInstance) async {
+        await forceStop(instance)
+        instanceToStopPaused = nil
+        showStopPausedConfirmation = false
     }
 
     func forceStop(_ instance: VMInstance) async {
