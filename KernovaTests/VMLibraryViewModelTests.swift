@@ -357,6 +357,89 @@ struct VMLibraryViewModelTests {
         #expect(viewModel.errorMessage != nil)
     }
 
+    // MARK: - Stop Paused Confirmation
+
+    // Note: the `stop()` branch that diverts a *live-paused* instance to the
+    // confirmation sheet (status == .paused && virtualMachine != nil) is not
+    // directly unit-tested here. Triggering it requires a non-nil
+    // VZVirtualMachine, which the existing test infrastructure cannot
+    // construct (matching VMInstanceTests.swift:82 / VMStatusSerialConsoleTests.swift:25).
+    // The branch is exercised at integration time. Tests below cover the
+    // surrounding behavior: resumeAndStop dispatch, error surfacing, and
+    // confirming `.running` instances skip the confirmation flow.
+
+    @Test("resumeAndStop dispatches resume then stop")
+    func resumeAndStopDispatches() async {
+        let (viewModel, _, _, virtService) = makeViewModel()
+        let instance = makeInstance()
+        instance.status = .paused
+        viewModel.instances.append(instance)
+
+        await viewModel.resumeAndStop(instance)
+
+        #expect(virtService.resumeCallCount == 1)
+        #expect(virtService.stopCallCount == 1)
+    }
+
+    @Test("resumeAndStop clears confirmation state after dispatch")
+    func resumeAndStopClearsConfirmationState() async {
+        let (viewModel, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        instance.status = .paused
+        viewModel.instances.append(instance)
+        viewModel.instanceToStopPaused = instance
+        viewModel.showStopPausedConfirmation = true
+
+        await viewModel.resumeAndStop(instance)
+
+        #expect(viewModel.instanceToStopPaused == nil)
+        #expect(viewModel.showStopPausedConfirmation == false)
+    }
+
+    @Test("forceStopFromPaused dispatches forceStop and clears state")
+    func forceStopFromPausedDispatches() async {
+        let (viewModel, _, _, virtService) = makeViewModel()
+        let instance = makeInstance()
+        instance.status = .paused
+        viewModel.instances.append(instance)
+        viewModel.instanceToStopPaused = instance
+        viewModel.showStopPausedConfirmation = true
+
+        await viewModel.forceStopFromPaused(instance)
+
+        #expect(virtService.forceStopCallCount == 1)
+        #expect(viewModel.instanceToStopPaused == nil)
+        #expect(viewModel.showStopPausedConfirmation == false)
+    }
+
+    @Test("resumeAndStop presents error if resume fails")
+    func resumeAndStopPresentsErrorOnResumeFailure() async {
+        let virtService = MockVirtualizationService()
+        virtService.resumeError = VirtualizationError.noVirtualMachine
+        let (viewModel, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let instance = makeInstance()
+        instance.status = .paused
+
+        await viewModel.resumeAndStop(instance)
+
+        #expect(viewModel.showError == true)
+        #expect(virtService.stopCallCount == 0)
+    }
+
+    @Test("stop on running VM still delegates directly without confirmation")
+    func stopRunningSkipsConfirmation() {
+        let (viewModel, _, _, virtService) = makeViewModel()
+        let instance = makeInstance()
+        instance.status = .running
+        viewModel.instances.append(instance)
+
+        viewModel.stop(instance)
+
+        #expect(virtService.stopCallCount == 1)
+        #expect(viewModel.showStopPausedConfirmation == false)
+        #expect(viewModel.instanceToStopPaused == nil)
+    }
+
     @Test("pause presents error on service failure")
     func pausePresentsError() async {
         let virtService = MockVirtualizationService()
