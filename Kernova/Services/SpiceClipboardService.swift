@@ -48,17 +48,6 @@ final class SpiceClipboardService {
     /// instead of waiting for a REQUEST.
     private var guestSupportsByDemand = false
 
-    // MARK: - Heartbeat
-
-    private static let heartbeatInterval: Duration = .seconds(5)
-    private static let heartbeatTimeout: Duration = .seconds(5)
-
-    /// Set to `true` whenever a valid message arrives from the guest; reset by
-    /// the heartbeat loop after each check. Avoids wall-clock comparisons.
-    private var receivedSinceLastProbe = false
-
-    private var heartbeatTask: Task<Void, Never>?
-
     private static let logger = Logger(subsystem: "com.kernova.app", category: "SpiceClipboardService")
 
     // MARK: - Init
@@ -77,7 +66,7 @@ final class SpiceClipboardService {
         Self.logger.info("SPICE clipboard service started")
     }
 
-    /// Stops reading, cancels the heartbeat, and releases resources.
+    /// Stops reading, marks the connection inactive, and releases resources.
     func stop() {
         disconnect()
         outputPipe.fileHandleForReading.readabilityHandler = nil
@@ -154,10 +143,6 @@ final class SpiceClipboardService {
             Self.logger.error("SPICE parser buffer reset — stream may be corrupted")
         }
 
-        if !messages.isEmpty {
-            receivedSinceLastProbe = true
-        }
-
         for message in messages {
             switch message {
             case .announceCapabilities(let request, let caps):
@@ -200,7 +185,6 @@ final class SpiceClipboardService {
 
         isConnected = true
         guestSupportsByDemand = byDemand
-        startHeartbeat()
 
         // If the guest requested our capabilities, send them back (non-requesting)
         if request {
@@ -286,53 +270,9 @@ final class SpiceClipboardService {
         }
     }
 
-    // MARK: - Heartbeat
-
-    /// Monitors guest agent liveness. Skips probing when the agent was recently
-    /// active; otherwise sends a capabilities request and waits for a reply.
-    /// Marks the connection as dead and stops if no response arrives.
-    private func startHeartbeat() {
-        heartbeatTask?.cancel()
-        Self.logger.debug("Starting heartbeat monitor")
-        heartbeatTask = Task { [weak self] in
-            do {
-                while true {
-                    try await Task.sleep(for: Self.heartbeatInterval)
-                    guard let self, self.isConnected else { return }
-
-                    // Agent was active during the interval — no probe needed
-                    if self.receivedSinceLastProbe {
-                        self.receivedSinceLastProbe = false
-                        continue
-                    }
-
-                    // No recent activity — send a probe and wait for response
-                    self.sendCapabilities()
-
-                    try await Task.sleep(for: Self.heartbeatTimeout)
-                    guard self.isConnected else { return }
-
-                    if self.receivedSinceLastProbe {
-                        self.receivedSinceLastProbe = false
-                        continue
-                    }
-
-                    self.disconnect()
-                    Self.logger.notice("Heartbeat timeout — guest agent not responding")
-                    return
-                }
-            } catch {
-                // CancellationError from stop() — normal teardown
-            }
-        }
-    }
-
-    /// Cancels the heartbeat and marks the connection as inactive.
+    /// Marks the connection as inactive.
     private func disconnect() {
-        heartbeatTask?.cancel()
-        heartbeatTask = nil
         isConnected = false
-        receivedSinceLastProbe = false
     }
 
     // MARK: - Capability Helpers
