@@ -10,6 +10,7 @@
 		A10000F1 /* DiskTemplates in Resources */ = {isa = PBXBuildFile; fileRef = A10000F0 /* DiskTemplates */; };
 		A100010B /* KernovaRelaunchHelper in Embed Helpers */ = {isa = PBXBuildFile; fileRef = A1000100 /* KernovaRelaunchHelper */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		A2000001 /* KernovaProtocol in Frameworks */ = {isa = PBXBuildFile; productRef = A2000002 /* KernovaProtocol */; };
+		A2000004 /* KernovaProtocol in Frameworks */ = {isa = PBXBuildFile; productRef = A2000005 /* KernovaProtocol */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -129,6 +130,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A2000004 /* KernovaProtocol in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -250,6 +252,7 @@
 			);
 			name = KernovaGuestAgent;
 			packageProductDependencies = (
+				A2000005 /* KernovaProtocol */,
 			);
 			productName = KernovaGuestAgent;
 			productReference = A1000200 /* KernovaGuestAgent */;
@@ -759,6 +762,10 @@
 
 /* Begin XCSwiftPackageProductDependency section */
 		A2000002 /* KernovaProtocol */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = KernovaProtocol;
+		};
+		A2000005 /* KernovaProtocol */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = KernovaProtocol;
 		};
