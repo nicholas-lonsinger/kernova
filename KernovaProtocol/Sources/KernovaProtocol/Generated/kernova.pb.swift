@@ -58,11 +58,30 @@ public struct Kernova_V1_Frame: Sendable {
     set {payload = .error(newValue)}
   }
 
+  /// Service payloads occupy reserved number ranges so each service can grow
+  /// independently without colliding:
+  ///   20..29 reserved for clipboard
+  ///   30..39 reserved for logging
+  ///   40..49 reserved for drag/drop
+  public var logRecord: Kernova_V1_LogRecord {
+    get {
+      if case .logRecord(let v)? = payload {return v}
+      return Kernova_V1_LogRecord()
+    }
+    set {payload = .logRecord(newValue)}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public enum OneOf_Payload: Equatable, Sendable {
     case hello(Kernova_V1_Hello)
     case error(Kernova_V1_Error)
+    /// Service payloads occupy reserved number ranges so each service can grow
+    /// independently without colliding:
+    ///   20..29 reserved for clipboard
+    ///   30..39 reserved for logging
+    ///   40..49 reserved for drag/drop
+    case logRecord(Kernova_V1_LogRecord)
 
   }
 
@@ -124,6 +143,93 @@ public struct Kernova_V1_AgentInfo: Sendable {
   public init() {}
 }
 
+/// One unit of log output forwarded from a guest agent to the host.
+///
+/// The guest formats the message text locally so all privacy decisions stay on
+/// the guest side; the host treats `message` as opaque and republishes it via
+/// its own logger. Levels map directly onto Apple's `os.Logger` log levels so
+/// the host can pass them through with the same severity semantics.
+public struct Kernova_V1_LogRecord: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// Wall-clock time at which the record was emitted on the guest, expressed
+  /// as milliseconds since the Unix epoch in UTC. Hosts may apply their own
+  /// clock-skew correction; the field is intended for chronological ordering
+  /// and post-mortem analysis, not strict synchronisation.
+  public var timestampMs: Int64 = 0
+
+  public var level: Kernova_V1_LogRecord.Level = .unspecified
+
+  /// Logger subsystem and category from the guest, e.g. "com.kernova.agent" /
+  /// "GuestClipboardAgent". Treated as opaque labels by the host.
+  public var subsystem: String = String()
+
+  public var category: String = String()
+
+  /// Pre-formatted message text. Must be valid UTF-8.
+  public var message: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public enum Level: SwiftProtobuf.Enum, Swift.CaseIterable {
+    public typealias RawValue = Int
+    case unspecified // = 0
+    case debug // = 1
+    case info // = 2
+    case notice // = 3
+    case warning // = 4
+    case error // = 5
+    case fault // = 6
+    case UNRECOGNIZED(Int)
+
+    public init() {
+      self = .unspecified
+    }
+
+    public init?(rawValue: Int) {
+      switch rawValue {
+      case 0: self = .unspecified
+      case 1: self = .debug
+      case 2: self = .info
+      case 3: self = .notice
+      case 4: self = .warning
+      case 5: self = .error
+      case 6: self = .fault
+      default: self = .UNRECOGNIZED(rawValue)
+      }
+    }
+
+    public var rawValue: Int {
+      switch self {
+      case .unspecified: return 0
+      case .debug: return 1
+      case .info: return 2
+      case .notice: return 3
+      case .warning: return 4
+      case .error: return 5
+      case .fault: return 6
+      case .UNRECOGNIZED(let i): return i
+      }
+    }
+
+    // The compiler won't synthesize support with the UNRECOGNIZED case.
+    public static let allCases: [Kernova_V1_LogRecord.Level] = [
+      .unspecified,
+      .debug,
+      .info,
+      .notice,
+      .warning,
+      .error,
+      .fault,
+    ]
+
+  }
+
+  public init() {}
+}
+
 /// Reported by either side when a request cannot be fulfilled, or as an
 /// asynchronous notification of a problem (e.g. malformed request, capability
 /// mismatch). The receiver may log and continue; it should not assume the
@@ -165,7 +271,7 @@ fileprivate let _protobuf_package = "kernova.v1"
 
 extension Kernova_V1_Frame: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Frame"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}protocol_version\0\u{2}\u{9}hello\0\u{1}error\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}protocol_version\0\u{2}\u{9}hello\0\u{1}error\0\u{4}\u{13}log_record\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -200,6 +306,19 @@ extension Kernova_V1_Frame: SwiftProtobuf.Message, SwiftProtobuf._MessageImpleme
           self.payload = .error(v)
         }
       }()
+      case 30: try {
+        var v: Kernova_V1_LogRecord?
+        var hadOneofValue = false
+        if let current = self.payload {
+          hadOneofValue = true
+          if case .logRecord(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.payload = .logRecord(v)
+        }
+      }()
       default: break
       }
     }
@@ -221,6 +340,10 @@ extension Kernova_V1_Frame: SwiftProtobuf.Message, SwiftProtobuf._MessageImpleme
     case .error?: try {
       guard case .error(let v)? = self.payload else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 11)
+    }()
+    case .logRecord?: try {
+      guard case .logRecord(let v)? = self.payload else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 30)
     }()
     case nil: break
     }
@@ -317,6 +440,60 @@ extension Kernova_V1_AgentInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageImp
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
+}
+
+extension Kernova_V1_LogRecord: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".LogRecord"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}timestamp_ms\0\u{1}level\0\u{1}subsystem\0\u{1}category\0\u{1}message\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularInt64Field(value: &self.timestampMs) }()
+      case 2: try { try decoder.decodeSingularEnumField(value: &self.level) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.subsystem) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.category) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.message) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.timestampMs != 0 {
+      try visitor.visitSingularInt64Field(value: self.timestampMs, fieldNumber: 1)
+    }
+    if self.level != .unspecified {
+      try visitor.visitSingularEnumField(value: self.level, fieldNumber: 2)
+    }
+    if !self.subsystem.isEmpty {
+      try visitor.visitSingularStringField(value: self.subsystem, fieldNumber: 3)
+    }
+    if !self.category.isEmpty {
+      try visitor.visitSingularStringField(value: self.category, fieldNumber: 4)
+    }
+    if !self.message.isEmpty {
+      try visitor.visitSingularStringField(value: self.message, fieldNumber: 5)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Kernova_V1_LogRecord, rhs: Kernova_V1_LogRecord) -> Bool {
+    if lhs.timestampMs != rhs.timestampMs {return false}
+    if lhs.level != rhs.level {return false}
+    if lhs.subsystem != rhs.subsystem {return false}
+    if lhs.category != rhs.category {return false}
+    if lhs.message != rhs.message {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Kernova_V1_LogRecord.Level: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0LEVEL_UNSPECIFIED\0\u{1}LEVEL_DEBUG\0\u{1}LEVEL_INFO\0\u{1}LEVEL_NOTICE\0\u{1}LEVEL_WARNING\0\u{1}LEVEL_ERROR\0\u{1}LEVEL_FAULT\0")
 }
 
 extension Kernova_V1_Error: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {

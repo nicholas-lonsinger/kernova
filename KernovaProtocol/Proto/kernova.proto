@@ -26,6 +26,7 @@ message Frame {
     //   20..29 reserved for clipboard
     //   30..39 reserved for logging
     //   40..49 reserved for drag/drop
+    LogRecord log_record = 30;
   }
 }
 
@@ -52,6 +53,40 @@ message AgentInfo {
   string os = 1;             // e.g. "macOS", "Linux"
   string os_version = 2;     // e.g. "26.0", "6.8.0"
   string agent_version = 3;  // e.g. "0.1.0"
+}
+
+// One unit of log output forwarded from a guest agent to the host.
+//
+// The guest formats the message text locally so all privacy decisions stay on
+// the guest side; the host treats `message` as opaque and republishes it via
+// its own logger. Levels map directly onto Apple's `os.Logger` log levels so
+// the host can pass them through with the same severity semantics.
+message LogRecord {
+  enum Level {
+    LEVEL_UNSPECIFIED = 0;
+    LEVEL_DEBUG = 1;
+    LEVEL_INFO = 2;
+    LEVEL_NOTICE = 3;
+    LEVEL_WARNING = 4;
+    LEVEL_ERROR = 5;
+    LEVEL_FAULT = 6;
+  }
+
+  // Wall-clock time at which the record was emitted on the guest, expressed
+  // as milliseconds since the Unix epoch in UTC. Hosts may apply their own
+  // clock-skew correction; the field is intended for chronological ordering
+  // and post-mortem analysis, not strict synchronisation.
+  int64 timestamp_ms = 1;
+
+  Level level = 2;
+
+  // Logger subsystem and category from the guest, e.g. "com.kernova.agent" /
+  // "GuestClipboardAgent". Treated as opaque labels by the host.
+  string subsystem = 3;
+  string category = 4;
+
+  // Pre-formatted message text. Must be valid UTF-8.
+  string message = 5;
 }
 
 // Reported by either side when a request cannot be fulfilled, or as an
