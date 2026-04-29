@@ -33,7 +33,7 @@ Kernova is an AppKit app hosting SwiftUI views that manages virtual machines via
 
 **Concurrency model:** Everything touching `VZVirtualMachine` is `@MainActor`. The codebase uses Swift 6 strict concurrency. Services that interact with VZ are `@MainActor`-isolated; stateless services are `Sendable` structs. Some VZ delegate callbacks use `nonisolated(unsafe)` with `MainActor.assumeIsolated` to bridge back.
 
-**No external dependencies.** The app uses only Apple system frameworks.
+**No third-party dependencies.** The Kernova app target uses only Apple system frameworks. Apple-published Swift Packages (e.g. `apple/swift-protobuf`, currently consumed by the local `KernovaProtocol/` package) are acceptable when they pull their weight; non-Apple packages still require explicit sign-off.
 
 ## Development Guidelines
 
