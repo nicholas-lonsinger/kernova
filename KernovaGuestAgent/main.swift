@@ -53,6 +53,11 @@ logger.notice("Kernova Guest Agent v\(version, privacy: .public) (\(buildNumber,
 // main.swift top-level code is nonisolated in Swift 6, making @MainActor impractical.
 nonisolated(unsafe) var currentAgent: GuestClipboardAgent?
 
+/// Long-lived vsock connection to the host, used for log forwarding (and
+/// eventually clipboard / drag-drop). Independent from the SPICE agent —
+/// either side can be down without affecting the other.
+let vsockConnection = VsockHostConnection()
+
 signal(SIGINT, SIG_IGN)
 signal(SIGTERM, SIG_IGN)
 
@@ -61,6 +66,7 @@ let sigtermSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .mai
 
 let shutdownHandler: () -> Void = {
     logger.notice("Received termination signal, shutting down")
+    vsockConnection.stop()
     currentAgent?.stop()
     currentAgent = nil
     exit(0)
@@ -97,5 +103,6 @@ func attemptConnection() {
     agent.start()
 }
 
+vsockConnection.start()
 attemptConnection()
 dispatchMain()
