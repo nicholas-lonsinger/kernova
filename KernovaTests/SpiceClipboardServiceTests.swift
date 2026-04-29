@@ -182,6 +182,25 @@ struct SpiceClipboardServiceTests {
         #expect(!service.isConnected)
     }
 
+    @Test("Pipe EOF disconnects the service")
+    func pipeEOFDisconnects() async throws {
+        let (service, inputPipe, outputPipe) = makeService()
+        service.start()
+        drainPipe(inputPipe)
+        connect(service)
+        #expect(service.isConnected)
+
+        try outputPipe.fileHandleForWriting.close()
+
+        let deadline = Date().addingTimeInterval(1.0)
+        while service.isConnected && Date() < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        #expect(!service.isConnected)
+        service.stop()
+    }
+
     // MARK: - Inbound Message Handling
 
     @Test("Guest clipboard data updates text and resets grab tracking")
