@@ -46,6 +46,11 @@ if CommandLine.arguments.contains("--version") {
 
 logger.notice("Kernova Guest Agent v\(version, privacy: .public) (\(buildNumber, privacy: .public)) started")
 
+// Make the same notice visible on the host once the vsock connection is up.
+// Forwarded messages are routed under com.kernova.guest in the host's log
+// store via VsockGuestLogService.
+let agentSubsystem = "com.kernova.agent"
+
 // MARK: - Signal Handling
 
 // RATIONALE: nonisolated(unsafe) is correct here because all access to currentAgent occurs
@@ -66,6 +71,12 @@ let sigtermSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .mai
 
 let shutdownHandler: () -> Void = {
     logger.notice("Received termination signal, shutting down")
+    vsockConnection.forwardLog(
+        level: .notice,
+        subsystem: agentSubsystem,
+        category: "GuestAgent",
+        message: "Received termination signal, shutting down"
+    )
     vsockConnection.stop()
     currentAgent?.stop()
     currentAgent = nil
@@ -104,5 +115,11 @@ func attemptConnection() {
 }
 
 vsockConnection.start()
+vsockConnection.forwardLog(
+    level: .notice,
+    subsystem: agentSubsystem,
+    category: "GuestAgent",
+    message: "Kernova Guest Agent v\(version) (\(buildNumber)) started"
+)
 attemptConnection()
 dispatchMain()

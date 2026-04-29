@@ -77,6 +77,28 @@ final class VsockHostConnection: @unchecked Sendable {
         }
     }
 
+    /// Builds and best-effort sends a `LogRecord` frame to the host. Drops
+    /// silently when no connection is active — log forwarding is a
+    /// diagnostic add-on, not a guarantee.
+    @discardableResult
+    func forwardLog(
+        level: Kernova_V1_LogRecord.Level,
+        subsystem: String,
+        category: String,
+        message: String
+    ) -> Bool {
+        var frame = Frame()
+        frame.protocolVersion = 1
+        frame.logRecord = Kernova_V1_LogRecord.with {
+            $0.timestampMs = Int64(Date().timeIntervalSince1970 * 1000)
+            $0.level = level
+            $0.subsystem = subsystem
+            $0.category = category
+            $0.message = message
+        }
+        return send(frame)
+    }
+
     // MARK: - Reconnect loop
 
     private func runReconnectLoop() async {
