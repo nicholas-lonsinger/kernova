@@ -369,12 +369,18 @@ struct ConfigurationBuilder: Sendable {
     /// directly and present clipboard data in a gated UI rather than hijacking the
     /// host clipboard.
     ///
-    /// Returns the (input, output) pipes, or `nil` when clipboard sharing is disabled.
+    /// Linux guests only — macOS guests sync clipboard over vsock (port
+    /// `KernovaVsockPort.clipboard`) instead of a SPICE console port, so the
+    /// SPICE pipes are not configured for them.
+    ///
+    /// Returns the (input, output) pipes, or `nil` when clipboard sharing is
+    /// disabled or routed over vsock instead.
     private func configureClipboardSharing(
         _ vzConfig: VZVirtualMachineConfiguration,
         config: VMConfiguration
     ) -> (input: Pipe, output: Pipe)? {
         guard config.clipboardSharingEnabled else { return nil }
+        guard config.guestOS == .linux else { return nil }
 
         let inputPipe = Pipe()   // host writes → guest reads
         let outputPipe = Pipe()  // guest writes → host reads

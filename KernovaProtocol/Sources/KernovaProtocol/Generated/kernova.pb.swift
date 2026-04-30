@@ -15,6 +15,11 @@
 /// oneof. Field numbers and existing payload types must never be reused; new
 /// services append new payload types at the next available number.
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
+import Foundation
+#endif
 import SwiftProtobuf
 
 // If the compiler emits an error on this type, it is because this file
@@ -25,6 +30,43 @@ import SwiftProtobuf
 fileprivate struct _GeneratedWithProtocGenSwiftVersion: SwiftProtobuf.ProtobufAPIVersionCheck {
   struct _2: SwiftProtobuf.ProtobufAPIVersion_2 {}
   typealias Version = _2
+}
+
+/// Clipboard data formats the channel can carry. Only TEXT_UTF8 is wired up
+/// for the initial release; the enum scaffold is reserved so adding richer
+/// formats later (image, RTF, file lists) doesn't reshape the messages.
+public enum Kernova_V1_ClipboardFormat: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case textUtf8 // = 1
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .textUtf8
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .textUtf8: return 1
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Kernova_V1_ClipboardFormat] = [
+    .unspecified,
+    .textUtf8,
+  ]
+
 }
 
 /// A single message on the wire. The `payload` oneof selects the message type.
@@ -63,6 +105,38 @@ public struct Kernova_V1_Frame: Sendable {
   ///   20..29 reserved for clipboard
   ///   30..39 reserved for logging
   ///   40..49 reserved for drag/drop
+  public var clipboardOffer: Kernova_V1_ClipboardOffer {
+    get {
+      if case .clipboardOffer(let v)? = payload {return v}
+      return Kernova_V1_ClipboardOffer()
+    }
+    set {payload = .clipboardOffer(newValue)}
+  }
+
+  public var clipboardRequest: Kernova_V1_ClipboardRequest {
+    get {
+      if case .clipboardRequest(let v)? = payload {return v}
+      return Kernova_V1_ClipboardRequest()
+    }
+    set {payload = .clipboardRequest(newValue)}
+  }
+
+  public var clipboardData: Kernova_V1_ClipboardData {
+    get {
+      if case .clipboardData(let v)? = payload {return v}
+      return Kernova_V1_ClipboardData()
+    }
+    set {payload = .clipboardData(newValue)}
+  }
+
+  public var clipboardRelease: Kernova_V1_ClipboardRelease {
+    get {
+      if case .clipboardRelease(let v)? = payload {return v}
+      return Kernova_V1_ClipboardRelease()
+    }
+    set {payload = .clipboardRelease(newValue)}
+  }
+
   public var logRecord: Kernova_V1_LogRecord {
     get {
       if case .logRecord(let v)? = payload {return v}
@@ -81,6 +155,10 @@ public struct Kernova_V1_Frame: Sendable {
     ///   20..29 reserved for clipboard
     ///   30..39 reserved for logging
     ///   40..49 reserved for drag/drop
+    case clipboardOffer(Kernova_V1_ClipboardOffer)
+    case clipboardRequest(Kernova_V1_ClipboardRequest)
+    case clipboardData(Kernova_V1_ClipboardData)
+    case clipboardRelease(Kernova_V1_ClipboardRelease)
     case logRecord(Kernova_V1_LogRecord)
 
   }
@@ -230,6 +308,76 @@ public struct Kernova_V1_LogRecord: Sendable {
   public init() {}
 }
 
+/// Sent by either side to advertise that fresh clipboard content is available
+/// in one or more formats. The receiver picks a supported format and replies
+/// with `ClipboardRequest` to pull the actual bytes.
+///
+/// The `generation` field is a monotonically increasing counter scoped to the
+/// sender. Each new offer bumps it; receivers use it to discard requests that
+/// race a newer offer.
+public struct Kernova_V1_ClipboardOffer: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var generation: UInt64 = 0
+
+  public var formats: [Kernova_V1_ClipboardFormat] = []
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// Sent in response to a `ClipboardOffer` to pull the actual clipboard bytes.
+/// `generation` must echo the offer being requested.
+public struct Kernova_V1_ClipboardRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var generation: UInt64 = 0
+
+  public var format: Kernova_V1_ClipboardFormat = .unspecified
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// Carries the bytes of the clipboard content named by an earlier offer.
+/// The `format` and `generation` fields must echo the matching request.
+public struct Kernova_V1_ClipboardData: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var generation: UInt64 = 0
+
+  public var format: Kernova_V1_ClipboardFormat = .unspecified
+
+  public var data: Data = Data()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// Sent by the offerer when an offer is no longer valid (e.g. the user copied
+/// new content before the receiver requested the old). Receivers should drop
+/// any pending state for the named generation.
+public struct Kernova_V1_ClipboardRelease: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var generation: UInt64 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 /// Reported by either side when a request cannot be fulfilled, or as an
 /// asynchronous notification of a problem (e.g. malformed request, capability
 /// mismatch). The receiver may log and continue; it should not assume the
@@ -269,9 +417,13 @@ public struct Kernova_V1_Error: Sendable {
 
 fileprivate let _protobuf_package = "kernova.v1"
 
+extension Kernova_V1_ClipboardFormat: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0CLIPBOARD_FORMAT_UNSPECIFIED\0\u{1}CLIPBOARD_FORMAT_TEXT_UTF8\0")
+}
+
 extension Kernova_V1_Frame: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Frame"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}protocol_version\0\u{2}\u{9}hello\0\u{1}error\0\u{4}\u{13}log_record\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}protocol_version\0\u{2}\u{9}hello\0\u{1}error\0\u{4}\u{9}clipboard_offer\0\u{3}clipboard_request\0\u{3}clipboard_data\0\u{3}clipboard_release\0\u{4}\u{7}log_record\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -304,6 +456,58 @@ extension Kernova_V1_Frame: SwiftProtobuf.Message, SwiftProtobuf._MessageImpleme
         if let v = v {
           if hadOneofValue {try decoder.handleConflictingOneOf()}
           self.payload = .error(v)
+        }
+      }()
+      case 20: try {
+        var v: Kernova_V1_ClipboardOffer?
+        var hadOneofValue = false
+        if let current = self.payload {
+          hadOneofValue = true
+          if case .clipboardOffer(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.payload = .clipboardOffer(v)
+        }
+      }()
+      case 21: try {
+        var v: Kernova_V1_ClipboardRequest?
+        var hadOneofValue = false
+        if let current = self.payload {
+          hadOneofValue = true
+          if case .clipboardRequest(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.payload = .clipboardRequest(v)
+        }
+      }()
+      case 22: try {
+        var v: Kernova_V1_ClipboardData?
+        var hadOneofValue = false
+        if let current = self.payload {
+          hadOneofValue = true
+          if case .clipboardData(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.payload = .clipboardData(v)
+        }
+      }()
+      case 23: try {
+        var v: Kernova_V1_ClipboardRelease?
+        var hadOneofValue = false
+        if let current = self.payload {
+          hadOneofValue = true
+          if case .clipboardRelease(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.payload = .clipboardRelease(v)
         }
       }()
       case 30: try {
@@ -340,6 +544,22 @@ extension Kernova_V1_Frame: SwiftProtobuf.Message, SwiftProtobuf._MessageImpleme
     case .error?: try {
       guard case .error(let v)? = self.payload else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 11)
+    }()
+    case .clipboardOffer?: try {
+      guard case .clipboardOffer(let v)? = self.payload else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 20)
+    }()
+    case .clipboardRequest?: try {
+      guard case .clipboardRequest(let v)? = self.payload else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 21)
+    }()
+    case .clipboardData?: try {
+      guard case .clipboardData(let v)? = self.payload else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 22)
+    }()
+    case .clipboardRelease?: try {
+      guard case .clipboardRelease(let v)? = self.payload else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 23)
     }()
     case .logRecord?: try {
       guard case .logRecord(let v)? = self.payload else { preconditionFailure() }
@@ -494,6 +714,146 @@ extension Kernova_V1_LogRecord: SwiftProtobuf.Message, SwiftProtobuf._MessageImp
 
 extension Kernova_V1_LogRecord.Level: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0LEVEL_UNSPECIFIED\0\u{1}LEVEL_DEBUG\0\u{1}LEVEL_INFO\0\u{1}LEVEL_NOTICE\0\u{1}LEVEL_WARNING\0\u{1}LEVEL_ERROR\0\u{1}LEVEL_FAULT\0")
+}
+
+extension Kernova_V1_ClipboardOffer: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ClipboardOffer"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}generation\0\u{1}formats\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt64Field(value: &self.generation) }()
+      case 2: try { try decoder.decodeRepeatedEnumField(value: &self.formats) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.generation != 0 {
+      try visitor.visitSingularUInt64Field(value: self.generation, fieldNumber: 1)
+    }
+    if !self.formats.isEmpty {
+      try visitor.visitPackedEnumField(value: self.formats, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Kernova_V1_ClipboardOffer, rhs: Kernova_V1_ClipboardOffer) -> Bool {
+    if lhs.generation != rhs.generation {return false}
+    if lhs.formats != rhs.formats {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Kernova_V1_ClipboardRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ClipboardRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}generation\0\u{1}format\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt64Field(value: &self.generation) }()
+      case 2: try { try decoder.decodeSingularEnumField(value: &self.format) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.generation != 0 {
+      try visitor.visitSingularUInt64Field(value: self.generation, fieldNumber: 1)
+    }
+    if self.format != .unspecified {
+      try visitor.visitSingularEnumField(value: self.format, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Kernova_V1_ClipboardRequest, rhs: Kernova_V1_ClipboardRequest) -> Bool {
+    if lhs.generation != rhs.generation {return false}
+    if lhs.format != rhs.format {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Kernova_V1_ClipboardData: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ClipboardData"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}generation\0\u{1}format\0\u{1}data\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt64Field(value: &self.generation) }()
+      case 2: try { try decoder.decodeSingularEnumField(value: &self.format) }()
+      case 3: try { try decoder.decodeSingularBytesField(value: &self.data) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.generation != 0 {
+      try visitor.visitSingularUInt64Field(value: self.generation, fieldNumber: 1)
+    }
+    if self.format != .unspecified {
+      try visitor.visitSingularEnumField(value: self.format, fieldNumber: 2)
+    }
+    if !self.data.isEmpty {
+      try visitor.visitSingularBytesField(value: self.data, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Kernova_V1_ClipboardData, rhs: Kernova_V1_ClipboardData) -> Bool {
+    if lhs.generation != rhs.generation {return false}
+    if lhs.format != rhs.format {return false}
+    if lhs.data != rhs.data {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Kernova_V1_ClipboardRelease: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ClipboardRelease"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}generation\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt64Field(value: &self.generation) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.generation != 0 {
+      try visitor.visitSingularUInt64Field(value: self.generation, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Kernova_V1_ClipboardRelease, rhs: Kernova_V1_ClipboardRelease) -> Bool {
+    if lhs.generation != rhs.generation {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
 }
 
 extension Kernova_V1_Error: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {

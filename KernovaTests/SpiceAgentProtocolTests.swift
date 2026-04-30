@@ -426,55 +426,24 @@ struct SpiceAgentProtocolTests {
         #expect(data.readLittleEndianUInt64(at: 0) == 0x0102030405060708)
     }
 
-    // MARK: - Client Port and Port Parameter
+    // MARK: - Server Port
 
-    @Test("Client port constant equals VDP_CLIENT_PORT (1)")
-    func clientPortValue() {
-        #expect(SpiceConstants.clientPort == 1)
-        #expect(SpiceConstants.clientPort != SpiceConstants.serverPort)
-    }
+    @Test("All builders stamp serverPort in the chunk header")
+    func buildersUseServerPort() {
+        let capabilities = SpiceMessageBuilder.buildAnnounceCapabilities(request: false)
+        #expect(capabilities.readLittleEndianUInt32(at: 0) == SpiceConstants.serverPort)
 
-    @Test("Builder with explicit clientPort produces chunk header with port 1")
-    func buildCapabilitiesWithClientPort() {
-        let message = SpiceMessageBuilder.buildAnnounceCapabilities(
-            request: true,
-            port: SpiceConstants.clientPort
-        )
+        let grab = SpiceMessageBuilder.buildClipboardGrab(types: [.utf8Text])
+        #expect(grab.readLittleEndianUInt32(at: 0) == SpiceConstants.serverPort)
 
-        let port = message.readLittleEndianUInt32(at: 0)
-        #expect(port == SpiceConstants.clientPort)
+        let request = SpiceMessageBuilder.buildClipboardRequest(type: .utf8Text)
+        #expect(request.readLittleEndianUInt32(at: 0) == SpiceConstants.serverPort)
 
-        // Message structure should be identical except for the port field
-        #expect(message.count == 36)
-        let msgType = message.readLittleEndianUInt32(at: VDIChunkHeader.size + 4)
-        #expect(msgType == SpiceAgentMessageType.announceCapabilities.rawValue)
-    }
+        let data = SpiceMessageBuilder.buildClipboardData(type: .utf8Text, data: Data([0x41]))
+        #expect(data.readLittleEndianUInt32(at: 0) == SpiceConstants.serverPort)
 
-    @Test("All builder methods respect explicit port parameter",
-          arguments: [SpiceConstants.clientPort, SpiceConstants.serverPort])
-    func buildersRespectPortParameter(port: UInt32) {
-        let capabilities = SpiceMessageBuilder.buildAnnounceCapabilities(request: false, port: port)
-        #expect(capabilities.readLittleEndianUInt32(at: 0) == port)
-
-        let grab = SpiceMessageBuilder.buildClipboardGrab(types: [.utf8Text], port: port)
-        #expect(grab.readLittleEndianUInt32(at: 0) == port)
-
-        let request = SpiceMessageBuilder.buildClipboardRequest(type: .utf8Text, port: port)
-        #expect(request.readLittleEndianUInt32(at: 0) == port)
-
-        let data = SpiceMessageBuilder.buildClipboardData(type: .utf8Text, data: Data([0x41]), port: port)
-        #expect(data.readLittleEndianUInt32(at: 0) == port)
-
-        let release = SpiceMessageBuilder.buildClipboardRelease(port: port)
-        #expect(release.readLittleEndianUInt32(at: 0) == port)
-    }
-
-    @Test("Default port parameter produces serverPort for backward compatibility")
-    func defaultPortIsServerPort() {
-        // Call without explicit port — should default to serverPort (2)
-        let message = SpiceMessageBuilder.buildClipboardGrab(types: [.utf8Text])
-        let port = message.readLittleEndianUInt32(at: 0)
-        #expect(port == SpiceConstants.serverPort)
+        let release = SpiceMessageBuilder.buildClipboardRelease()
+        #expect(release.readLittleEndianUInt32(at: 0) == SpiceConstants.serverPort)
     }
 
     // MARK: - Capability Checking

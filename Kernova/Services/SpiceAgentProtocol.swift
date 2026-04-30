@@ -10,12 +10,11 @@ enum SpiceConstants {
     static let agentProtocol: UInt32 = 1
 
     /// Destination port for host → guest messages (`VDP_SERVER_PORT`).
-    /// The guest agent reads from this port.
+    /// Host-side `SpiceClipboardService` writes everything with this port.
+    /// (`VDP_CLIENT_PORT = 1` is part of the SPICE wire format but no longer
+    /// referenced now that macOS guests have moved to vsock — the
+    /// guest-side SPICE agent that used `clientPort` was retired.)
     static let serverPort: UInt32 = 2
-
-    /// Destination port for guest → host messages (`VDP_CLIENT_PORT`).
-    /// The host reads from this port.
-    static let clientPort: UInt32 = 1
 }
 
 // MARK: - VDI Chunk Header
@@ -134,12 +133,13 @@ enum SpiceAgentCapability: Int, Sendable {
 
 /// Builds complete wire-ready messages (VDI chunk header + VDAgent message header + data).
 ///
-/// Shared between the host app and guest agent. The `port` parameter defaults to
-/// `serverPort` for host-side callers; guest-side code passes `clientPort` explicitly.
+/// Used only by the host-side `SpiceClipboardService` for Linux guests; all
+/// outbound chunks therefore use `VDP_SERVER_PORT`. The retired guest-side
+/// SPICE agent was the only caller that ever needed `VDP_CLIENT_PORT`.
 enum SpiceMessageBuilder {
 
     /// Builds an `ANNOUNCE_CAPABILITIES` message advertising clipboard support.
-    static func buildAnnounceCapabilities(request: Bool, port: UInt32 = SpiceConstants.serverPort) -> Data {
+    static func buildAnnounceCapabilities(request: Bool) -> Data {
         // Capabilities payload: request (uint32) + caps array (1 × uint32)
         var caps: UInt32 = 0
         setCapability(&caps, .clipboard)
@@ -149,44 +149,44 @@ enum SpiceMessageBuilder {
         payload.appendLittleEndian(request ? UInt32(1) : UInt32(0))
         payload.appendLittleEndian(caps)
 
-        return wrapMessage(type: .announceCapabilities, payload: payload, port: port)
+        return wrapMessage(type: .announceCapabilities, payload: payload)
     }
 
     /// Builds a `CLIPBOARD_GRAB` message announcing available clipboard types.
     ///
     /// Without `VD_AGENT_CAP_CLIPBOARD_SELECTION`, the grab payload is simply
     /// an array of `uint32_t` type values.
-    static func buildClipboardGrab(types: [SpiceClipboardType], port: UInt32 = SpiceConstants.serverPort) -> Data {
+    static func buildClipboardGrab(types: [SpiceClipboardType]) -> Data {
         var payload = Data(capacity: types.count * 4)
         for type in types {
             payload.appendLittleEndian(type.rawValue)
         }
-        return wrapMessage(type: .clipboardGrab, payload: payload, port: port)
+        return wrapMessage(type: .clipboardGrab, payload: payload)
     }
 
     /// Builds a `CLIPBOARD_REQUEST` message asking the peer for clipboard data.
-    static func buildClipboardRequest(type: SpiceClipboardType, port: UInt32 = SpiceConstants.serverPort) -> Data {
+    static func buildClipboardRequest(type: SpiceClipboardType) -> Data {
         var payload = Data(capacity: 4)
         payload.appendLittleEndian(type.rawValue)
-        return wrapMessage(type: .clipboardRequest, payload: payload, port: port)
+        return wrapMessage(type: .clipboardRequest, payload: payload)
     }
 
     /// Builds a `CLIPBOARD` message delivering clipboard data to the peer.
-    static func buildClipboardData(type: SpiceClipboardType, data clipboardData: Data, port: UInt32 = SpiceConstants.serverPort) -> Data {
+    static func buildClipboardData(type: SpiceClipboardType, data clipboardData: Data) -> Data {
         var payload = Data(capacity: 4 + clipboardData.count)
         payload.appendLittleEndian(type.rawValue)
         payload.append(clipboardData)
-        return wrapMessage(type: .clipboard, payload: payload, port: port)
+        return wrapMessage(type: .clipboard, payload: payload)
     }
 
     /// Builds a `CLIPBOARD_RELEASE` message.
-    static func buildClipboardRelease(port: UInt32 = SpiceConstants.serverPort) -> Data {
-        wrapMessage(type: .clipboardRelease, payload: Data(), port: port)
+    static func buildClipboardRelease() -> Data {
+        wrapMessage(type: .clipboardRelease, payload: Data())
     }
 
     // MARK: - Private
 
-    private static func wrapMessage(type: SpiceAgentMessageType, payload: Data, port: UInt32) -> Data {
+    private static func wrapMessage(type: SpiceAgentMessageType, payload: Data) -> Data {
         let header = VDAgentMessageHeader(
             type: type,
             opaque: 0,
@@ -195,7 +195,7 @@ enum SpiceMessageBuilder {
 
         let chunkPayload = header.serialize() + payload
         let chunk = VDIChunkHeader(
-            port: port,
+            port: SpiceConstants.serverPort,
             dataSize: UInt32(chunkPayload.count)
         )
 

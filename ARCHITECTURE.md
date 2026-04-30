@@ -37,7 +37,9 @@ Kernova/
 │   ├── IPSWService.swift               # Fetches/downloads macOS restore images (Sendable struct)
 │   ├── SystemSleepWatcher.swift        # Observes system sleep/wake, triggers VM pause/resume
 │   ├── SpiceAgentProtocol.swift       # SPICE agent wire format: VDI chunks, message headers, clipboard types
-│   ├── SpiceClipboardService.swift    # Host-side SPICE clipboard: pipe I/O, protocol state machine (@MainActor)
+│   ├── ClipboardServicing.swift       # Protocol shared by Spice + Vsock clipboard implementations
+│   ├── SpiceClipboardService.swift    # Linux clipboard: pipe I/O, SPICE protocol state machine (@MainActor)
+│   ├── VsockClipboardService.swift    # macOS clipboard: vsock-based offer/request/data state machine (@MainActor)
 │   └── Protocols/                      # Service protocol abstractions for DI and testing
 │       ├── VirtualizationProviding.swift
 │       ├── VMStorageProviding.swift
@@ -87,11 +89,15 @@ DiskTemplates/                             # Bundled ASIF disk image templates (
 KernovaRelaunchHelper/
 └── main.swift                          # Lightweight CLI watchdog for TCC-forced restarts
 
-KernovaGuestAgent/                      # Guest-side SPICE + vsock agent for macOS VMs + DMG packaging resources
-├── main.swift                          # Entry point: signal handling, device discovery, reconnect loops
-├── GuestClipboardAgent.swift           # SPICE clipboard protocol state machine + NSPasteboard polling
-├── SerialPortDiscovery.swift           # Opens the SPICE agent console port character device
-├── VsockHostConnection.swift           # AF_VSOCK connection to host on port 49153 — log forwarding (and future clipboard)
+KernovaGuestAgent/                      # Guest-side vsock agent for macOS VMs + DMG packaging resources
+├── main.swift                          # Entry point: signal handling, starts log + clipboard agents
+├── VsockGuestClient.swift              # Generic connect/retry/serve loop — shared by log and clipboard
+├── VsockHostConnection.swift           # Log-forwarding agent on port 49153 (uses VsockGuestClient)
+├── VsockGuestClipboardAgent.swift      # Clipboard sync agent on port 49152 (uses VsockGuestClient)
+├── VsockPorts.swift                    # Guest-side port registry (mirrors Kernova/Services/VsockPorts.swift)
+├── VsockLogBridge.swift                # Static handle so KernovaLogger can hand records to VsockHostConnection
+├── KernovaLogger.swift                 # Drop-in os.Logger wrapper that mirrors records to host
+├── KernovaLogMessage.swift             # Custom interpolation supporting OSLogPrivacy-shaped privacy attrs
 ├── Info.plist                          # Explicit Info.plist with preprocessor macro for CFBundleVersion
 ├── install.command                     # Guest-side installer: copies binary, registers LaunchAgent
 ├── uninstall.command                   # Guest-side uninstaller: stops agent, removes files
@@ -178,7 +184,7 @@ The remaining models are enums: `VMStatus` (stopped/starting/running/paused/savi
 
 ### Services
 
-**Files:** `ConfigurationBuilder.swift`, `VirtualizationService.swift`, `VMStorageService.swift`, `DiskImageService.swift`, `MacOSInstallService.swift`, `IPSWService.swift`, `SpiceAgentProtocol.swift`, `SpiceClipboardService.swift`, `VsockListenerHost.swift`, `VsockGuestLogService.swift`, `VsockPorts.swift`
+**Files:** `ConfigurationBuilder.swift`, `VirtualizationService.swift`, `VMStorageService.swift`, `DiskImageService.swift`, `MacOSInstallService.swift`, `IPSWService.swift`, `SpiceAgentProtocol.swift`, `ClipboardServicing.swift`, `SpiceClipboardService.swift`, `VsockClipboardService.swift`, `VsockListenerHost.swift`, `VsockGuestLogService.swift`, `VsockPorts.swift`
 
 **Protocols:** `VirtualizationProviding`, `VMStorageProviding`, `DiskImageProviding`, `MacOSInstallProviding`, `IPSWProviding`
 
@@ -195,17 +201,21 @@ Services are split by concurrency requirements:
 
 - **`SystemSleepWatcher`** — `@MainActor` observer class that monitors `NSWorkspace.willSleepNotification` and `NSWorkspace.didWakeNotification`. Follows the same pattern as `VMDirectoryWatcher`: callback-driven, `nonisolated(unsafe)` for observer tokens, `start()`/`deinit` lifecycle. Owned by `VMLibraryViewModel`, which uses it to auto-pause running VMs before sleep and resume them on wake.
 
-- **`ConfigurationBuilder`** — Translates a `VMConfiguration` into a `VZVirtualMachineConfiguration`. Handles three boot paths: `VZMacOSBootLoader` (macOS), `VZEFIBootLoader` (EFI/UEFI), and `VZLinuxBootLoader` (direct kernel boot). Configures CPU, memory, storage, network, display, keyboard, trackpad, and audio devices. When `clipboardSharingEnabled` is set, configures a `VZVirtioConsoleDeviceConfiguration` with a SPICE-named port using raw `VZFileHandleSerialPortAttachment` pipes (not `VZSpiceAgentPortAttachment`). For macOS guests it also appends a `VZVirtioSocketDeviceConfiguration` so the host can install vsock listeners against the live device once the VM is created. Resolves symlinks on user-supplied paths (shared directories, kernel/initrd, ISO images) and validates them before passing to VZ. File paths (kernel, initrd, ISO) are checked for existence and rejected if they point to directories. Shared directory validation checks existence, is-directory, readability, and writability (for read-write shares) against the resolved path.
+- **`ConfigurationBuilder`** — Translates a `VMConfiguration` into a `VZVirtualMachineConfiguration`. Handles three boot paths: `VZMacOSBootLoader` (macOS), `VZEFIBootLoader` (EFI/UEFI), and `VZLinuxBootLoader` (direct kernel boot). Configures CPU, memory, storage, network, display, keyboard, trackpad, and audio devices. When `clipboardSharingEnabled` is set on a Linux guest, configures a `VZVirtioConsoleDeviceConfiguration` with a SPICE-named port using raw `VZFileHandleSerialPortAttachment` pipes (not `VZSpiceAgentPortAttachment`); macOS guests instead carry clipboard over the vsock device. For macOS guests it always appends a `VZVirtioSocketDeviceConfiguration` so the host can install vsock listeners (log + clipboard) against the live device once the VM is created. Resolves symlinks on user-supplied paths (shared directories, kernel/initrd, ISO images) and validates them before passing to VZ. File paths (kernel, initrd, ISO) are checked for existence and rejected if they point to directories. Shared directory validation checks existence, is-directory, readability, and writability (for read-write shares) against the resolved path.
 
-- **`SpiceAgentProtocol`** — Pure data types and parsing for the SPICE agent wire format. Defines VDI chunk headers, VDAgent message headers, clipboard message types, and capability bitmasks. Includes `SpiceMessageBuilder` (builds wire-ready messages with a `port` parameter defaulting to `serverPort` for host-side use; guest-side code passes `clientPort`) and `SpiceAgentParser` (incremental parser handling fragmented data across multiple pipe reads). Fully `Sendable`, no I/O. Shared between the Kernova app and KernovaGuestAgent targets via multi-target membership.
+- **`SpiceAgentProtocol`** — Pure data types and parsing for the SPICE agent wire format. Defines VDI chunk headers, VDAgent message headers, clipboard message types, and capability bitmasks. Includes `SpiceMessageBuilder` (builds wire-ready messages with a `port` parameter defaulting to `serverPort` for host-side use) and `SpiceAgentParser` (incremental parser handling fragmented data across multiple pipe reads). Fully `Sendable`, no I/O. Used only by the host-side `SpiceClipboardService` (Linux clipboard transport) — macOS guests now use vsock instead, so the file is no longer multi-target.
 
-- **`SpiceClipboardService`** — `@MainActor` service that manages SPICE clipboard sharing for a single VM. Reads from the guest pipe on a background GCD queue, parses messages via `SpiceAgentParser`, and exposes `clipboardText` (observable, editable by the UI) and `isConnected`. When the clipboard window loses focus, `grabIfChanged()` sends a `CLIPBOARD_GRAB` if the text was edited. Uses raw pipes rather than `VZSpiceAgentPortAttachment` so clipboard data flows through the gated UI instead of the host `NSPasteboard`. Linux guests only — macOS guests will migrate to the vsock channel once the new guest agent ships.
+- **`ClipboardServicing`** — `@MainActor` protocol covering the public surface (`clipboardText`, `isConnected`, `start()`, `stop()`, `grabIfChanged()`) shared by both clipboard implementations. `VMInstance.clipboardService` holds the existential, so the clipboard window controllers don't branch on transport.
+
+- **`SpiceClipboardService`** — `@MainActor` `ClipboardServicing` implementation for Linux guests. Reads from the guest pipe on a background GCD queue, parses messages via `SpiceAgentParser`, and exposes `clipboardText` (observable, editable by the UI) and `isConnected`. When the clipboard window loses focus, `grabIfChanged()` sends a `CLIPBOARD_GRAB` if the text was edited. Uses raw pipes rather than `VZSpiceAgentPortAttachment` so clipboard data flows through the gated UI instead of the host `NSPasteboard`.
+
+- **`VsockClipboardService`** — `@MainActor` `ClipboardServicing` implementation for macOS guests, layered on `VsockChannel`. Sends `Hello` on start; outbound clipboard changes are announced as `ClipboardOffer` with a monotonically increasing `generation`, then the guest pulls the bytes via `ClipboardRequest` / `ClipboardData`. Inbound flow is symmetrical (offer → request → data). Stale generations are detected by both sides so a `ClipboardData` reply that races a newer offer is dropped rather than overwriting fresher state. The service is constructed lazily by the vsock clipboard listener when the guest connects, so `VMInstance.clipboardService` may be nil until then.
 
 - **`VsockListenerHost`** — `@MainActor` wrapper around `VZVirtioSocketListener` bound to one vsock port. The nonisolated `VZVirtioSocketListenerDelegate` callback dups the connection's file descriptor and bridges back to MainActor before constructing a `VsockChannel` and handing it to a caller-supplied closure. One instance per service; multiple coexist on the same `VZVirtioSocketDevice`.
 
 - **`VsockGuestLogService`** — `@MainActor` consumer that owns one accepted `VsockChannel` for the lifetime of a guest connection. Forwards `LogRecord` frames through a `GuestLogEmitter` abstraction (default `OSLogGuestLogEmitter`, subsystem `com.kernova.guest`); guest log levels map 1:1 onto `os.Logger` methods. `Hello` and `Error` frames go to the host's own diagnostic logger instead of the guest stream. The service self-terminates on EOF.
 
-- **`VsockPorts`** — Central registry of port assignments (currently just `KernovaVsockPort.log = 49153`) so each future service (clipboard, drag-drop, …) gets its own listener on a distinct port instead of in-band multiplexing.
+- **`VsockPorts`** — Central registry of port assignments (`KernovaVsockPort.clipboard = 49152`, `KernovaVsockPort.log = 49153`) so each service gets its own listener on a distinct port instead of in-band multiplexing.
 
 All service implementations conform to protocols defined in `Services/Protocols/`. This enables full dependency injection — tests use mock implementations that track call counts and support error injection.
 
@@ -354,7 +364,7 @@ Two standalone command-line tool targets are built alongside the main app:
 
 - **KernovaRelaunchHelper** — Embedded in `Contents/MacOS/`. A watchdog that monitors the main app's PID and relaunches it after TCC-forced terminations. Launched by `AppDelegate` during quit when a TCC revocation is detected.
 
-- **KernovaGuestAgent** — Not embedded directly. Runs inside macOS VMs and speaks two protocols: the SPICE VDAgent clipboard protocol over the virtio console port `com.redhat.spice.0` (existing path; bidirectional text clipboard sharing with the host-side `SpiceClipboardService`), and the new vsock channel (`VsockHostConnection`) opening `socket(AF_VSOCK, SOCK_STREAM)` to `(VMADDR_CID_HOST, 49153)` for log forwarding via `LogRecord` frames; clipboard and other guest <-> host traffic will migrate onto vsock in later phases. Both paths are independent — either side can be down without affecting the other. The agent depends on the local `KernovaProtocol` SPM package for the wire types and channel implementation. Packaged into a disk image at build time by the "Package Guest Agent DMG" Run Script build phase. The disk image (containing the binary, `install.command`, `uninstall.command`, and a LaunchAgent plist) is placed in `Contents/Resources/KernovaGuestAgent.dmg`. At runtime, the "Install Guest Agent..." menu item in the Virtual Machine menu attaches it to a guest VM as USB mass storage. The guest user runs `install.command` to install the agent as a LaunchAgent in user-space (`~/Library/Application Support/Kernova/`). The agent discovers the SPICE serial device via `/dev/` scan, performs a SPICE capabilities handshake, polls `NSPasteboard.general` for clipboard changes (500ms interval), and reconnects automatically if either the SPICE device or the vsock connection drops. The vsock reconnect loop uses a flat 5s retry interval. Shares `SpiceAgentProtocol.swift` with the host app via multi-target membership. The build number is injected via `INFOPLIST_PREPROCESS`: a pre-Sources build phase ("Set Build Number from Git") writes `#define AGENT_BUILD_NUMBER` (set to the git commit count scoped to `KernovaGuestAgent/`) to a header in `DERIVED_FILE_DIR`, and the explicit `Info.plist` references that macro for `CFBundleVersion`. The preprocessed plist is embedded in the binary via `CREATE_INFOPLIST_SECTION_IN_BINARY`.
+- **KernovaGuestAgent** — Not embedded directly. Runs inside macOS VMs and maintains two long-lived vsock connections to the host: log forwarding (`VsockHostConnection` on port 49153) and bidirectional clipboard sync (`VsockGuestClipboardAgent` on port 49152). Both connections are independent — a disconnect on one doesn't take the other down — and both share a `VsockGuestClient` helper that owns the connect/retry/serve loop. The clipboard agent polls `NSPasteboard.general` at 500 ms and announces changes to the host via `ClipboardOffer` frames; on inbound offers it requests the bytes and writes them to the local pasteboard. The agent depends on the local `KernovaProtocol` SPM package for the wire types and channel implementation. Packaged into a disk image at build time by the "Package Guest Agent DMG" Run Script build phase. The disk image (containing the binary, `install.command`, `uninstall.command`, and a LaunchAgent plist) is placed in `Contents/Resources/KernovaGuestAgent.dmg`. At runtime, the "Install Guest Agent..." menu item in the Virtual Machine menu attaches it to a guest VM as USB mass storage. The guest user runs `install.command` to install the agent as a LaunchAgent in user-space (`~/Library/Application Support/Kernova/`). The vsock reconnect loop uses a flat 5s retry interval; `SO_RCVTIMEO` / `SO_SNDTIMEO` are set to 30 s as a safety net against wedged read/write calls. The build number is injected via `INFOPLIST_PREPROCESS`: a pre-Sources build phase ("Set Build Number from Git") writes `#define AGENT_BUILD_NUMBER` (set to the git commit count scoped to `KernovaGuestAgent/`) to a header in `DERIVED_FILE_DIR`, and the explicit `Info.plist` references that macro for `CFBundleVersion`. The preprocessed plist is embedded in the binary via `CREATE_INFOPLIST_SECTION_IN_BINARY`.
 
 ## Dependencies
 
@@ -393,6 +403,7 @@ No third-party (non-Apple) package dependencies. No CocoaPods or Carthage.
 | `DataFormatters` | Yes | Byte formatting, CPU count formatting |
 | `NSImageExtensions` | Yes | SF Symbol loading with known symbol validation |
 | `SpiceAgentProtocol` | Yes | VDI chunk/message serialization round-trips, parser with multi-message feeds, partial data, unknown types, clientPort constant, port-parameterized builders |
+| `VsockClipboardService` | 8 tests | Hello handshake, outbound offer dedup + monotonic generation, request-response, stale request/data drop, inbound offer-driven population |
 
 ### Mocked but Not Directly Tested
 
@@ -402,7 +413,7 @@ These services interact with system processes, the network, or VZ installer inte
 - `IPSWService` — makes network requests to Apple
 - `MacOSInstallService` — requires a real `VZVirtualMachine` and restore image
 - `SpiceClipboardService` — requires active SPICE pipe I/O (protocol parsing tested via `SpiceAgentProtocol` suite)
-- `GuestClipboardAgent` — runs inside guest VMs; mirrors `SpiceClipboardService` logic (protocol layer tested via shared `SpiceAgentProtocol` suite)
+- `VsockGuestClipboardAgent` — runs inside guest VMs; mirrors `VsockClipboardService` logic (host-side state-machine coverage in `VsockClipboardServiceTests`)
 
 ### Not Tested
 
