@@ -95,9 +95,11 @@ final class VsockClipboardService: ClipboardServicing {
         guard clipboardText != lastGrabbedText else { return }
 
         let generation = nextLocalGeneration
-        // Wrapping is acceptable — UInt64 won't realistically wrap, but the
-        // overflow operator keeps the arithmetic well-defined either way.
-        nextLocalGeneration &+= 1
+        // Plain `+=` traps on overflow rather than wrapping into 0, which is
+        // the "no pending request" sentinel for the inbound side. UInt64.max
+        // is unreachable in practice; the trap surfaces a real bug if the
+        // counter ever runs that far.
+        nextLocalGeneration += 1
 
         var offer = Frame()
         offer.protocolVersion = 1

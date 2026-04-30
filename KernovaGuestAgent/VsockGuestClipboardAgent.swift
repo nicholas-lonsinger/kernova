@@ -157,7 +157,10 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         }
 
         let generation = nextLocalGeneration
-        nextLocalGeneration &+= 1
+        // Plain `+=` traps on overflow rather than wrapping into 0, which the
+        // inbound side uses as a "no pending offer" sentinel. UInt64.max is
+        // unreachable in practice; the trap surfaces a real bug otherwise.
+        nextLocalGeneration += 1
         pendingOutbound = (generation: generation, text: text)
         lastSeenText = text
         lastPasteboardChangeCount = currentCount
