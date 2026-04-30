@@ -222,22 +222,34 @@ final class VsockHostConnection: @unchecked Sendable {
 
     // MARK: - Hello
 
-    /// Drains `pendingLogs` onto a live channel. Stops on first send
-    /// failure — the channel is then dead and retrying would only push
-    /// more records into the void; remaining frames are discarded.
+    /// Drains `pendingLogs` onto a live channel. On a mid-flush send failure
+    /// the channel is dead — but the unflushed remainder is re-enqueued at
+    /// the head of `pendingLogs` (ordered before any newly-added frames so
+    /// chronological order is preserved) so the next successful reconnect
+    /// retries them. The buffer cap is re-applied after re-enqueue, so a
+    /// chronic flush failure won't grow memory unbounded.
     private func flushPendingLogs(on channel: VsockChannel) {
         let drained: [Frame] = lock.withLock {
             let p = pendingLogs
-            pendingLogs.removeAll(keepingCapacity: false)
+            pendingLogs.removeAll(keepingCapacity: true)
             return p
         }
         guard !drained.isEmpty else { return }
 
-        for frame in drained {
+        for (index, frame) in drained.enumerated() {
             do {
                 try channel.send(frame)
             } catch {
-                Self.logger.warning("Failed to flush buffered log frames: \(error.localizedDescription, privacy: .public)")
+                let unflushed = Array(drained[index...])
+                lock.withLock {
+                    pendingLogs.insert(contentsOf: unflushed, at: 0)
+                    if pendingLogs.count > Self.logBufferLimit {
+                        pendingLogs.removeFirst(pendingLogs.count - Self.logBufferLimit)
+                    }
+                }
+                Self.logger.warning(
+                    "Re-enqueued \(unflushed.count, privacy: .public) buffered log frame(s) after flush failure: \(error.localizedDescription, privacy: .public)"
+                )
                 return
             }
         }
