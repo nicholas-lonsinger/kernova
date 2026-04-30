@@ -95,11 +95,6 @@ final class VsockClipboardService: ClipboardServicing {
         guard clipboardText != lastGrabbedText else { return }
 
         let generation = nextLocalGeneration
-        // Plain `+=` traps on overflow rather than wrapping into 0, which is
-        // the "no pending request" sentinel for the inbound side. UInt64.max
-        // is unreachable in practice; the trap surfaces a real bug if the
-        // counter ever runs that far.
-        nextLocalGeneration += 1
 
         var offer = Frame()
         offer.protocolVersion = 1
@@ -110,12 +105,19 @@ final class VsockClipboardService: ClipboardServicing {
 
         do {
             try channel.send(offer)
+            // Plain `+=` traps on overflow rather than wrapping into 0,
+            // which the inbound side uses as a "no pending offer" sentinel.
+            // UInt64.max is unreachable in practice.
+            nextLocalGeneration += 1
             pendingOutbound = (generation: generation, text: clipboardText)
             lastGrabbedText = clipboardText
             Self.logger.notice(
                 "Sent clipboard offer to '\(self.label, privacy: .public)' (gen=\(generation, privacy: .public), \(self.clipboardText.utf8.count, privacy: .public) bytes)"
             )
         } catch {
+            // State left untouched: lastGrabbedText still differs from
+            // clipboardText, generation still unconsumed — next call will
+            // re-attempt the same offer.
             Self.logger.error(
                 "Failed to send clipboard offer for '\(self.label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )

@@ -157,13 +157,6 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         }
 
         let generation = nextLocalGeneration
-        // Plain `+=` traps on overflow rather than wrapping into 0, which the
-        // inbound side uses as a "no pending offer" sentinel. UInt64.max is
-        // unreachable in practice; the trap surfaces a real bug otherwise.
-        nextLocalGeneration += 1
-        pendingOutbound = (generation: generation, text: text)
-        lastSeenText = text
-        lastPasteboardChangeCount = currentCount
 
         var offer = Frame()
         offer.protocolVersion = 1
@@ -173,10 +166,20 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         }
         do {
             try channel.send(offer)
+            // Plain `+=` traps on overflow rather than wrapping into 0,
+            // which the inbound side uses as a "no pending offer" sentinel.
+            // UInt64.max is unreachable in practice.
+            nextLocalGeneration += 1
+            pendingOutbound = (generation: generation, text: text)
+            lastSeenText = text
+            lastPasteboardChangeCount = currentCount
             Self.logger.notice(
                 "Sent clipboard offer (gen=\(generation, privacy: .public), \(text.utf8.count, privacy: .public) bytes)"
             )
         } catch {
+            // State left untouched: lastSeenText still differs from `text`,
+            // changeCount still old, generation still unconsumed — the next
+            // poll cycle will re-attempt the same offer.
             Self.logger.warning(
                 "Failed to send clipboard offer: \(error.localizedDescription, privacy: .public)"
             )
