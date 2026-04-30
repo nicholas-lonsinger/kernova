@@ -215,6 +215,11 @@ final class VsockHostConnection: @unchecked Sendable {
         applySocketTimeouts(fd: fd)
 
         var addr = sockaddr_vm()
+        // Darwin's `sockaddr` family carries a leading `sa_len`/`svm_len`
+        // byte that the networking stack may rely on; setting it
+        // explicitly is the documented-safe pattern even though some
+        // kernel paths infer it.
+        addr.svm_len = UInt8(MemoryLayout<sockaddr_vm>.size)
         addr.svm_family = sa_family_t(AF_VSOCK)
         addr.svm_port = port
         addr.svm_cid = UInt32(VMADDR_CID_HOST)
