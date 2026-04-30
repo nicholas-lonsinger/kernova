@@ -52,6 +52,15 @@ public final class VsockChannel: @unchecked Sendable {
         self.continuation = continuation
     }
 
+    deinit {
+        // Belt-and-braces: if a caller drops the last strong reference
+        // without invoking `close()`, finishing the continuation here
+        // prevents `incoming` consumers from hanging forever waiting
+        // on a stream whose producer has gone away. Idempotent — `close()`
+        // guards against repeat teardown via its own `closed` flag.
+        close()
+    }
+
     /// Begins reading from the underlying descriptor. Idempotent.
     public func start() {
         lock.lock()
