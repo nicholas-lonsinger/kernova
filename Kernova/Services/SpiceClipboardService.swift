@@ -16,7 +16,7 @@ import os
 /// - Destroyed by `VMInstance.stopClipboardService()` on teardown
 @MainActor
 @Observable
-final class SpiceClipboardService {
+final class SpiceClipboardService: ClipboardServicing {
 
     // MARK: - Observable State
 

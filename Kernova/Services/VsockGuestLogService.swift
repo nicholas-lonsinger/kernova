@@ -77,6 +77,12 @@ final class VsockGuestLogService {
         emitter: any GuestLogEmitter,
         label: String
     ) {
+        guard frame.protocolVersion == 1 else {
+            logger.warning(
+                "Dropping frame with unsupported protocol version \(frame.protocolVersion, privacy: .public) for '\(label, privacy: .public)'"
+            )
+            return
+        }
         switch frame.payload {
         case .hello(let hello):
             logger.notice(
@@ -88,6 +94,10 @@ final class VsockGuestLogService {
             logger.warning(
                 "Guest agent error for '\(label, privacy: .public)': \(error.code, privacy: .public) — \(error.message, privacy: .public)"
             )
+        case .clipboardOffer, .clipboardRequest, .clipboardData, .clipboardRelease:
+            // Clipboard payloads belong on the clipboard port; if one arrives
+            // here, the guest agent has crossed wires. Log and ignore.
+            logger.warning("Unexpected clipboard payload on log channel for '\(label, privacy: .public)'")
         case .none:
             logger.debug("Frame with no payload for '\(label, privacy: .public)'")
         }

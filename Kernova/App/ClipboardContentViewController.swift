@@ -4,8 +4,9 @@ import os
 /// Pure AppKit view controller for the clipboard sharing window content.
 ///
 /// Provides an editable `NSTextView` for the clipboard buffer and a status bar
-/// showing the SPICE agent connection state. Observes `SpiceClipboardService`
-/// properties via `withObservationTracking`.
+/// showing the guest agent connection state. Observes the active
+/// `ClipboardServicing` (either SPICE for Linux or vsock for macOS) via
+/// `withObservationTracking`.
 @MainActor
 final class ClipboardContentViewController: NSViewController, NSTextViewDelegate {
 

@@ -67,13 +67,6 @@
 			);
 			target = A1000003 /* Kernova */;
 		};
-		A1000300 /* Exceptions for "Kernova" folder in "KernovaGuestAgent" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				Services/SpiceAgentProtocol.swift,
-			);
-			target = A1000204 /* KernovaGuestAgent */;
-		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -81,7 +74,6 @@
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				A10000E0 /* Exceptions for "Kernova" folder in "Kernova" target */,
-				A1000300 /* Exceptions for "Kernova" folder in "KernovaGuestAgent" target */,
 			);
 			path = Kernova;
 			sourceTree = "<group>";

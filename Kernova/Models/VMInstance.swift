@@ -93,12 +93,16 @@ final class VMInstance: Identifiable {
 
     // MARK: - Clipboard Sharing
 
-    /// Bidirectional pipes for the SPICE clipboard console port.
+    /// Bidirectional pipes for the SPICE clipboard console port (Linux guests).
+    /// Unused for macOS guests, which sync clipboard over vsock instead.
     var clipboardInputPipe: Pipe?
     var clipboardOutputPipe: Pipe?
 
-    /// The SPICE clipboard service managing protocol I/O for this VM.
-    var clipboardService: SpiceClipboardService?
+    /// Active clipboard service for this VM. The concrete type depends on the
+    /// guest OS: `SpiceClipboardService` for Linux, `VsockClipboardService`
+    /// for macOS. Held as the existential so consumers don't need to branch.
+    /// May be nil on macOS until the guest agent connects.
+    var clipboardService: (any ClipboardServicing)?
 
     // MARK: - Vsock Channel (macOS guests)
 
@@ -110,6 +114,11 @@ final class VMInstance: Identifiable {
     /// guest agent has connected and forwarded its first frame; cleared on
     /// disconnect or VM teardown.
     var vsockLogService: VsockGuestLogService?
+
+    /// Listener for incoming guest clipboard connections; populated for macOS
+    /// guests with clipboard sharing enabled while the VM has a live
+    /// `VZVirtualMachine`.
+    var vsockClipboardListenerHost: VsockListenerHost?
 
     // MARK: - Serial Console
 
@@ -369,27 +378,43 @@ final class VMInstance: Identifiable {
 
     // MARK: - Clipboard Service Lifecycle
 
-    /// Creates and starts the SPICE clipboard service using the clipboard pipes.
+    /// Starts clipboard sharing if enabled in this VM's configuration. The
+    /// transport depends on the guest OS:
+    /// - Linux: SPICE agent over the console-port pipes set up at config build.
+    /// - macOS: vsock — the actual `VsockClipboardService` is constructed when
+    ///   the guest agent connects via the listener installed in
+    ///   `startVsockServices()`. Nothing to do here besides log.
     func startClipboardService() {
         guard configuration.clipboardSharingEnabled else { return }
+        switch configuration.guestOS {
+        case .linux:
+            startSpiceClipboardService()
+        case .macOS:
+            Self.logger.info("Clipboard sharing armed (vsock) for '\(self.name, privacy: .public)' — awaiting guest agent")
+        }
+    }
 
+    private func startSpiceClipboardService() {
         guard let inputPipe = clipboardInputPipe,
               let outputPipe = clipboardOutputPipe else {
-            Self.logger.error("Clipboard sharing enabled but pipes not configured for '\(self.name, privacy: .public)'")
+            Self.logger.error("SPICE clipboard pipes not configured for '\(self.name, privacy: .public)'")
             return
         }
-
         let service = SpiceClipboardService(inputPipe: inputPipe, outputPipe: outputPipe)
         service.start()
         clipboardService = service
-        Self.logger.info("Clipboard service started for '\(self.name, privacy: .public)'")
+        Self.logger.info("SPICE clipboard service started for '\(self.name, privacy: .public)'")
     }
 
-    /// Stops and releases the clipboard service and closes pipe file handles.
+    /// Stops and releases the clipboard service and (for SPICE) closes pipe
+    /// file handles. Safe to call when no service is active.
     func stopClipboardService() {
         clipboardService?.stop()
         clipboardService = nil
+        closeSpiceClipboardPipes()
+    }
 
+    private func closeSpiceClipboardPipes() {
         do {
             try clipboardInputPipe?.fileHandleForReading.close()
         } catch {
@@ -410,7 +435,6 @@ final class VMInstance: Identifiable {
         } catch {
             Self.logger.warning("Failed to close clipboard output write handle for VM '\(self.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
         }
-
         clipboardInputPipe = nil
         clipboardOutputPipe = nil
     }
@@ -420,7 +444,11 @@ final class VMInstance: Identifiable {
     /// Installs vsock listeners on the live VM's `VZVirtioSocketDevice`. Safe
     /// to call when no socket device is present (Linux guests, or macOS guests
     /// whose configuration omitted it) — the call becomes a no-op.
-    /// Idempotent: any previously installed listener is torn down first.
+    /// Idempotent: any previously installed listeners are torn down first.
+    ///
+    /// The log listener is always installed when a socket device exists. The
+    /// clipboard listener is additionally installed when clipboard sharing is
+    /// enabled in the VM configuration.
     func startVsockServices() {
         stopVsockServices()
         guard let vm = virtualMachine else { return }
@@ -428,7 +456,7 @@ final class VMInstance: Identifiable {
             return
         }
 
-        let host = VsockListenerHost(port: KernovaVsockPort.log) { [weak self] channel in
+        let logHost = VsockListenerHost(port: KernovaVsockPort.log) { [weak self] channel in
             guard let self else {
                 channel.close()
                 return
@@ -439,16 +467,41 @@ final class VMInstance: Identifiable {
             self.vsockLogService = service
             service.start()
         }
-        host.attach(to: socketDevice)
-        vsockLogListenerHost = host
+        logHost.attach(to: socketDevice)
+        vsockLogListenerHost = logHost
+
+        if configuration.clipboardSharingEnabled {
+            let clipHost = VsockListenerHost(port: KernovaVsockPort.clipboard) { [weak self] channel in
+                guard let self else {
+                    channel.close()
+                    return
+                }
+                self.clipboardService?.stop()
+                let service = VsockClipboardService(channel: channel, label: self.name)
+                self.clipboardService = service
+                service.start()
+            }
+            clipHost.attach(to: socketDevice)
+            vsockClipboardListenerHost = clipHost
+        }
+
         Self.logger.info("Vsock services started for '\(self.name, privacy: .public)'")
     }
 
-    /// Tears down the vsock listener and any active log service.
+    /// Tears down all vsock listeners and any active services running on them.
+    /// The clipboard service is only stopped here when it's the vsock variant —
+    /// the SPICE service is owned by `stopClipboardService()` and would already
+    /// be nil at this point under normal teardown order.
     func stopVsockServices() {
         vsockLogService?.stop()
         vsockLogService = nil
         vsockLogListenerHost = nil
+
+        if clipboardService is VsockClipboardService {
+            clipboardService?.stop()
+            clipboardService = nil
+        }
+        vsockClipboardListenerHost = nil
     }
 }
 
