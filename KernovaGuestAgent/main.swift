@@ -1,6 +1,5 @@
 import AppKit
 import Foundation
-import os
 
 // KernovaGuestAgent
 //
@@ -12,7 +11,7 @@ import os
 // When run without flags, discovers the SPICE serial device and begins clipboard sharing.
 // Designed to run as a macOS LaunchAgent (auto-start on login, auto-restart on crash).
 
-private let logger = Logger(subsystem: "com.kernova.agent", category: "GuestAgent")
+private let logger = KernovaLogger(subsystem: "com.kernova.agent", category: "GuestAgent")
 
 // MARK: - Version
 
@@ -44,6 +43,26 @@ if CommandLine.arguments.contains("--version") {
     exit(0)
 }
 
+// MARK: - Vsock connection
+
+/// Long-lived vsock connection to the host, used for log forwarding (and
+/// eventually clipboard / drag-drop). Independent from the SPICE agent —
+/// either side can be down without affecting the other.
+///
+/// Created and registered with `VsockLogBridge` before the
+/// `logger.notice(...)` startup banner emission below, so that banner is
+/// buffered into the connection's pre-connect ring buffer rather than
+/// dropped.
+///
+/// Note: the `logger.fault(...)` calls inside the `version` and
+/// `buildNumber` closures above run during top-level module init, before
+/// this assignment, so those failure cases (broken `Info.plist`) only
+/// reach local `os.Logger`. They're build-time issues that should never
+/// fire in a properly packaged release; not worth complicating the
+/// init order to forward them.
+let vsockConnection = VsockHostConnection()
+VsockLogBridge.connection = vsockConnection
+
 logger.notice("Kernova Guest Agent v\(version, privacy: .public) (\(buildNumber, privacy: .public)) started")
 
 // MARK: - Signal Handling
@@ -61,6 +80,7 @@ let sigtermSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .mai
 
 let shutdownHandler: () -> Void = {
     logger.notice("Received termination signal, shutting down")
+    vsockConnection.stop()
     currentAgent?.stop()
     currentAgent = nil
     exit(0)
@@ -97,5 +117,6 @@ func attemptConnection() {
     agent.start()
 }
 
+vsockConnection.start()
 attemptConnection()
 dispatchMain()

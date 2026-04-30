@@ -39,7 +39,7 @@ final class GuestClipboardAgent: @unchecked Sendable {
 
     private static let pollingInterval: TimeInterval = 0.5
 
-    private static let logger = Logger(subsystem: "com.kernova.agent", category: "GuestClipboardAgent")
+    private static let logger = KernovaLogger(subsystem: "com.kernova.agent", category: "GuestClipboardAgent")
 
     // MARK: - Init
 
