@@ -49,9 +49,17 @@ if CommandLine.arguments.contains("--version") {
 /// eventually clipboard / drag-drop). Independent from the SPICE agent —
 /// either side can be down without affecting the other.
 ///
-/// Created and registered with `VsockLogBridge` before any logging happens
-/// below so the agent's startup banner gets buffered into the connection's
-/// pre-connect ring buffer rather than dropped.
+/// Created and registered with `VsockLogBridge` before the
+/// `logger.notice(...)` startup banner emission below, so that banner is
+/// buffered into the connection's pre-connect ring buffer rather than
+/// dropped.
+///
+/// Note: the `logger.fault(...)` calls inside the `version` and
+/// `buildNumber` closures above run during top-level module init, before
+/// this assignment, so those failure cases (broken `Info.plist`) only
+/// reach local `os.Logger`. They're build-time issues that should never
+/// fire in a properly packaged release; not worth complicating the
+/// init order to forward them.
 let vsockConnection = VsockHostConnection()
 VsockLogBridge.connection = vsockConnection
 
