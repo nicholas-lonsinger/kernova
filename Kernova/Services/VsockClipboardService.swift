@@ -165,6 +165,12 @@ final class VsockClipboardService: ClipboardServicing {
     }
 
     private func handle(frame: Frame) {
+        guard frame.protocolVersion == 1 else {
+            Self.logger.warning(
+                "Dropping frame with unsupported protocol version \(frame.protocolVersion, privacy: .public) for '\(self.label, privacy: .public)'"
+            )
+            return
+        }
         switch frame.payload {
         case .hello(let hello):
             isConnected = true

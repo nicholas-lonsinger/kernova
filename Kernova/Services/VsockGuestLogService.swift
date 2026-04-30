@@ -77,6 +77,12 @@ final class VsockGuestLogService {
         emitter: any GuestLogEmitter,
         label: String
     ) {
+        guard frame.protocolVersion == 1 else {
+            logger.warning(
+                "Dropping frame with unsupported protocol version \(frame.protocolVersion, privacy: .public) for '\(label, privacy: .public)'"
+            )
+            return
+        }
         switch frame.payload {
         case .hello(let hello):
             logger.notice(

@@ -100,9 +100,15 @@ final class VsockHostConnection: @unchecked Sendable {
 
         // Drain the inbound stream so we observe EOF / errors. The log
         // channel is one-way today; any inbound message is logged and
-        // discarded.
+        // discarded after a protocol-version check.
         do {
             for try await frame in channel.incoming {
+                guard frame.protocolVersion == 1 else {
+                    Self.logger.warning(
+                        "Dropping inbound frame with unsupported protocol version \(frame.protocolVersion, privacy: .public)"
+                    )
+                    continue
+                }
                 Self.logger.debug("Received inbound vsock frame (type: \(String(describing: frame.payload), privacy: .public))")
             }
             Self.logger.notice("Vsock channel closed by host")

@@ -312,6 +312,38 @@ struct VsockClipboardServiceTests {
         #expect(service.clipboardText == "from guest")
     }
 
+    @Test("Frames with unsupported protocol version are dropped before payload dispatch")
+    func dropsUnsupportedProtocolVersion() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test")
+        service.start()
+        defer { service.stop() }
+
+        _ = try await nextFrame(from: guest)        // host hello
+
+        // Send a Hello with the wrong protocol_version. If the version check
+        // is missing, isConnected would flip true (Hello payload otherwise
+        // looks fine). With the check in place, the frame is dropped.
+        var hello = Frame()
+        hello.protocolVersion = 99
+        hello.hello = Kernova_V1_Hello.with {
+            $0.serviceVersion = 1
+            $0.capabilities = ["clipboard.text.utf8"]
+        }
+        try guest.send(hello)
+
+        // Follow with a real Hello to give the consume loop something to
+        // observe; once that lands, the v99 Hello has already been processed.
+        try guest.send(makeHello())
+        try await waitUntil { service.isConnected }
+
+        #expect(service.isConnected)  // tripped only by the v1 Hello
+    }
+
     @Test("ClipboardData with stale generation is ignored")
     func ignoresStaleData() async throws {
         let (guest, host) = try makePair()

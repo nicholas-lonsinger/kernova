@@ -186,6 +186,12 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     // MARK: - Frame handlers (main queue)
 
     private func handle(frame: Frame, channel: VsockChannel) {
+        guard frame.protocolVersion == 1 else {
+            Self.logger.warning(
+                "Dropping frame with unsupported protocol version \(frame.protocolVersion, privacy: .public)"
+            )
+            return
+        }
         switch frame.payload {
         case .hello(let hello):
             Self.logger.notice(
