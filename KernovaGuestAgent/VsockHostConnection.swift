@@ -35,7 +35,13 @@ final class VsockHostConnection: @unchecked Sendable {
 
     /// Maximum number of `LogRecord` frames buffered while the channel is
     /// down. Older entries are dropped first.
-    private static let logBufferLimit = 64
+    ///
+    /// Sized for the bursty pre-connect window: agent boot can take 30s+
+    /// from VM-start to first vsock connect on macOS, and Phase 4's
+    /// clipboard work will push `.debug` traffic that could fill a smaller
+    /// buffer well before Hello lands. 256 frames at ~200 bytes apiece is
+    /// ~50 KiB of bounded memory, which is fine for this purpose.
+    private static let logBufferLimit = 256
 
     private let lock = NSLock()
     private var channel: VsockChannel?
