@@ -102,6 +102,13 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             self?.liveChannel = channel
             self?.pendingOutbound = nil
             self?.pendingInboundGeneration = nil
+            // The host on the other end may be a brand-new instance (host
+            // app restarted, VM stopped+started, etc.) that has no record
+            // of prior offers. Clear the dedup state so the next poll
+            // cycle re-announces the current clipboard rather than
+            // assuming the host already has it.
+            self?.lastSeenText = nil
+            self?.lastPasteboardChangeCount = -1
         }
         Self.logger.notice("Vsock clipboard connected to host")
 
