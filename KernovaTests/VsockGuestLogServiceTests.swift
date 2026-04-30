@@ -22,10 +22,13 @@ struct VsockGuestLogServiceTests {
                 VsockChannel(fileDescriptor: fds[1]))
     }
 
+    // Generous default — multi-frame tests on slower CI runners were
+    // landing right around the prior 1-second deadline. Local runs
+    // typically finish well under a second; this is purely a ceiling.
     private func waitForRecords(
         _ emitter: RecordingEmitter,
         count: Int,
-        timeout: Duration = .seconds(1)
+        timeout: Duration = .seconds(5)
     ) async throws {
         let deadline = ContinuousClock.now.advanced(by: timeout)
         while emitter.snapshot().count < count && ContinuousClock.now < deadline {
