@@ -1,6 +1,5 @@
 import AppKit
 import Foundation
-import os
 
 // KernovaGuestAgent
 //
@@ -12,7 +11,7 @@ import os
 // When run without flags, discovers the SPICE serial device and begins clipboard sharing.
 // Designed to run as a macOS LaunchAgent (auto-start on login, auto-restart on crash).
 
-private let logger = Logger(subsystem: "com.kernova.agent", category: "GuestAgent")
+private let logger = KernovaLogger(subsystem: "com.kernova.agent", category: "GuestAgent")
 
 // MARK: - Version
 
@@ -44,14 +43,19 @@ if CommandLine.arguments.contains("--version") {
     exit(0)
 }
 
-logger.notice("Kernova Guest Agent v\(version, privacy: .public) (\(buildNumber, privacy: .public)) started")
+// MARK: - Vsock connection
 
-// Subsystem used for log records forwarded over vsock to the host. The
-// startup notice itself isn't forwarded — Hello already carries the agent
-// version on the host side, and emitting here would race the connection.
-// Used by the shutdown handler below, which fires after the channel is
-// established.
-let agentSubsystem = "com.kernova.agent"
+/// Long-lived vsock connection to the host, used for log forwarding (and
+/// eventually clipboard / drag-drop). Independent from the SPICE agent —
+/// either side can be down without affecting the other.
+///
+/// Created and registered with `VsockLogBridge` before any logging happens
+/// below so the agent's startup banner gets buffered into the connection's
+/// pre-connect ring buffer rather than dropped.
+let vsockConnection = VsockHostConnection()
+VsockLogBridge.connection = vsockConnection
+
+logger.notice("Kernova Guest Agent v\(version, privacy: .public) (\(buildNumber, privacy: .public)) started")
 
 // MARK: - Signal Handling
 
@@ -59,11 +63,6 @@ let agentSubsystem = "com.kernova.agent"
 // on the main dispatch queue (signal handlers, attemptConnection, onDisconnect callback).
 // main.swift top-level code is nonisolated in Swift 6, making @MainActor impractical.
 nonisolated(unsafe) var currentAgent: GuestClipboardAgent?
-
-/// Long-lived vsock connection to the host, used for log forwarding (and
-/// eventually clipboard / drag-drop). Independent from the SPICE agent —
-/// either side can be down without affecting the other.
-let vsockConnection = VsockHostConnection()
 
 signal(SIGINT, SIG_IGN)
 signal(SIGTERM, SIG_IGN)
@@ -73,12 +72,6 @@ let sigtermSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .mai
 
 let shutdownHandler: () -> Void = {
     logger.notice("Received termination signal, shutting down")
-    vsockConnection.forwardLog(
-        level: .notice,
-        subsystem: agentSubsystem,
-        category: "GuestAgent",
-        message: "Received termination signal, shutting down"
-    )
     vsockConnection.stop()
     currentAgent?.stop()
     currentAgent = nil
