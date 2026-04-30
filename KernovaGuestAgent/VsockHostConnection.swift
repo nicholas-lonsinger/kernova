@@ -33,6 +33,13 @@ final class VsockHostConnection: @unchecked Sendable {
 
     private static let retryInterval: Duration = .seconds(5)
 
+    /// Worst-case bound on a single send/recv blocking call on the vsock
+    /// fd. Local vsock connect/send/recv normally return in milliseconds;
+    /// this is purely a safety net against a wedged host listener or a VM
+    /// in a partial-pause state where the kernel side is alive but the
+    /// user-space service isn't draining.
+    private static let socketTimeoutSeconds: Int = 30
+
     /// Maximum number of `LogRecord` frames buffered while the channel is
     /// down. Older entries are dropped first.
     ///
@@ -205,6 +212,8 @@ final class VsockHostConnection: @unchecked Sendable {
             return nil
         }
 
+        applySocketTimeouts(fd: fd)
+
         var addr = sockaddr_vm()
         addr.svm_family = sa_family_t(AF_VSOCK)
         addr.svm_port = port
@@ -224,6 +233,22 @@ final class VsockHostConnection: @unchecked Sendable {
         }
 
         return fd
+    }
+
+    /// Sets `SO_RCVTIMEO` / `SO_SNDTIMEO` on the fresh socket so subsequent
+    /// recv/send calls can't block longer than `socketTimeoutSeconds`.
+    /// `setsockopt` failures are logged at debug and otherwise ignored —
+    /// without timeouts the agent still works, just less robustly.
+    private func applySocketTimeouts(fd: Int32) {
+        var timeout = timeval(tv_sec: Self.socketTimeoutSeconds, tv_usec: 0)
+        let optionSize = socklen_t(MemoryLayout<timeval>.size)
+
+        if setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, optionSize) != 0 {
+            Self.logger.debug("setsockopt SO_RCVTIMEO failed: errno=\(errno, privacy: .public)")
+        }
+        if setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, optionSize) != 0 {
+            Self.logger.debug("setsockopt SO_SNDTIMEO failed: errno=\(errno, privacy: .public)")
+        }
     }
 
     // MARK: - Hello
