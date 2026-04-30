@@ -46,9 +46,11 @@ if CommandLine.arguments.contains("--version") {
 
 logger.notice("Kernova Guest Agent v\(version, privacy: .public) (\(buildNumber, privacy: .public)) started")
 
-// Make the same notice visible on the host once the vsock connection is up.
-// Forwarded messages are routed under com.kernova.guest in the host's log
-// store via VsockGuestLogService.
+// Subsystem used for log records forwarded over vsock to the host. The
+// startup notice itself isn't forwarded — Hello already carries the agent
+// version on the host side, and emitting here would race the connection.
+// Used by the shutdown handler below, which fires after the channel is
+// established.
 let agentSubsystem = "com.kernova.agent"
 
 // MARK: - Signal Handling
@@ -115,11 +117,5 @@ func attemptConnection() {
 }
 
 vsockConnection.start()
-vsockConnection.forwardLog(
-    level: .notice,
-    subsystem: agentSubsystem,
-    category: "GuestAgent",
-    message: "Kernova Guest Agent v\(version) (\(buildNumber)) started"
-)
 attemptConnection()
 dispatchMain()

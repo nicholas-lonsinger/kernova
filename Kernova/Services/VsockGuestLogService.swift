@@ -21,18 +21,21 @@ final class VsockGuestLogService {
 
     /// - Parameters:
     ///   - channel: the channel accepted from the guest's vsock connection.
-    ///   - label: human-readable identifier used in host-side diagnostics.
+    ///   - label: human-readable identifier used in host-side diagnostics
+    ///     and as the `os.Logger` category for forwarded guest records.
     ///     Typically the VM name.
     ///   - emitter: where to publish translated guest log records.
-    ///     Defaults to a `Logger`-backed emitter under `com.kernova.guest`.
+    ///     When `nil` (the default), an `OSLogGuestLogEmitter` is built
+    ///     using `label` so each VM's forwarded records appear under their
+    ///     own `com.kernova.guest:<vmName>` category.
     init(
         channel: VsockChannel,
         label: String,
-        emitter: any GuestLogEmitter = OSLogGuestLogEmitter(label: "guest")
+        emitter: (any GuestLogEmitter)? = nil
     ) {
         self.channel = channel
         self.label = label
-        self.emitter = emitter
+        self.emitter = emitter ?? OSLogGuestLogEmitter(label: label)
     }
 
     /// Begins consuming frames from the channel. Idempotent.
