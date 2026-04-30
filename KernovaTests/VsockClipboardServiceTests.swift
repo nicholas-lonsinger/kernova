@@ -46,6 +46,60 @@ struct VsockClipboardServiceTests {
 
     private struct TestFailure: Error { let message: String; init(_ m: String) { message = m } }
 
+    /// MainActor-isolated buffer fed by a single iterator on the channel.
+    /// Tests that need both "expect frame" and "expect no frame" assertions
+    /// against the same channel must not hand-roll iterators per call —
+    /// `AsyncThrowingStream` is single-consumer and cancelling an iterator
+    /// terminates the shared iteration, poisoning subsequent reads.
+    @MainActor
+    private final class FrameRecorder {
+        var frames: [Frame] = []
+        private var consumeTask: Task<Void, Never>?
+
+        init(channel: VsockChannel) {
+            consumeTask = Task { @MainActor [weak self] in
+                do {
+                    for try await frame in channel.incoming {
+                        self?.frames.append(frame)
+                    }
+                } catch {
+                    // Stream errored — recording stops. Tests that care
+                    // about errors can inspect `frames` and infer.
+                }
+            }
+        }
+
+        func cancel() { consumeTask?.cancel() }
+        deinit { consumeTask?.cancel() }
+    }
+
+    /// Spins until `recorder.frames.count == expected`, or fails the test if
+    /// the deadline elapses.
+    private func waitForFrameCount(
+        _ recorder: FrameRecorder,
+        equals expected: Int,
+        timeout: Duration = .seconds(2)
+    ) async throws {
+        try await waitUntil(timeout: timeout) {
+            recorder.frames.count == expected
+        }
+    }
+
+    /// Sleeps `duration` then asserts no frames arrived since `before`.
+    /// Used in suppression tests where we want to prove a `grabIfChanged()`
+    /// call produced *no* wire traffic, not just "fewer than the next two".
+    private func expectNoNewFrames(
+        on recorder: FrameRecorder,
+        sinceCount before: Int,
+        for duration: Duration = .milliseconds(100)
+    ) async throws {
+        try await Task.sleep(for: duration)
+        if recorder.frames.count != before {
+            let extras = Array(recorder.frames[before...])
+            Issue.record("Expected no new frames over \(duration); got \(extras.count): \(extras.map { String(describing: $0.payload) })")
+        }
+    }
+
     /// Spins until a service-side condition is true (or a deadline elapses).
     /// Replaces ad-hoc `Task.sleep` waits in concurrency-sensitive tests.
     private func waitUntil(
@@ -189,25 +243,42 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        _ = try await nextFrame(from: guest)        // host hello
+        let recorder = FrameRecorder(channel: guest)
+        defer { recorder.cancel() }
+
+        // Frame 0: host's startup Hello.
+        try await waitForFrameCount(recorder, equals: 1)
+
         try guest.send(makeHello())
         try await waitUntil { service.isConnected }
 
-        // Empty text: no offer.
+        // Empty text → no offer.
+        var snapshot = recorder.frames.count
         service.grabIfChanged()
-        // Non-empty + first call: offer fires.
+        try await expectNoNewFrames(on: recorder, sinceCount: snapshot)
+
+        // First non-empty text → exactly one offer.
         service.clipboardText = "alpha"
         service.grabIfChanged()
-        // Same text: no second offer.
+        try await waitForFrameCount(recorder, equals: snapshot + 1)
+        let alphaFrame = recorder.frames[snapshot]
+        guard case .clipboardOffer = alphaFrame.payload else {
+            Issue.record("Expected clipboardOffer for 'alpha', got \(String(describing: alphaFrame.payload))")
+            return
+        }
+        snapshot = recorder.frames.count
+
+        // Same text → no second offer.
         service.grabIfChanged()
-        // Then a fresh value: another offer.
+        try await expectNoNewFrames(on: recorder, sinceCount: snapshot)
+
+        // Fresh text → another offer.
         service.clipboardText = "beta"
         service.grabIfChanged()
-
-        let first = try await nextFrame(from: guest)
-        let second = try await nextFrame(from: guest)
-        guard case .clipboardOffer = first.payload, case .clipboardOffer = second.payload else {
-            Issue.record("Expected two offers; got \(String(describing: first.payload)), \(String(describing: second.payload))")
+        try await waitForFrameCount(recorder, equals: snapshot + 1)
+        let betaFrame = recorder.frames[snapshot]
+        guard case .clipboardOffer = betaFrame.payload else {
+            Issue.record("Expected clipboardOffer for 'beta', got \(String(describing: betaFrame.payload))")
             return
         }
     }
