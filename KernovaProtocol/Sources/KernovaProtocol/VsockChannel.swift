@@ -67,6 +67,14 @@ public final class VsockChannel: @unchecked Sendable {
 
     /// Encodes and sends a frame. Multiple concurrent calls are safe — they
     /// serialize on an internal lock.
+    ///
+    /// Errors thrown:
+    /// - `VsockChannelError.closed` — channel is locally closed or has hit EOF
+    /// - `VsockChannelError.write(_)` — the underlying `FileHandle.write`
+    ///   failed; the channel is torn down before the error reaches the caller
+    /// - any error from `Frame.serializedData()` / `VsockFrame.encode(_:)`
+    ///   if the frame itself is unencodable; in that case the channel
+    ///   stays open
     public func send(_ frame: Frame) throws {
         let payload = try frame.serializedData()
         let framed = try VsockFrame.encode(payload)
@@ -79,7 +87,7 @@ public final class VsockChannel: @unchecked Sendable {
             try fileHandle.write(contentsOf: framed)
         } catch {
             tearDownLocked(finishWith: error)
-            throw error
+            throw VsockChannelError.write(error)
         }
     }
 
@@ -126,7 +134,30 @@ public final class VsockChannel: @unchecked Sendable {
 }
 
 /// Errors raised by `VsockChannel`.
-public enum VsockChannelError: Error, Sendable, Equatable {
+public enum VsockChannelError: Error, Sendable {
     /// `send` was called after the channel was closed (locally or by EOF).
     case closed
+
+    /// The underlying `FileHandle.write` failed. The channel is torn down
+    /// before this error reaches the caller — subsequent `send` calls will
+    /// throw `.closed`. The associated error preserves the original cause
+    /// (typically a `CocoaError.fileWriteUnknown` wrapping a POSIX errno).
+    case write(any Error)
+
+    // RATIONALE: `Equatable` is implemented manually so callers can still
+    // pattern-match on `.closed` (the common test case) without forcing
+    // every wrapped error to be Equatable. `.write` cases compare equal to
+    // each other irrespective of their inner error — sufficient for the
+    // type-discrimination use case; if a caller needs the exact underlying
+    // error they should switch and inspect the associated value directly.
+}
+
+extension VsockChannelError: Equatable {
+    public static func == (lhs: VsockChannelError, rhs: VsockChannelError) -> Bool {
+        switch (lhs, rhs) {
+        case (.closed, .closed): return true
+        case (.write, .write): return true
+        default: return false
+        }
+    }
 }
