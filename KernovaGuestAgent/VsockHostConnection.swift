@@ -26,10 +26,18 @@ final class VsockHostConnection: @unchecked Sendable {
 
     private static let retryInterval: Duration = .seconds(5)
 
+    /// Maximum number of `LogRecord` frames buffered while the channel is
+    /// down. Older entries are dropped first.
+    private static let logBufferLimit = 64
+
     private let lock = NSLock()
     private var channel: VsockChannel?
     private var reconnectTask: Task<Void, Never>?
     private var stopped = false
+
+    /// `LogRecord` frames emitted before/between connections. Drained on
+    /// each successful Hello send.
+    private var pendingLogs: [Frame] = []
 
     init() {}
 
@@ -53,6 +61,7 @@ final class VsockHostConnection: @unchecked Sendable {
             reconnectTask = nil
             let c = channel
             channel = nil
+            pendingLogs.removeAll(keepingCapacity: false)
             return (t, c)
         }
 
@@ -77,9 +86,11 @@ final class VsockHostConnection: @unchecked Sendable {
         }
     }
 
-    /// Builds and best-effort sends a `LogRecord` frame to the host. Drops
-    /// silently when no connection is active — log forwarding is a
-    /// diagnostic add-on, not a guarantee.
+    /// Builds and best-effort sends a `LogRecord` frame to the host. When
+    /// no connection is currently active, the frame is buffered (up to
+    /// `logBufferLimit` records, oldest dropped first) and flushed once
+    /// the next Hello succeeds. Returns `true` when the frame was handed
+    /// to a live channel synchronously.
     @discardableResult
     func forwardLog(
         level: Kernova_V1_LogRecord.Level,
@@ -96,7 +107,28 @@ final class VsockHostConnection: @unchecked Sendable {
             $0.category = category
             $0.message = message
         }
-        return send(frame)
+
+        // Try to send live; otherwise enqueue for the next connection.
+        let ch: VsockChannel? = lock.withLock {
+            if let live = channel {
+                return live
+            }
+            if !stopped {
+                pendingLogs.append(frame)
+                if pendingLogs.count > Self.logBufferLimit {
+                    pendingLogs.removeFirst(pendingLogs.count - Self.logBufferLimit)
+                }
+            }
+            return nil
+        }
+
+        guard let ch else { return false }
+        do {
+            try ch.send(frame)
+            return true
+        } catch {
+            return false
+        }
     }
 
     // MARK: - Reconnect loop
@@ -129,6 +161,8 @@ final class VsockHostConnection: @unchecked Sendable {
 
         sendHello(on: channel)
         Self.logger.notice("Connected to host vsock on port \(Self.port, privacy: .public)")
+
+        flushPendingLogs(on: channel)
 
         // Drain the inbound stream so we observe EOF / errors. The log
         // channel is one-way today; any inbound message is logged and
@@ -180,6 +214,28 @@ final class VsockHostConnection: @unchecked Sendable {
     }
 
     // MARK: - Hello
+
+    /// Drains `pendingLogs` onto a live channel. Stops on first send
+    /// failure — the channel is then dead and retrying would only push
+    /// more records into the void; remaining frames are discarded.
+    private func flushPendingLogs(on channel: VsockChannel) {
+        let drained: [Frame] = lock.withLock {
+            let p = pendingLogs
+            pendingLogs.removeAll(keepingCapacity: false)
+            return p
+        }
+        guard !drained.isEmpty else { return }
+
+        for frame in drained {
+            do {
+                try channel.send(frame)
+            } catch {
+                Self.logger.warning("Failed to flush buffered log frames: \(error.localizedDescription, privacy: .public)")
+                return
+            }
+        }
+        Self.logger.debug("Flushed \(drained.count, privacy: .public) buffered log frame(s)")
+    }
 
     private func sendHello(on channel: VsockChannel) {
         var hello = Frame()
