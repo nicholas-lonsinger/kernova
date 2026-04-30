@@ -35,6 +35,7 @@ final class VirtualizationService {
                 let vm = instance.attachVirtualMachine(from: result.configuration)
                 instance.startSerialReading()
                 instance.startClipboardService()
+                instance.startVsockServices()
                 try await vm.start()
             }
 
@@ -248,6 +249,7 @@ final class VirtualizationService {
         let vm = instance.attachVirtualMachine(from: result.configuration)
         instance.startSerialReading()
         instance.startClipboardService()
+        instance.startVsockServices()
 
         Self.logger.debug("restoreOrColdBoot: attempting restore from save file")
         do {
@@ -264,6 +266,9 @@ final class VirtualizationService {
             // Create a fresh VZVirtualMachine since the previous one may be in a bad state
             Self.logger.debug("restoreOrColdBoot: falling back to cold boot with fresh VM")
             let freshVM = instance.attachVirtualMachine(from: result.configuration)
+            // Re-attach vsock listener to the fresh VM's socket device — the
+            // previous listener referenced the now-dead VM. Idempotent.
+            instance.startVsockServices()
             instance.status = .starting
             try await freshVM.start()
         }

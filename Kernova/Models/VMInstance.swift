@@ -100,6 +100,17 @@ final class VMInstance: Identifiable {
     /// The SPICE clipboard service managing protocol I/O for this VM.
     var clipboardService: SpiceClipboardService?
 
+    // MARK: - Vsock Channel (macOS guests)
+
+    /// Listener for incoming guest log connections; populated for macOS guests
+    /// while the VM has a live `VZVirtualMachine`.
+    var vsockLogListenerHost: VsockListenerHost?
+
+    /// Service handling an active guest log connection. Populated when a
+    /// guest agent has connected and forwarded its first frame; cleared on
+    /// disconnect or VM teardown.
+    var vsockLogService: VsockGuestLogService?
+
     // MARK: - Serial Console
 
     /// Observable text buffer driven by serial port output. Capped at 1 MB in memory;
@@ -231,6 +242,7 @@ final class VMInstance: Identifiable {
     /// `VZVirtualMachine` reference. Does **not** change `status` — callers set
     /// the appropriate status after calling this.
     func tearDownSession() {
+        stopVsockServices()
         stopClipboardService()
         stopSerialReading()
         serialInputPipe = nil
@@ -401,6 +413,42 @@ final class VMInstance: Identifiable {
 
         clipboardInputPipe = nil
         clipboardOutputPipe = nil
+    }
+
+    // MARK: - Vsock Service Lifecycle
+
+    /// Installs vsock listeners on the live VM's `VZVirtioSocketDevice`. Safe
+    /// to call when no socket device is present (Linux guests, or macOS guests
+    /// whose configuration omitted it) — the call becomes a no-op.
+    /// Idempotent: any previously installed listener is torn down first.
+    func startVsockServices() {
+        stopVsockServices()
+        guard let vm = virtualMachine else { return }
+        guard let socketDevice = vm.socketDevices.compactMap({ $0 as? VZVirtioSocketDevice }).first else {
+            return
+        }
+
+        let host = VsockListenerHost(port: KernovaVsockPort.log) { [weak self] channel in
+            guard let self else {
+                channel.close()
+                return
+            }
+            // Replace any prior service from a previous reconnect.
+            self.vsockLogService?.stop()
+            let service = VsockGuestLogService(channel: channel, label: self.name)
+            self.vsockLogService = service
+            service.start()
+        }
+        host.attach(to: socketDevice)
+        vsockLogListenerHost = host
+        Self.logger.info("Vsock services started for '\(self.name, privacy: .public)'")
+    }
+
+    /// Tears down the vsock listener and any active log service.
+    func stopVsockServices() {
+        vsockLogService?.stop()
+        vsockLogService = nil
+        vsockLogListenerHost = nil
     }
 }
 

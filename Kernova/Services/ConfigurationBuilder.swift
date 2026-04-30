@@ -65,6 +65,14 @@ struct ConfigurationBuilder: Sendable {
         // Clipboard sharing (SPICE agent console port)
         let clipboardPipes = configureClipboardSharing(vzConfig, config: config)
 
+        // Vsock device for the Kernova guest <-> host channel (macOS guests only).
+        // The listener and any per-service consumers are wired up post-VM-create
+        // by VMInstance.startVsockServices(); the Linux SPICE/virtio-console path
+        // remains the clipboard transport for Linux guests.
+        if config.bootMode == .macOS {
+            configureVsockDevice(vzConfig)
+        }
+
         // Validate
         try vzConfig.validate()
 
@@ -386,6 +394,17 @@ struct ConfigurationBuilder: Sendable {
 
         Self.logger.info("Configured SPICE clipboard console port for '\(config.name, privacy: .public)'")
         return (inputPipe, outputPipe)
+    }
+
+    // MARK: - Vsock
+
+    /// Adds a single virtio-socket device to the configuration. Listeners are
+    /// installed post-VM-create against the live `VZVirtioSocketDevice` rather
+    /// than declared on the configuration.
+    private func configureVsockDevice(_ vzConfig: VZVirtualMachineConfiguration) {
+        let socketDevice = VZVirtioSocketDeviceConfiguration()
+        vzConfig.socketDevices.append(socketDevice)
+        Self.logger.info("Configured virtio-socket device for guest <-> host channel")
     }
 
     // MARK: - Directory Sharing

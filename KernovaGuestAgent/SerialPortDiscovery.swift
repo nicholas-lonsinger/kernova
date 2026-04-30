@@ -8,7 +8,7 @@ import os
 /// Inside the guest this appears as a character device at `/dev/cu.<name>`.
 enum SerialPortDiscovery {
 
-    private static let logger = Logger(subsystem: "com.kernova.agent", category: "SerialPortDiscovery")
+    private static let logger = KernovaLogger(subsystem: "com.kernova.agent", category: "SerialPortDiscovery")
 
     /// Device path for the SPICE agent console port.
     /// The host names the port `VZSpiceAgentPortAttachment.spiceAgentPortName`

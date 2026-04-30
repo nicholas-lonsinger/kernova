@@ -1,0 +1,108 @@
+// Kernova guest <-> host wire protocol.
+//
+// All traffic on a vsock connection is a sequence of length-prefixed Frame
+// messages. Each Frame carries exactly one payload selected by the `payload`
+// oneof. Field numbers and existing payload types must never be reused; new
+// services append new payload types at the next available number.
+syntax = "proto3";
+
+package kernova.v1;
+
+// A single message on the wire. The `payload` oneof selects the message type.
+//
+// Wire layout: a 4-byte big-endian uint32 length prefix (NOT included in the
+// length count itself) followed by `length` bytes of the encoded Frame.
+message Frame {
+  // Protocol version. Bumped when the framing or required fields change in a
+  // backwards-incompatible way. Currently 1.
+  uint32 protocol_version = 1;
+
+  oneof payload {
+    Hello hello = 10;
+    Error error = 11;
+
+    // Service payloads occupy reserved number ranges so each service can grow
+    // independently without colliding:
+    //   20..29 reserved for clipboard
+    //   30..39 reserved for logging
+    //   40..49 reserved for drag/drop
+    LogRecord log_record = 30;
+  }
+}
+
+// Sent by both sides immediately after a vsock connection is accepted.
+//
+// Each side advertises its protocol version, the capabilities it supports,
+// and identifying information for diagnostics. Capability strings use a dotted
+// namespace (e.g. "clipboard.text", "clipboard.image.png", "log.records.v1").
+message Hello {
+  // Bumps when the service-level protocol changes within a given
+  // `protocol_version`. Independent from `Frame.protocol_version`.
+  uint32 service_version = 1;
+
+  // Capability tags advertised by the sender. Receivers ignore unknown tags.
+  repeated string capabilities = 2;
+
+  // Optional identifying info. Diagnostic only; not used for routing.
+  AgentInfo agent_info = 3;
+}
+
+// Identifying info about the peer. All fields are optional — populate what's
+// useful, leave the rest empty.
+message AgentInfo {
+  string os = 1;             // e.g. "macOS", "Linux"
+  string os_version = 2;     // e.g. "26.0", "6.8.0"
+  string agent_version = 3;  // e.g. "0.1.0"
+}
+
+// One unit of log output forwarded from a guest agent to the host.
+//
+// The guest formats the message text locally so all privacy decisions stay on
+// the guest side; the host treats `message` as opaque and republishes it via
+// its own logger. Levels map directly onto Apple's `os.Logger` log levels so
+// the host can pass them through with the same severity semantics.
+message LogRecord {
+  enum Level {
+    LEVEL_UNSPECIFIED = 0;
+    LEVEL_DEBUG = 1;
+    LEVEL_INFO = 2;
+    LEVEL_NOTICE = 3;
+    LEVEL_WARNING = 4;
+    LEVEL_ERROR = 5;
+    LEVEL_FAULT = 6;
+  }
+
+  // Wall-clock time at which the record was emitted on the guest, expressed
+  // as milliseconds since the Unix epoch in UTC. Hosts may apply their own
+  // clock-skew correction; the field is intended for chronological ordering
+  // and post-mortem analysis, not strict synchronisation.
+  int64 timestamp_ms = 1;
+
+  Level level = 2;
+
+  // Logger subsystem and category from the guest, e.g. "com.kernova.agent" /
+  // "GuestClipboardAgent". Treated as opaque labels by the host.
+  string subsystem = 3;
+  string category = 4;
+
+  // Pre-formatted message text. Must be valid UTF-8.
+  string message = 5;
+}
+
+// Reported by either side when a request cannot be fulfilled, or as an
+// asynchronous notification of a problem (e.g. malformed request, capability
+// mismatch). The receiver may log and continue; it should not assume the
+// peer is gone.
+message Error {
+  // Stable machine-readable code, e.g. "version.unsupported",
+  // "format.unavailable", "transfer.too.large".
+  string code = 1;
+
+  // Human-readable detail. May be shown in logs or surfaced to the user.
+  string message = 2;
+
+  // Optional reference to the message type this error replies to,
+  // e.g. "clipboard.request". Populated when the error is causally linked
+  // to a specific incoming message.
+  optional string in_reply_to = 3;
+}

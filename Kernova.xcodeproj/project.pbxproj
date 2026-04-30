@@ -9,6 +9,8 @@
 /* Begin PBXBuildFile section */
 		A10000F1 /* DiskTemplates in Resources */ = {isa = PBXBuildFile; fileRef = A10000F0 /* DiskTemplates */; };
 		A100010B /* KernovaRelaunchHelper in Embed Helpers */ = {isa = PBXBuildFile; fileRef = A1000100 /* KernovaRelaunchHelper */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		A2000001 /* KernovaProtocol in Frameworks */ = {isa = PBXBuildFile; productRef = A2000002 /* KernovaProtocol */; };
+		A2000004 /* KernovaProtocol in Frameworks */ = {isa = PBXBuildFile; productRef = A2000005 /* KernovaProtocol */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -106,6 +108,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A2000001 /* KernovaProtocol in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -127,6 +130,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A2000004 /* KernovaProtocol in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -181,6 +185,7 @@
 			);
 			name = Kernova;
 			packageProductDependencies = (
+				A2000002 /* KernovaProtocol */,
 			);
 			productName = Kernova;
 			productReference = A1000004 /* Kernova.app */;
@@ -247,6 +252,7 @@
 			);
 			name = KernovaGuestAgent;
 			packageProductDependencies = (
+				A2000005 /* KernovaProtocol */,
 			);
 			productName = KernovaGuestAgent;
 			productReference = A1000200 /* KernovaGuestAgent */;
@@ -285,6 +291,9 @@
 			);
 			mainGroup = A1000020;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				A2000003 /* XCLocalSwiftPackageReference "KernovaProtocol" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = A1000021 /* Products */;
 			projectDirPath = "";
@@ -743,6 +752,24 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		A2000003 /* XCLocalSwiftPackageReference "KernovaProtocol" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = KernovaProtocol;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A2000002 /* KernovaProtocol */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = KernovaProtocol;
+		};
+		A2000005 /* KernovaProtocol */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = KernovaProtocol;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = A1000002 /* Project object */;
 }
