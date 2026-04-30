@@ -79,17 +79,28 @@ final class VsockHostConnection: @unchecked Sendable {
                 try live.send(frame)
                 return true
             } catch {
+                // Send failed — channel is likely dead. Buffer the frame so
+                // it gets flushed on the next reconnect rather than lost.
+                bufferFrame(frame)
                 return false
             }
         }
 
+        bufferFrame(frame)
+        return false
+    }
+
+    /// Appends a frame to the pre-connect ring, dropping the oldest entries
+    /// once the cap is exceeded. Used both for the "no live channel" path
+    /// and the "live channel write failed" path so a transient send error
+    /// doesn't lose the record.
+    private func bufferFrame(_ frame: Frame) {
         lock.withLock {
             pendingLogs.append(frame)
             if pendingLogs.count > Self.logBufferLimit {
                 pendingLogs.removeFirst(pendingLogs.count - Self.logBufferLimit)
             }
         }
-        return false
     }
 
     // MARK: - Per-connection serve
