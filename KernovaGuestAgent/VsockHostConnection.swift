@@ -1,116 +1,62 @@
 import Foundation
 import KernovaProtocol
-import Darwin
 import os
 
-/// Maintains a long-lived vsock connection from the guest agent to the host
-/// on `KernovaVsockPort.log` (49153) for log forwarding (and, eventually,
-/// other guest-emitted traffic).
+/// Forwards guest-emitted log records to the host on `KernovaVsockPort.log`
+/// (49153). Connection lifecycle is delegated to `VsockGuestClient`; this
+/// class layers log-specific buffering, hello/flush sequencing, and inbound
+/// drain on top.
 ///
-/// Behavior:
-/// - Connects with `socket(AF_VSOCK, SOCK_STREAM, 0)` + `connect()` to
-///   `(VMADDR_CID_HOST, 49153)`
-/// - On connect, sends `Hello` and then drains the channel until EOF
-/// - On disconnect or connect failure, waits `retryInterval` and retries
-/// - `send(_:)` is safe from any thread — drops the frame if not currently
-///   connected (logs are best-effort)
+/// `forwardLog` is safe to call from any thread. When the channel is down,
+/// frames are buffered in a bounded ring (oldest dropped first) and flushed
+/// once the next Hello succeeds.
 final class VsockHostConnection: @unchecked Sendable {
 
-    // RATIONALE: This file deliberately uses raw `os.Logger` rather than the
-    // `KernovaLogger` wrapper that every other agent file uses. Routing this
-    // class's internal logs (connect-attempt failures, EOF events, flush-loop
-    // outcomes) through `KernovaLogger` would forward them via this same
-    // connection — risking a feedback loop where a write failure logs an
-    // event that schedules another send through the broken channel. Keep all
-    // VsockHostConnection diagnostics local to the guest's `os.Logger`.
+    // RATIONALE: Same as `VsockGuestClient` — keep this class's diagnostics
+    // local to the guest's `os.Logger`. Routing them through `KernovaLogger`
+    // would forward them via this same connection, risking a feedback loop
+    // where a write failure logs an event that schedules another send
+    // through the broken channel.
     private static let logger = Logger(subsystem: "com.kernova.agent", category: "VsockHostConnection")
-
-    /// Same port as `Kernova/Services/VsockPorts.swift::KernovaVsockPort.log`
-    /// — duplicated here rather than imported so the two sides can drift
-    /// independently if needed (e.g. a guest agent built against an older
-    /// host). The port number is part of the wire contract.
-    private static let port: UInt32 = 49153
-
-    private static let retryInterval: Duration = .seconds(5)
-
-    /// Worst-case bound on a single send/recv blocking call on the vsock
-    /// fd. Local vsock connect/send/recv normally return in milliseconds;
-    /// this is purely a safety net against a wedged host listener or a VM
-    /// in a partial-pause state where the kernel side is alive but the
-    /// user-space service isn't draining.
-    private static let socketTimeoutSeconds: Int = 30
 
     /// Maximum number of `LogRecord` frames buffered while the channel is
     /// down. Older entries are dropped first.
     ///
     /// Sized for the bursty pre-connect window: agent boot can take 30s+
-    /// from VM-start to first vsock connect on macOS, and Phase 4's
-    /// clipboard work will push `.debug` traffic that could fill a smaller
-    /// buffer well before Hello lands. 256 frames at ~200 bytes apiece is
-    /// ~50 KiB of bounded memory, which is fine for this purpose.
+    /// from VM-start to first vsock connect on macOS, and clipboard activity
+    /// from `VsockGuestClipboardAgent` may push `.debug` traffic that could
+    /// fill a smaller buffer well before Hello lands. 256 frames at
+    /// ~200 bytes apiece is ~50 KiB of bounded memory.
     private static let logBufferLimit = 256
 
-    private let lock = NSLock()
-    private var channel: VsockChannel?
-    private var reconnectTask: Task<Void, Never>?
-    private var stopped = false
+    private let client: VsockGuestClient
 
-    /// `LogRecord` frames emitted before/between connections. Drained on
-    /// each successful Hello send.
+    private let lock = NSLock()
     private var pendingLogs: [Frame] = []
 
-    init() {}
+    init() {
+        self.client = VsockGuestClient(port: KernovaVsockPort.log, label: "log")
+    }
 
     /// Begins the connect/serve/reconnect loop. Idempotent.
     func start() {
-        let shouldStart: Bool = lock.withLock {
-            guard reconnectTask == nil, !stopped else { return false }
-            reconnectTask = Task.detached(priority: .utility) { [weak self] in
-                await self?.runReconnectLoop()
-            }
-            return true
+        client.start { [weak self] channel in
+            await self?.serveLogChannel(channel)
         }
-        _ = shouldStart
     }
 
-    /// Stops the loop and tears down any active channel.
+    /// Stops the loop, tears down any active channel, and discards the
+    /// buffered log records.
     func stop() {
-        let (task, ch): (Task<Void, Never>?, VsockChannel?) = lock.withLock {
-            stopped = true
-            let t = reconnectTask
-            reconnectTask = nil
-            let c = channel
-            channel = nil
-            pendingLogs.removeAll(keepingCapacity: false)
-            return (t, c)
-        }
-
-        task?.cancel()
-        ch?.close()
+        client.stop()
+        lock.withLock { pendingLogs.removeAll(keepingCapacity: false) }
     }
 
-    /// Best-effort send. Returns `true` when the frame was handed to a live
-    /// channel; `false` if there is no current connection or the underlying
-    /// write failed. Errors do not propagate — a failing send tears the
-    /// channel down so the reconnect loop picks up.
-    @discardableResult
-    func send(_ frame: Frame) -> Bool {
-        let ch: VsockChannel? = lock.withLock { channel }
-        guard let ch else { return false }
-
-        do {
-            try ch.send(frame)
-            return true
-        } catch {
-            return false
-        }
-    }
-
-    /// Builds and best-effort sends a `LogRecord` frame to the host. When
-    /// no connection is currently active, the frame is buffered (up to
-    /// `logBufferLimit` records, oldest dropped first) and flushed once
-    /// the next Hello succeeds. Returns `true` when the frame was handed
-    /// to a live channel synchronously.
+    /// Builds and best-effort sends a `LogRecord` frame to the host. When no
+    /// connection is currently active, the frame is buffered (up to
+    /// `logBufferLimit` records, oldest dropped first) and flushed once the
+    /// next Hello succeeds. Returns `true` when the frame was handed to a
+    /// live channel synchronously.
     @discardableResult
     func forwardLog(
         level: Kernova_V1_LogRecord.Level,
@@ -128,60 +74,28 @@ final class VsockHostConnection: @unchecked Sendable {
             $0.message = message
         }
 
-        // Try to send live; otherwise enqueue for the next connection.
-        let ch: VsockChannel? = lock.withLock {
-            if let live = channel {
-                return live
+        if let live = client.liveChannel {
+            do {
+                try live.send(frame)
+                return true
+            } catch {
+                return false
             }
-            if !stopped {
-                pendingLogs.append(frame)
-                if pendingLogs.count > Self.logBufferLimit {
-                    pendingLogs.removeFirst(pendingLogs.count - Self.logBufferLimit)
-                }
-            }
-            return nil
         }
 
-        guard let ch else { return false }
-        do {
-            try ch.send(frame)
-            return true
-        } catch {
-            return false
+        lock.withLock {
+            pendingLogs.append(frame)
+            if pendingLogs.count > Self.logBufferLimit {
+                pendingLogs.removeFirst(pendingLogs.count - Self.logBufferLimit)
+            }
         }
+        return false
     }
 
-    // MARK: - Reconnect loop
+    // MARK: - Per-connection serve
 
-    private func runReconnectLoop() async {
-        while !Task.isCancelled {
-            await connectAndServe()
-            guard !Task.isCancelled else { break }
-            try? await Task.sleep(for: Self.retryInterval)
-        }
-    }
-
-    private func connectAndServe() async {
-        guard let fd = openVsockToHost(port: Self.port) else {
-            return
-        }
-
-        let channel = VsockChannel(fileDescriptor: fd)
-        channel.start()
-
-        let aborted: Bool = lock.withLock {
-            if stopped { return true }
-            self.channel = channel
-            return false
-        }
-        if aborted {
-            channel.close()
-            return
-        }
-
+    private func serveLogChannel(_ channel: VsockChannel) async {
         sendHello(on: channel)
-        Self.logger.notice("Connected to host vsock on port \(Self.port, privacy: .public)")
-
         flushPendingLogs(on: channel)
 
         // Drain the inbound stream so we observe EOF / errors. The log
@@ -195,68 +109,7 @@ final class VsockHostConnection: @unchecked Sendable {
         } catch {
             Self.logger.warning("Vsock channel ended with error: \(error.localizedDescription, privacy: .public)")
         }
-
-        lock.withLock {
-            if self.channel === channel {
-                self.channel = nil
-            }
-        }
     }
-
-    // MARK: - Socket helpers
-
-    private func openVsockToHost(port: UInt32) -> Int32? {
-        let fd = socket(AF_VSOCK, SOCK_STREAM, 0)
-        guard fd >= 0 else {
-            Self.logger.debug("socket(AF_VSOCK) failed: errno=\(errno, privacy: .public)")
-            return nil
-        }
-
-        applySocketTimeouts(fd: fd)
-
-        var addr = sockaddr_vm()
-        // Darwin's `sockaddr` family carries a leading `sa_len`/`svm_len`
-        // byte that the networking stack may rely on; setting it
-        // explicitly is the documented-safe pattern even though some
-        // kernel paths infer it.
-        addr.svm_len = UInt8(MemoryLayout<sockaddr_vm>.size)
-        addr.svm_family = sa_family_t(AF_VSOCK)
-        addr.svm_port = port
-        addr.svm_cid = UInt32(VMADDR_CID_HOST)
-
-        let rc = withUnsafePointer(to: &addr) { ptr -> Int32 in
-            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
-                connect(fd, sa, socklen_t(MemoryLayout<sockaddr_vm>.size))
-            }
-        }
-
-        guard rc == 0 else {
-            let err = errno
-            close(fd)
-            Self.logger.debug("connect() to host vsock port \(port, privacy: .public) failed: errno=\(err, privacy: .public)")
-            return nil
-        }
-
-        return fd
-    }
-
-    /// Sets `SO_RCVTIMEO` / `SO_SNDTIMEO` on the fresh socket so subsequent
-    /// recv/send calls can't block longer than `socketTimeoutSeconds`.
-    /// `setsockopt` failures are logged at debug and otherwise ignored —
-    /// without timeouts the agent still works, just less robustly.
-    private func applySocketTimeouts(fd: Int32) {
-        var timeout = timeval(tv_sec: Self.socketTimeoutSeconds, tv_usec: 0)
-        let optionSize = socklen_t(MemoryLayout<timeval>.size)
-
-        if setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, optionSize) != 0 {
-            Self.logger.debug("setsockopt SO_RCVTIMEO failed: errno=\(errno, privacy: .public)")
-        }
-        if setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, optionSize) != 0 {
-            Self.logger.debug("setsockopt SO_SNDTIMEO failed: errno=\(errno, privacy: .public)")
-        }
-    }
-
-    // MARK: - Hello
 
     /// Drains `pendingLogs` onto a live channel. On a mid-flush send failure
     /// the channel is dead — but the unflushed remainder is re-enqueued at
