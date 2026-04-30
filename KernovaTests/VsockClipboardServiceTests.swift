@@ -1,0 +1,345 @@
+import Testing
+import Foundation
+import Darwin
+import KernovaProtocol
+@testable import Kernova
+
+@Suite("VsockClipboardService")
+@MainActor
+struct VsockClipboardServiceTests {
+
+    // MARK: - Helpers
+
+    private func makePair() throws -> (sender: VsockChannel, receiver: VsockChannel) {
+        var fds: [Int32] = [-1, -1]
+        let rc = fds.withUnsafeMutableBufferPointer { buf in
+            socketpair(AF_UNIX, SOCK_STREAM, 0, buf.baseAddress)
+        }
+        guard rc == 0 else {
+            throw POSIXError(.init(rawValue: errno) ?? .EIO)
+        }
+        return (VsockChannel(fileDescriptor: fds[0]),
+                VsockChannel(fileDescriptor: fds[1]))
+    }
+
+    /// Drains the next frame from a channel within a generous deadline. Tests
+    /// that expect no frame must use `expectNoFrame` instead — this helper
+    /// throws on timeout.
+    private func nextFrame(
+        from channel: VsockChannel,
+        timeout: Duration = .seconds(2)
+    ) async throws -> Frame {
+        let receiver = Task<Frame?, Error> {
+            var iterator = channel.incoming.makeAsyncIterator()
+            return try await iterator.next()
+        }
+        let timeoutTask = Task<Void, Error> {
+            try await Task.sleep(for: timeout)
+            receiver.cancel()
+        }
+        defer { timeoutTask.cancel() }
+        guard let frame = try await receiver.value else {
+            throw TestFailure("Channel finished without producing a frame")
+        }
+        return frame
+    }
+
+    private struct TestFailure: Error { let message: String; init(_ m: String) { message = m } }
+
+    /// Spins until a service-side condition is true (or a deadline elapses).
+    /// Replaces ad-hoc `Task.sleep` waits in concurrency-sensitive tests.
+    private func waitUntil(
+        timeout: Duration = .seconds(2),
+        _ predicate: () -> Bool
+    ) async throws {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while !predicate() && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        if !predicate() {
+            throw TestFailure("Predicate did not become true within \(timeout)")
+        }
+    }
+
+    /// Builds the guest-side hello frame the service expects in order to
+    /// flip `isConnected` true.
+    private func makeHello() -> Frame {
+        var frame = Frame()
+        frame.protocolVersion = 1
+        frame.hello = Kernova_V1_Hello.with {
+            $0.serviceVersion = 1
+            $0.capabilities = ["clipboard.text.utf8"]
+        }
+        return frame
+    }
+
+    private func makeOffer(generation: UInt64) -> Frame {
+        var frame = Frame()
+        frame.protocolVersion = 1
+        frame.clipboardOffer = Kernova_V1_ClipboardOffer.with {
+            $0.generation = generation
+            $0.formats = [.textUtf8]
+        }
+        return frame
+    }
+
+    private func makeData(generation: UInt64, text: String) -> Frame {
+        var frame = Frame()
+        frame.protocolVersion = 1
+        frame.clipboardData = Kernova_V1_ClipboardData.with {
+            $0.generation = generation
+            $0.format = .textUtf8
+            $0.data = Data(text.utf8)
+        }
+        return frame
+    }
+
+    private func makeRequest(generation: UInt64) -> Frame {
+        var frame = Frame()
+        frame.protocolVersion = 1
+        frame.clipboardRequest = Kernova_V1_ClipboardRequest.with {
+            $0.generation = generation
+            $0.format = .textUtf8
+        }
+        return frame
+    }
+
+    // MARK: - Tests
+
+    @Test("Sends Hello frame on start")
+    func sendsHelloOnStart() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test")
+        service.start()
+        defer { service.stop() }
+
+        let received = try await nextFrame(from: guest)
+        guard case .hello(let hello) = received.payload else {
+            Issue.record("Expected hello payload, got \(String(describing: received.payload))")
+            return
+        }
+        #expect(hello.capabilities.contains("clipboard.text.utf8"))
+    }
+
+    @Test("Guest hello flips isConnected to true")
+    func helloFlipsConnected() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test")
+        service.start()
+        defer { service.stop() }
+
+        // Discard our outbound hello.
+        _ = try await nextFrame(from: guest)
+        try guest.send(makeHello())
+
+        try await waitUntil { service.isConnected }
+        #expect(service.isConnected)
+    }
+
+    @Test("grabIfChanged sends ClipboardOffer with monotonic generation")
+    func grabSendsOffer() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test")
+        service.start()
+        defer { service.stop() }
+
+        _ = try await nextFrame(from: guest)        // host hello
+        try guest.send(makeHello())
+        try await waitUntil { service.isConnected }
+
+        service.clipboardText = "first"
+        service.grabIfChanged()
+        let firstOffer = try await nextFrame(from: guest)
+        guard case .clipboardOffer(let offerA) = firstOffer.payload else {
+            Issue.record("Expected first clipboardOffer, got \(String(describing: firstOffer.payload))")
+            return
+        }
+        #expect(offerA.formats.contains(.textUtf8))
+
+        service.clipboardText = "second"
+        service.grabIfChanged()
+        let secondOffer = try await nextFrame(from: guest)
+        guard case .clipboardOffer(let offerB) = secondOffer.payload else {
+            Issue.record("Expected second clipboardOffer, got \(String(describing: secondOffer.payload))")
+            return
+        }
+        #expect(offerB.generation > offerA.generation)
+    }
+
+    @Test("grabIfChanged is suppressed when text is unchanged or empty")
+    func grabSuppressionGuards() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test")
+        service.start()
+        defer { service.stop() }
+
+        _ = try await nextFrame(from: guest)        // host hello
+        try guest.send(makeHello())
+        try await waitUntil { service.isConnected }
+
+        // Empty text: no offer.
+        service.grabIfChanged()
+        // Non-empty + first call: offer fires.
+        service.clipboardText = "alpha"
+        service.grabIfChanged()
+        // Same text: no second offer.
+        service.grabIfChanged()
+        // Then a fresh value: another offer.
+        service.clipboardText = "beta"
+        service.grabIfChanged()
+
+        let first = try await nextFrame(from: guest)
+        let second = try await nextFrame(from: guest)
+        guard case .clipboardOffer = first.payload, case .clipboardOffer = second.payload else {
+            Issue.record("Expected two offers; got \(String(describing: first.payload)), \(String(describing: second.payload))")
+            return
+        }
+    }
+
+    @Test("Responds to ClipboardRequest with matching generation")
+    func respondsToMatchingRequest() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test")
+        service.start()
+        defer { service.stop() }
+
+        _ = try await nextFrame(from: guest)        // host hello
+        try guest.send(makeHello())
+        try await waitUntil { service.isConnected }
+
+        service.clipboardText = "payload"
+        service.grabIfChanged()
+        let offerFrame = try await nextFrame(from: guest)
+        guard case .clipboardOffer(let offer) = offerFrame.payload else {
+            Issue.record("Expected offer, got \(String(describing: offerFrame.payload))")
+            return
+        }
+
+        try guest.send(makeRequest(generation: offer.generation))
+        let dataFrame = try await nextFrame(from: guest)
+        guard case .clipboardData(let data) = dataFrame.payload else {
+            Issue.record("Expected clipboardData, got \(String(describing: dataFrame.payload))")
+            return
+        }
+        #expect(data.generation == offer.generation)
+        #expect(data.format == .textUtf8)
+        #expect(String(data: data.data, encoding: .utf8) == "payload")
+    }
+
+    @Test("Stale ClipboardRequest is ignored")
+    func ignoresStaleRequest() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test")
+        service.start()
+        defer { service.stop() }
+
+        _ = try await nextFrame(from: guest)        // host hello
+        try guest.send(makeHello())
+        try await waitUntil { service.isConnected }
+
+        service.clipboardText = "payload"
+        service.grabIfChanged()
+        let offerFrame = try await nextFrame(from: guest)
+        guard case .clipboardOffer(let offer) = offerFrame.payload else {
+            Issue.record("Expected offer, got \(String(describing: offerFrame.payload))")
+            return
+        }
+
+        // Request a generation that doesn't match the pending offer.
+        try guest.send(makeRequest(generation: offer.generation &+ 1_000))
+
+        // Send a real request shortly after; the *real* response is what
+        // should arrive next on the guest side, proving the stale one was
+        // dropped rather than queued ahead of it.
+        try guest.send(makeRequest(generation: offer.generation))
+        let response = try await nextFrame(from: guest)
+        guard case .clipboardData(let data) = response.payload else {
+            Issue.record("Expected clipboardData, got \(String(describing: response.payload))")
+            return
+        }
+        #expect(data.generation == offer.generation)
+    }
+
+    @Test("Inbound offer triggers a request and incoming data updates clipboardText")
+    func inboundFlowPopulatesClipboard() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test")
+        service.start()
+        defer { service.stop() }
+
+        _ = try await nextFrame(from: guest)        // host hello
+        try guest.send(makeHello())
+        try await waitUntil { service.isConnected }
+
+        try guest.send(makeOffer(generation: 42))
+        let request = try await nextFrame(from: guest)
+        guard case .clipboardRequest(let req) = request.payload else {
+            Issue.record("Expected clipboardRequest, got \(String(describing: request.payload))")
+            return
+        }
+        #expect(req.generation == 42)
+
+        try guest.send(makeData(generation: 42, text: "from guest"))
+        try await waitUntil { service.clipboardText == "from guest" }
+        #expect(service.clipboardText == "from guest")
+    }
+
+    @Test("ClipboardData with stale generation is ignored")
+    func ignoresStaleData() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test")
+        service.start()
+        defer { service.stop() }
+
+        _ = try await nextFrame(from: guest)        // host hello
+        try guest.send(makeHello())
+        try await waitUntil { service.isConnected }
+
+        try guest.send(makeOffer(generation: 1))
+        _ = try await nextFrame(from: guest)         // request for gen=1
+
+        try guest.send(makeOffer(generation: 2))
+        _ = try await nextFrame(from: guest)         // request for gen=2
+
+        // Reply for the first (now stale) offer — must be dropped.
+        try guest.send(makeData(generation: 1, text: "stale"))
+        // Then deliver the real one.
+        try guest.send(makeData(generation: 2, text: "fresh"))
+
+        try await waitUntil { service.clipboardText == "fresh" }
+        #expect(service.clipboardText == "fresh")
+    }
+}
+

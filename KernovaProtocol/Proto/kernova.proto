@@ -26,6 +26,11 @@ message Frame {
     //   20..29 reserved for clipboard
     //   30..39 reserved for logging
     //   40..49 reserved for drag/drop
+    ClipboardOffer clipboard_offer = 20;
+    ClipboardRequest clipboard_request = 21;
+    ClipboardData clipboard_data = 22;
+    ClipboardRelease clipboard_release = 23;
+
     LogRecord log_record = 30;
   }
 }
@@ -87,6 +92,48 @@ message LogRecord {
 
   // Pre-formatted message text. Must be valid UTF-8.
   string message = 5;
+}
+
+// Clipboard data formats the channel can carry. Only TEXT_UTF8 is wired up
+// for the initial release; the enum scaffold is reserved so adding richer
+// formats later (image, RTF, file lists) doesn't reshape the messages.
+enum ClipboardFormat {
+  CLIPBOARD_FORMAT_UNSPECIFIED = 0;
+  CLIPBOARD_FORMAT_TEXT_UTF8 = 1;
+}
+
+// Sent by either side to advertise that fresh clipboard content is available
+// in one or more formats. The receiver picks a supported format and replies
+// with `ClipboardRequest` to pull the actual bytes.
+//
+// The `generation` field is a monotonically increasing counter scoped to the
+// sender. Each new offer bumps it; receivers use it to discard requests that
+// race a newer offer.
+message ClipboardOffer {
+  uint64 generation = 1;
+  repeated ClipboardFormat formats = 2;
+}
+
+// Sent in response to a `ClipboardOffer` to pull the actual clipboard bytes.
+// `generation` must echo the offer being requested.
+message ClipboardRequest {
+  uint64 generation = 1;
+  ClipboardFormat format = 2;
+}
+
+// Carries the bytes of the clipboard content named by an earlier offer.
+// The `format` and `generation` fields must echo the matching request.
+message ClipboardData {
+  uint64 generation = 1;
+  ClipboardFormat format = 2;
+  bytes data = 3;
+}
+
+// Sent by the offerer when an offer is no longer valid (e.g. the user copied
+// new content before the receiver requested the old). Receivers should drop
+// any pending state for the named generation.
+message ClipboardRelease {
+  uint64 generation = 1;
 }
 
 // Reported by either side when a request cannot be fulfilled, or as an

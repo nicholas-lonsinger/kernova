@@ -88,6 +88,10 @@ final class VsockGuestLogService {
             logger.warning(
                 "Guest agent error for '\(label, privacy: .public)': \(error.code, privacy: .public) — \(error.message, privacy: .public)"
             )
+        case .clipboardOffer, .clipboardRequest, .clipboardData, .clipboardRelease:
+            // Clipboard payloads belong on the clipboard port; if one arrives
+            // here, the guest agent has crossed wires. Log and ignore.
+            logger.warning("Unexpected clipboard payload on log channel for '\(label, privacy: .public)'")
         case .none:
             logger.debug("Frame with no payload for '\(label, privacy: .public)'")
         }
