@@ -14,6 +14,20 @@ public typealias Frame = Kernova_V1_Frame
 /// The channel takes ownership of the file descriptor: it will be closed by
 /// `close()`, by EOF on the read side, or by the underlying `FileHandle` on
 /// dealloc.
+///
+/// **Concurrency model**: this class is `@unchecked Sendable` with an
+/// internal `NSLock` rather than `@MainActor`-isolated like much of the
+/// host-side code (`SpiceClipboardService`, `VsockGuestLogService`). The
+/// reasons:
+/// - `FileHandle.readabilityHandler` callbacks run on a private GCD queue,
+///   not main, so consuming them through actor isolation would require
+///   bouncing every chunk through `await MainActor.run`
+/// - `VsockChannel` is consumed by both host (`@MainActor` services) and
+///   the guest agent (top-level main.swift code that's nonisolated), so
+///   pinning to a specific actor would force one of them through extra
+///   hops
+/// The lock-based design lets either side call `send` from any context and
+/// drain `incoming` from any task without isolation hops.
 public final class VsockChannel: @unchecked Sendable {
 
     /// Inbound frames. The stream finishes on EOF and finishes-with-error on

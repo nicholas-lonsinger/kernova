@@ -16,6 +16,13 @@ import os
 ///   connected (logs are best-effort)
 final class VsockHostConnection: @unchecked Sendable {
 
+    // RATIONALE: This file deliberately uses raw `os.Logger` rather than the
+    // `KernovaLogger` wrapper that every other agent file uses. Routing this
+    // class's internal logs (connect-attempt failures, EOF events, flush-loop
+    // outcomes) through `KernovaLogger` would forward them via this same
+    // connection — risking a feedback loop where a write failure logs an
+    // event that schedules another send through the broken channel. Keep all
+    // VsockHostConnection diagnostics local to the guest's `os.Logger`.
     private static let logger = Logger(subsystem: "com.kernova.agent", category: "VsockHostConnection")
 
     /// Same port as `Kernova/Services/VsockPorts.swift::KernovaVsockPort.log`
