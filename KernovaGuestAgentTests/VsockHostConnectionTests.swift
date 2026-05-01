@@ -143,6 +143,11 @@ struct VsockHostConnectionTests {
 
         let (senderFd, receiverFd) = try makeRawSocketPair()
 
+        // SO_NOSIGPIPE so writing to a peer-closed socket surfaces as an
+        // error rather than killing the test process with SIGPIPE.
+        var noSigpipe: Int32 = 1
+        _ = setsockopt(senderFd, SOL_SOCKET, SO_NOSIGPIPE, &noSigpipe, socklen_t(MemoryLayout<Int32>.size))
+
         // Constrain the send buffer to ~8 KB so the kernel queue fills quickly.
         var sndbuf: Int32 = 8192
         setsockopt(senderFd, SOL_SOCKET, SO_SNDBUF, &sndbuf, socklen_t(MemoryLayout<Int32>.size))
