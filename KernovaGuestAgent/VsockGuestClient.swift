@@ -24,8 +24,31 @@ import os
 /// another send through the broken channel.
 final class VsockGuestClient: @unchecked Sendable {
 
-    /// Opens a SOCK_STREAM fd for the given port and label; returns nil on failure.
-    typealias VsockSocketProvider = @Sendable (_ port: UInt32, _ label: String) -> Int32?
+    /// Outcome of a `VsockSocketProvider` failure. `.transient` failures cause
+    /// the reconnect loop to sleep and retry; `.permanent` failures cause the
+    /// loop to exit and the client to enter its terminal "cannot be restarted"
+    /// state.
+    enum VsockProviderError: Error, Sendable, Equatable {
+        /// Retry-able — peer not ready, transient kernel resource pressure, etc.
+        case transient(String)
+        /// Not retry-able — kernel doesn't support AF_VSOCK, sandbox prohibits
+        /// the syscall, etc. Logging once at error level is sufficient.
+        case permanent(String)
+    }
+
+    /// Opens a SOCK_STREAM fd for the given port and label; returns `.success`
+    /// with the connected fd, or `.failure` with a `.transient` or `.permanent`
+    /// error indicating whether the loop should retry or halt.
+    typealias VsockSocketProvider =
+        @Sendable (_ port: UInt32, _ label: String) -> Result<Int32, VsockProviderError>
+
+    /// Outcome produced by `connectAndServe` to control the reconnect loop.
+    private enum LoopOutcome: Equatable {
+        /// Sleep `retryInterval`, then try again.
+        case retry
+        /// Exit the loop; client is now permanently inert.
+        case terminate
+    }
 
     private static let logger = Logger(subsystem: "com.kernova.agent", category: "VsockGuestClient")
     private static let socketTimeoutSeconds: Int = 30
@@ -66,8 +89,9 @@ final class VsockGuestClient: @unchecked Sendable {
     // MARK: - Lifecycle
 
     /// Begins the connect/serve/reconnect loop. Idempotent — repeated calls
-    /// after the first are no-ops. Once stopped, the client cannot be
-    /// restarted; create a new instance.
+    /// after the first are no-ops. Once stopped (or permanently terminated by a
+    /// permanent provider failure), the client cannot be restarted; create a
+    /// new instance.
     func start(serve: @escaping @Sendable (VsockChannel) async -> Void) {
         lock.withLock {
             guard reconnectTask == nil, !stopped else { return }
@@ -103,19 +127,45 @@ final class VsockGuestClient: @unchecked Sendable {
 
     private func runReconnectLoop(serve: @Sendable @escaping (VsockChannel) async -> Void) async {
         while !Task.isCancelled {
-            await connectAndServe(serve: serve)
+            let outcome = await connectAndServe(serve: serve)
+            switch outcome {
+            case .terminate:
+                lock.withLock { stopped = true }
+                return
+            case .retry:
+                break
+            }
             guard !Task.isCancelled else { break }
             try? await Task.sleep(for: retryInterval)
         }
     }
 
-    private func connectAndServe(serve: @Sendable @escaping (VsockChannel) async -> Void) async {
-        guard let fd = socketProvider(port, label) else { return }
-        guard fd >= 0 else {
-            Self.logger.fault("socketProvider returned invalid fd \(fd, privacy: .public) for '\(self.label, privacy: .public)'")
-            assertionFailure("socketProvider returned invalid fd \(fd) for '\(self.label)'")
-            return
+    private func connectAndServe(
+        serve: @Sendable @escaping (VsockChannel) async -> Void
+    ) async -> LoopOutcome {
+        let fd: Int32
+        switch socketProvider(port, label) {
+        case .success(let f):
+            fd = f
+        case .failure(.transient):
+            // Logged at the call site closest to errno context (openVsockToHost /
+            // classifySocketErrno). No re-log here — the typed error is purely a
+            // control-flow signal at this level.
+            return .retry
+        case .failure(.permanent):
+            // Logged at error level inside classifySocketErrno. Halt the loop.
+            Self.logger.error("Halting reconnect loop for '\(self.label, privacy: .public)' after permanent failure.")
+            return .terminate
         }
+
+        guard fd >= 0 else {
+            Self.logger.fault(
+                "socketProvider returned invalid fd \(fd, privacy: .public) for '\(self.label, privacy: .public)'"
+            )
+            assertionFailure("socketProvider returned invalid fd \(fd) for '\(self.label)'")
+            return .retry
+        }
+
         let channel = VsockChannel(fileDescriptor: fd)
         channel.start()
 
@@ -126,7 +176,7 @@ final class VsockGuestClient: @unchecked Sendable {
         }
         if aborted {
             channel.close()
-            return
+            return .retry
         }
 
         Self.logger.notice("Connected '\(self.label, privacy: .public)' to host vsock port \(self.port, privacy: .public)")
@@ -136,6 +186,7 @@ final class VsockGuestClient: @unchecked Sendable {
         lock.withLock {
             if currentChannel === channel { currentChannel = nil }
         }
+        return .retry
     }
 
     // MARK: - Socket helpers (static — no instance state read)
@@ -149,13 +200,17 @@ final class VsockGuestClient: @unchecked Sendable {
     /// connect phase; blocking mode is restored afterwards so subsequent
     /// `recv`/`send` calls continue to observe the socket-level timeouts.
     ///
-    /// Returns the connected fd on success, nil on failure. Used as the
-    /// default `socketProvider` in the production convenience init.
-    private static func openVsockToHost(port: UInt32, label: String) -> Int32? {
+    /// Returns `.success(fd)` on success, `.failure(.permanent(...))` when
+    /// `AF_VSOCK` is unsupported, or `.failure(.transient(...))` for all other
+    /// failures. Used as the default `socketProvider` in the production
+    /// convenience init.
+    private static func openVsockToHost(
+        port: UInt32, label: String
+    ) -> Result<Int32, VsockProviderError> {
         let fd = socket(AF_VSOCK, SOCK_STREAM, 0)
         guard fd >= 0 else {
-            logger.warning("socket(AF_VSOCK) failed for '\(label, privacy: .public)': errno=\(errno, privacy: .public)")
-            return nil
+            let err = errno
+            return .failure(classifySocketErrno(err, label: label))
         }
 
         let originalFlags = fcntl(fd, F_GETFL, 0)
@@ -163,13 +218,13 @@ final class VsockGuestClient: @unchecked Sendable {
             let err = errno
             close(fd)
             logger.error("fcntl(F_GETFL) failed for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
-            return nil
+            return .failure(.transient("fcntl(F_GETFL) failed for '\(label)': errno=\(err)"))
         }
         guard fcntl(fd, F_SETFL, originalFlags | O_NONBLOCK) >= 0 else {
             let err = errno
             close(fd)
             logger.error("fcntl(F_SETFL, O_NONBLOCK) failed for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
-            return nil
+            return .failure(.transient("fcntl(F_SETFL, O_NONBLOCK) failed for '\(label)': errno=\(err)"))
         }
 
         var addr = sockaddr_vm()
@@ -192,11 +247,11 @@ final class VsockGuestClient: @unchecked Sendable {
             guard connectErr == EINPROGRESS else {
                 close(fd)
                 logger.warning("connect() to '\(label, privacy: .public)' port \(port, privacy: .public) failed: errno=\(connectErr, privacy: .public)")
-                return nil
+                return .failure(.transient("connect() to '\(label)' port \(port) failed: errno=\(connectErr)"))
             }
             guard awaitConnectCompletion(fd: fd, label: label, port: port) else {
                 close(fd)
-                return nil
+                return .failure(.transient("connect() to '\(label)' port \(port) did not complete"))
             }
         }
 
@@ -204,11 +259,27 @@ final class VsockGuestClient: @unchecked Sendable {
             let err = errno
             close(fd)
             logger.error("fcntl(F_SETFL) restore failed for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
-            return nil
+            return .failure(.transient("fcntl(F_SETFL) restore failed for '\(label)': errno=\(err)"))
         }
 
         applySocketTimeouts(fd: fd, label: label)
-        return fd
+        return .success(fd)
+    }
+
+    /// Classifies a `socket(AF_VSOCK)` errno value into a `.permanent` or
+    /// `.transient` provider error. `EAFNOSUPPORT` and `EPROTONOSUPPORT`
+    /// indicate the kernel does not support AF_VSOCK at all and will never
+    /// succeed; all other values (resource exhaustion, access control) may
+    /// clear up and are classified as transient.
+    static func classifySocketErrno(_ err: Int32, label: String) -> VsockProviderError {
+        switch err {
+        case EAFNOSUPPORT, EPROTONOSUPPORT:
+            logger.error("socket(AF_VSOCK) unsupported for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
+            return .permanent("socket(AF_VSOCK) unsupported for '\(label)': errno=\(err)")
+        default:
+            logger.warning("socket(AF_VSOCK) failed for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
+            return .transient("socket(AF_VSOCK) failed for '\(label)': errno=\(err)")
+        }
     }
 
     /// Waits up to `connectTimeoutSeconds` for an in-flight non-blocking connect

@@ -51,8 +51,8 @@ struct VsockGuestClipboardAgentTests {
     // MARK: - Agent factory helpers
 
     /// Sets up an agent with the given pasteboard and a socket provider that
-    /// returns the given fd on first call, nil thereafter. Does NOT retry
-    /// (long retry interval) so tests don't interfere with each other.
+    /// returns the given fd on first call, transient failure thereafter. Does
+    /// NOT retry (long retry interval) so tests don't interfere with each other.
     private func makeAgent(pasteboard: FakePasteboard, agentFd: Int32) -> VsockGuestClipboardAgent {
         let provided = AtomicInt()
         let client = VsockGuestClient(
@@ -60,7 +60,7 @@ struct VsockGuestClipboardAgentTests {
             label: "clipboard-test",
             retryInterval: .seconds(60)
         ) { _, _ in
-            provided.increment() == 1 ? agentFd : nil
+            provided.increment() == 1 ? .success(agentFd) : .failure(.transient("test: no fd"))
         }
         return VsockGuestClipboardAgent(pasteboard: pasteboard, client: client)
     }
@@ -174,7 +174,11 @@ struct VsockGuestClipboardAgentTests {
             retryInterval: .milliseconds(50)
         ) { _, _ in
             let n = provideCount.increment()
-            return fdBox.fd(at: n - 1)
+            if let fd = fdBox.fd(at: n - 1) {
+                return .success(fd)
+            } else {
+                return .failure(.transient("test: no fd at index \(n - 1)"))
+            }
         }
 
         let agent = VsockGuestClipboardAgent(pasteboard: pasteboard, client: client)
@@ -288,7 +292,11 @@ struct VsockGuestClipboardAgentTests {
                 firstFailedGate.signal()
                 secondProvideGate.wait()
             }
-            return fdBox.fd(at: n - 1)
+            if let fd = fdBox.fd(at: n - 1) {
+                return .success(fd)
+            } else {
+                return .failure(.transient("test: no fd at index \(n - 1)"))
+            }
         }
 
         let agent = VsockGuestClipboardAgent(pasteboard: pasteboard, client: client)
