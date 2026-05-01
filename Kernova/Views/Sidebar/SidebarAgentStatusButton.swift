@@ -28,20 +28,19 @@ struct SidebarAgentStatusButton: View {
         // arrowEdge: .leading places the arrow on the popover's leading edge,
         // which sits the popover to the trailing side of the button — i.e. over
         // the detail pane, where there's room.
-        //
-        // The trailing .fixedSize() (both dimensions) is what makes the popover
-        // size correctly. With it absent, NSPopover negotiates a width with
-        // SwiftUI that lets the inner Text render on one line and clip
-        // horizontally; with .fixedSize(horizontal: false, vertical: true) the
-        // horizontal stays flexible and produces the same one-line truncation.
-        // Fixing both dimensions to intrinsic — width pinned at 320 by the
-        // inner frame, height pinned at the wrapped content's natural height —
-        // gives NSPopover a fully-determined size and the body wraps cleanly.
         .popover(isPresented: $isPopoverPresented, arrowEdge: .leading) {
-            popoverContent
-                .frame(width: 320, alignment: .leading)
-                .padding(16)
-                .fixedSize()
+            AgentStatusPopoverContent(
+                vmName: vmName,
+                status: status,
+                onAction: {
+                    if case .current = status {
+                        // Done — just close
+                    } else {
+                        onMount()
+                    }
+                    isPopoverPresented = false
+                }
+            )
         }
     }
 
@@ -70,11 +69,22 @@ struct SidebarAgentStatusButton: View {
         case .current(let version): "Guest agent connected (\(version))"
         }
     }
+}
 
-    // MARK: - Popover
+/// Body of the agent-status popover, extracted from `SidebarAgentStatusButton`
+/// so it can be previewed and tuned without clicking the popover open.
+///
+/// The trailing `.fixedSize()` (both dimensions) is what makes NSPopover size
+/// correctly. With horizontal flexible the inner Text renders on one line and
+/// gets clipped to the inner frame; pinning both dimensions to intrinsic
+/// produces a wrapped, naturally-tall layout NSPopover can host without
+/// negotiation.
+struct AgentStatusPopoverContent: View {
+    let vmName: String
+    let status: AgentStatus
+    let onAction: () -> Void
 
-    @ViewBuilder
-    private var popoverContent: some View {
+    var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(popoverTitle).font(.headline)
             Text(popoverBody)
@@ -84,18 +94,13 @@ struct SidebarAgentStatusButton: View {
 
             HStack {
                 Spacer()
-                if case .current = status {
-                    Button("Done") { isPopoverPresented = false }
-                        .keyboardShortcut(.defaultAction)
-                } else {
-                    Button(buttonTitle) {
-                        onMount()
-                        isPopoverPresented = false
-                    }
+                Button(buttonTitle, action: onAction)
                     .keyboardShortcut(.defaultAction)
-                }
             }
         }
+        .frame(width: 320, alignment: .leading)
+        .padding(16)
+        .fixedSize()
     }
 
     private var popoverTitle: String {
@@ -128,7 +133,8 @@ struct SidebarAgentStatusButton: View {
 
 // MARK: - Previews
 
-#Preview("Waiting") {
+// Sidebar button + click target. Click the icon to open the live popover.
+#Preview("Button — Waiting") {
     SidebarAgentStatusButton(
         vmName: "Sequoia Dev",
         status: .waiting,
@@ -137,7 +143,7 @@ struct SidebarAgentStatusButton: View {
     .padding(40)
 }
 
-#Preview("Outdated") {
+#Preview("Button — Outdated") {
     SidebarAgentStatusButton(
         vmName: "Sequoia Dev",
         status: .outdated(installed: "0.9.1", bundled: "0.9.2"),
@@ -146,11 +152,45 @@ struct SidebarAgentStatusButton: View {
     .padding(40)
 }
 
-#Preview("Current") {
+#Preview("Button — Current") {
     SidebarAgentStatusButton(
         vmName: "Sequoia Dev",
         status: .current(version: "0.9.2"),
         onMount: {}
     )
     .padding(40)
+}
+
+// Standalone popover content — always visible in the canvas, lets you iterate
+// on text wrapping and sizing without clicking the button each time.
+#Preview("Popover — Waiting") {
+    AgentStatusPopoverContent(
+        vmName: "Sequoia Dev",
+        status: .waiting,
+        onAction: {}
+    )
+}
+
+#Preview("Popover — Outdated") {
+    AgentStatusPopoverContent(
+        vmName: "Sequoia Dev",
+        status: .outdated(installed: "0.9.1", bundled: "0.9.2"),
+        onAction: {}
+    )
+}
+
+#Preview("Popover — Current") {
+    AgentStatusPopoverContent(
+        vmName: "Sequoia Dev",
+        status: .current(version: "0.9.2"),
+        onAction: {}
+    )
+}
+
+#Preview("Popover — Long VM name") {
+    AgentStatusPopoverContent(
+        vmName: "My Very Long macOS Sequoia Development VM Name",
+        status: .outdated(installed: "0.9.1", bundled: "0.9.2"),
+        onAction: {}
+    )
 }
