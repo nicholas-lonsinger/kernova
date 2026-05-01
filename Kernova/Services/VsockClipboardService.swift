@@ -50,6 +50,16 @@ final class VsockClipboardService: ClipboardServicing {
     /// `grabIfChanged()` is called repeatedly with the same content.
     private var lastGrabbedText: String?
 
+    /// Exposes `pendingInboundGeneration` for tests that need to assert the
+    /// inbound-request lifecycle without relying on observable side effects.
+    ///
+    /// A seam is used here rather than a behavioral assertion (e.g. sending a
+    /// stale `ClipboardData` and checking `clipboardText` wasn't overwritten)
+    /// because any channel teardown resets `pendingInboundGeneration` to `nil`
+    /// via `stop()`. That reset would satisfy a behavioral assertion for the
+    /// wrong reason, masking a regression in the generation commit logic itself.
+    var pendingInboundGenerationForTesting: UInt64? { pendingInboundGeneration }
+
     private static let logger = Logger(subsystem: "com.kernova.app", category: "VsockClipboardService")
 
     // MARK: - Init
@@ -210,11 +220,6 @@ final class VsockClipboardService: ClipboardServicing {
             return
         }
 
-        // Accept the latest offer. If a previous inbound was still pending,
-        // the older `ClipboardData` will be discarded by `handleData` because
-        // the generation no longer matches.
-        pendingInboundGeneration = offer.generation
-
         var request = Frame()
         request.protocolVersion = 1
         request.clipboardRequest = Kernova_V1_ClipboardRequest.with {
@@ -223,6 +228,11 @@ final class VsockClipboardService: ClipboardServicing {
         }
         do {
             try channel.send(request)
+            // Accept the latest offer only after the request is successfully
+            // sent. If the send fails, leaving pendingInboundGeneration nil
+            // lets the inbound side remain clean — no stale generation that
+            // could cause a real ClipboardData to be dropped as "mismatch".
+            pendingInboundGeneration = offer.generation
             Self.logger.debug(
                 "Requested clipboard data from '\(self.label, privacy: .public)' (gen=\(offer.generation, privacy: .public))"
             )
