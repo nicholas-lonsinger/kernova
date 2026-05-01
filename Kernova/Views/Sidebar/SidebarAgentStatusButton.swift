@@ -30,13 +30,19 @@ struct SidebarAgentStatusButton: View {
         // the detail pane, where there's room. The previous .trailing setting
         // pushed the popover into the sidebar where the 280pt width clipped
         // the body copy and button title against the window edge.
+        //
+        // The trailing .fixedSize(horizontal: false, vertical: true) is what
+        // lets the popover stretch to fit multi-line body copy. Without it,
+        // NSPopover sizes its content view before the inner Text's wrapping
+        // settles and the bottom of the body gets clipped — even though the
+        // inner Text already has its own fixedSize. Applying fixedSize at the
+        // outermost level after the frame/padding propagates the intrinsic
+        // height up to NSPopover.
         .popover(isPresented: $isPopoverPresented, arrowEdge: .leading) {
             popoverContent
+                .frame(width: 320)
                 .padding(16)
-                // min/ideal/max lets the popover widen for long VM names while
-                // staying compact in the common case; vertical size is
-                // unconstrained so the body wraps to as many lines as needed.
-                .frame(minWidth: 280, idealWidth: 320, maxWidth: 380)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -71,13 +77,7 @@ struct SidebarAgentStatusButton: View {
     @ViewBuilder
     private var popoverContent: some View {
         VStack(alignment: .leading, spacing: 10) {
-            // .fixedSize(horizontal: false, vertical: true) on every Text so
-            // long titles (long VM names, version diffs) wrap to the popover
-            // width instead of being single-line truncated. Without this,
-            // the headline in particular collapses to one line and clips.
-            Text(popoverTitle)
-                .font(.headline)
-                .fixedSize(horizontal: false, vertical: true)
+            Text(popoverTitle).font(.headline)
             Text(popoverBody)
                 .font(.callout)
                 .foregroundStyle(.secondary)
@@ -97,7 +97,6 @@ struct SidebarAgentStatusButton: View {
                 }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var popoverTitle: String {
