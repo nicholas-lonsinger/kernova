@@ -341,6 +341,46 @@ struct VsockGuestClipboardAgentTests {
         #expect(liveChannelWasNilSnapshot.value == 1, "liveChannel was non-nil during the failed Hello connection: fix did not abort before publish")
     }
 
+    @Test("handleRequest with unsupported format replies with an Error frame")
+    func unsupportedFormatRepliesWithError() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForHello(agent: agent, hostChannel: hostChannel)
+
+        // Guest puts text on the clipboard; agent sends an offer.
+        pasteboard.setString("guest content", forType: .string)
+        await MainActor.run { agent.checkClipboardChange() }
+
+        let offerFrame = try await nextFrame(from: hostChannel)
+        guard case .clipboardOffer(let offer) = offerFrame.payload else {
+            throw TestFailure("Expected ClipboardOffer, got \(String(describing: offerFrame.payload))")
+        }
+
+        // Host sends a request with an unsupported format.
+        var request = Frame()
+        request.protocolVersion = 1
+        request.clipboardRequest = Kernova_V1_ClipboardRequest.with {
+            $0.generation = offer.generation
+            $0.format = .unspecified  // any non-textUtf8 value
+        }
+        try hostChannel.send(request)
+
+        // Expect an Error frame — not silence.
+        let response = try await nextFrame(from: hostChannel)
+        guard case .error(let err) = response.payload else {
+            throw TestFailure("Expected Error frame, got \(String(describing: response.payload))")
+        }
+        #expect(err.code == "clipboard.format.unavailable")
+        #expect(err.inReplyTo == "clipboard.request")
+    }
+
     @Test("full inbound offer/request/data round-trip writes pasteboard")
     func inboundRoundTripWritesPasteboard() async throws {
         let pasteboard = FakePasteboard()

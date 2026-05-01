@@ -52,6 +52,11 @@ final class VsockClipboardService: ClipboardServicing {
 
     private static let logger = Logger(subsystem: "com.kernova.app", category: "VsockClipboardService")
 
+    // Error codes for outbound `Kernova_V1_Error` frames on `handleRequest` failures.
+    private static let errorCodeFormatUnavailable = "clipboard.format.unavailable"
+    private static let errorCodeEncodingFailure = "clipboard.transfer.encoding.failure"
+    private static let errorCodeTransferFailure = "clipboard.transfer.send.failure"
+
     // MARK: - Init
 
     init(channel: VsockChannel, label: String) {
@@ -124,7 +129,29 @@ final class VsockClipboardService: ClipboardServicing {
         }
     }
 
-    // MARK: - Hello
+    // MARK: - Hello / Error helpers
+
+    /// Best-effort emission of an `Error` frame on the clipboard channel.
+    ///
+    /// If `channel.send` fails (typically because the channel just tore down
+    /// for the same reason we're reporting), the failure is logged at `.debug`
+    /// and swallowed — we have nothing better to do at that point.
+    private func sendErrorFrame(code: String, message: String, inReplyTo: String?) {
+        var frame = Frame()
+        frame.protocolVersion = 1
+        frame.error = Kernova_V1_Error.with {
+            $0.code = code
+            $0.message = message
+            if let inReplyTo { $0.inReplyTo = inReplyTo }
+        }
+        do {
+            try channel.send(frame)
+        } catch {
+            Self.logger.debug(
+                "Failed to send error frame (code=\(code, privacy: .public)) for '\(self.label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+        }
+    }
 
     private func sendHello() {
         var hello = Frame()
@@ -235,20 +262,32 @@ final class VsockClipboardService: ClipboardServicing {
 
     private func handleRequest(_ request: Kernova_V1_ClipboardRequest) {
         guard let pending = pendingOutbound, pending.generation == request.generation else {
+            // Stale: the guest has already replaced or dropped the offer this targets.
+            // Don't burden it with an error — silence is correct here.
             Self.logger.debug(
                 "Stale clipboard request gen=\(request.generation, privacy: .public) (pending=\(self.pendingOutbound?.generation ?? 0, privacy: .public))"
             )
             return
         }
         guard request.format == .textUtf8 else {
-            Self.logger.debug(
-                "Unsupported clipboard format requested: \(request.format.rawValue, privacy: .public)"
+            Self.logger.warning(
+                "Unsupported clipboard format requested gen=\(request.generation, privacy: .public) format=\(request.format.rawValue, privacy: .public)"
+            )
+            sendErrorFrame(
+                code: Self.errorCodeFormatUnavailable,
+                message: "Host only carries TEXT_UTF8 (gen=\(request.generation), requested format=\(request.format.rawValue))",
+                inReplyTo: "clipboard.request"
             )
             return
         }
         guard let bytes = pending.text.data(using: .utf8) else {
             Self.logger.warning(
-                "Failed to encode clipboard text as UTF-8 (\(pending.text.count, privacy: .public) chars)"
+                "Failed to encode clipboard text as UTF-8 gen=\(pending.generation, privacy: .public) chars=\(pending.text.count, privacy: .public)"
+            )
+            sendErrorFrame(
+                code: Self.errorCodeEncodingFailure,
+                message: "Host could not encode \(pending.text.count) characters as UTF-8 (gen=\(pending.generation))",
+                inReplyTo: "clipboard.request"
             )
             return
         }
@@ -266,8 +305,18 @@ final class VsockClipboardService: ClipboardServicing {
                 "Sent clipboard data to '\(self.label, privacy: .public)' (gen=\(pending.generation, privacy: .public), \(bytes.count, privacy: .public) bytes)"
             )
         } catch {
+            // Escalate severity: this is user-visible (paste from host produces
+            // nothing on the guest). Generation + size in the log so post-mortems
+            // can match the failure against the guest's "request sent" line.
             Self.logger.error(
-                "Failed to send clipboard data: \(error.localizedDescription, privacy: .public)"
+                "Failed to send clipboard data to '\(self.label, privacy: .public)' gen=\(pending.generation, privacy: .public) bytes=\(bytes.count, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+            // Best-effort error frame. If the channel died on the data send,
+            // this will also fail and be swallowed — guest learns via EOF.
+            sendErrorFrame(
+                code: Self.errorCodeTransferFailure,
+                message: "Host failed to deliver clipboard data (gen=\(pending.generation), \(bytes.count) bytes): \(error.localizedDescription)",
+                inReplyTo: "clipboard.request"
             )
         }
     }

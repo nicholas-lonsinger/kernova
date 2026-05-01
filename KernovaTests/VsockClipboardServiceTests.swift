@@ -355,6 +355,48 @@ struct VsockClipboardServiceTests {
         #expect(data.generation == offer.generation)
     }
 
+    @Test("handleRequest with unsupported format replies with an Error frame")
+    func unsupportedFormatRepliesWithError() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test")
+        service.start()
+        defer { service.stop() }
+
+        _ = try await nextFrame(from: guest)        // host hello
+        try guest.send(makeHello())
+        try await waitUntil { service.isConnected }
+
+        service.clipboardText = "host content"
+        service.grabIfChanged()
+        let offerFrame = try await nextFrame(from: guest)
+        guard case .clipboardOffer(let offer) = offerFrame.payload else {
+            Issue.record("Expected clipboardOffer, got \(String(describing: offerFrame.payload))")
+            return
+        }
+
+        // Guest requests with an unsupported format.
+        var badRequest = Frame()
+        badRequest.protocolVersion = 1
+        badRequest.clipboardRequest = Kernova_V1_ClipboardRequest.with {
+            $0.generation = offer.generation
+            $0.format = .unspecified  // any non-textUtf8 value
+        }
+        try guest.send(badRequest)
+
+        // Expect an Error frame — not silence.
+        let response = try await nextFrame(from: guest)
+        guard case .error(let err) = response.payload else {
+            Issue.record("Expected error frame, got \(String(describing: response.payload))")
+            return
+        }
+        #expect(err.code == "clipboard.format.unavailable")
+        #expect(err.inReplyTo == "clipboard.request")
+    }
+
     @Test("Inbound offer triggers a request and incoming data updates clipboardText")
     func inboundFlowPopulatesClipboard() async throws {
         let (guest, host) = try makePair()
