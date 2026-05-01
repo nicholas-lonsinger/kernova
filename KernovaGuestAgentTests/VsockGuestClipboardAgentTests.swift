@@ -354,7 +354,6 @@ struct VsockGuestClipboardAgentTests {
 
         try await startAgentAndWaitForHello(agent: agent, hostChannel: hostChannel)
 
-        // Guest puts text on the clipboard; agent sends an offer.
         pasteboard.setString("guest content", forType: .string)
         await MainActor.run { agent.checkClipboardChange() }
 
@@ -363,7 +362,6 @@ struct VsockGuestClipboardAgentTests {
             throw TestFailure("Expected ClipboardOffer, got \(String(describing: offerFrame.payload))")
         }
 
-        // Host sends a request with an unsupported format.
         var request = Frame()
         request.protocolVersion = 1
         request.clipboardRequest = Kernova_V1_ClipboardRequest.with {
@@ -379,6 +377,53 @@ struct VsockGuestClipboardAgentTests {
         }
         #expect(err.code == "clipboard.format.unavailable")
         #expect(err.inReplyTo == "clipboard.request")
+        #expect(err.message.contains("gen=\(offer.generation)"))
+    }
+
+    @Test("handleRequest data-send failure is logged without crashing and leaves state coherent")
+    func dataSendFailureIsHandledGracefully() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+
+        // SO_NOSIGPIPE so a write to a peer-closed socket returns EPIPE rather
+        // than delivering SIGPIPE to the test process.
+        var noSigpipe: Int32 = 1
+        _ = setsockopt(agentFd, SOL_SOCKET, SO_NOSIGPIPE, &noSigpipe, socklen_t(MemoryLayout<Int32>.size))
+
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForHello(agent: agent, hostChannel: hostChannel)
+
+        pasteboard.setString("guest data", forType: .string)
+        await MainActor.run { agent.checkClipboardChange() }
+
+        let offerFrame = try await nextFrame(from: hostChannel)
+        guard case .clipboardOffer(let offer) = offerFrame.payload else {
+            throw TestFailure("Expected ClipboardOffer, got \(String(describing: offerFrame.payload))")
+        }
+
+        // Queue the request in the kernel buffer, then close the host end so
+        // the agent's data-send reply arrives at a dead peer.
+        var request = Frame()
+        request.protocolVersion = 1
+        request.clipboardRequest = Kernova_V1_ClipboardRequest.with {
+            $0.generation = offer.generation
+            $0.format = .textUtf8
+        }
+        try hostChannel.send(request)
+        hostChannel.close()
+
+        // The agent reads the request, tries to send data, fails (peer gone),
+        // logs .error, and attempts a best-effort error frame (also fails,
+        // swallowed). It must not crash and liveChannel must be cleared once
+        // the receive loop observes EOF.
+        try await waitUntil(timeout: .seconds(3)) { agent.liveChannelForTesting == nil }
+        #expect(agent.liveChannelForTesting == nil, "liveChannel should be nil after peer EOF")
     }
 
     @Test("full inbound offer/request/data round-trip writes pasteboard")

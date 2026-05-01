@@ -52,7 +52,6 @@ final class VsockClipboardService: ClipboardServicing {
 
     private static let logger = Logger(subsystem: "com.kernova.app", category: "VsockClipboardService")
 
-    // Error codes for outbound `Kernova_V1_Error` frames on `handleRequest` failures.
     private static let errorCodeFormatUnavailable = "clipboard.format.unavailable"
     private static let errorCodeEncodingFailure = "clipboard.transfer.encoding.failure"
     private static let errorCodeTransferFailure = "clipboard.transfer.send.failure"
@@ -131,8 +130,6 @@ final class VsockClipboardService: ClipboardServicing {
 
     // MARK: - Hello / Error helpers
 
-    /// Best-effort emission of an `Error` frame on the clipboard channel.
-    ///
     /// If `channel.send` fails (typically because the channel just tore down
     /// for the same reason we're reporting), the failure is logged at `.debug`
     /// and swallowed — we have nothing better to do at that point.
@@ -305,14 +302,12 @@ final class VsockClipboardService: ClipboardServicing {
                 "Sent clipboard data to '\(self.label, privacy: .public)' (gen=\(pending.generation, privacy: .public), \(bytes.count, privacy: .public) bytes)"
             )
         } catch {
-            // Escalate severity: this is user-visible (paste from host produces
-            // nothing on the guest). Generation + size in the log so post-mortems
-            // can match the failure against the guest's "request sent" line.
+            // Logged at .error: this failure is user-visible (paste produces nothing).
+            // Include gen + size so post-mortems can pair this with the peer's "request sent" log.
             Self.logger.error(
                 "Failed to send clipboard data to '\(self.label, privacy: .public)' gen=\(pending.generation, privacy: .public) bytes=\(bytes.count, privacy: .public): \(error.localizedDescription, privacy: .public)"
             )
-            // Best-effort error frame. If the channel died on the data send,
-            // this will also fail and be swallowed — guest learns via EOF.
+            // If the channel is dead, the peer will learn via EOF — no further fallback needed.
             sendErrorFrame(
                 code: Self.errorCodeTransferFailure,
                 message: "Host failed to deliver clipboard data (gen=\(pending.generation), \(bytes.count) bytes): \(error.localizedDescription)",
