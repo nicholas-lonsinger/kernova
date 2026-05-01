@@ -11,6 +11,7 @@
 		A100010B /* KernovaRelaunchHelper in Embed Helpers */ = {isa = PBXBuildFile; fileRef = A1000100 /* KernovaRelaunchHelper */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		A2000001 /* KernovaProtocol in Frameworks */ = {isa = PBXBuildFile; productRef = A2000002 /* KernovaProtocol */; };
 		A2000004 /* KernovaProtocol in Frameworks */ = {isa = PBXBuildFile; productRef = A2000005 /* KernovaProtocol */; };
+		A2000006 /* KernovaProtocol in Frameworks */ = {isa = PBXBuildFile; productRef = A2000007 /* KernovaProtocol */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -29,6 +30,13 @@
 			remoteInfo = KernovaRelaunchHelper;
 		};
 		A1000205 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A1000002 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A1000204;
+			remoteInfo = KernovaGuestAgent;
+		};
+		A1000301 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = A1000002 /* Project object */;
 			proxyType = 1;
@@ -57,6 +65,7 @@
 		A10000F0 /* DiskTemplates */ = {isa = PBXFileReference; lastKnownFileType = folder; path = DiskTemplates; sourceTree = "<group>"; };
 		A1000100 /* KernovaRelaunchHelper */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = KernovaRelaunchHelper; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000200 /* KernovaGuestAgent */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = KernovaGuestAgent; sourceTree = BUILT_PRODUCTS_DIR; };
+		A1000300 /* KernovaGuestAgentTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KernovaGuestAgentTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -66,6 +75,17 @@
 				App/Info.plist,
 			);
 			target = A1000003 /* Kernova */;
+		};
+		A1000308 /* Exceptions for "KernovaGuestAgent" folder in "KernovaGuestAgentTests" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				main.swift,
+				Info.plist,
+				"com.kernova.agent.plist",
+				"install.command",
+				"uninstall.command",
+			);
+			target = A1000303 /* KernovaGuestAgentTests */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -90,7 +110,15 @@
 		};
 		A1000201 /* KernovaGuestAgent */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				A1000308 /* Exceptions for "KernovaGuestAgent" folder in "KernovaGuestAgentTests" target */,
+			);
 			path = KernovaGuestAgent;
+			sourceTree = "<group>";
+		};
+		A1000302 /* KernovaGuestAgentTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = KernovaGuestAgentTests;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -126,6 +154,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A1000305 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A2000006 /* KernovaProtocol in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -136,6 +172,7 @@
 				A1000007 /* KernovaTests */,
 				A1000101 /* KernovaRelaunchHelper */,
 				A1000201 /* KernovaGuestAgent */,
+				A1000302 /* KernovaGuestAgentTests */,
 				A10000F0 /* DiskTemplates */,
 				A1000021 /* Products */,
 			);
@@ -148,6 +185,7 @@
 				A1000005 /* KernovaTests.xctest */,
 				A1000100 /* KernovaRelaunchHelper */,
 				A1000200 /* KernovaGuestAgent */,
+				A1000300 /* KernovaGuestAgentTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -250,6 +288,31 @@
 			productReference = A1000200 /* KernovaGuestAgent */;
 			productType = "com.apple.product-type.tool";
 		};
+		A1000303 /* KernovaGuestAgentTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A1000309 /* Build configuration list for PBXNativeTarget "KernovaGuestAgentTests" */;
+			buildPhases = (
+				A1000304 /* Sources */,
+				A1000305 /* Frameworks */,
+				A1000306 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A1000307 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				A1000201 /* KernovaGuestAgent */,
+				A1000302 /* KernovaGuestAgentTests */,
+			);
+			name = KernovaGuestAgentTests;
+			packageProductDependencies = (
+				A2000007 /* KernovaProtocol */,
+			);
+			productName = KernovaGuestAgentTests;
+			productReference = A1000300 /* KernovaGuestAgentTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -271,6 +334,10 @@
 					};
 					A1000204 = {
 						CreatedOnToolsVersion = 16.0;
+					};
+					A1000303 = {
+						CreatedOnToolsVersion = 16.0;
+						TestTargetID = A1000204;
 					};
 				};
 			};
@@ -295,6 +362,7 @@
 				A1000102 /* KernovaRelaunchHelper */,
 				A1000204 /* KernovaGuestAgent */,
 				A1000060 /* KernovaTests */,
+				A1000303 /* KernovaGuestAgentTests */,
 			);
 		};
 /* End PBXProject section */
@@ -309,6 +377,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		A1000051 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A1000306 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -411,6 +486,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A1000304 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -428,6 +510,11 @@
 			isa = PBXTargetDependency;
 			target = A1000204 /* KernovaGuestAgent */;
 			targetProxy = A1000205 /* PBXContainerItemProxy */;
+		};
+		A1000307 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A1000204 /* KernovaGuestAgent */;
+			targetProxy = A1000301 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -695,6 +782,36 @@
 			};
 			name = Release;
 		};
+		A100030A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 0.9.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.kernova.agent.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		A100030B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 0.9.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.kernova.agent.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -743,6 +860,15 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		A1000309 /* Build configuration list for PBXNativeTarget "KernovaGuestAgentTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A100030A /* Debug */,
+				A100030B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
@@ -758,6 +884,10 @@
 			productName = KernovaProtocol;
 		};
 		A2000005 /* KernovaProtocol */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = KernovaProtocol;
+		};
+		A2000007 /* KernovaProtocol */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = KernovaProtocol;
 		};

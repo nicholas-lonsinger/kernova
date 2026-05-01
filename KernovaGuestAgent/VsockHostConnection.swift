@@ -12,11 +12,6 @@ import os
 /// once the next Hello succeeds.
 final class VsockHostConnection: @unchecked Sendable {
 
-    // RATIONALE: Same as `VsockGuestClient` — keep this class's diagnostics
-    // local to the guest's `os.Logger`. Routing them through `KernovaLogger`
-    // would forward them via this same connection, risking a feedback loop
-    // where a write failure logs an event that schedules another send
-    // through the broken channel.
     private static let logger = Logger(subsystem: "com.kernova.agent", category: "VsockHostConnection")
 
     /// Maximum number of `LogRecord` frames buffered while the channel is
@@ -27,12 +22,12 @@ final class VsockHostConnection: @unchecked Sendable {
     /// from `VsockGuestClipboardAgent` may push `.debug` traffic that could
     /// fill a smaller buffer well before Hello lands. 256 frames at
     /// ~200 bytes apiece is ~50 KiB of bounded memory.
-    private static let logBufferLimit = 256
+    static let logBufferLimit = 256
 
     private let client: VsockGuestClient
 
-    private let lock = NSLock()
-    private var pendingLogs: [Frame] = []
+    let lock = NSLock()
+    var pendingLogs: [Frame] = []
 
     init() {
         self.client = VsockGuestClient(port: KernovaVsockPort.log, label: "log")
@@ -90,11 +85,8 @@ final class VsockHostConnection: @unchecked Sendable {
         return false
     }
 
-    /// Appends a frame to the pre-connect ring, dropping the oldest entries
-    /// once the cap is exceeded. Used both for the "no live channel" path
-    /// and the "live channel write failed" path so a transient send error
-    /// doesn't lose the record.
-    private func bufferFrame(_ frame: Frame) {
+    /// Appends a frame to the pre-connect ring, dropping oldest entries once the cap is exceeded.
+    func bufferFrame(_ frame: Frame) {
         lock.withLock {
             pendingLogs.append(frame)
             if pendingLogs.count > Self.logBufferLimit {
@@ -128,13 +120,8 @@ final class VsockHostConnection: @unchecked Sendable {
         }
     }
 
-    /// Drains `pendingLogs` onto a live channel. On a mid-flush send failure
-    /// the channel is dead — but the unflushed remainder is re-enqueued at
-    /// the head of `pendingLogs` (ordered before any newly-added frames so
-    /// chronological order is preserved) so the next successful reconnect
-    /// retries them. The buffer cap is re-applied after re-enqueue, so a
-    /// chronic flush failure won't grow memory unbounded.
-    private func flushPendingLogs(on channel: VsockChannel) {
+    /// Re-enqueues unflushed frames at the head so chronological order survives a mid-flush failure.
+    func flushPendingLogs(on channel: VsockChannel) {
         let drained: [Frame] = lock.withLock {
             let p = pendingLogs
             pendingLogs.removeAll(keepingCapacity: true)

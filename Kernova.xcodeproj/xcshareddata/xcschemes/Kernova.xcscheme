@@ -41,6 +41,17 @@
                ReferencedContainer = "container:Kernova.xcodeproj">
             </BuildableReference>
          </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "A1000303"
+               BuildableName = "KernovaGuestAgentTests.xctest"
+               BlueprintName = "KernovaGuestAgentTests"
+               ReferencedContainer = "container:Kernova.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
       </Testables>
    </TestAction>
    <LaunchAction
