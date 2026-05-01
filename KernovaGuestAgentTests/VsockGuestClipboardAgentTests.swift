@@ -352,6 +352,91 @@ struct VsockGuestClipboardAgentTests {
         #expect(liveChannelWasNilSnapshot.value == 1, "liveChannel was non-nil during the failed Hello connection: fix did not abort before publish")
     }
 
+    @Test("handleRequest with unsupported format replies with an Error frame")
+    func unsupportedFormatRepliesWithError() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForHello(agent: agent, hostChannel: hostChannel)
+
+        pasteboard.setString("guest content", forType: .string)
+        await MainActor.run { agent.checkClipboardChange() }
+
+        let offerFrame = try await nextFrame(from: hostChannel)
+        guard case .clipboardOffer(let offer) = offerFrame.payload else {
+            throw TestFailure("Expected ClipboardOffer, got \(String(describing: offerFrame.payload))")
+        }
+
+        var request = Frame()
+        request.protocolVersion = 1
+        request.clipboardRequest = Kernova_V1_ClipboardRequest.with {
+            $0.generation = offer.generation
+            $0.format = .unspecified  // any non-textUtf8 value
+        }
+        try hostChannel.send(request)
+
+        // Expect an Error frame — not silence.
+        let response = try await nextFrame(from: hostChannel)
+        guard case .error(let err) = response.payload else {
+            throw TestFailure("Expected Error frame, got \(String(describing: response.payload))")
+        }
+        #expect(err.code == "clipboard.format.unavailable")
+        #expect(err.inReplyTo == "clipboard.request")
+        #expect(err.message.contains("gen=\(offer.generation)"))
+    }
+
+    @Test("handleRequest data-send failure is logged without crashing and leaves state coherent")
+    func dataSendFailureIsHandledGracefully() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+
+        // SO_NOSIGPIPE so a write to a peer-closed socket returns EPIPE rather
+        // than delivering SIGPIPE to the test process.
+        var noSigpipe: Int32 = 1
+        _ = setsockopt(agentFd, SOL_SOCKET, SO_NOSIGPIPE, &noSigpipe, socklen_t(MemoryLayout<Int32>.size))
+
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForHello(agent: agent, hostChannel: hostChannel)
+
+        pasteboard.setString("guest data", forType: .string)
+        await MainActor.run { agent.checkClipboardChange() }
+
+        let offerFrame = try await nextFrame(from: hostChannel)
+        guard case .clipboardOffer(let offer) = offerFrame.payload else {
+            throw TestFailure("Expected ClipboardOffer, got \(String(describing: offerFrame.payload))")
+        }
+
+        // Queue the request in the kernel buffer, then close the host end so
+        // the agent's data-send reply arrives at a dead peer.
+        var request = Frame()
+        request.protocolVersion = 1
+        request.clipboardRequest = Kernova_V1_ClipboardRequest.with {
+            $0.generation = offer.generation
+            $0.format = .textUtf8
+        }
+        try hostChannel.send(request)
+        hostChannel.close()
+
+        // The agent reads the request, tries to send data, fails (peer gone),
+        // logs .error, and attempts a best-effort error frame (also fails,
+        // swallowed). It must not crash and liveChannel must be cleared once
+        // the receive loop observes EOF.
+        try await waitUntil(timeout: .seconds(3)) { agent.liveChannelForTesting == nil }
+        #expect(agent.liveChannelForTesting == nil, "liveChannel should be nil after peer EOF")
+    }
+
     @Test("full inbound offer/request/data round-trip writes pasteboard")
     func inboundRoundTripWritesPasteboard() async throws {
         let pasteboard = FakePasteboard()
