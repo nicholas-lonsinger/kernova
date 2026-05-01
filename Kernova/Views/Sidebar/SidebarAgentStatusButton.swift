@@ -25,10 +25,15 @@ struct SidebarAgentStatusButton: View {
         }
         .buttonStyle(.plain)
         .help(helpText)
-        .popover(isPresented: $isPopoverPresented, arrowEdge: .trailing) {
+        // arrowEdge: .leading places the arrow on the popover's leading edge,
+        // which sits the popover to the trailing side of the button — i.e. over
+        // the detail pane, where there's room. The previous .trailing setting
+        // pushed the popover into the sidebar where the 280pt width clipped
+        // the body copy and button title against the window edge.
+        .popover(isPresented: $isPopoverPresented, arrowEdge: .leading) {
             popoverContent
                 .padding(16)
-                .frame(width: 280)
+                .frame(width: 320)
         }
     }
 
