@@ -59,7 +59,14 @@ public enum VsockFrameError: Error, Sendable, Equatable {
 /// queue at a time.
 public struct VsockFrameDecoder: Sendable {
 
+    /// Compact the consumed prefix once the read offset crosses this many
+    /// bytes. Sized to amortize the shift cost (each byte is copied at most
+    /// once before being dropped) without keeping more than ~64 KiB of stale
+    /// storage live per decoder.
+    private static let compactionThreshold: Int = 64 * 1024
+
     private var buffer: Data = Data()
+    private var readOffset: Int = 0
 
     public init() {}
 
@@ -77,7 +84,8 @@ public struct VsockFrameDecoder: Sendable {
     ///   should be discarded — the buffer is left in place but the stream is
     ///   considered corrupt.
     public mutating func nextFrame() throws -> Data? {
-        guard buffer.count >= VsockFrame.lengthPrefixSize else { return nil }
+        let unread = buffer.count - readOffset
+        guard unread >= VsockFrame.lengthPrefixSize else { return nil }
 
         let payloadSize = Int(readLengthPrefix())
 
@@ -89,24 +97,44 @@ public struct VsockFrameDecoder: Sendable {
         }
 
         let totalFrameSize = VsockFrame.lengthPrefixSize + payloadSize
-        guard buffer.count >= totalFrameSize else { return nil }
+        guard unread >= totalFrameSize else { return nil }
 
-        let start = buffer.startIndex + VsockFrame.lengthPrefixSize
-        let end = buffer.startIndex + totalFrameSize
-        let payload = Data(buffer[start..<end])
-        buffer.removeSubrange(buffer.startIndex..<end)
+        let payloadStart = buffer.startIndex + readOffset + VsockFrame.lengthPrefixSize
+        let payloadEnd = buffer.startIndex + readOffset + totalFrameSize
+        let payload = Data(buffer[payloadStart..<payloadEnd])
+        readOffset += totalFrameSize
+
+        compactIfNeeded()
         return payload
     }
 
     /// `true` when no buffered bytes remain.
-    public var isEmpty: Bool { buffer.isEmpty }
+    public var isEmpty: Bool { buffer.count == readOffset }
 
     /// Number of buffered bytes not yet consumed.
-    public var bufferedByteCount: Int { buffer.count }
+    public var bufferedByteCount: Int { buffer.count - readOffset }
 
     private func readLengthPrefix() -> UInt32 {
-        buffer.prefix(VsockFrame.lengthPrefixSize).withUnsafeBytes { raw in
+        let start = buffer.startIndex + readOffset
+        let end = start + VsockFrame.lengthPrefixSize
+        return buffer[start..<end].withUnsafeBytes { raw in
             UInt32(bigEndian: raw.loadUnaligned(as: UInt32.self))
+        }
+    }
+
+    /// Two-tier compaction: drained buffers reset for free; partial buffers
+    /// shift only after the threshold to keep the per-byte copy cost amortized.
+    private mutating func compactIfNeeded() {
+        guard readOffset > 0 else { return }
+        if readOffset == buffer.count {
+            buffer.removeAll(keepingCapacity: true)
+            readOffset = 0
+            return
+        }
+        if readOffset >= VsockFrameDecoder.compactionThreshold {
+            let unreadStart = buffer.startIndex + readOffset
+            buffer.removeSubrange(buffer.startIndex..<unreadStart)
+            readOffset = 0
         }
     }
 }
