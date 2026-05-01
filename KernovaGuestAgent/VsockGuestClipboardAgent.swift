@@ -131,7 +131,18 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         // so any offer the timer dispatches is guaranteed to land on the host
         // after Hello — the host doesn't otherwise gate offer handling on
         // hello completion, but ordering keeps the wire trace coherent.
-        sendHello(on: channel)
+        do {
+            try sendHello(on: channel)
+        } catch {
+            // Don't publish liveChannel — VsockGuestClient will retry the
+            // connection. channel.close() is belt-and-braces; VsockChannel.send
+            // already tears down on .write errors.
+            Self.logger.warning(
+                "Failed to send clipboard Hello — aborting serve: \(error.localizedDescription, privacy: .public)"
+            )
+            channel.close()
+            return
+        }
 
         DispatchQueue.main.async { [weak self] in
             self?.liveChannel = channel
@@ -360,7 +371,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
 
     // MARK: - Hello
 
-    private func sendHello(on channel: VsockChannel) {
+    private func sendHello(on channel: VsockChannel) throws {
         var hello = Frame()
         hello.protocolVersion = 1
         hello.hello = Kernova_V1_Hello.with {
@@ -372,12 +383,6 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                 $0.agentVersion = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "unknown"
             }
         }
-        do {
-            try channel.send(hello)
-        } catch {
-            Self.logger.warning(
-                "Failed to send clipboard Hello: \(error.localizedDescription, privacy: .public)"
-            )
-        }
+        try channel.send(hello)
     }
 }

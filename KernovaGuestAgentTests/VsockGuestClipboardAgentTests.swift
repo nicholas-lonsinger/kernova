@@ -242,6 +242,53 @@ struct VsockGuestClipboardAgentTests {
         #expect(pasteboard.string(forType: .string) == nil)
     }
 
+    @Test("Hello send failure aborts serve without publishing liveChannel; client retries")
+    func helloFailureAbortsAndRetries() async throws {
+        let pasteboard = FakePasteboard()
+
+        // First attempt: close the peer fd before the agent writes Hello so the
+        // first send() hits EPIPE / .closed. Second attempt: a healthy pair.
+        let (agentFd0, remoteFd0) = try makeRawSocketPair()
+        close(remoteFd0)  // peer gone before agent writes Hello
+
+        let (agentFd1, remoteFd1) = try makeRawSocketPair()
+        let host1 = VsockChannel(fileDescriptor: remoteFd1)
+        host1.start()
+        defer { host1.close() }
+
+        let fdBox = FdBox(fds: [agentFd0, agentFd1])
+        let provideCount = AtomicInt()
+
+        let client = VsockGuestClient(
+            port: 49152,
+            label: "clipboard-hello-fail-test",
+            retryInterval: .milliseconds(50)
+        ) { _, _ in
+            let n = provideCount.increment()
+            return fdBox.fd(at: n - 1)
+        }
+
+        let agent = VsockGuestClipboardAgent(pasteboard: pasteboard, client: client)
+        defer { agent.stop() }
+
+        agent.start()
+
+        // The retry should reach the second (healthy) connection and Hello should
+        // arrive on host1. liveChannel must only become non-nil for the second
+        // connection — never for the first (broken) one.
+        let hello = try await nextFrame(from: host1, timeout: .seconds(3))
+        guard case .hello = hello.payload else {
+            throw TestFailure("Expected Hello on retry connection, got \(String(describing: hello.payload))")
+        }
+        // Reply with host Hello so liveChannel is published.
+        try host1.send(makeHelloFrame())
+        try await waitUntil { agent.liveChannelForTesting != nil }
+
+        // Socket provider was called at least twice (once for the failed fd,
+        // once for the healthy fd).
+        #expect(provideCount.value >= 2)
+    }
+
     @Test("full inbound offer/request/data round-trip writes pasteboard")
     func inboundRoundTripWritesPasteboard() async throws {
         let pasteboard = FakePasteboard()
