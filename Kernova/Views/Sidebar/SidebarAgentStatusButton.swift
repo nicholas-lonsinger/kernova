@@ -27,22 +27,21 @@ struct SidebarAgentStatusButton: View {
         .help(helpText)
         // arrowEdge: .leading places the arrow on the popover's leading edge,
         // which sits the popover to the trailing side of the button — i.e. over
-        // the detail pane, where there's room. The previous .trailing setting
-        // pushed the popover into the sidebar where the 280pt width clipped
-        // the body copy and button title against the window edge.
+        // the detail pane, where there's room.
         //
-        // The trailing .fixedSize(horizontal: false, vertical: true) is what
-        // lets the popover stretch to fit multi-line body copy. Without it,
-        // NSPopover sizes its content view before the inner Text's wrapping
-        // settles and the bottom of the body gets clipped — even though the
-        // inner Text already has its own fixedSize. Applying fixedSize at the
-        // outermost level after the frame/padding propagates the intrinsic
-        // height up to NSPopover.
+        // The trailing .fixedSize() (both dimensions) is what makes the popover
+        // size correctly. With it absent, NSPopover negotiates a width with
+        // SwiftUI that lets the inner Text render on one line and clip
+        // horizontally; with .fixedSize(horizontal: false, vertical: true) the
+        // horizontal stays flexible and produces the same one-line truncation.
+        // Fixing both dimensions to intrinsic — width pinned at 320 by the
+        // inner frame, height pinned at the wrapped content's natural height —
+        // gives NSPopover a fully-determined size and the body wraps cleanly.
         .popover(isPresented: $isPopoverPresented, arrowEdge: .leading) {
             popoverContent
-                .frame(width: 320)
+                .frame(width: 320, alignment: .leading)
                 .padding(16)
-                .fixedSize(horizontal: false, vertical: true)
+                .fixedSize()
         }
     }
 
