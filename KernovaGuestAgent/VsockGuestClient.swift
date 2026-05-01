@@ -163,7 +163,10 @@ final class VsockGuestClient: @unchecked Sendable {
                 "socketProvider returned invalid fd \(fd, privacy: .public) for '\(self.label, privacy: .public)'"
             )
             assertionFailure("socketProvider returned invalid fd \(fd) for '\(self.label)'")
-            return .retry
+            // A negative fd from a custom provider is a programming-error contract
+            // violation — not a transient kernel condition. Terminate rather than
+            // spin forever in release builds where assertionFailure does not trap.
+            return .terminate
         }
 
         let channel = VsockChannel(fileDescriptor: fd)
@@ -204,27 +207,32 @@ final class VsockGuestClient: @unchecked Sendable {
     /// `AF_VSOCK` is unsupported, or `.failure(.transient(...))` for all other
     /// failures. Used as the default `socketProvider` in the production
     /// convenience init.
-    private static func openVsockToHost(
-        port: UInt32, label: String
+    ///
+    /// The `ops` parameter defaults to `DarwinRawSocketOps()` so production
+    /// callers omit it and real Darwin syscalls are used. Tests inject a
+    /// `RawSocketOpsMock` to drive every failure branch deterministically
+    /// without requiring real AF_VSOCK kernel support.
+    static func openVsockToHost(
+        port: UInt32,
+        label: String,
+        ops: RawSocketOps = DarwinRawSocketOps()
     ) -> Result<Int32, VsockProviderError> {
-        let fd = socket(AF_VSOCK, SOCK_STREAM, 0)
+        let (fd, socketErr) = ops.socket(AF_VSOCK, SOCK_STREAM, 0)
         guard fd >= 0 else {
-            let err = errno
-            return .failure(classifySocketErrno(err, label: label))
+            return .failure(classifySocketErrno(socketErr, label: label))
         }
 
-        let originalFlags = fcntl(fd, F_GETFL, 0)
+        let (originalFlags, getFlagsErr) = ops.fcntl(fd, F_GETFL, 0)
         guard originalFlags >= 0 else {
-            let err = errno
-            close(fd)
-            logger.error("fcntl(F_GETFL) failed for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
-            return .failure(.transient("fcntl(F_GETFL) failed for '\(label)': errno=\(err)"))
+            ops.close(fd)
+            logger.error("fcntl(F_GETFL) failed for '\(label, privacy: .public)': errno=\(getFlagsErr, privacy: .public)")
+            return .failure(.transient("fcntl(F_GETFL) failed for '\(label)': errno=\(getFlagsErr)"))
         }
-        guard fcntl(fd, F_SETFL, originalFlags | O_NONBLOCK) >= 0 else {
-            let err = errno
-            close(fd)
-            logger.error("fcntl(F_SETFL, O_NONBLOCK) failed for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
-            return .failure(.transient("fcntl(F_SETFL, O_NONBLOCK) failed for '\(label)': errno=\(err)"))
+        let (setflRc, setflErr) = ops.fcntl(fd, F_SETFL, originalFlags | O_NONBLOCK)
+        guard setflRc >= 0 else {
+            ops.close(fd)
+            logger.error("fcntl(F_SETFL, O_NONBLOCK) failed for '\(label, privacy: .public)': errno=\(setflErr, privacy: .public)")
+            return .failure(.transient("fcntl(F_SETFL, O_NONBLOCK) failed for '\(label)': errno=\(setflErr)"))
         }
 
         var addr = sockaddr_vm()
@@ -236,33 +244,32 @@ final class VsockGuestClient: @unchecked Sendable {
         addr.svm_port = port
         addr.svm_cid = UInt32(VMADDR_CID_HOST)
 
-        let rc = withUnsafePointer(to: &addr) { ptr -> Int32 in
+        let (connectRc, connectErr) = withUnsafePointer(to: &addr) { ptr in
             ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
-                connect(fd, sa, socklen_t(MemoryLayout<sockaddr_vm>.size))
+                ops.connect(fd, sa, socklen_t(MemoryLayout<sockaddr_vm>.size))
             }
         }
 
-        if rc != 0 {
-            let connectErr = errno
+        if connectRc != 0 {
             guard connectErr == EINPROGRESS else {
-                close(fd)
+                ops.close(fd)
                 logger.warning("connect() to '\(label, privacy: .public)' port \(port, privacy: .public) failed: errno=\(connectErr, privacy: .public)")
                 return .failure(.transient("connect() to '\(label)' port \(port) failed: errno=\(connectErr)"))
             }
-            guard awaitConnectCompletion(fd: fd, label: label, port: port) else {
-                close(fd)
+            guard awaitConnectCompletion(fd: fd, label: label, port: port, ops: ops) else {
+                ops.close(fd)
                 return .failure(.transient("connect() to '\(label)' port \(port) did not complete"))
             }
         }
 
-        guard fcntl(fd, F_SETFL, originalFlags) >= 0 else {
-            let err = errno
-            close(fd)
-            logger.error("fcntl(F_SETFL) restore failed for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
-            return .failure(.transient("fcntl(F_SETFL) restore failed for '\(label)': errno=\(err)"))
+        let (restoreRc, restoreErr) = ops.fcntl(fd, F_SETFL, originalFlags)
+        guard restoreRc >= 0 else {
+            ops.close(fd)
+            logger.error("fcntl(F_SETFL) restore failed for '\(label, privacy: .public)': errno=\(restoreErr, privacy: .public)")
+            return .failure(.transient("fcntl(F_SETFL) restore failed for '\(label)': errno=\(restoreErr)"))
         }
 
-        applySocketTimeouts(fd: fd, label: label)
+        applySocketTimeouts(fd: fd, label: label, ops: ops)
         return .success(fd)
     }
 
@@ -286,7 +293,12 @@ final class VsockGuestClient: @unchecked Sendable {
     /// to complete on `fd`. Returns true on success, false on timeout, poll
     /// error, or a deferred connect error. Caller owns `fd` on both paths and
     /// must `close()` it on false return — this helper does not assume ownership.
-    private static func awaitConnectCompletion(fd: Int32, label: String, port: UInt32) -> Bool {
+    private static func awaitConnectCompletion(
+        fd: Int32,
+        label: String,
+        port: UInt32,
+        ops: RawSocketOps = DarwinRawSocketOps()
+    ) -> Bool {
         var pfd = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
         let deadline = ContinuousClock.now + .seconds(connectTimeoutSeconds)
 
@@ -295,10 +307,10 @@ final class VsockGuestClient: @unchecked Sendable {
             let remaining = deadline - ContinuousClock.now
             let remainingMs = Int32(max(0, Double(remaining.components.seconds) * 1000
                 + Double(remaining.components.attoseconds) / 1e15))
-            pollRc = withUnsafeMutablePointer(to: &pfd) { poll($0, 1, remainingMs) }
-            let err = errno
-            if pollRc < 0 && err != EINTR {
-                logger.warning("poll() while connecting '\(label, privacy: .public)' failed: errno=\(err, privacy: .public)")
+            let (rc, pollErr) = withUnsafeMutablePointer(to: &pfd) { ops.poll($0, 1, remainingMs) }
+            pollRc = rc
+            if pollRc < 0 && pollErr != EINTR {
+                logger.warning("poll() while connecting '\(label, privacy: .public)' failed: errno=\(pollErr, privacy: .public)")
                 return false
             }
         } while pollRc < 0
@@ -316,7 +328,10 @@ final class VsockGuestClient: @unchecked Sendable {
             var soError: Int32 = 0
             var soErrorLen = socklen_t(MemoryLayout<Int32>.size)
             let errStr: String
-            if getsockopt(fd, SOL_SOCKET, SO_ERROR, &soError, &soErrorLen) == 0 && soError != 0 {
+            let (errRevGso, _) = withUnsafeMutablePointer(to: &soError) { soPtr in
+                ops.getsockopt(fd, SOL_SOCKET, SO_ERROR, UnsafeMutableRawPointer(soPtr), &soErrorLen)
+            }
+            if errRevGso == 0 && soError != 0 {
                 errStr = "errno=\(soError)"
             } else {
                 errStr = "revents=\(pfd.revents)"
@@ -327,9 +342,11 @@ final class VsockGuestClient: @unchecked Sendable {
 
         var soError: Int32 = 0
         var soErrorLen = socklen_t(MemoryLayout<Int32>.size)
-        guard getsockopt(fd, SOL_SOCKET, SO_ERROR, &soError, &soErrorLen) == 0 else {
-            let err = errno
-            logger.warning("getsockopt(SO_ERROR) for '\(label, privacy: .public)' failed: errno=\(err, privacy: .public)")
+        let (gsoRc, gsoErr) = withUnsafeMutablePointer(to: &soError) { soPtr in
+            ops.getsockopt(fd, SOL_SOCKET, SO_ERROR, UnsafeMutableRawPointer(soPtr), &soErrorLen)
+        }
+        guard gsoRc == 0 else {
+            logger.warning("getsockopt(SO_ERROR) for '\(label, privacy: .public)' failed: errno=\(gsoErr, privacy: .public)")
             return false
         }
         guard soError == 0 else {
@@ -343,15 +360,21 @@ final class VsockGuestClient: @unchecked Sendable {
     /// recv/send calls can't block longer than `socketTimeoutSeconds`.
     /// `setsockopt` failures are logged at warning and otherwise ignored —
     /// without timeouts the agent still works, just less robustly.
-    private static func applySocketTimeouts(fd: Int32, label: String) {
+    private static func applySocketTimeouts(
+        fd: Int32,
+        label: String,
+        ops: RawSocketOps = DarwinRawSocketOps()
+    ) {
         var timeout = timeval(tv_sec: socketTimeoutSeconds, tv_usec: 0)
         let optionSize = socklen_t(MemoryLayout<timeval>.size)
 
-        if setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, optionSize) != 0 {
-            logger.warning("setsockopt SO_RCVTIMEO failed for '\(label, privacy: .public)': errno=\(errno, privacy: .public)")
+        let (rcvRc, rcvErr) = withUnsafePointer(to: &timeout) { ops.setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, UnsafeRawPointer($0), optionSize) }
+        if rcvRc != 0 {
+            logger.warning("setsockopt SO_RCVTIMEO failed for '\(label, privacy: .public)': errno=\(rcvErr, privacy: .public)")
         }
-        if setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, optionSize) != 0 {
-            logger.warning("setsockopt SO_SNDTIMEO failed for '\(label, privacy: .public)': errno=\(errno, privacy: .public)")
+        let (sndRc, sndErr) = withUnsafePointer(to: &timeout) { ops.setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, UnsafeRawPointer($0), optionSize) }
+        if sndRc != 0 {
+            logger.warning("setsockopt SO_SNDTIMEO failed for '\(label, privacy: .public)': errno=\(sndErr, privacy: .public)")
         }
     }
 }
