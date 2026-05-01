@@ -125,3 +125,32 @@ struct SidebarAgentStatusButton: View {
         }
     }
 }
+
+// MARK: - Previews
+
+#Preview("Waiting") {
+    SidebarAgentStatusButton(
+        vmName: "Sequoia Dev",
+        status: .waiting,
+        onMount: {}
+    )
+    .padding(40)
+}
+
+#Preview("Outdated") {
+    SidebarAgentStatusButton(
+        vmName: "Sequoia Dev",
+        status: .outdated(installed: "0.9.1", bundled: "0.9.2"),
+        onMount: {}
+    )
+    .padding(40)
+}
+
+#Preview("Current") {
+    SidebarAgentStatusButton(
+        vmName: "Sequoia Dev",
+        status: .current(version: "0.9.2"),
+        onMount: {}
+    )
+    .padding(40)
+}
