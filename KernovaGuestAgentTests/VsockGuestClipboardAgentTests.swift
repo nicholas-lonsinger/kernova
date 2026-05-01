@@ -12,6 +12,7 @@ final class FakePasteboard: Pasteboard, @unchecked Sendable {
     private let lock = NSLock()
     private var _changeCount: Int = 0
     private var _contents: [NSPasteboard.PasteboardType: String] = [:]
+    private var _setStringFailureCount: Int = 0
 
     var changeCount: Int {
         lock.withLock { _changeCount }
@@ -19,6 +20,12 @@ final class FakePasteboard: Pasteboard, @unchecked Sendable {
 
     func string(forType type: NSPasteboard.PasteboardType) -> String? {
         lock.withLock { _contents[type] }
+    }
+
+    /// Make the next `n` `setString` calls return `false` and skip storage
+    /// updates. Lets tests model OS-level pasteboard write failures.
+    func failNextSetString(times: Int = 1) {
+        lock.withLock { _setStringFailureCount += times }
     }
 
     @discardableResult
@@ -36,6 +43,10 @@ final class FakePasteboard: Pasteboard, @unchecked Sendable {
     @discardableResult
     func setString(_ string: String, forType type: NSPasteboard.PasteboardType) -> Bool {
         lock.withLock {
+            if _setStringFailureCount > 0 {
+                _setStringFailureCount -= 1
+                return false
+            }
             _contents[type] = string
             _changeCount += 1
             return true
@@ -367,6 +378,47 @@ struct VsockGuestClipboardAgentTests {
 
         try await waitUntil { pasteboard.string(forType: .string) == "clipboard payload" }
         #expect(pasteboard.string(forType: .string) == "clipboard payload")
+    }
+
+    @Test("setString failure preserves echo-suppression state")
+    func setStringFailureDoesNotCorruptEchoSuppression() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForHello(agent: agent, hostChannel: hostChannel)
+
+        // Inject a single setString failure, then have the host send offer + data.
+        pasteboard.failNextSetString()
+        try hostChannel.send(makeOfferFrame(generation: 1))
+
+        let requestFrame = try await nextFrame(from: hostChannel)
+        guard case .clipboardRequest = requestFrame.payload else {
+            throw TestFailure("Expected ClipboardRequest, got \(String(describing: requestFrame.payload))")
+        }
+        try hostChannel.send(makeDataFrame(generation: 1, text: "host text that fails to write"))
+
+        // Allow the data frame to be processed.
+        try await Task.sleep(for: .milliseconds(100))
+
+        // The pasteboard should not contain the host text — setString failed.
+        #expect(pasteboard.string(forType: .string) == nil)
+
+        // Now the user copies different text. Echo-suppression must NOT fire,
+        // because lastSeenText was not corrupted with the never-written host text.
+        pasteboard.setString("user copied this", forType: .string)
+        await MainActor.run { agent.checkClipboardChange() }
+
+        let offerFrame = try await nextFrame(from: hostChannel)
+        guard case .clipboardOffer(let offer) = offerFrame.payload else {
+            throw TestFailure("Expected ClipboardOffer after user copy, got \(String(describing: offerFrame.payload))")
+        }
+        #expect(offer.generation >= 1)
     }
 }
 
