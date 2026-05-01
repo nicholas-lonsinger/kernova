@@ -5,19 +5,20 @@ import AppKit
 /// user's attention — either it's not installed, or the installed version is
 /// older than what this build of Kernova bundles.
 ///
-/// Click opens a popover anchored to the button with the install/update
-/// affordance, so users can act on the situation without opening the clipboard
-/// window. This is the single notification surface for agent-driven features
-/// (clipboard sync today, drag/drop file copy and auto passthrough later).
+/// Click opens an `NSPopover` with the install/update affordance, so users can
+/// act on the situation without opening the clipboard window. This is the
+/// single notification surface for agent-driven features (clipboard sync today,
+/// drag/drop file copy and auto passthrough later).
 ///
-/// ## Why this uses NSPopover instead of SwiftUI's `.popover`
-/// SwiftUI's `.popover` modifier wraps the content in an `NSHostingController`
-/// whose `sizingOptions` are not configurable. That host doesn't propagate
-/// `.fixedSize()` to NSPopover's `contentSize` reliably, so the body Text
-/// rendered as a single line and was clipped horizontally with an ellipsis.
-/// Bridging directly to `NSPopover` + `NSHostingController` lets us set
-/// `sizingOptions = .preferredContentSize` explicitly, which is the pattern
-/// `RemovableMediaPopoverView` already uses successfully.
+/// ## Why this uses NSPopover with an explicit contentSize
+/// SwiftUI's `.popover` modifier and `NSHostingController` with various
+/// `sizingOptions` both fail to size a multi-line-text popover correctly on
+/// macOS Tahoe — the body Text renders single-line and clips with an ellipsis.
+/// The fix is to bypass SwiftUI's sizing-up-to-host model entirely: measure
+/// the body text with `NSAttributedString.boundingRect`, set
+/// `popover.contentSize` to a known-good (width, computed-height), and let the
+/// SwiftUI view fill that bounded rectangle. Text wraps naturally to the
+/// bounded width with no `.frame(width:)` or `.fixedSize()` involved.
 struct SidebarAgentStatusButton: View {
     let vmName: String
     let status: AgentStatus
@@ -38,6 +39,10 @@ struct SidebarAgentStatusButton: View {
         .background(
             NSPopoverAnchor(
                 isPresented: $isPopoverPresented,
+                contentSize: AgentStatusPopoverMetrics.contentSize(
+                    forStatus: status,
+                    vmName: vmName
+                ),
                 preferredEdge: .maxX
             ) {
                 AgentStatusPopoverContent(
@@ -83,25 +88,27 @@ struct SidebarAgentStatusButton: View {
     }
 }
 
-/// Body of the agent-status popover, extracted from `SidebarAgentStatusButton`
-/// so it can be previewed and tuned without clicking the popover open.
-///
-/// Width is pinned at 320 by the inner frame; padding wraps the content; the
-/// trailing `.fixedSize()` makes both dimensions intrinsic so when this view is
-/// hosted by `NSHostingController` with `sizingOptions = .preferredContentSize`,
-/// `NSPopover` gets a fully-determined content size and the body wraps cleanly.
+// MARK: - Popover content & metrics
+
+/// Body of the agent-status popover. Designed to **fill** its host (the
+/// popover's content area is sized externally by `AgentStatusPopoverMetrics`)
+/// rather than dictate its own size — `.frame(maxWidth: .infinity, …)` lets it
+/// expand into the bounded region, and Text wraps naturally to that width with
+/// no `.frame(width:)` or `.fixedSize()` modifiers needed.
 struct AgentStatusPopoverContent: View {
     let vmName: String
     let status: AgentStatus
     let onAction: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(popoverTitle).font(.headline)
-            Text(popoverBody)
+        VStack(alignment: .leading, spacing: AgentStatusPopoverMetrics.verticalSpacing) {
+            Text(AgentStatusPopoverMetrics.title(for: status))
+                .font(.headline)
+
+            Text(AgentStatusPopoverMetrics.bodyText(for: status, vmName: vmName))
                 .font(.callout)
                 .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+                .multilineTextAlignment(.leading)
 
             HStack {
                 Spacer()
@@ -109,28 +116,8 @@ struct AgentStatusPopoverContent: View {
                     .keyboardShortcut(.defaultAction)
             }
         }
-        .frame(width: 320, alignment: .leading)
-        .padding(16)
-        .fixedSize()
-    }
-
-    private var popoverTitle: String {
-        switch status {
-        case .waiting: "Set up the Kernova guest agent"
-        case .outdated: "Update available"
-        case .current: "Guest agent connected"
-        }
-    }
-
-    private var popoverBody: String {
-        switch status {
-        case .waiting:
-            return "The Kernova guest agent enables clipboard sync with \(vmName). Mounting the installer presents it as a disk inside the VM — open it in Finder and run install.command."
-        case .outdated(let installed, let bundled):
-            return "\(vmName) is running guest agent \(installed). Kernova bundles \(bundled). Mounting the installer presents it as a disk inside the VM — open it in Finder and run install.command."
-        case .current(let version):
-            return "\(vmName) is connected with guest agent \(version)."
-        }
+        .padding(AgentStatusPopoverMetrics.padding)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var buttonTitle: String {
@@ -142,14 +129,73 @@ struct AgentStatusPopoverContent: View {
     }
 }
 
-/// Bridges a SwiftUI binding to an `NSPopover` whose content view controller
-/// is configured with `sizingOptions = .preferredContentSize`.
-///
-/// Place behind a SwiftUI control via `.background(NSPopoverAnchor(...))`:
-/// the representable's hidden `NSView` becomes the popover's anchor, and
-/// flipping `isPresented` shows or closes the popover.
+/// Static helpers that compute the popover's `contentSize` and the per-status
+/// strings. Centralized here so `AgentStatusPopoverContent` and
+/// `SidebarAgentStatusButton` agree on the layout numbers used for the
+/// `NSPopover` content size and the SwiftUI padding/spacing.
+enum AgentStatusPopoverMetrics {
+    static let contentWidth: CGFloat = 360
+    static let padding: CGFloat = 16
+    static let verticalSpacing: CGFloat = 10
+
+    /// Approximate `.headline` line height, including SwiftUI's default
+    /// padding around the baseline. Hard-coded because we don't have layout
+    /// access at the point we need to size the popover.
+    private static let titleLineHeight: CGFloat = 22
+
+    /// Standard `.regular` SwiftUI button height for `.keyboardShortcut(.defaultAction)`.
+    private static let buttonHeight: CGFloat = 28
+
+    static func contentSize(forStatus status: AgentStatus, vmName: String) -> NSSize {
+        let textWidth = contentWidth - padding * 2
+        let font = NSFont.preferredFont(forTextStyle: .callout)
+        let attributes: [NSAttributedString.Key: Any] = [.font: font]
+        let body = bodyText(for: status, vmName: vmName) as NSString
+        let bodyRect = body.boundingRect(
+            with: NSSize(width: textWidth, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: attributes
+        )
+
+        let height = padding             // top
+            + titleLineHeight             // headline
+            + verticalSpacing             // gap before body
+            + ceil(bodyRect.height)       // wrapped body
+            + verticalSpacing             // gap before button row
+            + buttonHeight                // button
+            + padding                     // bottom
+        return NSSize(width: contentWidth, height: ceil(height))
+    }
+
+    static func title(for status: AgentStatus) -> String {
+        switch status {
+        case .waiting: "Set up the Kernova guest agent"
+        case .outdated: "Update available"
+        case .current: "Guest agent connected"
+        }
+    }
+
+    static func bodyText(for status: AgentStatus, vmName: String) -> String {
+        switch status {
+        case .waiting:
+            return "The Kernova guest agent enables clipboard sync with \(vmName). Mounting the installer presents it as a disk inside the VM — open it in Finder and run install.command."
+        case .outdated(let installed, let bundled):
+            return "\(vmName) is running guest agent \(installed). Kernova bundles \(bundled). Mounting the installer presents it as a disk inside the VM — open it in Finder and run install.command."
+        case .current(let version):
+            return "\(vmName) is connected with guest agent \(version)."
+        }
+    }
+}
+
+// MARK: - NSPopover bridge
+
+/// Bridges a SwiftUI `Bool` binding to an `NSPopover` whose `contentSize` is
+/// supplied by the caller. The host SwiftUI view (typically placed via
+/// `.background(NSPopoverAnchor(...))`) provides the anchor `NSView`; flipping
+/// the binding shows or closes the popover.
 private struct NSPopoverAnchor<Content: View>: NSViewRepresentable {
     @Binding var isPresented: Bool
+    let contentSize: NSSize
     let preferredEdge: NSRectEdge
     @ViewBuilder let content: () -> Content
 
@@ -171,6 +217,7 @@ private struct NSPopoverAnchor<Content: View>: NSViewRepresentable {
         if isPresented {
             coordinator.show(
                 content: content(),
+                contentSize: contentSize,
                 from: nsView,
                 preferredEdge: preferredEdge
             )
@@ -189,7 +236,12 @@ private struct NSPopoverAnchor<Content: View>: NSViewRepresentable {
             self.isPresented = isPresented
         }
 
-        func show<C: View>(content: C, from anchor: NSView, preferredEdge: NSRectEdge) {
+        func show<C: View>(
+            content: C,
+            contentSize: NSSize,
+            from anchor: NSView,
+            preferredEdge: NSRectEdge
+        ) {
             // Already showing? Just leave it alone — re-presenting causes flicker.
             if let popover, popover.isShown { return }
 
@@ -198,20 +250,11 @@ private struct NSPopoverAnchor<Content: View>: NSViewRepresentable {
             popover.delegate = self
 
             let hostingController = NSHostingController(rootView: content)
-            hostingController.sizingOptions = .preferredContentSize
-
-            // NSPopover queries contentSize before the SwiftUI hosting view has
-            // a chance to lay out, so .preferredContentSize alone leaves the
-            // popover sized to the host's empty initial bounds (one-line clip).
-            // Forcing a layout pass and reading `fittingSize` resolves the
-            // SwiftUI view's `.frame(width:)` + `.fixedSize()` to a concrete
-            // NSSize, which we then set on the popover explicitly.
-            hostingController.view.layoutSubtreeIfNeeded()
-            let fittedSize = hostingController.view.fittingSize
-            if fittedSize.width > 0 && fittedSize.height > 0 {
-                popover.contentSize = fittedSize
-            }
             popover.contentViewController = hostingController
+            // Set contentSize *before* showing — NSPopover uses this directly,
+            // bypassing all of SwiftUI's sizing-up-through-the-host machinery
+            // that broke previous attempts.
+            popover.contentSize = contentSize
 
             popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: preferredEdge)
             self.popover = popover
@@ -264,13 +307,17 @@ private struct NSPopoverAnchor<Content: View>: NSViewRepresentable {
     .padding(40)
 }
 
-// Standalone popover content — always visible in the canvas, lets you iterate
-// on text wrapping and sizing without clicking the button each time.
+// Standalone popover content rendered in a fixed frame matching the actual
+// popover content size, so the canvas mirrors what NSPopover will display.
 #Preview("Popover — Waiting") {
     AgentStatusPopoverContent(
         vmName: "Sequoia Dev",
         status: .waiting,
         onAction: {}
+    )
+    .frame(
+        width: AgentStatusPopoverMetrics.contentSize(forStatus: .waiting, vmName: "Sequoia Dev").width,
+        height: AgentStatusPopoverMetrics.contentSize(forStatus: .waiting, vmName: "Sequoia Dev").height
     )
 }
 
@@ -280,6 +327,10 @@ private struct NSPopoverAnchor<Content: View>: NSViewRepresentable {
         status: .outdated(installed: "0.9.1", bundled: "0.9.2"),
         onAction: {}
     )
+    .frame(
+        width: AgentStatusPopoverMetrics.contentSize(forStatus: .outdated(installed: "0.9.1", bundled: "0.9.2"), vmName: "Sequoia Dev").width,
+        height: AgentStatusPopoverMetrics.contentSize(forStatus: .outdated(installed: "0.9.1", bundled: "0.9.2"), vmName: "Sequoia Dev").height
+    )
 }
 
 #Preview("Popover — Current") {
@@ -288,6 +339,10 @@ private struct NSPopoverAnchor<Content: View>: NSViewRepresentable {
         status: .current(version: "0.9.2"),
         onAction: {}
     )
+    .frame(
+        width: AgentStatusPopoverMetrics.contentSize(forStatus: .current(version: "0.9.2"), vmName: "Sequoia Dev").width,
+        height: AgentStatusPopoverMetrics.contentSize(forStatus: .current(version: "0.9.2"), vmName: "Sequoia Dev").height
+    )
 }
 
 #Preview("Popover — Long VM name") {
@@ -295,5 +350,9 @@ private struct NSPopoverAnchor<Content: View>: NSViewRepresentable {
         vmName: "My Very Long macOS Sequoia Development VM Name",
         status: .outdated(installed: "0.9.1", bundled: "0.9.2"),
         onAction: {}
+    )
+    .frame(
+        width: AgentStatusPopoverMetrics.contentSize(forStatus: .outdated(installed: "0.9.1", bundled: "0.9.2"), vmName: "My Very Long macOS Sequoia Development VM Name").width,
+        height: AgentStatusPopoverMetrics.contentSize(forStatus: .outdated(installed: "0.9.1", bundled: "0.9.2"), vmName: "My Very Long macOS Sequoia Development VM Name").height
     )
 }
