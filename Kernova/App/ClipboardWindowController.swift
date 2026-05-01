@@ -16,10 +16,10 @@ final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
     let instance: VMInstance
     private var statusObservation: ObservationLoop?
 
-    init(instance: VMInstance) {
+    init(instance: VMInstance, viewModel: VMLibraryViewModel) {
         self.instance = instance
 
-        let viewController = ClipboardContentViewController(instance: instance)
+        let viewController = ClipboardContentViewController(instance: instance, viewModel: viewModel)
         let initialSize = NSSize(width: 480, height: 300)
 
         let window = NSWindow(

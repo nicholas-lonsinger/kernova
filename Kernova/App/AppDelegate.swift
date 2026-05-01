@@ -455,7 +455,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             isEligible: instance.canShowClipboard,
             windowsPath: \.clipboardWindows,
             observersPath: \.clipboardObservers,
-            factory: ClipboardWindowController.init
+            factory: { [viewModel] in ClipboardWindowController(instance: $0, viewModel: viewModel) }
         )
     }
 

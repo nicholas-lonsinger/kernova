@@ -550,6 +550,40 @@ final class VMLibraryViewModel {
         }
     }
 
+    // MARK: - Guest Agent Installer
+
+    /// Mounts the bundled `KernovaGuestAgent.dmg` as a read-only USB device so
+    /// the user can run `install.command` inside the guest. Used by the
+    /// clipboard window's "Set Up Agent" / "Update Agent" affordances and the
+    /// sidebar's agent-status popover.
+    ///
+    /// No-op if a device already mounted at the bundled DMG path is present —
+    /// duplicate mounts don't help the user.
+    func mountGuestAgentInstaller(on instance: VMInstance) {
+        guard let url = KernovaGuestAgentInfo.installerDiskImageURL else {
+            Self.logger.fault("Guest agent installer DMG missing from app bundle")
+            assertionFailure("KernovaGuestAgent.dmg missing — check 'Package Guest Agent DMG' build phase outputs")
+            return
+        }
+        let path = url.path
+        if instance.attachedUSBDevices.contains(where: { $0.path == path }) {
+            Self.logger.debug("Guest agent installer already mounted on '\(instance.name, privacy: .public)'")
+            return
+        }
+        Self.logger.notice("Mounting guest agent installer on '\(instance.name, privacy: .public)'")
+        attachUSBDevice(diskImagePath: path, readOnly: true, to: instance)
+    }
+
+    /// Detaches the bundled guest agent installer if currently mounted.
+    /// Identified by path equality with `KernovaGuestAgentInfo.installerDiskImageURL`.
+    func unmountGuestAgentInstaller(from instance: VMInstance) {
+        guard let url = KernovaGuestAgentInfo.installerDiskImageURL else { return }
+        let path = url.path
+        guard let device = instance.attachedUSBDevices.first(where: { $0.path == path }) else { return }
+        Self.logger.notice("Unmounting guest agent installer from '\(instance.name, privacy: .public)'")
+        detachUSBDevice(device, from: instance)
+    }
+
     // MARK: - Additional Disks
 
     /// Removes an additional disk from the configuration and trashes the file if internal.

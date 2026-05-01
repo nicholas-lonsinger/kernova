@@ -37,9 +37,10 @@ Kernova/
 │   ├── IPSWService.swift               # Fetches/downloads macOS restore images (Sendable struct)
 │   ├── SystemSleepWatcher.swift        # Observes system sleep/wake, triggers VM pause/resume
 │   ├── SpiceAgentProtocol.swift       # SPICE agent wire format: VDI chunks, message headers, clipboard types
-│   ├── ClipboardServicing.swift       # Protocol shared by Spice + Vsock clipboard implementations
+│   ├── ClipboardServicing.swift       # Protocol shared by Spice + Vsock clipboard implementations + AgentStatus enum
 │   ├── SpiceClipboardService.swift    # Linux clipboard: pipe I/O, SPICE protocol state machine (@MainActor)
 │   ├── VsockClipboardService.swift    # macOS clipboard: vsock-based offer/request/data state machine (@MainActor)
+│   ├── KernovaGuestAgentInfo.swift    # Bundled guest agent version + installer DMG URL accessors
 │   └── Protocols/                      # Service protocol abstractions for DI and testing
 │       ├── VirtualizationProviding.swift
 │       ├── VMStorageProviding.swift
@@ -56,7 +57,8 @@ Kernova/
 │   ├── VMInstance+Display.swift        # Display-layer extension: cold-paused vs live-paused distinction
 │   ├── Sidebar/
 │   │   ├── SidebarView.swift           # VM list with selection, double-click-to-start, and context menus
-│   │   └── VMRowView.swift             # Individual VM row (name, status, inline rename)
+│   │   ├── VMRowView.swift             # Individual VM row (name, status, inline rename, agent indicator)
+│   │   └── SidebarAgentStatusButton.swift # Per-VM agent install/update affordance with anchored popover
 │   ├── Detail/
 │   │   ├── MainDetailView.swift        # Detail pane wrapper — selection switch, creation sheet, error alert
 │   │   ├── VMDetailView.swift          # VM detail — console/settings switch (honors detailPaneMode), confirmation alerts
@@ -216,11 +218,13 @@ Services are split by concurrency requirements:
 
 - **`SpiceAgentProtocol`** — Pure data types and parsing for the SPICE agent wire format. Defines VDI chunk headers, VDAgent message headers, clipboard message types, and capability bitmasks. Includes `SpiceMessageBuilder` (builds wire-ready messages with a `port` parameter defaulting to `serverPort` for host-side use) and `SpiceAgentParser` (incremental parser handling fragmented data across multiple pipe reads). Fully `Sendable`, no I/O. Used only by the host-side `SpiceClipboardService` (Linux clipboard transport) — macOS guests now use vsock instead, so the file is no longer multi-target.
 
-- **`ClipboardServicing`** — `@MainActor` protocol covering the public surface (`clipboardText`, `isConnected`, `start()`, `stop()`, `grabIfChanged()`) shared by both clipboard implementations. `VMInstance.clipboardService` holds the existential, so the clipboard window controllers don't branch on transport.
+- **`ClipboardServicing`** — `@MainActor` protocol covering the public surface (`clipboardText`, `isConnected`, `agentStatus`, `start()`, `stop()`, `grabIfChanged()`) shared by both clipboard implementations. `VMInstance.clipboardService` holds the existential, so the clipboard window controllers don't branch on transport. Defines `AgentStatus` (`.waiting | .current(version) | .outdated(installed, bundled)`) — the source of truth that drives install/update affordances in both the clipboard window and the sidebar.
+
+- **`KernovaGuestAgentInfo`** — Static accessors for the bundled guest agent. The "Package Guest Agent DMG" build phase extracts `CFBundleShortVersionString` from the built `KernovaGuestAgent` binary's embedded `__info_plist` section (via `otool -X -P | plutil -extract`) and writes it to `Resources/KernovaGuestAgentVersion.txt`; this file is the single source of truth for "what version did I bundle" and cannot drift from the actual agent binary. The accessor reads the sidecar lazily; missing/empty files trip an `assertionFailure` since the build phase is required to produce them. Also exposes the installer DMG URL.
 
 - **`SpiceClipboardService`** — `@MainActor` `ClipboardServicing` implementation for Linux guests. Reads from the guest pipe on a background GCD queue, parses messages via `SpiceAgentParser`, and exposes `clipboardText` (observable, editable by the UI) and `isConnected`. When the clipboard window loses focus, `grabIfChanged()` sends a `CLIPBOARD_GRAB` if the text was edited. Uses raw pipes rather than `VZSpiceAgentPortAttachment` so clipboard data flows through the gated UI instead of the host `NSPasteboard`.
 
-- **`VsockClipboardService`** — `@MainActor` `ClipboardServicing` implementation for macOS guests, layered on `VsockChannel`. Sends `Hello` on start; outbound clipboard changes are announced as `ClipboardOffer` with a monotonically increasing `generation`, then the guest pulls the bytes via `ClipboardRequest` / `ClipboardData`. Inbound flow is symmetrical (offer → request → data). Stale generations are detected by both sides so a `ClipboardData` reply that races a newer offer is dropped rather than overwriting fresher state. The service is constructed lazily by the vsock clipboard listener when the guest connects, so `VMInstance.clipboardService` may be nil until then.
+- **`VsockClipboardService`** — `@MainActor` `ClipboardServicing` implementation for macOS guests, layered on `VsockChannel`. Sends `Hello` on start; outbound clipboard changes are announced as `ClipboardOffer` with a monotonically increasing `generation`, then the guest pulls the bytes via `ClipboardRequest` / `ClipboardData`. Inbound flow is symmetrical (offer → request → data). Stale generations are detected by both sides so a `ClipboardData` reply that races a newer offer is dropped rather than overwriting fresher state. The service is constructed lazily by the vsock clipboard listener when the guest connects, so `VMInstance.clipboardService` may be nil until then. Captures the guest-reported `Hello.agent_info.agent_version` and exposes a derived `agentStatus` that compares it against the host's `KernovaGuestAgentInfo.bundledVersion` using `String.compare(_:options: .numeric)` (correct for dotted-decimal SemVer like `0.9.0` vs `0.10.0`); a `bundledAgentVersion` initializer parameter lets tests vary the comparison target.
 
 - **`VsockListenerHost`** — `@MainActor` wrapper around `VZVirtioSocketListener` bound to one vsock port. The nonisolated `VZVirtioSocketListenerDelegate` callback dups the connection's file descriptor and bridges back to MainActor before constructing a `VsockChannel` and handing it to a caller-supplied closure. One instance per service; multiple coexist on the same `VZVirtioSocketDevice`.
 
@@ -416,7 +420,7 @@ No third-party (non-Apple) package dependencies. No CocoaPods or Carthage.
 | `DataFormatters` | Yes | Byte formatting, CPU count formatting |
 | `NSImageExtensions` | Yes | SF Symbol loading with known symbol validation |
 | `SpiceAgentProtocol` | Yes | VDI chunk/message serialization round-trips, parser with multi-message feeds, partial data, unknown types, clientPort constant, port-parameterized builders |
-| `VsockClipboardService` | 8 tests | Hello handshake, outbound offer dedup + monotonic generation, request-response, stale request/data drop, inbound offer-driven population |
+| `VsockClipboardService` | 19 tests | Hello handshake, outbound offer dedup + monotonic generation, request-response, stale request/data drop, inbound offer-driven population, `agentStatus` waiting/current/outdated/newer-than-bundled, numeric ordering for dotted versions, reset on stop, fallback when bundled version missing |
 | `KernovaLogMessage` | Yes | Full privacy-redaction matrix: `.public`/`.private`/`.sensitive`/`.auto`/default, generic fallback (String, Int, Bool), mixed interpolations, literal init |
 | `VsockHostConnection` | Yes | Log ring-buffer cap (256 frames), FIFO ordering, oldest-drop-first eviction, flush-to-channel, partial-flush re-enqueue (index>0 and index=0), cap enforcement after re-enqueue, `forwardLog` live-channel paths |
 | `VsockGuestClient` | Yes | Socket-factory injection, `liveChannel` lifecycle, stop-mid-connect abort, stop-mid-serve, idempotent start, stop-before-start no-op, nil-provider retry |
