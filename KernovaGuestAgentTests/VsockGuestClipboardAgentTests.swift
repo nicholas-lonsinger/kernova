@@ -249,6 +249,12 @@ struct VsockGuestClipboardAgentTests {
         // First attempt: close the peer fd before the agent writes Hello so the
         // first send() hits EPIPE / .closed. Second attempt: a healthy pair.
         let (agentFd0, remoteFd0) = try makeRawSocketPair()
+
+        // SO_NOSIGPIPE so writing to a peer-closed socket surfaces as an
+        // error rather than killing the test process with SIGPIPE.
+        var noSigpipe: Int32 = 1
+        _ = setsockopt(agentFd0, SOL_SOCKET, SO_NOSIGPIPE, &noSigpipe, socklen_t(MemoryLayout<Int32>.size))
+
         close(remoteFd0)  // peer gone before agent writes Hello
 
         let (agentFd1, remoteFd1) = try makeRawSocketPair()
@@ -259,12 +265,29 @@ struct VsockGuestClipboardAgentTests {
         let fdBox = FdBox(fds: [agentFd0, agentFd1])
         let provideCount = AtomicInt()
 
+        // Gate: signals when the reconnect loop asks for the second fd (i.e.,
+        // after the first connection has already failed and been cleaned up).
+        let firstFailedGate = DispatchSemaphore(value: 0)
+        // Gate: released by the test body after it has asserted liveChannel==nil,
+        // allowing the reconnect loop to continue with the healthy fd.
+        let secondProvideGate = DispatchSemaphore(value: 0)
+
         let client = VsockGuestClient(
             port: 49152,
             label: "clipboard-hello-fail-test",
             retryInterval: .milliseconds(50)
         ) { _, _ in
             let n = provideCount.increment()
+            if n == 2 {
+                // The reconnect loop has already (a) called serve with fd0,
+                // (b) had serve return due to Hello failure, (c) cleared
+                // currentChannel, (d) slept retryInterval, and (e) re-entered
+                // runReconnectLoop to ask for the next fd. Signal the test body
+                // so it can assert liveChannel is still nil (the fix under test),
+                // then wait for the test to give the go-ahead.
+                firstFailedGate.signal()
+                secondProvideGate.wait()
+            }
             return fdBox.fd(at: n - 1)
         }
 
@@ -272,6 +295,23 @@ struct VsockGuestClipboardAgentTests {
         defer { agent.stop() }
 
         agent.start()
+
+        // Wait (on a background thread) until the provider is entered for the
+        // second time, then assert liveChannel is nil before releasing the gate.
+        // Must not block the cooperative thread pool — bridge via a detached thread.
+        // AtomicInt stores the snapshot: 1 = liveChannel was nil (fix worked), 0 = non-nil (regression).
+        let liveChannelWasNilSnapshot = AtomicInt()
+        DispatchQueue.global(qos: .userInitiated).async {
+            firstFailedGate.wait()
+            // By the time the provider is called a second time, serve() for
+            // the broken connection has already returned without publishing
+            // liveChannel (that is exactly what the fix under test enforces).
+            let isNil = DispatchQueue.main.sync {
+                agent.liveChannelForTesting == nil
+            }
+            if isNil { liveChannelWasNilSnapshot.increment() }
+            secondProvideGate.signal()
+        }
 
         // The retry should reach the second (healthy) connection and Hello should
         // arrive on host1. liveChannel must only become non-nil for the second
@@ -287,6 +327,10 @@ struct VsockGuestClipboardAgentTests {
         // Socket provider was called at least twice (once for the failed fd,
         // once for the healthy fd).
         #expect(provideCount.value >= 2)
+
+        // The snapshot taken between first failure and second provide must be nil —
+        // this is the load-bearing assertion that the fix prevents premature publish.
+        #expect(liveChannelWasNilSnapshot.value == 1, "liveChannel was non-nil during the failed Hello connection: fix did not abort before publish")
     }
 
     @Test("full inbound offer/request/data round-trip writes pasteboard")

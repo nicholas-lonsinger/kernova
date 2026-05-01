@@ -134,11 +134,11 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         do {
             try sendHello(on: channel)
         } catch {
-            // Don't publish liveChannel — VsockGuestClient will retry the
-            // connection. channel.close() is belt-and-braces; VsockChannel.send
-            // already tears down on .write errors.
+            // Don't publish liveChannel — VsockGuestClient.runReconnectLoop will retry
+            // the connection. channel.close() is idempotent and ensures the fd is
+            // released regardless of which sendHello error path we took.
             Self.logger.warning(
-                "Failed to send clipboard Hello — aborting serve: \(error.localizedDescription, privacy: .public)"
+                "Failed to send clipboard Hello on port \(KernovaVsockPort.clipboard, privacy: .public) — aborting serve, VsockGuestClient will reconnect: \(String(describing: error), privacy: .public)"
             )
             channel.close()
             return
