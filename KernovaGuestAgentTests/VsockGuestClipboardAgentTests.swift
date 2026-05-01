@@ -569,28 +569,179 @@ struct VsockGuestClipboardAgentTests {
     @Test("serve clears liveChannel synchronously before the reconnect loop can proceed")
     func serveSynchronouslyClearsLiveChannelOnClose() async throws {
         let pasteboard = FakePasteboard()
+
+        // Two socket pairs: first for the initial connection that we will close,
+        // second for the reconnect that the gating logic intercepts.
+        let (agentFd0, remoteFd0) = try makeRawSocketPair()
+        let (agentFd1, remoteFd1) = try makeRawSocketPair()
+        let host0 = VsockChannel(fileDescriptor: remoteFd0)
+        let host1 = VsockChannel(fileDescriptor: remoteFd1)
+        host0.start()
+        host1.start()
+        defer { host0.close(); host1.close() }
+
+        let fdBox = FdBox(fds: [agentFd0, agentFd1])
+        let provideCount = AtomicInt()
+
+        // Gate: signals when the reconnect loop asks for the SECOND fd — i.e.,
+        // after the first connection has closed and serve() has returned.
+        // Under the new code, serve()'s `await MainActor.run` cleanup completes
+        // BEFORE serve returns, so by the time the provider is called a second
+        // time, liveChannel is guaranteed to be nil.
+        let firstClosedGate = DispatchSemaphore(value: 0)
+        // Gate: released by the test body after asserting liveChannel == nil,
+        // allowing the reconnect loop to continue with the second fd.
+        let secondProvideGate = DispatchSemaphore(value: 0)
+
+        let client = VsockGuestClient(
+            port: 49152,
+            label: "clipboard-sync-cleanup-test",
+            retryInterval: .milliseconds(50)
+        ) { _, _ in
+            let n = provideCount.increment()
+            if n == 2 {
+                // The reconnect loop has already (a) called serve with fd0,
+                // (b) had serve return after the host closed host0,
+                // (c) run cleanup to nil out liveChannel via await MainActor.run,
+                // (d) cleared currentChannel in VsockGuestClient,
+                // (e) slept retryInterval, and (f) re-entered the loop to ask
+                // for the next fd. Signal the test so it can assert liveChannel
+                // is nil (proving cleanup was synchronous), then wait.
+                firstClosedGate.signal()
+                secondProvideGate.wait()
+            }
+            if let fd = fdBox.fd(at: n - 1) {
+                return .success(fd)
+            } else {
+                return .failure(.transient("test: no fd at index \(n - 1)"))
+            }
+        }
+
+        let agent = VsockGuestClipboardAgent(pasteboard: pasteboard, client: client)
+        defer { agent.stop() }
+
+        agent.start()
+
+        // First connection: wait for Hello, reply, wait for liveChannel to be set.
+        let hello0 = try await nextFrame(from: host0)
+        guard case .hello = hello0.payload else {
+            throw TestFailure("Expected Hello on first connection")
+        }
+        try host0.send(makeHelloFrame())
+        try await waitUntil { agent.liveChannelForTesting != nil }
+        #expect(agent.liveChannelForTesting != nil)
+
+        // Close the first connection. serve() will observe EOF, run the
+        // `await MainActor.run` cleanup block (which clears liveChannel), and
+        // return — all before the reconnect loop can advance to the next iteration.
+        host0.close()
+
+        // On a background thread, wait for the provider to be called a second
+        // time, then snapshot liveChannel via DispatchQueue.main.sync.
+        // AtomicInt stores the result: 1 = nil (fix works), 0 = non-nil (regression).
+        let liveChannelWasNilAtSecondProvide = AtomicInt()
+        DispatchQueue.global(qos: .userInitiated).async {
+            firstClosedGate.wait()
+            // By the time the provider is called for the second fd, serve() for
+            // the first connection has returned. Because serve() runs cleanup via
+            // `await MainActor.run` (synchronous from serve's perspective), the
+            // main queue has already processed the nil assignment. A regression
+            // back to DispatchQueue.main.async would leave a window here where
+            // liveChannel could still be non-nil.
+            let isNil = DispatchQueue.main.sync {
+                agent.liveChannelForTesting == nil
+            }
+            if isNil { liveChannelWasNilAtSecondProvide.increment() }
+            secondProvideGate.signal()
+        }
+
+        // The reconnect should reach the second (healthy) connection. Consume
+        // the Hello so the test doesn't leave a pending read that would stall.
+        let hello1 = try await nextFrame(from: host1, timeout: .seconds(3))
+        guard case .hello = hello1.payload else {
+            throw TestFailure("Expected Hello on second connection, got \(String(describing: hello1.payload))")
+        }
+
+        // The load-bearing assertion: liveChannel was nil at the moment the
+        // provider was called for the second fd — proving cleanup ran
+        // synchronously before serve returned, not merely eventually.
+        #expect(liveChannelWasNilAtSecondProvide.value == 1,
+                "liveChannel was non-nil when the reconnect loop asked for the second fd: cleanup was not synchronous")
+    }
+
+    @Test("serve publishes liveChannel synchronously so the read loop can process inbound frames immediately")
+    func servePublishesLiveChannelBeforeReadLoop() async throws {
+        let pasteboard = FakePasteboard()
+
+        // Two socket pairs: first pair establishes the initial connection,
+        // second is never used (retries disabled via long retry interval).
+        // We use a custom provider so we can intercept between Hello send
+        // and the publish MainActor.run.
         let (agentFd, remoteFd) = try makeRawSocketPair()
         let hostChannel = VsockChannel(fileDescriptor: remoteFd)
         hostChannel.start()
+        defer { hostChannel.close() }
 
-        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        // After Hello send, serve() enters `await MainActor.run { liveChannel = channel }`.
+        // The main queue must process that block BEFORE serve() enters the read loop.
+        // Gating pattern: after the agent sends Hello, we hold the host reply until
+        // we've confirmed liveChannel is nil, then release — after which the publish
+        // block must have run before any ClipboardOffer can be dispatched.
+        //
+        // Gate: agent sends Hello → host holds reply → test snapshots liveChannel
+        //       (must be nil — publish hasn't run yet) → host sends Hello →
+        //       publish MainActor.run runs → liveChannel is non-nil →
+        //       host sends Offer → agent processes it (read loop is running).
+        //
+        // The symmetric claim: after the host Hello is sent and `waitUntil` sees
+        // non-nil, any subsequent main-queue work (like a dispatched frame handler)
+        // is enqueued AFTER the publish block has already committed.
+        let provideCount = AtomicInt()
+        let client = VsockGuestClient(
+            port: 49152,
+            label: "clipboard-sync-publish-test",
+            retryInterval: .seconds(60)
+        ) { _, _ in
+            provideCount.increment() == 1 ? .success(agentFd) : .failure(.transient("test: no more fds"))
+        }
+
+        let agent = VsockGuestClipboardAgent(pasteboard: pasteboard, client: client)
         defer { agent.stop() }
+        agent.start()
 
-        try await startAgentAndWaitForHello(agent: agent, hostChannel: hostChannel)
-        #expect(agent.liveChannelForTesting != nil)
+        // Wait for Hello from the agent. serve() has sent Hello but has not yet
+        // entered the `await MainActor.run` publish block (which is the next step).
+        let hello = try await nextFrame(from: hostChannel)
+        guard case .hello = hello.payload else {
+            throw TestFailure("Expected Hello from agent, got \(String(describing: hello.payload))")
+        }
 
-        // Host closes the channel. The agent's serve loop observes EOF and
-        // runs the cleanup via `await MainActor.run`, which completes before
-        // `serve` returns. The reconnect loop in VsockGuestClient can only
-        // advance past its `await serve(channel:)` call once serve returns,
-        // so `liveChannel` is guaranteed nil at that point.
-        hostChannel.close()
+        // Reply with host Hello. This causes serve() to advance to the
+        // `await MainActor.run { self.liveChannel = channel }` block and complete
+        // it before entering the for-await read loop.
+        try hostChannel.send(makeHelloFrame())
 
-        // Poll until the cleanup has propagated. With the synchronous
-        // `await MainActor.run` shape, this settles promptly — no extended
-        // window where the polling timer can dispatch to the dead channel.
-        try await waitUntil { agent.liveChannelForTesting == nil }
-        #expect(agent.liveChannelForTesting == nil)
+        // Wait until publish settles. Under the new code (await MainActor.run),
+        // this happens before the read loop starts — so by the time waitUntil
+        // returns, the main queue has already committed liveChannel.
+        try await waitUntil { agent.liveChannelForTesting != nil }
+
+        // Snapshot on the main queue: liveChannel must be non-nil.
+        // A regression back to DispatchQueue.main.async would leave a window where
+        // liveChannel is still nil here, because the async dispatch may not have
+        // run before the read loop already processed frames.
+        let liveChannelSet = DispatchQueue.main.sync { agent.liveChannelForTesting != nil }
+        #expect(liveChannelSet,
+                "liveChannel was nil on main queue after publish — publish was not synchronous with serve()'s progression")
+
+        // Send an offer and verify the agent processes it, confirming the read
+        // loop is running and liveChannel was already set when the frame arrived.
+        try hostChannel.send(makeOfferFrame(generation: 1))
+        let requestFrame = try await nextFrame(from: hostChannel)
+        guard case .clipboardRequest(let req) = requestFrame.payload else {
+            throw TestFailure("Expected ClipboardRequest in response to offer, got \(String(describing: requestFrame.payload))")
+        }
+        #expect(req.generation == 1)
     }
 
     @Test("handleOffer send failure leaves pendingInboundGeneration unchanged")
