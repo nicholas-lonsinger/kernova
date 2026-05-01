@@ -109,6 +109,7 @@ struct AgentStatusPopoverContent: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.leading)
+                .lineLimit(nil)
 
             HStack {
                 Spacer()
@@ -117,7 +118,12 @@ struct AgentStatusPopoverContent: View {
             }
         }
         .padding(AgentStatusPopoverMetrics.padding)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        // Hard-pin width so the SwiftUI ideal width is exactly contentWidth.
+        // Without this the ideal width is the body Text's single-line width
+        // (huge), and NSHostingController publishes that as preferredContentSize,
+        // overriding popover.contentSize. The result was a wide popover with
+        // the body Text on one line clipped at the screen edge.
+        .frame(width: AgentStatusPopoverMetrics.contentWidth, alignment: .topLeading)
     }
 
     private var buttonTitle: String {
@@ -250,11 +256,16 @@ private struct NSPopoverAnchor<Content: View>: NSViewRepresentable {
             popover.delegate = self
 
             let hostingController = NSHostingController(rootView: content)
-            popover.contentViewController = hostingController
-            // Set contentSize *before* showing — NSPopover uses this directly,
-            // bypassing all of SwiftUI's sizing-up-through-the-host machinery
-            // that broke previous attempts.
+            // Both popover.contentSize AND hostingController.preferredContentSize
+            // need to be set. Per Apple's NSPopover docs: if the
+            // contentViewController has a non-zero preferredContentSize, the
+            // popover uses *that* and ignores popover.contentSize. Without
+            // pinning preferredContentSize here, NSHostingController publishes
+            // the SwiftUI view's ideal size — which can balloon if the inner
+            // content has unbounded width — and overrides our explicit sizing.
+            hostingController.preferredContentSize = contentSize
             popover.contentSize = contentSize
+            popover.contentViewController = hostingController
 
             popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: preferredEdge)
             self.popover = popover
