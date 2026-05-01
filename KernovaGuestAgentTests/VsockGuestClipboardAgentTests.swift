@@ -1,0 +1,288 @@
+import Testing
+import Foundation
+import AppKit
+import Darwin
+import KernovaProtocol
+
+// MARK: - Fake Pasteboard
+
+/// In-memory `Pasteboard` substitute. Thread-safe via NSLock so tests running
+/// on DispatchQueue.main don't race the setup thread.
+final class FakePasteboard: Pasteboard, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _changeCount: Int = 0
+    private var _contents: [NSPasteboard.PasteboardType: String] = [:]
+
+    var changeCount: Int {
+        lock.withLock { _changeCount }
+    }
+
+    func string(forType type: NSPasteboard.PasteboardType) -> String? {
+        lock.withLock { _contents[type] }
+    }
+
+    @discardableResult
+    func clearContents() -> Int {
+        // NSPasteboard.clearContents() does NOT bump changeCount on its own —
+        // the subsequent setString() call is what changes the count. Mirror
+        // that behavior so echo-suppression logic sees the same delta as on a
+        // real pasteboard.
+        lock.withLock {
+            _contents.removeAll()
+            return _changeCount
+        }
+    }
+
+    @discardableResult
+    func setString(_ string: String, forType type: NSPasteboard.PasteboardType) -> Bool {
+        lock.withLock {
+            _contents[type] = string
+            _changeCount += 1
+            return true
+        }
+    }
+}
+
+// MARK: - Test Suite
+
+@Suite("VsockGuestClipboardAgent state machine")
+struct VsockGuestClipboardAgentTests {
+
+    // MARK: - Agent factory helpers
+
+    /// Sets up an agent with the given pasteboard and a socket provider that
+    /// returns the given fd on first call, nil thereafter. Does NOT retry
+    /// (long retry interval) so tests don't interfere with each other.
+    private func makeAgent(pasteboard: FakePasteboard, agentFd: Int32) -> VsockGuestClipboardAgent {
+        let provided = AtomicInt()
+        let client = VsockGuestClient(
+            port: 49152,
+            label: "clipboard-test",
+            retryInterval: .seconds(60)
+        ) { _, _ in
+            provided.increment() == 1 ? agentFd : nil
+        }
+        return VsockGuestClipboardAgent(pasteboard: pasteboard, client: client)
+    }
+
+    /// Starts the agent and waits until the host side receives the Hello frame,
+    /// then replies with a Hello so the agent transitions to "connected" state.
+    private func startAgentAndWaitForHello(
+        agent: VsockGuestClipboardAgent,
+        hostChannel: VsockChannel
+    ) async throws {
+        agent.start()
+        let hello = try await nextFrame(from: hostChannel)
+        guard case .hello = hello.payload else {
+            throw TestFailure("Expected Hello from agent, got \(String(describing: hello.payload))")
+        }
+        try hostChannel.send(makeHelloFrame())
+        // Wait until liveChannel is set on the main queue before returning,
+        // so callers driving checkClipboardChange() see a non-nil channel.
+        try await waitUntil { agent.liveChannelForTesting != nil }
+    }
+
+    // MARK: - Tests
+
+    @Test("outbound offer is sent when local pasteboard changes")
+    func outboundOfferOnPasteboardChange() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForHello(agent: agent, hostChannel: hostChannel)
+
+        pasteboard.setString("hello from guest", forType: .string)
+        await MainActor.run { agent.checkClipboardChange() }
+
+        let frame = try await nextFrame(from: hostChannel)
+        guard case .clipboardOffer(let offer) = frame.payload else {
+            throw TestFailure("Expected ClipboardOffer, got \(String(describing: frame.payload))")
+        }
+        #expect(offer.formats.contains(.textUtf8))
+        #expect(offer.generation >= 1)
+    }
+
+    @Test("echo suppression — text just written from host is not re-offered")
+    func echoSuppression() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForHello(agent: agent, hostChannel: hostChannel)
+
+        // Host sends offer → agent requests → host sends data → agent writes pasteboard
+        try hostChannel.send(makeOfferFrame(generation: 1))
+
+        let requestFrame = try await nextFrame(from: hostChannel)
+        guard case .clipboardRequest(let req) = requestFrame.payload else {
+            throw TestFailure("Expected ClipboardRequest, got \(String(describing: requestFrame.payload))")
+        }
+        #expect(req.generation == 1)
+
+        try hostChannel.send(makeDataFrame(generation: 1, text: "from host"))
+
+        try await waitUntil { pasteboard.string(forType: .string) == "from host" }
+        #expect(pasteboard.string(forType: .string) == "from host")
+
+        // Poll — since we just received "from host", no re-offer should be sent
+        await MainActor.run { agent.checkClipboardChange() }
+
+        // Give a window; no offer should arrive. Use a short-lived task and cancel it.
+        let extraTask = Task<Frame?, Never> {
+            try? await Task.sleep(for: .milliseconds(50))
+            var iterator = hostChannel.incoming.makeAsyncIterator()
+            return try? await iterator.next()
+        }
+        try await Task.sleep(for: .milliseconds(200))
+        extraTask.cancel()
+        let extra = await extraTask.value
+        if let frame = extra, case .clipboardOffer = frame.payload {
+            throw TestFailure("Echo suppression failed: agent re-offered host-written text")
+        }
+    }
+
+    @Test("reconnect resets lastSeenText so agent re-offers current pasteboard")
+    func reconnectResetsLastSeenText() async throws {
+        let pasteboard = FakePasteboard()
+        pasteboard.setString("persistent text", forType: .string)
+
+        let (agentFd0, remoteFd0) = try makeRawSocketPair()
+        let (agentFd1, remoteFd1) = try makeRawSocketPair()
+        let host0 = VsockChannel(fileDescriptor: remoteFd0)
+        let host1 = VsockChannel(fileDescriptor: remoteFd1)
+        host0.start()
+        host1.start()
+        defer { host0.close(); host1.close() }
+
+        let fdBox = FdBox(fds: [agentFd0, agentFd1])
+        let provideCount = AtomicInt()
+
+        let client = VsockGuestClient(
+            port: 49152,
+            label: "clipboard-reconnect-test",
+            retryInterval: .milliseconds(50)
+        ) { _, _ in
+            let n = provideCount.increment()
+            return fdBox.fd(at: n - 1)
+        }
+
+        let agent = VsockGuestClipboardAgent(pasteboard: pasteboard, client: client)
+        defer { agent.stop() }
+
+        agent.start()
+
+        // First connection: consume Hello
+        let hello1 = try await nextFrame(from: host0)
+        guard case .hello = hello1.payload else {
+            throw TestFailure("Expected Hello on first connection")
+        }
+        try await waitUntil { agent.liveChannelForTesting != nil }
+
+        // Trigger a poll — agent should offer "persistent text"
+        await MainActor.run { agent.checkClipboardChange() }
+
+        let offer1Frame = try await nextFrame(from: host0)
+        guard case .clipboardOffer(let offer1) = offer1Frame.payload else {
+            throw TestFailure("Expected ClipboardOffer on first connection")
+        }
+        #expect(offer1.generation >= 1)
+
+        // Close first connection to force reconnect
+        host0.close()
+        try await waitUntil { agent.liveChannelForTesting == nil }
+
+        // Wait for second connection Hello
+        let hello2 = try await nextFrame(from: host1, timeout: .seconds(3))
+        guard case .hello = hello2.payload else {
+            throw TestFailure("Expected Hello on second connection")
+        }
+        try await waitUntil { agent.liveChannelForTesting != nil }
+
+        // After reconnect, lastSeenText is cleared — next poll should re-offer
+        await MainActor.run { agent.checkClipboardChange() }
+
+        let offer2Frame = try await nextFrame(from: host1)
+        guard case .clipboardOffer(let offer2) = offer2Frame.payload else {
+            throw TestFailure("Expected ClipboardOffer after reconnect")
+        }
+        #expect(offer2.generation > offer1.generation)
+    }
+
+    @Test("stale ClipboardData with wrong generation is dropped")
+    func staleClipboardDataDropped() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForHello(agent: agent, hostChannel: hostChannel)
+
+        try hostChannel.send(makeOfferFrame(generation: 5))
+        _ = try await nextFrame(from: hostChannel)  // Consume agent's request
+
+        // Send data with wrong generation (4 instead of 5)
+        try hostChannel.send(makeDataFrame(generation: 4, text: "stale data"))
+
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(pasteboard.string(forType: .string) == nil)
+    }
+
+    @Test("full inbound offer/request/data round-trip writes pasteboard")
+    func inboundRoundTripWritesPasteboard() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForHello(agent: agent, hostChannel: hostChannel)
+
+        try hostChannel.send(makeOfferFrame(generation: 42))
+
+        let requestFrame = try await nextFrame(from: hostChannel)
+        guard case .clipboardRequest(let req) = requestFrame.payload else {
+            throw TestFailure("Expected ClipboardRequest, got \(String(describing: requestFrame.payload))")
+        }
+        #expect(req.generation == 42)
+        #expect(req.format == .textUtf8)
+
+        try hostChannel.send(makeDataFrame(generation: 42, text: "clipboard payload"))
+
+        try await waitUntil { pasteboard.string(forType: .string) == "clipboard payload" }
+        #expect(pasteboard.string(forType: .string) == "clipboard payload")
+    }
+}
+
+// MARK: - Thread-safe fd array
+
+/// Sendable wrapper for an array of file descriptors used in socket provider closures.
+final class FdBox: @unchecked Sendable {
+    private let fds: [Int32]  // Immutable post-init; lock not needed.
+
+    init(fds: [Int32]) {
+        self.fds = fds
+    }
+
+    func fd(at index: Int) -> Int32? {
+        guard index >= 0 && index < fds.count else { return nil }
+        return fds[index]
+    }
+}
