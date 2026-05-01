@@ -349,7 +349,12 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         }
 
         pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
+        guard pasteboard.setString(text, forType: .string) else {
+            Self.logger.warning(
+                "Failed to write host clipboard to pasteboard (gen=\(data.generation, privacy: .public), \(text.count, privacy: .public) chars). Echo-suppression state preserved; next user clipboard change will offer normally."
+            )
+            return
+        }
         // Record so the polling timer doesn't echo this back to the host
         // on the next change-count tick.
         lastPasteboardChangeCount = pasteboard.changeCount
