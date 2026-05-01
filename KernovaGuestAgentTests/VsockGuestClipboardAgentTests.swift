@@ -30,12 +30,12 @@ final class FakePasteboard: Pasteboard, @unchecked Sendable {
 
     @discardableResult
     func clearContents() -> Int {
-        // NSPasteboard.clearContents() does NOT bump changeCount on its own —
-        // the subsequent setString() call is what changes the count. Mirror
-        // that behavior so echo-suppression logic sees the same delta as on a
-        // real pasteboard.
+        // Real NSPasteboard.clearContents() bumps the change count and returns
+        // the new value. Mirror that behavior so the fake's echo-suppression
+        // delta matches a real pasteboard.
         lock.withLock {
             _contents.removeAll()
+            _changeCount += 1
             return _changeCount
         }
     }
@@ -383,6 +383,11 @@ struct VsockGuestClipboardAgentTests {
     @Test("setString failure preserves echo-suppression state")
     func setStringFailureDoesNotCorruptEchoSuppression() async throws {
         let pasteboard = FakePasteboard()
+        // Start with existing text so clearContents() in handleData is visible
+        // and we can confirm handleData actually ran and modified the pasteboard.
+        pasteboard.setString("initial guest text", forType: .string)
+        #expect(pasteboard.string(forType: .string) == "initial guest text")
+
         let (agentFd, remoteFd) = try makeRawSocketPair()
         let hostChannel = VsockChannel(fileDescriptor: remoteFd)
         hostChannel.start()
@@ -403,22 +408,77 @@ struct VsockGuestClipboardAgentTests {
         }
         try hostChannel.send(makeDataFrame(generation: 1, text: "host text that fails to write"))
 
-        // Allow the data frame to be processed.
-        try await Task.sleep(for: .milliseconds(100))
-
-        // The pasteboard should not contain the host text — setString failed.
+        // Wait until clearContents() runs (which clears the initial text) and
+        // the failed setString() guard returns — confirmed by the pasteboard
+        // being empty. This also proves handleData ran and reached the guard.
+        try await waitUntil { pasteboard.string(forType: .string) == nil }
         #expect(pasteboard.string(forType: .string) == nil)
 
-        // Now the user copies different text. Echo-suppression must NOT fire,
-        // because lastSeenText was not corrupted with the never-written host text.
-        pasteboard.setString("user copied this", forType: .string)
+        // The regression under test: buggy code stored "host text that fails to write"
+        // as lastSeenText even though the write failed. With the fix, lastSeenText
+        // remains nil. Copying the same text the host tried to write must still
+        // produce an outbound offer (it would be echo-suppressed with the bug).
+        pasteboard.setString("host text that fails to write", forType: .string)
         await MainActor.run { agent.checkClipboardChange() }
 
         let offerFrame = try await nextFrame(from: hostChannel)
-        guard case .clipboardOffer(let offer) = offerFrame.payload else {
-            throw TestFailure("Expected ClipboardOffer after user copy, got \(String(describing: offerFrame.payload))")
+        guard case .clipboardOffer = offerFrame.payload else {
+            throw TestFailure("Expected ClipboardOffer after user copies same text as failed host write — echo-suppression fired incorrectly (regression)")
         }
-        #expect(offer.generation >= 1)
+    }
+
+    @Test("host retry after setString failure succeeds and updates state")
+    func setStringFailureRetrySucceeds() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForHello(agent: agent, hostChannel: hostChannel)
+
+        // First attempt: inject failure, send offer + data.
+        let countBeforeFirstAttempt = pasteboard.changeCount
+        pasteboard.failNextSetString()
+        try hostChannel.send(makeOfferFrame(generation: 1))
+
+        let req1 = try await nextFrame(from: hostChannel)
+        guard case .clipboardRequest = req1.payload else {
+            throw TestFailure("Expected ClipboardRequest, got \(String(describing: req1.payload))")
+        }
+        try hostChannel.send(makeDataFrame(generation: 1, text: "retried host text"))
+
+        // Wait until clearContents() runs (changeCount bumps), confirming
+        // handleData executed the failed write path before we retry.
+        try await waitUntil { pasteboard.changeCount > countBeforeFirstAttempt }
+
+        // pendingInboundGeneration is intentionally left set on failure — the
+        // host can re-send the same generation and the agent will accept it.
+        // Simulate the host detecting failure and retrying with the same generation.
+        try hostChannel.send(makeDataFrame(generation: 1, text: "retried host text"))
+
+        // Wait for the successful write to land.
+        try await waitUntil { pasteboard.string(forType: .string) == "retried host text" }
+        #expect(pasteboard.string(forType: .string) == "retried host text")
+
+        // Echo suppression must now be set: polling with the same text must not
+        // produce an offer (lastSeenText was updated on the successful retry).
+        await MainActor.run { agent.checkClipboardChange() }
+
+        let noOfferTask = Task<Frame?, Never> {
+            try? await Task.sleep(for: .milliseconds(50))
+            var iterator = hostChannel.incoming.makeAsyncIterator()
+            return try? await iterator.next()
+        }
+        try await Task.sleep(for: .milliseconds(200))
+        noOfferTask.cancel()
+        let extra = await noOfferTask.value
+        if let frame = extra, case .clipboardOffer = frame.payload {
+            throw TestFailure("Echo suppression failed after successful retry: agent re-offered host-written text")
+        }
     }
 }
 

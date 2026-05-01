@@ -351,7 +351,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         pasteboard.clearContents()
         guard pasteboard.setString(text, forType: .string) else {
             Self.logger.warning(
-                "Failed to write host clipboard to pasteboard (\(text.count, privacy: .public) chars). Echo-suppression state preserved; next user clipboard change will offer normally."
+                "Failed to write host clipboard to pasteboard (gen=\(data.generation, privacy: .public), \(text.count, privacy: .public) chars). Echo-suppression state preserved; next user clipboard change will offer normally."
             )
             return
         }
