@@ -198,11 +198,19 @@ private struct NSPopoverAnchor<Content: View>: NSViewRepresentable {
             popover.delegate = self
 
             let hostingController = NSHostingController(rootView: content)
-            // .preferredContentSize is the linchpin: it tells NSHostingController
-            // to publish the SwiftUI view's intrinsic size as the popover's
-            // contentSize. SwiftUI's built-in .popover modifier does not set
-            // this option, which is what was clipping the body to one line.
             hostingController.sizingOptions = .preferredContentSize
+
+            // NSPopover queries contentSize before the SwiftUI hosting view has
+            // a chance to lay out, so .preferredContentSize alone leaves the
+            // popover sized to the host's empty initial bounds (one-line clip).
+            // Forcing a layout pass and reading `fittingSize` resolves the
+            // SwiftUI view's `.frame(width:)` + `.fixedSize()` to a concrete
+            // NSSize, which we then set on the popover explicitly.
+            hostingController.view.layoutSubtreeIfNeeded()
+            let fittedSize = hostingController.view.fittingSize
+            if fittedSize.width > 0 && fittedSize.height > 0 {
+                popover.contentSize = fittedSize
+            }
             popover.contentViewController = hostingController
 
             popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: preferredEdge)
