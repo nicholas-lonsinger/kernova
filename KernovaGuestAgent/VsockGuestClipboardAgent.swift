@@ -53,6 +53,10 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// the host isn't reachable.
     private var liveChannel: VsockChannel?
 
+    /// Exposes `liveChannel` as an internal read for tests that need to wait
+    /// until the main-queue async assignment completes before driving polls.
+    var liveChannelForTesting: VsockChannel? { liveChannel }
+
     /// Counter for outbound offer generations. Starts at 1 so 0 can serve as
     /// "no pending request" sentinel for the inbound side.
     private var nextLocalGeneration: UInt64 = 1

@@ -71,6 +71,32 @@ struct KernovaLogMessageTests {
         #expect(msg.wireRendered == "true")
     }
 
+    /// Default privacy on the generic overload is the highest-risk regression:
+    /// if the default ever changed to `.public`, private values would leak to disk.
+    @Test("default-privacy generic interpolation redacts local form")
+    func defaultPrivacyGenericRedactsLocal() {
+        let n = 99
+        let msg: KernovaLogMessage = "\(n)"
+        #expect(msg.localRendered == "<private>")
+        #expect(msg.wireRendered == "99")
+    }
+
+    @Test("sensitive generic interpolation redacts local form via generic fallback")
+    func sensitiveGenericRedactsLocal() {
+        let n = 7
+        let msg: KernovaLogMessage = "\(n, privacy: .sensitive)"
+        #expect(msg.localRendered == "<private>")
+        #expect(msg.wireRendered == "7")
+    }
+
+    @Test("auto generic interpolation renders cleartext via generic fallback")
+    func autoGenericRendersInBothForms() {
+        let n = 3
+        let msg: KernovaLogMessage = "\(n, privacy: .auto)"
+        #expect(msg.localRendered == "3")
+        #expect(msg.wireRendered == "3")
+    }
+
     // MARK: - Mixed interpolations
 
     @Test("mixed public/private interpolations redact selectively")

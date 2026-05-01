@@ -6,51 +6,17 @@ import KernovaProtocol
 @Suite("VsockGuestClient connect/retry/stop lifecycle")
 struct VsockGuestClientTests {
 
-    // MARK: - Helpers
-
-    private struct TestFailure: Error {
-        let message: String
-        init(_ m: String) { message = m }
-    }
-
-    /// Creates a connected socketpair; returns (local fd, remote VsockChannel).
-    /// The caller owns the remote channel and must close it when done.
-    private func makeSocketPair() throws -> (localFd: Int32, remoteChannel: VsockChannel) {
-        var fds: [Int32] = [-1, -1]
-        let rc = fds.withUnsafeMutableBufferPointer { buf in
-            socketpair(AF_UNIX, SOCK_STREAM, 0, buf.baseAddress)
-        }
-        guard rc == 0 else {
-            throw POSIXError(.init(rawValue: errno) ?? .EIO)
-        }
-        let remote = VsockChannel(fileDescriptor: fds[1])
-        remote.start()
-        return (fds[0], remote)
-    }
-
-    /// Waits until the predicate is true or a deadline elapses.
-    private func waitUntil(
-        timeout: Duration = .seconds(2),
-        _ predicate: @Sendable () -> Bool
-    ) async throws {
-        let deadline = ContinuousClock.now.advanced(by: timeout)
-        while !predicate() && ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        if !predicate() {
-            throw TestFailure("Predicate did not become true within \(timeout)")
-        }
-    }
-
     // MARK: - Tests
 
     @Test("start invokes serve closure with a connected channel")
     func startInvokesServeClosure() async throws {
         let fastRetry: Duration = .milliseconds(50)
-        let (localFd, remote) = try makeSocketPair()
+        let (localFd, remoteFd) = try makeRawSocketPair()
+        let remote = VsockChannel(fileDescriptor: remoteFd)
+        remote.start()
         defer { remote.close() }
 
-        let servedStream = AsyncStream<Void>.makeStream()
+        let (servedStream, continuation) = AsyncStream<Void>.makeStream()
 
         let client = VsockGuestClient(
             port: 12345,
@@ -60,63 +26,103 @@ struct VsockGuestClientTests {
         defer { client.stop() }
 
         client.start { channel in
-            servedStream.continuation.yield(())
+            continuation.yield(())
             do { for try await _ in channel.incoming {} } catch {}
         }
 
-        // Drain the stream with a timeout task
-        let serveTask = Task { () -> Void in
-            var iterator = servedStream.stream.makeAsyncIterator()
-            _ = await iterator.next()
-        }
-        let timeoutTask = Task {
-            try? await Task.sleep(for: .seconds(2))
-            serveTask.cancel()
-        }
-        await serveTask.value
-        timeoutTask.cancel()
-        #expect(!serveTask.isCancelled, "serve closure should have been called")
+        _ = try await awaitFirst(servedStream)
     }
 
     @Test("liveChannel is non-nil while serve is running and nil after serve returns")
     func liveChannelLifecycle() async throws {
         let fastRetry: Duration = .milliseconds(50)
-        let (localFd, remote) = try makeSocketPair()
+        let (localFd, remoteFd) = try makeRawSocketPair()
+        let remote = VsockChannel(fileDescriptor: remoteFd)
+        remote.start()
+
+        // Return localFd on first call, nil thereafter — prevents reuse of a
+        // closed fd if the client retries after the remote closes.
+        let callCount = AtomicInt()
+        let client = VsockGuestClient(
+            port: 12345,
+            label: "test",
+            retryInterval: fastRetry
+        ) { _, _ in
+            callCount.increment() == 1 ? localFd : nil
+        }
+        defer { client.stop() }
+
+        let (enteredStream, continuation) = AsyncStream<Void>.makeStream()
+        client.start { channel in
+            continuation.yield(())
+            do { for try await _ in channel.incoming {} } catch {}
+        }
+
+        _ = try await awaitFirst(enteredStream)
+
+        try await waitUntil { client.liveChannel != nil }
+        #expect(client.liveChannel != nil)
+
+        remote.close()
+        try await waitUntil { client.liveChannel == nil }
+        #expect(client.liveChannel == nil)
+    }
+
+    /// Exercises the `connectAndServe` pre-serve abort path: the reconnect
+    /// loop is stopped before a connection is established so the `stopped`
+    /// guard fires and `serve` is never called.
+    @Test("stop while reconnecting aborts loop without calling serve")
+    func stopMidConnectAbortBeforeServe() async throws {
+        let fastRetry: Duration = .milliseconds(50)
+        let serveCallCount = AtomicInt()
+        let providerEnteredGate = DispatchSemaphore(value: 0)
+        let providerReleaseGate = DispatchSemaphore(value: 0)
+
+        let (localFd, remoteFd) = try makeRawSocketPair()
+        let remote = VsockChannel(fileDescriptor: remoteFd)
+        remote.start()
+        defer { remote.close() }
 
         let client = VsockGuestClient(
             port: 12345,
             label: "test",
             retryInterval: fastRetry
-        ) { _, _ in localFd }
-        defer { client.stop() }
-
-        let enteredStream = AsyncStream<Void>.makeStream()
-
-        client.start { channel in
-            enteredStream.continuation.yield(())
-            do { for try await _ in channel.incoming {} } catch {}
+        ) { _, _ in
+            // Provider runs synchronously on the reconnect-loop thread.
+            // Signal we've entered, then block until the test releases us.
+            providerEnteredGate.signal()
+            providerReleaseGate.wait()  // Legal: called synchronously, not from async context
+            return localFd
         }
 
-        let waitTask = Task { () -> Void in
-            var iterator = enteredStream.stream.makeAsyncIterator()
-            _ = await iterator.next()
+        client.start { _ in
+            serveCallCount.increment()
         }
-        await waitTask.value
 
-        // liveChannel must be non-nil while serve is blocked
-        try await waitUntil { client.liveChannel != nil }
-        #expect(client.liveChannel != nil)
+        // Wait (on a background thread) until the provider is entered, then
+        // stop the client, then release the provider. We must not block the
+        // cooperative pool here, so bridge via a detached thread.
+        let stopDone = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .userInitiated).async {
+            providerEnteredGate.wait()
+            client.stop()
+            providerReleaseGate.signal()
+            stopDone.signal()
+        }
 
-        // Close the remote end — serve returns — liveChannel should clear
-        remote.close()
-        try await waitUntil { client.liveChannel == nil }
+        // Await the background work by sleeping; the provider returns localFd
+        // but aborted==true so serve is not invoked.
+        try await Task.sleep(for: .milliseconds(300))
+
+        #expect(serveCallCount.value == 0)
         #expect(client.liveChannel == nil)
     }
 
     @Test("stop mid-serve tears down the channel and does not re-invoke serve")
     func stopMidServe() async throws {
         let fastRetry: Duration = .milliseconds(50)
-        let (localFd, _) = try makeSocketPair()
+        let (localFd, remoteFd) = try makeRawSocketPair()
+        _ = remoteFd  // keep alive; remote end closed when test exits
 
         let callCounter = CallCounter()
 
@@ -126,30 +132,21 @@ struct VsockGuestClientTests {
             retryInterval: fastRetry
         ) { _, _ in localFd }
 
-        let enteredStream = AsyncStream<Void>.makeStream()
+        let (enteredStream, continuation) = AsyncStream<Void>.makeStream()
 
         client.start { channel in
             await callCounter.increment()
-            enteredStream.continuation.yield(())
+            continuation.yield(())
             do { for try await _ in channel.incoming {} } catch {}
         }
 
-        let waitTask = Task { () -> Void in
-            var iterator = enteredStream.stream.makeAsyncIterator()
-            _ = await iterator.next()
-        }
-        await waitTask.value
+        _ = try await awaitFirst(enteredStream)
 
         // Stop while serve is in flight
         client.stop()
 
-        // Give a moment for any spurious reconnect
         try await Task.sleep(for: .milliseconds(150))
-
-        let finalCallCount = await callCounter.value
-        // After stop the reconnect loop is cancelled; serve should not
-        // be invoked again even with the fast retry interval.
-        #expect(finalCallCount == 1)
+        #expect(await callCounter.value == 1)
         #expect(client.liveChannel == nil)
     }
 
@@ -167,13 +164,9 @@ struct VsockGuestClientTests {
             return nil
         }
 
-        // Stop before start — should not crash or lock
         client.stop()
-
-        // Start after stop — documented as a no-op (cannot be restarted)
         client.start { _ in }
 
-        // Wait briefly to confirm no provider calls were made
         try await Task.sleep(for: .milliseconds(100))
         #expect(provideCounter.value == 0)
         #expect(client.liveChannel == nil)
@@ -182,7 +175,9 @@ struct VsockGuestClientTests {
     @Test("start is idempotent — second call before stop is a no-op")
     func startIsIdempotent() async throws {
         let fastRetry: Duration = .milliseconds(50)
-        let (localFd, remote) = try makeSocketPair()
+        let (localFd, remoteFd) = try makeRawSocketPair()
+        let remote = VsockChannel(fileDescriptor: remoteFd)
+        remote.start()
         defer { remote.close() }
 
         let provideCounter = AtomicInt()
@@ -197,23 +192,18 @@ struct VsockGuestClientTests {
         }
         defer { client.stop() }
 
-        let enteredStream = AsyncStream<Void>.makeStream()
+        let (enteredStream, continuation) = AsyncStream<Void>.makeStream()
         client.start { channel in
-            enteredStream.continuation.yield(())
+            continuation.yield(())
             do { for try await _ in channel.incoming {} } catch {}
         }
 
-        let waitTask = Task { () -> Void in
-            var iterator = enteredStream.stream.makeAsyncIterator()
-            _ = await iterator.next()
-        }
-        await waitTask.value
+        _ = try await awaitFirst(enteredStream)
 
-        // Second start — should be a no-op, no new task spawned
+        // Second start — no-op
         client.start { _ in }
 
         try await Task.sleep(for: .milliseconds(100))
-        // Provider still called exactly once
         #expect(provideCounter.value == 1)
     }
 
@@ -222,11 +212,13 @@ struct VsockGuestClientTests {
         let fastRetry: Duration = .milliseconds(50)
         let targetAttempt = 3
 
-        let (localFd, remote) = try makeSocketPair()
+        let (localFd, remoteFd) = try makeRawSocketPair()
+        let remote = VsockChannel(fileDescriptor: remoteFd)
+        remote.start()
         defer { remote.close() }
 
         let attemptCounter = AtomicInt()
-        let servedStream = AsyncStream<Void>.makeStream()
+        let (servedStream, continuation) = AsyncStream<Void>.makeStream()
 
         let client = VsockGuestClient(
             port: 12345,
@@ -234,30 +226,17 @@ struct VsockGuestClientTests {
             retryInterval: fastRetry
         ) { _, _ in
             let n = attemptCounter.increment()
-            if n < targetAttempt {
-                return nil
-            }
-            return localFd
+            return n < targetAttempt ? nil : localFd
         }
         defer { client.stop() }
 
         client.start { channel in
-            servedStream.continuation.yield(())
+            continuation.yield(())
             do { for try await _ in channel.incoming {} } catch {}
         }
 
-        let serveTask = Task { () -> Void in
-            var iterator = servedStream.stream.makeAsyncIterator()
-            _ = await iterator.next()
-        }
-        let timeoutTask = Task {
-            try? await Task.sleep(for: .seconds(3))
-            serveTask.cancel()
-        }
-        await serveTask.value
-        timeoutTask.cancel()
+        _ = try await awaitFirst(servedStream, timeout: .seconds(3))
 
-        #expect(!serveTask.isCancelled, "serve should have been called after retries")
         #expect(attemptCounter.value >= targetAttempt)
         #expect(client.liveChannel != nil)
     }
@@ -269,22 +248,4 @@ struct VsockGuestClientTests {
 private actor CallCounter {
     private(set) var value: Int = 0
     func increment() { value += 1 }
-}
-
-/// Lock-protected integer for use in non-async closures (socket providers).
-final class AtomicInt: @unchecked Sendable {
-    private let lock = NSLock()
-    private var _value: Int = 0
-
-    @discardableResult
-    func increment() -> Int {
-        lock.withLock {
-            _value += 1
-            return _value
-        }
-    }
-
-    var value: Int {
-        lock.withLock { _value }
-    }
 }
