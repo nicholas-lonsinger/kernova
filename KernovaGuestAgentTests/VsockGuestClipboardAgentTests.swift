@@ -566,6 +566,33 @@ struct VsockGuestClipboardAgentTests {
         }
     }
 
+    @Test("serve clears liveChannel synchronously before the reconnect loop can proceed")
+    func serveSynchronouslyClearsLiveChannelOnClose() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForHello(agent: agent, hostChannel: hostChannel)
+        #expect(agent.liveChannelForTesting != nil)
+
+        // Host closes the channel. The agent's serve loop observes EOF and
+        // runs the cleanup via `await MainActor.run`, which completes before
+        // `serve` returns. The reconnect loop in VsockGuestClient can only
+        // advance past its `await serve(channel:)` call once serve returns,
+        // so `liveChannel` is guaranteed nil at that point.
+        hostChannel.close()
+
+        // Poll until the cleanup has propagated. With the synchronous
+        // `await MainActor.run` shape, this settles promptly — no extended
+        // window where the polling timer can dispatch to the dead channel.
+        try await waitUntil { agent.liveChannelForTesting == nil }
+        #expect(agent.liveChannelForTesting == nil)
+    }
+
     @Test("handleOffer send failure leaves pendingInboundGeneration unchanged")
     func offerSendFailureDoesNotSetPendingGeneration() async throws {
         let pasteboard = FakePasteboard()

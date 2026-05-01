@@ -159,17 +159,17 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             return
         }
 
-        DispatchQueue.main.async { [weak self] in
-            self?.liveChannel = channel
-            self?.pendingOutbound = nil
-            self?.pendingInboundGeneration = nil
+        await MainActor.run {
+            self.liveChannel = channel
+            self.pendingOutbound = nil
+            self.pendingInboundGeneration = nil
             // The host on the other end may be a brand-new instance (host
             // app restarted, VM stopped+started, etc.) that has no record
             // of prior offers. Clear the dedup state so the next poll
             // cycle re-announces the current clipboard rather than
             // assuming the host already has it.
-            self?.lastSeenText = nil
-            self?.lastPasteboardChangeCount = -1
+            self.lastSeenText = nil
+            self.lastPasteboardChangeCount = -1
         }
         Self.logger.notice("Vsock clipboard connected to host")
 
@@ -186,11 +186,11 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             )
         }
 
-        DispatchQueue.main.async { [weak self] in
-            if self?.liveChannel === channel {
-                self?.liveChannel = nil
-                self?.pendingOutbound = nil
-                self?.pendingInboundGeneration = nil
+        await MainActor.run {
+            if self.liveChannel === channel {
+                self.liveChannel = nil
+                self.pendingOutbound = nil
+                self.pendingInboundGeneration = nil
             }
         }
     }
