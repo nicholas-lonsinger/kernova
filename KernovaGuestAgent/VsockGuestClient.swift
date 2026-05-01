@@ -29,6 +29,9 @@ final class VsockGuestClient: @unchecked Sendable {
 
     private static let logger = Logger(subsystem: "com.kernova.agent", category: "VsockGuestClient")
     private static let socketTimeoutSeconds: Int = 30
+    // RATIONALE: vsock is a local-only transport with no SYN dance, so connect
+    // is normally immediate-success or immediate-ECONNREFUSED. 3s is a generous
+    // ceiling that stays well under the 5s retryInterval.
     private static let connectTimeoutSeconds: Int = 3
 
     let port: UInt32
@@ -155,18 +158,17 @@ final class VsockGuestClient: @unchecked Sendable {
             return nil
         }
 
-        // Snapshot the original flags so we can restore blocking mode after connect.
         let originalFlags = fcntl(fd, F_GETFL, 0)
         guard originalFlags >= 0 else {
             let err = errno
             close(fd)
-            logger.warning("fcntl(F_GETFL) failed for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
+            logger.error("fcntl(F_GETFL) failed for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
             return nil
         }
         guard fcntl(fd, F_SETFL, originalFlags | O_NONBLOCK) >= 0 else {
             let err = errno
             close(fd)
-            logger.warning("fcntl(F_SETFL, O_NONBLOCK) failed for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
+            logger.error("fcntl(F_SETFL, O_NONBLOCK) failed for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
             return nil
         }
 
@@ -198,11 +200,10 @@ final class VsockGuestClient: @unchecked Sendable {
             }
         }
 
-        // Restore blocking mode so recv/send observe SO_RCVTIMEO/SO_SNDTIMEO timeouts.
         guard fcntl(fd, F_SETFL, originalFlags) >= 0 else {
             let err = errno
             close(fd)
-            logger.warning("fcntl(F_SETFL) restore failed for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
+            logger.error("fcntl(F_SETFL) restore failed for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
             return nil
         }
 
@@ -211,31 +212,53 @@ final class VsockGuestClient: @unchecked Sendable {
     }
 
     /// Waits up to `connectTimeoutSeconds` for an in-flight non-blocking connect
-    /// to complete on `fd`. Returns true iff the connect succeeded; false on
-    /// timeout, poll error, or a deferred connect error reported via SO_ERROR.
-    /// The caller is responsible for closing `fd` on false.
+    /// to complete on `fd`. Returns true on success, false on timeout, poll
+    /// error, or a deferred connect error. Caller owns `fd` on both paths and
+    /// must `close()` it on false return — this helper does not assume ownership.
     private static func awaitConnectCompletion(fd: Int32, label: String, port: UInt32) -> Bool {
         var pfd = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
-        let timeoutMs = Int32(connectTimeoutSeconds * 1000)
+        let deadline = ContinuousClock.now + .seconds(connectTimeoutSeconds)
 
         var pollRc: Int32
         repeat {
-            pollRc = withUnsafeMutablePointer(to: &pfd) { poll($0, 1, timeoutMs) }
-        } while pollRc < 0 && errno == EINTR
+            let remaining = deadline - ContinuousClock.now
+            let remainingMs = Int32(max(0, Double(remaining.components.seconds) * 1000
+                + Double(remaining.components.attoseconds) / 1e15))
+            pollRc = withUnsafeMutablePointer(to: &pfd) { poll($0, 1, remainingMs) }
+            let err = errno
+            if pollRc < 0 && err != EINTR {
+                logger.warning("poll() while connecting '\(label, privacy: .public)' failed: errno=\(err, privacy: .public)")
+                return false
+            }
+        } while pollRc < 0
 
         if pollRc == 0 {
             logger.warning("connect() to '\(label, privacy: .public)' port \(port, privacy: .public) timed out after \(connectTimeoutSeconds, privacy: .public)s")
             return false
         }
-        if pollRc < 0 {
-            logger.warning("poll() while connecting '\(label, privacy: .public)' failed: errno=\(errno, privacy: .public)")
+
+        // Check output-only error flags before trusting SO_ERROR. POLLHUP can
+        // arrive with POLLOUT on a peer that hung up between EINPROGRESS and
+        // completion; SO_ERROR may read 0 because the connect itself succeeded.
+        let errorRevents = Int16(POLLHUP) | Int16(POLLERR) | Int16(POLLNVAL)
+        if pfd.revents & errorRevents != 0 {
+            var soError: Int32 = 0
+            var soErrorLen = socklen_t(MemoryLayout<Int32>.size)
+            let errStr: String
+            if getsockopt(fd, SOL_SOCKET, SO_ERROR, &soError, &soErrorLen) == 0 && soError != 0 {
+                errStr = "errno=\(soError)"
+            } else {
+                errStr = "revents=\(pfd.revents)"
+            }
+            logger.warning("connect() to '\(label, privacy: .public)' port \(port, privacy: .public) failed: \(errStr, privacy: .public)")
             return false
         }
 
         var soError: Int32 = 0
         var soErrorLen = socklen_t(MemoryLayout<Int32>.size)
         guard getsockopt(fd, SOL_SOCKET, SO_ERROR, &soError, &soErrorLen) == 0 else {
-            logger.warning("getsockopt(SO_ERROR) for '\(label, privacy: .public)' failed: errno=\(errno, privacy: .public)")
+            let err = errno
+            logger.warning("getsockopt(SO_ERROR) for '\(label, privacy: .public)' failed: errno=\(err, privacy: .public)")
             return false
         }
         guard soError == 0 else {
