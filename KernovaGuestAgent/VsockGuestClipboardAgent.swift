@@ -43,6 +43,10 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     private static let logger = KernovaLogger(subsystem: "com.kernova.agent", category: "VsockGuestClipboardAgent")
     private static let pollingInterval: TimeInterval = 0.5
 
+    private static let errorCodeFormatUnavailable = "clipboard.format.unavailable"
+    private static let errorCodeEncodingFailure = "clipboard.transfer.encoding.failure"
+    private static let errorCodeTransferFailure = "clipboard.transfer.send.failure"
+
     private let client: VsockGuestClient
     private let pasteboard: Pasteboard
 
@@ -306,20 +310,34 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
 
     private func handleRequest(_ request: Kernova_V1_ClipboardRequest, channel: VsockChannel) {
         guard let pending = pendingOutbound, pending.generation == request.generation else {
+            // Stale: the host has already replaced or dropped the offer this targets.
+            // Don't burden it with an error — silence is correct here.
             Self.logger.debug(
                 "Stale clipboard request gen=\(request.generation, privacy: .public) (pending=\(self.pendingOutbound?.generation ?? 0, privacy: .public))"
             )
             return
         }
         guard request.format == .textUtf8 else {
-            Self.logger.debug(
-                "Unsupported clipboard format requested: \(request.format.rawValue, privacy: .public)"
+            Self.logger.warning(
+                "Unsupported clipboard format requested gen=\(request.generation, privacy: .public) format=\(request.format.rawValue, privacy: .public)"
+            )
+            sendErrorFrame(
+                on: channel,
+                code: Self.errorCodeFormatUnavailable,
+                message: "Guest agent only carries TEXT_UTF8 (gen=\(request.generation), requested format=\(request.format.rawValue))",
+                inReplyTo: "clipboard.request"
             )
             return
         }
         guard let bytes = pending.text.data(using: .utf8) else {
             Self.logger.warning(
-                "Failed to encode clipboard text as UTF-8 (\(pending.text.count, privacy: .public) chars)"
+                "Failed to encode clipboard text as UTF-8 gen=\(pending.generation, privacy: .public) chars=\(pending.text.count, privacy: .public)"
+            )
+            sendErrorFrame(
+                on: channel,
+                code: Self.errorCodeEncodingFailure,
+                message: "Guest agent could not encode \(pending.text.count) characters as UTF-8 (gen=\(pending.generation))",
+                inReplyTo: "clipboard.request"
             )
             return
         }
@@ -337,8 +355,17 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                 "Sent clipboard data (gen=\(pending.generation, privacy: .public), \(bytes.count, privacy: .public) bytes)"
             )
         } catch {
-            Self.logger.warning(
-                "Failed to send clipboard data: \(error.localizedDescription, privacy: .public)"
+            // Logged at .error: this failure is user-visible (paste produces nothing).
+            // Include gen + size so post-mortems can pair this with the peer's "request sent" log.
+            Self.logger.error(
+                "Failed to send clipboard data gen=\(pending.generation, privacy: .public) bytes=\(bytes.count, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+            // If the channel is dead, the peer will learn via EOF — no further fallback needed.
+            sendErrorFrame(
+                on: channel,
+                code: Self.errorCodeTransferFailure,
+                message: "Guest agent failed to deliver clipboard data (gen=\(pending.generation), \(bytes.count) bytes): \(error.localizedDescription)",
+                inReplyTo: "clipboard.request"
             )
         }
     }
@@ -384,7 +411,32 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         }
     }
 
-    // MARK: - Hello
+    // MARK: - Hello / Error helpers
+
+    /// If `channel.send` fails (typically because the channel just tore down
+    /// for the same reason we're reporting), the failure is logged at `.debug`
+    /// and swallowed — we have nothing better to do at that point.
+    private func sendErrorFrame(
+        on channel: VsockChannel,
+        code: String,
+        message: String,
+        inReplyTo: String?
+    ) {
+        var frame = Frame()
+        frame.protocolVersion = 1
+        frame.error = Kernova_V1_Error.with {
+            $0.code = code
+            $0.message = message
+            if let inReplyTo { $0.inReplyTo = inReplyTo }
+        }
+        do {
+            try channel.send(frame)
+        } catch {
+            Self.logger.debug(
+                "Failed to send error frame (code=\(code, privacy: .public)): \(error.localizedDescription, privacy: .public)"
+            )
+        }
+    }
 
     private func sendHello(on channel: VsockChannel) throws {
         var hello = Frame()

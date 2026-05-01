@@ -22,6 +22,19 @@ struct VsockClipboardServiceTests {
                 VsockChannel(fileDescriptor: fds[1]))
     }
 
+    /// Returns the raw fd pair alongside the channels so callers can set socket
+    /// options (e.g. SO_NOSIGPIPE) on the fd before writes.
+    private func makeRawPair() throws -> (hostFd: Int32, guestFd: Int32, host: VsockChannel, guest: VsockChannel) {
+        var fds: [Int32] = [-1, -1]
+        let rc = fds.withUnsafeMutableBufferPointer { buf in
+            socketpair(AF_UNIX, SOCK_STREAM, 0, buf.baseAddress)
+        }
+        guard rc == 0 else {
+            throw POSIXError(.init(rawValue: errno) ?? .EIO)
+        }
+        return (fds[0], fds[1], VsockChannel(fileDescriptor: fds[0]), VsockChannel(fileDescriptor: fds[1]))
+    }
+
     /// Drains the next frame from a channel within a generous deadline. Tests
     /// that expect no frame must use `expectNoFrame` instead — this helper
     /// throws on timeout.
@@ -353,6 +366,88 @@ struct VsockClipboardServiceTests {
             return
         }
         #expect(data.generation == offer.generation)
+    }
+
+    @Test("handleRequest with unsupported format replies with an Error frame")
+    func unsupportedFormatRepliesWithError() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test")
+        service.start()
+        defer { service.stop() }
+
+        _ = try await nextFrame(from: guest)        // host hello
+        try guest.send(makeHello())
+        try await waitUntil { service.isConnected }
+
+        service.clipboardText = "host content"
+        service.grabIfChanged()
+        let offerFrame = try await nextFrame(from: guest)
+        guard case .clipboardOffer(let offer) = offerFrame.payload else {
+            Issue.record("Expected clipboardOffer, got \(String(describing: offerFrame.payload))")
+            return
+        }
+
+        var badRequest = Frame()
+        badRequest.protocolVersion = 1
+        badRequest.clipboardRequest = Kernova_V1_ClipboardRequest.with {
+            $0.generation = offer.generation
+            $0.format = .unspecified  // any non-textUtf8 value
+        }
+        try guest.send(badRequest)
+
+        // Expect an Error frame — not silence.
+        let response = try await nextFrame(from: guest)
+        guard case .error(let err) = response.payload else {
+            Issue.record("Expected error frame, got \(String(describing: response.payload))")
+            return
+        }
+        #expect(err.code == "clipboard.format.unavailable")
+        #expect(err.inReplyTo == "clipboard.request")
+        #expect(err.message.contains("gen=\(offer.generation)"))
+    }
+
+    @Test("handleRequest data-send failure is logged without crashing and leaves service connected")
+    func dataSendFailureIsHandledGracefully() async throws {
+        let (hostFd, _, host, guest) = try makeRawPair()
+        host.start()
+        guest.start()
+
+        // SO_NOSIGPIPE on the host channel's fd so a write to a peer-closed
+        // socket surfaces as an error rather than delivering SIGPIPE.
+        var noSigpipe: Int32 = 1
+        _ = setsockopt(hostFd, SOL_SOCKET, SO_NOSIGPIPE, &noSigpipe, socklen_t(MemoryLayout<Int32>.size))
+
+        let service = VsockClipboardService(channel: host, label: "test")
+        service.start()
+        defer { service.stop() }
+
+        _ = try await nextFrame(from: guest)        // host hello
+        try guest.send(makeHello())
+        try await waitUntil { service.isConnected }
+
+        service.clipboardText = "host data"
+        service.grabIfChanged()
+        let offerFrame = try await nextFrame(from: guest)
+        guard case .clipboardOffer(let offer) = offerFrame.payload else {
+            Issue.record("Expected clipboardOffer, got \(String(describing: offerFrame.payload))")
+            return
+        }
+
+        // Queue the request in the kernel buffer, then close the guest end so
+        // the service's data-send reply arrives at a dead peer.
+        try guest.send(makeRequest(generation: offer.generation))
+        guest.close()
+
+        // The service reads the request, tries to send data, fails (peer gone),
+        // logs .error, and attempts a best-effort error frame (also fails,
+        // swallowed). The service must not crash (no SIGPIPE) and isConnected
+        // must remain true because only stop() clears it.
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(service.isConnected, "isConnected should remain true — only stop() clears it")
     }
 
     @Test("Inbound offer triggers a request and incoming data updates clipboardText")
