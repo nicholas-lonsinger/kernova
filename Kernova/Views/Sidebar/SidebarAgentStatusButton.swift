@@ -33,7 +33,10 @@ struct SidebarAgentStatusButton: View {
         .popover(isPresented: $isPopoverPresented, arrowEdge: .leading) {
             popoverContent
                 .padding(16)
-                .frame(width: 320)
+                // min/ideal/max lets the popover widen for long VM names while
+                // staying compact in the common case; vertical size is
+                // unconstrained so the body wraps to as many lines as needed.
+                .frame(minWidth: 280, idealWidth: 320, maxWidth: 380)
         }
     }
 
@@ -68,7 +71,13 @@ struct SidebarAgentStatusButton: View {
     @ViewBuilder
     private var popoverContent: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(popoverTitle).font(.headline)
+            // .fixedSize(horizontal: false, vertical: true) on every Text so
+            // long titles (long VM names, version diffs) wrap to the popover
+            // width instead of being single-line truncated. Without this,
+            // the headline in particular collapses to one line and clips.
+            Text(popoverTitle)
+                .font(.headline)
+                .fixedSize(horizontal: false, vertical: true)
             Text(popoverBody)
                 .font(.callout)
                 .foregroundStyle(.secondary)
@@ -88,6 +97,7 @@ struct SidebarAgentStatusButton: View {
                 }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var popoverTitle: String {
