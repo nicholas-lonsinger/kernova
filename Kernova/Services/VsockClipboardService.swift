@@ -28,6 +28,14 @@ final class VsockClipboardService: ClipboardServicing {
 
     // MARK: - Private state
 
+    // RATIONALE: `channel` is captured at init and never replaced. There is no
+    // polling timer or reconnect loop that reads the channel from a different
+    // actor context, so the publish/cleanup race fixed in
+    // VsockGuestClipboardAgent.serve (PR #166 / issue #156) does not apply here.
+    // If you add dynamic channel swapping (e.g., per-reconnect channel
+    // reassignment), mirror that fix: replace any DispatchQueue.main.async
+    // publish/cleanup in the new code with await MainActor.run so state settles
+    // before the function that changes the channel returns.
     private let channel: VsockChannel
     private let label: String
 
