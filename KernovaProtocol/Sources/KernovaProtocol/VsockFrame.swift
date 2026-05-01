@@ -122,7 +122,8 @@ public struct VsockFrameDecoder: Sendable {
         }
     }
 
-    /// Drops the consumed prefix when worthwhile. Cheap if no work is needed.
+    /// Two-tier compaction: drained buffers reset for free; partial buffers
+    /// shift only after the threshold to keep the per-byte copy cost amortized.
     private mutating func compactIfNeeded() {
         guard readOffset > 0 else { return }
         if readOffset == buffer.count {
