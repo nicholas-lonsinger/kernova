@@ -146,9 +146,17 @@ KernovaTests/
 ├── SpiceAgentProtocolTests.swift       # SPICE wire format serialization/deserialization tests
 ├── DataFormattersTests.swift           # Formatting utility tests
 └── NSImageExtensionsTests.swift        # SF Symbol loading utility tests
+
+KernovaGuestAgentTests/                 # Unit tests for the guest agent (standalone xctest bundle — no TEST_HOST)
+│                                       # Compiles KernovaGuestAgent source files directly (except main.swift) so
+│                                       # internal members are accessible without @testable import.
+├── KernovaLogMessageTests.swift        # 11 tests: privacy-redaction matrix for KernovaLogMessage interpolations
+├── VsockHostConnectionTests.swift      # 9 tests: log ring-buffer cap + partial-flush re-enqueue logic
+├── VsockGuestClientTests.swift         # 6 tests: connect/retry/stop lifecycle; socket-factory injection
+└── VsockGuestClipboardAgentTests.swift # 5 tests: echo suppression, reconnect reset, offer/request/data flow
 ```
 
-**Total: 56 source files + 2 helpers, 25 test files (19 suites + 6 mocks).**
+**Total: 56 source files + 2 helpers, 29 test files (23 suites + 6 mocks).**
 
 *Note: `ContentView.swift` was removed when `NavigationSplitView` was replaced by `NSSplitViewController` in `MainWindowController`. Its responsibilities were split between `MainWindowController` (toolbar, split view) and `MainDetailView` (detail switching, sheets, alerts).*
 
@@ -360,11 +368,13 @@ SystemSleepWatcher ──sleep/wake──→ VMLibraryViewModel ──pause/resu
 
 ## Helper Targets
 
-Two standalone command-line tool targets are built alongside the main app:
+Three standalone targets are built alongside the main app — two CLI tools and one unit-test bundle:
 
 - **KernovaRelaunchHelper** — Embedded in `Contents/MacOS/`. A watchdog that monitors the main app's PID and relaunches it after TCC-forced terminations. Launched by `AppDelegate` during quit when a TCC revocation is detected.
 
 - **KernovaGuestAgent** — Not embedded directly. Runs inside macOS VMs and maintains two long-lived vsock connections to the host: log forwarding (`VsockHostConnection` on port 49153) and bidirectional clipboard sync (`VsockGuestClipboardAgent` on port 49152). Both connections are independent — a disconnect on one doesn't take the other down — and both share a `VsockGuestClient` helper that owns the connect/retry/serve loop. The clipboard agent polls `NSPasteboard.general` at 500 ms and announces changes to the host via `ClipboardOffer` frames; on inbound offers it requests the bytes and writes them to the local pasteboard. The agent depends on the local `KernovaProtocol` SPM package for the wire types and channel implementation. Packaged into a disk image at build time by the "Package Guest Agent DMG" Run Script build phase. The disk image (containing the binary, `install.command`, `uninstall.command`, and a LaunchAgent plist) is placed in `Contents/Resources/KernovaGuestAgent.dmg`. At runtime, the "Install Guest Agent..." menu item in the Virtual Machine menu attaches it to a guest VM as USB mass storage. The guest user runs `install.command` to install the agent as a LaunchAgent in user-space (`~/Library/Application Support/Kernova/`). The vsock reconnect loop uses a flat 5s retry interval; `SO_RCVTIMEO` / `SO_SNDTIMEO` are set to 30 s as a safety net against wedged read/write calls. The build number is injected via `INFOPLIST_PREPROCESS`: a pre-Sources build phase ("Set Build Number from Git") writes `#define AGENT_BUILD_NUMBER` (set to the git commit count scoped to `KernovaGuestAgent/`) to a header in `DERIVED_FILE_DIR`, and the explicit `Info.plist` references that macro for `CFBundleVersion`. The preprocessed plist is embedded in the binary via `CREATE_INFOPLIST_SECTION_IN_BINARY`.
+
+- **KernovaGuestAgentTests** — Standalone unit-test bundle (no `TEST_HOST` / `BUNDLE_LOADER`) that covers the agent-side classes. Because `KernovaGuestAgent` is an executable tool target (not a framework), its symbols are not linkable — the test bundle instead compiles the agent's Swift source files directly (all except `main.swift`, `Info.plist`, and the shell scripts, excluded via `PBXFileSystemSynchronizedBuildFileExceptionSet`). Three agent classes required light testability seams: `VsockGuestClient` gained a `socketProvider` closure injection point and a parameterized `retryInterval` (default unchanged at 5 s); `VsockGuestClipboardAgent` gained a `Pasteboard` protocol (with `NSPasteboard` conformance) and injected `client`/`pasteboard` init parameters; `VsockHostConnection` lifted `pendingLogs`, `lock`, `bufferFrame`, `flushPendingLogs`, and `logBufferLimit` from `private` to internal. Runs 31 tests across 4 suites (see Test Coverage). Non-parallelizable in the scheme because each test worker loads the agent sources which include global state (`VsockLogBridge.connection`); tests share one runner process.
 
 ## Dependencies
 
@@ -404,6 +414,10 @@ No third-party (non-Apple) package dependencies. No CocoaPods or Carthage.
 | `NSImageExtensions` | Yes | SF Symbol loading with known symbol validation |
 | `SpiceAgentProtocol` | Yes | VDI chunk/message serialization round-trips, parser with multi-message feeds, partial data, unknown types, clientPort constant, port-parameterized builders |
 | `VsockClipboardService` | 8 tests | Hello handshake, outbound offer dedup + monotonic generation, request-response, stale request/data drop, inbound offer-driven population |
+| `KernovaLogMessage` | 11 tests | Full privacy-redaction matrix: `.public`/`.private`/`.sensitive`/`.auto`/default, generic fallback (`Int`, `Bool`), mixed interpolations, literal init |
+| `VsockHostConnection` | 9 tests | Log ring-buffer cap (256 frames), FIFO ordering, oldest-drop-first eviction, flush-to-channel, partial-flush re-enqueue after send failure, cap enforcement after re-enqueue |
+| `VsockGuestClient` | 6 tests | Socket-factory injection, `liveChannel` lifecycle, stop-mid-serve, idempotent start, stop-before-start no-op, nil-provider retry |
+| `VsockGuestClipboardAgent` | 5 tests | Outbound offer on pasteboard change, echo suppression after host write, reconnect resets `lastSeenText`, stale-generation data drop, full offer/request/data round-trip |
 
 ### Mocked but Not Directly Tested
 
@@ -413,7 +427,6 @@ These services interact with system processes, the network, or VZ installer inte
 - `IPSWService` — makes network requests to Apple
 - `MacOSInstallService` — requires a real `VZVirtualMachine` and restore image
 - `SpiceClipboardService` — requires active SPICE pipe I/O (protocol parsing tested via `SpiceAgentProtocol` suite)
-- `VsockGuestClipboardAgent` — runs inside guest VMs; mirrors `VsockClipboardService` logic (host-side state-machine coverage in `VsockClipboardServiceTests`)
 
 ### Not Tested
 

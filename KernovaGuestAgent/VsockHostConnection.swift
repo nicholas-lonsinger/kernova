@@ -27,12 +27,18 @@ final class VsockHostConnection: @unchecked Sendable {
     /// from `VsockGuestClipboardAgent` may push `.debug` traffic that could
     /// fill a smaller buffer well before Hello lands. 256 frames at
     /// ~200 bytes apiece is ~50 KiB of bounded memory.
-    private static let logBufferLimit = 256
+    // RATIONALE: internal (not private) so KernovaGuestAgentTests (which
+    // compiles the agent source files directly) can drive the buffer
+    // without standing up a full VsockGuestClient.
+    static let logBufferLimit = 256
 
     private let client: VsockGuestClient
 
-    private let lock = NSLock()
-    private var pendingLogs: [Frame] = []
+    // RATIONALE: internal so KernovaGuestAgentTests can read/write these
+    // directly for buffer-cap and partial-flush assertions. Tests call
+    // bufferFrame / flushPendingLogs from a single-threaded test context.
+    let lock = NSLock()
+    var pendingLogs: [Frame] = []
 
     init() {
         self.client = VsockGuestClient(port: KernovaVsockPort.log, label: "log")
@@ -94,7 +100,9 @@ final class VsockHostConnection: @unchecked Sendable {
     /// once the cap is exceeded. Used both for the "no live channel" path
     /// and the "live channel write failed" path so a transient send error
     /// doesn't lose the record.
-    private func bufferFrame(_ frame: Frame) {
+    // RATIONALE: internal so tests can preload the buffer directly without
+    // calling forwardLog 256+ times.
+    func bufferFrame(_ frame: Frame) {
         lock.withLock {
             pendingLogs.append(frame)
             if pendingLogs.count > Self.logBufferLimit {
@@ -134,7 +142,9 @@ final class VsockHostConnection: @unchecked Sendable {
     /// chronological order is preserved) so the next successful reconnect
     /// retries them. The buffer cap is re-applied after re-enqueue, so a
     /// chronic flush failure won't grow memory unbounded.
-    private func flushPendingLogs(on channel: VsockChannel) {
+    // RATIONALE: internal so tests can drive the flush against a controlled
+    // channel without standing up the full serve loop.
+    func flushPendingLogs(on channel: VsockChannel) {
         let drained: [Frame] = lock.withLock {
             let p = pendingLogs
             pendingLogs.removeAll(keepingCapacity: true)

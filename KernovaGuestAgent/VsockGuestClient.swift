@@ -24,22 +24,50 @@ import os
 /// another send through the broken channel.
 final class VsockGuestClient: @unchecked Sendable {
 
+    /// Factory closure that opens a SOCK_STREAM fd for the given port and
+    /// label, returning nil on failure. Injected via init so tests can
+    /// substitute a socketpair-backed channel without a real vsock device.
+    typealias VsockSocketProvider = @Sendable (_ port: UInt32, _ label: String) -> Int32?
+
     private static let logger = Logger(subsystem: "com.kernova.agent", category: "VsockGuestClient")
-    private static let retryInterval: Duration = .seconds(5)
-    private static let socketTimeoutSeconds: Int = 30
+    private static let defaultSocketTimeoutSeconds: Int = 30
 
     let port: UInt32
     let label: String
+
+    private let retryInterval: Duration
+    private let socketProvider: VsockSocketProvider
 
     private let lock = NSLock()
     private var currentChannel: VsockChannel?
     private var reconnectTask: Task<Void, Never>?
     private var stopped = false
 
-    init(port: UInt32, label: String) {
+    // MARK: - Init
+
+    /// Designated init. Tests pass custom `socketProvider` and `retryInterval`
+    /// values to avoid real vsock connections and multi-second sleeps.
+    init(
+        port: UInt32,
+        label: String,
+        retryInterval: Duration = .seconds(5),
+        socketProvider: @escaping VsockSocketProvider
+    ) {
         self.port = port
         self.label = label
+        self.retryInterval = retryInterval
+        self.socketProvider = socketProvider
     }
+
+    /// Production convenience init — uses the real vsock socket opener and
+    /// the default 5-second retry interval.
+    convenience init(port: UInt32, label: String) {
+        self.init(port: port, label: label) { port, label in
+            VsockGuestClient.openVsockToHost(port: port, label: label)
+        }
+    }
+
+    // MARK: - Lifecycle
 
     /// Begins the connect/serve/reconnect loop. Idempotent — repeated calls
     /// after the first are no-ops. Once stopped, the client cannot be
@@ -81,12 +109,12 @@ final class VsockGuestClient: @unchecked Sendable {
         while !Task.isCancelled {
             await connectAndServe(serve: serve)
             guard !Task.isCancelled else { break }
-            try? await Task.sleep(for: Self.retryInterval)
+            try? await Task.sleep(for: retryInterval)
         }
     }
 
     private func connectAndServe(serve: @Sendable @escaping (VsockChannel) async -> Void) async {
-        guard let fd = openVsockToHost() else { return }
+        guard let fd = socketProvider(port, label) else { return }
         let channel = VsockChannel(fileDescriptor: fd)
         channel.start()
 
@@ -109,14 +137,19 @@ final class VsockGuestClient: @unchecked Sendable {
         }
     }
 
-    private func openVsockToHost() -> Int32? {
+    // MARK: - Socket helpers (static — no instance state read)
+
+    /// Opens a raw `AF_VSOCK / SOCK_STREAM` socket and connects to the host.
+    /// Returns the connected fd on success, nil on failure. Used as the
+    /// default `socketProvider` in the production convenience init.
+    private static func openVsockToHost(port: UInt32, label: String) -> Int32? {
         let fd = socket(AF_VSOCK, SOCK_STREAM, 0)
         guard fd >= 0 else {
-            Self.logger.debug("socket(AF_VSOCK) failed for '\(self.label, privacy: .public)': errno=\(errno, privacy: .public)")
+            logger.debug("socket(AF_VSOCK) failed for '\(label, privacy: .public)': errno=\(errno, privacy: .public)")
             return nil
         }
 
-        applySocketTimeouts(fd: fd)
+        applySocketTimeouts(fd: fd, label: label)
 
         var addr = sockaddr_vm()
         // Darwin's `sockaddr` family carries a leading `sa_len`/`svm_len`
@@ -135,7 +168,7 @@ final class VsockGuestClient: @unchecked Sendable {
         guard rc == 0 else {
             let err = errno
             close(fd)
-            Self.logger.debug("connect() to '\(self.label, privacy: .public)' port \(self.port, privacy: .public) failed: errno=\(err, privacy: .public)")
+            logger.debug("connect() to '\(label, privacy: .public)' port \(port, privacy: .public) failed: errno=\(err, privacy: .public)")
             return nil
         }
         return fd
@@ -145,15 +178,15 @@ final class VsockGuestClient: @unchecked Sendable {
     /// recv/send calls can't block longer than `socketTimeoutSeconds`.
     /// `setsockopt` failures are logged at debug and otherwise ignored —
     /// without timeouts the agent still works, just less robustly.
-    private func applySocketTimeouts(fd: Int32) {
-        var timeout = timeval(tv_sec: Self.socketTimeoutSeconds, tv_usec: 0)
+    private static func applySocketTimeouts(fd: Int32, label: String) {
+        var timeout = timeval(tv_sec: defaultSocketTimeoutSeconds, tv_usec: 0)
         let optionSize = socklen_t(MemoryLayout<timeval>.size)
 
         if setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, optionSize) != 0 {
-            Self.logger.debug("setsockopt SO_RCVTIMEO failed for '\(self.label, privacy: .public)': errno=\(errno, privacy: .public)")
+            logger.debug("setsockopt SO_RCVTIMEO failed for '\(label, privacy: .public)': errno=\(errno, privacy: .public)")
         }
         if setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, optionSize) != 0 {
-            Self.logger.debug("setsockopt SO_SNDTIMEO failed for '\(self.label, privacy: .public)': errno=\(errno, privacy: .public)")
+            logger.debug("setsockopt SO_SNDTIMEO failed for '\(label, privacy: .public)': errno=\(errno, privacy: .public)")
         }
     }
 }

@@ -2,6 +2,25 @@ import AppKit
 import Foundation
 import KernovaProtocol
 
+// MARK: - Pasteboard protocol
+
+/// Subset of `NSPasteboard` actually used by `VsockGuestClipboardAgent`.
+/// Injected via init so tests can substitute an in-memory fake without
+/// touching the developer's real `NSPasteboard.general`.
+protocol Pasteboard: AnyObject, Sendable {
+    var changeCount: Int { get }
+    func string(forType type: NSPasteboard.PasteboardType) -> String?
+    @discardableResult func clearContents() -> Int
+    @discardableResult func setString(_ string: String, forType type: NSPasteboard.PasteboardType) -> Bool
+}
+
+// RATIONALE: NSPasteboard already implements all four methods with matching
+// signatures; the extension just declares conformance. @retroactive is not
+// needed here because Pasteboard is defined in the same module.
+extension NSPasteboard: Pasteboard {}
+
+// MARK: - VsockGuestClipboardAgent
+
 /// Guest-side clipboard agent that talks to the host's `VsockClipboardService`
 /// on `KernovaVsockPort.clipboard` (49152).
 ///
@@ -26,6 +45,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     private static let pollingInterval: TimeInterval = 0.5
 
     private let client: VsockGuestClient
+    private let pasteboard: Pasteboard
 
     // MARK: - Main-queue state
 
@@ -58,9 +78,23 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
 
     private var pollingTimer: DispatchSourceTimer?
 
-    init() {
-        self.client = VsockGuestClient(port: KernovaVsockPort.clipboard, label: "clipboard")
-        self.lastPasteboardChangeCount = NSPasteboard.general.changeCount
+    // MARK: - Init
+
+    /// Production init — uses real `NSPasteboard.general` and a default
+    /// `VsockGuestClient` on the clipboard port.
+    convenience init() {
+        self.init(
+            pasteboard: NSPasteboard.general,
+            client: VsockGuestClient(port: KernovaVsockPort.clipboard, label: "clipboard")
+        )
+    }
+
+    /// Designated init for production and testing. Tests inject a fake
+    /// `Pasteboard` and a `VsockGuestClient` backed by a socketpair.
+    init(pasteboard: Pasteboard, client: VsockGuestClient) {
+        self.pasteboard = pasteboard
+        self.client = client
+        self.lastPasteboardChangeCount = pasteboard.changeCount
     }
 
     // MARK: - Lifecycle
@@ -146,10 +180,11 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         pollingTimer = timer
     }
 
-    private func checkClipboardChange() {
+    // RATIONALE: internal (not private) so tests can drive a poll cycle
+    // synchronously without waiting for the 0.5 s timer interval.
+    func checkClipboardChange() {
         guard let channel = liveChannel else { return }
 
-        let pasteboard = NSPasteboard.general
         let currentCount = pasteboard.changeCount
         guard currentCount != lastPasteboardChangeCount else { return }
 
@@ -303,7 +338,6 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             return
         }
 
-        let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
         // Record so the polling timer doesn't echo this back to the host
