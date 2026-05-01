@@ -718,11 +718,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             return activeInstance?.canAttachUSBDevices ?? false
         case #selector(attachGuestAgentDisk(_:)):
             guard let instance = activeInstance, instance.canAttachUSBDevices else { return false }
-            guard let agentPath = Self.guestAgentDiskPath else { return false }
+            guard Self.guestAgentDiskPath != nil else { return false }
             // Mirror the sidebar popover and clipboard window button: title
             // reflects whether the agent is missing (Install) or behind the
-            // bundled version (Update). Disabled when the agent is current
-            // (nothing to do) or when the installer DMG is already mounted.
+            // bundled version (Update). Disabled only when the agent is
+            // .current — nothing to do. Stays enabled when the installer is
+            // already mounted so the user can re-trigger the instructions
+            // alert if they dismissed it before reading.
             let status = instance.clipboardService?.agentStatus ?? .waiting
             switch status {
             case .outdated:
@@ -731,7 +733,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 menuItem.title = "Install Guest Agent…"
             }
             if case .current = status { return false }
-            return !instance.attachedUSBDevices.contains { $0.path == agentPath }
+            return true
         case #selector(togglePopOut(_:)):
             guard let instance = activeInstance else { return false }
             let canUse = instance.canUseExternalDisplay
