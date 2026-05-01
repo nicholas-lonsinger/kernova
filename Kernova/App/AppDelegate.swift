@@ -484,16 +484,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     @objc func attachGuestAgentDisk(_ sender: Any?) {
         guard let instance = activeInstance else { return }
-        guard let path = Self.guestAgentDiskPath else {
-            Self.logger.fault("Guest agent disk image not found in app bundle")
-            assertionFailure("Guest agent disk image not found in app bundle")
-            return
-        }
-        viewModel.attachUSBDevice(
-            diskImagePath: path,
-            readOnly: true,
-            to: instance
-        )
+        // Route through mountGuestAgentInstaller so the post-mount instructions
+        // alert fires here too — same UX as the sidebar popover and clipboard
+        // window button. The viewModel already handles the missing-DMG case
+        // with a fault + assertionFailure.
+        viewModel.mountGuestAgentInstaller(on: instance)
     }
 
     // MARK: - Display Window (Pop-Out / Fullscreen)

@@ -34,6 +34,13 @@ final class VMLibraryViewModel {
     var showDeleteConfirmation = false
     var showError = false
     var errorMessage: String?
+
+    /// Drives the post-mount instructions alert. Set after a successful
+    /// `mountGuestAgentInstaller(on:)` so the user gets unified guidance no
+    /// matter which entry point (sidebar popover, clipboard window button, or
+    /// menubar item) triggered the mount.
+    var showInstallerMountedAlert = false
+    var installerMountedVMName: String?
     var instanceToDelete: VMInstance?
     var activeRename: RenameTarget?
     var showCancelPreparingConfirmation = false
@@ -554,8 +561,13 @@ final class VMLibraryViewModel {
 
     /// Mounts the bundled `KernovaGuestAgent.dmg` as a read-only USB device so
     /// the user can run `install.command` inside the guest. Used by the
-    /// clipboard window's "Set Up Agent" / "Update Agent" affordances and the
-    /// sidebar's agent-status popover.
+    /// clipboard window's "Install Guest Agent…" affordance, the sidebar's
+    /// agent-status popover, and the menubar item.
+    ///
+    /// On successful mount, sets `installerMountedVMName` to drive an
+    /// SwiftUI `.alert()` that explains the next step (open the disk in the
+    /// guest's Finder, run install.command). The alert unifies the
+    /// post-click experience across all three entry points.
     ///
     /// No-op if a device already mounted at the bundled DMG path is present —
     /// duplicate mounts don't help the user.
@@ -568,10 +580,29 @@ final class VMLibraryViewModel {
         let path = url.path
         if instance.attachedUSBDevices.contains(where: { $0.path == path }) {
             Self.logger.debug("Guest agent installer already mounted on '\(instance.name, privacy: .public)'")
+            // Still surface the instructions — the user just clicked an
+            // install/update affordance and is owed feedback even if the
+            // disk happens to already be mounted from a prior click.
+            installerMountedVMName = instance.name
+            showInstallerMountedAlert = true
             return
         }
         Self.logger.notice("Mounting guest agent installer on '\(instance.name, privacy: .public)'")
-        attachUSBDevice(diskImagePath: path, readOnly: true, to: instance)
+        let vmName = instance.name
+        Task { [weak self] in
+            do {
+                _ = try await self?.lifecycle.attachUSBDevice(
+                    diskImagePath: path,
+                    readOnly: true,
+                    to: instance
+                )
+                self?.installerMountedVMName = vmName
+                self?.showInstallerMountedAlert = true
+            } catch {
+                Self.logger.error("USB attach failed for '\(vmName, privacy: .public)': \(error.localizedDescription, privacy: .public)")
+                self?.presentError(error)
+            }
+        }
     }
 
     /// Detaches the bundled guest agent installer if currently mounted.
