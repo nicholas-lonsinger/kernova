@@ -22,7 +22,7 @@ struct VsockGuestClientTests {
             port: 12345,
             label: "test",
             retryInterval: fastRetry
-        ) { _, _ in localFd }
+        ) { _, _ in .success(localFd) }
         defer { client.stop() }
 
         client.start { channel in
@@ -40,15 +40,15 @@ struct VsockGuestClientTests {
         let remote = VsockChannel(fileDescriptor: remoteFd)
         remote.start()
 
-        // Return localFd on first call, nil thereafter — prevents reuse of a
-        // closed fd if the client retries after the remote closes.
+        // Return localFd on first call, transient failure thereafter — prevents
+        // reuse of a closed fd if the client retries after the remote closes.
         let callCount = AtomicInt()
         let client = VsockGuestClient(
             port: 12345,
             label: "test",
             retryInterval: fastRetry
         ) { _, _ in
-            callCount.increment() == 1 ? localFd : nil
+            callCount.increment() == 1 ? .success(localFd) : .failure(.transient("test: no fd"))
         }
         defer { client.stop() }
 
@@ -92,7 +92,7 @@ struct VsockGuestClientTests {
             // Signal we've entered, then block until the test releases us.
             providerEnteredGate.signal()
             providerReleaseGate.wait()  // Legal: called synchronously, not from async context
-            return localFd
+            return .success(localFd)
         }
 
         client.start { _ in
@@ -110,7 +110,7 @@ struct VsockGuestClientTests {
             stopDone.signal()
         }
 
-        // Await the background work by sleeping; the provider returns localFd
+        // Await the background work by sleeping; the provider returns .success(localFd)
         // but aborted==true so serve is not invoked.
         try await Task.sleep(for: .milliseconds(300))
 
@@ -130,7 +130,7 @@ struct VsockGuestClientTests {
             port: 12345,
             label: "test",
             retryInterval: fastRetry
-        ) { _, _ in localFd }
+        ) { _, _ in .success(localFd) }
 
         let (enteredStream, continuation) = AsyncStream<Void>.makeStream()
 
@@ -161,7 +161,7 @@ struct VsockGuestClientTests {
             retryInterval: fastRetry
         ) { _, _ in
             provideCounter.increment()
-            return nil
+            return .failure(.transient("test: no fd"))
         }
 
         client.stop()
@@ -188,7 +188,7 @@ struct VsockGuestClientTests {
             retryInterval: fastRetry
         ) { _, _ in
             provideCounter.increment()
-            return localFd
+            return .success(localFd)
         }
         defer { client.stop() }
 
@@ -207,8 +207,8 @@ struct VsockGuestClientTests {
         #expect(provideCounter.value == 1)
     }
 
-    @Test("socketProvider returning nil triggers retry until a real fd arrives")
-    func providerNilTriggersRetry() async throws {
+    @Test("socketProvider returning transient failure triggers retry until a real fd arrives")
+    func providerTransientFailureTriggersRetry() async throws {
         let fastRetry: Duration = .milliseconds(50)
         let targetAttempt = 3
 
@@ -226,7 +226,7 @@ struct VsockGuestClientTests {
             retryInterval: fastRetry
         ) { _, _ in
             let n = attemptCounter.increment()
-            return n < targetAttempt ? nil : localFd
+            return n < targetAttempt ? .failure(.transient("attempt \(n)")) : .success(localFd)
         }
         defer { client.stop() }
 
@@ -239,6 +239,30 @@ struct VsockGuestClientTests {
 
         #expect(attemptCounter.value >= targetAttempt)
         #expect(client.liveChannel != nil)
+    }
+
+    @Test("permanent socket-provider failure halts the reconnect loop")
+    func permanentFailureHaltsLoop() async throws {
+        let fastRetry: Duration = .milliseconds(50)
+        let provideCounter = AtomicInt()
+
+        let client = VsockGuestClient(
+            port: 12345,
+            label: "test",
+            retryInterval: fastRetry
+        ) { _, _ in
+            provideCounter.increment()
+            return .failure(.permanent("AF_VSOCK not supported"))
+        }
+        defer { client.stop() }
+
+        client.start { _ in }
+
+        // Wait several retry intervals — if the loop kept retrying we'd see >1 calls.
+        try await Task.sleep(for: .milliseconds(300))
+
+        #expect(provideCounter.value == 1)
+        #expect(client.liveChannel == nil)
     }
 }
 
