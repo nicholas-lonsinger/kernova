@@ -139,12 +139,12 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             statusCircle.layer?.backgroundColor = NSColor.secondaryLabelColor.cgColor
             statusLabel.stringValue = "Waiting for guest agent"
             actionButton.isHidden = !canInstallKernovaAgent
-            actionButton.title = "Set Up Agent…"
+            actionButton.title = "Install Guest Agent…"
         case .outdated(let installed, let bundled):
             statusCircle.layer?.backgroundColor = NSColor.systemOrange.cgColor
             statusLabel.stringValue = "Update available (\(installed) → \(bundled))"
             actionButton.isHidden = !canInstallKernovaAgent
-            actionButton.title = "Update Agent…"
+            actionButton.title = "Update Guest Agent…"
         case .current(let version):
             statusCircle.layer?.backgroundColor = NSColor.systemGreen.cgColor
             statusLabel.stringValue = "Connected (\(version))"

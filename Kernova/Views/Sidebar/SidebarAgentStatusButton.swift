@@ -106,8 +106,8 @@ struct SidebarAgentStatusButton: View {
 
     private var buttonTitle: String {
         switch status {
-        case .waiting: "Set Up Agent…"
-        case .outdated: "Update Agent…"
+        case .waiting: "Install Guest Agent…"
+        case .outdated: "Update Guest Agent…"
         case .current: "Done"
         }
     }
