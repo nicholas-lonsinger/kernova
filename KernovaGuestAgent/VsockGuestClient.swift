@@ -128,7 +128,13 @@ final class VsockGuestClient: @unchecked Sendable {
     private func runReconnectLoop(serve: @Sendable @escaping (VsockChannel) async -> Void) async {
         while !Task.isCancelled {
             let outcome = await connectAndServe(serve: serve)
-            if outcome == .terminate { break }
+            switch outcome {
+            case .terminate:
+                lock.withLock { stopped = true }
+                return
+            case .retry:
+                break
+            }
             guard !Task.isCancelled else { break }
             try? await Task.sleep(for: retryInterval)
         }
@@ -141,13 +147,14 @@ final class VsockGuestClient: @unchecked Sendable {
         switch socketProvider(port, label) {
         case .success(let f):
             fd = f
-        case .failure(.transient(let reason)):
-            Self.logger.warning("\(reason, privacy: .public)")
+        case .failure(.transient):
+            // Logged at the call site closest to errno context (openVsockToHost /
+            // classifySocketErrno). No re-log here — the typed error is purely a
+            // control-flow signal at this level.
             return .retry
-        case .failure(.permanent(let reason)):
-            Self.logger.error(
-                "\(reason, privacy: .public). Halting reconnect loop for '\(self.label, privacy: .public)'."
-            )
+        case .failure(.permanent):
+            // Logged at error level inside classifySocketErrno. Halt the loop.
+            Self.logger.error("Halting reconnect loop for '\(self.label, privacy: .public)' after permanent failure.")
             return .terminate
         }
 
@@ -210,13 +217,13 @@ final class VsockGuestClient: @unchecked Sendable {
         guard originalFlags >= 0 else {
             let err = errno
             close(fd)
-            logger.warning("fcntl(F_GETFL) failed for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
+            logger.error("fcntl(F_GETFL) failed for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
             return .failure(.transient("fcntl(F_GETFL) failed for '\(label)': errno=\(err)"))
         }
         guard fcntl(fd, F_SETFL, originalFlags | O_NONBLOCK) >= 0 else {
             let err = errno
             close(fd)
-            logger.warning("fcntl(F_SETFL, O_NONBLOCK) failed for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
+            logger.error("fcntl(F_SETFL, O_NONBLOCK) failed for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
             return .failure(.transient("fcntl(F_SETFL, O_NONBLOCK) failed for '\(label)': errno=\(err)"))
         }
 
@@ -251,7 +258,7 @@ final class VsockGuestClient: @unchecked Sendable {
         guard fcntl(fd, F_SETFL, originalFlags) >= 0 else {
             let err = errno
             close(fd)
-            logger.warning("fcntl(F_SETFL) restore failed for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
+            logger.error("fcntl(F_SETFL) restore failed for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
             return .failure(.transient("fcntl(F_SETFL) restore failed for '\(label)': errno=\(err)"))
         }
 
@@ -264,7 +271,7 @@ final class VsockGuestClient: @unchecked Sendable {
     /// indicate the kernel does not support AF_VSOCK at all and will never
     /// succeed; all other values (resource exhaustion, access control) may
     /// clear up and are classified as transient.
-    private static func classifySocketErrno(_ err: Int32, label: String) -> VsockProviderError {
+    static func classifySocketErrno(_ err: Int32, label: String) -> VsockProviderError {
         switch err {
         case EAFNOSUPPORT, EPROTONOSUPPORT:
             logger.error("socket(AF_VSOCK) unsupported for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
