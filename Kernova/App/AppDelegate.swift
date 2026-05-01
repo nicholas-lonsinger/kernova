@@ -719,6 +719,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         case #selector(attachGuestAgentDisk(_:)):
             guard let instance = activeInstance, instance.canAttachUSBDevices else { return false }
             guard let agentPath = Self.guestAgentDiskPath else { return false }
+            // Mirror the sidebar popover and clipboard window button: title
+            // reflects whether the agent is missing (Install) or behind the
+            // bundled version (Update). Disabled when the agent is current
+            // (nothing to do) or when the installer DMG is already mounted.
+            let status = instance.clipboardService?.agentStatus ?? .waiting
+            switch status {
+            case .outdated:
+                menuItem.title = "Update Guest Agent…"
+            case .waiting, .current:
+                menuItem.title = "Install Guest Agent…"
+            }
+            if case .current = status { return false }
             return !instance.attachedUSBDevices.contains { $0.path == agentPath }
         case #selector(togglePopOut(_:)):
             guard let instance = activeInstance else { return false }
