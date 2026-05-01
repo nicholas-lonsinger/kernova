@@ -159,17 +159,27 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             return
         }
 
-        DispatchQueue.main.async { [weak self] in
-            self?.liveChannel = channel
-            self?.pendingOutbound = nil
-            self?.pendingInboundGeneration = nil
+        // RATIONALE: Use await MainActor.run rather than DispatchQueue.main.async
+        // here so the publish completes before serve() advances to the read loop.
+        // The polling timer checks liveChannel on the main queue; with async
+        // dispatch there would be a window where the timer fires, sees a nil
+        // channel, and silently skips an offer — even though serve() has already
+        // sent Hello and the connection is live. The other DispatchQueue.main.async
+        // sites in this class (start/stop, frame-handler dispatch in the loop body)
+        // are fire-and-forget and don't need this guarantee. MainActor.run shares
+        // the main-queue executor with DispatchQueue.main, so FIFO ordering is
+        // preserved between the two idioms.
+        await MainActor.run {
+            self.liveChannel = channel
+            self.pendingOutbound = nil
+            self.pendingInboundGeneration = nil
             // The host on the other end may be a brand-new instance (host
             // app restarted, VM stopped+started, etc.) that has no record
             // of prior offers. Clear the dedup state so the next poll
             // cycle re-announces the current clipboard rather than
             // assuming the host already has it.
-            self?.lastSeenText = nil
-            self?.lastPasteboardChangeCount = -1
+            self.lastSeenText = nil
+            self.lastPasteboardChangeCount = -1
         }
         Self.logger.notice("Vsock clipboard connected to host")
 
@@ -186,11 +196,18 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             )
         }
 
-        DispatchQueue.main.async { [weak self] in
-            if self?.liveChannel === channel {
-                self?.liveChannel = nil
-                self?.pendingOutbound = nil
-                self?.pendingInboundGeneration = nil
+        // RATIONALE: Cleanup also uses await MainActor.run so it settles before
+        // serve() returns. The reconnect loop in VsockGuestClient cannot call the
+        // next socketProvider until serve() returns, which means liveChannel is
+        // guaranteed nil before a new connection is published. An async dispatch
+        // here would leave a window where the timer dispatches a checkClipboardChange
+        // to the dead channel, and tests could pass under eventual consistency
+        // without catching the race (see serveSynchronouslyClearsLiveChannelOnClose).
+        await MainActor.run {
+            if self.liveChannel === channel {
+                self.liveChannel = nil
+                self.pendingOutbound = nil
+                self.pendingInboundGeneration = nil
             }
         }
     }
