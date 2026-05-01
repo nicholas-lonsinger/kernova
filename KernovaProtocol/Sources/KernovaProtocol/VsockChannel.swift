@@ -170,3 +170,35 @@ extension VsockChannelError: Equatable {
         }
     }
 }
+
+// MARK: - Convenience helpers
+
+extension VsockChannel {
+    /// Constructs and sends a Kernova V1 Error frame on this channel.
+    ///
+    /// Convenience wrapper around `send` that centralizes the protocol-version
+    /// pin and the optional `inReplyTo` plumbing. Callers that treat error
+    /// reporting as best-effort (the typical case — the channel is usually
+    /// torn down for the same reason being reported) catch and log at `.debug`.
+    ///
+    /// Throws any error documented on `send(_:)` — `VsockChannelError.closed`,
+    /// `VsockChannelError.write(_)`, or a serialization error from
+    /// `Frame.serializedData()` / `VsockFrame.encode(_:)`.
+    ///
+    /// - Parameters:
+    ///   - code: stable machine-readable code, e.g. `"clipboard.format.unavailable"`
+    ///   - message: human-readable detail; surfaced in logs
+    ///   - inReplyTo: optional ref to the request type this error replies to,
+    ///     e.g. `"clipboard.request"`. When `nil`, the field is omitted from
+    ///     the encoded frame and `hasInReplyTo` reads `false` on the receiving side.
+    public func sendErrorFrame(code: String, message: String, inReplyTo: String?) throws {
+        var frame = Frame()
+        frame.protocolVersion = 1
+        frame.error = Kernova_V1_Error.with {
+            $0.code = code
+            $0.message = message
+            if let inReplyTo { $0.inReplyTo = inReplyTo }
+        }
+        try send(frame)
+    }
+}

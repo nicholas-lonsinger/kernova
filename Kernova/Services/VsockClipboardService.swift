@@ -148,19 +148,12 @@ final class VsockClipboardService: ClipboardServicing {
 
     // MARK: - Hello / Error helpers
 
-    /// If `channel.send` fails (typically because the channel just tore down
+    /// If `channel.sendErrorFrame` fails (typically because the channel just tore down
     /// for the same reason we're reporting), the failure is logged at `.debug`
     /// and swallowed — we have nothing better to do at that point.
     private func sendErrorFrame(code: String, message: String, inReplyTo: String?) {
-        var frame = Frame()
-        frame.protocolVersion = 1
-        frame.error = Kernova_V1_Error.with {
-            $0.code = code
-            $0.message = message
-            if let inReplyTo { $0.inReplyTo = inReplyTo }
-        }
         do {
-            try channel.send(frame)
+            try channel.sendErrorFrame(code: code, message: message, inReplyTo: inReplyTo)
         } catch {
             Self.logger.debug(
                 "Failed to send error frame (code=\(code, privacy: .public)) for '\(self.label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
