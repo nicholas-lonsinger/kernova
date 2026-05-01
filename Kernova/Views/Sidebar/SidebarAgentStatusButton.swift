@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// Trailing accessory shown in the sidebar row when the guest agent needs the
 /// user's attention — either it's not installed, or the installed version is
@@ -8,6 +9,15 @@ import SwiftUI
 /// affordance, so users can act on the situation without opening the clipboard
 /// window. This is the single notification surface for agent-driven features
 /// (clipboard sync today, drag/drop file copy and auto passthrough later).
+///
+/// ## Why this uses NSPopover instead of SwiftUI's `.popover`
+/// SwiftUI's `.popover` modifier wraps the content in an `NSHostingController`
+/// whose `sizingOptions` are not configurable. That host doesn't propagate
+/// `.fixedSize()` to NSPopover's `contentSize` reliably, so the body Text
+/// rendered as a single line and was clipped horizontally with an ellipsis.
+/// Bridging directly to `NSPopover` + `NSHostingController` lets us set
+/// `sizingOptions = .preferredContentSize` explicitly, which is the pattern
+/// `RemovableMediaPopoverView` already uses successfully.
 struct SidebarAgentStatusButton: View {
     let vmName: String
     let status: AgentStatus
@@ -17,7 +27,7 @@ struct SidebarAgentStatusButton: View {
 
     var body: some View {
         Button {
-            isPopoverPresented = true
+            isPopoverPresented.toggle()
         } label: {
             Image(systemName: symbolName)
                 .foregroundStyle(symbolColor)
@@ -25,23 +35,25 @@ struct SidebarAgentStatusButton: View {
         }
         .buttonStyle(.plain)
         .help(helpText)
-        // arrowEdge: .leading places the arrow on the popover's leading edge,
-        // which sits the popover to the trailing side of the button — i.e. over
-        // the detail pane, where there's room.
-        .popover(isPresented: $isPopoverPresented, arrowEdge: .leading) {
-            AgentStatusPopoverContent(
-                vmName: vmName,
-                status: status,
-                onAction: {
-                    if case .current = status {
-                        // Done — just close
-                    } else {
-                        onMount()
+        .background(
+            NSPopoverAnchor(
+                isPresented: $isPopoverPresented,
+                preferredEdge: .maxX
+            ) {
+                AgentStatusPopoverContent(
+                    vmName: vmName,
+                    status: status,
+                    onAction: {
+                        if case .current = status {
+                            // Done — just close
+                        } else {
+                            onMount()
+                        }
+                        isPopoverPresented = false
                     }
-                    isPopoverPresented = false
-                }
-            )
-        }
+                )
+            }
+        )
     }
 
     // MARK: - Visual mapping
@@ -74,11 +86,10 @@ struct SidebarAgentStatusButton: View {
 /// Body of the agent-status popover, extracted from `SidebarAgentStatusButton`
 /// so it can be previewed and tuned without clicking the popover open.
 ///
-/// The trailing `.fixedSize()` (both dimensions) is what makes NSPopover size
-/// correctly. With horizontal flexible the inner Text renders on one line and
-/// gets clipped to the inner frame; pinning both dimensions to intrinsic
-/// produces a wrapped, naturally-tall layout NSPopover can host without
-/// negotiation.
+/// Width is pinned at 320 by the inner frame; padding wraps the content; the
+/// trailing `.fixedSize()` makes both dimensions intrinsic so when this view is
+/// hosted by `NSHostingController` with `sizingOptions = .preferredContentSize`,
+/// `NSPopover` gets a fully-determined content size and the body wraps cleanly.
 struct AgentStatusPopoverContent: View {
     let vmName: String
     let status: AgentStatus
@@ -127,6 +138,90 @@ struct AgentStatusPopoverContent: View {
         case .waiting: "Install Guest Agent…"
         case .outdated: "Update Guest Agent…"
         case .current: "Done"
+        }
+    }
+}
+
+/// Bridges a SwiftUI binding to an `NSPopover` whose content view controller
+/// is configured with `sizingOptions = .preferredContentSize`.
+///
+/// Place behind a SwiftUI control via `.background(NSPopoverAnchor(...))`:
+/// the representable's hidden `NSView` becomes the popover's anchor, and
+/// flipping `isPresented` shows or closes the popover.
+private struct NSPopoverAnchor<Content: View>: NSViewRepresentable {
+    @Binding var isPresented: Bool
+    let preferredEdge: NSRectEdge
+    @ViewBuilder let content: () -> Content
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(isPresented: $isPresented)
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        view.translatesAutoresizingMaskIntoConstraints = false
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        let coordinator = context.coordinator
+        coordinator.isPresented = $isPresented
+        coordinator.anchor = nsView
+
+        if isPresented {
+            coordinator.show(
+                content: content(),
+                from: nsView,
+                preferredEdge: preferredEdge
+            )
+        } else {
+            coordinator.close()
+        }
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, NSPopoverDelegate {
+        var isPresented: Binding<Bool>
+        weak var anchor: NSView?
+        private var popover: NSPopover?
+
+        init(isPresented: Binding<Bool>) {
+            self.isPresented = isPresented
+        }
+
+        func show<C: View>(content: C, from anchor: NSView, preferredEdge: NSRectEdge) {
+            // Already showing? Just leave it alone — re-presenting causes flicker.
+            if let popover, popover.isShown { return }
+
+            let popover = NSPopover()
+            popover.behavior = .transient
+            popover.delegate = self
+
+            let hostingController = NSHostingController(rootView: content)
+            // .preferredContentSize is the linchpin: it tells NSHostingController
+            // to publish the SwiftUI view's intrinsic size as the popover's
+            // contentSize. SwiftUI's built-in .popover modifier does not set
+            // this option, which is what was clipping the body to one line.
+            hostingController.sizingOptions = .preferredContentSize
+            popover.contentViewController = hostingController
+
+            popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: preferredEdge)
+            self.popover = popover
+        }
+
+        func close() {
+            popover?.performClose(nil)
+            popover = nil
+        }
+
+        func popoverDidClose(_ notification: Notification) {
+            popover = nil
+            // Sync the binding back to false when the user dismisses the
+            // popover (click outside, Esc, etc.) so the parent view's state
+            // matches reality.
+            if isPresented.wrappedValue {
+                isPresented.wrappedValue = false
+            }
         }
     }
 }
