@@ -29,6 +29,7 @@ final class VsockGuestClient: @unchecked Sendable {
 
     private static let logger = Logger(subsystem: "com.kernova.agent", category: "VsockGuestClient")
     private static let socketTimeoutSeconds: Int = 30
+    private static let connectTimeoutSeconds: Int = 3
 
     let port: UInt32
     let label: String
@@ -136,7 +137,15 @@ final class VsockGuestClient: @unchecked Sendable {
 
     // MARK: - Socket helpers (static — no instance state read)
 
-    /// Opens a raw `AF_VSOCK / SOCK_STREAM` socket and connects to the host.
+    /// Opens a raw `AF_VSOCK / SOCK_STREAM` socket and connects to the host
+    /// using the non-blocking-connect-with-poll idiom so `connect(2)` can't
+    /// block the reconnect loop longer than `connectTimeoutSeconds`.
+    ///
+    /// `SO_RCVTIMEO`/`SO_SNDTIMEO` from Darwin do not bound `connect(2)`,
+    /// only `recv`/`send`. Non-blocking mode is used exclusively for the
+    /// connect phase; blocking mode is restored afterwards so subsequent
+    /// `recv`/`send` calls continue to observe the socket-level timeouts.
+    ///
     /// Returns the connected fd on success, nil on failure. Used as the
     /// default `socketProvider` in the production convenience init.
     private static func openVsockToHost(port: UInt32, label: String) -> Int32? {
@@ -146,7 +155,20 @@ final class VsockGuestClient: @unchecked Sendable {
             return nil
         }
 
-        applySocketTimeouts(fd: fd, label: label)
+        // Snapshot the original flags so we can restore blocking mode after connect.
+        let originalFlags = fcntl(fd, F_GETFL, 0)
+        guard originalFlags >= 0 else {
+            let err = errno
+            close(fd)
+            logger.warning("fcntl(F_GETFL) failed for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
+            return nil
+        }
+        guard fcntl(fd, F_SETFL, originalFlags | O_NONBLOCK) >= 0 else {
+            let err = errno
+            close(fd)
+            logger.warning("fcntl(F_SETFL, O_NONBLOCK) failed for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
+            return nil
+        }
 
         var addr = sockaddr_vm()
         // Darwin's `sockaddr` family carries a leading `sa_len`/`svm_len`
@@ -162,13 +184,65 @@ final class VsockGuestClient: @unchecked Sendable {
                 connect(fd, sa, socklen_t(MemoryLayout<sockaddr_vm>.size))
             }
         }
-        guard rc == 0 else {
+
+        if rc != 0 {
+            let connectErr = errno
+            guard connectErr == EINPROGRESS else {
+                close(fd)
+                logger.warning("connect() to '\(label, privacy: .public)' port \(port, privacy: .public) failed: errno=\(connectErr, privacy: .public)")
+                return nil
+            }
+            guard awaitConnectCompletion(fd: fd, label: label, port: port) else {
+                close(fd)
+                return nil
+            }
+        }
+
+        // Restore blocking mode so recv/send observe SO_RCVTIMEO/SO_SNDTIMEO timeouts.
+        guard fcntl(fd, F_SETFL, originalFlags) >= 0 else {
             let err = errno
             close(fd)
-            logger.warning("connect() to '\(label, privacy: .public)' port \(port, privacy: .public) failed: errno=\(err, privacy: .public)")
+            logger.warning("fcntl(F_SETFL) restore failed for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
             return nil
         }
+
+        applySocketTimeouts(fd: fd, label: label)
         return fd
+    }
+
+    /// Waits up to `connectTimeoutSeconds` for an in-flight non-blocking connect
+    /// to complete on `fd`. Returns true iff the connect succeeded; false on
+    /// timeout, poll error, or a deferred connect error reported via SO_ERROR.
+    /// The caller is responsible for closing `fd` on false.
+    private static func awaitConnectCompletion(fd: Int32, label: String, port: UInt32) -> Bool {
+        var pfd = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
+        let timeoutMs = Int32(connectTimeoutSeconds * 1000)
+
+        var pollRc: Int32
+        repeat {
+            pollRc = withUnsafeMutablePointer(to: &pfd) { poll($0, 1, timeoutMs) }
+        } while pollRc < 0 && errno == EINTR
+
+        if pollRc == 0 {
+            logger.warning("connect() to '\(label, privacy: .public)' port \(port, privacy: .public) timed out after \(connectTimeoutSeconds, privacy: .public)s")
+            return false
+        }
+        if pollRc < 0 {
+            logger.warning("poll() while connecting '\(label, privacy: .public)' failed: errno=\(errno, privacy: .public)")
+            return false
+        }
+
+        var soError: Int32 = 0
+        var soErrorLen = socklen_t(MemoryLayout<Int32>.size)
+        guard getsockopt(fd, SOL_SOCKET, SO_ERROR, &soError, &soErrorLen) == 0 else {
+            logger.warning("getsockopt(SO_ERROR) for '\(label, privacy: .public)' failed: errno=\(errno, privacy: .public)")
+            return false
+        }
+        guard soError == 0 else {
+            logger.warning("connect() to '\(label, privacy: .public)' port \(port, privacy: .public) failed (deferred): errno=\(soError, privacy: .public)")
+            return false
+        }
+        return true
     }
 
     /// Sets `SO_RCVTIMEO` / `SO_SNDTIMEO` on the fresh socket so subsequent
