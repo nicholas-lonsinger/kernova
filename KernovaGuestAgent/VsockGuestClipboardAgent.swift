@@ -57,6 +57,17 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// until the main-queue async assignment completes before driving polls.
     var liveChannelForTesting: VsockChannel? { liveChannel }
 
+    /// Exposes `pendingInboundGeneration` for tests that need to assert the
+    /// inbound-request lifecycle without relying on observable side effects.
+    ///
+    /// A seam is used here rather than a behavioral assertion (e.g. sending a
+    /// stale `ClipboardData` and checking the pasteboard wasn't overwritten)
+    /// because any reconnect path resets `pendingInboundGeneration` to `nil`
+    /// via `serve()`'s teardown block. That reset would satisfy a behavioral
+    /// assertion for the wrong reason, masking a regression in the generation
+    /// commit logic itself.
+    var pendingInboundGenerationForTesting: UInt64? { pendingInboundGeneration }
+
     /// Counter for outbound offer generations. Starts at 1 so 0 can serve as
     /// "no pending request" sentinel for the inbound side.
     private var nextLocalGeneration: UInt64 = 1
@@ -276,8 +287,6 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             )
             return
         }
-        pendingInboundGeneration = offer.generation
-
         var request = Frame()
         request.protocolVersion = 1
         request.clipboardRequest = Kernova_V1_ClipboardRequest.with {
@@ -286,6 +295,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         }
         do {
             try channel.send(request)
+            pendingInboundGeneration = offer.generation
             Self.logger.debug("Requested clipboard data from host (gen=\(offer.generation, privacy: .public))")
         } catch {
             Self.logger.warning(

@@ -480,6 +480,48 @@ struct VsockGuestClipboardAgentTests {
             throw TestFailure("Echo suppression failed after successful retry: agent re-offered host-written text")
         }
     }
+
+    @Test("handleOffer send failure leaves pendingInboundGeneration unchanged")
+    func offerSendFailureDoesNotSetPendingGeneration() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, hostFd) = try makeRawSocketPair()
+
+        // SO_NOSIGPIPE so the agent's write to a closed peer raises an error
+        // rather than killing the test process with SIGPIPE.
+        var noSigpipe: Int32 = 1
+        _ = setsockopt(agentFd, SOL_SOCKET, SO_NOSIGPIPE, &noSigpipe, socklen_t(MemoryLayout<Int32>.size))
+
+        let hostChannel = VsockChannel(fileDescriptor: hostFd)
+        hostChannel.start()
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForHello(agent: agent, hostChannel: hostChannel)
+
+        // Push the offer into the kernel buffer, then close the host channel.
+        // The agent reads the offer; its subsequent attempt to send a request
+        // back fails (peer is gone), so handleOffer's catch path runs.
+        try hostChannel.send(makeOfferFrame(generation: 42))
+        hostChannel.close()
+
+        // Wait until the agent's main-queue teardown runs (liveChannel is
+        // cleared). Because the main queue is FIFO, by the time liveChannel
+        // becomes nil the handleOffer dispatch — which was enqueued before
+        // the EOF/teardown dispatch — has already completed. This avoids the
+        // vacuous-pass risk of a raw sleep: if handleOffer hasn't run yet the
+        // nil assertion would pass for the wrong reason (generation was never
+        // set), not because the fix works.
+        try await waitUntil { agent.liveChannelForTesting == nil }
+
+        // The fix: pendingInboundGeneration must NOT be set to 42 — state is
+        // only committed inside the do-block after a successful send.
+        // With the bug present this would equal 42.
+        // Read on the main queue to respect the @unchecked Sendable contract
+        // (all mutable state is main-queue-exclusive).
+        let pendingGen = DispatchQueue.main.sync { agent.pendingInboundGenerationForTesting }
+        #expect(pendingGen == nil)
+    }
 }
 
 // MARK: - Thread-safe fd array

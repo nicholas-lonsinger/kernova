@@ -415,6 +415,69 @@ struct VsockClipboardServiceTests {
         #expect(service.isConnected)  // tripped only by the v1 Hello
     }
 
+    @Test("handleOffer send failure leaves pendingInboundGeneration unchanged")
+    func offerSendFailureDoesNotSetPendingGeneration() async throws {
+        var rawFds: [Int32] = [-1, -1]
+        let rc = rawFds.withUnsafeMutableBufferPointer { buf in
+            socketpair(AF_UNIX, SOCK_STREAM, 0, buf.baseAddress)
+        }
+        guard rc == 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+        let (guestRawFd, hostRawFd) = (rawFds[0], rawFds[1])
+
+        // SO_NOSIGPIPE so the service's write to a closed peer surfaces as an
+        // error rather than killing the test process with SIGPIPE.
+        var noSigpipe: Int32 = 1
+        _ = setsockopt(hostRawFd, SOL_SOCKET, SO_NOSIGPIPE, &noSigpipe, socklen_t(MemoryLayout<Int32>.size))
+
+        let guest = VsockChannel(fileDescriptor: guestRawFd)
+        let host = VsockChannel(fileDescriptor: hostRawFd)
+        guest.start()
+        host.start()
+
+        let service = VsockClipboardService(channel: host, label: "test")
+        service.start()
+        defer { service.stop() }
+
+        // Discard host's outbound Hello, then connect as guest.
+        _ = try await nextFrame(from: guest)
+        try guest.send(makeHello())
+        try await waitUntil { service.isConnected }
+
+        // Start recording frames that arrive on guest BEFORE closing it.
+        // The recorder captures any ClipboardRequest the service might send —
+        // if the bug were present, a request for gen=42 would arrive here.
+        let recorder = FrameRecorder(channel: guest)
+        defer { recorder.cancel() }
+
+        // Push the offer into the kernel buffer then close the guest channel.
+        // The service reads the offer; its attempt to send a ClipboardRequest
+        // back fails (peer is gone), so handleOffer's catch path runs without
+        // committing pendingInboundGeneration.
+        try guest.send(makeOffer(generation: 42))
+        guest.close()
+
+        // Sleep briefly to allow the consume task to drain the offer from the
+        // socket buffer and dispatch handleOffer to the main actor. Then flush
+        // any pending main-actor work before reading the seam. All three steps
+        // (consume task reads frame, dispatches to main actor, main actor runs
+        // handleOffer) are triggered by this yield sequence.
+        try await Task.sleep(for: .milliseconds(150))
+
+        // The fix: pendingInboundGeneration must NOT be set to 42 — state is
+        // only committed inside the do-block after a successful send.
+        // With the bug present this would equal 42.
+        #expect(service.pendingInboundGenerationForTesting == nil)
+
+        // Corroborating assertion: no ClipboardRequest frame arrived, because
+        // the send that would have produced it failed.
+        if recorder.frames.contains(where: {
+            if case .clipboardRequest(let r) = $0.payload { return r.generation == 42 }
+            return false
+        }) {
+            Issue.record("Service sent a ClipboardRequest despite send failure — pendingInboundGeneration would be stale")
+        }
+    }
+
     @Test("ClipboardData with stale generation is ignored")
     func ignoresStaleData() async throws {
         let (guest, host) = try makePair()
