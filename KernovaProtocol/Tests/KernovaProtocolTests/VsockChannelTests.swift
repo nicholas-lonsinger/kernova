@@ -176,6 +176,57 @@ struct VsockChannelTests {
         }
     }
 
+    @Test("sendErrorFrame round-trips an Error payload with inReplyTo set")
+    func sendErrorFrameRoundTrips() async throws {
+        let (a, b) = try makePair()
+        a.start()
+        b.start()
+        defer { a.close(); b.close() }
+
+        try a.sendErrorFrame(code: "test.code", message: "test message", inReplyTo: "test.reply")
+
+        let received = try await waitForNextFrame(on: b)
+        #expect(received?.protocolVersion == 1)
+        guard case .error(let err) = received?.payload else {
+            Issue.record("Expected error payload, got \(String(describing: received?.payload))")
+            return
+        }
+        #expect(err.code == "test.code")
+        #expect(err.message == "test message")
+        #expect(err.hasInReplyTo)
+        #expect(err.inReplyTo == "test.reply")
+    }
+
+    @Test("sendErrorFrame omits inReplyTo when nil")
+    func sendErrorFrameOmitsInReplyTo() async throws {
+        let (a, b) = try makePair()
+        a.start()
+        b.start()
+        defer { a.close(); b.close() }
+
+        try a.sendErrorFrame(code: "test.code", message: "test", inReplyTo: nil)
+
+        let received = try await waitForNextFrame(on: b)
+        guard case .error(let err) = received?.payload else {
+            Issue.record("Expected error payload")
+            return
+        }
+        #expect(err.hasInReplyTo == false)
+    }
+
+    @Test("sendErrorFrame on a closed channel throws .closed")
+    func sendErrorFrameOnClosedChannelThrows() async throws {
+        let (a, b) = try makePair()
+        a.start()
+        b.start()
+        defer { b.close() }
+        a.close()
+
+        #expect(throws: VsockChannelError.closed) {
+            try a.sendErrorFrame(code: "x", message: "y", inReplyTo: nil)
+        }
+    }
+
     @Test("send throws .write when the underlying FileHandle write fails")
     func sendThrowsWriteOnUnderlyingFailure() async throws {
         var fds: [Int32] = [-1, -1]
