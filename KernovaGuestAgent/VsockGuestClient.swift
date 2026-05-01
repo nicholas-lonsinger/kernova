@@ -24,13 +24,11 @@ import os
 /// another send through the broken channel.
 final class VsockGuestClient: @unchecked Sendable {
 
-    /// Factory closure that opens a SOCK_STREAM fd for the given port and
-    /// label, returning nil on failure. Injected via init so tests can
-    /// substitute a socketpair-backed channel without a real vsock device.
+    /// Opens a SOCK_STREAM fd for the given port and label; returns nil on failure.
     typealias VsockSocketProvider = @Sendable (_ port: UInt32, _ label: String) -> Int32?
 
     private static let logger = Logger(subsystem: "com.kernova.agent", category: "VsockGuestClient")
-    private static let defaultSocketTimeoutSeconds: Int = 30
+    private static let socketTimeoutSeconds: Int = 30
 
     let port: UInt32
     let label: String
@@ -45,24 +43,18 @@ final class VsockGuestClient: @unchecked Sendable {
 
     // MARK: - Init
 
-    /// Designated init. Tests pass custom `socketProvider` and `retryInterval`
-    /// values to avoid real vsock connections and multi-second sleeps.
+    /// Creates a client for the given port. Pass a custom `socketProvider` and
+    /// `retryInterval` in tests; production callers can use the defaults.
     init(
         port: UInt32,
         label: String,
         retryInterval: Duration = .seconds(5),
-        socketProvider: @escaping VsockSocketProvider
+        socketProvider: VsockSocketProvider? = nil
     ) {
         self.port = port
         self.label = label
         self.retryInterval = retryInterval
-        self.socketProvider = socketProvider
-    }
-
-    /// Production convenience init — uses the real vsock socket opener and
-    /// the default 5-second retry interval.
-    convenience init(port: UInt32, label: String) {
-        self.init(port: port, label: label) { port, label in
+        self.socketProvider = socketProvider ?? { port, label in
             VsockGuestClient.openVsockToHost(port: port, label: label)
         }
     }
@@ -115,6 +107,11 @@ final class VsockGuestClient: @unchecked Sendable {
 
     private func connectAndServe(serve: @Sendable @escaping (VsockChannel) async -> Void) async {
         guard let fd = socketProvider(port, label) else { return }
+        guard fd >= 0 else {
+            Self.logger.fault("socketProvider returned invalid fd \(fd, privacy: .public) for '\(self.label, privacy: .public)'")
+            assertionFailure("socketProvider returned invalid fd \(fd) for '\(self.label)'")
+            return
+        }
         let channel = VsockChannel(fileDescriptor: fd)
         channel.start()
 
@@ -145,7 +142,7 @@ final class VsockGuestClient: @unchecked Sendable {
     private static func openVsockToHost(port: UInt32, label: String) -> Int32? {
         let fd = socket(AF_VSOCK, SOCK_STREAM, 0)
         guard fd >= 0 else {
-            logger.debug("socket(AF_VSOCK) failed for '\(label, privacy: .public)': errno=\(errno, privacy: .public)")
+            logger.warning("socket(AF_VSOCK) failed for '\(label, privacy: .public)': errno=\(errno, privacy: .public)")
             return nil
         }
 
@@ -168,7 +165,7 @@ final class VsockGuestClient: @unchecked Sendable {
         guard rc == 0 else {
             let err = errno
             close(fd)
-            logger.debug("connect() to '\(label, privacy: .public)' port \(port, privacy: .public) failed: errno=\(err, privacy: .public)")
+            logger.warning("connect() to '\(label, privacy: .public)' port \(port, privacy: .public) failed: errno=\(err, privacy: .public)")
             return nil
         }
         return fd
@@ -176,17 +173,17 @@ final class VsockGuestClient: @unchecked Sendable {
 
     /// Sets `SO_RCVTIMEO` / `SO_SNDTIMEO` on the fresh socket so subsequent
     /// recv/send calls can't block longer than `socketTimeoutSeconds`.
-    /// `setsockopt` failures are logged at debug and otherwise ignored —
+    /// `setsockopt` failures are logged at warning and otherwise ignored —
     /// without timeouts the agent still works, just less robustly.
     private static func applySocketTimeouts(fd: Int32, label: String) {
-        var timeout = timeval(tv_sec: defaultSocketTimeoutSeconds, tv_usec: 0)
+        var timeout = timeval(tv_sec: socketTimeoutSeconds, tv_usec: 0)
         let optionSize = socklen_t(MemoryLayout<timeval>.size)
 
         if setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, optionSize) != 0 {
-            logger.debug("setsockopt SO_RCVTIMEO failed for '\(label, privacy: .public)': errno=\(errno, privacy: .public)")
+            logger.warning("setsockopt SO_RCVTIMEO failed for '\(label, privacy: .public)': errno=\(errno, privacy: .public)")
         }
         if setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, optionSize) != 0 {
-            logger.debug("setsockopt SO_SNDTIMEO failed for '\(label, privacy: .public)': errno=\(errno, privacy: .public)")
+            logger.warning("setsockopt SO_SNDTIMEO failed for '\(label, privacy: .public)': errno=\(errno, privacy: .public)")
         }
     }
 }

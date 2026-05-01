@@ -5,18 +5,17 @@ import KernovaProtocol
 // MARK: - Pasteboard protocol
 
 /// Subset of `NSPasteboard` actually used by `VsockGuestClipboardAgent`.
-/// Injected via init so tests can substitute an in-memory fake without
-/// touching the developer's real `NSPasteboard.general`.
-protocol Pasteboard: AnyObject, Sendable {
+///
+/// RATIONALE: `NSPasteboard.general` is a process-wide singleton with no
+/// mockable surface; this protocol is the cheapest seam that lets tests run
+/// without touching the developer's real clipboard.
+protocol Pasteboard: AnyObject {
     var changeCount: Int { get }
     func string(forType type: NSPasteboard.PasteboardType) -> String?
     @discardableResult func clearContents() -> Int
     @discardableResult func setString(_ string: String, forType type: NSPasteboard.PasteboardType) -> Bool
 }
 
-// RATIONALE: NSPasteboard already implements all four methods with matching
-// signatures; the extension just declares conformance. @retroactive is not
-// needed here because Pasteboard is defined in the same module.
 extension NSPasteboard: Pasteboard {}
 
 // MARK: - VsockGuestClipboardAgent
@@ -80,8 +79,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
 
     // MARK: - Init
 
-    /// Production init — uses real `NSPasteboard.general` and a default
-    /// `VsockGuestClient` on the clipboard port.
+    /// Production init — uses real `NSPasteboard.general` on the clipboard port.
     convenience init() {
         self.init(
             pasteboard: NSPasteboard.general,
@@ -89,8 +87,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         )
     }
 
-    /// Designated init for production and testing. Tests inject a fake
-    /// `Pasteboard` and a `VsockGuestClient` backed by a socketpair.
+    /// Designated init; tests inject a fake pasteboard and socketpair-backed client.
     init(pasteboard: Pasteboard, client: VsockGuestClient) {
         self.pasteboard = pasteboard
         self.client = client
@@ -180,8 +177,6 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         pollingTimer = timer
     }
 
-    // RATIONALE: internal (not private) so tests can drive a poll cycle
-    // synchronously without waiting for the 0.5 s timer interval.
     func checkClipboardChange() {
         guard let channel = liveChannel else { return }
 
