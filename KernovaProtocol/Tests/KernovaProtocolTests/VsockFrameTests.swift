@@ -118,6 +118,116 @@ struct VsockFrameTests {
         }
     }
 
+    // MARK: - compaction
+
+    @Test("decoder remains correct after consuming more than the compaction threshold")
+    func decoderSurvivesCompaction() throws {
+        var decoder = VsockFrameDecoder()
+        let payload = Data(repeating: 0xAB, count: 1024)
+        let framed = try VsockFrame.encode(payload)
+
+        // Enough frames to cross the compaction threshold several times.
+        let frameCount = 256
+        for _ in 0..<frameCount {
+            decoder.feed(framed)
+            let got = try decoder.nextFrame()
+            #expect(got == payload)
+        }
+        #expect(decoder.isEmpty)
+        #expect(decoder.bufferedByteCount == 0)
+
+        // Decoder is still usable for new frames after compaction cycles.
+        decoder.feed(try VsockFrame.encode(Data([0x01, 0x02, 0x03])))
+        #expect(try decoder.nextFrame() == Data([0x01, 0x02, 0x03]))
+    }
+
+    @Test("decoder reports correct bufferedByteCount mid-stream after compaction")
+    func decoderBufferedByteCountAfterCompaction() throws {
+        var decoder = VsockFrameDecoder()
+        // Push enough frames to trip compaction, but leave a partial frame at the tail.
+        let smallPayload = Data(repeating: 0x55, count: 4096)
+        let smallFramed = try VsockFrame.encode(smallPayload)
+        // Cross the compaction threshold at least twice before leaving a partial frame.
+        for _ in 0..<32 {
+            decoder.feed(smallFramed)
+            _ = try decoder.nextFrame()
+        }
+
+        let halfFrame = smallFramed.prefix(smallFramed.count / 2)
+        decoder.feed(halfFrame)
+        #expect(try decoder.nextFrame() == nil)
+        #expect(decoder.bufferedByteCount == halfFrame.count)
+    }
+
+    @Test("decoder preserves payload bytes of a frame straddling the compaction boundary")
+    func decoderPayloadIntegrityAcrossCompaction() throws {
+        var decoder = VsockFrameDecoder()
+        // Use a recognisable payload so byte corruption is immediately obvious.
+        let smallPayload = Data((0..<128).map { UInt8($0 & 0xFF) })
+        let smallFramed = try VsockFrame.encode(smallPayload)
+
+        // Cross the compaction threshold at least once.
+        for _ in 0..<32 {
+            decoder.feed(smallFramed)
+            _ = try decoder.nextFrame()
+        }
+
+        // Feed just past the threshold but mid-payload of the next frame.
+        let splitAt = smallFramed.count / 2
+        decoder.feed(Data(smallFramed.prefix(splitAt)))
+        #expect(try decoder.nextFrame() == nil)
+
+        // Deliver the remainder — the decoder must reconstruct the exact bytes.
+        decoder.feed(Data(smallFramed.suffix(smallFramed.count - splitAt)))
+        let recovered = try decoder.nextFrame()
+        #expect(recovered == smallPayload)
+    }
+
+    @Test("decoder yields correct payloads while draining across a compaction boundary")
+    func decoderDrainsAcrossCompactionBoundary() throws {
+        var decoder = VsockFrameDecoder()
+        // Build a single chunk large enough to trigger compaction mid-drain.
+        let payload = Data((0..<64).map { UInt8($0 & 0xFF) })
+        let framed = try VsockFrame.encode(payload)
+        // Enough frames to cross the compaction threshold several times in one feed.
+        let frameCount = 1100
+        var bulk = Data()
+        bulk.reserveCapacity(framed.count * frameCount)
+        for _ in 0..<frameCount { bulk.append(framed) }
+
+        decoder.feed(bulk)
+
+        for i in 0..<frameCount {
+            let got = try decoder.nextFrame()
+            #expect(got == payload, "payload mismatch at frame \(i)")
+        }
+        #expect(try decoder.nextFrame() == nil)
+    }
+
+    @Test("decoder handles a partial length prefix split at the compaction boundary")
+    func decoderPartialLengthPrefixAcrossCompaction() throws {
+        var decoder = VsockFrameDecoder()
+        let warmPayload = Data(repeating: 0xAA, count: 4096)
+        let warmFramed = try VsockFrame.encode(warmPayload)
+
+        // Cross the compaction threshold at least twice before leaving a partial prefix.
+        for _ in 0..<32 {
+            decoder.feed(warmFramed)
+            _ = try decoder.nextFrame()
+        }
+
+        // Build the next frame but deliver only 1 byte of its length prefix.
+        let nextPayload = Data([0x10, 0x20, 0x30, 0x40, 0x50])
+        let nextFramed = try VsockFrame.encode(nextPayload)
+        decoder.feed(Data(nextFramed.prefix(1)))
+        #expect(try decoder.nextFrame() == nil)
+
+        // Deliver the rest — decoder must reconstruct the full frame correctly.
+        decoder.feed(Data(nextFramed.dropFirst(1)))
+        #expect(try decoder.nextFrame() == nextPayload)
+        #expect(decoder.isEmpty)
+    }
+
     // MARK: - round trip
 
     @Test("encode/decode round-trip preserves arbitrary bytes")
