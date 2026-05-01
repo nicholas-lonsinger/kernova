@@ -163,7 +163,10 @@ final class VsockGuestClient: @unchecked Sendable {
                 "socketProvider returned invalid fd \(fd, privacy: .public) for '\(self.label, privacy: .public)'"
             )
             assertionFailure("socketProvider returned invalid fd \(fd) for '\(self.label)'")
-            return .retry
+            // A negative fd from a custom provider is a programming-error contract
+            // violation — not a transient kernel condition. Terminate rather than
+            // spin forever in release builds where assertionFailure does not trap.
+            return .terminate
         }
 
         let channel = VsockChannel(fileDescriptor: fd)
@@ -205,9 +208,10 @@ final class VsockGuestClient: @unchecked Sendable {
     /// failures. Used as the default `socketProvider` in the production
     /// convenience init.
     ///
-    /// The `ops` parameter defaults to `DarwinRawSocketOps()` so all
-    /// existing production call sites are unaffected; tests inject a mock to
-    /// exercise every failure branch without needing real AF_VSOCK support.
+    /// The `ops` parameter defaults to `DarwinRawSocketOps()` so production
+    /// callers omit it and real Darwin syscalls are used. Tests inject a
+    /// `RawSocketOpsMock` to drive every failure branch deterministically
+    /// without requiring real AF_VSOCK kernel support.
     static func openVsockToHost(
         port: UInt32,
         label: String,
@@ -324,8 +328,8 @@ final class VsockGuestClient: @unchecked Sendable {
             var soError: Int32 = 0
             var soErrorLen = socklen_t(MemoryLayout<Int32>.size)
             let errStr: String
-            let (errRevGso, _) = withUnsafeMutableBytes(of: &soError) { soPtr in
-                ops.getsockopt(fd, SOL_SOCKET, SO_ERROR, soPtr.baseAddress!, &soErrorLen)
+            let (errRevGso, _) = withUnsafeMutablePointer(to: &soError) { soPtr in
+                ops.getsockopt(fd, SOL_SOCKET, SO_ERROR, UnsafeMutableRawPointer(soPtr), &soErrorLen)
             }
             if errRevGso == 0 && soError != 0 {
                 errStr = "errno=\(soError)"
@@ -338,8 +342,8 @@ final class VsockGuestClient: @unchecked Sendable {
 
         var soError: Int32 = 0
         var soErrorLen = socklen_t(MemoryLayout<Int32>.size)
-        let (gsoRc, gsoErr) = withUnsafeMutableBytes(of: &soError) { soPtr in
-            ops.getsockopt(fd, SOL_SOCKET, SO_ERROR, soPtr.baseAddress!, &soErrorLen)
+        let (gsoRc, gsoErr) = withUnsafeMutablePointer(to: &soError) { soPtr in
+            ops.getsockopt(fd, SOL_SOCKET, SO_ERROR, UnsafeMutableRawPointer(soPtr), &soErrorLen)
         }
         guard gsoRc == 0 else {
             logger.warning("getsockopt(SO_ERROR) for '\(label, privacy: .public)' failed: errno=\(gsoErr, privacy: .public)")
@@ -364,11 +368,11 @@ final class VsockGuestClient: @unchecked Sendable {
         var timeout = timeval(tv_sec: socketTimeoutSeconds, tv_usec: 0)
         let optionSize = socklen_t(MemoryLayout<timeval>.size)
 
-        let (rcvRc, rcvErr) = withUnsafeBytes(of: &timeout) { ops.setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, $0.baseAddress!, optionSize) }
+        let (rcvRc, rcvErr) = withUnsafePointer(to: &timeout) { ops.setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, UnsafeRawPointer($0), optionSize) }
         if rcvRc != 0 {
             logger.warning("setsockopt SO_RCVTIMEO failed for '\(label, privacy: .public)': errno=\(rcvErr, privacy: .public)")
         }
-        let (sndRc, sndErr) = withUnsafeBytes(of: &timeout) { ops.setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, $0.baseAddress!, optionSize) }
+        let (sndRc, sndErr) = withUnsafePointer(to: &timeout) { ops.setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, UnsafeRawPointer($0), optionSize) }
         if sndRc != 0 {
             logger.warning("setsockopt SO_SNDTIMEO failed for '\(label, privacy: .public)': errno=\(sndErr, privacy: .public)")
         }

@@ -267,6 +267,12 @@ struct VsockGuestClientTests {
 
     /// Pins the docstring contract: once permanently terminated, subsequent
     /// `start` calls are no-ops — the client cannot be restarted.
+    // NOTE: The invalid-fd guard in connectAndServe (fd < 0) returns .terminate
+    // rather than .retry so the loop cannot spin in release builds. This path is
+    // not directly unit-testable because the guard pairs .terminate with an
+    // assertionFailure(), which traps in debug/test builds before the loop can
+    // observe the outcome. The change is verified by code review.
+
     @Test("start after permanent termination is a no-op — provider is never called again")
     func startAfterPermanentTerminationIsNoOp() async throws {
         let fastRetry: Duration = .milliseconds(50)
@@ -432,7 +438,6 @@ struct OpenVsockBSDPathTests {
         let mockFd: Int32 = 7
         let ops = RawSocketOpsMock()
         ops.socketResults  = [(rc: mockFd, errno: 0)]
-        // fcntlResults empty → F_GETFL returns (0,0), F_SETFL returns (0,0), restore returns (0,0)
         ops.connectResults = [(rc: 0, errno: 0)]
 
         let result = VsockGuestClient.openVsockToHost(port: 1234, label: "test", ops: ops)
@@ -445,6 +450,9 @@ struct OpenVsockBSDPathTests {
         // poll must not have been called (no EINPROGRESS path)
         let pollCalls = ops.calls.filter { if case .poll = $0 { return true }; return false }
         #expect(pollCalls.isEmpty, "poll should not be called on immediate connect success")
+        // applySocketTimeouts must set both SO_RCVTIMEO and SO_SNDTIMEO
+        let setsockoptCalls = ops.calls.filter { if case .setsockopt = $0 { return true }; return false }
+        #expect(setsockoptCalls.count == 2, "applySocketTimeouts must call setsockopt twice (SO_RCVTIMEO + SO_SNDTIMEO)")
         #expect(ops.closedFds.isEmpty, "no close expected on success")
     }
 
@@ -532,6 +540,25 @@ struct OpenVsockBSDPathTests {
 
         guard case .failure(let err) = result, case .transient = err else {
             Issue.record("Expected .failure(.transient) on POLLHUP, got \(result)")
+            return
+        }
+        #expect(ops.closedFds == [mockFd])
+    }
+
+    @Test("awaitConnect: POLLHUP revents + getsockopt() failure closes fd and returns transient")
+    func awaitConnectPollhupWithGetsockoptError() {
+        let mockFd: Int32 = 7
+        let ops = RawSocketOpsMock()
+        ops.socketResults     = [(rc: mockFd, errno: 0)]
+        ops.connectResults    = [(rc: -1, errno: EINPROGRESS)]
+        ops.pollResults       = [.init(rc: 1, errno: 0, revents: Int16(POLLHUP))]
+        // getsockopt itself fails (rc=-1, errno=EBADF) on the error-revents path
+        ops.getsockoptResults = [.init(rc: -1, errno: EBADF, soError: 0)]
+
+        let result = VsockGuestClient.openVsockToHost(port: 1234, label: "test", ops: ops)
+
+        guard case .failure(let err) = result, case .transient = err else {
+            Issue.record("Expected .failure(.transient) on POLLHUP + getsockopt failure, got \(result)")
             return
         }
         #expect(ops.closedFds == [mockFd])

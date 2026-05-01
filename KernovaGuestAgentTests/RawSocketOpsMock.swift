@@ -8,6 +8,15 @@ import Darwin
 /// order. When the script is exhausted, the default result for that method is
 /// returned so tests that don't care about a particular call don't have to
 /// script it explicitly.
+///
+/// Per-method defaults (used when the corresponding `Results` array is empty):
+/// - `socket`     → `(rc: 5, errno: 0)` — a valid-looking fd
+/// - `fcntl`      → `(rc: 0, errno: 0)` — success, flags = 0
+/// - `connect`    → `(rc: 0, errno: 0)` — immediate success
+/// - `poll`       → `(rc: 1, errno: 0, revents: POLLOUT)` — readable/writable
+/// - `getsockopt` → `(rc: 0, errno: 0, soError: 0)` — no deferred error
+/// - `setsockopt` → `(rc: 0, errno: 0)` — success
+/// - `close`      → `Void` (always recorded, never scripted)
 final class RawSocketOpsMock: RawSocketOps, @unchecked Sendable {
 
     // MARK: - Recorded call shapes

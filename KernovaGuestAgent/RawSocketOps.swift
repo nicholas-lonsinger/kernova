@@ -6,9 +6,11 @@ import Darwin
 /// dance without depending on Darwin's thread-local `errno` or real
 /// `AF_VSOCK` kernel support.
 ///
-/// Each method returns both the `rc` and the captured `errno` as a tuple —
-/// Darwin's thread-local `errno` is unmockable, and the production code
-/// already pairs every rc with an immediate `let err = errno` read.
+/// Each method returns both the `rc` and the captured `errno` as a tuple.
+/// Darwin's thread-local `errno` cannot be mocked, so each method captures
+/// `errno` immediately after the syscall and returns it paired with `rc`.
+/// This keeps the (rc, errno) pair atomic and lets mocks script errno values
+/// per call without touching the real Darwin errno.
 protocol RawSocketOps: Sendable {
     func socket(_ family: Int32, _ type: Int32, _ proto: Int32) -> (rc: Int32, errno: Int32)
     func fcntl(_ fd: Int32, _ cmd: Int32, _ arg: Int32) -> (rc: Int32, errno: Int32)
@@ -36,6 +38,9 @@ protocol RawSocketOps: Sendable {
         _ value: UnsafeRawPointer,
         _ len: socklen_t
     ) -> (rc: Int32, errno: Int32)
+    /// Closes `fd`. Returns `Void` because close-time errors (EBADF, EINTR,
+    /// EIO) have no actionable recovery on a partial-connect failure path
+    /// where no data has been buffered.
     func close(_ fd: Int32)
 }
 
