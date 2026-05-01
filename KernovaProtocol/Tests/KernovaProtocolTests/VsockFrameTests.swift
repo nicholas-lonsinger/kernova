@@ -118,6 +118,47 @@ struct VsockFrameTests {
         }
     }
 
+    // MARK: - compaction
+
+    @Test("decoder remains correct after consuming more than the compaction threshold")
+    func decoderSurvivesCompaction() throws {
+        var decoder = VsockFrameDecoder()
+        let payload = Data(repeating: 0xAB, count: 1024)
+        let framed = try VsockFrame.encode(payload)
+
+        // Feed and consume enough frames to cross 64 KiB consumed bytes several times.
+        let frameCount = 256  // ~256 KiB of data
+        for _ in 0..<frameCount {
+            decoder.feed(framed)
+            let got = try decoder.nextFrame()
+            #expect(got == payload)
+        }
+        #expect(decoder.isEmpty)
+        #expect(decoder.bufferedByteCount == 0)
+
+        // Decoder is still usable for new frames after compaction cycles.
+        decoder.feed(try VsockFrame.encode(Data([0x01, 0x02, 0x03])))
+        #expect(try decoder.nextFrame() == Data([0x01, 0x02, 0x03]))
+    }
+
+    @Test("decoder reports correct bufferedByteCount mid-stream after compaction")
+    func decoderBufferedByteCountAfterCompaction() throws {
+        var decoder = VsockFrameDecoder()
+        // Push enough frames to trip compaction, but leave a partial frame at the tail.
+        let smallPayload = Data(repeating: 0x55, count: 4096)
+        let smallFramed = try VsockFrame.encode(smallPayload)
+        for _ in 0..<32 {  // ~128 KiB consumed
+            decoder.feed(smallFramed)
+            _ = try decoder.nextFrame()
+        }
+
+        // Feed a half-frame to leave unread bytes hanging.
+        let halfFrame = smallFramed.prefix(smallFramed.count / 2)
+        decoder.feed(halfFrame)
+        #expect(try decoder.nextFrame() == nil)
+        #expect(decoder.bufferedByteCount == halfFrame.count)
+    }
+
     // MARK: - round trip
 
     @Test("encode/decode round-trip preserves arbitrary bytes")
