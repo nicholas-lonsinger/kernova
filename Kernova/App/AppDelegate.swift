@@ -491,6 +491,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         viewModel.mountGuestAgentInstaller(on: instance)
     }
 
+    @objc func showAboutPanel(_ sender: Any?) {
+        #if DEBUG
+        let buildConfiguration = "Debug Build"
+        #else
+        let buildConfiguration = "Release Build"
+        #endif
+
+        let credits = NSAttributedString(
+            string: buildConfiguration,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
+                .foregroundColor: NSColor.secondaryLabelColor,
+            ]
+        )
+        NSApp.orderFrontStandardAboutPanel(options: [.credits: credits])
+    }
+
     // MARK: - Display Window (Pop-Out / Fullscreen)
 
     @objc func togglePopOut(_ sender: Any?) {
@@ -765,7 +782,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // Application menu
         let appMenuItem = NSMenuItem()
         let appMenu = NSMenu()
-        appMenu.addItem(withTitle: "About Kernova", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(withTitle: "About Kernova", action: #selector(showAboutPanel(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
         let servicesItem = NSMenuItem(title: "Services", action: nil, keyEquivalent: "")
         let servicesMenu = NSMenu(title: "Services")
