@@ -6,6 +6,7 @@ struct VMRowView: View {
     var isRenaming: Bool = false
     var onCommitRename: (String) -> Void = { _ in }
     var onCancelRename: () -> Void = {}
+    var onMountAgentInstaller: () -> Void = {}
 
     @State private var editingName: String = ""
     @FocusState private var isTextFieldFocused: Bool
@@ -41,6 +42,14 @@ struct VMRowView: View {
 
             Spacer()
 
+            if let agentStatus = visibleAgentStatus {
+                SidebarAgentStatusButton(
+                    vmName: instance.name,
+                    status: agentStatus,
+                    onMount: onMountAgentInstaller
+                )
+            }
+
             if instance.isPreparing || instance.status.isTransitioning {
                 ProgressView()
                     .controlSize(.mini)
@@ -65,5 +74,18 @@ struct VMRowView: View {
                 onCommitRename(editingName)
             }
         }
+    }
+
+    /// The agent status to surface as a sidebar indicator, or `nil` to hide.
+    /// Hidden when the guest can't use the Kernova-bundled agent (Linux guests
+    /// install spice-vdagent themselves), when no clipboard service is active
+    /// (clipboard sharing off, or VM not running), or when the agent is current
+    /// (no news is good news).
+    private var visibleAgentStatus: AgentStatus? {
+        guard instance.configuration.guestOS == .macOS else { return nil }
+        guard let service = instance.clipboardService else { return nil }
+        let status = service.agentStatus
+        if case .current = status { return nil }
+        return status
     }
 }

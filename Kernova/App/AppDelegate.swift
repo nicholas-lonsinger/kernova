@@ -455,7 +455,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             isEligible: instance.canShowClipboard,
             windowsPath: \.clipboardWindows,
             observersPath: \.clipboardObservers,
-            factory: ClipboardWindowController.init
+            factory: { [viewModel] in ClipboardWindowController(instance: $0, viewModel: viewModel) }
         )
     }
 
@@ -484,16 +484,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     @objc func attachGuestAgentDisk(_ sender: Any?) {
         guard let instance = activeInstance else { return }
-        guard let path = Self.guestAgentDiskPath else {
-            Self.logger.fault("Guest agent disk image not found in app bundle")
-            assertionFailure("Guest agent disk image not found in app bundle")
-            return
-        }
-        viewModel.attachUSBDevice(
-            diskImagePath: path,
-            readOnly: true,
-            to: instance
-        )
+        // Route through mountGuestAgentInstaller so the post-mount instructions
+        // alert fires here too — same UX as the sidebar popover and clipboard
+        // window button. The viewModel already handles the missing-DMG case
+        // with a fault + assertionFailure.
+        viewModel.mountGuestAgentInstaller(on: instance)
     }
 
     // MARK: - Display Window (Pop-Out / Fullscreen)
@@ -723,8 +718,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             return activeInstance?.canAttachUSBDevices ?? false
         case #selector(attachGuestAgentDisk(_:)):
             guard let instance = activeInstance, instance.canAttachUSBDevices else { return false }
-            guard let agentPath = Self.guestAgentDiskPath else { return false }
-            return !instance.attachedUSBDevices.contains { $0.path == agentPath }
+            guard Self.guestAgentDiskPath != nil else { return false }
+            // Mirror the sidebar popover and clipboard window button: title
+            // reflects whether the agent is missing (Install) or behind the
+            // bundled version (Update). Disabled only when the agent is
+            // .current — nothing to do. Stays enabled when the installer is
+            // already mounted so the user can re-trigger the instructions
+            // alert if they dismissed it before reading.
+            let status = instance.clipboardService?.agentStatus ?? .waiting
+            switch status {
+            case .outdated:
+                menuItem.title = "Update Guest Agent…"
+            case .waiting, .current:
+                menuItem.title = "Install Guest Agent…"
+            }
+            if case .current = status { return false }
+            return true
         case #selector(togglePopOut(_:)):
             guard let instance = activeInstance else { return false }
             let canUse = instance.canUseExternalDisplay
