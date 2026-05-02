@@ -493,17 +493,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     @objc func showAboutPanel(_ sender: Any?) {
         #if DEBUG
-        let buildConfiguration = "Debug"
-        #else
-        let buildConfiguration = "Release"
-        #endif
-
         let buildNumber = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? ""
-        let versionAnnotation = buildNumber.isEmpty
-            ? buildConfiguration
-            : "\(buildNumber), \(buildConfiguration)"
-
+        let versionAnnotation = buildNumber.isEmpty ? "Debug" : "\(buildNumber), Debug"
         NSApp.orderFrontStandardAboutPanel(options: [.version: versionAnnotation])
+        #else
+        NSApp.orderFrontStandardAboutPanel(sender)
+        #endif
     }
 
     // MARK: - Display Window (Pop-Out / Fullscreen)
