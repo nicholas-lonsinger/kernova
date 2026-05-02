@@ -92,14 +92,16 @@ final class VMLibraryViewModel {
         diskImageService: any DiskImageProviding = DiskImageService(),
         virtualizationService: any VirtualizationProviding = VirtualizationService(),
         installService: any MacOSInstallProviding = MacOSInstallService(),
-        ipswService: any IPSWProviding = IPSWService()
+        ipswService: any IPSWProviding = IPSWService(),
+        usbDeviceService: any USBDeviceProviding = USBDeviceService()
     ) {
         self.storageService = storageService
         self.diskImageService = diskImageService
         self.lifecycle = VMLifecycleCoordinator(
             virtualizationService: virtualizationService,
             installService: installService,
-            ipswService: ipswService
+            ipswService: ipswService,
+            usbDeviceService: usbDeviceService
         )
 
         loadVMs()
