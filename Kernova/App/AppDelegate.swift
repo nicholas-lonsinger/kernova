@@ -493,19 +493,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     @objc func showAboutPanel(_ sender: Any?) {
         #if DEBUG
-        let buildConfiguration = "Debug Build"
+        let buildConfiguration = "Debug"
         #else
-        let buildConfiguration = "Release Build"
+        let buildConfiguration = "Release"
         #endif
 
-        let credits = NSAttributedString(
-            string: buildConfiguration,
-            attributes: [
-                .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
-                .foregroundColor: NSColor.secondaryLabelColor,
-            ]
-        )
-        NSApp.orderFrontStandardAboutPanel(options: [.credits: credits])
+        let buildNumber = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? ""
+        let versionAnnotation = buildNumber.isEmpty
+            ? buildConfiguration
+            : "\(buildNumber), \(buildConfiguration)"
+
+        NSApp.orderFrontStandardAboutPanel(options: [.version: versionAnnotation])
     }
 
     // MARK: - Display Window (Pop-Out / Fullscreen)
