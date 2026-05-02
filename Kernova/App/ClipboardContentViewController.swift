@@ -222,7 +222,15 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         button.isHidden = true
         self.actionButton = button
 
-        let stack = NSStackView(views: [circle, label, NSView(), button])
+        // Spacer needs an explicit low horizontal hugging priority to actually
+        // expand inside the NSStackView. NSView's default hugging priority is
+        // 250 — same as the label's — so without this, the stack view has no
+        // signal to grow the spacer rather than the label, and the button
+        // wouldn't reliably end up flush against the trailing edge.
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        let stack = NSStackView(views: [circle, label, spacer, button])
         stack.orientation = .horizontal
         stack.spacing = 6
         stack.edgeInsets = NSEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
