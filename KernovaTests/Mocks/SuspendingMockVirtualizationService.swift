@@ -6,7 +6,7 @@ import Foundation
 ///
 /// - Important: Only **one** operation can be suspended at a time. The mock stores a
 ///   single `suspendedContinuation` slot; calling `suspendIfNeeded()` while another
-///   operation is already suspended will overwrite the first continuation, leaking it.
+///   operation is already suspended will trigger a precondition failure.
 @MainActor
 final class SuspendingMockVirtualizationService: VirtualizationProviding {
 
