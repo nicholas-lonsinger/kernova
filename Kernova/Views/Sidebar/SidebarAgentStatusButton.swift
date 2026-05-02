@@ -109,7 +109,6 @@ struct AgentStatusPopoverContent: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.leading)
-                .lineLimit(nil)
 
             HStack {
                 Spacer()
@@ -210,32 +209,25 @@ private struct NSPopoverAnchor<Content: View>: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        view.translatesAutoresizingMaskIntoConstraints = false
-        return view
+        NSView()
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        let coordinator = context.coordinator
-        coordinator.isPresented = $isPresented
-        coordinator.anchor = nsView
-
         if isPresented {
-            coordinator.show(
+            context.coordinator.show(
                 content: content(),
                 contentSize: contentSize,
                 from: nsView,
                 preferredEdge: preferredEdge
             )
         } else {
-            coordinator.close()
+            context.coordinator.close()
         }
     }
 
     @MainActor
     final class Coordinator: NSObject, NSPopoverDelegate {
-        var isPresented: Binding<Bool>
-        weak var anchor: NSView?
+        let isPresented: Binding<Bool>
         private var popover: NSPopover?
 
         init(isPresented: Binding<Bool>) {
