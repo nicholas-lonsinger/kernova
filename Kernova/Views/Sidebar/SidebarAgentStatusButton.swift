@@ -143,10 +143,15 @@ enum AgentStatusPopoverMetrics {
     static let padding: CGFloat = 16
     static let verticalSpacing: CGFloat = 10
 
-    /// Approximate `.headline` line height, including SwiftUI's default
-    /// padding around the baseline. Hard-coded because we don't have layout
-    /// access at the point we need to size the popover.
-    private static let titleLineHeight: CGFloat = 22
+    /// Line height of the `.headline` font as currently configured. Reading
+    /// from `NSFont.preferredFont` honors the user's Dynamic Type setting, so
+    /// the popover height stays correct under accessibility text scaling.
+    /// `descender` is negative on macOS, so subtracting it adds the descent
+    /// portion to the total height.
+    private static var titleLineHeight: CGFloat {
+        let font = NSFont.preferredFont(forTextStyle: .headline)
+        return ceil(font.ascender - font.descender + font.leading)
+    }
 
     /// Standard `.regular` SwiftUI button height for `.keyboardShortcut(.defaultAction)`.
     private static let buttonHeight: CGFloat = 28
@@ -214,7 +219,7 @@ private struct NSPopoverAnchor<Content: View>: NSViewRepresentable {
 
     func updateNSView(_ nsView: NSView, context: Context) {
         if isPresented {
-            context.coordinator.show(
+            context.coordinator.showOrUpdate(
                 content: content(),
                 contentSize: contentSize,
                 from: nsView,
@@ -234,14 +239,24 @@ private struct NSPopoverAnchor<Content: View>: NSViewRepresentable {
             self.isPresented = isPresented
         }
 
-        func show<C: View>(
+        func showOrUpdate<C: View>(
             content: C,
             contentSize: NSSize,
             from anchor: NSView,
             preferredEdge: NSRectEdge
         ) {
-            // Already showing? Just leave it alone — re-presenting causes flicker.
-            if let popover, popover.isShown { return }
+            // If a popover is already shown, refresh its content + size in place
+            // instead of dismissing/re-presenting (which would flicker). This
+            // keeps the popover reactive when `status` or `vmName` changes
+            // while it's open — e.g. the agent connects mid-popover and the
+            // status flips from .waiting to .current.
+            if let popover, popover.isShown,
+               let hostingController = popover.contentViewController as? NSHostingController<C> {
+                hostingController.rootView = content
+                hostingController.preferredContentSize = contentSize
+                popover.contentSize = contentSize
+                return
+            }
 
             let popover = NSPopover()
             popover.behavior = .transient

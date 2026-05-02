@@ -41,6 +41,11 @@ final class VMLibraryViewModel {
     /// menubar item) triggered the mount.
     var showInstallerMountedAlert = false
     var installerMountedVMName: String?
+
+    /// VMs with an in-flight installer mount. Prevents rapid double-clicks
+    /// from spawning two parallel attaches — the second would race the first
+    /// and likely surface as a spurious "operation in progress" error alert.
+    private var mountingInstanceIDs: Set<UUID> = []
     var instanceToDelete: VMInstance?
     var activeRename: RenameTarget?
     var showCancelPreparingConfirmation = false
@@ -572,6 +577,14 @@ final class VMLibraryViewModel {
     /// No-op if a device already mounted at the bundled DMG path is present —
     /// duplicate mounts don't help the user.
     func mountGuestAgentInstaller(on instance: VMInstance) {
+        let id = instance.instanceID
+        // Coalesce rapid double-clicks: if a mount Task is already in flight
+        // for this VM, ignore the new click. Prevents the second attach from
+        // racing the first and surfacing as a spurious error alert.
+        guard !mountingInstanceIDs.contains(id) else {
+            Self.logger.debug("Mount already in flight for '\(instance.name, privacy: .public)' — ignoring duplicate click")
+            return
+        }
         guard let url = KernovaGuestAgentInfo.installerDiskImageURL else {
             Self.logger.fault("Guest agent installer DMG missing from app bundle")
             assertionFailure("KernovaGuestAgent.dmg missing — check 'Package Guest Agent DMG' build phase outputs")
@@ -589,6 +602,7 @@ final class VMLibraryViewModel {
         }
         Self.logger.notice("Mounting guest agent installer on '\(instance.name, privacy: .public)'")
         let vmName = instance.name
+        mountingInstanceIDs.insert(id)
         Task { [weak self] in
             do {
                 _ = try await self?.lifecycle.attachUSBDevice(
@@ -602,6 +616,7 @@ final class VMLibraryViewModel {
                 Self.logger.error("USB attach failed for '\(vmName, privacy: .public)': \(error.localizedDescription, privacy: .public)")
                 self?.presentError(error)
             }
+            self?.mountingInstanceIDs.remove(id)
         }
     }
 
