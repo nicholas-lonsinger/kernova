@@ -129,13 +129,21 @@ struct VsockClipboardServiceTests {
     }
 
     /// Builds the guest-side hello frame the service expects in order to
-    /// flip `isConnected` true.
-    private func makeHello() -> Frame {
+    /// flip `isConnected` true. `agentVersion` populates `Hello.agent_info` so
+    /// tests can drive the `agentStatus` computed property.
+    private func makeHello(agentVersion: String? = nil) -> Frame {
         var frame = Frame()
         frame.protocolVersion = 1
         frame.hello = Kernova_V1_Hello.with {
             $0.serviceVersion = 1
             $0.capabilities = ["clipboard.text.utf8"]
+            if let version = agentVersion {
+                $0.agentInfo = Kernova_V1_AgentInfo.with {
+                    $0.os = "macOS"
+                    $0.osVersion = "26.0"
+                    $0.agentVersion = version
+                }
+            }
         }
         return frame
     }
@@ -571,6 +579,150 @@ struct VsockClipboardServiceTests {
         }) {
             Issue.record("Service sent a ClipboardRequest despite send failure — pendingInboundGeneration would be stale")
         }
+    }
+
+    // MARK: - agentStatus
+
+    @Test("agentStatus is .waiting before Hello arrives")
+    func agentStatusWaitingBeforeHello() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(
+            channel: host, label: "test", bundledAgentVersion: "0.9.0"
+        )
+        service.start()
+        defer { service.stop() }
+
+        #expect(service.agentStatus == .waiting)
+    }
+
+    @Test("agentStatus is .current when guest reports the bundled version")
+    func agentStatusCurrentWhenVersionsMatch() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(
+            channel: host, label: "test", bundledAgentVersion: "0.9.0"
+        )
+        service.start()
+        defer { service.stop() }
+
+        _ = try await nextFrame(from: guest)
+        try guest.send(makeHello(agentVersion: "0.9.0"))
+        try await waitUntil { service.isConnected }
+
+        #expect(service.agentStatus == .current(version: "0.9.0"))
+    }
+
+    @Test("agentStatus is .outdated when guest reports an older version")
+    func agentStatusOutdatedWhenGuestOlder() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(
+            channel: host, label: "test", bundledAgentVersion: "0.9.0"
+        )
+        service.start()
+        defer { service.stop() }
+
+        _ = try await nextFrame(from: guest)
+        try guest.send(makeHello(agentVersion: "0.8.5"))
+        try await waitUntil { service.isConnected }
+
+        #expect(service.agentStatus == .outdated(installed: "0.8.5", bundled: "0.9.0"))
+    }
+
+    @Test("agentStatus is .current when guest reports a newer version (don't fight the user)")
+    func agentStatusCurrentWhenGuestNewer() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(
+            channel: host, label: "test", bundledAgentVersion: "0.9.0"
+        )
+        service.start()
+        defer { service.stop() }
+
+        _ = try await nextFrame(from: guest)
+        try guest.send(makeHello(agentVersion: "1.0.0"))
+        try await waitUntil { service.isConnected }
+
+        #expect(service.agentStatus == .current(version: "1.0.0"))
+    }
+
+    @Test("agentStatus uses numeric ordering: 0.9.0 < 0.10.0")
+    func agentStatusNumericOrdering() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(
+            channel: host, label: "test", bundledAgentVersion: "0.10.0"
+        )
+        service.start()
+        defer { service.stop() }
+
+        _ = try await nextFrame(from: guest)
+        try guest.send(makeHello(agentVersion: "0.9.0"))
+        try await waitUntil { service.isConnected }
+
+        // Lexicographic comparison would put "0.9.0" > "0.10.0" — wrong.
+        // .numeric must produce .outdated here.
+        #expect(service.agentStatus == .outdated(installed: "0.9.0", bundled: "0.10.0"))
+    }
+
+    @Test("agentStatus resets to .waiting on stop()")
+    func agentStatusResetsOnStop() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(
+            channel: host, label: "test", bundledAgentVersion: "0.9.0"
+        )
+        service.start()
+
+        _ = try await nextFrame(from: guest)
+        try guest.send(makeHello(agentVersion: "0.9.0"))
+        try await waitUntil { service.isConnected }
+        #expect(service.agentStatus == .current(version: "0.9.0"))
+
+        service.stop()
+        #expect(service.agentStatus == .waiting)
+    }
+
+    @Test("agentStatus falls back to .current when bundled version is unavailable")
+    func agentStatusCurrentWhenBundledMissing() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(
+            channel: host, label: "test", bundledAgentVersion: nil
+        )
+        service.start()
+        defer { service.stop() }
+
+        _ = try await nextFrame(from: guest)
+        try guest.send(makeHello(agentVersion: "0.5.0"))
+        try await waitUntil { service.isConnected }
+
+        // Without a bundled version to compare against we can't decide
+        // outdatedness — accepting the guest's report avoids prompting the user
+        // to "update" against missing data.
+        #expect(service.agentStatus == .current(version: "0.5.0"))
     }
 
     @Test("ClipboardData with stale generation is ignored")

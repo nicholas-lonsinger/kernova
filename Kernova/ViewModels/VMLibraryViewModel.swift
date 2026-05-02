@@ -34,6 +34,18 @@ final class VMLibraryViewModel {
     var showDeleteConfirmation = false
     var showError = false
     var errorMessage: String?
+
+    /// Drives the post-mount instructions alert. Set after a successful
+    /// `mountGuestAgentInstaller(on:)` so the user gets unified guidance no
+    /// matter which entry point (sidebar popover, clipboard window button, or
+    /// menubar item) triggered the mount.
+    var showInstallerMountedAlert = false
+    var installerMountedVMName: String?
+
+    /// VMs with an in-flight installer mount. Prevents rapid double-clicks
+    /// from spawning two parallel attaches — the second would race the first
+    /// and likely surface as a spurious "operation in progress" error alert.
+    private var mountingInstanceIDs: Set<UUID> = []
     var instanceToDelete: VMInstance?
     var activeRename: RenameTarget?
     var showCancelPreparingConfirmation = false
@@ -548,6 +560,74 @@ final class VMLibraryViewModel {
                 presentError(error)
             }
         }
+    }
+
+    // MARK: - Guest Agent Installer
+
+    /// Mounts the bundled `KernovaGuestAgent.dmg` as a read-only USB device so
+    /// the user can run `install.command` inside the guest. Used by the
+    /// clipboard window's "Install Guest Agent…" affordance, the sidebar's
+    /// agent-status popover, and the menubar item.
+    ///
+    /// On successful mount, sets `installerMountedVMName` to drive an
+    /// SwiftUI `.alert()` that explains the next step (open the disk in the
+    /// guest's Finder, run install.command). The alert unifies the
+    /// post-click experience across all three entry points.
+    ///
+    /// No-op if a device already mounted at the bundled DMG path is present —
+    /// duplicate mounts don't help the user.
+    func mountGuestAgentInstaller(on instance: VMInstance) {
+        let id = instance.instanceID
+        // Coalesce rapid double-clicks: if a mount Task is already in flight
+        // for this VM, ignore the new click. Prevents the second attach from
+        // racing the first and surfacing as a spurious error alert.
+        guard !mountingInstanceIDs.contains(id) else {
+            Self.logger.debug("Mount already in flight for '\(instance.name, privacy: .public)' — ignoring duplicate click")
+            return
+        }
+        guard let url = KernovaGuestAgentInfo.installerDiskImageURL else {
+            Self.logger.fault("Guest agent installer DMG missing from app bundle")
+            assertionFailure("KernovaGuestAgent.dmg missing — check 'Package Guest Agent DMG' build phase outputs")
+            return
+        }
+        let path = url.path
+        if instance.attachedUSBDevices.contains(where: { $0.path == path }) {
+            Self.logger.debug("Guest agent installer already mounted on '\(instance.name, privacy: .public)'")
+            // Still surface the instructions — the user just clicked an
+            // install/update affordance and is owed feedback even if the
+            // disk happens to already be mounted from a prior click.
+            installerMountedVMName = instance.name
+            showInstallerMountedAlert = true
+            return
+        }
+        Self.logger.notice("Mounting guest agent installer on '\(instance.name, privacy: .public)'")
+        let vmName = instance.name
+        mountingInstanceIDs.insert(id)
+        Task { [weak self] in
+            do {
+                _ = try await self?.lifecycle.attachUSBDevice(
+                    diskImagePath: path,
+                    readOnly: true,
+                    to: instance
+                )
+                self?.installerMountedVMName = vmName
+                self?.showInstallerMountedAlert = true
+            } catch {
+                Self.logger.error("USB attach failed for '\(vmName, privacy: .public)': \(error.localizedDescription, privacy: .public)")
+                self?.presentError(error)
+            }
+            self?.mountingInstanceIDs.remove(id)
+        }
+    }
+
+    /// Detaches the bundled guest agent installer if currently mounted.
+    /// Identified by path equality with `KernovaGuestAgentInfo.installerDiskImageURL`.
+    func unmountGuestAgentInstaller(from instance: VMInstance) {
+        guard let url = KernovaGuestAgentInfo.installerDiskImageURL else { return }
+        let path = url.path
+        guard let device = instance.attachedUSBDevices.first(where: { $0.path == path }) else { return }
+        Self.logger.notice("Unmounting guest agent installer from '\(instance.name, privacy: .public)'")
+        detachUSBDevice(device, from: instance)
     }
 
     // MARK: - Additional Disks

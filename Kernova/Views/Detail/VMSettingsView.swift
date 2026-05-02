@@ -453,7 +453,7 @@ struct VMSettingsView: View {
     private var clipboardSection: some View {
         Section("Clipboard") {
             Toggle("Clipboard Sharing", isOn: $instance.configuration.clipboardSharingEnabled)
-            Text("Enables a SPICE clipboard channel for exchanging text between host and guest. The guest must have a SPICE agent installed (e.g. spice-vdagent on Linux).")
+            Text("Exchanges clipboard text between host and guest. macOS guests use the bundled Kernova guest agent — Kernova will offer to install or update it from the clipboard window. Linux guests need spice-vdagent installed via the guest's package manager.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

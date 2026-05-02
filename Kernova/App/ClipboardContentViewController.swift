@@ -4,23 +4,32 @@ import os
 /// Pure AppKit view controller for the clipboard sharing window content.
 ///
 /// Provides an editable `NSTextView` for the clipboard buffer and a status bar
-/// showing the guest agent connection state. Observes the active
-/// `ClipboardServicing` (either SPICE for Linux or vsock for macOS) via
-/// `withObservationTracking`.
+/// showing the guest agent connection state. The status bar surfaces the
+/// install/update affordance for macOS guests when the bundled Kernova agent is
+/// missing or outdated. Linux guests use `spice-vdagent` from their package
+/// manager — the affordance is hidden for them.
 @MainActor
 final class ClipboardContentViewController: NSViewController, NSTextViewDelegate {
 
     private static let logger = Logger(subsystem: "com.kernova.app", category: "ClipboardContentViewController")
 
     private let instance: VMInstance
+    private weak var viewModel: VMLibraryViewModel?
     private var textView: NSTextView!
     private var statusCircle: NSView!
     private var statusLabel: NSTextField!
+    private var actionButton: NSButton!
     private var isUpdatingFromService = false
     private var serviceObservation: ObservationLoop?
 
-    init(instance: VMInstance) {
+    /// Tracks whether we previously observed a non-`.current` state so we only
+    /// auto-eject after a real transition (avoiding redundant detach calls when
+    /// the controller observes other clipboard service state changes).
+    private var hasSeenNonCurrentStatus = false
+
+    init(instance: VMInstance, viewModel: VMLibraryViewModel) {
         self.instance = instance
+        self.viewModel = viewModel
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -97,6 +106,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 let service = self?.instance.clipboardService
                 _ = service?.clipboardText
                 _ = service?.isConnected
+                _ = service?.agentStatus
             },
             apply: { [weak self] in
                 self?.updateUI()
@@ -106,7 +116,8 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
     private func updateUI() {
         let service = instance.clipboardService
-        let isConnected = service?.isConnected ?? false
+        let status = service?.agentStatus ?? .waiting
+        let canInstallKernovaAgent = instance.configuration.guestOS == .macOS
 
         textView.isEditable = service != nil
 
@@ -118,10 +129,42 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             isUpdatingFromService = false
         }
 
-        statusCircle.layer?.backgroundColor = isConnected
-            ? NSColor.systemGreen.cgColor
-            : NSColor.secondaryLabelColor.cgColor
-        statusLabel.stringValue = isConnected ? "Connected" : "Waiting for guest agent"
+        applyStatus(status, canInstallKernovaAgent: canInstallKernovaAgent)
+        autoEjectIfJustBecameCurrent(status: status, canInstallKernovaAgent: canInstallKernovaAgent)
+    }
+
+    private func applyStatus(_ status: AgentStatus, canInstallKernovaAgent: Bool) {
+        switch status {
+        case .waiting:
+            statusCircle.layer?.backgroundColor = NSColor.secondaryLabelColor.cgColor
+            statusLabel.stringValue = "Waiting for guest agent"
+            actionButton.isHidden = !canInstallKernovaAgent
+            actionButton.title = "Install Guest Agent…"
+        case .outdated(let installed, let bundled):
+            statusCircle.layer?.backgroundColor = NSColor.systemOrange.cgColor
+            statusLabel.stringValue = "Update available (\(installed) → \(bundled))"
+            actionButton.isHidden = !canInstallKernovaAgent
+            actionButton.title = "Update Guest Agent…"
+        case .current(let version):
+            statusCircle.layer?.backgroundColor = NSColor.systemGreen.cgColor
+            statusLabel.stringValue = "Connected (\(version))"
+            actionButton.isHidden = true
+        }
+    }
+
+    private func autoEjectIfJustBecameCurrent(status: AgentStatus, canInstallKernovaAgent: Bool) {
+        if case .current = status {
+            if hasSeenNonCurrentStatus, canInstallKernovaAgent {
+                viewModel?.unmountGuestAgentInstaller(from: instance)
+            }
+            hasSeenNonCurrentStatus = false
+        } else {
+            hasSeenNonCurrentStatus = true
+        }
+    }
+
+    @objc private func actionButtonClicked(_ sender: Any?) {
+        viewModel?.mountGuestAgentInstaller(on: instance)
     }
 
     // MARK: - View Construction
@@ -169,12 +212,29 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         let label = NSTextField(labelWithString: "")
         label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         label.textColor = .secondaryLabelColor
+        label.lineBreakMode = .byTruncatingTail
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         self.statusLabel = label
 
-        let stack = NSStackView(views: [circle, label])
+        let button = NSButton(title: "", target: self, action: #selector(actionButtonClicked(_:)))
+        button.bezelStyle = .accessoryBarAction
+        button.controlSize = .small
+        button.isHidden = true
+        self.actionButton = button
+
+        // Spacer needs an explicit low horizontal hugging priority to actually
+        // expand inside the NSStackView. NSView's default hugging priority is
+        // 250 — same as the label's — so without this, the stack view has no
+        // signal to grow the spacer rather than the label, and the button
+        // wouldn't reliably end up flush against the trailing edge.
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        let stack = NSStackView(views: [circle, label, spacer, button])
         stack.orientation = .horizontal
         stack.spacing = 6
         stack.edgeInsets = NSEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
+        stack.alignment = .centerY
 
         return stack
     }

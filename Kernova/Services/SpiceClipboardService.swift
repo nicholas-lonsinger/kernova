@@ -31,6 +31,15 @@ final class SpiceClipboardService: ClipboardServicing {
     /// `true` once the guest agent has completed the capabilities handshake.
     private(set) var isConnected: Bool = false
 
+    /// SPICE agents (e.g. `spice-vdagent` on Linux) are user-installed and
+    /// version-tracked by the guest's package manager — Kernova does not bundle
+    /// or update them. The UI distinguishes Linux guests from macOS guests
+    /// before offering an install affordance, so reporting `.current` once
+    /// connected is enough to suppress the host-side install/update flow.
+    var agentStatus: AgentStatus {
+        isConnected ? .current(version: "spice-vdagent") : .waiting
+    }
+
     // MARK: - Private
 
     private let inputPipe: Pipe    // host writes → guest reads

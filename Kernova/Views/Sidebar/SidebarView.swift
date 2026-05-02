@@ -17,6 +17,9 @@ struct SidebarView: View {
                         },
                         onCancelRename: {
                             viewModel.cancelRename()
+                        },
+                        onMountAgentInstaller: {
+                            viewModel.mountGuestAgentInstaller(on: instance)
                         }
                     )
                     .tag(instance.id)

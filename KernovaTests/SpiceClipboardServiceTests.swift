@@ -96,6 +96,21 @@ struct SpiceClipboardServiceTests {
         #expect(!service.isConnected)
     }
 
+    @Test("agentStatus is .waiting before the capabilities handshake")
+    func agentStatusBeforeHandshake() {
+        let (service, _, _) = makeService()
+        #expect(service.agentStatus == .waiting)
+    }
+
+    @Test("agentStatus is .current after the handshake")
+    func agentStatusAfterHandshake() {
+        let (service, _, _) = makeService()
+        connect(service, byDemand: true)
+        // Linux guests install spice-vdagent themselves, so the host has
+        // nothing to install/update — .current suppresses install affordances.
+        #expect(service.agentStatus == .current(version: "spice-vdagent"))
+    }
+
     @Test("Sends capabilities reply when guest requests it")
     func capabilitiesReply() {
         let (service, inputPipe, _) = makeService()
