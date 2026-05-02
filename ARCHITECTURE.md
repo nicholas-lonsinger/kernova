@@ -122,13 +122,15 @@ Tools/
 └── regen-proto.sh                      # Regenerates kernova.pb.swift via protoc + protoc-gen-swift
 
 KernovaTests/
-├── Mocks/                              # Mock service implementations (6 files)
+├── Mocks/                              # Mock service implementations (8 files)
 │   ├── MockVirtualizationService.swift
 │   ├── SuspendingMockVirtualizationService.swift
 │   ├── MockVMStorageService.swift
 │   ├── MockDiskImageService.swift
 │   ├── MockMacOSInstallService.swift
-│   └── MockIPSWService.swift
+│   ├── MockIPSWService.swift
+│   ├── MockUSBDeviceService.swift
+│   └── SuspendingMockUSBDeviceService.swift
 ├── VMConfigurationTests.swift          # 43 tests for VMConfiguration
 ├── VMToolbarManagerTests.swift          # Toolbar manager item creation and state update tests
 ├── VMConfigurationCloneTests.swift     # Clone-specific configuration tests
@@ -161,7 +163,7 @@ KernovaGuestAgentTests/                 # Unit tests for the guest agent (standa
 └── VsockGuestClipboardAgentTests.swift # Echo suppression, reconnect reset, offer/request/data flow
 ```
 
-**Total: 56 source files + 2 helpers, 30 test files (23 suites + 6 mocks + 1 test-helpers).**
+**Total: 56 source files + 2 helpers, 31 test files (23 suites + 8 mocks + 1 test-helpers).**
 
 *Note: `ContentView.swift` was removed when `NavigationSplitView` was replaced by `NSSplitViewController` in `MainWindowController`. Its responsibilities were split between `MainWindowController` (toolbar, split view) and `MainDetailView` (detail switching, sheets, alerts).*
 
@@ -404,7 +406,7 @@ No third-party (non-Apple) package dependencies. No CocoaPods or Carthage.
 | Component | Tests | Notes |
 |-----------|-------|-------|
 | `VMConfiguration` | 47 tests + clone suite | Encoding/decoding, defaults, validation, all fields |
-| `VMLibraryViewModel` | 74 tests | Add/remove/rename/reorder VMs, selection, auto-select on load, selection preservation on reload, delegation to coordinator, sleep/wake, clone/import phantom rows, cancel preparing, force-stop confirmation, stop escalation timing, custom order persistence |
+| `VMLibraryViewModel` | 80 tests | Add/remove/rename/reorder VMs, selection, auto-select on load, selection preservation on reload, delegation to coordinator, sleep/wake, clone/import phantom rows, cancel preparing, force-stop confirmation, stop escalation timing, custom order persistence, guest agent installer mount/unmount state machines |
 | `VMCreationViewModel` | 44 tests | All wizard steps, validation, OS-specific paths |
 | `VMLifecycleCoordinator` | Yes | Multi-step orchestration, error handling, service delegation, token-based operation serialization, stop/forceStop bypass, stale-token race condition coverage |
 | `VMInstance` | Yes | Status transitions, configuration updates, bundle layout, preparing state display properties |
@@ -449,6 +451,6 @@ These services interact with system processes, the network, or VZ installer inte
 ### Test Patterns
 
 - **Framework:** Swift Testing (`@Suite`, `@Test`, `#expect`) — not XCTest
-- **Mocks:** 6 mock implementations conforming to service protocols, supporting call counting and error injection via `throwError` properties. Includes `SuspendingMockVirtualizationService` for testing operation serialization — suspends mid-operation to verify concurrent rejection and token-based race conditions. Relies on `@MainActor` cooperative scheduling (documented in the mock) and enforces single-suspension via `precondition`
+- **Mocks:** 8 mock implementations conforming to service protocols, supporting call counting and error injection via `throwError` properties. Includes `SuspendingMockVirtualizationService` for testing operation serialization and `SuspendingMockUSBDeviceService` for testing the mount mutex in `mountGuestAgentInstaller` — both suspend mid-operation to verify concurrent rejection. Rely on `@MainActor` cooperative scheduling (documented in the mocks) and enforce single-suspension via `precondition`
 - **Factories:** Shared helpers like `makeInstance()`, `makeViewModel()`, `makeCoordinator()` reduce setup duplication
 - **Error paths:** Mocks support setting `throwError` to inject failures and verify error handling

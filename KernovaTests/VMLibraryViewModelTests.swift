@@ -9,8 +9,9 @@ struct VMLibraryViewModelTests {
     private func makeViewModel(
         storageService: MockVMStorageService = MockVMStorageService(),
         diskImageService: MockDiskImageService = MockDiskImageService(),
-        virtualizationService: MockVirtualizationService = MockVirtualizationService()
-    ) -> (VMLibraryViewModel, MockVMStorageService, MockDiskImageService, MockVirtualizationService) {
+        virtualizationService: MockVirtualizationService = MockVirtualizationService(),
+        usbDeviceService: any USBDeviceProviding = MockUSBDeviceService()
+    ) -> (VMLibraryViewModel, MockVMStorageService, MockDiskImageService, MockVirtualizationService, any USBDeviceProviding) {
         UserDefaults.standard.removeObject(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
         UserDefaults.standard.removeObject(forKey: VMLibraryViewModel.vmOrderKey)
         let vm = VMLibraryViewModel(
@@ -18,9 +19,10 @@ struct VMLibraryViewModelTests {
             diskImageService: diskImageService,
             virtualizationService: virtualizationService,
             installService: MockMacOSInstallService(),
-            ipswService: MockIPSWService()
+            ipswService: MockIPSWService(),
+            usbDeviceService: usbDeviceService
         )
-        return (vm, storageService, diskImageService, virtualizationService)
+        return (vm, storageService, diskImageService, virtualizationService, usbDeviceService)
     }
 
     private func makeInstance(name: String = "Test VM") -> VMInstance {
@@ -38,7 +40,7 @@ struct VMLibraryViewModelTests {
 
     @Test("ViewModel starts with empty instances when storage is empty")
     func initialStateEmpty() {
-        let (viewModel, _, _, _) = makeViewModel()
+        let (viewModel, _, _, _, _) = makeViewModel()
         #expect(viewModel.instances.isEmpty)
         #expect(viewModel.selectedID == nil)
         #expect(viewModel.showCreationWizard == false)
@@ -59,7 +61,7 @@ struct VMLibraryViewModelTests {
         storage.bundles[url1] = config1
         storage.bundles[url2] = config2
 
-        let (viewModel, _, _, _) = makeViewModel(storageService: storage)
+        let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
 
         #expect(viewModel.instances.count == 2)
         #expect(viewModel.selectedID == viewModel.instances.first?.id)
@@ -77,7 +79,7 @@ struct VMLibraryViewModelTests {
         storage.bundles[url1] = config1
         storage.bundles[url2] = config2
 
-        let (viewModel, _, _, _) = makeViewModel(storageService: storage)
+        let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
         let secondID = viewModel.instances.last?.id
         viewModel.selectedID = secondID
 
@@ -90,7 +92,7 @@ struct VMLibraryViewModelTests {
 
     @Test("selectedID persists to UserDefaults on change")
     func selectedIDPersistsToUserDefaults() {
-        let (viewModel, _, _, _) = makeViewModel()
+        let (viewModel, _, _, _, _) = makeViewModel()
         let instance = makeInstance()
         viewModel.instances.append(instance)
 
@@ -102,7 +104,7 @@ struct VMLibraryViewModelTests {
 
     @Test("selectedID clears UserDefaults when set to nil")
     func selectedIDClearsUserDefaults() {
-        let (viewModel, _, _, _) = makeViewModel()
+        let (viewModel, _, _, _, _) = makeViewModel()
         let instance = makeInstance()
         viewModel.instances.append(instance)
         viewModel.selectedID = instance.id
@@ -155,7 +157,7 @@ struct VMLibraryViewModelTests {
         storage.bundles[badURL] = VMConfiguration(name: "Bad VM", guestOS: .linux, bootMode: .efi)
         storage.loadConfigurationFailURLs = [badURL]
 
-        let (viewModel, _, _, _) = makeViewModel(storageService: storage)
+        let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
 
         // Good VM loaded, bad VM skipped
         #expect(viewModel.instances.count == 1)
@@ -192,7 +194,7 @@ struct VMLibraryViewModelTests {
 
     @Test("confirmDelete sets instance and shows confirmation")
     func confirmDelete() {
-        let (viewModel, _, _, _) = makeViewModel()
+        let (viewModel, _, _, _, _) = makeViewModel()
         let instance = makeInstance()
         viewModel.instances.append(instance)
 
@@ -204,7 +206,7 @@ struct VMLibraryViewModelTests {
 
     @Test("deleteConfirmed removes instance and clears selection")
     func deleteConfirmed() {
-        let (viewModel, storage, _, _) = makeViewModel()
+        let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = makeInstance()
         viewModel.instances.append(instance)
         viewModel.selectedID = instance.id
@@ -223,7 +225,7 @@ struct VMLibraryViewModelTests {
 
     @Test("deleteConfirmed selects first remaining instance when deleting selected")
     func deleteConfirmedUpdatesSelection() {
-        let (viewModel, storage, _, _) = makeViewModel()
+        let (viewModel, storage, _, _, _) = makeViewModel()
         let first = makeInstance(name: "First")
         let second = makeInstance(name: "Second")
         viewModel.instances = [first, second]
@@ -241,7 +243,7 @@ struct VMLibraryViewModelTests {
 
     @Test("start delegates to lifecycle coordinator")
     func startDelegates() async {
-        let (viewModel, _, _, virtService) = makeViewModel()
+        let (viewModel, _, _, virtService, _) = makeViewModel()
         let instance = makeInstance()
         viewModel.instances.append(instance)
 
@@ -253,7 +255,7 @@ struct VMLibraryViewModelTests {
 
     @Test("stop delegates to lifecycle coordinator")
     func stopDelegates() {
-        let (viewModel, _, _, virtService) = makeViewModel()
+        let (viewModel, _, _, virtService, _) = makeViewModel()
         let instance = makeInstance()
         instance.status = .running
         viewModel.instances.append(instance)
@@ -266,7 +268,7 @@ struct VMLibraryViewModelTests {
 
     @Test("forceStop delegates to lifecycle coordinator")
     func forceStopDelegates() async {
-        let (viewModel, _, _, virtService) = makeViewModel()
+        let (viewModel, _, _, virtService, _) = makeViewModel()
         let instance = makeInstance()
         instance.status = .running
         viewModel.instances.append(instance)
@@ -279,7 +281,7 @@ struct VMLibraryViewModelTests {
 
     @Test("pause delegates to lifecycle coordinator")
     func pauseDelegates() async {
-        let (viewModel, _, _, virtService) = makeViewModel()
+        let (viewModel, _, _, virtService, _) = makeViewModel()
         let instance = makeInstance()
         instance.status = .running
         viewModel.instances.append(instance)
@@ -292,7 +294,7 @@ struct VMLibraryViewModelTests {
 
     @Test("resume delegates to lifecycle coordinator")
     func resumeDelegates() async {
-        let (viewModel, _, _, virtService) = makeViewModel()
+        let (viewModel, _, _, virtService, _) = makeViewModel()
         let instance = makeInstance()
         instance.status = .paused
         viewModel.instances.append(instance)
@@ -305,7 +307,7 @@ struct VMLibraryViewModelTests {
 
     @Test("save delegates to lifecycle coordinator")
     func saveDelegates() async {
-        let (viewModel, _, _, virtService) = makeViewModel()
+        let (viewModel, _, _, virtService, _) = makeViewModel()
         let instance = makeInstance()
         instance.status = .running
         viewModel.instances.append(instance)
@@ -322,7 +324,7 @@ struct VMLibraryViewModelTests {
     func startPresentsError() async {
         let virtService = MockVirtualizationService()
         virtService.startError = VirtualizationError.noVirtualMachine
-        let (viewModel, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let instance = makeInstance()
 
         await viewModel.start(instance)
@@ -335,7 +337,7 @@ struct VMLibraryViewModelTests {
     func forceStopPresentsError() async {
         let virtService = MockVirtualizationService()
         virtService.forceStopError = VirtualizationError.noVirtualMachine
-        let (viewModel, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let instance = makeInstance()
 
         await viewModel.forceStop(instance)
@@ -348,7 +350,7 @@ struct VMLibraryViewModelTests {
     func stopPresentsError() {
         let virtService = MockVirtualizationService()
         virtService.stopError = VirtualizationError.noVirtualMachine
-        let (viewModel, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let instance = makeInstance()
 
         viewModel.stop(instance)
@@ -370,7 +372,7 @@ struct VMLibraryViewModelTests {
 
     @Test("resumeAndStop dispatches resume then stop")
     func resumeAndStopDispatches() async {
-        let (viewModel, _, _, virtService) = makeViewModel()
+        let (viewModel, _, _, virtService, _) = makeViewModel()
         let instance = makeInstance()
         instance.status = .paused
         viewModel.instances.append(instance)
@@ -383,7 +385,7 @@ struct VMLibraryViewModelTests {
 
     @Test("resumeAndStop clears confirmation state after dispatch")
     func resumeAndStopClearsConfirmationState() async {
-        let (viewModel, _, _, _) = makeViewModel()
+        let (viewModel, _, _, _, _) = makeViewModel()
         let instance = makeInstance()
         instance.status = .paused
         viewModel.instances.append(instance)
@@ -398,7 +400,7 @@ struct VMLibraryViewModelTests {
 
     @Test("forceStopFromPaused dispatches forceStop and clears state")
     func forceStopFromPausedDispatches() async {
-        let (viewModel, _, _, virtService) = makeViewModel()
+        let (viewModel, _, _, virtService, _) = makeViewModel()
         let instance = makeInstance()
         instance.status = .paused
         viewModel.instances.append(instance)
@@ -416,7 +418,7 @@ struct VMLibraryViewModelTests {
     func resumeAndStopPresentsErrorOnResumeFailure() async {
         let virtService = MockVirtualizationService()
         virtService.resumeError = VirtualizationError.noVirtualMachine
-        let (viewModel, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let instance = makeInstance()
         instance.status = .paused
 
@@ -428,7 +430,7 @@ struct VMLibraryViewModelTests {
 
     @Test("stop on running VM still delegates directly without confirmation")
     func stopRunningSkipsConfirmation() {
-        let (viewModel, _, _, virtService) = makeViewModel()
+        let (viewModel, _, _, virtService, _) = makeViewModel()
         let instance = makeInstance()
         instance.status = .running
         viewModel.instances.append(instance)
@@ -444,7 +446,7 @@ struct VMLibraryViewModelTests {
     func pausePresentsError() async {
         let virtService = MockVirtualizationService()
         virtService.pauseError = VirtualizationError.noVirtualMachine
-        let (viewModel, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let instance = makeInstance()
 
         await viewModel.pause(instance)
@@ -457,7 +459,7 @@ struct VMLibraryViewModelTests {
     func resumePresentsError() async {
         let virtService = MockVirtualizationService()
         virtService.resumeError = VirtualizationError.noVirtualMachine
-        let (viewModel, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let instance = makeInstance()
 
         await viewModel.resume(instance)
@@ -470,7 +472,7 @@ struct VMLibraryViewModelTests {
     func savePresentsError() async {
         let virtService = MockVirtualizationService()
         virtService.saveError = VirtualizationError.noVirtualMachine
-        let (viewModel, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let instance = makeInstance()
 
         await viewModel.save(instance)
@@ -483,7 +485,7 @@ struct VMLibraryViewModelTests {
 
     @Test("saveConfiguration persists via storage service")
     func saveConfigurationPersists() {
-        let (viewModel, storage, _, _) = makeViewModel()
+        let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = makeInstance()
 
         viewModel.saveConfiguration(for: instance)
@@ -493,7 +495,7 @@ struct VMLibraryViewModelTests {
 
     @Test("saveConfiguration presents error on failure")
     func saveConfigurationPresentsError() {
-        let (viewModel, storage, _, _) = makeViewModel()
+        let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = makeInstance()
         storage.saveConfigurationError = NSError(domain: "test", code: 1)
 
@@ -509,7 +511,7 @@ struct VMLibraryViewModelTests {
     func trySaveThrows() async {
         let virtService = MockVirtualizationService()
         virtService.saveError = VirtualizationError.noVirtualMachine
-        let (viewModel, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let instance = makeInstance()
 
         await #expect(throws: VirtualizationError.self) {
@@ -521,7 +523,7 @@ struct VMLibraryViewModelTests {
     func tryForceStopThrows() async {
         let virtService = MockVirtualizationService()
         virtService.forceStopError = VirtualizationError.noVirtualMachine
-        let (viewModel, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let instance = makeInstance()
 
         await #expect(throws: VirtualizationError.self) {
@@ -533,7 +535,7 @@ struct VMLibraryViewModelTests {
 
     @Test("selectedInstance returns the instance matching selectedID")
     func selectedInstance() {
-        let (viewModel, _, _, _) = makeViewModel()
+        let (viewModel, _, _, _, _) = makeViewModel()
         let instance = makeInstance()
         viewModel.instances.append(instance)
         viewModel.selectedID = instance.id
@@ -543,7 +545,7 @@ struct VMLibraryViewModelTests {
 
     @Test("selectedInstance returns nil when no match")
     func selectedInstanceNil() {
-        let (viewModel, _, _, _) = makeViewModel()
+        let (viewModel, _, _, _, _) = makeViewModel()
         viewModel.selectedID = UUID()
 
         #expect(viewModel.selectedInstance == nil)
@@ -553,7 +555,7 @@ struct VMLibraryViewModelTests {
 
     @Test("createVM creates bundle, disk image, and adds instance")
     func createVMAddsInstance() async {
-        let (viewModel, storage, diskService, _) = makeViewModel()
+        let (viewModel, storage, diskService, _, _) = makeViewModel()
         let wizard = VMCreationViewModel()
         wizard.selectedOS = .linux
         wizard.selectedBootMode = .efi
@@ -569,7 +571,7 @@ struct VMLibraryViewModelTests {
 
     @Test("createVM selects newly created instance")
     func createVMSelectsInstance() async {
-        let (viewModel, _, _, _) = makeViewModel()
+        let (viewModel, _, _, _, _) = makeViewModel()
         let wizard = VMCreationViewModel()
         wizard.selectedOS = .linux
         wizard.selectedBootMode = .efi
@@ -584,7 +586,7 @@ struct VMLibraryViewModelTests {
     func createVMBundleError() async {
         let storage = MockVMStorageService()
         storage.createVMBundleError = VMStorageError.bundleAlreadyExists(UUID())
-        let (viewModel, _, _, _) = makeViewModel(storageService: storage)
+        let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
         let wizard = VMCreationViewModel()
         wizard.selectedOS = .linux
         wizard.selectedBootMode = .efi
@@ -601,7 +603,7 @@ struct VMLibraryViewModelTests {
     func createVMDiskImageError() async {
         let diskService = MockDiskImageService()
         diskService.createDiskImageError = NSError(domain: "test", code: 1)
-        let (viewModel, _, _, _) = makeViewModel(diskImageService: diskService)
+        let (viewModel, _, _, _, _) = makeViewModel(diskImageService: diskService)
         let wizard = VMCreationViewModel()
         wizard.selectedOS = .linux
         wizard.selectedBootMode = .efi
@@ -623,7 +625,7 @@ struct VMLibraryViewModelTests {
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
         storage.bundles[bundleURL] = config
 
-        let (viewModel, _, _, _) = makeViewModel(storageService: storage)
+        let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
         // loadVMs already ran during init, so the instance should be loaded
         // But let's clear and reconcile manually to test the specific method
         viewModel.instances.removeAll()
@@ -636,7 +638,7 @@ struct VMLibraryViewModelTests {
 
     @Test("reconcileWithDisk removes stopped VMs whose bundles are gone")
     func reconcileRemovesStoppedVMs() {
-        let (viewModel, _, _, _) = makeViewModel()
+        let (viewModel, _, _, _, _) = makeViewModel()
         let instance = makeInstance(name: "Gone VM")
         instance.status = .stopped
         viewModel.instances.append(instance)
@@ -649,7 +651,7 @@ struct VMLibraryViewModelTests {
 
     @Test("reconcileWithDisk preserves running VMs even if bundle is missing")
     func reconcilePreservesRunningVMs() {
-        let (viewModel, _, _, _) = makeViewModel()
+        let (viewModel, _, _, _, _) = makeViewModel()
         let instance = makeInstance(name: "Running VM")
         instance.status = .running
         viewModel.instances.append(instance)
@@ -662,7 +664,7 @@ struct VMLibraryViewModelTests {
 
     @Test("reconcileWithDisk preserves paused VMs even if bundle is missing")
     func reconcilePreservesPausedVMs() {
-        let (viewModel, _, _, _) = makeViewModel()
+        let (viewModel, _, _, _, _) = makeViewModel()
         let instance = makeInstance(name: "Paused VM")
         instance.status = .paused
         viewModel.instances.append(instance)
@@ -675,7 +677,7 @@ struct VMLibraryViewModelTests {
 
     @Test("reconcileWithDisk updates selection when selected stopped VM is removed")
     func reconcileUpdatesSelection() {
-        let (viewModel, storage, _, _) = makeViewModel()
+        let (viewModel, storage, _, _, _) = makeViewModel()
         let remaining = makeInstance(name: "Remaining")
         let removed = makeInstance(name: "Removed")
         removed.status = .stopped
@@ -701,7 +703,7 @@ struct VMLibraryViewModelTests {
         storage.bundles[goodURL] = config
 
         // Create viewModel first (no bad bundles yet)
-        let (viewModel, _, _, _) = makeViewModel(storageService: storage)
+        let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
 
         // Introduce the bad bundle after init so it's new to reconcileWithDisk
         let badURL = FileManager.default.temporaryDirectory
@@ -721,7 +723,7 @@ struct VMLibraryViewModelTests {
 
     @Test("reconcileWithDisk presents error when listing bundles fails")
     func reconcilePresentsErrorForFilesystemFailure() {
-        let (viewModel, storage, _, _) = makeViewModel()
+        let (viewModel, storage, _, _, _) = makeViewModel()
         viewModel.showError = false
         viewModel.errorMessage = nil
 
@@ -738,7 +740,7 @@ struct VMLibraryViewModelTests {
     @Test("reconcileWithDisk does not re-present error for already-reported corrupted bundles")
     func reconcileDeduplicatesFailedBundleErrors() {
         let storage = MockVMStorageService()
-        let (viewModel, _, _, _) = makeViewModel(storageService: storage)
+        let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
 
         // Introduce the bad bundle after init so it's new to reconcileWithDisk
         let badURL = FileManager.default.temporaryDirectory
@@ -770,7 +772,7 @@ struct VMLibraryViewModelTests {
         storage.loadConfigurationFailURLs.insert(badURL)
 
         // loadVMs() in init reports the error and seeds reportedFailedBundles
-        let (viewModel, _, _, _) = makeViewModel(storageService: storage)
+        let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
         #expect(viewModel.showError == true)
         #expect(viewModel.errorMessage?.contains("broken-vm") == true)
 
@@ -801,7 +803,7 @@ struct VMLibraryViewModelTests {
         storage.loadConfigurationFailURLs.insert(badURL)
 
         // loadVMs() runs in init and should report the error
-        let (viewModel, _, _, _) = makeViewModel(storageService: storage)
+        let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
         #expect(viewModel.showError == true)
         #expect(viewModel.errorMessage?.contains("broken-vm") == true)
 
@@ -818,7 +820,7 @@ struct VMLibraryViewModelTests {
     @Test("reconcileWithDisk re-presents error after previously-failed bundle loads successfully")
     func reconcileReReportsAfterBundleRecovery() {
         let storage = MockVMStorageService()
-        let (viewModel, _, _, _) = makeViewModel(storageService: storage)
+        let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
 
         // Introduce the bad bundle after init so it's new to reconcileWithDisk
         let bundleURL = FileManager.default.temporaryDirectory
@@ -859,7 +861,7 @@ struct VMLibraryViewModelTests {
     #if arch(arm64)
     @Test("cancelInstallation removes instance and deletes bundle")
     func cancelInstallationRemovesInstance() {
-        let (viewModel, storage, _, _) = makeViewModel()
+        let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = makeInstance(name: "Installing VM")
         instance.status = .installing
         viewModel.instances.append(instance)
@@ -873,7 +875,7 @@ struct VMLibraryViewModelTests {
 
     @Test("cancelInstallation updates selection to first remaining instance")
     func cancelInstallationUpdatesSelection() {
-        let (viewModel, storage, _, _) = makeViewModel()
+        let (viewModel, storage, _, _, _) = makeViewModel()
         let first = makeInstance(name: "First")
         let installing = makeInstance(name: "Installing")
         installing.status = .installing
@@ -893,7 +895,7 @@ struct VMLibraryViewModelTests {
         storage.deleteVMBundleError = VMStorageError.bundleNotFound(
             FileManager.default.temporaryDirectory
         )
-        let (viewModel, _, _, _) = makeViewModel(storageService: storage)
+        let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
         let instance = makeInstance(name: "Installing VM")
         instance.status = .installing
         viewModel.instances.append(instance)
@@ -912,7 +914,7 @@ struct VMLibraryViewModelTests {
 
     @Test("renameVM sets activeRename to detail target")
     func renameVMSetsDetailTarget() {
-        let (viewModel, _, _, _) = makeViewModel()
+        let (viewModel, _, _, _, _) = makeViewModel()
         let instance = makeInstance()
         viewModel.instances.append(instance)
 
@@ -923,7 +925,7 @@ struct VMLibraryViewModelTests {
 
     @Test("renameVMInSidebar sets activeRename to sidebar target")
     func renameVMInSidebarSetsSidebarTarget() {
-        let (viewModel, _, _, _) = makeViewModel()
+        let (viewModel, _, _, _, _) = makeViewModel()
         let instance = makeInstance()
         viewModel.instances.append(instance)
 
@@ -934,7 +936,7 @@ struct VMLibraryViewModelTests {
 
     @Test("commitRename updates name and persists")
     func commitRenameUpdatesName() {
-        let (viewModel, storage, _, _) = makeViewModel()
+        let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = makeInstance(name: "Old Name")
         viewModel.instances.append(instance)
         viewModel.activeRename = .detail(instance.id)
@@ -948,7 +950,7 @@ struct VMLibraryViewModelTests {
 
     @Test("commitRename trims whitespace")
     func commitRenameTrimWhitespace() {
-        let (viewModel, _, _, _) = makeViewModel()
+        let (viewModel, _, _, _, _) = makeViewModel()
         let instance = makeInstance(name: "Original")
         viewModel.instances.append(instance)
         viewModel.activeRename = .detail(instance.id)
@@ -961,7 +963,7 @@ struct VMLibraryViewModelTests {
 
     @Test("commitRename rejects empty name and preserves original")
     func commitRenameRejectsEmpty() {
-        let (viewModel, storage, _, _) = makeViewModel()
+        let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = makeInstance(name: "Keep Me")
         viewModel.instances.append(instance)
         viewModel.activeRename = .detail(instance.id)
@@ -975,7 +977,7 @@ struct VMLibraryViewModelTests {
 
     @Test("commitRename rejects whitespace-only name and preserves original")
     func commitRenameRejectsWhitespace() {
-        let (viewModel, storage, _, _) = makeViewModel()
+        let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = makeInstance(name: "Keep Me")
         viewModel.instances.append(instance)
         viewModel.activeRename = .detail(instance.id)
@@ -989,7 +991,7 @@ struct VMLibraryViewModelTests {
 
     @Test("cancelRename clears state without saving")
     func cancelRenameClearsState() {
-        let (viewModel, storage, _, _) = makeViewModel()
+        let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = makeInstance()
         viewModel.instances.append(instance)
         viewModel.activeRename = .sidebar(instance.id)
@@ -1004,7 +1006,7 @@ struct VMLibraryViewModelTests {
 
     @Test("pauseAllForSleep pauses only running VMs")
     func pauseAllForSleepPausesRunning() async {
-        let (viewModel, _, _, virtService) = makeViewModel()
+        let (viewModel, _, _, virtService, _) = makeViewModel()
         let running1 = makeInstance(name: "Running 1")
         running1.status = .running
         let running2 = makeInstance(name: "Running 2")
@@ -1027,7 +1029,7 @@ struct VMLibraryViewModelTests {
 
     @Test("resumeAllAfterWake resumes only sleep-paused VMs")
     func resumeAllAfterWakeResumesOnlySleepPaused() async {
-        let (viewModel, _, _, virtService) = makeViewModel()
+        let (viewModel, _, _, virtService, _) = makeViewModel()
         let sleepPaused = makeInstance(name: "Sleep Paused")
         sleepPaused.status = .paused
         let userPaused = makeInstance(name: "User Paused")
@@ -1047,7 +1049,7 @@ struct VMLibraryViewModelTests {
     func pauseAllForSleepHandlesError() async {
         let virtService = MockVirtualizationService()
         virtService.pauseError = VirtualizationError.noVirtualMachine
-        let (viewModel, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let running = makeInstance(name: "Running")
         running.status = .running
         viewModel.instances = [running]
@@ -1065,7 +1067,7 @@ struct VMLibraryViewModelTests {
     func resumeAllAfterWakeClearsOnError() async {
         let virtService = MockVirtualizationService()
         virtService.resumeError = VirtualizationError.noVirtualMachine
-        let (viewModel, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let instance = makeInstance(name: "Sleep Paused")
         instance.status = .paused
         viewModel.instances = [instance]
@@ -1081,7 +1083,7 @@ struct VMLibraryViewModelTests {
 
     @Test("pauseAllForSleep is no-op when no running VMs")
     func pauseAllForSleepNoOp() async {
-        let (viewModel, _, _, virtService) = makeViewModel()
+        let (viewModel, _, _, virtService, _) = makeViewModel()
         let stopped = makeInstance(name: "Stopped")
         stopped.status = .stopped
         viewModel.instances = [stopped]
@@ -1094,7 +1096,7 @@ struct VMLibraryViewModelTests {
 
     @Test("resumeAllAfterWake is no-op when no sleep-paused VMs")
     func resumeAllAfterWakeNoOp() async {
-        let (viewModel, _, _, virtService) = makeViewModel()
+        let (viewModel, _, _, virtService, _) = makeViewModel()
         let paused = makeInstance(name: "User Paused")
         paused.status = .paused
         viewModel.instances = [paused]
@@ -1107,7 +1109,7 @@ struct VMLibraryViewModelTests {
 
     @Test("pauseAllForSleep skips non-running states")
     func pauseAllForSleepSkipsNonRunning() async {
-        let (viewModel, _, _, virtService) = makeViewModel()
+        let (viewModel, _, _, virtService, _) = makeViewModel()
         let starting = makeInstance(name: "Starting")
         starting.status = .starting
         let saving = makeInstance(name: "Saving")
@@ -1124,7 +1126,7 @@ struct VMLibraryViewModelTests {
 
     @Test("resumeAllAfterWake skips VMs no longer paused")
     func resumeAllAfterWakeSkipsNonPaused() async {
-        let (viewModel, _, _, virtService) = makeViewModel()
+        let (viewModel, _, _, virtService, _) = makeViewModel()
         let instance = makeInstance(name: "Was Paused")
         instance.status = .stopped  // Status changed between sleep and wake
         viewModel.instances = [instance]
@@ -1145,7 +1147,7 @@ struct VMLibraryViewModelTests {
 
     @Test("cloneVM creates phantom row immediately with preparingState")
     func cloneVMCreatesPhantomRow() {
-        let (viewModel, storage, _, _) = makeViewModel()
+        let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = makeInstance(name: "Original")
         instance.status = .stopped
         viewModel.instances.append(instance)
@@ -1164,7 +1166,7 @@ struct VMLibraryViewModelTests {
 
     @Test("cloneVM transitions phantom to real on success")
     func cloneVMTransitionsPhantom() async {
-        let (viewModel, storage, _, _) = makeViewModel()
+        let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = makeInstance(name: "Original")
         instance.status = .stopped
         viewModel.instances.append(instance)
@@ -1188,7 +1190,7 @@ struct VMLibraryViewModelTests {
     func cloneVMRemovesPhantomOnError() async {
         let storage = MockVMStorageService()
         storage.cloneVMBundleError = VMStorageError.bundleAlreadyExists(UUID())
-        let (viewModel, _, _, _) = makeViewModel(storageService: storage)
+        let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
         let instance = makeInstance(name: "Fail Clone")
         instance.status = .stopped
         viewModel.instances.append(instance)
@@ -1211,7 +1213,7 @@ struct VMLibraryViewModelTests {
 
     @Test("cloneVM is skipped when VM is running")
     func cloneVMSkippedWhenRunning() {
-        let (viewModel, storage, _, _) = makeViewModel()
+        let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = makeInstance(name: "Running VM")
         instance.status = .running
         viewModel.instances.append(instance)
@@ -1224,7 +1226,7 @@ struct VMLibraryViewModelTests {
 
     @Test("cloneVM shows error when hasPreparing is true")
     func cloneVMShowsErrorWhenPreparing() {
-        let (viewModel, _, _, _) = makeViewModel()
+        let (viewModel, _, _, _, _) = makeViewModel()
         let existing = makeInstance(name: "Existing")
         markPreparing(existing)
         let instance = makeInstance(name: "Source")
@@ -1240,7 +1242,7 @@ struct VMLibraryViewModelTests {
 
     @Test("cloneVM increments name when Copy already exists")
     func cloneVMIncrementsName() {
-        let (viewModel, storage, _, _) = makeViewModel()
+        let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = makeInstance(name: "VM")
         instance.status = .stopped
         let copyInstance = makeInstance(name: "VM Copy")
@@ -1257,7 +1259,7 @@ struct VMLibraryViewModelTests {
 
     @Test("cancelPreparingConfirmed removes phantom instance and cancels task")
     func cancelPreparingConfirmedRemovesPhantom() {
-        let (viewModel, _, _, _) = makeViewModel()
+        let (viewModel, _, _, _, _) = makeViewModel()
         let phantom = makeInstance(name: "Cloning VM")
         markPreparing(phantom)
         viewModel.instances.append(phantom)
@@ -1273,7 +1275,7 @@ struct VMLibraryViewModelTests {
 
     @Test("cancelPreparingConfirmed selects remaining instance")
     func cancelPreparingConfirmedSelectsRemaining() {
-        let (viewModel, _, _, _) = makeViewModel()
+        let (viewModel, _, _, _, _) = makeViewModel()
         let other = makeInstance(name: "Other VM")
         let phantom = makeInstance(name: "Cloning VM")
         markPreparing(phantom)
@@ -1288,7 +1290,7 @@ struct VMLibraryViewModelTests {
 
     @Test("confirmCancelPreparing sets state for alert")
     func confirmCancelPreparingSetsState() {
-        let (viewModel, _, _, _) = makeViewModel()
+        let (viewModel, _, _, _, _) = makeViewModel()
         let phantom = makeInstance(name: "Cloning VM")
         markPreparing(phantom)
         viewModel.instances.append(phantom)
@@ -1303,7 +1305,7 @@ struct VMLibraryViewModelTests {
 
     @Test("confirmForceStop sets instance and shows confirmation")
     func confirmForceStop() {
-        let (viewModel, _, _, _) = makeViewModel()
+        let (viewModel, _, _, _, _) = makeViewModel()
         let instance = makeInstance()
         instance.status = .running
         viewModel.instances.append(instance)
@@ -1316,7 +1318,7 @@ struct VMLibraryViewModelTests {
 
     @Test("forceStopConfirmed delegates to lifecycle")
     func forceStopConfirmed() async {
-        let (viewModel, _, _, virtService) = makeViewModel()
+        let (viewModel, _, _, virtService, _) = makeViewModel()
         let instance = makeInstance()
         instance.status = .running
         viewModel.instances.append(instance)
@@ -1331,7 +1333,7 @@ struct VMLibraryViewModelTests {
 
     @Test("hasPreparing returns true when an instance is preparing")
     func hasPreparingTrue() {
-        let (viewModel, _, _, _) = makeViewModel()
+        let (viewModel, _, _, _, _) = makeViewModel()
         let instance = makeInstance()
         markPreparing(instance)
         viewModel.instances.append(instance)
@@ -1341,7 +1343,7 @@ struct VMLibraryViewModelTests {
 
     @Test("hasPreparing returns false when no instances are preparing")
     func hasPreparingFalse() {
-        let (viewModel, _, _, _) = makeViewModel()
+        let (viewModel, _, _, _, _) = makeViewModel()
         let instance = makeInstance()
         viewModel.instances.append(instance)
 
@@ -1358,7 +1360,7 @@ struct VMLibraryViewModelTests {
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
         storage.bundles[bundleURL] = config
 
-        let (viewModel, _, _, _) = makeViewModel(storageService: storage)
+        let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
         viewModel.instances.removeAll()
 
         // Add a preparing instance
@@ -1375,7 +1377,7 @@ struct VMLibraryViewModelTests {
 
     @Test("reconcileWithDisk preserves preparing instances from removal")
     func reconcilePreservesPreparingInstances() {
-        let (viewModel, _, _, _) = makeViewModel()
+        let (viewModel, _, _, _, _) = makeViewModel()
         let preparing = makeInstance(name: "Preparing VM")
         markPreparing(preparing)
         preparing.status = .stopped
@@ -1393,7 +1395,7 @@ struct VMLibraryViewModelTests {
 
     @Test("moveVM reorders instances and persists order to UserDefaults")
     func moveVMReordersAndPersists() {
-        let (viewModel, _, _, _) = makeViewModel()
+        let (viewModel, _, _, _, _) = makeViewModel()
         let a = makeInstance(name: "A")
         let b = makeInstance(name: "B")
         let c = makeInstance(name: "C")
@@ -1452,7 +1454,7 @@ struct VMLibraryViewModelTests {
         storage.bundles[url1] = config1
         storage.bundles[url2] = config2
 
-        let (viewModel, _, _, _) = makeViewModel(storageService: storage)
+        let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
 
         #expect(viewModel.instances.map(\.name) == ["Older", "Newer"])
     }
@@ -1465,7 +1467,7 @@ struct VMLibraryViewModelTests {
             .appendingPathComponent("\(config1.id.uuidString).kernova", isDirectory: true)
         storage.bundles[url1] = config1
 
-        let (viewModel, _, _, _) = makeViewModel(storageService: storage)
+        let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
         #expect(viewModel.instances.count == 1)
 
         // Simulate a new VM appearing on disk
@@ -1484,7 +1486,7 @@ struct VMLibraryViewModelTests {
 
     @Test("deleteConfirmed removes VM from persisted order")
     func deleteRemovesFromOrder() {
-        let (viewModel, storage, _, _) = makeViewModel()
+        let (viewModel, storage, _, _, _) = makeViewModel()
         let a = makeInstance(name: "A")
         let b = makeInstance(name: "B")
         viewModel.instances = [a, b]
@@ -1523,5 +1525,129 @@ struct VMLibraryViewModelTests {
 
         #expect(viewModel.instances.count == 1)
         #expect(viewModel.instances.first?.name == "Only VM")
+    }
+
+    // MARK: - Guest Agent Installer
+
+    @Test("mountGuestAgentInstaller attaches DMG and shows post-mount alert")
+    func mountGuestAgentInstallerAttachesAndShowsAlert() async throws {
+        let installerURL = try #require(KernovaGuestAgentInfo.installerDiskImageURL)
+        let mock = MockUSBDeviceService()
+        let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
+        let instance = makeInstance()
+        viewModel.instances.append(instance)
+
+        viewModel.mountGuestAgentInstaller(on: instance)
+
+        // Spin until the spawned Task sets the alert flag
+        while !viewModel.showInstallerMountedAlert { await Task.yield() }
+
+        #expect(mock.attachCallCount == 1)
+        #expect(mock.lastAttachedPath == installerURL.path)
+        #expect(mock.lastAttachedReadOnly == true)
+        #expect(viewModel.showInstallerMountedAlert == true)
+        #expect(viewModel.installerMountedVMName == instance.name)
+    }
+
+    @Test("mountGuestAgentInstaller is no-op when DMG already attached but still surfaces alert")
+    func mountGuestAgentInstallerAlreadyAttachedSurfacesAlert() throws {
+        let installerURL = try #require(KernovaGuestAgentInfo.installerDiskImageURL)
+        let mock = MockUSBDeviceService()
+        let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
+        let instance = makeInstance()
+        // Pre-populate with the installer DMG already attached
+        instance.attachedUSBDevices.append(USBDeviceInfo(path: installerURL.path, readOnly: true))
+        viewModel.instances.append(instance)
+
+        viewModel.mountGuestAgentInstaller(on: instance)
+
+        // The early-return path sets the alert synchronously — no Task needed
+        #expect(mock.attachCallCount == 0)
+        #expect(viewModel.showInstallerMountedAlert == true)
+        #expect(viewModel.installerMountedVMName == instance.name)
+    }
+
+    @Test("rapid double-click mounts only once via mountingInstanceIDs guard")
+    func rapidDoubleClickMountsOnce() async throws {
+        _ = try #require(KernovaGuestAgentInfo.installerDiskImageURL)
+        let suspending = SuspendingMockUSBDeviceService()
+        let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: suspending)
+        let instance = makeInstance()
+        viewModel.instances.append(instance)
+
+        viewModel.mountGuestAgentInstaller(on: instance)   // Task A — will suspend in attach
+        await suspending.waitUntilSuspended()
+
+        viewModel.mountGuestAgentInstaller(on: instance)   // should early-return on mutex guard
+
+        suspending.resumeSuspended()
+        // Drain by awaiting alert state — the spawned Task sets it before returning
+        while !viewModel.showInstallerMountedAlert { await Task.yield() }
+
+        #expect(suspending.attachCallCount == 1)
+        #expect(viewModel.installerMountedVMName == instance.name)
+    }
+
+    @Test("mountGuestAgentInstaller surfaces error and clears mounting state on attach failure")
+    func mountGuestAgentInstallerAttachFailureClearsState() async throws {
+        _ = try #require(KernovaGuestAgentInfo.installerDiskImageURL)
+        let mock = MockUSBDeviceService()
+        mock.attachError = USBDeviceError.noVirtualMachine
+        let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
+        let instance = makeInstance()
+        viewModel.instances.append(instance)
+
+        viewModel.mountGuestAgentInstaller(on: instance)
+        while !viewModel.showError { await Task.yield() }   // spin until the spawned Task surfaces error
+
+        #expect(mock.attachCallCount == 1)
+        #expect(viewModel.errorMessage != nil)
+        #expect(viewModel.showInstallerMountedAlert == false)
+
+        // Second call must not be blocked — proves mountingInstanceIDs was cleaned up
+        mock.attachError = nil
+        viewModel.mountGuestAgentInstaller(on: instance)
+        while !viewModel.showInstallerMountedAlert { await Task.yield() }
+        #expect(mock.attachCallCount == 2)
+    }
+
+    @Test("unmountGuestAgentInstaller is no-op when DMG not attached")
+    func unmountGuestAgentInstallerNoOpWhenNotAttached() async throws {
+        _ = try #require(KernovaGuestAgentInfo.installerDiskImageURL)
+        let mock = MockUSBDeviceService()
+        let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
+        let instance = makeInstance()
+        // Attach only an unrelated device
+        let unrelated = USBDeviceInfo(path: "/some/other/disk.img", readOnly: false)
+        instance.attachedUSBDevices.append(unrelated)
+        viewModel.instances.append(instance)
+
+        viewModel.unmountGuestAgentInstaller(from: instance)
+
+        // Give any spawned Task time to run (though none should be spawned)
+        await Task.yield()
+
+        #expect(mock.detachCallCount == 0)
+        #expect(instance.attachedUSBDevices.count == 1)
+        #expect(instance.attachedUSBDevices.first?.path == unrelated.path)
+    }
+
+    @Test("unmountGuestAgentInstaller detaches DMG when attached")
+    func unmountGuestAgentInstallerDetachesWhenAttached() async throws {
+        let installerURL = try #require(KernovaGuestAgentInfo.installerDiskImageURL)
+        let mock = MockUSBDeviceService()
+        let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
+        let instance = makeInstance()
+        let installerDevice = USBDeviceInfo(path: installerURL.path, readOnly: true)
+        instance.attachedUSBDevices.append(installerDevice)
+        viewModel.instances.append(instance)
+
+        viewModel.unmountGuestAgentInstaller(from: instance)
+
+        // Spin until the detach Task clears the attached devices list
+        while !instance.attachedUSBDevices.isEmpty { await Task.yield() }
+
+        #expect(mock.detachCallCount == 1)
+        #expect(instance.attachedUSBDevices.isEmpty)
     }
 }

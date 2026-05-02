@@ -1,20 +1,22 @@
 import Foundation
 @testable import Kernova
 
-/// A mock virtualization service whose `start` and `pause` methods suspend until
-/// explicitly resumed. Used to test operation serialization in `VMLifecycleCoordinator`.
+/// A mock USB device service whose `attach` method suspends until explicitly resumed.
+/// Used to test the rapid-double-click mount mutex in `VMLibraryViewModel`.
 ///
 /// - Important: Only **one** operation can be suspended at a time. The mock stores a
 ///   single `suspendedContinuation` slot; calling `suspendIfNeeded()` while another
 ///   operation is already suspended will trigger a precondition failure.
 @MainActor
-final class SuspendingMockVirtualizationService: VirtualizationProviding {
+final class SuspendingMockUSBDeviceService: USBDeviceProviding {
 
-    /// When `true`, `start` will suspend. Set to `false` to allow subsequent calls through immediately.
-    var shouldSuspendOnStart = true
+    /// When `true`, `attach` will suspend. Set to `false` to allow subsequent calls through immediately.
+    var shouldSuspendOnAttach = true
 
-    /// When `true`, `pause` will suspend. Set to `false` to allow subsequent calls through immediately.
-    var shouldSuspendOnPause = true
+    var attachCallCount = 0
+    var detachCallCount = 0
+    var lastAttachedPath: String?
+    var lastAttachedReadOnly: Bool?
 
     // MARK: - Suspension Mechanism
 
@@ -27,7 +29,7 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
     /// Waits until the mock is suspended inside an operation.
     ///
     /// This relies on `@MainActor` cooperative scheduling: the `Task { @MainActor in … }`
-    /// that drives the coordinator will suspend at `withCheckedContinuation` inside
+    /// that drives the view model will suspend at `withCheckedContinuation` inside
     /// `suspendIfNeeded()`, yielding back to the main actor run loop. That yield allows
     /// this method's own `withCheckedContinuation` to execute and observe the stored
     /// `suspendedContinuation`, confirming the mock has entered its suspended state.
@@ -57,40 +59,24 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
         }
     }
 
-    // MARK: - VirtualizationProviding
+    // MARK: - USBDeviceProviding
 
-    func start(_ instance: VMInstance) async throws {
-        if shouldSuspendOnStart {
-            await suspendIfNeeded()
-        }
-        instance.status = .running
+    func attach(
+        diskImagePath: String,
+        readOnly: Bool,
+        to instance: VMInstance
+    ) async throws -> USBDeviceInfo {
+        attachCallCount += 1
+        lastAttachedPath = diskImagePath
+        lastAttachedReadOnly = readOnly
+        if shouldSuspendOnAttach { await suspendIfNeeded() }
+        return USBDeviceInfo(path: diskImagePath, readOnly: readOnly)
     }
 
-    func stop(_ instance: VMInstance) throws {
-        instance.resetToStopped()
-    }
-
-    func forceStop(_ instance: VMInstance) async throws {
-        instance.resetToStopped()
-    }
-
-    func pause(_ instance: VMInstance) async throws {
-        if shouldSuspendOnPause {
-            await suspendIfNeeded()
-        }
-        instance.status = .paused
-    }
-
-    func resume(_ instance: VMInstance) async throws {
-        instance.status = .running
-    }
-
-    func save(_ instance: VMInstance) async throws {
-        instance.tearDownSession()
-        instance.status = .paused
-    }
-
-    func restore(_ instance: VMInstance) async throws {
-        instance.status = .running
+    func detach(
+        deviceInfo: USBDeviceInfo,
+        from instance: VMInstance
+    ) async throws {
+        detachCallCount += 1
     }
 }
