@@ -49,9 +49,13 @@ struct SidebarAgentStatusButton: View {
                     vmName: vmName,
                     status: status,
                     onAction: {
-                        if case .current = status {
-                            // Done — just close
-                        } else {
+                        switch status {
+                        case .current, .unresponsive:
+                            // Done — just close. Nothing to install or update;
+                            // an unresponsive agent will reset itself once the
+                            // heartbeat timeout fires.
+                            break
+                        case .waiting, .outdated:
                             onMount()
                         }
                         isPopoverPresented = false
@@ -68,6 +72,7 @@ struct SidebarAgentStatusButton: View {
         case .waiting: "exclamationmark.circle.fill"
         case .outdated: "arrow.triangle.2.circlepath.circle.fill"
         case .current: "checkmark.circle.fill"
+        case .unresponsive: "wifi.exclamationmark"
         }
     }
 
@@ -76,6 +81,7 @@ struct SidebarAgentStatusButton: View {
         case .waiting: .secondary
         case .outdated: .orange
         case .current: .green
+        case .unresponsive: .orange
         }
     }
 
@@ -84,6 +90,7 @@ struct SidebarAgentStatusButton: View {
         case .waiting: "Guest agent not installed"
         case .outdated(let installed, let bundled): "Guest agent update available (\(installed) → \(bundled))"
         case .current(let version): "Guest agent connected (\(version))"
+        case .unresponsive(let version): "Guest agent unresponsive (\(version))"
         }
     }
 }
@@ -129,7 +136,7 @@ struct AgentStatusPopoverContent: View {
         switch status {
         case .waiting: "Install Guest Agent…"
         case .outdated: "Update Guest Agent…"
-        case .current: "Done"
+        case .current, .unresponsive: "Done"
         }
     }
 }
@@ -182,6 +189,7 @@ enum AgentStatusPopoverMetrics {
         case .waiting: "Set up the Kernova guest agent"
         case .outdated: "Update available"
         case .current: "Guest agent connected"
+        case .unresponsive: "Guest agent unresponsive"
         }
     }
 
@@ -193,6 +201,8 @@ enum AgentStatusPopoverMetrics {
             return "\(vmName) is running guest agent \(installed). Kernova bundles \(bundled). Mounting the installer presents it as a disk inside the VM — open it in Finder and run install.command."
         case .current(let version):
             return "\(vmName) is connected with guest agent \(version)."
+        case .unresponsive(let version):
+            return "\(vmName) (guest agent \(version)) stopped responding to heartbeats. The control connection will reset automatically; if it persists, restart the agent inside the VM."
         }
     }
 }
@@ -320,6 +330,15 @@ private struct NSPopoverAnchor<Content: View>: NSViewRepresentable {
     SidebarAgentStatusButton(
         vmName: "Sequoia Dev",
         status: .current(version: "0.9.2"),
+        onMount: {}
+    )
+    .padding(40)
+}
+
+#Preview("Button — Unresponsive") {
+    SidebarAgentStatusButton(
+        vmName: "Sequoia Dev",
+        status: .unresponsive(version: "0.9.2"),
         onMount: {}
     )
     .padding(40)

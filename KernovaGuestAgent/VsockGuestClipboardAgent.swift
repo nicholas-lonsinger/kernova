@@ -142,31 +142,14 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     // MARK: - Per-connection serve
 
     private func serve(channel: VsockChannel) async {
-        // Send Hello *before* publishing the channel for the polling timer,
-        // so any offer the timer dispatches is guaranteed to land on the host
-        // after Hello — the host doesn't otherwise gate offer handling on
-        // hello completion, but ordering keeps the wire trace coherent.
-        do {
-            try sendHello(on: channel)
-        } catch {
-            // Don't publish liveChannel — VsockGuestClient.runReconnectLoop will retry
-            // the connection. channel.close() is idempotent and ensures the fd is
-            // released regardless of which sendHello error path we took.
-            Self.logger.warning(
-                "Failed to send clipboard Hello on port \(KernovaVsockPort.clipboard, privacy: .public) — aborting serve, VsockGuestClient will reconnect: \(String(describing: error), privacy: .public)"
-            )
-            channel.close()
-            return
-        }
-
         // RATIONALE: Use await MainActor.run rather than DispatchQueue.main.async
         // here so the publish completes before serve() advances to the read loop.
         // The polling timer checks liveChannel on the main queue; with async
         // dispatch there would be a window where the timer fires, sees a nil
-        // channel, and silently skips an offer — even though serve() has already
-        // sent Hello and the connection is live. The other DispatchQueue.main.async
-        // sites in this class (start/stop, frame-handler dispatch in the loop body)
-        // are fire-and-forget and don't need this guarantee. MainActor.run shares
+        // channel, and silently skips an offer — even though the connection is
+        // already live. The other DispatchQueue.main.async sites in this class
+        // (start/stop, frame-handler dispatch in the loop body) are
+        // fire-and-forget and don't need this guarantee. MainActor.run shares
         // the main-queue executor with DispatchQueue.main, so FIFO ordering is
         // preserved between the two idioms.
         await MainActor.run {
@@ -280,10 +263,6 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             return
         }
         switch frame.payload {
-        case .hello(let hello):
-            Self.logger.notice(
-                "Host clipboard service ready (caps: \(hello.capabilities.joined(separator: ","), privacy: .public))"
-            )
         case .clipboardOffer(let offer):
             handleOffer(offer, channel: channel)
         case .clipboardRequest(let req):
@@ -296,8 +275,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             Self.logger.warning(
                 "Host clipboard error: \(error.code, privacy: .public) — \(error.message, privacy: .public)"
             )
-        case .logRecord, .none:
-            Self.logger.debug("Ignoring unexpected payload on clipboard channel")
+        case .hello, .heartbeat, .logRecord, .none:
+            Self.logger.warning("Unexpected payload on clipboard channel — wrong port")
         }
     }
 
@@ -428,7 +407,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         }
     }
 
-    // MARK: - Hello / Error helpers
+    // MARK: - Error helpers
 
     /// If `channel.sendErrorFrame` fails (typically because the channel just tore down
     /// for the same reason we're reporting), the failure is logged at `.debug`
@@ -446,20 +425,5 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                 "Failed to send error frame (code=\(code, privacy: .public)): \(error.localizedDescription, privacy: .public)"
             )
         }
-    }
-
-    private func sendHello(on channel: VsockChannel) throws {
-        var hello = Frame()
-        hello.protocolVersion = 1
-        hello.hello = Kernova_V1_Hello.with {
-            $0.serviceVersion = 1
-            $0.capabilities = ["clipboard.text.utf8"]
-            $0.agentInfo = Kernova_V1_AgentInfo.with {
-                $0.os = "macOS"
-                $0.osVersion = ProcessInfo.processInfo.operatingSystemVersionString
-                $0.agentVersion = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "unknown"
-            }
-        }
-        try channel.send(hello)
     }
 }
