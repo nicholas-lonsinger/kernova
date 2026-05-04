@@ -328,6 +328,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
     }
 
+    @objc func showAboutPanel(_ sender: Any?) {
+        #if DEBUG
+        let buildNumber = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? ""
+        let versionAnnotation = buildNumber.isEmpty ? "Debug" : "\(buildNumber) | Debug"
+        NSApp.orderFrontStandardAboutPanel(options: [.version: versionAnnotation])
+        #else
+        NSApp.orderFrontStandardAboutPanel(sender)
+        #endif
+    }
+
     // MARK: - VM Actions
 
     @objc func startVM(_ sender: Any?) {
@@ -489,16 +499,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // window button. The viewModel already handles the missing-DMG case
         // with a fault + assertionFailure.
         viewModel.mountGuestAgentInstaller(on: instance)
-    }
-
-    @objc func showAboutPanel(_ sender: Any?) {
-        #if DEBUG
-        let buildNumber = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? ""
-        let versionAnnotation = buildNumber.isEmpty ? "Debug" : "\(buildNumber) | Debug"
-        NSApp.orderFrontStandardAboutPanel(options: [.version: versionAnnotation])
-        #else
-        NSApp.orderFrontStandardAboutPanel(sender)
-        #endif
     }
 
     // MARK: - Display Window (Pop-Out / Fullscreen)
