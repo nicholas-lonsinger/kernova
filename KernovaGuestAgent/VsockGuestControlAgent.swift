@@ -200,10 +200,9 @@ final class VsockGuestControlAgent: @unchecked Sendable {
     }
 
     private func sendHeartbeat(on channel: VsockChannel) {
-        let nonce = lock.withLock { () -> UInt64 in
-            let n = nextHeartbeatNonce
-            nextHeartbeatNonce += 1
-            return n
+        let nonce = lock.withLock {
+            defer { nextHeartbeatNonce += 1 }
+            return nextHeartbeatNonce
         }
         var frame = Frame()
         frame.protocolVersion = 1
