@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import SwiftProtobuf
 
 /// Convenience alias for the generated top-level wire message.
@@ -46,6 +47,22 @@ public final class VsockChannel: @unchecked Sendable {
     /// Wraps the given file descriptor. The descriptor must be a connected
     /// SOCK_STREAM endpoint; the channel will close it on teardown.
     public init(fileDescriptor: Int32) {
+        // Set `SO_NOSIGPIPE` so writes to a peer whose read side has closed
+        // surface as an EPIPE error from `write(2)` instead of raising
+        // `SIGPIPE` to the process. Without this, a peer disconnecting at the
+        // wrong moment crashes the agent (or any host process) the next time
+        // a heartbeat / clipboard / log frame is dispatched. Best-effort:
+        // `setsockopt` failure is logged via the writer's error path the
+        // first time a write fails, so we don't surface here.
+        var nosigpipe: Int32 = 1
+        _ = setsockopt(
+            fileDescriptor,
+            SOL_SOCKET,
+            SO_NOSIGPIPE,
+            &nosigpipe,
+            socklen_t(MemoryLayout<Int32>.size)
+        )
+
         self.fileHandle = FileHandle(fileDescriptor: fileDescriptor, closeOnDealloc: true)
         let (stream, continuation) = AsyncThrowingStream<Frame, Error>.makeStream()
         self.incoming = stream
