@@ -328,6 +328,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
     }
 
+    @objc func showAboutPanel(_ sender: Any?) {
+        #if DEBUG
+        let buildNumber = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? ""
+        let versionAnnotation = buildNumber.isEmpty ? "Debug" : "\(buildNumber) | Debug"
+        NSApp.orderFrontStandardAboutPanel(options: [.version: versionAnnotation])
+        #else
+        NSApp.orderFrontStandardAboutPanel(sender)
+        #endif
+    }
+
     // MARK: - VM Actions
 
     @objc func startVM(_ sender: Any?) {
@@ -765,7 +775,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // Application menu
         let appMenuItem = NSMenuItem()
         let appMenu = NSMenu()
-        appMenu.addItem(withTitle: "About Kernova", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(withTitle: "About Kernova", action: #selector(showAboutPanel(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
         let servicesItem = NSMenuItem(title: "Services", action: nil, keyEquivalent: "")
         let servicesMenu = NSMenu(title: "Services")
