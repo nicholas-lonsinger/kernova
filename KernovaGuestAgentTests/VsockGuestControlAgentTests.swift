@@ -98,6 +98,13 @@ struct VsockGuestControlAgentTests {
         // that the maximum inter-frame gap stays within a generous tolerance
         // of the cadence. This proves "the timer fires repeatedly at roughly
         // the configured rate" without coupling to absolute wall-clock time.
+        //
+        // Note: gaps are measured at receive time, not at the timer's fire
+        // time. If MainActor stalls and the kernel buffers heartbeats during
+        // the stall, the test reads them back-to-back with near-zero gaps and
+        // passes — which is correct for "is the timer running" but does NOT
+        // catch "MainActor → late delivery". A separate (likely clock-injected)
+        // test would be needed to assert end-to-end latency.
         let cadence: Duration = .milliseconds(100)
         let agent = makeAgent(agentFd: agentFd, heartbeatInterval: cadence)
         defer { agent.stop() }
@@ -114,8 +121,10 @@ struct VsockGuestControlAgentTests {
             }
         }
 
+        // Loop above guarantees stamps.count == 3, so gaps has exactly 2
+        // elements and reduce(.zero, max) is the natural non-optional form.
         let gaps = zip(stamps.dropFirst(), stamps).map { $0 - $1 }
-        let maxGap = gaps.max() ?? .zero
+        let maxGap = gaps.reduce(.zero, max)
         // 10× cadence tolerance: catches "timer not running" / "cadence
         // misconfigured" without flagging single-tick scheduling jitter.
         let tolerance = cadence * 10

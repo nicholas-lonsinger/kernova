@@ -11,28 +11,15 @@ struct VsockClipboardServiceTests {
     // MARK: - Helpers
 
     private func makePair() throws -> (sender: VsockChannel, receiver: VsockChannel) {
-        var fds: [Int32] = [-1, -1]
-        let rc = fds.withUnsafeMutableBufferPointer { buf in
-            socketpair(AF_UNIX, SOCK_STREAM, 0, buf.baseAddress)
-        }
-        guard rc == 0 else {
-            throw POSIXError(.init(rawValue: errno) ?? .EIO)
-        }
-        return (VsockChannel(fileDescriptor: fds[0]),
-                VsockChannel(fileDescriptor: fds[1]))
+        let (a, b) = try makeRawSocketPair()
+        return (VsockChannel(fileDescriptor: a), VsockChannel(fileDescriptor: b))
     }
 
     /// Returns the raw fd pair alongside the channels so callers can set socket
     /// options (e.g. SO_NOSIGPIPE) on the fd before writes.
     private func makeRawPair() throws -> (hostFd: Int32, guestFd: Int32, host: VsockChannel, guest: VsockChannel) {
-        var fds: [Int32] = [-1, -1]
-        let rc = fds.withUnsafeMutableBufferPointer { buf in
-            socketpair(AF_UNIX, SOCK_STREAM, 0, buf.baseAddress)
-        }
-        guard rc == 0 else {
-            throw POSIXError(.init(rawValue: errno) ?? .EIO)
-        }
-        return (fds[0], fds[1], VsockChannel(fileDescriptor: fds[0]), VsockChannel(fileDescriptor: fds[1]))
+        let (hostFd, guestFd) = try makeRawSocketPair()
+        return (hostFd, guestFd, VsockChannel(fileDescriptor: hostFd), VsockChannel(fileDescriptor: guestFd))
     }
 
     /// MainActor-isolated buffer fed by a single iterator on the channel.
@@ -440,12 +427,7 @@ struct VsockClipboardServiceTests {
 
     @Test("handleOffer send failure leaves pendingInboundGeneration unchanged")
     func offerSendFailureDoesNotSetPendingGeneration() async throws {
-        var rawFds: [Int32] = [-1, -1]
-        let rc = rawFds.withUnsafeMutableBufferPointer { buf in
-            socketpair(AF_UNIX, SOCK_STREAM, 0, buf.baseAddress)
-        }
-        guard rc == 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
-        let (guestRawFd, hostRawFd) = (rawFds[0], rawFds[1])
+        let (guestRawFd, hostRawFd) = try makeRawSocketPair()
 
         // SO_NOSIGPIPE so the service's write to a closed peer surfaces as an
         // error rather than killing the test process with SIGPIPE.

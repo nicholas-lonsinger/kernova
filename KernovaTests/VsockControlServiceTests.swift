@@ -11,15 +11,8 @@ struct VsockControlServiceTests {
     // MARK: - Helpers
 
     private func makePair() throws -> (sender: VsockChannel, receiver: VsockChannel) {
-        var fds: [Int32] = [-1, -1]
-        let rc = fds.withUnsafeMutableBufferPointer { buf in
-            socketpair(AF_UNIX, SOCK_STREAM, 0, buf.baseAddress)
-        }
-        guard rc == 0 else {
-            throw POSIXError(.init(rawValue: errno) ?? .EIO)
-        }
-        return (VsockChannel(fileDescriptor: fds[0]),
-                VsockChannel(fileDescriptor: fds[1]))
+        let (a, b) = try makeRawSocketPair()
+        return (VsockChannel(fileDescriptor: a), VsockChannel(fileDescriptor: b))
     }
 
     /// Builds a guest-side Hello frame with the given agent version. Tests use
@@ -258,6 +251,11 @@ struct VsockControlServiceTests {
         // heartbeats and check that the maximum inter-frame gap stays within
         // a generous tolerance of the cadence. Mirrors the agent-side test
         // in VsockGuestControlAgentTests.
+        //
+        // Note: gaps are measured at receive time, not at the timer's fire
+        // time. A MainActor stall that buffers frames and drains them back-
+        // to-back will pass — correct for "is the timer running" but not a
+        // check on end-to-end latency.
         let cadence: Duration = .milliseconds(100)
         let service = makeService(channel: host, heartbeatInterval: cadence)
         service.start()
@@ -274,8 +272,10 @@ struct VsockControlServiceTests {
             }
         }
 
+        // Loop above guarantees stamps.count == 3, so gaps has exactly 2
+        // elements and reduce(.zero, max) is the natural non-optional form.
         let gaps = zip(stamps.dropFirst(), stamps).map { $0 - $1 }
-        let maxGap = gaps.max() ?? .zero
+        let maxGap = gaps.reduce(.zero, max)
         let tolerance = cadence * 10
         #expect(
             maxGap < tolerance,
