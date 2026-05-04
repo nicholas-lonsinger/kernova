@@ -95,6 +95,14 @@ final class VsockControlService {
         unresponsiveAfter: Duration = .seconds(15),
         terminateAfter: Duration = .seconds(30)
     ) {
+        // The two-stage watchdog requires `unresponsiveAfter < terminateAfter`
+        // so the `.unresponsive` UI transition is observable before the channel
+        // is torn down. With the relation reversed, `terminateAfter` would fire
+        // first and `.unresponsive` would never be reached.
+        precondition(
+            unresponsiveAfter < terminateAfter,
+            "VsockControlService: unresponsiveAfter (\(unresponsiveAfter)) must be < terminateAfter (\(terminateAfter))"
+        )
         self.channel = channel
         self.label = label
         self.bundledAgentVersion = bundledAgentVersion

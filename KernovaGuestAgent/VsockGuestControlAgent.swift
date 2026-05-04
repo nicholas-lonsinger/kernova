@@ -56,6 +56,14 @@ final class VsockGuestControlAgent: @unchecked Sendable {
         unresponsiveAfter: Duration = .seconds(15),
         terminateAfter: Duration = .seconds(30)
     ) {
+        // The two-stage watchdog requires `unresponsiveAfter < terminateAfter`
+        // so the "host appears unresponsive" warning is observable before the
+        // channel is torn down. With the relation reversed, `terminateAfter`
+        // would fire first and the unresponsive log path would never run.
+        precondition(
+            unresponsiveAfter < terminateAfter,
+            "VsockGuestControlAgent: unresponsiveAfter (\(unresponsiveAfter)) must be < terminateAfter (\(terminateAfter))"
+        )
         self.client = client
         self.heartbeatInterval = heartbeatInterval
         self.unresponsiveAfter = unresponsiveAfter
