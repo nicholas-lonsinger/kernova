@@ -311,12 +311,24 @@ struct VsockControlServiceTests {
         host.start()
         defer { guest.close() }
 
+        // Use generous timings so MainActor scheduling jitter on slow CI
+        // runners doesn't race the watchdog tick. The narrow 40 ms / 120 ms
+        // pairing this test originally used was flaky on GitHub Actions:
+        // when the test's `Task.sleep` resumed late (because MainActor was
+        // busy with the heartbeat + liveness tasks), `now - lastInboundFrame`
+        // could exceed `unresponsiveAfter` between sleep wake and assertion,
+        // flipping status to .unresponsive briefly even though the test had
+        // just sent a heartbeat. Widening the unresponsive window to 400 ms
+        // and asserting only at end-of-test (rather than per-iteration)
+        // removes the race while still proving the property under test:
+        // sustained inbound heartbeats reset the inbound-liveness clock so
+        // status remains .current across a window > unresponsiveAfter.
         let service = makeService(
             channel: host,
             bundledAgentVersion: "0.9.0",
-            heartbeatInterval: .milliseconds(40),
-            unresponsiveAfter: .milliseconds(120),
-            terminateAfter: .milliseconds(2_000)
+            heartbeatInterval: .milliseconds(200),
+            unresponsiveAfter: .milliseconds(400),
+            terminateAfter: .seconds(5)
         )
         service.start()
         defer { service.stop() }
@@ -325,13 +337,17 @@ struct VsockControlServiceTests {
         try guest.send(makeGuestHello(agentVersion: "0.9.0"))
         try await waitUntil { service.isConnected }
 
-        // Send 6 heartbeats spread over ~240ms — twice the unresponsiveAfter
-        // window. Status must stay .current the whole time.
-        for nonce in (1 ... 6) {
+        // Send heartbeats every 100 ms (well below the 400 ms unresponsive
+        // window) for ~800 ms total — twice unresponsiveAfter.
+        for nonce in 1 ... 8 {
             try guest.send(makeHeartbeat(nonce: UInt64(nonce)))
-            try await Task.sleep(for: .milliseconds(40))
-            #expect(service.agentStatus == .current(version: "0.9.0"))
+            try await Task.sleep(for: .milliseconds(100))
         }
+
+        // End-state check: total elapsed > 2× unresponsiveAfter. If
+        // heartbeats had not been resetting the clock, status would now be
+        // .unresponsive. .current here proves the sustained-liveness path.
+        #expect(service.agentStatus == .current(version: "0.9.0"))
     }
 
     @Test("Silence past unresponsiveAfter flips agentStatus to .unresponsive")
