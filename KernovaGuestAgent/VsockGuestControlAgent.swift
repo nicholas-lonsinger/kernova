@@ -241,9 +241,4 @@ final class VsockGuestControlAgent: @unchecked Sendable {
             }
         }
     }
-
-    // MARK: - Test seams
-
-    /// Exposes the heartbeat-interval init parameter for assertions in tests.
-    var heartbeatIntervalForTesting: Duration { heartbeatInterval }
 }
