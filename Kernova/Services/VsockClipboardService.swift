@@ -180,7 +180,7 @@ final class VsockClipboardService: ClipboardServicing {
     ) async {
         do {
             for try await frame in channel.incoming {
-                await dispatch(frame)
+                dispatch(frame)
             }
             logger.info("Vsock clipboard channel closed for '\(label, privacy: .public)'")
         } catch {

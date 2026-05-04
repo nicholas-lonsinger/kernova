@@ -139,7 +139,7 @@ final class VsockControlService {
                     return
                 }
                 if Task.isCancelled { return }
-                await self?.sendHeartbeat()
+                self?.sendHeartbeat()
             }
         }
 
@@ -152,7 +152,7 @@ final class VsockControlService {
                     return
                 }
                 if Task.isCancelled { return }
-                await self?.checkLiveness()
+                self?.checkLiveness()
             }
         }
 
@@ -261,7 +261,7 @@ final class VsockControlService {
     ) async {
         do {
             for try await frame in channel.incoming {
-                await dispatch(frame)
+                dispatch(frame)
             }
             logger.info("Vsock control channel closed for '\(label, privacy: .public)'")
         } catch {
