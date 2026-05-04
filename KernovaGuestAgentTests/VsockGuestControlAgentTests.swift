@@ -86,27 +86,43 @@ struct VsockGuestControlAgentTests {
         host.start()
         defer { host.close() }
 
-        // Use a 100 ms cadence and a 1 s deadline so MainActor scheduling
-        // jitter on slow CI runners (the macOS-26 VMs see noticeably more
-        // latency than local hardware) doesn't squeeze the heartbeat count.
-        // 1 s / 100 ms = 10 expected cadences; demanding ≥ 3 leaves 7×
-        // headroom while still proving the timer fires repeatedly.
-        let agent = makeAgent(agentFd: agentFd, heartbeatInterval: .milliseconds(100))
+        // Property under test: heartbeats fire repeatedly on the cadence.
+        //
+        // Earlier shape — "≥ N heartbeats inside a fixed wall-clock window" —
+        // was brittle on macos-26 GitHub Actions runners (one prior failure
+        // recorded `count → 2 ≥ 3`). The window-based count fails when a
+        // single MainActor stall slides multiple ticks outside the window
+        // even though the timer is firing correctly.
+        //
+        // Gap-based assertion: read three consecutive heartbeats and check
+        // that the maximum inter-frame gap stays within a generous tolerance
+        // of the cadence. This proves "the timer fires repeatedly at roughly
+        // the configured rate" without coupling to absolute wall-clock time.
+        let cadence: Duration = .milliseconds(100)
+        let agent = makeAgent(agentFd: agentFd, heartbeatInterval: cadence)
         defer { agent.stop() }
         agent.start()
 
         // First frame is the agent Hello — discard.
         _ = try await nextFrame(from: host)
 
-        var count = 0
-        let deadline = ContinuousClock.now.advanced(by: .seconds(1))
-        while ContinuousClock.now < deadline && count < 3 {
-            let frame = try await nextFrame(from: host, timeout: .milliseconds(800))
+        var stamps: [ContinuousClock.Instant] = []
+        while stamps.count < 3 {
+            let frame = try await nextFrame(from: host, timeout: .seconds(2))
             if case .heartbeat = frame.payload {
-                count += 1
+                stamps.append(.now)
             }
         }
-        #expect(count >= 3, "Expected at least 3 heartbeats; got \(count)")
+
+        let gaps = zip(stamps.dropFirst(), stamps).map { $0 - $1 }
+        let maxGap = gaps.max() ?? .zero
+        // 10× cadence tolerance: catches "timer not running" / "cadence
+        // misconfigured" without flagging single-tick scheduling jitter.
+        let tolerance = cadence * 10
+        #expect(
+            maxGap < tolerance,
+            "Heartbeat cadence drift: max gap \(maxGap) exceeds \(tolerance) (10× cadence). Gaps: \(gaps)"
+        )
     }
 
     // MARK: - Inbound

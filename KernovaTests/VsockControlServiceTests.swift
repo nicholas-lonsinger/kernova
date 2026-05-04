@@ -22,40 +22,6 @@ struct VsockControlServiceTests {
                 VsockChannel(fileDescriptor: fds[1]))
     }
 
-    private func nextFrame(
-        from channel: VsockChannel,
-        timeout: Duration = .seconds(2)
-    ) async throws -> Frame {
-        let receiver = Task<Frame?, Error> {
-            var iterator = channel.incoming.makeAsyncIterator()
-            return try await iterator.next()
-        }
-        let timeoutTask = Task<Void, Error> {
-            try await Task.sleep(for: timeout)
-            receiver.cancel()
-        }
-        defer { timeoutTask.cancel() }
-        guard let frame = try await receiver.value else {
-            throw TestFailure("Channel finished without producing a frame")
-        }
-        return frame
-    }
-
-    private struct TestFailure: Error { let message: String; init(_ m: String) { message = m } }
-
-    private func waitUntil(
-        timeout: Duration = .seconds(2),
-        _ predicate: () -> Bool
-    ) async throws {
-        let deadline = ContinuousClock.now.advanced(by: timeout)
-        while !predicate() && ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        if !predicate() {
-            throw TestFailure("Predicate did not become true within \(timeout)")
-        }
-    }
-
     /// Builds a guest-side Hello frame with the given agent version. Tests use
     /// this to drive the `agentStatus` numeric-comparison matrix.
     private func makeGuestHello(agentVersion: String) -> Frame {
@@ -285,25 +251,36 @@ struct VsockControlServiceTests {
         host.start()
         defer { guest.close() }
 
-        // Wider cadence (100 ms) and deadline (1 s) so MainActor scheduling
-        // jitter on slow CI runners doesn't squeeze the heartbeat count.
-        let service = makeService(channel: host, heartbeatInterval: .milliseconds(100))
+        // Property under test: heartbeats fire repeatedly on the cadence.
+        //
+        // Earlier shape — "≥ N heartbeats inside a fixed wall-clock window" —
+        // was brittle on macos-26 runners. Gap-based: read three consecutive
+        // heartbeats and check that the maximum inter-frame gap stays within
+        // a generous tolerance of the cadence. Mirrors the agent-side test
+        // in VsockGuestControlAgentTests.
+        let cadence: Duration = .milliseconds(100)
+        let service = makeService(channel: host, heartbeatInterval: cadence)
         service.start()
         defer { service.stop() }
 
-        // Frame 0 is the host Hello. After that, ≥3 heartbeats with a 100ms
-        // cadence inside a 1 s window — 7× headroom over the assertion.
+        // Frame 0 is the host Hello — discard.
         _ = try await nextFrame(from: guest)
 
-        var heartbeatCount = 0
-        let deadline = ContinuousClock.now.advanced(by: .seconds(1))
-        while heartbeatCount < 3, ContinuousClock.now < deadline {
-            let frame = try await nextFrame(from: guest, timeout: .milliseconds(800))
+        var stamps: [ContinuousClock.Instant] = []
+        while stamps.count < 3 {
+            let frame = try await nextFrame(from: guest, timeout: .seconds(2))
             if case .heartbeat = frame.payload {
-                heartbeatCount += 1
+                stamps.append(.now)
             }
         }
-        #expect(heartbeatCount >= 3, "Expected at least 3 heartbeats; got \(heartbeatCount)")
+
+        let gaps = zip(stamps.dropFirst(), stamps).map { $0 - $1 }
+        let maxGap = gaps.max() ?? .zero
+        let tolerance = cadence * 10
+        #expect(
+            maxGap < tolerance,
+            "Heartbeat cadence drift: max gap \(maxGap) exceeds \(tolerance) (10× cadence). Gaps: \(gaps)"
+        )
     }
 
     @Test("Inbound heartbeat keeps agentStatus .current past unresponsiveAfter")

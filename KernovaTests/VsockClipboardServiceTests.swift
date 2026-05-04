@@ -35,30 +35,6 @@ struct VsockClipboardServiceTests {
         return (fds[0], fds[1], VsockChannel(fileDescriptor: fds[0]), VsockChannel(fileDescriptor: fds[1]))
     }
 
-    /// Drains the next frame from a channel within a generous deadline. Tests
-    /// that expect no frame must use `expectNoFrame` instead — this helper
-    /// throws on timeout.
-    private func nextFrame(
-        from channel: VsockChannel,
-        timeout: Duration = .seconds(2)
-    ) async throws -> Frame {
-        let receiver = Task<Frame?, Error> {
-            var iterator = channel.incoming.makeAsyncIterator()
-            return try await iterator.next()
-        }
-        let timeoutTask = Task<Void, Error> {
-            try await Task.sleep(for: timeout)
-            receiver.cancel()
-        }
-        defer { timeoutTask.cancel() }
-        guard let frame = try await receiver.value else {
-            throw TestFailure("Channel finished without producing a frame")
-        }
-        return frame
-    }
-
-    private struct TestFailure: Error { let message: String; init(_ m: String) { message = m } }
-
     /// MainActor-isolated buffer fed by a single iterator on the channel.
     /// Tests that need both "expect frame" and "expect no frame" assertions
     /// against the same channel must not hand-roll iterators per call —
@@ -91,7 +67,7 @@ struct VsockClipboardServiceTests {
     private func waitForFrameCount(
         _ recorder: FrameRecorder,
         equals expected: Int,
-        timeout: Duration = .seconds(2)
+        timeout: Duration = .seconds(5)
     ) async throws {
         try await waitUntil(timeout: timeout) {
             recorder.frames.count == expected
@@ -110,21 +86,6 @@ struct VsockClipboardServiceTests {
         if recorder.frames.count != before {
             let extras = Array(recorder.frames[before...])
             Issue.record("Expected no new frames over \(duration); got \(extras.count): \(extras.map { String(describing: $0.payload) })")
-        }
-    }
-
-    /// Spins until a service-side condition is true (or a deadline elapses).
-    /// Replaces ad-hoc `Task.sleep` waits in concurrency-sensitive tests.
-    private func waitUntil(
-        timeout: Duration = .seconds(2),
-        _ predicate: () -> Bool
-    ) async throws {
-        let deadline = ContinuousClock.now.advanced(by: timeout)
-        while !predicate() && ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        if !predicate() {
-            throw TestFailure("Predicate did not become true within \(timeout)")
         }
     }
 
