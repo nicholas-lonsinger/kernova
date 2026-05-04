@@ -44,16 +44,28 @@ public final class VsockChannel: @unchecked Sendable {
     private var started = false
     private var closed = false
 
+    /// Set once on first `VsockChannel` construction: ignore `SIGPIPE`
+    /// process-wide so a write to a peer whose read side has closed surfaces
+    /// as `EPIPE` from `write(2)` instead of killing the process. Belt-and-
+    /// suspenders alongside the per-fd `SO_NOSIGPIPE` set in `init` —
+    /// `SO_NOSIGPIPE` doesn't appear to take effect on every code path
+    /// across macOS versions / `FileHandle` write internals (CI on macOS-26.3
+    /// VMs still delivers `SIGPIPE` despite the socket option being set), so
+    /// the global handler is the reliable backstop.
+    private static let suppressSIGPIPEOnce: Void = {
+        signal(SIGPIPE, SIG_IGN)
+    }()
+
     /// Wraps the given file descriptor. The descriptor must be a connected
     /// SOCK_STREAM endpoint; the channel will close it on teardown.
     public init(fileDescriptor: Int32) {
-        // Set `SO_NOSIGPIPE` so writes to a peer whose read side has closed
-        // surface as an EPIPE error from `write(2)` instead of raising
-        // `SIGPIPE` to the process. Without this, a peer disconnecting at the
-        // wrong moment crashes the agent (or any host process) the next time
-        // a heartbeat / clipboard / log frame is dispatched. Best-effort:
-        // `setsockopt` failure is logged via the writer's error path the
-        // first time a write fails, so we don't surface here.
+        _ = Self.suppressSIGPIPEOnce
+
+        // Per-fd safety net: when the option does take effect, this is the
+        // cleaner mechanism (errors from individual writes vs. a global
+        // signal mask change). When it doesn't, `suppressSIGPIPEOnce`
+        // already covers us. Best-effort — `setsockopt` failure on a fresh
+        // socket is non-fatal and would surface via the next write's error.
         var nosigpipe: Int32 = 1
         _ = setsockopt(
             fileDescriptor,
