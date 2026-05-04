@@ -126,16 +126,6 @@ final class AtomicInt: @unchecked Sendable {
 
 // MARK: - Frame factories
 
-func makeHelloFrame() -> Frame {
-    var frame = Frame()
-    frame.protocolVersion = 1
-    frame.hello = Kernova_V1_Hello.with {
-        $0.serviceVersion = 1
-        $0.capabilities = ["clipboard.text.utf8"]
-    }
-    return frame
-}
-
 func makeOfferFrame(generation: UInt64) -> Frame {
     var frame = Frame()
     frame.protocolVersion = 1

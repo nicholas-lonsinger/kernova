@@ -78,13 +78,12 @@ struct VMRowView: View {
 
     /// The agent status to surface as a sidebar indicator, or `nil` to hide.
     /// Hidden when the guest can't use the Kernova-bundled agent (Linux guests
-    /// install spice-vdagent themselves), when no clipboard service is active
-    /// (clipboard sharing off, or VM not running), or when the agent is current
-    /// (no news is good news).
+    /// install spice-vdagent themselves) or when the agent is `.current` (no
+    /// news is good news). `.waiting`, `.outdated`, and `.unresponsive` are all
+    /// surfaced so the user has something to act on.
     private var visibleAgentStatus: AgentStatus? {
         guard instance.configuration.guestOS == .macOS else { return nil }
-        guard let service = instance.clipboardService else { return nil }
-        let status = service.agentStatus
+        let status = instance.agentStatus
         if case .current = status { return nil }
         return status
     }

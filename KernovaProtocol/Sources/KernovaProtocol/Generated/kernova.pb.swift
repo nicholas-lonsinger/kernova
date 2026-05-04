@@ -100,8 +100,17 @@ public struct Kernova_V1_Frame: Sendable {
     set {payload = .error(newValue)}
   }
 
+  public var heartbeat: Kernova_V1_Heartbeat {
+    get {
+      if case .heartbeat(let v)? = payload {return v}
+      return Kernova_V1_Heartbeat()
+    }
+    set {payload = .heartbeat(newValue)}
+  }
+
   /// Service payloads occupy reserved number ranges so each service can grow
   /// independently without colliding:
+  ///   12..19 reserved for control plane (heartbeat, future control payloads)
   ///   20..29 reserved for clipboard
   ///   30..39 reserved for logging
   ///   40..49 reserved for drag/drop
@@ -150,8 +159,10 @@ public struct Kernova_V1_Frame: Sendable {
   public enum OneOf_Payload: Equatable, Sendable {
     case hello(Kernova_V1_Hello)
     case error(Kernova_V1_Error)
+    case heartbeat(Kernova_V1_Heartbeat)
     /// Service payloads occupy reserved number ranges so each service can grow
     /// independently without colliding:
+    ///   12..19 reserved for control plane (heartbeat, future control payloads)
     ///   20..29 reserved for clipboard
     ///   30..39 reserved for logging
     ///   40..49 reserved for drag/drop
@@ -378,6 +389,26 @@ public struct Kernova_V1_ClipboardRelease: Sendable {
   public init() {}
 }
 
+/// Liveness ping exchanged on the control channel. Each side sends one on a
+/// recurring timer (default ~5 seconds). Receivers refresh their "last seen"
+/// clock for the peer and treat extended silence as the peer being hung —
+/// distinct from a clean socket disconnect.
+///
+/// `nonce` is opaque. Receivers do not echo it; both sides emit independent
+/// streams of heartbeats. The field is reserved for future use (e.g. RTT
+/// sampling) without bumping `Frame.protocol_version`.
+public struct Kernova_V1_Heartbeat: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var nonce: UInt64 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 /// Reported by either side when a request cannot be fulfilled, or as an
 /// asynchronous notification of a problem (e.g. malformed request, capability
 /// mismatch). The receiver may log and continue; it should not assume the
@@ -423,7 +454,7 @@ extension Kernova_V1_ClipboardFormat: SwiftProtobuf._ProtoNameProviding {
 
 extension Kernova_V1_Frame: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Frame"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}protocol_version\0\u{2}\u{9}hello\0\u{1}error\0\u{4}\u{9}clipboard_offer\0\u{3}clipboard_request\0\u{3}clipboard_data\0\u{3}clipboard_release\0\u{4}\u{7}log_record\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}protocol_version\0\u{2}\u{9}hello\0\u{1}error\0\u{1}heartbeat\0\u{4}\u{8}clipboard_offer\0\u{3}clipboard_request\0\u{3}clipboard_data\0\u{3}clipboard_release\0\u{4}\u{7}log_record\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -456,6 +487,19 @@ extension Kernova_V1_Frame: SwiftProtobuf.Message, SwiftProtobuf._MessageImpleme
         if let v = v {
           if hadOneofValue {try decoder.handleConflictingOneOf()}
           self.payload = .error(v)
+        }
+      }()
+      case 12: try {
+        var v: Kernova_V1_Heartbeat?
+        var hadOneofValue = false
+        if let current = self.payload {
+          hadOneofValue = true
+          if case .heartbeat(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.payload = .heartbeat(v)
         }
       }()
       case 20: try {
@@ -544,6 +588,10 @@ extension Kernova_V1_Frame: SwiftProtobuf.Message, SwiftProtobuf._MessageImpleme
     case .error?: try {
       guard case .error(let v)? = self.payload else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 11)
+    }()
+    case .heartbeat?: try {
+      guard case .heartbeat(let v)? = self.payload else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 12)
     }()
     case .clipboardOffer?: try {
       guard case .clipboardOffer(let v)? = self.payload else { preconditionFailure() }
@@ -851,6 +899,36 @@ extension Kernova_V1_ClipboardRelease: SwiftProtobuf.Message, SwiftProtobuf._Mes
 
   public static func ==(lhs: Kernova_V1_ClipboardRelease, rhs: Kernova_V1_ClipboardRelease) -> Bool {
     if lhs.generation != rhs.generation {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Kernova_V1_Heartbeat: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".Heartbeat"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}nonce\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt64Field(value: &self.nonce) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.nonce != 0 {
+      try visitor.visitSingularUInt64Field(value: self.nonce, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Kernova_V1_Heartbeat, rhs: Kernova_V1_Heartbeat) -> Bool {
+    if lhs.nonce != rhs.nonce {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

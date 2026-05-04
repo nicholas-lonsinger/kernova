@@ -67,6 +67,11 @@ logger.notice("Kernova Guest Agent v\(version, privacy: .public) (\(buildNumber,
 /// disconnect on one channel doesn't take the other down.
 let clipboardAgent = VsockGuestClipboardAgent()
 
+/// Control-plane agent. Always-on connection on `KernovaVsockPort.control`
+/// carrying the version handshake and bidirectional heartbeats, independent of
+/// any optional feature toggle on the host.
+let controlAgent = VsockGuestControlAgent()
+
 // MARK: - Signal Handling
 
 signal(SIGINT, SIG_IGN)
@@ -77,6 +82,9 @@ let sigtermSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .mai
 
 let shutdownHandler: () -> Void = {
     logger.notice("Received termination signal, shutting down")
+    // Stop control first so heartbeat cessation is the cleanest signal the
+    // host gets that this agent is going away. Clipboard and log follow.
+    controlAgent.stop()
     clipboardAgent.stop()
     vsockConnection.stop()
     exit(0)
@@ -91,4 +99,5 @@ sigtermSource.resume()
 
 vsockConnection.start()
 clipboardAgent.start()
+controlAgent.start()
 dispatchMain()

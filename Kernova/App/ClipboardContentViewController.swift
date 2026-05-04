@@ -102,11 +102,16 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     private func observeServiceChanges() {
         serviceObservation = observeRecurring(
             track: { [weak self] in
-                // Read clipboardService itself so observation re-fires when it transitions nil → non-nil
-                let service = self?.instance.clipboardService
-                _ = service?.clipboardText
-                _ = service?.isConnected
-                _ = service?.agentStatus
+                guard let self else { return }
+                // Read each property so observation re-fires when any of them
+                // transitions: clipboardService (nil → non-nil on connect),
+                // vsockControlService (drives agentStatus for macOS guests),
+                // and the per-property fields the UI mirrors.
+                let clipService = self.instance.clipboardService
+                _ = clipService?.clipboardText
+                _ = clipService?.isConnected
+                _ = self.instance.vsockControlService?.agentStatus
+                _ = self.instance.agentStatus
             },
             apply: { [weak self] in
                 self?.updateUI()
@@ -116,7 +121,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
     private func updateUI() {
         let service = instance.clipboardService
-        let status = service?.agentStatus ?? .waiting
+        let status = instance.agentStatus
         let canInstallKernovaAgent = instance.configuration.guestOS == .macOS
 
         textView.isEditable = service != nil
@@ -148,6 +153,10 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         case .current(let version):
             statusCircle.layer?.backgroundColor = NSColor.systemGreen.cgColor
             statusLabel.stringValue = "Connected (\(version))"
+            actionButton.isHidden = true
+        case .unresponsive(let version):
+            statusCircle.layer?.backgroundColor = NSColor.systemOrange.cgColor
+            statusLabel.stringValue = "Unresponsive (\(version))"
             actionButton.isHidden = true
         }
     }

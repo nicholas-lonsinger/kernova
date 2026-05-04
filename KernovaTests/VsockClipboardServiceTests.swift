@@ -128,26 +128,6 @@ struct VsockClipboardServiceTests {
         }
     }
 
-    /// Builds the guest-side hello frame the service expects in order to
-    /// flip `isConnected` true. `agentVersion` populates `Hello.agent_info` so
-    /// tests can drive the `agentStatus` computed property.
-    private func makeHello(agentVersion: String? = nil) -> Frame {
-        var frame = Frame()
-        frame.protocolVersion = 1
-        frame.hello = Kernova_V1_Hello.with {
-            $0.serviceVersion = 1
-            $0.capabilities = ["clipboard.text.utf8"]
-            if let version = agentVersion {
-                $0.agentInfo = Kernova_V1_AgentInfo.with {
-                    $0.os = "macOS"
-                    $0.osVersion = "26.0"
-                    $0.agentVersion = version
-                }
-            }
-        }
-        return frame
-    }
-
     private func makeOffer(generation: UInt64) -> Frame {
         var frame = Frame()
         frame.protocolVersion = 1
@@ -181,8 +161,12 @@ struct VsockClipboardServiceTests {
 
     // MARK: - Tests
 
-    @Test("Sends Hello frame on start")
-    func sendsHelloOnStart() async throws {
+    @Test("Does not send Hello on start; first outbound frame is service traffic")
+    func doesNotSendHelloOnStart() async throws {
+        // Hello has moved to the always-on control channel
+        // (`VsockControlService`). The clipboard channel emits feature
+        // payloads only — verify the first outbound frame after `start()` is
+        // the offer driven by `grabIfChanged`, not a Hello.
         let (guest, host) = try makePair()
         guest.start()
         host.start()
@@ -191,17 +175,19 @@ struct VsockClipboardServiceTests {
         let service = VsockClipboardService(channel: host, label: "test")
         service.start()
         defer { service.stop() }
+
+        service.clipboardText = "first"
+        service.grabIfChanged()
 
         let received = try await nextFrame(from: guest)
-        guard case .hello(let hello) = received.payload else {
-            Issue.record("Expected hello payload, got \(String(describing: received.payload))")
+        guard case .clipboardOffer = received.payload else {
+            Issue.record("Expected clipboardOffer as first outbound frame, got \(String(describing: received.payload))")
             return
         }
-        #expect(hello.capabilities.contains("clipboard.text.utf8"))
     }
 
-    @Test("Guest hello flips isConnected to true")
-    func helloFlipsConnected() async throws {
+    @Test("isConnected is true after start() — no Hello required")
+    func isConnectedAfterStart() async throws {
         let (guest, host) = try makePair()
         guest.start()
         host.start()
@@ -211,11 +197,9 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        // Discard our outbound hello.
-        _ = try await nextFrame(from: guest)
-        try guest.send(makeHello())
-
-        try await waitUntil { service.isConnected }
+        // The clipboard listener accepts the connection before the service is
+        // constructed, so connectivity is equivalent to "started and not yet
+        // stopped". Liveness lives on the control channel.
         #expect(service.isConnected)
     }
 
@@ -229,10 +213,6 @@ struct VsockClipboardServiceTests {
         let service = VsockClipboardService(channel: host, label: "test")
         service.start()
         defer { service.stop() }
-
-        _ = try await nextFrame(from: guest)        // host hello
-        try guest.send(makeHello())
-        try await waitUntil { service.isConnected }
 
         service.clipboardText = "first"
         service.grabIfChanged()
@@ -267,11 +247,8 @@ struct VsockClipboardServiceTests {
         let recorder = FrameRecorder(channel: guest)
         defer { recorder.cancel() }
 
-        // Frame 0: host's startup Hello.
-        try await waitForFrameCount(recorder, equals: 1)
-
-        try guest.send(makeHello())
-        try await waitUntil { service.isConnected }
+        // No startup Hello on the clipboard channel — that lives on the
+        // control channel now. The recorder starts empty.
 
         // Empty text → no offer.
         var snapshot = recorder.frames.count
@@ -315,10 +292,6 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        _ = try await nextFrame(from: guest)        // host hello
-        try guest.send(makeHello())
-        try await waitUntil { service.isConnected }
-
         service.clipboardText = "payload"
         service.grabIfChanged()
         let offerFrame = try await nextFrame(from: guest)
@@ -348,10 +321,6 @@ struct VsockClipboardServiceTests {
         let service = VsockClipboardService(channel: host, label: "test")
         service.start()
         defer { service.stop() }
-
-        _ = try await nextFrame(from: guest)        // host hello
-        try guest.send(makeHello())
-        try await waitUntil { service.isConnected }
 
         service.clipboardText = "payload"
         service.grabIfChanged()
@@ -386,10 +355,6 @@ struct VsockClipboardServiceTests {
         let service = VsockClipboardService(channel: host, label: "test")
         service.start()
         defer { service.stop() }
-
-        _ = try await nextFrame(from: guest)        // host hello
-        try guest.send(makeHello())
-        try await waitUntil { service.isConnected }
 
         service.clipboardText = "host content"
         service.grabIfChanged()
@@ -433,10 +398,6 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        _ = try await nextFrame(from: guest)        // host hello
-        try guest.send(makeHello())
-        try await waitUntil { service.isConnected }
-
         service.clipboardText = "host data"
         service.grabIfChanged()
         let offerFrame = try await nextFrame(from: guest)
@@ -469,10 +430,6 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        _ = try await nextFrame(from: guest)        // host hello
-        try guest.send(makeHello())
-        try await waitUntil { service.isConnected }
-
         try guest.send(makeOffer(generation: 42))
         let request = try await nextFrame(from: guest)
         guard case .clipboardRequest(let req) = request.payload else {
@@ -497,25 +454,27 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        _ = try await nextFrame(from: guest)        // host hello
-
-        // Send a Hello with the wrong protocol_version. If the version check
-        // is missing, isConnected would flip true (Hello payload otherwise
-        // looks fine). With the check in place, the frame is dropped.
-        var hello = Frame()
-        hello.protocolVersion = 99
-        hello.hello = Kernova_V1_Hello.with {
-            $0.serviceVersion = 1
-            $0.capabilities = ["clipboard.text.utf8"]
+        // Send a ClipboardOffer with the wrong protocol_version. If the
+        // version check is missing, the service would respond with a
+        // ClipboardRequest. With the check in place, the frame is dropped.
+        var offerV99 = Frame()
+        offerV99.protocolVersion = 99
+        offerV99.clipboardOffer = Kernova_V1_ClipboardOffer.with {
+            $0.generation = 1
+            $0.formats = [.textUtf8]
         }
-        try guest.send(hello)
+        try guest.send(offerV99)
 
-        // Follow with a real Hello to give the consume loop something to
-        // observe; once that lands, the v99 Hello has already been processed.
-        try guest.send(makeHello())
-        try await waitUntil { service.isConnected }
+        // Follow with a v1 ClipboardOffer using a different generation. The
+        // service must request only gen=2 — proof that gen=1 was dropped.
+        try guest.send(makeOffer(generation: 2))
 
-        #expect(service.isConnected)  // tripped only by the v1 Hello
+        let request = try await nextFrame(from: guest)
+        guard case .clipboardRequest(let req) = request.payload else {
+            Issue.record("Expected clipboardRequest, got \(String(describing: request.payload))")
+            return
+        }
+        #expect(req.generation == 2)
     }
 
     @Test("handleOffer send failure leaves pendingInboundGeneration unchanged")
@@ -541,12 +500,9 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        // Discard host's outbound Hello, then connect as guest.
-        _ = try await nextFrame(from: guest)
-        try guest.send(makeHello())
-        try await waitUntil { service.isConnected }
-
-        // Start recording frames that arrive on guest BEFORE closing it.
+        // No Hello traffic on this channel — control-plane responsibilities
+        // moved to `VsockControlService`. Start recording frames that arrive
+        // on guest BEFORE closing it.
         // The recorder captures any ClipboardRequest the service might send —
         // if the bug were present, a request for gen=42 would arrive here.
         let recorder = FrameRecorder(channel: guest)
@@ -581,150 +537,6 @@ struct VsockClipboardServiceTests {
         }
     }
 
-    // MARK: - agentStatus
-
-    @Test("agentStatus is .waiting before Hello arrives")
-    func agentStatusWaitingBeforeHello() async throws {
-        let (guest, host) = try makePair()
-        guest.start()
-        host.start()
-        defer { guest.close() }
-
-        let service = VsockClipboardService(
-            channel: host, label: "test", bundledAgentVersion: "0.9.0"
-        )
-        service.start()
-        defer { service.stop() }
-
-        #expect(service.agentStatus == .waiting)
-    }
-
-    @Test("agentStatus is .current when guest reports the bundled version")
-    func agentStatusCurrentWhenVersionsMatch() async throws {
-        let (guest, host) = try makePair()
-        guest.start()
-        host.start()
-        defer { guest.close() }
-
-        let service = VsockClipboardService(
-            channel: host, label: "test", bundledAgentVersion: "0.9.0"
-        )
-        service.start()
-        defer { service.stop() }
-
-        _ = try await nextFrame(from: guest)
-        try guest.send(makeHello(agentVersion: "0.9.0"))
-        try await waitUntil { service.isConnected }
-
-        #expect(service.agentStatus == .current(version: "0.9.0"))
-    }
-
-    @Test("agentStatus is .outdated when guest reports an older version")
-    func agentStatusOutdatedWhenGuestOlder() async throws {
-        let (guest, host) = try makePair()
-        guest.start()
-        host.start()
-        defer { guest.close() }
-
-        let service = VsockClipboardService(
-            channel: host, label: "test", bundledAgentVersion: "0.9.0"
-        )
-        service.start()
-        defer { service.stop() }
-
-        _ = try await nextFrame(from: guest)
-        try guest.send(makeHello(agentVersion: "0.8.5"))
-        try await waitUntil { service.isConnected }
-
-        #expect(service.agentStatus == .outdated(installed: "0.8.5", bundled: "0.9.0"))
-    }
-
-    @Test("agentStatus is .current when guest reports a newer version (don't fight the user)")
-    func agentStatusCurrentWhenGuestNewer() async throws {
-        let (guest, host) = try makePair()
-        guest.start()
-        host.start()
-        defer { guest.close() }
-
-        let service = VsockClipboardService(
-            channel: host, label: "test", bundledAgentVersion: "0.9.0"
-        )
-        service.start()
-        defer { service.stop() }
-
-        _ = try await nextFrame(from: guest)
-        try guest.send(makeHello(agentVersion: "1.0.0"))
-        try await waitUntil { service.isConnected }
-
-        #expect(service.agentStatus == .current(version: "1.0.0"))
-    }
-
-    @Test("agentStatus uses numeric ordering: 0.9.0 < 0.10.0")
-    func agentStatusNumericOrdering() async throws {
-        let (guest, host) = try makePair()
-        guest.start()
-        host.start()
-        defer { guest.close() }
-
-        let service = VsockClipboardService(
-            channel: host, label: "test", bundledAgentVersion: "0.10.0"
-        )
-        service.start()
-        defer { service.stop() }
-
-        _ = try await nextFrame(from: guest)
-        try guest.send(makeHello(agentVersion: "0.9.0"))
-        try await waitUntil { service.isConnected }
-
-        // Lexicographic comparison would put "0.9.0" > "0.10.0" — wrong.
-        // .numeric must produce .outdated here.
-        #expect(service.agentStatus == .outdated(installed: "0.9.0", bundled: "0.10.0"))
-    }
-
-    @Test("agentStatus resets to .waiting on stop()")
-    func agentStatusResetsOnStop() async throws {
-        let (guest, host) = try makePair()
-        guest.start()
-        host.start()
-        defer { guest.close() }
-
-        let service = VsockClipboardService(
-            channel: host, label: "test", bundledAgentVersion: "0.9.0"
-        )
-        service.start()
-
-        _ = try await nextFrame(from: guest)
-        try guest.send(makeHello(agentVersion: "0.9.0"))
-        try await waitUntil { service.isConnected }
-        #expect(service.agentStatus == .current(version: "0.9.0"))
-
-        service.stop()
-        #expect(service.agentStatus == .waiting)
-    }
-
-    @Test("agentStatus falls back to .current when bundled version is unavailable")
-    func agentStatusCurrentWhenBundledMissing() async throws {
-        let (guest, host) = try makePair()
-        guest.start()
-        host.start()
-        defer { guest.close() }
-
-        let service = VsockClipboardService(
-            channel: host, label: "test", bundledAgentVersion: nil
-        )
-        service.start()
-        defer { service.stop() }
-
-        _ = try await nextFrame(from: guest)
-        try guest.send(makeHello(agentVersion: "0.5.0"))
-        try await waitUntil { service.isConnected }
-
-        // Without a bundled version to compare against we can't decide
-        // outdatedness — accepting the guest's report avoids prompting the user
-        // to "update" against missing data.
-        #expect(service.agentStatus == .current(version: "0.5.0"))
-    }
-
     @Test("ClipboardData with stale generation is ignored")
     func ignoresStaleData() async throws {
         let (guest, host) = try makePair()
@@ -735,10 +547,6 @@ struct VsockClipboardServiceTests {
         let service = VsockClipboardService(channel: host, label: "test")
         service.start()
         defer { service.stop() }
-
-        _ = try await nextFrame(from: guest)        // host hello
-        try guest.send(makeHello())
-        try await waitUntil { service.isConnected }
 
         try guest.send(makeOffer(generation: 1))
         _ = try await nextFrame(from: guest)         // request for gen=1

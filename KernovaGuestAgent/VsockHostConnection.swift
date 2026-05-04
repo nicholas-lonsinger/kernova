@@ -4,12 +4,15 @@ import os
 
 /// Forwards guest-emitted log records to the host on `KernovaVsockPort.log`
 /// (49153). Connection lifecycle is delegated to `VsockGuestClient`; this
-/// class layers log-specific buffering, hello/flush sequencing, and inbound
-/// drain on top.
+/// class layers log-specific buffering and inbound drain on top.
+///
+/// The version handshake and agent liveness live on the always-on control
+/// channel (`VsockGuestControlAgent` / `KernovaVsockPort.control`). This class
+/// emits only `LogRecord` frames once a connection is established.
 ///
 /// `forwardLog` is safe to call from any thread. When the channel is down,
 /// frames are buffered in a bounded ring (oldest dropped first) and flushed
-/// once the next Hello succeeds.
+/// once the next connection comes up.
 final class VsockHostConnection: @unchecked Sendable {
 
     private static let logger = Logger(subsystem: "com.kernova.agent", category: "VsockHostConnection")
@@ -20,8 +23,8 @@ final class VsockHostConnection: @unchecked Sendable {
     /// Sized for the bursty pre-connect window: agent boot can take 30s+
     /// from VM-start to first vsock connect on macOS, and clipboard activity
     /// from `VsockGuestClipboardAgent` may push `.debug` traffic that could
-    /// fill a smaller buffer well before Hello lands. 256 frames at
-    /// ~200 bytes apiece is ~50 KiB of bounded memory.
+    /// fill a smaller buffer well before the log channel comes up. 256 frames
+    /// at ~200 bytes apiece is ~50 KiB of bounded memory.
     static let logBufferLimit = 256
 
     private let client: VsockGuestClient
@@ -50,7 +53,7 @@ final class VsockHostConnection: @unchecked Sendable {
     /// Builds and best-effort sends a `LogRecord` frame to the host. When no
     /// connection is currently active, the frame is buffered (up to
     /// `logBufferLimit` records, oldest dropped first) and flushed once the
-    /// next Hello succeeds. Returns `true` when the frame was handed to a
+    /// next connection comes up. Returns `true` when the frame was handed to a
     /// live channel synchronously.
     @discardableResult
     func forwardLog(
@@ -98,7 +101,6 @@ final class VsockHostConnection: @unchecked Sendable {
     // MARK: - Per-connection serve
 
     private func serveLogChannel(_ channel: VsockChannel) async {
-        sendHello(on: channel)
         flushPendingLogs(on: channel)
 
         // Drain the inbound stream so we observe EOF / errors. The log
@@ -149,30 +151,4 @@ final class VsockHostConnection: @unchecked Sendable {
         Self.logger.debug("Flushed \(drained.count, privacy: .public) buffered log frame(s)")
     }
 
-    private func sendHello(on channel: VsockChannel) {
-        var hello = Frame()
-        hello.protocolVersion = 1
-        hello.hello = Kernova_V1_Hello.with {
-            $0.serviceVersion = 1
-            $0.capabilities = ["log.records.v1"]
-            $0.agentInfo = Kernova_V1_AgentInfo.with {
-                $0.os = "macOS"
-                $0.osVersion = ProcessInfo.processInfo.operatingSystemVersionString
-                $0.agentVersion = Self.embeddedAgentVersion
-            }
-        }
-
-        do {
-            try channel.send(hello)
-        } catch {
-            Self.logger.warning("Failed to send Hello: \(error.localizedDescription, privacy: .public)")
-        }
-    }
-
-    private static let embeddedAgentVersion: String = {
-        guard let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String else {
-            return "unknown"
-        }
-        return version
-    }()
 }

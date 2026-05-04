@@ -735,15 +735,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             // .current — nothing to do. Stays enabled when the installer is
             // already mounted so the user can re-trigger the instructions
             // alert if they dismissed it before reading.
-            let status = instance.clipboardService?.agentStatus ?? .waiting
+            let status = instance.agentStatus
             switch status {
             case .outdated:
                 menuItem.title = "Update Guest Agent…"
-            case .waiting, .current:
+            case .waiting, .current, .unresponsive:
                 menuItem.title = "Install Guest Agent…"
             }
-            if case .current = status { return false }
-            return true
+            switch status {
+            case .current, .unresponsive:
+                // Agent is already installed; no install/update action helps.
+                // `.unresponsive` will reset itself once the heartbeat timeout
+                // fires.
+                return false
+            case .waiting, .outdated:
+                return true
+            }
         case #selector(togglePopOut(_:)):
             guard let instance = activeInstance else { return false }
             let canUse = instance.canUseExternalDisplay
