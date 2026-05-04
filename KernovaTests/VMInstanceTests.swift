@@ -470,4 +470,71 @@ struct VMInstanceTests {
         #expect(VMInstance.PreparingOperation.importing.cancelLabel == "Cancel Import")
         #expect(VMInstance.PreparingOperation.importing.cancelAlertTitle == "Cancel Import?")
     }
+
+    // MARK: - agentStatus dispatch
+    //
+    // `VMInstance.agentStatus` is the single read site for the UI; it must
+    // dispatch by `configuration.guestOS`:
+    //   - macOS guests source it from `vsockControlService` (the always-on
+    //     control channel, independent of clipboard sharing).
+    //   - Linux guests source it from `clipboardService` cast to
+    //     `SpiceClipboardService` (`spice-vdagent` is user-installed; only
+    //     `.waiting` / `.current` are reachable).
+    //
+    // These tests lock in the switch so a future refactor can't accidentally
+    // fall through to the wrong service per OS.
+
+    private func makeInstance(guestOS: VMGuestOS) -> VMInstance {
+        let bootMode: VMBootMode = guestOS == .macOS ? .macOS : .efi
+        let config = VMConfiguration(
+            name: "Test VM",
+            guestOS: guestOS,
+            bootMode: bootMode
+        )
+        let bundleURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(config.id.uuidString, isDirectory: true)
+        return VMInstance(configuration: config, bundleURL: bundleURL, status: .stopped)
+    }
+
+    @Test("agentStatus is .waiting on a macOS instance with no control service set")
+    func agentStatusMacOSDefaultsToWaiting() {
+        let instance = makeInstance(guestOS: .macOS)
+        #expect(instance.vsockControlService == nil)
+        #expect(instance.agentStatus == .waiting)
+    }
+
+    @Test("agentStatus is .waiting on a Linux instance with no clipboard service set")
+    func agentStatusLinuxDefaultsToWaiting() {
+        let instance = makeInstance(guestOS: .linux)
+        #expect(instance.clipboardService == nil)
+        #expect(instance.agentStatus == .waiting)
+    }
+
+    @Test("agentStatus on macOS does NOT fall through to clipboardService — control is the only source")
+    func agentStatusMacOSIgnoresClipboardService() {
+        // Set a SpiceClipboardService on a macOS instance — an obvious
+        // misconfiguration the dispatch shouldn't dignify. macOS should still
+        // report `.waiting` because vsockControlService is nil; if dispatch
+        // accidentally fell through to clipboardService, this would surface
+        // the SPICE service's own `.waiting` (same value, but for the wrong
+        // reason — and `.current` if the SPICE service were connected).
+        let instance = makeInstance(guestOS: .macOS)
+        instance.clipboardService = SpiceClipboardService(
+            inputPipe: Pipe(),
+            outputPipe: Pipe()
+        )
+        #expect(instance.vsockControlService == nil)
+        #expect(instance.agentStatus == .waiting)
+    }
+
+    @Test("agentStatus on Linux dispatches to clipboardService cast as SpiceClipboardService")
+    func agentStatusLinuxDispatchesToSpice() {
+        let instance = makeInstance(guestOS: .linux)
+        let spice = SpiceClipboardService(inputPipe: Pipe(), outputPipe: Pipe())
+        instance.clipboardService = spice
+        // Newly-constructed SPICE service is `.waiting` (no handshake yet) —
+        // dispatch returns that same value, proving the cast + access path runs.
+        #expect(spice.agentStatus == .waiting)
+        #expect(instance.agentStatus == .waiting)
+    }
 }

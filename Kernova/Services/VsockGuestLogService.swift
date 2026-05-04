@@ -84,20 +84,17 @@ final class VsockGuestLogService {
             return
         }
         switch frame.payload {
-        case .hello(let hello):
-            logger.notice(
-                "Guest agent hello for '\(label, privacy: .public)': service=\(hello.serviceVersion, privacy: .public), agent=\(hello.agentInfo.agentVersion, privacy: .public), os=\(hello.agentInfo.os, privacy: .public) \(hello.agentInfo.osVersion, privacy: .public)"
-            )
         case .logRecord(let record):
             emitter.emit(record)
         case .error(let error):
             logger.warning(
                 "Guest agent error for '\(label, privacy: .public)': \(error.code, privacy: .public) — \(error.message, privacy: .public)"
             )
-        case .clipboardOffer, .clipboardRequest, .clipboardData, .clipboardRelease:
-            // Clipboard payloads belong on the clipboard port; if one arrives
-            // here, the guest agent has crossed wires. Log and ignore.
-            logger.warning("Unexpected clipboard payload on log channel for '\(label, privacy: .public)'")
+        case .hello, .heartbeat, .clipboardOffer, .clipboardRequest, .clipboardData, .clipboardRelease:
+            // Hello and Heartbeat belong on the control channel; clipboard
+            // payloads belong on the clipboard channel. Anything other than
+            // LogRecord/Error reaching here means the peer crossed wires.
+            logger.warning("Unexpected payload on log channel for '\(label, privacy: .public)' — wrong port")
         case .none:
             logger.debug("Frame with no payload for '\(label, privacy: .public)'")
         }

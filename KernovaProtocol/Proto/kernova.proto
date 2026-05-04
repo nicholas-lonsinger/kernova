@@ -20,9 +20,11 @@ message Frame {
   oneof payload {
     Hello hello = 10;
     Error error = 11;
+    Heartbeat heartbeat = 12;
 
     // Service payloads occupy reserved number ranges so each service can grow
     // independently without colliding:
+    //   12..19 reserved for control plane (heartbeat, future control payloads)
     //   20..29 reserved for clipboard
     //   30..39 reserved for logging
     //   40..49 reserved for drag/drop
@@ -134,6 +136,18 @@ message ClipboardData {
 // any pending state for the named generation.
 message ClipboardRelease {
   uint64 generation = 1;
+}
+
+// Liveness ping exchanged on the control channel. Each side sends one on a
+// recurring timer (default ~5 seconds). Receivers refresh their "last seen"
+// clock for the peer and treat extended silence as the peer being hung —
+// distinct from a clean socket disconnect.
+//
+// `nonce` is opaque. Receivers do not echo it; both sides emit independent
+// streams of heartbeats. The field is reserved for future use (e.g. RTT
+// sampling) without bumping `Frame.protocol_version`.
+message Heartbeat {
+  uint64 nonce = 1;
 }
 
 // Reported by either side when a request cannot be fulfilled, or as an

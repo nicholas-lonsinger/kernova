@@ -120,6 +120,36 @@ final class VMInstance: Identifiable {
     /// `VZVirtualMachine`.
     var vsockClipboardListenerHost: VsockListenerHost?
 
+    /// Listener for the always-on guest control channel; populated for macOS
+    /// guests while the VM has a live `VZVirtualMachine`. Carries the agent
+    /// version handshake and a bidirectional heartbeat independent of any
+    /// optional feature toggle.
+    var vsockControlListenerHost: VsockListenerHost?
+
+    /// Service handling an active guest control connection. Populated when
+    /// the guest agent's control channel connects; cleared on disconnect or
+    /// VM teardown.
+    var vsockControlService: VsockControlService?
+
+    /// The current install/version/liveness state of the guest agent for this
+    /// VM. The single read site for the UI; dispatches to whichever transport
+    /// owns agent status for this guest OS:
+    /// - macOS guests source it from the always-on `VsockControlService`, so
+    ///   the value is meaningful regardless of whether clipboard sharing is
+    ///   enabled.
+    /// - Linux guests source it from `SpiceClipboardService` — `spice-vdagent`
+    ///   is user-installed, so there is no host-side install/update flow to
+    ///   drive and the only states reachable are `.waiting` / `.current`.
+    /// Returns `.waiting` when no service has been started yet.
+    var agentStatus: AgentStatus {
+        switch configuration.guestOS {
+        case .macOS:
+            return vsockControlService?.agentStatus ?? .waiting
+        case .linux:
+            return (clipboardService as? SpiceClipboardService)?.agentStatus ?? .waiting
+        }
+    }
+
     // MARK: - Serial Console
 
     /// Observable text buffer driven by serial port output. Capped at 1 MB in memory;
@@ -446,9 +476,9 @@ final class VMInstance: Identifiable {
     /// whose configuration omitted it) — the call becomes a no-op.
     /// Idempotent: any previously installed listeners are torn down first.
     ///
-    /// The log listener is always installed when a socket device exists. The
-    /// clipboard listener is additionally installed when clipboard sharing is
-    /// enabled in the VM configuration.
+    /// The control listener and the log listener are always installed when a
+    /// socket device exists. The clipboard listener is additionally installed
+    /// when clipboard sharing is enabled in the VM configuration.
     func startVsockServices() {
         stopVsockServices()
         guard let vm = virtualMachine else { return }
@@ -456,12 +486,25 @@ final class VMInstance: Identifiable {
             return
         }
 
-        let logHost = VsockListenerHost(port: KernovaVsockPort.log) { [weak self] channel in
+        let controlHost = VsockListenerHost(port: KernovaVsockPort.control) { [weak self] channel in
             guard let self else {
                 channel.close()
                 return
             }
             // Replace any prior service from a previous reconnect.
+            self.vsockControlService?.stop()
+            let service = VsockControlService(channel: channel, label: self.name)
+            self.vsockControlService = service
+            service.start()
+        }
+        controlHost.attach(to: socketDevice)
+        vsockControlListenerHost = controlHost
+
+        let logHost = VsockListenerHost(port: KernovaVsockPort.log) { [weak self] channel in
+            guard let self else {
+                channel.close()
+                return
+            }
             self.vsockLogService?.stop()
             let service = VsockGuestLogService(channel: channel, label: self.name)
             self.vsockLogService = service
@@ -493,6 +536,10 @@ final class VMInstance: Identifiable {
     /// the SPICE service is owned by `stopClipboardService()` and would already
     /// be nil at this point under normal teardown order.
     func stopVsockServices() {
+        vsockControlService?.stop()
+        vsockControlService = nil
+        vsockControlListenerHost = nil
+
         vsockLogService?.stop()
         vsockLogService = nil
         vsockLogListenerHost = nil
