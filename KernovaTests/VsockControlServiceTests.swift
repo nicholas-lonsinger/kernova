@@ -285,18 +285,20 @@ struct VsockControlServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = makeService(channel: host, heartbeatInterval: .milliseconds(30))
+        // Wider cadence (100 ms) and deadline (1 s) so MainActor scheduling
+        // jitter on slow CI runners doesn't squeeze the heartbeat count.
+        let service = makeService(channel: host, heartbeatInterval: .milliseconds(100))
         service.start()
         defer { service.stop() }
 
-        // Frame 0 is the host Hello. After that, three heartbeats with a 30ms
-        // cadence should arrive within ~250ms (slack for scheduler jitter).
+        // Frame 0 is the host Hello. After that, ≥3 heartbeats with a 100ms
+        // cadence inside a 1 s window — 7× headroom over the assertion.
         _ = try await nextFrame(from: guest)
 
         var heartbeatCount = 0
-        let deadline = ContinuousClock.now.advanced(by: .milliseconds(400))
+        let deadline = ContinuousClock.now.advanced(by: .seconds(1))
         while heartbeatCount < 3, ContinuousClock.now < deadline {
-            let frame = try await nextFrame(from: guest, timeout: .milliseconds(300))
+            let frame = try await nextFrame(from: guest, timeout: .milliseconds(800))
             if case .heartbeat = frame.payload {
                 heartbeatCount += 1
             }
@@ -372,7 +374,7 @@ struct VsockControlServiceTests {
         try await waitUntil { service.isConnected }
 
         // Don't send any further inbound. After ~100ms+ the watchdog flips.
-        try await waitUntil(timeout: .seconds(2)) {
+        try await waitUntil(timeout: .seconds(5)) {
             service.agentStatus == .unresponsive(version: "0.9.0")
         }
         #expect(service.agentStatus == .unresponsive(version: "0.9.0"))
@@ -400,13 +402,13 @@ struct VsockControlServiceTests {
         try await waitUntil { service.isConnected }
 
         // Go silent → unresponsive.
-        try await waitUntil(timeout: .seconds(2)) {
+        try await waitUntil(timeout: .seconds(5)) {
             service.agentStatus == .unresponsive(version: "0.9.0")
         }
 
         // Resume heartbeats. The next liveness tick clears the flag.
         try guest.send(makeHeartbeat(nonce: 99))
-        try await waitUntil(timeout: .seconds(2)) {
+        try await waitUntil(timeout: .seconds(5)) {
             service.agentStatus == .current(version: "0.9.0")
         }
         #expect(service.agentStatus == .current(version: "0.9.0"))
@@ -419,12 +421,15 @@ struct VsockControlServiceTests {
         host.start()
         defer { guest.close() }
 
+        // Widen cadences for CI runner jitter (the original 40/80/200 ms
+        // pairing was tight enough that on slow runners the watchdog could
+        // miss its window before the terminate condition fired).
         let service = makeService(
             channel: host,
             bundledAgentVersion: "0.9.0",
-            heartbeatInterval: .milliseconds(40),
-            unresponsiveAfter: .milliseconds(80),
-            terminateAfter: .milliseconds(200)
+            heartbeatInterval: .milliseconds(100),
+            unresponsiveAfter: .milliseconds(200),
+            terminateAfter: .milliseconds(500)
         )
 
         service.start()
@@ -434,10 +439,10 @@ struct VsockControlServiceTests {
         try guest.send(makeGuestHello(agentVersion: "0.9.0"))
         try await waitUntil { service.isConnected }
 
-        // Wait for a couple of terminateAfter windows. By then `checkLiveness`
+        // Wait for a few terminateAfter windows. By then `checkLiveness`
         // should have fired and called `channel.close()` on the host side.
         // After teardown, `host.send(...)` raises `VsockChannelError.closed`.
-        try await waitUntil(timeout: .seconds(2)) {
+        try await waitUntil(timeout: .seconds(5)) {
             do {
                 try host.send(makeHeartbeat(nonce: 1))
                 return false

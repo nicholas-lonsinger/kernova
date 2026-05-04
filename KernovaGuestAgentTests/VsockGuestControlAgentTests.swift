@@ -86,19 +86,22 @@ struct VsockGuestControlAgentTests {
         host.start()
         defer { host.close() }
 
-        let agent = makeAgent(agentFd: agentFd, heartbeatInterval: .milliseconds(30))
+        // Use a 100 ms cadence and a 1 s deadline so MainActor scheduling
+        // jitter on slow CI runners (the macOS-26 VMs see noticeably more
+        // latency than local hardware) doesn't squeeze the heartbeat count.
+        // 1 s / 100 ms = 10 expected cadences; demanding ≥ 3 leaves 7×
+        // headroom while still proving the timer fires repeatedly.
+        let agent = makeAgent(agentFd: agentFd, heartbeatInterval: .milliseconds(100))
         defer { agent.stop() }
         agent.start()
 
         // First frame is the agent Hello — discard.
         _ = try await nextFrame(from: host)
 
-        // Within ~150ms (5 cadences) we should see at least 3 heartbeats.
-        // Slack accounts for scheduler jitter without making the assertion vacuous.
         var count = 0
-        let deadline = ContinuousClock.now.advanced(by: .milliseconds(250))
+        let deadline = ContinuousClock.now.advanced(by: .seconds(1))
         while ContinuousClock.now < deadline && count < 3 {
-            let frame = try await nextFrame(from: host, timeout: .milliseconds(200))
+            let frame = try await nextFrame(from: host, timeout: .milliseconds(800))
             if case .heartbeat = frame.payload {
                 count += 1
             }
@@ -115,7 +118,9 @@ struct VsockGuestControlAgentTests {
         host.start()
         defer { host.close() }
 
-        let agent = makeAgent(agentFd: agentFd)
+        // Wider heartbeat cadence (100 ms) + final-read timeout (800 ms) for
+        // the same CI-jitter reason as `heartbeatOutboundCadence`.
+        let agent = makeAgent(agentFd: agentFd, heartbeatInterval: .milliseconds(100))
         defer { agent.stop() }
         agent.start()
 
@@ -127,13 +132,13 @@ struct VsockGuestControlAgentTests {
         try host.send(makeHostHelloFrame())
         for n in 1 ... 3 {
             try host.send(makeHeartbeatFrame(nonce: UInt64(n)))
-            try await Task.sleep(for: .milliseconds(40))
+            try await Task.sleep(for: .milliseconds(50))
         }
 
         // The agent should still be sending heartbeats: read the next frame
         // and expect either a heartbeat or — at worst — a successful round
         // trip without a thrown error.
-        let frame = try await nextFrame(from: host, timeout: .milliseconds(200))
+        let frame = try await nextFrame(from: host, timeout: .milliseconds(800))
         switch frame.payload {
         case .heartbeat:
             break
@@ -179,9 +184,9 @@ struct VsockGuestControlAgentTests {
 
         let agent = VsockGuestControlAgent(
             client: client,
-            heartbeatInterval: .milliseconds(40),
-            unresponsiveAfter: .milliseconds(80),
-            terminateAfter: .milliseconds(200)
+            heartbeatInterval: .milliseconds(100),
+            unresponsiveAfter: .milliseconds(200),
+            terminateAfter: .milliseconds(500)
         )
         defer { agent.stop() }
         agent.start()
@@ -190,7 +195,7 @@ struct VsockGuestControlAgentTests {
         // failures plus the liveness watchdog will tear down the channel.
         // The client then reconnects with the second fd. Wait for the agent's
         // Hello on host1 — proof the reconnect cycle ran end to end.
-        let firstFrame = try await nextFrame(from: host1, timeout: .seconds(3))
+        let firstFrame = try await nextFrame(from: host1, timeout: .seconds(5))
         guard case .hello(let hello) = firstFrame.payload else {
             throw TestFailure("Expected Hello on reconnect, got \(String(describing: firstFrame.payload))")
         }
