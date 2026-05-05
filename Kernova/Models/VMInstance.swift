@@ -545,22 +545,7 @@ final class VMInstance: Identifiable {
                     )
                 },
                 onAgentVersionObserved: { [weak self] reportedVersion in
-                    guard let self else { return }
-                    // The first Hello of any session — even from a stale or
-                    // reconnect cycle — proves the agent is alive, so cancel
-                    // the post-start watchdog and clear the expected-missing
-                    // flag regardless of whether the persisted version moved.
-                    self.cancelAgentPostStartWatchdog()
-                    self.agentExpectedButMissing = false
-                    // Only persist when the version actually changed. Reconnects
-                    // and heartbeats alone don't need a `config.json` rewrite —
-                    // and avoiding the no-op write keeps `VMDirectoryWatcher`
-                    // from re-firing reconcile on every Hello.
-                    guard self.configuration.lastSeenAgentVersion != reportedVersion else {
-                        return
-                    }
-                    self.configuration.lastSeenAgentVersion = reportedVersion
-                    self.onConfigurationDidChange?(self)
+                    self?.recordObservedAgentVersion(reportedVersion)
                 }
             )
             self.vsockControlService = service
@@ -659,6 +644,33 @@ final class VMInstance: Identifiable {
     func cancelAgentPostStartWatchdog() {
         agentPostStartTask?.cancel()
         agentPostStartTask = nil
+    }
+
+    /// Reacts to a fresh, non-empty `agent_version` reported by the guest:
+    /// cancel the post-start watchdog, clear the expected-missing flag, and
+    /// persist the new value via `onConfigurationDidChange` if it differs
+    /// from what's on record. Wired by `startVsockServices()` into the
+    /// `VsockControlService` callback; exposed at this scope so tests can
+    /// drive the path without standing up a real control channel.
+    ///
+    /// Empty strings are filtered upstream by `VsockControlService` — they
+    /// would represent an agent that didn't populate the field, and
+    /// persisting "" would silence both the install nudge and the watchdog
+    /// for no good reason.
+    func recordObservedAgentVersion(_ reportedVersion: String) {
+        // First Hello of any session — even from a stale or reconnect cycle —
+        // proves the agent is alive, so cancel the post-start watchdog and
+        // clear the expected-missing flag regardless of whether the persisted
+        // version moved.
+        cancelAgentPostStartWatchdog()
+        agentExpectedButMissing = false
+        // Suppress the disk write when the version hasn't moved. Reconnects
+        // and heartbeats alone don't need a `config.json` rewrite — and
+        // skipping the no-op write keeps `VMDirectoryWatcher` from re-firing
+        // reconcile on every Hello.
+        guard configuration.lastSeenAgentVersion != reportedVersion else { return }
+        configuration.lastSeenAgentVersion = reportedVersion
+        onConfigurationDidChange?(self)
     }
 
     /// Tears down all vsock listeners and any active services running on them.

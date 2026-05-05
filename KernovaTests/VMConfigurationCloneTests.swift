@@ -246,4 +246,24 @@ struct VMConfigurationCloneTests {
         let clone = makeConfig().clonedForNewInstance(existingNames: [])
         #expect(clone.additionalDisks == nil)
     }
+
+    // MARK: - lastSeenAgentVersion
+
+    @Test("Clone preserves lastSeenAgentVersion")
+    func clonePreservesLastSeenAgentVersion() {
+        // The disk image is copied as part of the clone, which means the
+        // installed agent comes along with it — so the persisted version is
+        // still accurate for the new VM. (Without this, the clone would show
+        // a spurious "install agent" badge until next boot.)
+        var config = makeConfig(guestOS: .macOS, bootMode: .macOS)
+        config.lastSeenAgentVersion = "0.9.2"
+        let clone = config.clonedForNewInstance(existingNames: [])
+        #expect(clone.lastSeenAgentVersion == "0.9.2")
+    }
+
+    @Test("Clone with nil lastSeenAgentVersion remains nil")
+    func cloneNilLastSeenAgentVersion() {
+        let clone = makeConfig().clonedForNewInstance(existingNames: [])
+        #expect(clone.lastSeenAgentVersion == nil)
+    }
 }

@@ -575,4 +575,219 @@ struct VMInstanceTests {
         #expect(fields.contains(\.agentLogForwardingEnabled))
         #expect(fields.contains(\.clipboardSharingEnabled))
     }
+
+    // MARK: - Agent Post-Start Watchdog
+    //
+    // The watchdog flips `agentExpectedButMissing` after a grace period when:
+    //   - The guest is macOS,
+    //   - `lastSeenAgentVersion` is set (so we have a baseline expectation),
+    //   - No `installState` is in progress, and
+    //   - No Hello arrives during the grace window.
+    // Tests inject a millisecond-scale grace so the suite stays fast.
+
+    /// Builds a macOS VMInstance with a known `lastSeenAgentVersion`. The
+    /// caller is responsible for explicitly clearing the watchdog if needed
+    /// across tests.
+    private func makeMacOSInstanceWithAgentInstalled(
+        lastSeen: String = "0.9.2",
+        installState: MacOSInstallState? = nil
+    ) -> VMInstance {
+        var config = VMConfiguration(
+            name: "macOS Watchdog Test",
+            guestOS: .macOS,
+            bootMode: .macOS
+        )
+        config.lastSeenAgentVersion = lastSeen
+        let bundleURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(config.id.uuidString, isDirectory: true)
+        let instance = VMInstance(configuration: config, bundleURL: bundleURL, status: .running)
+        instance.installState = installState
+        return instance
+    }
+
+    @Test("Watchdog flips agentExpectedButMissing when no Hello arrives in the grace window")
+    func watchdogFiresWhenSilent() async throws {
+        let instance = makeMacOSInstanceWithAgentInstalled()
+        instance.startAgentPostStartWatchdog(grace: .milliseconds(50))
+
+        // Wait past grace; the watchdog runs as a Task so we need to yield.
+        try await waitUntil(timeout: .seconds(2)) {
+            instance.agentExpectedButMissing
+        }
+        #expect(instance.agentExpectedButMissing == true)
+        #expect(instance.agentStatus == .expectedMissing(expected: "0.9.2"))
+    }
+
+    @Test("Cancelling the watchdog before grace prevents firing")
+    func watchdogCancelledStaysQuiet() async throws {
+        let instance = makeMacOSInstanceWithAgentInstalled()
+        instance.startAgentPostStartWatchdog(grace: .milliseconds(200))
+
+        // Cancel well before the grace elapses — the timer task must not
+        // flip the flag after cancellation.
+        instance.cancelAgentPostStartWatchdog()
+        try await Task.sleep(for: .milliseconds(400))
+        #expect(instance.agentExpectedButMissing == false)
+    }
+
+    @Test("Watchdog is a no-op when lastSeenAgentVersion is nil")
+    func watchdogNoopWithoutPersistedVersion() async throws {
+        // Fresh macOS VM, no prior agent — the .waiting nudge stays the
+        // appropriate signal, the louder "didn't reconnect" badge would be
+        // misleading.
+        let config = VMConfiguration(
+            name: "Fresh macOS",
+            guestOS: .macOS,
+            bootMode: .macOS
+        )
+        let bundleURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(config.id.uuidString, isDirectory: true)
+        let instance = VMInstance(configuration: config, bundleURL: bundleURL, status: .running)
+
+        instance.startAgentPostStartWatchdog(grace: .milliseconds(50))
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(instance.agentExpectedButMissing == false)
+    }
+
+    @Test("Watchdog is a no-op for Linux guests")
+    func watchdogNoopForLinux() async throws {
+        // Linux uses spice-vdagent, which the host doesn't fingerprint —
+        // the watchdog has no business firing here.
+        var config = VMConfiguration(
+            name: "Linux VM",
+            guestOS: .linux,
+            bootMode: .efi
+        )
+        config.lastSeenAgentVersion = "should-be-ignored"
+        let bundleURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(config.id.uuidString, isDirectory: true)
+        let instance = VMInstance(configuration: config, bundleURL: bundleURL, status: .running)
+
+        instance.startAgentPostStartWatchdog(grace: .milliseconds(50))
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(instance.agentExpectedButMissing == false)
+    }
+
+    @Test("Watchdog is a no-op while macOS install is in progress")
+    func watchdogNoopDuringMacOSInstall() async throws {
+        // No agent exists during install; no point arming the watchdog.
+        let installState = MacOSInstallState(
+            hasDownloadStep: true,
+            currentPhase: .downloading(.zero)
+        )
+        let instance = makeMacOSInstanceWithAgentInstalled(installState: installState)
+
+        instance.startAgentPostStartWatchdog(grace: .milliseconds(50))
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(instance.agentExpectedButMissing == false)
+    }
+
+    @Test("startAgentPostStartWatchdog is idempotent when already armed")
+    func watchdogIdempotent() async throws {
+        let instance = makeMacOSInstanceWithAgentInstalled()
+        instance.startAgentPostStartWatchdog(grace: .milliseconds(200))
+        // Second call must not replace the in-flight task with a fresh one
+        // (which would defer firing). Asking with a much smaller grace also
+        // shouldn't take effect — we keep the original timer.
+        instance.startAgentPostStartWatchdog(grace: .milliseconds(50))
+
+        // Wait past the *shorter* grace but not the original. If the second
+        // call had taken effect, the flag would be true here.
+        try await Task.sleep(for: .milliseconds(120))
+        #expect(instance.agentExpectedButMissing == false)
+    }
+
+    @Test("tearDownSession clears agentExpectedButMissing and cancels the watchdog")
+    func tearDownSessionResetsWatchdogState() async throws {
+        let instance = makeMacOSInstanceWithAgentInstalled()
+        // Drive the flag manually to simulate the watchdog having fired.
+        instance.agentExpectedButMissing = true
+        instance.startAgentPostStartWatchdog(grace: .seconds(60))
+
+        instance.tearDownSession()
+
+        #expect(instance.agentExpectedButMissing == false)
+        // Re-arming after teardown should now succeed — the prior task was
+        // cancelled, so the idempotency guard does not block this.
+        instance.startAgentPostStartWatchdog(grace: .milliseconds(50))
+        try await waitUntil(timeout: .seconds(2)) {
+            instance.agentExpectedButMissing
+        }
+    }
+
+    @Test("agentStatus surfaces .expectedMissing only when both the flag and persisted version are set")
+    func agentStatusExpectedMissingRequiresBoth() {
+        let instance = makeMacOSInstanceWithAgentInstalled()
+        // Flag alone but version present → .expectedMissing
+        instance.agentExpectedButMissing = true
+        #expect(instance.agentStatus == .expectedMissing(expected: "0.9.2"))
+
+        // Wipe the persisted version: the synthesizer guard falls back to
+        // .waiting rather than producing .expectedMissing(expected: "").
+        instance.configuration.lastSeenAgentVersion = nil
+        #expect(instance.agentStatus == .waiting)
+    }
+
+    // MARK: - recordObservedAgentVersion
+
+    @Test("recordObservedAgentVersion persists when the version changes")
+    func recordObservedPersistsOnChange() {
+        let instance = makeMacOSInstanceWithAgentInstalled(lastSeen: "0.9.0")
+        var savedConfig: VMConfiguration?
+        instance.onConfigurationDidChange = { savedConfig = $0.configuration }
+
+        instance.recordObservedAgentVersion("0.9.2")
+
+        #expect(instance.configuration.lastSeenAgentVersion == "0.9.2")
+        #expect(savedConfig?.lastSeenAgentVersion == "0.9.2")
+    }
+
+    @Test("recordObservedAgentVersion populates lastSeenAgentVersion for fresh VMs")
+    func recordObservedSetsFromNil() {
+        // Simulates the very first time an agent connects to a fresh VM —
+        // the persisted field starts nil and the observer must seed it.
+        let config = VMConfiguration(name: "Fresh", guestOS: .macOS, bootMode: .macOS)
+        let bundleURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(config.id.uuidString, isDirectory: true)
+        let instance = VMInstance(configuration: config, bundleURL: bundleURL, status: .running)
+        var saveCount = 0
+        instance.onConfigurationDidChange = { _ in saveCount += 1 }
+
+        instance.recordObservedAgentVersion("0.9.0")
+
+        #expect(instance.configuration.lastSeenAgentVersion == "0.9.0")
+        #expect(saveCount == 1)
+    }
+
+    @Test("recordObservedAgentVersion does not persist when the version is unchanged")
+    func recordObservedSkipsRedundantWrites() {
+        let instance = makeMacOSInstanceWithAgentInstalled(lastSeen: "0.9.2")
+        var saveCount = 0
+        instance.onConfigurationDidChange = { _ in saveCount += 1 }
+
+        instance.recordObservedAgentVersion("0.9.2")
+        instance.recordObservedAgentVersion("0.9.2")
+
+        // Two same-version Hellos must not produce a single disk write.
+        // Storage churn would re-fire VMDirectoryWatcher reconcile on every
+        // heartbeat-driven reconnect.
+        #expect(saveCount == 0)
+    }
+
+    @Test("recordObservedAgentVersion cancels the watchdog and clears expected-missing")
+    func recordObservedClearsWatchdogState() async throws {
+        let instance = makeMacOSInstanceWithAgentInstalled()
+        instance.agentExpectedButMissing = true
+        instance.startAgentPostStartWatchdog(grace: .seconds(10))
+
+        instance.recordObservedAgentVersion("0.9.2")
+
+        #expect(instance.agentExpectedButMissing == false)
+        // Re-arming with a tiny grace must succeed (proves the prior task
+        // was cancelled — the idempotency guard does not block this).
+        instance.startAgentPostStartWatchdog(grace: .milliseconds(50))
+        try await waitUntil(timeout: .seconds(2)) {
+            instance.agentExpectedButMissing
+        }
+    }
 }
