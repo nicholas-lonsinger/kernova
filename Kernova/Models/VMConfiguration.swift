@@ -278,12 +278,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
     /// Single source of truth — `VMSettingsView` uses this for change
     /// detection, and the live-policy handler that applies these changes to
     /// a running VM consumes the same list.
-    ///
-    /// RATIONALE: `KeyPath` does not conform to `Sendable` in Swift 6, so a
-    /// `static let` of `[KeyPath]` would be rejected. The values are
-    /// immutable (key paths captured at compile time) so concurrent reads
-    /// are safe — `nonisolated(unsafe)` is the appropriate escape hatch.
-    nonisolated(unsafe) static let hotToggleFields: [KeyPath<VMConfiguration, Bool>] = [
+    static let hotToggleFields: [KeyPath<VMConfiguration, Bool> & Sendable] = [
         \.agentLogForwardingEnabled,
         \.clipboardSharingEnabled,
     ]

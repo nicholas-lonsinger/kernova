@@ -665,6 +665,80 @@ struct VMConfigurationTests {
 
     // MARK: - Missing Required Fields
 
+    // MARK: - Full-field round-trip
+
+    /// Populates every property with a non-default value, encodes to JSON,
+    /// decodes back, and asserts equality. Tripwire for the custom
+    /// `init(from:)`: if a new field is added to `VMConfiguration` but the
+    /// decoder is not updated, the missed field will silently default-
+    /// initialize on decode and the round-trip equality will fail.
+    ///
+    /// When this test fires, also update `init(from:)` in `VMConfiguration`
+    /// to read the new key.
+    @Test("Configuration with all fields populated round-trips identically through JSON")
+    func fullFieldRoundTrip() throws {
+        let original = VMConfiguration(
+            id: UUID(uuidString: "DEADBEEF-DEAD-BEEF-DEAD-BEEFDEADBEEF")!,
+            name: "Comprehensive VM",
+            guestOS: .macOS,
+            bootMode: .macOS,
+            cpuCount: 12,
+            memorySizeInGB: 24,
+            diskSizeInGB: 256,
+            displayWidth: 2560,
+            displayHeight: 1440,
+            displayPPI: 192,
+            displayPreference: .popOut,
+            lastFullscreenDisplayID: 0xDEAD_BEEF,
+            networkEnabled: false,
+            macAddress: "aa:bb:cc:dd:ee:ff",
+            clipboardSharingEnabled: true,
+            microphoneEnabled: true,
+            agentLogForwardingEnabled: true,
+            hardwareModelData: Data([0x01, 0x02, 0x03]),
+            machineIdentifierData: Data([0x04, 0x05]),
+            genericMachineIdentifierData: Data([0x06]),
+            discImagePath: "/path/to/disc.iso",
+            discImageReadOnly: false,
+            bootFromDiscImage: true,
+            kernelPath: "/path/to/kernel",
+            initrdPath: "/path/to/initrd",
+            kernelCommandLine: "console=ttyS0",
+            additionalDisks: [
+                AdditionalDisk(
+                    id: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!,
+                    path: "/disk2.img",
+                    readOnly: true,
+                    label: "data",
+                    isInternal: false
+                ),
+            ],
+            sharedDirectories: [
+                SharedDirectory(
+                    id: UUID(uuidString: "22222222-2222-2222-2222-222222222222")!,
+                    path: "/host/shared",
+                    readOnly: true
+                ),
+            ],
+            // Whole-second timestamp so .iso8601 (no fractional seconds)
+            // round-trips without precision loss.
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(original)
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(VMConfiguration.self, from: data)
+
+        #expect(
+            decoded == original,
+            "Round-trip mismatch — likely an unhandled field in `init(from:)`"
+        )
+    }
+
     @Test("Decoding JSON missing a required field throws DecodingError")
     func missingRequiredFieldThrows() {
         // Intentionally omits: displayPreference, clipboardSharingEnabled,
