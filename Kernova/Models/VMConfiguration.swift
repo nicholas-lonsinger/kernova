@@ -10,6 +10,13 @@ enum VMDisplayPreference: String, Codable, Sendable, Equatable {
 /// Persistent configuration for a virtual machine.
 ///
 /// This type is serialized to `config.json` inside each VM bundle directory.
+///
+/// > Important: This struct uses a custom `init(from:)` (see the `Codable`
+/// > section) instead of synthesized `Decodable` so newly added optional
+/// > defaults can be migrated cleanly. **Any new property must be added to
+/// > the custom `init(from:)` as well.** Optional properties decoded via
+/// > synthesized `init(from:)` would default to `nil` silently; the manual
+/// > initializer makes that decision explicit.
 struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
 
     // MARK: - Identity
@@ -261,6 +268,25 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
     var memorySizeInBytes: UInt64 {
         UInt64(memorySizeInGB) * 1024 * 1024 * 1024
     }
+
+    // MARK: - Hot-Toggleable Fields
+
+    /// Fields the user may edit while the VM is running. Changes to these
+    /// bypass the read-only settings lock and are pushed to the live guest
+    /// agent via `PolicyUpdate` on the vsock control channel.
+    ///
+    /// Single source of truth — `VMSettingsView` uses this for change
+    /// detection, and the live-policy handler that applies these changes to
+    /// a running VM consumes the same list.
+    ///
+    /// RATIONALE: `KeyPath` does not conform to `Sendable` in Swift 6, so a
+    /// `static let` of `[KeyPath]` would be rejected. The values are
+    /// immutable (key paths captured at compile time) so concurrent reads
+    /// are safe — `nonisolated(unsafe)` is the appropriate escape hatch.
+    nonisolated(unsafe) static let hotToggleFields: [KeyPath<VMConfiguration, Bool>] = [
+        \.agentLogForwardingEnabled,
+        \.clipboardSharingEnabled,
+    ]
 }
 
 // MARK: - SharedDirectory

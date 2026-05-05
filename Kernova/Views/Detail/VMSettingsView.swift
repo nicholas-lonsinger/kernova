@@ -82,14 +82,14 @@ struct VMSettingsView: View {
             }
         }
         .onChange(of: instance.configuration) { old, new in
-            // RATIONALE: hot-toggleable fields (agent log forwarding, clipboard
-            // sharing) can change while `isReadOnly` is true because their
-            // toggles stay interactive. Save when they change; for everything
-            // else, the read-only guard protects against spurious writes
-            // during instance swap-in transitions.
-            let hotFieldsChanged =
-                old.agentLogForwardingEnabled != new.agentLogForwardingEnabled
-                || old.clipboardSharingEnabled != new.clipboardSharingEnabled
+            // RATIONALE: fields in `VMConfiguration.hotToggleFields` can
+            // change while `isReadOnly` is true because their toggles stay
+            // interactive. Save when they change; for everything else, the
+            // read-only guard protects against spurious writes during
+            // instance swap-in transitions.
+            let hotFieldsChanged = VMConfiguration.hotToggleFields.contains {
+                old[keyPath: $0] != new[keyPath: $0]
+            }
             guard !isReadOnly || hotFieldsChanged else { return }
             viewModel.saveConfiguration(for: instance)
         }
