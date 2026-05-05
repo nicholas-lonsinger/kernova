@@ -74,20 +74,23 @@ enum AgentStatus: Equatable, Sendable {
     ///
     /// Precedence (top wins):
     ///   1. **`.expectedMissing`** when `agentExpectedButMissing == true`
-    ///      *and* `lastSeenAgentVersion` is non-nil. This overrides any
-    ///      upstream value because the watchdog fires only after the
-    ///      post-start grace and represents host knowledge the upstream
-    ///      service can't have. If the persisted version is missing the
-    ///      branch falls through (defensive — the watchdog shouldn't fire
-    ///      without a version, but synthesizing `.expectedMissing("")`
-    ///      would be worse than letting upstream win).
+    ///      *and* `lastSeenAgentVersion` is a non-empty string. This
+    ///      overrides any upstream value because the watchdog fires only
+    ///      after the post-start grace and represents host knowledge the
+    ///      upstream service can't have. If the persisted version is `nil`
+    ///      or empty the branch falls through — the watchdog shouldn't
+    ///      fire without a version, but synthesizing
+    ///      `.expectedMissing("")` would render with an empty version
+    ///      string in the UI ("guest agent  didn't reconnect"), which is
+    ///      worse than letting upstream win.
     ///   2. **`.connecting`** when upstream is `.waiting`, the VM is in a
-    ///      live session (`isInLiveSession == true`), and we have a prior
-    ///      `lastSeenAgentVersion`. Surfaces the "we're aware and we're
-    ///      waiting" reconnect indicator instead of the install nudge
-    ///      during the post-start window for VMs that have had an agent
-    ///      before. Resolves to `.current` once Hello arrives, or to
-    ///      `.expectedMissing` (case 1) if the watchdog fires.
+    ///      live session (`isInLiveSession == true`), and we have a
+    ///      non-empty `lastSeenAgentVersion`. Surfaces the "we're aware
+    ///      and we're waiting" reconnect indicator instead of the install
+    ///      nudge during the post-start window for VMs that have had an
+    ///      agent before. Resolves to `.current` once Hello arrives, or to
+    ///      `.expectedMissing` (case 1) if the watchdog fires. Same
+    ///      empty-string defense as case 1.
     ///   3. **upstream** otherwise — pass through `.current`, `.outdated`,
     ///      `.unresponsive`, and `.waiting` (when none of the synthesis
     ///      conditions apply) unchanged.
@@ -102,11 +105,14 @@ enum AgentStatus: Equatable, Sendable {
         isInLiveSession: Bool,
         agentExpectedButMissing: Bool
     ) -> AgentStatus {
-        if agentExpectedButMissing, let expected = lastSeenAgentVersion {
+        if agentExpectedButMissing,
+           let expected = lastSeenAgentVersion,
+           !expected.isEmpty {
             return .expectedMissing(expected: expected)
         }
         if case .waiting = upstream,
            let lastSeen = lastSeenAgentVersion,
+           !lastSeen.isEmpty,
            isInLiveSession {
             return .connecting(expected: lastSeen)
         }

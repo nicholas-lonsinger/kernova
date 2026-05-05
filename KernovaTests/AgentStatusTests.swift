@@ -160,4 +160,38 @@ struct AgentStatusTests {
         )
         #expect(result == .expectedMissing(expected: "0.9.2"))
     }
+
+    // MARK: - Empty-version defensive fall-through
+
+    @Test("Empty lastSeenAgentVersion is treated like nil for .expectedMissing")
+    func missingFlagWithEmptyVersionFallsThrough() {
+        // VsockControlService filters empty `agent_version` strings before
+        // they ever reach `lastSeenAgentVersion`, but a hand-edited
+        // config.json could still contain `""`. Synthesizing
+        // `.expectedMissing("")` would render as an empty-version-string
+        // badge in the UI ("guest agent  didn't reconnect"), so the
+        // synthesizer treats `""` the same as `nil` and falls through.
+        let result = AgentStatus.synthesize(
+            upstream: .waiting,
+            lastSeenAgentVersion: "",
+            isInLiveSession: true,
+            agentExpectedButMissing: true
+        )
+        #expect(result == .waiting)
+    }
+
+    @Test("Empty lastSeenAgentVersion is treated like nil for .connecting")
+    func waitingWithEmptyVersionFallsThrough() {
+        // Same defense as the `.expectedMissing` empty-version case:
+        // `.connecting("")` would render with an empty version, so an
+        // empty `lastSeenAgentVersion` falls through to upstream
+        // (`.waiting`) and the install nudge surfaces normally.
+        let result = AgentStatus.synthesize(
+            upstream: .waiting,
+            lastSeenAgentVersion: "",
+            isInLiveSession: true,
+            agentExpectedButMissing: false
+        )
+        #expect(result == .waiting)
+    }
 }
