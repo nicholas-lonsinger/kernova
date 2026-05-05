@@ -92,6 +92,9 @@ struct VMSettingsView: View {
             }
             guard !isReadOnly || hotFieldsChanged else { return }
             viewModel.saveConfiguration(for: instance)
+            if hotFieldsChanged {
+                viewModel.applyLivePolicy(for: instance, old: old, new: new)
+            }
         }
     }
 
