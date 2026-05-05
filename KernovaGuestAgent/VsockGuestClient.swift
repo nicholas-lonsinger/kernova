@@ -197,8 +197,15 @@ final class VsockGuestClient: @unchecked Sendable {
         let channel = VsockChannel(fileDescriptor: fd)
         channel.start()
 
+        // Check `paused` here (under the same lock that protects
+        // `currentChannel`) to close the race where `pause()` lands while
+        // `socketProvider` was mid-flight: without this guard, the lock-
+        // protected publish below would store the new channel and the
+        // outer loop would invoke `serve(channel)` despite policy saying
+        // otherwise. `pause()` clears `currentChannel` and sets `paused=true`
+        // atomically, so seeing `paused == true` here means we must abort.
         let aborted: Bool = lock.withLock {
-            if stopped { return true }
+            if stopped || paused { return true }
             currentChannel = channel
             return false
         }
