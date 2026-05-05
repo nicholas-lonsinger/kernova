@@ -741,14 +741,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 menuItem.title = "Update Guest Agent…"
             case .expectedMissing:
                 menuItem.title = "Reinstall Guest Agent…"
-            case .waiting, .current, .unresponsive:
+            case .waiting, .current, .unresponsive, .connecting:
                 menuItem.title = "Install Guest Agent…"
             }
             switch status {
-            case .current, .unresponsive:
+            case .current, .unresponsive, .connecting:
                 // Agent is already installed; no install/update action helps.
-                // `.unresponsive` will reset itself once the heartbeat timeout
-                // fires.
+                // `.unresponsive` resets itself once the heartbeat timeout
+                // fires; `.connecting` resolves to `.current` or
+                // `.expectedMissing` on its own.
                 return false
             case .waiting, .outdated, .expectedMissing:
                 return true

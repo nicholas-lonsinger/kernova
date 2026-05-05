@@ -177,7 +177,19 @@ final class VMInstance: Identifiable {
                let expected = configuration.lastSeenAgentVersion {
                 return .expectedMissing(expected: expected)
             }
-            return vsockControlService?.agentStatus ?? .waiting
+            let upstream = vsockControlService?.agentStatus ?? .waiting
+            // Live session for a VM with a known prior agent that hasn't
+            // said Hello yet → `.connecting`. The UI uses this to show a
+            // softer rotating indicator instead of the install nudge while
+            // the agent is expected to reconnect. Resolves to `.current`
+            // once Hello arrives, or `.expectedMissing` if the post-start
+            // watchdog fires (handled above).
+            if case .waiting = upstream,
+               let lastSeen = configuration.lastSeenAgentVersion,
+               virtualMachine != nil {
+                return .connecting(expected: lastSeen)
+            }
+            return upstream
         case .linux:
             return (clipboardService as? SpiceClipboardService)?.agentStatus ?? .waiting
         }

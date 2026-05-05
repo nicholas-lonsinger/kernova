@@ -45,4 +45,24 @@ enum AgentStatus: Equatable, Sendable {
     /// (which has no access to persisted state) never returns it.
     /// `expected` is the last-known agent version we have on record.
     case expectedMissing(expected: String)
+
+    /// Live session for a VM that has previously had a guest agent connect
+    /// (`VMConfiguration.lastSeenAgentVersion` is set), but no `Hello` has
+    /// arrived yet on this session. Distinct from `.waiting` (no prior
+    /// install) so the UI can surface a softer "connecting…" indicator
+    /// instead of the install nudge while the agent is expected to
+    /// reconnect. Resolves to `.current` once the handshake completes, or
+    /// to `.expectedMissing` if the post-start watchdog fires.
+    ///
+    /// Synthesized only at `VMInstance.agentStatus`; `VsockControlService`
+    /// never returns it. `expected` is the last-known agent version.
+    case connecting(expected: String)
+
+    /// True when this case carries the "actively trying to reconnect"
+    /// semantic. Convenience for UI code that wants to attach a continuous
+    /// rotation `.symbolEffect` to the icon.
+    var isConnecting: Bool {
+        if case .connecting = self { return true }
+        return false
+    }
 }

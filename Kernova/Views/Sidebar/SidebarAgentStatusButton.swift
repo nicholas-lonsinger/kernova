@@ -41,6 +41,12 @@ struct SidebarAgentStatusButton: View {
             Image(systemName: symbolName)
                 .foregroundStyle(symbolColor)
                 .font(.system(size: 12, weight: .semibold))
+                // Spin the refresh symbol while we're in the post-start
+                // grace window for a previously-installed agent. The
+                // rotation stops automatically once `.connecting` resolves
+                // to `.current` (icon hidden) or `.expectedMissing` (icon
+                // becomes the warning triangle).
+                .symbolEffect(.rotate, options: .repeat(.continuous), isActive: status.isConnecting)
         }
         .buttonStyle(.plain)
         .help(helpText)
@@ -58,10 +64,11 @@ struct SidebarAgentStatusButton: View {
                     status: status,
                     onAction: {
                         switch status {
-                        case .current, .unresponsive:
+                        case .current, .unresponsive, .connecting:
                             // Done — just close. Nothing to install or update;
                             // an unresponsive agent will reset itself once the
-                            // heartbeat timeout fires.
+                            // heartbeat timeout fires, and a connecting agent
+                            // is already on the way.
                             break
                         case .waiting, .outdated, .expectedMissing:
                             onMount()
@@ -85,6 +92,10 @@ struct SidebarAgentStatusButton: View {
         switch status {
         case .waiting: "exclamationmark.circle.fill"
         case .outdated: "arrow.triangle.2.circlepath.circle.fill"
+        // Same refresh symbol as `.outdated`; a continuous-rotation
+        // `.symbolEffect` distinguishes "actively trying to connect" from
+        // "stationary update available."
+        case .connecting: "arrow.triangle.2.circlepath.circle.fill"
         case .current: "checkmark.circle.fill"
         case .unresponsive: "wifi.exclamationmark"
         // Triangle (vs the .waiting circle) signals "something went wrong"
@@ -98,6 +109,10 @@ struct SidebarAgentStatusButton: View {
         switch status {
         case .waiting: .secondary
         case .outdated: .orange
+        // Gray (not orange) — `.connecting` is informational, not an
+        // attention state. The rotation animation carries the "in
+        // progress" signal.
+        case .connecting: .secondary
         case .current: .green
         case .unresponsive: .orange
         case .expectedMissing: .orange
@@ -108,6 +123,7 @@ struct SidebarAgentStatusButton: View {
         switch status {
         case .waiting: "Guest agent not installed"
         case .outdated(let installed, let bundled): "Guest agent update available (\(installed) → \(bundled))"
+        case .connecting(let expected): "Connecting to guest agent (was \(expected))"
         case .current(let version): "Guest agent connected (\(version))"
         case .unresponsive(let version): "Guest agent unresponsive (\(version))"
         case .expectedMissing(let expected): "Guest agent didn't reconnect (was \(expected))"
@@ -171,7 +187,7 @@ struct AgentStatusPopoverContent: View {
         switch status {
         case .waiting: "Install Guest Agent…"
         case .outdated: "Update Guest Agent…"
-        case .current, .unresponsive: "Done"
+        case .current, .unresponsive, .connecting: "Done"
         case .expectedMissing: "Reinstall Guest Agent…"
         }
     }
@@ -224,6 +240,7 @@ enum AgentStatusPopoverMetrics {
         switch status {
         case .waiting: "Set up the Kernova guest agent"
         case .outdated: "Update available"
+        case .connecting: "Connecting to guest agent"
         case .current: "Guest agent connected"
         case .unresponsive: "Guest agent unresponsive"
         case .expectedMissing: "Guest agent didn't reconnect"
@@ -236,6 +253,8 @@ enum AgentStatusPopoverMetrics {
             return "The Kernova guest agent enables clipboard sync with \(vmName). Mounting the installer presents it as a disk inside the VM — open it in Finder and run install.command."
         case .outdated(let installed, let bundled):
             return "\(vmName) is running guest agent \(installed). Kernova bundles \(bundled). Mounting the installer presents it as a disk inside the VM — open it in Finder and run install.command."
+        case .connecting(let expected):
+            return "Waiting for guest agent \(expected) on \(vmName) to reconnect after boot. If it doesn't connect within a couple of minutes, you'll see a 'didn't reconnect' indicator with reinstall steps."
         case .current(let version):
             return "\(vmName) is connected with guest agent \(version)."
         case .unresponsive(let version):
