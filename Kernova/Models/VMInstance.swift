@@ -592,6 +592,24 @@ final class VMInstance: Identifiable {
             oldConfig.clipboardSharingEnabled != newConfig.clipboardSharingEnabled
         guard logChanged || clipboardChanged else { return }
 
+        // Push the policy snapshot to the guest BEFORE manipulating host
+        // listeners. On a disable transition, this lets the guest pause its
+        // reconnect loop first; if we tore down the listener first, the guest
+        // would see EOF on its existing channel and pound the host with
+        // reconnects (up to one per `retryInterval`) until the policy frame
+        // arrives. On enable, the guest's `resume()` waits up to
+        // `retryInterval` before its next connect, so the host has time to
+        // install the listener after the policy send returns. The control
+        // service may be nil during the brief window between accepting the
+        // listener connection and receiving the guest's Hello — `?` keeps
+        // that state safe; the next Hello-driven send will catch it up.
+        vsockControlService?.sendPolicyUpdate(
+            AgentPolicySnapshot(
+                logForwardingEnabled: newConfig.agentLogForwardingEnabled,
+                clipboardSharingEnabled: newConfig.clipboardSharingEnabled
+            )
+        )
+
         if logChanged {
             applyLiveLogPolicy(enabled: newConfig.agentLogForwardingEnabled, on: socketDevice)
         }
@@ -603,17 +621,6 @@ final class VMInstance: Identifiable {
                 on: socketDevice
             )
         }
-
-        // Push the resulting policy snapshot to the guest. The control
-        // service may be nil during the brief window between accepting the
-        // listener connection and receiving the guest's Hello — `?` keeps
-        // that state safe; the next Hello-driven send will catch it up.
-        vsockControlService?.sendPolicyUpdate(
-            AgentPolicySnapshot(
-                logForwardingEnabled: newConfig.agentLogForwardingEnabled,
-                clipboardSharingEnabled: newConfig.clipboardSharingEnabled
-            )
-        )
 
         Self.logger.notice(
             "Applied live policy for '\(self.name, privacy: .public)' (logForwarding=\(newConfig.agentLogForwardingEnabled, privacy: .public), clipboard=\(newConfig.clipboardSharingEnabled, privacy: .public))"
@@ -660,10 +667,11 @@ final class VMInstance: Identifiable {
             clipHost.attach(to: socketDevice)
             vsockClipboardListenerHost = clipHost
         } else {
-            if clipboardService is VsockClipboardService {
-                clipboardService?.stop()
-                clipboardService = nil
-            }
+            // Caller (`applyLivePolicy`) gates this branch on `isMacOSGuest`,
+            // so any `clipboardService` here is a `VsockClipboardService` —
+            // SPICE-backed services live exclusively on Linux guests.
+            clipboardService?.stop()
+            clipboardService = nil
             vsockClipboardListenerHost = nil
         }
     }
