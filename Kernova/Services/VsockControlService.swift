@@ -2,6 +2,15 @@ import Foundation
 import KernovaProtocol
 import os
 
+/// Snapshot of the toggle state delivered to the guest agent via
+/// `PolicyUpdate` on the control channel. Decouples `VsockControlService`
+/// from `VMConfiguration` — the host supplies a closure that reads the
+/// fields each time policy is sent.
+struct AgentPolicySnapshot: Equatable, Sendable {
+    var logForwardingEnabled: Bool
+    var clipboardSharingEnabled: Bool
+}
+
 /// Drives the always-on control channel between the host and the macOS guest
 /// agent.
 ///
@@ -70,6 +79,11 @@ final class VsockControlService {
     private let terminateAfter: Duration
     private let livenessTickInterval: Duration
 
+    /// Reads the latest policy from the host configuration. Invoked once per
+    /// guest `Hello` so the guest receives the current snapshot at every
+    /// (re)connect. `nil` in tests that don't exercise policy delivery.
+    private let policyProvider: (@MainActor () -> AgentPolicySnapshot)?
+
     private var consumeTask: Task<Void, Never>?
     private var outboundHeartbeatTask: Task<Void, Never>?
     private var livenessTask: Task<Void, Never>?
@@ -93,7 +107,8 @@ final class VsockControlService {
         bundledAgentVersion: String? = KernovaGuestAgentInfo.bundledVersion,
         heartbeatInterval: Duration = .seconds(5),
         unresponsiveAfter: Duration = .seconds(15),
-        terminateAfter: Duration = .seconds(30)
+        terminateAfter: Duration = .seconds(30),
+        policyProvider: (@MainActor () -> AgentPolicySnapshot)? = nil
     ) {
         // The two-stage watchdog requires `unresponsiveAfter < terminateAfter`
         // so the `.unresponsive` UI transition is observable before the channel
@@ -113,6 +128,7 @@ final class VsockControlService {
         // transition fires promptly. Capped at the heartbeat interval so tests
         // with very small thresholds don't over-spin.
         self.livenessTickInterval = min(heartbeatInterval, unresponsiveAfter / 3)
+        self.policyProvider = policyProvider
     }
 
     // MARK: - Lifecycle
@@ -193,6 +209,28 @@ final class VsockControlService {
         } catch {
             Self.logger.error(
                 "Failed to send control hello for '\(self.label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+        }
+    }
+
+    /// Sends a `PolicyUpdate` frame carrying the current toggle snapshot to
+    /// the guest. Called once on Hello receipt and again any time the user
+    /// flips a hot-toggleable setting while the VM is running.
+    func sendPolicyUpdate(_ policy: AgentPolicySnapshot) {
+        var frame = Frame()
+        frame.protocolVersion = 1
+        frame.policyUpdate = Kernova_V1_PolicyUpdate.with {
+            $0.logForwardingEnabled = policy.logForwardingEnabled
+            $0.clipboardSharingEnabled = policy.clipboardSharingEnabled
+        }
+        do {
+            try channel.send(frame)
+            Self.logger.notice(
+                "Sent policy update for '\(self.label, privacy: .public)' (logForwarding=\(policy.logForwardingEnabled, privacy: .public), clipboard=\(policy.clipboardSharingEnabled, privacy: .public))"
+            )
+        } catch {
+            Self.logger.error(
+                "Failed to send policy update for '\(self.label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
         }
     }
@@ -292,6 +330,12 @@ final class VsockControlService {
             Self.logger.notice(
                 "Guest agent connected for '\(self.label, privacy: .public)' (service=\(hello.serviceVersion, privacy: .public), agent=\(reportedVersion, privacy: .public), caps=\(hello.capabilities.joined(separator: ","), privacy: .public))"
             )
+            // Push the current policy snapshot to the freshly connected guest
+            // so it stops/starts log + clipboard work immediately rather than
+            // assuming defaults.
+            if let provider = policyProvider {
+                sendPolicyUpdate(provider())
+            }
         case .heartbeat:
             // The frame itself is the signal — nothing more to do beyond the
             // `lastInboundFrame` refresh above. Recovery from `.unresponsive`

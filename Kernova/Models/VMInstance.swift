@@ -476,9 +476,10 @@ final class VMInstance: Identifiable {
     /// whose configuration omitted it) — the call becomes a no-op.
     /// Idempotent: any previously installed listeners are torn down first.
     ///
-    /// The control listener and the log listener are always installed when a
-    /// socket device exists. The clipboard listener is additionally installed
-    /// when clipboard sharing is enabled in the VM configuration.
+    /// The control listener is always installed when a socket device exists —
+    /// it carries the policy update + heartbeat. The log and clipboard
+    /// listeners are gated on their respective configuration toggles
+    /// (`agentLogForwardingEnabled`, `clipboardSharingEnabled`).
     func startVsockServices() {
         stopVsockServices()
         guard let vm = virtualMachine else { return }
@@ -493,25 +494,42 @@ final class VMInstance: Identifiable {
             }
             // Replace any prior service from a previous reconnect.
             self.vsockControlService?.stop()
-            let service = VsockControlService(channel: channel, label: self.name)
+            let service = VsockControlService(
+                channel: channel,
+                label: self.name,
+                policyProvider: { [weak self] in
+                    guard let self else {
+                        return AgentPolicySnapshot(
+                            logForwardingEnabled: false,
+                            clipboardSharingEnabled: false
+                        )
+                    }
+                    return AgentPolicySnapshot(
+                        logForwardingEnabled: self.configuration.agentLogForwardingEnabled,
+                        clipboardSharingEnabled: self.configuration.clipboardSharingEnabled
+                    )
+                }
+            )
             self.vsockControlService = service
             service.start()
         }
         controlHost.attach(to: socketDevice)
         vsockControlListenerHost = controlHost
 
-        let logHost = VsockListenerHost(port: KernovaVsockPort.log) { [weak self] channel in
-            guard let self else {
-                channel.close()
-                return
+        if configuration.agentLogForwardingEnabled {
+            let logHost = VsockListenerHost(port: KernovaVsockPort.log) { [weak self] channel in
+                guard let self else {
+                    channel.close()
+                    return
+                }
+                self.vsockLogService?.stop()
+                let service = VsockGuestLogService(channel: channel, label: self.name)
+                self.vsockLogService = service
+                service.start()
             }
-            self.vsockLogService?.stop()
-            let service = VsockGuestLogService(channel: channel, label: self.name)
-            self.vsockLogService = service
-            service.start()
+            logHost.attach(to: socketDevice)
+            vsockLogListenerHost = logHost
         }
-        logHost.attach(to: socketDevice)
-        vsockLogListenerHost = logHost
 
         if configuration.clipboardSharingEnabled {
             let clipHost = VsockListenerHost(port: KernovaVsockPort.clipboard) { [weak self] channel in
