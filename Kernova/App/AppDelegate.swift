@@ -739,6 +739,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             switch status {
             case .outdated:
                 menuItem.title = "Update Guest Agent…"
+            case .expectedMissing:
+                menuItem.title = "Reinstall Guest Agent…"
             case .waiting, .current, .unresponsive:
                 menuItem.title = "Install Guest Agent…"
             }
@@ -748,7 +750,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 // `.unresponsive` will reset itself once the heartbeat timeout
                 // fires.
                 return false
-            case .waiting, .outdated:
+            case .waiting, .outdated, .expectedMissing:
                 return true
             }
         case #selector(togglePopOut(_:)):

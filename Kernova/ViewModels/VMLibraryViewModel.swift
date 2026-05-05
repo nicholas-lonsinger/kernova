@@ -122,6 +122,7 @@ final class VMLibraryViewModel {
                     let layout = VMBundleLayout(bundleURL: bundleURL)
                     let initialStatus: VMStatus = layout.hasSaveFile ? .paused : .stopped
                     let instance = VMInstance(configuration: config, bundleURL: bundleURL, status: initialStatus)
+                    wirePersistence(for: instance)
                     return instance
                 } catch {
                     Self.logger.error("Failed to load VM from \(bundleURL.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
@@ -169,6 +170,7 @@ final class VMLibraryViewModel {
             let config = wizard.buildConfiguration()
             let bundleURL = try storageService.createVMBundle(for: config)
             let instance = VMInstance(configuration: config, bundleURL: bundleURL)
+            wirePersistence(for: instance)
 
             // Create disk image
             try await diskImageService.createDiskImage(
@@ -445,6 +447,7 @@ final class VMLibraryViewModel {
             }()
             // Create phantom row immediately
             let phantom = VMInstance(configuration: config, bundleURL: destinationURL, status: initialStatus)
+            wirePersistence(for: phantom)
             instances.append(phantom)
             sortInstances()
             persistOrder()
@@ -531,6 +534,16 @@ final class VMLibraryViewModel {
         } catch {
             Self.logger.error("Failed to save configuration for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
             presentError(error)
+        }
+    }
+
+    /// Wires `instance.onConfigurationDidChange` so host-driven mutations
+    /// (e.g. the guest reporting a new agent version via `Hello`) flow back
+    /// through the storage abstraction. Called at every VMInstance
+    /// construction site in this view model.
+    private func wirePersistence(for instance: VMInstance) {
+        instance.onConfigurationDidChange = { [weak self] inst in
+            self?.saveConfiguration(for: inst)
         }
     }
 
@@ -766,6 +779,7 @@ final class VMLibraryViewModel {
 
         // Create phantom row immediately
         let phantom = VMInstance(configuration: clonedConfig, bundleURL: bundleURL)
+        wirePersistence(for: phantom)
         instances.append(phantom)
         sortInstances()
         persistOrder()
@@ -981,6 +995,7 @@ final class VMLibraryViewModel {
                     bundleURL: bundleURL,
                     status: initialStatus
                 )
+                wirePersistence(for: instance)
                 instances.append(instance)
                 Self.logger.info("Discovered VM '\(config.name, privacy: .public)' on disk — added to library")
                 didChange = true

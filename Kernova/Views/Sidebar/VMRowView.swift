@@ -77,14 +77,35 @@ struct VMRowView: View {
     }
 
     /// The agent status to surface as a sidebar indicator, or `nil` to hide.
-    /// Hidden when the guest can't use the Kernova-bundled agent (Linux guests
-    /// install spice-vdagent themselves) or when the agent is `.current` (no
-    /// news is good news). `.waiting`, `.outdated`, and `.unresponsive` are all
-    /// surfaced so the user has something to act on.
+    ///
+    /// Hidden when:
+    /// - The guest can't use the Kernova-bundled agent (Linux installs
+    ///   spice-vdagent itself).
+    /// - macOS install is in progress (no agent yet, by design).
+    /// - The agent is `.current` (no news is good news).
+    /// - The VM is currently stopped or cold-paused **and** we have already
+    ///   seen the agent on this VM (`lastSeenAgentVersion != nil`). In that
+    ///   case the `.waiting` badge would just nag — the version is safely
+    ///   persisted and the live state will resurface on next start.
+    ///
+    /// `.waiting`, `.outdated`, `.unresponsive`, and `.expectedMissing` are
+    /// surfaced when applicable so the user has something to act on.
     private var visibleAgentStatus: AgentStatus? {
         guard instance.configuration.guestOS == .macOS else { return nil }
+        guard instance.installState == nil else { return nil }
         let status = instance.agentStatus
         if case .current = status { return nil }
+        // For stopped / cold-paused VMs we'd otherwise show `.waiting`. If
+        // the agent has previously connected, suppress that nudge — we only
+        // want to surface live-session signals (`.outdated` / `.unresponsive`
+        // / `.expectedMissing`) on running VMs. The watchdog only fires while
+        // running, so `.expectedMissing` only reaches here for live sessions.
+        let isLiveSession = instance.virtualMachine != nil
+        if !isLiveSession,
+           case .waiting = status,
+           instance.configuration.lastSeenAgentVersion != nil {
+            return nil
+        }
         return status
     }
 }

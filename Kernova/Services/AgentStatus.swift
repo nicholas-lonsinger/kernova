@@ -33,4 +33,16 @@ enum AgentStatus: Equatable, Sendable {
     /// handshake. The UI uses this state to surface a "guest agent
     /// unresponsive" indicator while the channel is reconnecting.
     case unresponsive(version: String)
+
+    /// The host has previously seen the guest agent connect on this VM
+    /// (`VMConfiguration.lastSeenAgentVersion` is set), but after the VM
+    /// reached `.running` the post-start grace period elapsed without a
+    /// fresh `Hello`. The UI uses this state to surface a louder
+    /// "didn't reconnect" affordance — distinct from the gentler `.waiting`
+    /// nudge shown on VMs that have never had an agent.
+    ///
+    /// Synthesized only at `VMInstance.agentStatus`; `VsockControlService`
+    /// (which has no access to persisted state) never returns it.
+    /// `expected` is the last-known agent version we have on record.
+    case expectedMissing(expected: String)
 }

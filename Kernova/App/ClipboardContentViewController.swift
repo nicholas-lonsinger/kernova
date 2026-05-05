@@ -158,6 +158,11 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             statusCircle.layer?.backgroundColor = NSColor.systemOrange.cgColor
             statusLabel.stringValue = "Unresponsive (\(version))"
             actionButton.isHidden = true
+        case .expectedMissing(let expected):
+            statusCircle.layer?.backgroundColor = NSColor.systemOrange.cgColor
+            statusLabel.stringValue = "Didn't reconnect (was \(expected))"
+            actionButton.isHidden = !canInstallKernovaAgent
+            actionButton.title = "Reinstall Guest Agent…"
         }
     }
 

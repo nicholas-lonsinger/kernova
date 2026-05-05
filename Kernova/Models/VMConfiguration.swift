@@ -70,6 +70,22 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
     /// `PolicyUpdate` delivery.
     var agentLogForwardingEnabled: Bool
 
+    /// The most recent guest-reported agent version observed on this VM's
+    /// control channel (`Hello.agent_info.agent_version`). `nil` until the
+    /// host has seen at least one successful Hello.
+    ///
+    /// Drives two pieces of UX:
+    /// 1. Suppressing the sidebar "install agent" nudge for stopped VMs whose
+    ///    agent has previously connected.
+    /// 2. Arming the post-start watchdog (`VMInstance.startAgentPostStartWatchdog`)
+    ///    so a VM whose agent was previously installed but doesn't reconnect
+    ///    after boot surfaces a "didn't reconnect" badge instead of the
+    ///    generic install nudge.
+    ///
+    /// Persisted, never reset on stop. Updated whenever the guest reports a
+    /// new version (e.g. user-side update or downgrade inside the VM).
+    var lastSeenAgentVersion: String?
+
     // MARK: - macOS-specific
 
     /// Serialized `VZMacHardwareModel.dataRepresentation`.
@@ -135,6 +151,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         clipboardSharingEnabled: Bool = false,
         microphoneEnabled: Bool = false,
         agentLogForwardingEnabled: Bool = false,
+        lastSeenAgentVersion: String? = nil,
         hardwareModelData: Data? = nil,
         machineIdentifierData: Data? = nil,
         genericMachineIdentifierData: Data? = nil,
@@ -165,6 +182,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         self.clipboardSharingEnabled = clipboardSharingEnabled
         self.microphoneEnabled = microphoneEnabled
         self.agentLogForwardingEnabled = agentLogForwardingEnabled
+        self.lastSeenAgentVersion = lastSeenAgentVersion
         self.hardwareModelData = hardwareModelData
         self.machineIdentifierData = machineIdentifierData
         self.genericMachineIdentifierData = genericMachineIdentifierData
@@ -181,10 +199,11 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
 
     // MARK: - Codable
 
-    // RATIONALE: Custom `init(from:)` so a newly added field
-    // (`agentLogForwardingEnabled`) defaults to `false` when decoding configs
-    // that pre-date its introduction. Other fields keep their existing
-    // required/optional decoding semantics.
+    // RATIONALE: Custom `init(from:)` so newly added fields default cleanly
+    // when decoding configs that pre-date their introduction
+    // (`agentLogForwardingEnabled` defaults to `false`,
+    // `lastSeenAgentVersion` defaults to `nil`). Other fields keep their
+    // existing required/optional decoding semantics.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.id = try c.decode(UUID.self, forKey: .id)
@@ -204,6 +223,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         self.clipboardSharingEnabled = try c.decode(Bool.self, forKey: .clipboardSharingEnabled)
         self.microphoneEnabled = try c.decode(Bool.self, forKey: .microphoneEnabled)
         self.agentLogForwardingEnabled = try c.decodeIfPresent(Bool.self, forKey: .agentLogForwardingEnabled) ?? false
+        self.lastSeenAgentVersion = try c.decodeIfPresent(String.self, forKey: .lastSeenAgentVersion)
         self.hardwareModelData = try c.decodeIfPresent(Data.self, forKey: .hardwareModelData)
         self.machineIdentifierData = try c.decodeIfPresent(Data.self, forKey: .machineIdentifierData)
         self.genericMachineIdentifierData = try c.decodeIfPresent(Data.self, forKey: .genericMachineIdentifierData)

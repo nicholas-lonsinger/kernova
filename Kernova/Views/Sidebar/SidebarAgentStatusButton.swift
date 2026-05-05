@@ -55,7 +55,7 @@ struct SidebarAgentStatusButton: View {
                             // an unresponsive agent will reset itself once the
                             // heartbeat timeout fires.
                             break
-                        case .waiting, .outdated:
+                        case .waiting, .outdated, .expectedMissing:
                             onMount()
                         }
                         isPopoverPresented = false
@@ -73,6 +73,10 @@ struct SidebarAgentStatusButton: View {
         case .outdated: "arrow.triangle.2.circlepath.circle.fill"
         case .current: "checkmark.circle.fill"
         case .unresponsive: "wifi.exclamationmark"
+        // Triangle (vs the .waiting circle) signals "something went wrong"
+        // rather than "still pending" — the agent was here before, and didn't
+        // come back this boot.
+        case .expectedMissing: "exclamationmark.triangle.fill"
         }
     }
 
@@ -82,6 +86,7 @@ struct SidebarAgentStatusButton: View {
         case .outdated: .orange
         case .current: .green
         case .unresponsive: .orange
+        case .expectedMissing: .orange
         }
     }
 
@@ -91,6 +96,7 @@ struct SidebarAgentStatusButton: View {
         case .outdated(let installed, let bundled): "Guest agent update available (\(installed) → \(bundled))"
         case .current(let version): "Guest agent connected (\(version))"
         case .unresponsive(let version): "Guest agent unresponsive (\(version))"
+        case .expectedMissing(let expected): "Guest agent didn't reconnect (was \(expected))"
         }
     }
 }
@@ -137,6 +143,7 @@ struct AgentStatusPopoverContent: View {
         case .waiting: "Install Guest Agent…"
         case .outdated: "Update Guest Agent…"
         case .current, .unresponsive: "Done"
+        case .expectedMissing: "Reinstall Guest Agent…"
         }
     }
 }
@@ -190,6 +197,7 @@ enum AgentStatusPopoverMetrics {
         case .outdated: "Update available"
         case .current: "Guest agent connected"
         case .unresponsive: "Guest agent unresponsive"
+        case .expectedMissing: "Guest agent didn't reconnect"
         }
     }
 
@@ -203,6 +211,8 @@ enum AgentStatusPopoverMetrics {
             return "\(vmName) is connected with guest agent \(version)."
         case .unresponsive(let version):
             return "\(vmName) (guest agent \(version)) stopped responding to heartbeats. The control connection will reset automatically; if it persists, restart the agent inside the VM."
+        case .expectedMissing(let expected):
+            return "\(vmName) had guest agent \(expected) installed previously, but it didn't connect after this boot. The agent's LaunchAgent may be unloaded, or it may have been uninstalled inside the VM. Reinstalling presents the installer as a disk — open it in Finder and run install.command."
         }
     }
 }
@@ -344,6 +354,15 @@ private struct NSPopoverAnchor<Content: View>: NSViewRepresentable {
     .padding(40)
 }
 
+#Preview("Button — ExpectedMissing") {
+    SidebarAgentStatusButton(
+        vmName: "Sequoia Dev",
+        status: .expectedMissing(expected: "0.9.2"),
+        onMount: {}
+    )
+    .padding(40)
+}
+
 // Standalone popover content rendered in a fixed frame matching the actual
 // popover content size, so the canvas mirrors what NSPopover will display.
 #Preview("Popover — Waiting") {
@@ -379,6 +398,18 @@ private struct NSPopoverAnchor<Content: View>: NSViewRepresentable {
     .frame(
         width: AgentStatusPopoverMetrics.contentSize(forStatus: .current(version: "0.9.2"), vmName: "Sequoia Dev").width,
         height: AgentStatusPopoverMetrics.contentSize(forStatus: .current(version: "0.9.2"), vmName: "Sequoia Dev").height
+    )
+}
+
+#Preview("Popover — ExpectedMissing") {
+    AgentStatusPopoverContent(
+        vmName: "Sequoia Dev",
+        status: .expectedMissing(expected: "0.9.2"),
+        onAction: {}
+    )
+    .frame(
+        width: AgentStatusPopoverMetrics.contentSize(forStatus: .expectedMissing(expected: "0.9.2"), vmName: "Sequoia Dev").width,
+        height: AgentStatusPopoverMetrics.contentSize(forStatus: .expectedMissing(expected: "0.9.2"), vmName: "Sequoia Dev").height
     )
 }
 
