@@ -170,26 +170,12 @@ final class VMInstance: Identifiable {
     var agentStatus: AgentStatus {
         switch configuration.guestOS {
         case .macOS:
-            // The watchdog only fires after .running with a non-nil
-            // `lastSeenAgentVersion`, but defend against unexpected ordering
-            // by falling back to `.waiting` if the persisted value is missing.
-            if agentExpectedButMissing,
-               let expected = configuration.lastSeenAgentVersion {
-                return .expectedMissing(expected: expected)
-            }
-            let upstream = vsockControlService?.agentStatus ?? .waiting
-            // Live session for a VM with a known prior agent that hasn't
-            // said Hello yet → `.connecting`. The UI uses this to show a
-            // softer rotating indicator instead of the install nudge while
-            // the agent is expected to reconnect. Resolves to `.current`
-            // once Hello arrives, or `.expectedMissing` if the post-start
-            // watchdog fires (handled above).
-            if case .waiting = upstream,
-               let lastSeen = configuration.lastSeenAgentVersion,
-               virtualMachine != nil {
-                return .connecting(expected: lastSeen)
-            }
-            return upstream
+            return AgentStatus.synthesize(
+                upstream: vsockControlService?.agentStatus ?? .waiting,
+                lastSeenAgentVersion: configuration.lastSeenAgentVersion,
+                isInLiveSession: virtualMachine != nil,
+                agentExpectedButMissing: agentExpectedButMissing
+            )
         case .linux:
             return (clipboardService as? SpiceClipboardService)?.agentStatus ?? .waiting
         }
