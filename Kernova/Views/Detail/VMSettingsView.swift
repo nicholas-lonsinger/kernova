@@ -503,7 +503,7 @@ struct VMSettingsView: View {
                     set: { instance.configuration.agentInstallNudgeDismissed = !$0 }
                 )
             )
-            Text("Surfaces the orange install icon in the sidebar when the guest agent has not yet connected. Turn off to suppress the nudge for this VM. The more urgent indicators (update available, didn't reconnect, unresponsive) are not affected.")
+            Text("Surfaces the install icon in the sidebar when the guest agent has not yet connected. Turn off to suppress the nudge for this VM. The more urgent indicators (update available, didn't reconnect, unresponsive) are not affected.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
