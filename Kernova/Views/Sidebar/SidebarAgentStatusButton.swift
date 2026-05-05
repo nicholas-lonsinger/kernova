@@ -411,12 +411,6 @@ struct WrappingNSTextLabel: NSViewRepresentable {
         if nsView.preferredMaxLayoutWidth != maxWidth {
             nsView.preferredMaxLayoutWidth = maxWidth
         }
-        // Notify the layout system that the intrinsic size may have
-        // changed (text/font/maxWidth all affect it). The current popover
-        // pins its outer frame to a pre-measured size and ignores the
-        // intrinsic value, so this is effectively a no-op there — but it
-        // keeps the component correct if reused in a flexible container.
-        nsView.invalidateIntrinsicContentSize()
     }
 }
 
