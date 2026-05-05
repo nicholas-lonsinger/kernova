@@ -392,6 +392,10 @@ struct WrappingNSTextLabel: NSViewRepresentable {
         field.font = font
         field.textColor = textColor
         field.preferredMaxLayoutWidth = maxWidth
+        // Default for `wrappingLabelWithString:` is non-selectable. Enable
+        // selection so users can copy specific strings out of the body
+        // (e.g. `install.command`, version numbers).
+        field.isSelectable = true
         field.setContentHuggingPriority(.required, for: .vertical)
         field.setContentCompressionResistancePriority(.required, for: .vertical)
         return field
