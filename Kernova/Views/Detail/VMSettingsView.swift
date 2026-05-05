@@ -103,7 +103,7 @@ struct VMSettingsView: View {
         HStack(spacing: 10) {
             Image(systemName: "lock.fill")
                 .foregroundStyle(.orange)
-            Text("Settings are read-only while the VM is running. Stop the VM to make changes.")
+            Text("Sections marked with \(Text(Image(systemName: "lock.fill")).foregroundStyle(.orange)) are locked while the VM is running. Stop the VM to change them. Other sections can be edited live.")
                 .font(.callout)
             Spacer()
         }
@@ -116,11 +116,33 @@ struct VMSettingsView: View {
         }
     }
 
+    /// Section header that appends a lock SF Symbol when `isReadOnly` is
+    /// `true`, signaling that the section's controls are locked while the
+    /// VM is running. Hot-toggleable sections (Guest Agent, Clipboard) keep
+    /// their plain headers so the absence of the lock is itself the signal
+    /// that those sections remain editable.
+    ///
+    /// `LocalizedStringKey` matches SwiftUI's built-in `Section("...")`
+    /// initializer behavior so passing a literal participates in the same
+    /// localization lookup as the rest of the app's titles would.
+    @ViewBuilder
+    private func lockableHeader(_ title: LocalizedStringKey) -> some View {
+        HStack(spacing: 6) {
+            Text(title)
+            if isReadOnly {
+                Image(systemName: "lock.fill")
+                    .foregroundStyle(.orange)
+                    .imageScale(.small)
+                    .help("Locked while the VM is running")
+            }
+        }
+    }
+
     // MARK: - Sections
 
     @ViewBuilder
     private var generalSection: some View {
-        Section("General") {
+        Section(header: lockableHeader("General")) {
             if isRenaming {
                 TextField("Name", text: $editingName)
                     .focused($isNameFieldFocused)
@@ -158,7 +180,7 @@ struct VMSettingsView: View {
 
     @ViewBuilder
     private var removableMediaSection: some View {
-        Section("Removable Media") {
+        Section(header: lockableHeader("Removable Media")) {
             if let discImagePath = instance.configuration.discImagePath {
                 HStack {
                     Image(systemName: "opticaldisc")
@@ -289,7 +311,7 @@ struct VMSettingsView: View {
                 }
             }
         } header: {
-            Text("Storage Disks")
+            lockableHeader("Storage Disks")
         }
     }
 
@@ -346,7 +368,7 @@ struct VMSettingsView: View {
 
     @ViewBuilder
     private var resourcesSection: some View {
-        Section("Resources") {
+        Section(header: lockableHeader("Resources")) {
             let os = instance.configuration.guestOS
 
             Stepper(
@@ -397,7 +419,7 @@ struct VMSettingsView: View {
 
     @ViewBuilder
     private var networkSection: some View {
-        Section("Network") {
+        Section(header: lockableHeader("Network")) {
             Toggle("Networking Enabled", isOn: $instance.configuration.networkEnabled)
             if let mac = instance.configuration.macAddress {
                 LabeledContent("MAC Address", value: mac)
@@ -407,7 +429,7 @@ struct VMSettingsView: View {
 
     @ViewBuilder
     private var audioSection: some View {
-        Section("Audio") {
+        Section(header: lockableHeader("Audio")) {
             Toggle("Microphone", isOn: $instance.configuration.microphoneEnabled)
                 .disabled(isReadOnly)
             Text("Allows the guest to access the host microphone. Speaker output is always enabled.")
@@ -567,7 +589,7 @@ struct VMSettingsView: View {
                     .foregroundStyle(.secondary)
             }
         } header: {
-            Text("Shared Directories")
+            lockableHeader("Shared Directories")
         }
     }
 
