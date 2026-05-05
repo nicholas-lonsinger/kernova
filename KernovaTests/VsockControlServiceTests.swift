@@ -266,7 +266,11 @@ struct VsockControlServiceTests {
 
         var stamps: [ContinuousClock.Instant] = []
         while stamps.count < 3 {
-            let frame = try await nextFrame(from: guest, timeout: .seconds(2))
+            // Use the shared 5 s default. If the timer is genuinely broken
+            // we'll still fail in bounded time (≤15 s); if it's just slow,
+            // returning the frame lets the maxGap assertion below produce a
+            // sharper "cadence drift" error than a generic timeout.
+            let frame = try await nextFrame(from: guest)
             if case .heartbeat = frame.payload {
                 stamps.append(.now)
             }
