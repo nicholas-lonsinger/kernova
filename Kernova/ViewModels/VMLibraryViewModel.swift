@@ -534,6 +534,18 @@ final class VMLibraryViewModel {
         }
     }
 
+    /// Pushes a configuration change to a running VM. Hot-toggleable fields
+    /// (`agentLogForwardingEnabled`, `clipboardSharingEnabled`) take effect
+    /// immediately via `VMInstance.applyLivePolicy`; everything else is
+    /// persisted-only and waits for next start.
+    ///
+    /// Called from `VMSettingsView.onChange` after the new value has already
+    /// been written to `instance.configuration` and persisted via
+    /// `saveConfiguration(for:)`.
+    func applyLivePolicy(for instance: VMInstance, old: VMConfiguration, new: VMConfiguration) {
+        instance.applyLivePolicy(oldConfig: old, newConfig: new)
+    }
+
     // MARK: - USB Device Management
 
     func attachUSBDevice(diskImagePath: String, readOnly: Bool, to instance: VMInstance) {

@@ -483,7 +483,7 @@ final class VMInstance: Identifiable {
     func startVsockServices() {
         stopVsockServices()
         guard let vm = virtualMachine else { return }
-        guard let socketDevice = vm.socketDevices.compactMap({ $0 as? VZVirtioSocketDevice }).first else {
+        guard let socketDevice = vm.socketDevices.first(where: { $0 is VZVirtioSocketDevice }) as? VZVirtioSocketDevice else {
             return
         }
 
@@ -567,6 +567,105 @@ final class VMInstance: Identifiable {
             clipboardService = nil
         }
         vsockClipboardListenerHost = nil
+    }
+
+    /// Reacts to a configuration change while the VM is running by installing
+    /// or tearing down vsock listeners and pushing a fresh `PolicyUpdate` to
+    /// the guest agent. No-op when the VM isn't running, when no socket
+    /// device is attached, or when neither hot-toggleable field changed.
+    ///
+    /// Only `agentLogForwardingEnabled` and `clipboardSharingEnabled` are
+    /// honored at runtime. Clipboard sharing on Linux is restart-only
+    /// because the SPICE port must be declared at config-build time —
+    /// `applyLivePolicy` skips the clipboard branch entirely for Linux
+    /// guests; the UI surfaces a "takes effect on next start" hint instead.
+    func applyLivePolicy(oldConfig: VMConfiguration, newConfig: VMConfiguration) {
+        guard status == .running || status == .paused else { return }
+        guard let vm = virtualMachine else { return }
+        guard let socketDevice = vm.socketDevices.first(where: { $0 is VZVirtioSocketDevice }) as? VZVirtioSocketDevice else {
+            return
+        }
+
+        let logChanged =
+            oldConfig.agentLogForwardingEnabled != newConfig.agentLogForwardingEnabled
+        let clipboardChanged =
+            oldConfig.clipboardSharingEnabled != newConfig.clipboardSharingEnabled
+        guard logChanged || clipboardChanged else { return }
+
+        if logChanged {
+            applyLiveLogPolicy(enabled: newConfig.agentLogForwardingEnabled, on: socketDevice)
+        }
+
+        let isMacOSGuest = newConfig.guestOS == .macOS
+        if clipboardChanged && isMacOSGuest {
+            applyLiveClipboardPolicy(
+                enabled: newConfig.clipboardSharingEnabled,
+                on: socketDevice
+            )
+        }
+
+        // Push the resulting policy snapshot to the guest. The control
+        // service may be nil during the brief window between accepting the
+        // listener connection and receiving the guest's Hello — `?` keeps
+        // that state safe; the next Hello-driven send will catch it up.
+        vsockControlService?.sendPolicyUpdate(
+            AgentPolicySnapshot(
+                logForwardingEnabled: newConfig.agentLogForwardingEnabled,
+                clipboardSharingEnabled: newConfig.clipboardSharingEnabled
+            )
+        )
+
+        Self.logger.notice(
+            "Applied live policy for '\(self.name, privacy: .public)' (logForwarding=\(newConfig.agentLogForwardingEnabled, privacy: .public), clipboard=\(newConfig.clipboardSharingEnabled, privacy: .public))"
+        )
+    }
+
+    private func applyLiveLogPolicy(enabled: Bool, on socketDevice: VZVirtioSocketDevice) {
+        if enabled {
+            // Idempotent reinstall: tear down any prior listener so a stale
+            // accept callback doesn't race a new one.
+            vsockLogListenerHost = nil
+            let logHost = VsockListenerHost(port: KernovaVsockPort.log) { [weak self] channel in
+                guard let self else {
+                    channel.close()
+                    return
+                }
+                self.vsockLogService?.stop()
+                let service = VsockGuestLogService(channel: channel, label: self.name)
+                self.vsockLogService = service
+                service.start()
+            }
+            logHost.attach(to: socketDevice)
+            vsockLogListenerHost = logHost
+        } else {
+            vsockLogService?.stop()
+            vsockLogService = nil
+            vsockLogListenerHost = nil
+        }
+    }
+
+    private func applyLiveClipboardPolicy(enabled: Bool, on socketDevice: VZVirtioSocketDevice) {
+        if enabled {
+            vsockClipboardListenerHost = nil
+            let clipHost = VsockListenerHost(port: KernovaVsockPort.clipboard) { [weak self] channel in
+                guard let self else {
+                    channel.close()
+                    return
+                }
+                self.clipboardService?.stop()
+                let service = VsockClipboardService(channel: channel, label: self.name)
+                self.clipboardService = service
+                service.start()
+            }
+            clipHost.attach(to: socketDevice)
+            vsockClipboardListenerHost = clipHost
+        } else {
+            if clipboardService is VsockClipboardService {
+                clipboardService?.stop()
+                clipboardService = nil
+            }
+            vsockClipboardListenerHost = nil
+        }
     }
 }
 

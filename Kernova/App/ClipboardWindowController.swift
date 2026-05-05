@@ -70,17 +70,24 @@ final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: - Status Observation
 
-    /// Automatically closes the clipboard window when the VM stops or errors out.
+    /// Automatically closes the clipboard window when the VM stops, errors
+    /// out, or has clipboard sharing turned off via the live-policy toggle.
     private func observeStatus() {
         statusObservation = observeRecurring(
             track: { [weak self] in
                 _ = self?.instance.status
+                _ = self?.instance.configuration.clipboardSharingEnabled
             },
             apply: { [weak self] in
                 guard let self else { return }
                 let status = self.instance.status
                 if status == .stopped || status == .error {
                     Self.logger.notice("Auto-closing clipboard window for VM '\(self.instance.name, privacy: .public)' (status: \(status.displayName, privacy: .public))")
+                    self.window?.close()
+                    return
+                }
+                if !self.instance.configuration.clipboardSharingEnabled {
+                    Self.logger.notice("Auto-closing clipboard window for VM '\(self.instance.name, privacy: .public)' (clipboard sharing disabled by user)")
                     self.window?.close()
                 }
             }
