@@ -32,6 +32,7 @@ struct SidebarAgentStatusButton: View {
     /// install this."
     let onDismiss: (() -> Void)?
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isPopoverPresented = false
 
     var body: some View {
@@ -45,8 +46,16 @@ struct SidebarAgentStatusButton: View {
                 // grace window for a previously-installed agent. The
                 // rotation stops automatically once `.connecting` resolves
                 // to `.current` (icon hidden) or `.expectedMissing` (icon
-                // becomes the warning triangle).
-                .symbolEffect(.rotate, options: .repeat(.continuous), isActive: status.isConnecting)
+                // becomes the warning triangle). Gated on
+                // `accessibilityReduceMotion` so users who've disabled
+                // motion in System Settings see a static icon — the gray
+                // color (vs. orange `.outdated`) still differentiates the
+                // state, and the popover/help text carry the meaning.
+                .symbolEffect(
+                    .rotate,
+                    options: .repeat(.continuous),
+                    isActive: status.isConnecting && !reduceMotion
+                )
         }
         .buttonStyle(.plain)
         .help(helpText)
@@ -389,9 +398,16 @@ struct WrappingNSTextLabel: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSTextField, context: Context) {
+        // Guard `stringValue` and `preferredMaxLayoutWidth` because they
+        // trigger layout invalidation when set; `font` and `textColor` are
+        // unconditionally assigned because their `!=` comparison uses
+        // pointer equality on `NSColor` / `NSFont`, and dynamic system
+        // colors (e.g. `.secondaryLabelColor` adapts to dark mode) can
+        // resolve to the same pointer across appearance changes — the
+        // guard would skip a needed update.
         if nsView.stringValue != text { nsView.stringValue = text }
-        if nsView.font != font { nsView.font = font }
-        if nsView.textColor != textColor { nsView.textColor = textColor }
+        nsView.font = font
+        nsView.textColor = textColor
         if nsView.preferredMaxLayoutWidth != maxWidth {
             nsView.preferredMaxLayoutWidth = maxWidth
         }
