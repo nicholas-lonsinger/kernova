@@ -24,10 +24,12 @@ message Frame {
 
     // Service payloads occupy reserved number ranges so each service can grow
     // independently without colliding:
-    //   12..19 reserved for control plane (heartbeat, future control payloads)
+    //   12..19 reserved for control plane (heartbeat, policy, future control)
     //   20..29 reserved for clipboard
     //   30..39 reserved for logging
     //   40..49 reserved for drag/drop
+    PolicyUpdate policy_update = 13;
+
     ClipboardOffer clipboard_offer = 20;
     ClipboardRequest clipboard_request = 21;
     ClipboardData clipboard_data = 22;
@@ -148,6 +150,27 @@ message ClipboardRelease {
 // sampling) without bumping `Frame.protocol_version`.
 message Heartbeat {
   uint64 nonce = 1;
+}
+
+// Sent by the host on the control channel to tell the guest agent which
+// optional capabilities are currently enabled for this VM. The guest agent
+// uses it to actually stop work for disabled capabilities (close channels,
+// stop pasteboard polling, drop buffered records) rather than just having
+// the host ignore inbound traffic.
+//
+// The host sends one `PolicyUpdate` immediately after the control-plane
+// `Hello` exchange and one each time the user toggles a capability while
+// the VM is running. Each message carries the full current policy snapshot;
+// receivers compare against their last applied state and act on diffs.
+message PolicyUpdate {
+  // Whether the guest's log-forwarding agent should connect on the log port
+  // and stream `LogRecord` frames to the host.
+  bool log_forwarding_enabled = 1;
+
+  // Whether the guest's clipboard agent should poll `NSPasteboard.general`
+  // and exchange `ClipboardOffer`/`ClipboardRequest`/`ClipboardData` with
+  // the host on the clipboard port.
+  bool clipboard_sharing_enabled = 2;
 }
 
 // Reported by either side when a request cannot be fulfilled, or as an

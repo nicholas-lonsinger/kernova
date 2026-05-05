@@ -303,8 +303,10 @@ final class VsockControlService {
             Self.logger.warning(
                 "Guest control error for '\(self.label, privacy: .public)': \(error.code, privacy: .public) — \(error.message, privacy: .public)"
             )
-        case .clipboardOffer, .clipboardRequest, .clipboardData, .clipboardRelease, .logRecord, .none:
-            // These payloads belong on other channels. Log and ignore.
+        case .policyUpdate, .clipboardOffer, .clipboardRequest, .clipboardData, .clipboardRelease, .logRecord, .none:
+            // PolicyUpdate is a host→guest message and never arrives on the
+            // host side; other payloads belong on other channels. Log and
+            // ignore.
             Self.logger.warning(
                 "Unexpected payload on control channel for '\(self.label, privacy: .public)' — wrong port"
             )

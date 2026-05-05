@@ -86,6 +86,31 @@ struct VsockChannelTests {
         }
     }
 
+    @Test("Round-trips a PolicyUpdate frame")
+    func roundTripPolicyUpdate() async throws {
+        let (a, b) = try makePair()
+        a.start()
+        b.start()
+        defer { a.close(); b.close() }
+
+        var sent = Frame()
+        sent.protocolVersion = 1
+        sent.policyUpdate = Kernova_V1_PolicyUpdate.with {
+            $0.logForwardingEnabled = true
+            $0.clipboardSharingEnabled = false
+        }
+        try a.send(sent)
+
+        let received = try await waitForNextFrame(on: b)
+        #expect(received?.protocolVersion == 1)
+        guard case .policyUpdate(let policy) = received?.payload else {
+            Issue.record("Expected policyUpdate payload, got \(String(describing: received?.payload))")
+            return
+        }
+        #expect(policy.logForwardingEnabled == true)
+        #expect(policy.clipboardSharingEnabled == false)
+    }
+
     @Test("Delivers multiple frames in order")
     func multipleFramesPreserveOrder() async throws {
         let (a, b) = try makePair()

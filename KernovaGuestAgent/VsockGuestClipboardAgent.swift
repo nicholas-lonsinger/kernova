@@ -275,7 +275,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             Self.logger.warning(
                 "Host clipboard error: \(error.code, privacy: .public) — \(error.message, privacy: .public)"
             )
-        case .hello, .heartbeat, .logRecord, .none:
+        case .hello, .heartbeat, .policyUpdate, .logRecord, .none:
             Self.logger.warning("Unexpected payload on clipboard channel — wrong port")
         }
     }

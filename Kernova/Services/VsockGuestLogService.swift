@@ -90,10 +90,11 @@ final class VsockGuestLogService {
             logger.warning(
                 "Guest agent error for '\(label, privacy: .public)': \(error.code, privacy: .public) — \(error.message, privacy: .public)"
             )
-        case .hello, .heartbeat, .clipboardOffer, .clipboardRequest, .clipboardData, .clipboardRelease:
-            // Hello and Heartbeat belong on the control channel; clipboard
-            // payloads belong on the clipboard channel. Anything other than
-            // LogRecord/Error reaching here means the peer crossed wires.
+        case .hello, .heartbeat, .policyUpdate, .clipboardOffer, .clipboardRequest, .clipboardData, .clipboardRelease:
+            // Hello, Heartbeat, and PolicyUpdate belong on the control
+            // channel; clipboard payloads belong on the clipboard channel.
+            // Anything other than LogRecord/Error reaching here means the peer
+            // crossed wires.
             logger.warning("Unexpected payload on log channel for '\(label, privacy: .public)' — wrong port")
         case .none:
             logger.debug("Frame with no payload for '\(label, privacy: .public)'")
