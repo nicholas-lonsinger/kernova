@@ -54,7 +54,8 @@ struct VsockControlServiceTests {
         heartbeatInterval: Duration? = nil,
         unresponsiveAfter: Duration? = nil,
         terminateAfter: Duration? = nil,
-        policyProvider: (@MainActor () -> AgentPolicySnapshot)? = nil
+        policyProvider: (@MainActor () -> AgentPolicySnapshot)? = nil,
+        onAgentVersionObserved: (@MainActor (String) -> Void)? = nil
     ) -> VsockControlService {
         VsockControlService(
             channel: channel,
@@ -63,7 +64,8 @@ struct VsockControlServiceTests {
             heartbeatInterval: heartbeatInterval ?? Self.testHeartbeat,
             unresponsiveAfter: unresponsiveAfter ?? Self.testUnresponsive,
             terminateAfter: terminateAfter ?? Self.testTerminate,
-            policyProvider: policyProvider
+            policyProvider: policyProvider,
+            onAgentVersionObserved: onAgentVersionObserved
         )
     }
 
@@ -520,6 +522,86 @@ struct VsockControlServiceTests {
         }
     }
 
+    // MARK: - onAgentVersionObserved
+
+    @Test("onAgentVersionObserved fires once when the guest reports a non-empty version")
+    func onAgentVersionObservedFires() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let observed = ObservedRecorder()
+        let service = makeService(
+            channel: host,
+            onAgentVersionObserved: { observed.append($0) }
+        )
+        service.start()
+        defer { service.stop() }
+
+        _ = try await nextFrame(from: guest) // host hello
+        try guest.send(makeGuestHello(agentVersion: "0.9.2"))
+        try await waitUntil { service.isConnected }
+
+        // The Hello handler runs synchronously after the inbound frame is
+        // dispatched on the main actor, so by the time isConnected flips the
+        // observer has already been invoked.
+        #expect(observed.values == ["0.9.2"])
+    }
+
+    @Test("onAgentVersionObserved is skipped when the guest reports an empty version")
+    func onAgentVersionObservedSkippedForEmpty() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let observed = ObservedRecorder()
+        let service = makeService(
+            channel: host,
+            onAgentVersionObserved: { observed.append($0) }
+        )
+        service.start()
+        defer { service.stop() }
+
+        _ = try await nextFrame(from: guest)
+        try guest.send(makeGuestHello(agentVersion: ""))
+        try await waitUntil { service.isConnected }
+
+        // Connection succeeds (isConnected is set unconditionally on Hello),
+        // but agentVersion stays nil and the observer must not fire — the
+        // host has no meaningful version to persist.
+        #expect(service.agentVersion == nil)
+        #expect(observed.values.isEmpty)
+    }
+
+    @Test("onAgentVersionObserved fires once per Hello (dedup is the caller's job)")
+    func onAgentVersionObservedFiresPerHello() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let observed = ObservedRecorder()
+        let service = makeService(
+            channel: host,
+            onAgentVersionObserved: { observed.append($0) }
+        )
+        service.start()
+        defer { service.stop() }
+
+        _ = try await nextFrame(from: guest)
+        try guest.send(makeGuestHello(agentVersion: "0.9.2"))
+        try await waitUntil { service.isConnected }
+        try guest.send(makeGuestHello(agentVersion: "0.9.2"))
+
+        // Service fires the closure verbatim each time. Suppressing duplicate
+        // writes is `VMInstance`'s responsibility (it compares against the
+        // persisted value before invoking onConfigurationDidChange).
+        try await waitUntil { observed.values.count == 2 }
+        #expect(observed.values == ["0.9.2", "0.9.2"])
+    }
+
     @Test("sendPolicyUpdate emits a PolicyUpdate frame with the supplied snapshot")
     func sendPolicyUpdateEmitsFrame() async throws {
         let (guest, host) = try makePair()
@@ -547,5 +629,17 @@ struct VsockControlServiceTests {
         let received = try #require(policy)
         #expect(received.logForwardingEnabled == false)
         #expect(received.clipboardSharingEnabled == true)
+    }
+}
+
+/// MainActor-isolated recorder for the `onAgentVersionObserved` closure.
+/// Reference type so the observer's closure capture and the test's read site
+/// see the same buffer without `inout` shenanigans.
+@MainActor
+private final class ObservedRecorder {
+    private(set) var values: [String] = []
+
+    func append(_ value: String) {
+        values.append(value)
     }
 }

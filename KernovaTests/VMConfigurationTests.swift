@@ -631,6 +631,50 @@ struct VMConfigurationTests {
         #expect(config.agentLogForwardingEnabled == false)
     }
 
+    // MARK: - lastSeenAgentVersion Tests
+
+    @Test("Default lastSeenAgentVersion is nil")
+    func defaultLastSeenAgentVersion() {
+        let config = VMConfiguration(
+            name: "Test VM",
+            guestOS: .macOS,
+            bootMode: .macOS
+        )
+        #expect(config.lastSeenAgentVersion == nil)
+    }
+
+    @Test("Configuration round-trips lastSeenAgentVersion")
+    func lastSeenAgentVersionRoundTrip() throws {
+        let config = VMConfiguration(
+            name: "Persisted VM",
+            guestOS: .macOS,
+            bootMode: .macOS,
+            lastSeenAgentVersion: "0.9.2"
+        )
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(config)
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(VMConfiguration.self, from: data)
+
+        #expect(decoded.lastSeenAgentVersion == "0.9.2")
+    }
+
+    @Test("Missing lastSeenAgentVersion decodes as nil (existing-VM migration)")
+    func missingLastSeenAgentVersionDecodesNil() throws {
+        // Older configs predate the field — they must still decode, with the
+        // optional defaulting to nil so the post-start watchdog doesn't
+        // misfire on VMs that have never connected an agent.
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
+
+        #expect(config.lastSeenAgentVersion == nil)
+    }
+
     // MARK: - microphoneEnabled Tests
 
     @Test("Default microphoneEnabled is false")
@@ -693,6 +737,7 @@ struct VMConfigurationTests {
             clipboardSharingEnabled: true,
             microphoneEnabled: true,
             agentLogForwardingEnabled: true,
+            lastSeenAgentVersion: "1.2.3",
             hardwareModelData: Data([0x01, 0x02, 0x03]),
             machineIdentifierData: Data([0x04, 0x05]),
             genericMachineIdentifierData: Data([0x06]),

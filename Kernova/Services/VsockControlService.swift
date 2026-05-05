@@ -84,6 +84,13 @@ final class VsockControlService {
     /// (re)connect. `nil` in tests that don't exercise policy delivery.
     private let policyProvider: (@MainActor () -> AgentPolicySnapshot)?
 
+    /// Notified each time the guest reports a non-empty `agentVersion` in its
+    /// `Hello`. Fire-and-forget — this service does not care whether the host
+    /// persists the value. Wired by `VMInstance.startVsockServices()` to write
+    /// the version into `VMConfiguration.lastSeenAgentVersion`. `nil` in tests
+    /// and contexts where persistence is not exercised.
+    private let onAgentVersionObserved: (@MainActor (String) -> Void)?
+
     private var consumeTask: Task<Void, Never>?
     private var outboundHeartbeatTask: Task<Void, Never>?
     private var livenessTask: Task<Void, Never>?
@@ -108,7 +115,8 @@ final class VsockControlService {
         heartbeatInterval: Duration = .seconds(5),
         unresponsiveAfter: Duration = .seconds(15),
         terminateAfter: Duration = .seconds(30),
-        policyProvider: (@MainActor () -> AgentPolicySnapshot)? = nil
+        policyProvider: (@MainActor () -> AgentPolicySnapshot)? = nil,
+        onAgentVersionObserved: (@MainActor (String) -> Void)? = nil
     ) {
         // The two-stage watchdog requires `unresponsiveAfter < terminateAfter`
         // so the `.unresponsive` UI transition is observable before the channel
@@ -129,6 +137,7 @@ final class VsockControlService {
         // with very small thresholds don't over-spin.
         self.livenessTickInterval = min(heartbeatInterval, unresponsiveAfter / 3)
         self.policyProvider = policyProvider
+        self.onAgentVersionObserved = onAgentVersionObserved
     }
 
     // MARK: - Lifecycle
@@ -330,6 +339,12 @@ final class VsockControlService {
             Self.logger.notice(
                 "Guest agent connected for '\(self.label, privacy: .public)' (service=\(hello.serviceVersion, privacy: .public), agent=\(reportedVersion, privacy: .public), caps=\(hello.capabilities.joined(separator: ","), privacy: .public))"
             )
+            // Notify the host that we have a fresh version sample. Empty
+            // strings indicate an agent that didn't populate the field — skip
+            // those so the host doesn't persist a meaningless value.
+            if !reportedVersion.isEmpty {
+                onAgentVersionObserved?(reportedVersion)
+            }
             // Push the current policy snapshot to the freshly connected guest
             // so it stops/starts log + clipboard work immediately rather than
             // assuming defaults.

@@ -131,12 +131,38 @@ final class VMInstance: Identifiable {
     /// VM teardown.
     var vsockControlService: VsockControlService?
 
+    /// `true` when this VM has reached `.running`, the host previously saw a
+    /// guest agent connect (`configuration.lastSeenAgentVersion != nil`), and
+    /// the post-start grace period has elapsed without a fresh `Hello`
+    /// arriving over the control channel. Drives the sidebar's louder
+    /// "didn't reconnect" badge — distinct from the gentler `.waiting` state
+    /// shown on VMs that have never had an agent. Reset on `tearDownSession`
+    /// and on the next successful Hello.
+    var agentExpectedButMissing: Bool = false
+
+    /// Backing task for the post-start agent-arrival watchdog. One-shot per
+    /// VM session. Set in `startAgentPostStartWatchdog`; cancelled in
+    /// `tearDownSession` and on the first Hello of the session.
+    private var agentPostStartTask: Task<Void, Never>?
+
+    /// Notified whenever a host-side mutation to `configuration` should be
+    /// persisted (e.g. the guest reported a new agent version via Hello).
+    /// Wired by `VMLibraryViewModel` to `saveConfiguration(for:)` so the
+    /// JSON on disk stays in sync. Direct file writes from inside the
+    /// instance would bypass the storage abstraction the rest of the app
+    /// uses, so this closure routes the call through it.
+    @ObservationIgnored var onConfigurationDidChange: (@MainActor (VMInstance) -> Void)?
+
     /// The current install/version/liveness state of the guest agent for this
     /// VM. The single read site for the UI; dispatches to whichever transport
     /// owns agent status for this guest OS:
     /// - macOS guests source it from the always-on `VsockControlService`, so
     ///   the value is meaningful regardless of whether clipboard sharing is
-    ///   enabled.
+    ///   enabled. When the post-start watchdog has flipped
+    ///   `agentExpectedButMissing`, this property synthesizes
+    ///   `.expectedMissing` from the persisted `lastSeenAgentVersion` —
+    ///   `VsockControlService` itself does not (and cannot) produce that
+    ///   case because it has no access to persisted host state.
     /// - Linux guests source it from `SpiceClipboardService` — `spice-vdagent`
     ///   is user-installed, so there is no host-side install/update flow to
     ///   drive and the only states reachable are `.waiting` / `.current`.
@@ -144,6 +170,13 @@ final class VMInstance: Identifiable {
     var agentStatus: AgentStatus {
         switch configuration.guestOS {
         case .macOS:
+            // The watchdog only fires after .running with a non-nil
+            // `lastSeenAgentVersion`, but defend against unexpected ordering
+            // by falling back to `.waiting` if the persisted value is missing.
+            if agentExpectedButMissing,
+               let expected = configuration.lastSeenAgentVersion {
+                return .expectedMissing(expected: expected)
+            }
             return vsockControlService?.agentStatus ?? .waiting
         case .linux:
             return (clipboardService as? SpiceClipboardService)?.agentStatus ?? .waiting
@@ -284,6 +317,8 @@ final class VMInstance: Identifiable {
         stopVsockServices()
         stopClipboardService()
         stopSerialReading()
+        cancelAgentPostStartWatchdog()
+        agentExpectedButMissing = false
         serialInputPipe = nil
         serialOutputPipe = nil
         attachedUSBDevices = []
@@ -508,6 +543,9 @@ final class VMInstance: Identifiable {
                         logForwardingEnabled: self.configuration.agentLogForwardingEnabled,
                         clipboardSharingEnabled: self.configuration.clipboardSharingEnabled
                     )
+                },
+                onAgentVersionObserved: { [weak self] reportedVersion in
+                    self?.recordObservedAgentVersion(reportedVersion)
                 }
             )
             self.vsockControlService = service
@@ -547,6 +585,92 @@ final class VMInstance: Identifiable {
         }
 
         Self.logger.info("Vsock services started for '\(self.name, privacy: .public)'")
+    }
+
+    // MARK: - Agent Post-Start Watchdog
+
+    /// Default grace period before the post-start watchdog fires. Forgiving
+    /// enough to cover slow first boots and post-OS-update boots inside the
+    /// guest. Tests override this with a millisecond-scale duration.
+    static let defaultAgentPostStartGrace: Duration = .seconds(120)
+
+    /// Starts a one-shot timer that flips `agentExpectedButMissing = true` if
+    /// the guest agent doesn't say Hello within `grace`. No-op unless every
+    /// precondition holds:
+    ///
+    /// - macOS guest (Linux uses `spice-vdagent`, which the host doesn't track).
+    /// - `lastSeenAgentVersion` is non-nil — i.e. we've seen the agent before
+    ///   on this VM, so its absence after start is a regression worth surfacing.
+    /// - The VM is not currently in macOS install (no agent yet by design).
+    /// - No watchdog is already armed (idempotent).
+    ///
+    /// Cancellation is automatic: any inbound Hello calls
+    /// `cancelAgentPostStartWatchdog`; `tearDownSession` does the same on stop.
+    func startAgentPostStartWatchdog(grace: Duration = VMInstance.defaultAgentPostStartGrace) {
+        guard configuration.guestOS == .macOS else { return }
+        guard configuration.lastSeenAgentVersion != nil else { return }
+        guard installState == nil else { return }
+        guard agentPostStartTask == nil else { return }
+
+        Self.logger.debug(
+            "Agent post-start watchdog armed for '\(self.name, privacy: .public)' (grace=\(grace, privacy: .public))"
+        )
+        agentPostStartTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: grace)
+            } catch {
+                return
+            }
+            guard let self else { return }
+            // If the agent connected at any point during the grace window,
+            // `vsockControlService?.agentVersion` is non-nil and the cancel
+            // path has already cleared `agentPostStartTask` — this guard is
+            // belt-and-braces.
+            guard self.agentPostStartTask != nil else { return }
+            if self.vsockControlService?.agentVersion == nil {
+                Self.logger.notice(
+                    "Guest agent expected (last seen \(self.configuration.lastSeenAgentVersion ?? "?", privacy: .public)) but never reconnected for '\(self.name, privacy: .public)' — surfacing reinstall affordance"
+                )
+                self.agentExpectedButMissing = true
+            }
+            self.agentPostStartTask = nil
+        }
+    }
+
+    /// Cancels the post-start watchdog if armed. Used both when an agent
+    /// Hello arrives during the grace window and from `tearDownSession`.
+    /// Does not clear `agentExpectedButMissing` — callers do that explicitly
+    /// where appropriate.
+    func cancelAgentPostStartWatchdog() {
+        agentPostStartTask?.cancel()
+        agentPostStartTask = nil
+    }
+
+    /// Reacts to a fresh, non-empty `agent_version` reported by the guest:
+    /// cancel the post-start watchdog, clear the expected-missing flag, and
+    /// persist the new value via `onConfigurationDidChange` if it differs
+    /// from what's on record. Wired by `startVsockServices()` into the
+    /// `VsockControlService` callback; exposed at this scope so tests can
+    /// drive the path without standing up a real control channel.
+    ///
+    /// Empty strings are filtered upstream by `VsockControlService` — they
+    /// would represent an agent that didn't populate the field, and
+    /// persisting "" would silence both the install nudge and the watchdog
+    /// for no good reason.
+    func recordObservedAgentVersion(_ reportedVersion: String) {
+        // First Hello of any session — even from a stale or reconnect cycle —
+        // proves the agent is alive, so cancel the post-start watchdog and
+        // clear the expected-missing flag regardless of whether the persisted
+        // version moved.
+        cancelAgentPostStartWatchdog()
+        agentExpectedButMissing = false
+        // Suppress the disk write when the version hasn't moved. Reconnects
+        // and heartbeats alone don't need a `config.json` rewrite — and
+        // skipping the no-op write keeps `VMDirectoryWatcher` from re-firing
+        // reconcile on every Hello.
+        guard configuration.lastSeenAgentVersion != reportedVersion else { return }
+        configuration.lastSeenAgentVersion = reportedVersion
+        onConfigurationDidChange?(self)
     }
 
     /// Tears down all vsock listeners and any active services running on them.

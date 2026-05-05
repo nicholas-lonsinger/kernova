@@ -40,6 +40,13 @@ final class VirtualizationService {
             }
 
             instance.status = .running
+            // Once we've reached `.running`, the guest agent has roughly the
+            // grace period to say Hello. If we've seen the agent before on
+            // this VM and it doesn't reconnect, the watchdog flips
+            // `agentExpectedButMissing` so the UI surfaces a louder
+            // "didn't reconnect" badge instead of the generic install nudge.
+            // No-op for fresh VMs (no `lastSeenAgentVersion`) and for Linux.
+            instance.startAgentPostStartWatchdog()
             Self.logger.notice("Started VM '\(instance.name, privacy: .public)'")
         } catch {
             Self.logger.error("Failed to start VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
