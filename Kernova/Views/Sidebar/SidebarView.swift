@@ -20,6 +20,9 @@ struct SidebarView: View {
                         },
                         onMountAgentInstaller: {
                             viewModel.mountGuestAgentInstaller(on: instance)
+                        },
+                        onDismissAgentInstallNudge: {
+                            viewModel.dismissAgentInstallNudge(for: instance)
                         }
                     )
                     .tag(instance.id)

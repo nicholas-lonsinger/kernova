@@ -26,6 +26,11 @@ struct SidebarAgentStatusButton: View {
     let vmName: String
     let status: AgentStatus
     let onMount: () -> Void
+    /// Optional opt-out callback. Wired only for `.waiting` — the other
+    /// states (`.outdated`, `.unresponsive`, `.expectedMissing`) are not
+    /// dismissable because they imply something more urgent than "you could
+    /// install this."
+    let onDismiss: (() -> Void)?
 
     @State private var isPopoverPresented = false
 
@@ -62,6 +67,12 @@ struct SidebarAgentStatusButton: View {
                             onMount()
                         }
                         isPopoverPresented = false
+                    },
+                    onDismiss: onDismiss.map { dismiss in
+                        {
+                            dismiss()
+                            isPopoverPresented = false
+                        }
                     }
                 )
             }
@@ -114,6 +125,9 @@ struct AgentStatusPopoverContent: View {
     let vmName: String
     let status: AgentStatus
     let onAction: () -> Void
+    /// When non-nil, a "Don't show again" button is rendered at the
+    /// bottom-leading edge of the action row.
+    let onDismiss: (() -> Void)?
 
     var body: some View {
         let bodyWidth = AgentStatusPopoverMetrics.contentWidth
@@ -134,6 +148,10 @@ struct AgentStatusPopoverContent: View {
             .frame(width: bodyWidth, alignment: .leading)
 
             HStack {
+                if let onDismiss {
+                    Button("Don't show again", action: onDismiss)
+                        .buttonStyle(.link)
+                }
                 Spacer()
                 Button(buttonTitle, action: onAction)
                     .keyboardShortcut(.defaultAction)
@@ -368,7 +386,8 @@ struct WrappingNSTextLabel: NSViewRepresentable {
     SidebarAgentStatusButton(
         vmName: "Sequoia Dev",
         status: .waiting,
-        onMount: {}
+        onMount: {},
+        onDismiss: {}
     )
     .padding(40)
 }
@@ -377,7 +396,8 @@ struct WrappingNSTextLabel: NSViewRepresentable {
     SidebarAgentStatusButton(
         vmName: "Sequoia Dev",
         status: .outdated(installed: "0.9.1", bundled: "0.9.2"),
-        onMount: {}
+        onMount: {},
+        onDismiss: nil
     )
     .padding(40)
 }
@@ -386,7 +406,8 @@ struct WrappingNSTextLabel: NSViewRepresentable {
     SidebarAgentStatusButton(
         vmName: "Sequoia Dev",
         status: .current(version: "0.9.2"),
-        onMount: {}
+        onMount: {},
+        onDismiss: nil
     )
     .padding(40)
 }
@@ -395,7 +416,8 @@ struct WrappingNSTextLabel: NSViewRepresentable {
     SidebarAgentStatusButton(
         vmName: "Sequoia Dev",
         status: .unresponsive(version: "0.9.2"),
-        onMount: {}
+        onMount: {},
+        onDismiss: nil
     )
     .padding(40)
 }
@@ -404,7 +426,8 @@ struct WrappingNSTextLabel: NSViewRepresentable {
     SidebarAgentStatusButton(
         vmName: "Sequoia Dev",
         status: .expectedMissing(expected: "0.9.2"),
-        onMount: {}
+        onMount: {},
+        onDismiss: nil
     )
     .padding(40)
 }
@@ -415,7 +438,8 @@ struct WrappingNSTextLabel: NSViewRepresentable {
     AgentStatusPopoverContent(
         vmName: "Sequoia Dev",
         status: .waiting,
-        onAction: {}
+        onAction: {},
+        onDismiss: {}
     )
     .frame(
         width: AgentStatusPopoverMetrics.contentSize(forStatus: .waiting, vmName: "Sequoia Dev").width,
@@ -427,7 +451,8 @@ struct WrappingNSTextLabel: NSViewRepresentable {
     AgentStatusPopoverContent(
         vmName: "Sequoia Dev",
         status: .outdated(installed: "0.9.1", bundled: "0.9.2"),
-        onAction: {}
+        onAction: {},
+        onDismiss: nil
     )
     .frame(
         width: AgentStatusPopoverMetrics.contentSize(forStatus: .outdated(installed: "0.9.1", bundled: "0.9.2"), vmName: "Sequoia Dev").width,
@@ -439,7 +464,8 @@ struct WrappingNSTextLabel: NSViewRepresentable {
     AgentStatusPopoverContent(
         vmName: "Sequoia Dev",
         status: .current(version: "0.9.2"),
-        onAction: {}
+        onAction: {},
+        onDismiss: nil
     )
     .frame(
         width: AgentStatusPopoverMetrics.contentSize(forStatus: .current(version: "0.9.2"), vmName: "Sequoia Dev").width,
@@ -451,7 +477,8 @@ struct WrappingNSTextLabel: NSViewRepresentable {
     AgentStatusPopoverContent(
         vmName: "Sequoia Dev",
         status: .expectedMissing(expected: "0.9.2"),
-        onAction: {}
+        onAction: {},
+        onDismiss: nil
     )
     .frame(
         width: AgentStatusPopoverMetrics.contentSize(forStatus: .expectedMissing(expected: "0.9.2"), vmName: "Sequoia Dev").width,
@@ -463,7 +490,8 @@ struct WrappingNSTextLabel: NSViewRepresentable {
     AgentStatusPopoverContent(
         vmName: "My Very Long macOS Sequoia Development VM Name",
         status: .outdated(installed: "0.9.1", bundled: "0.9.2"),
-        onAction: {}
+        onAction: {},
+        onDismiss: nil
     )
     .frame(
         width: AgentStatusPopoverMetrics.contentSize(forStatus: .outdated(installed: "0.9.1", bundled: "0.9.2"), vmName: "My Very Long macOS Sequoia Development VM Name").width,
