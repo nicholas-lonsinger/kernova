@@ -10,6 +10,13 @@ enum VMDisplayPreference: String, Codable, Sendable, Equatable {
 /// Persistent configuration for a virtual machine.
 ///
 /// This type is serialized to `config.json` inside each VM bundle directory.
+///
+/// > Important: This struct uses a custom `init(from:)` (see the `Codable`
+/// > section) instead of synthesized `Decodable` so newly added optional
+/// > defaults can be migrated cleanly. **Any new property must be added to
+/// > the custom `init(from:)` as well.** Optional properties decoded via
+/// > synthesized `init(from:)` would default to `nil` silently; the manual
+/// > initializer makes that decision explicit.
 struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
 
     // MARK: - Identity
@@ -50,6 +57,18 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
     /// virtio sound input stream. Defaults to `false` so guests cannot silently
     /// listen to the host. Speaker output is always enabled regardless of this flag.
     var microphoneEnabled: Bool
+
+    // MARK: - Guest Agent
+
+    /// When `true`, the macOS guest agent forwards `os.Logger` records to the
+    /// host over vsock so they appear in Console.app under
+    /// `com.kernova.guest`. Defaults to `false` for new and existing VMs:
+    /// log forwarding is opt-in. Linux guests have no Kernova agent and ignore
+    /// this flag.
+    ///
+    /// Hot-toggleable while the VM is running — see `VsockControlService`'s
+    /// `PolicyUpdate` delivery.
+    var agentLogForwardingEnabled: Bool
 
     // MARK: - macOS-specific
 
@@ -115,6 +134,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         macAddress: String? = nil,
         clipboardSharingEnabled: Bool = false,
         microphoneEnabled: Bool = false,
+        agentLogForwardingEnabled: Bool = false,
         hardwareModelData: Data? = nil,
         machineIdentifierData: Data? = nil,
         genericMachineIdentifierData: Data? = nil,
@@ -144,6 +164,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         self.macAddress = macAddress
         self.clipboardSharingEnabled = clipboardSharingEnabled
         self.microphoneEnabled = microphoneEnabled
+        self.agentLogForwardingEnabled = agentLogForwardingEnabled
         self.hardwareModelData = hardwareModelData
         self.machineIdentifierData = machineIdentifierData
         self.genericMachineIdentifierData = genericMachineIdentifierData
@@ -156,6 +177,45 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         self.additionalDisks = additionalDisks
         self.sharedDirectories = sharedDirectories
         self.createdAt = createdAt
+    }
+
+    // MARK: - Codable
+
+    // RATIONALE: Custom `init(from:)` so a newly added field
+    // (`agentLogForwardingEnabled`) defaults to `false` when decoding configs
+    // that pre-date its introduction. Other fields keep their existing
+    // required/optional decoding semantics.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(UUID.self, forKey: .id)
+        self.name = try c.decode(String.self, forKey: .name)
+        self.guestOS = try c.decode(VMGuestOS.self, forKey: .guestOS)
+        self.bootMode = try c.decode(VMBootMode.self, forKey: .bootMode)
+        self.cpuCount = try c.decode(Int.self, forKey: .cpuCount)
+        self.memorySizeInGB = try c.decode(Int.self, forKey: .memorySizeInGB)
+        self.diskSizeInGB = try c.decode(Int.self, forKey: .diskSizeInGB)
+        self.displayWidth = try c.decode(Int.self, forKey: .displayWidth)
+        self.displayHeight = try c.decode(Int.self, forKey: .displayHeight)
+        self.displayPPI = try c.decode(Int.self, forKey: .displayPPI)
+        self.displayPreference = try c.decode(VMDisplayPreference.self, forKey: .displayPreference)
+        self.lastFullscreenDisplayID = try c.decodeIfPresent(UInt32.self, forKey: .lastFullscreenDisplayID)
+        self.networkEnabled = try c.decode(Bool.self, forKey: .networkEnabled)
+        self.macAddress = try c.decodeIfPresent(String.self, forKey: .macAddress)
+        self.clipboardSharingEnabled = try c.decode(Bool.self, forKey: .clipboardSharingEnabled)
+        self.microphoneEnabled = try c.decode(Bool.self, forKey: .microphoneEnabled)
+        self.agentLogForwardingEnabled = try c.decodeIfPresent(Bool.self, forKey: .agentLogForwardingEnabled) ?? false
+        self.hardwareModelData = try c.decodeIfPresent(Data.self, forKey: .hardwareModelData)
+        self.machineIdentifierData = try c.decodeIfPresent(Data.self, forKey: .machineIdentifierData)
+        self.genericMachineIdentifierData = try c.decodeIfPresent(Data.self, forKey: .genericMachineIdentifierData)
+        self.discImagePath = try c.decodeIfPresent(String.self, forKey: .discImagePath)
+        self.discImageReadOnly = try c.decode(Bool.self, forKey: .discImageReadOnly)
+        self.bootFromDiscImage = try c.decode(Bool.self, forKey: .bootFromDiscImage)
+        self.kernelPath = try c.decodeIfPresent(String.self, forKey: .kernelPath)
+        self.initrdPath = try c.decodeIfPresent(String.self, forKey: .initrdPath)
+        self.kernelCommandLine = try c.decodeIfPresent(String.self, forKey: .kernelCommandLine)
+        self.additionalDisks = try c.decodeIfPresent([AdditionalDisk].self, forKey: .additionalDisks)
+        self.sharedDirectories = try c.decodeIfPresent([SharedDirectory].self, forKey: .sharedDirectories)
+        self.createdAt = try c.decode(Date.self, forKey: .createdAt)
     }
 
     // MARK: - Cloning
@@ -208,6 +268,25 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
     var memorySizeInBytes: UInt64 {
         UInt64(memorySizeInGB) * 1024 * 1024 * 1024
     }
+
+    // MARK: - Hot-Toggleable Fields
+
+    /// Fields the user may edit while the VM is running. Changes to these
+    /// bypass the read-only settings lock and are pushed to the live guest
+    /// agent via `PolicyUpdate` on the vsock control channel.
+    ///
+    /// Single source of truth — `VMSettingsView` uses this for change
+    /// detection, and the live-policy handler that applies these changes to
+    /// a running VM consumes the same list.
+    ///
+    /// RATIONALE: `KeyPath` does not conform to `Sendable` in Swift 6, so a
+    /// `static let` of `[KeyPath]` would be rejected. The values are
+    /// immutable (key paths captured at compile time) so concurrent reads
+    /// are safe — `nonisolated(unsafe)` is the appropriate escape hatch.
+    nonisolated(unsafe) static let hotToggleFields: [KeyPath<VMConfiguration, Bool>] = [
+        \.agentLogForwardingEnabled,
+        \.clipboardSharingEnabled,
+    ]
 }
 
 // MARK: - SharedDirectory
