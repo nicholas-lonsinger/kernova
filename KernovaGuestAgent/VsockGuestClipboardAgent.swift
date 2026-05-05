@@ -96,6 +96,15 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
 
     private var pollingTimer: DispatchSourceTimer?
 
+    /// Whether clipboard sync is currently allowed by host policy. Default
+    /// `false` so the agent doesn't connect or poll until the host's first
+    /// `PolicyUpdate(clipboardSharingEnabled: true)` arrives. Mutated only
+    /// on the main queue.
+    private var enabled: Bool = false
+
+    /// Test seam.
+    var isEnabledForTesting: Bool { enabled }
+
     // MARK: - Init
 
     /// Production init — uses real `NSPasteboard.general` on the clipboard port.
@@ -111,19 +120,52 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         self.pasteboard = pasteboard
         self.client = client
         self.lastPasteboardChangeCount = pasteboard.changeCount
+        // Default-disabled: pause the reconnect loop until the host sends its
+        // first `PolicyUpdate(clipboardSharingEnabled: true)`.
+        self.client.pause()
     }
 
     // MARK: - Lifecycle
 
-    /// Begins the connect/serve loop and the local pasteboard poll.
+    /// Begins the connect/serve loop. The pasteboard poll is started when
+    /// host policy enables clipboard sharing — see `setEnabled(_:)`.
     func start() {
         client.start { [weak self] channel in
             await self?.serve(channel: channel)
         }
-        DispatchQueue.main.async { [weak self] in
-            self?.startPolling()
-        }
         Self.logger.notice("Vsock clipboard agent started")
+    }
+
+    /// Applies a host policy update for clipboard sharing.
+    ///
+    /// When disabling: cancels the pasteboard poll, closes any active channel
+    /// via the underlying client, clears per-connection state, and pauses
+    /// the reconnect loop. When enabling: resumes the loop and starts the
+    /// pasteboard poll. Idempotent — repeated calls with the same value are
+    /// no-ops.
+    func setEnabled(_ enabled: Bool) {
+        DispatchQueue.main.async { [weak self] in
+            self?.applyEnabledOnMain(enabled)
+        }
+    }
+
+    /// Main-queue body of `setEnabled(_:)`. Caller must dispatch to main.
+    private func applyEnabledOnMain(_ enabled: Bool) {
+        guard self.enabled != enabled else { return }
+        self.enabled = enabled
+        if enabled {
+            client.resume()
+            startPolling()
+            Self.logger.notice("Clipboard sharing enabled by host policy")
+        } else {
+            client.pause()
+            pollingTimer?.cancel()
+            pollingTimer = nil
+            liveChannel = nil
+            pendingOutbound = nil
+            pendingInboundGeneration = nil
+            Self.logger.notice("Clipboard sharing disabled by host policy")
+        }
     }
 
     /// Tears down the connection and the poll timer.

@@ -65,12 +65,21 @@ logger.notice("Kernova Guest Agent v\(version, privacy: .public) (\(buildNumber,
 /// Clipboard sync agent. Maintains its own connection on
 /// `KernovaVsockPort.clipboard` independent of the log connection, so a
 /// disconnect on one channel doesn't take the other down.
+///
+/// Default-disabled at construction; enabled when the host's first
+/// `PolicyUpdate(clipboardSharingEnabled: true)` arrives.
 let clipboardAgent = VsockGuestClipboardAgent()
 
 /// Control-plane agent. Always-on connection on `KernovaVsockPort.control`
-/// carrying the version handshake and bidirectional heartbeats, independent of
-/// any optional feature toggle on the host.
-let controlAgent = VsockGuestControlAgent()
+/// carrying the version handshake, bidirectional heartbeats, and the
+/// `PolicyUpdate` push that drives `vsockConnection.setEnabled(_:)` and
+/// `clipboardAgent.setEnabled(_:)`. Independent of any feature toggle on the
+/// host so the host can detect agent presence even when other capabilities
+/// are off.
+let controlAgent = VsockGuestControlAgent(onPolicy: { policy in
+    vsockConnection.setEnabled(policy.logForwardingEnabled)
+    clipboardAgent.setEnabled(policy.clipboardSharingEnabled)
+})
 
 // MARK: - Signal Handling
 

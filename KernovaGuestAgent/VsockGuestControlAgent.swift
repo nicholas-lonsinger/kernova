@@ -37,15 +37,21 @@ final class VsockGuestControlAgent: @unchecked Sendable {
     private let terminateAfter: Duration
     private let livenessTickInterval: Duration
 
+    /// Invoked on every inbound `PolicyUpdate`. The closure receives the raw
+    /// protobuf snapshot; main.swift wires it to `VsockHostConnection` and
+    /// `VsockGuestClipboardAgent` so each capability honors host policy.
+    private let onPolicy: (@Sendable (Kernova_V1_PolicyUpdate) -> Void)?
+
     private let lock = NSLock()
     private var lastInboundFrame: ContinuousClock.Instant?
     private var unresponsiveLogged: Bool = false
     private var nextHeartbeatNonce: UInt64 = 1
 
     /// Production init — connects to the control port with default cadences.
-    convenience init() {
+    convenience init(onPolicy: (@Sendable (Kernova_V1_PolicyUpdate) -> Void)? = nil) {
         self.init(
-            client: VsockGuestClient(port: KernovaVsockPort.control, label: "control")
+            client: VsockGuestClient(port: KernovaVsockPort.control, label: "control"),
+            onPolicy: onPolicy
         )
     }
 
@@ -54,7 +60,8 @@ final class VsockGuestControlAgent: @unchecked Sendable {
         client: VsockGuestClient,
         heartbeatInterval: Duration = .seconds(5),
         unresponsiveAfter: Duration = .seconds(15),
-        terminateAfter: Duration = .seconds(30)
+        terminateAfter: Duration = .seconds(30),
+        onPolicy: (@Sendable (Kernova_V1_PolicyUpdate) -> Void)? = nil
     ) {
         // The two-stage watchdog requires `unresponsiveAfter < terminateAfter`
         // so the "host appears unresponsive" warning is observable before the
@@ -72,6 +79,7 @@ final class VsockGuestControlAgent: @unchecked Sendable {
         // heartbeat interval so tests with very small thresholds don't
         // over-spin.
         self.livenessTickInterval = min(heartbeatInterval, unresponsiveAfter / 3)
+        self.onPolicy = onPolicy
     }
 
     // MARK: - Lifecycle
@@ -171,11 +179,11 @@ final class VsockGuestControlAgent: @unchecked Sendable {
             Self.logger.warning(
                 "Host control error: \(error.code, privacy: .public) — \(error.message, privacy: .public)"
             )
-        case .policyUpdate:
-            // PolicyUpdate is the right channel and the right direction
-            // (host→guest), but routing to the log + clipboard agents is
-            // wired up in a follow-up change. For now, log and drop.
-            Self.logger.debug("PolicyUpdate received but routing not yet wired")
+        case .policyUpdate(let policy):
+            Self.logger.notice(
+                "PolicyUpdate received (logForwarding=\(policy.logForwardingEnabled, privacy: .public), clipboard=\(policy.clipboardSharingEnabled, privacy: .public))"
+            )
+            onPolicy?(policy)
         case .clipboardOffer, .clipboardRequest, .clipboardData, .clipboardRelease, .logRecord, .none:
             Self.logger.warning("Unexpected payload on control channel — wrong port")
         }

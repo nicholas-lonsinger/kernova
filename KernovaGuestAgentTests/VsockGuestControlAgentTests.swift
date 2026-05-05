@@ -38,7 +38,8 @@ struct VsockGuestControlAgentTests {
         agentFd: Int32,
         heartbeatInterval: Duration = .milliseconds(40),
         unresponsiveAfter: Duration = .milliseconds(160),
-        terminateAfter: Duration = .milliseconds(2_000)
+        terminateAfter: Duration = .milliseconds(2_000),
+        onPolicy: (@Sendable (Kernova_V1_PolicyUpdate) -> Void)? = nil
     ) -> VsockGuestControlAgent {
         let provided = AtomicInt()
         let client = VsockGuestClient(
@@ -52,7 +53,8 @@ struct VsockGuestControlAgentTests {
             client: client,
             heartbeatInterval: heartbeatInterval,
             unresponsiveAfter: unresponsiveAfter,
-            terminateAfter: terminateAfter
+            terminateAfter: terminateAfter,
+            onPolicy: onPolicy
         )
     }
 
@@ -233,6 +235,79 @@ struct VsockGuestControlAgentTests {
     }
 
     // MARK: - Lifecycle
+
+    // MARK: - PolicyUpdate routing
+
+    /// Lock-protected box for the most recent policy received via the
+    /// onPolicy callback.
+    private final class PolicyBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var _value: Kernova_V1_PolicyUpdate?
+        func set(_ p: Kernova_V1_PolicyUpdate) { lock.withLock { _value = p } }
+        var value: Kernova_V1_PolicyUpdate? { lock.withLock { _value } }
+    }
+
+    @Test("Inbound PolicyUpdate is forwarded to the onPolicy callback")
+    func policyUpdateRoutesToCallback() async throws {
+        let (agentFd, hostFd) = try makeRawSocketPair()
+        let host = VsockChannel(fileDescriptor: hostFd)
+        host.start()
+        defer { host.close() }
+
+        let received = PolicyBox()
+        let agent = makeAgent(agentFd: agentFd, onPolicy: { policy in
+            received.set(policy)
+        })
+        agent.start()
+        defer { agent.stop() }
+
+        // Drain the agent's outbound Hello so subsequent reads are aligned.
+        _ = try await nextFrame(from: host)
+
+        // Send a PolicyUpdate from the host side and verify the callback fires
+        // with the supplied values.
+        var frame = Frame()
+        frame.protocolVersion = 1
+        frame.policyUpdate = Kernova_V1_PolicyUpdate.with {
+            $0.logForwardingEnabled = true
+            $0.clipboardSharingEnabled = false
+        }
+        try host.send(frame)
+
+        try await waitUntil { received.value != nil }
+        let policy = try #require(received.value)
+        #expect(policy.logForwardingEnabled == true)
+        #expect(policy.clipboardSharingEnabled == false)
+    }
+
+    @Test("Multiple PolicyUpdate frames each invoke the callback")
+    func multiplePolicyUpdatesRouteToCallback() async throws {
+        let (agentFd, hostFd) = try makeRawSocketPair()
+        let host = VsockChannel(fileDescriptor: hostFd)
+        host.start()
+        defer { host.close() }
+
+        let counts = AtomicInt()
+        let agent = makeAgent(agentFd: agentFd, onPolicy: { _ in
+            _ = counts.increment()
+        })
+        agent.start()
+        defer { agent.stop() }
+
+        _ = try await nextFrame(from: host) // drain outbound Hello
+
+        for _ in 0..<3 {
+            var frame = Frame()
+            frame.protocolVersion = 1
+            frame.policyUpdate = Kernova_V1_PolicyUpdate.with {
+                $0.logForwardingEnabled = true
+                $0.clipboardSharingEnabled = true
+            }
+            try host.send(frame)
+        }
+
+        try await waitUntil { counts.value >= 3 }
+    }
 
     @Test("stop() halts the connection without throwing")
     func stopHaltsCleanly() async throws {
