@@ -587,6 +587,50 @@ struct VMConfigurationTests {
         #expect(decoded.clipboardSharingEnabled == true)
     }
 
+    // MARK: - agentLogForwardingEnabled Tests
+
+    @Test("Default agentLogForwardingEnabled is false")
+    func defaultAgentLogForwardingEnabled() {
+        let config = VMConfiguration(
+            name: "Test VM",
+            guestOS: .macOS,
+            bootMode: .macOS
+        )
+        #expect(config.agentLogForwardingEnabled == false)
+    }
+
+    @Test("Configuration preserves agentLogForwardingEnabled flag")
+    func agentLogForwardingEnabledRoundTrip() throws {
+        let config = VMConfiguration(
+            name: "Logging VM",
+            guestOS: .macOS,
+            bootMode: .macOS,
+            agentLogForwardingEnabled: true
+        )
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(config)
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(VMConfiguration.self, from: data)
+
+        #expect(decoded.agentLogForwardingEnabled == true)
+    }
+
+    @Test("Missing agentLogForwardingEnabled decodes as false (existing-VM migration)")
+    func missingAgentLogForwardingEnabledDecodesFalse() throws {
+        // Older configs predate the field — they must still decode, with the
+        // new flag defaulting to off so existing VMs don't suddenly forward
+        // logs without the user opting in.
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
+
+        #expect(config.agentLogForwardingEnabled == false)
+    }
+
     // MARK: - microphoneEnabled Tests
 
     @Test("Default microphoneEnabled is false")

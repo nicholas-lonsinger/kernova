@@ -62,6 +62,9 @@ struct VMSettingsView: View {
                     // `resourcesSection` and `audioSection` (which handle their own
                     // disabling per-control) remain interactive in read-only mode —
                     // SwiftUI's disabled state propagates irreversibly to descendants.
+                    // `guestAgentSection` and `clipboardSection` carry hot-toggle
+                    // fields that remain editable while the VM is running, so they
+                    // are NOT wrapped with `.disabled(isReadOnly)`.
                     generalSection.disabled(isReadOnly)
                     resourcesSection
                     storageDiskSection.disabled(isReadOnly)
@@ -69,17 +72,25 @@ struct VMSettingsView: View {
                     sharedDirectoriesSection.disabled(isReadOnly)
                     networkSection.disabled(isReadOnly)
                     audioSection
-                    clipboardSection.disabled(isReadOnly)
+                    if instance.configuration.guestOS == .macOS {
+                        guestAgentSection
+                    }
+                    clipboardSection
                 }
                 .formStyle(.grouped)
                 .padding()
             }
         }
-        .onChange(of: instance.configuration) { _, _ in
-            // RATIONALE: In read-only mode no control can mutate the configuration, but
-            // SwiftUI may still invoke onChange when the instance itself is swapped in.
-            // Guarding here avoids a spurious write during that transition.
-            guard !isReadOnly else { return }
+        .onChange(of: instance.configuration) { old, new in
+            // RATIONALE: hot-toggleable fields (agent log forwarding, clipboard
+            // sharing) can change while `isReadOnly` is true because their
+            // toggles stay interactive. Save when they change; for everything
+            // else, the read-only guard protects against spurious writes
+            // during instance swap-in transitions.
+            let hotFieldsChanged =
+                old.agentLogForwardingEnabled != new.agentLogForwardingEnabled
+                || old.clipboardSharingEnabled != new.clipboardSharingEnabled
+            guard !isReadOnly || hotFieldsChanged else { return }
             viewModel.saveConfiguration(for: instance)
         }
     }
@@ -450,12 +461,30 @@ struct VMSettingsView: View {
     }
 
     @ViewBuilder
+    private var guestAgentSection: some View {
+        Section("Guest Agent") {
+            Toggle(
+                "Forward guest logs",
+                isOn: $instance.configuration.agentLogForwardingEnabled
+            )
+            Text("Streams `os.Logger` records from the macOS guest agent to the host so they appear in Console.app under `com.kernova.guest`. Off by default; can be toggled while the VM is running.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
     private var clipboardSection: some View {
         Section("Clipboard") {
             Toggle("Clipboard Sharing", isOn: $instance.configuration.clipboardSharingEnabled)
             Text("Exchanges clipboard text between host and guest. macOS guests use the bundled Kernova guest agent — Kernova will offer to install or update it from the clipboard window. Linux guests need spice-vdagent installed via the guest's package manager.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            if isReadOnly && instance.configuration.guestOS == .linux {
+                Text("Takes effect on next start — Linux guests configure SPICE at VM start time.")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
         }
     }
 
