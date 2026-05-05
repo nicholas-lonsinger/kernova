@@ -663,8 +663,6 @@ struct VMConfigurationTests {
         #expect(decoded.microphoneEnabled == true)
     }
 
-    // MARK: - Missing Required Fields
-
     // MARK: - Full-field round-trip
 
     /// Populates every property with a non-default value, encodes to JSON,
@@ -738,6 +736,8 @@ struct VMConfigurationTests {
             "Round-trip mismatch — likely an unhandled field in `init(from:)`"
         )
     }
+
+    // MARK: - Missing Required Fields
 
     @Test("Decoding JSON missing a required field throws DecodingError")
     func missingRequiredFieldThrows() {
