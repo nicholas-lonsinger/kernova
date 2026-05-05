@@ -483,7 +483,7 @@ final class VMInstance: Identifiable {
     func startVsockServices() {
         stopVsockServices()
         guard let vm = virtualMachine else { return }
-        guard let socketDevice = vm.socketDevices.compactMap({ $0 as? VZVirtioSocketDevice }).first else {
+        guard let socketDevice = vm.socketDevices.first(where: { $0 is VZVirtioSocketDevice }) as? VZVirtioSocketDevice else {
             return
         }
 
@@ -582,7 +582,7 @@ final class VMInstance: Identifiable {
     func applyLivePolicy(oldConfig: VMConfiguration, newConfig: VMConfiguration) {
         guard status == .running || status == .paused else { return }
         guard let vm = virtualMachine else { return }
-        guard let socketDevice = vm.socketDevices.compactMap({ $0 as? VZVirtioSocketDevice }).first else {
+        guard let socketDevice = vm.socketDevices.first(where: { $0 is VZVirtioSocketDevice }) as? VZVirtioSocketDevice else {
             return
         }
 
