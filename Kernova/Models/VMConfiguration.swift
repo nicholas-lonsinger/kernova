@@ -304,15 +304,19 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
     // MARK: - Hot-Toggleable Fields
 
     /// Fields the user may edit while the VM is running. Changes to these
-    /// bypass the read-only settings lock and are pushed to the live guest
-    /// agent via `PolicyUpdate` on the vsock control channel.
+    /// bypass the `VMSettingsView` read-only settings lock so the user can
+    /// flip them mid-session.
     ///
-    /// Single source of truth — `VMSettingsView` uses this for change
-    /// detection, and the live-policy handler that applies these changes to
-    /// a running VM consumes the same list.
+    /// Most also affect runtime guest behavior and are pushed to the live
+    /// guest agent via `PolicyUpdate` on the vsock control channel — but the
+    /// `applyLivePolicy` handler checks each such field directly rather than
+    /// iterating this list, so a host-only UI preference like
+    /// `agentInstallNudgeDismissed` (which suppresses a sidebar nudge but
+    /// has no guest-side effect) is safe to include.
     static let hotToggleFields: [KeyPath<VMConfiguration, Bool> & Sendable] = [
         \.agentLogForwardingEnabled,
         \.clipboardSharingEnabled,
+        \.agentInstallNudgeDismissed,
     ]
 }
 

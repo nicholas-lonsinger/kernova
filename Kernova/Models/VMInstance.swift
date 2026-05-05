@@ -632,6 +632,15 @@ final class VMInstance: Identifiable {
                     "Guest agent expected (last seen \(self.configuration.lastSeenAgentVersion ?? "?", privacy: .public)) but never reconnected for '\(self.name, privacy: .public)' — surfacing reinstall affordance"
                 )
                 self.agentExpectedButMissing = true
+                // A previously-installed agent disappearing is a louder
+                // event than the gentle install nudge the user once chose
+                // to silence. Reset the dismissal so any future `.waiting`
+                // (e.g. user wipes the VM and starts fresh, or
+                // `lastSeenAgentVersion` clears) surfaces normally.
+                if self.configuration.agentInstallNudgeDismissed {
+                    self.configuration.agentInstallNudgeDismissed = false
+                    self.onConfigurationDidChange?(self)
+                }
             }
             self.agentPostStartTask = nil
         }

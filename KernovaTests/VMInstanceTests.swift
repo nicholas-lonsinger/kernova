@@ -568,12 +568,13 @@ struct VMInstanceTests {
         #expect(instance.vsockClipboardListenerHost == nil)
     }
 
-    @Test("VMConfiguration.hotToggleFields covers both runtime-editable booleans")
+    @Test("VMConfiguration.hotToggleFields covers all runtime-editable booleans")
     func hotToggleFieldsCovered() {
         let fields = VMConfiguration.hotToggleFields
-        #expect(fields.count == 2)
+        #expect(fields.count == 3)
         #expect(fields.contains(\.agentLogForwardingEnabled))
         #expect(fields.contains(\.clipboardSharingEnabled))
+        #expect(fields.contains(\.agentInstallNudgeDismissed))
     }
 
     // MARK: - Agent Post-Start Watchdog
@@ -709,6 +710,44 @@ struct VMInstanceTests {
 
         try await Task.sleep(for: Self.testWatchdogGrace * 3)
         #expect(instance.agentExpectedButMissing == false)
+    }
+
+    @Test("Watchdog firing also clears a previously-dismissed install nudge and persists the change")
+    func watchdogClearsAgentInstallNudgeDismissed() async throws {
+        // Scenario: user previously installed the agent (lastSeenAgentVersion
+        // set) and earlier dismissed the install nudge for this VM. The
+        // agent now fails to reconnect after boot; the watchdog fires
+        // .expectedMissing AND resets the dismissed flag so any future
+        // .waiting (e.g. they wipe + reinstall the VM) is not silently
+        // suppressed by their old preference.
+        let instance = makeMacOSInstanceWithAgentInstalled()
+        instance.configuration.agentInstallNudgeDismissed = true
+
+        var persistCallCount = 0
+        instance.onConfigurationDidChange = { _ in persistCallCount += 1 }
+
+        instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
+
+        try await waitUntil {
+            instance.agentExpectedButMissing
+        }
+        #expect(instance.configuration.agentInstallNudgeDismissed == false)
+        #expect(persistCallCount == 1)
+    }
+
+    @Test("Watchdog firing leaves an undismissed nudge alone (no spurious persist)")
+    func watchdogDoesNotPersistWhenDismissalAlreadyClear() async throws {
+        let instance = makeMacOSInstanceWithAgentInstalled()
+        // Default: agentInstallNudgeDismissed == false
+        var persistCallCount = 0
+        instance.onConfigurationDidChange = { _ in persistCallCount += 1 }
+
+        instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
+
+        try await waitUntil {
+            instance.agentExpectedButMissing
+        }
+        #expect(persistCallCount == 0)
     }
 
     @Test("tearDownSession clears agentExpectedButMissing and cancels the watchdog")
