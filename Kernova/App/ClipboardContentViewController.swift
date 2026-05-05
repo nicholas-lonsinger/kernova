@@ -150,6 +150,14 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             statusLabel.stringValue = "Update available (\(installed) → \(bundled))"
             actionButton.isHidden = !canInstallKernovaAgent
             actionButton.title = "Update Guest Agent…"
+        case .connecting(let expected):
+            // Live session for a previously-installed agent that hasn't
+            // said Hello yet. No install/reinstall affordance — the agent
+            // is expected to reconnect; the watchdog will surface
+            // `.expectedMissing` if it doesn't.
+            statusCircle.layer?.backgroundColor = NSColor.secondaryLabelColor.cgColor
+            statusLabel.stringValue = "Connecting (was \(expected))"
+            actionButton.isHidden = true
         case .current(let version):
             statusCircle.layer?.backgroundColor = NSColor.systemGreen.cgColor
             statusLabel.stringValue = "Connected (\(version))"

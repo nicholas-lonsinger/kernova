@@ -86,6 +86,14 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
     /// new version (e.g. user-side update or downgrade inside the VM).
     var lastSeenAgentVersion: String?
 
+    /// When `true`, the user has explicitly dismissed the sidebar "install
+    /// guest agent" nudge for this VM. Suppresses only the gentle `.waiting`
+    /// affordance — the `.outdated`, `.unresponsive`, and `.expectedMissing`
+    /// states still surface because they imply something more urgent than
+    /// "you could install this." Defaults to `false` for new and migrated
+    /// configs.
+    var agentInstallNudgeDismissed: Bool
+
     // MARK: - macOS-specific
 
     /// Serialized `VZMacHardwareModel.dataRepresentation`.
@@ -152,6 +160,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         microphoneEnabled: Bool = false,
         agentLogForwardingEnabled: Bool = false,
         lastSeenAgentVersion: String? = nil,
+        agentInstallNudgeDismissed: Bool = false,
         hardwareModelData: Data? = nil,
         machineIdentifierData: Data? = nil,
         genericMachineIdentifierData: Data? = nil,
@@ -183,6 +192,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         self.microphoneEnabled = microphoneEnabled
         self.agentLogForwardingEnabled = agentLogForwardingEnabled
         self.lastSeenAgentVersion = lastSeenAgentVersion
+        self.agentInstallNudgeDismissed = agentInstallNudgeDismissed
         self.hardwareModelData = hardwareModelData
         self.machineIdentifierData = machineIdentifierData
         self.genericMachineIdentifierData = genericMachineIdentifierData
@@ -202,8 +212,9 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
     // RATIONALE: Custom `init(from:)` so newly added fields default cleanly
     // when decoding configs that pre-date their introduction
     // (`agentLogForwardingEnabled` defaults to `false`,
-    // `lastSeenAgentVersion` defaults to `nil`). Other fields keep their
-    // existing required/optional decoding semantics.
+    // `lastSeenAgentVersion` defaults to `nil`,
+    // `agentInstallNudgeDismissed` defaults to `false`). Other fields keep
+    // their existing required/optional decoding semantics.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.id = try c.decode(UUID.self, forKey: .id)
@@ -224,6 +235,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         self.microphoneEnabled = try c.decode(Bool.self, forKey: .microphoneEnabled)
         self.agentLogForwardingEnabled = try c.decodeIfPresent(Bool.self, forKey: .agentLogForwardingEnabled) ?? false
         self.lastSeenAgentVersion = try c.decodeIfPresent(String.self, forKey: .lastSeenAgentVersion)
+        self.agentInstallNudgeDismissed = try c.decodeIfPresent(Bool.self, forKey: .agentInstallNudgeDismissed) ?? false
         self.hardwareModelData = try c.decodeIfPresent(Data.self, forKey: .hardwareModelData)
         self.machineIdentifierData = try c.decodeIfPresent(Data.self, forKey: .machineIdentifierData)
         self.genericMachineIdentifierData = try c.decodeIfPresent(Data.self, forKey: .genericMachineIdentifierData)
@@ -292,15 +304,19 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
     // MARK: - Hot-Toggleable Fields
 
     /// Fields the user may edit while the VM is running. Changes to these
-    /// bypass the read-only settings lock and are pushed to the live guest
-    /// agent via `PolicyUpdate` on the vsock control channel.
+    /// bypass the `VMSettingsView` read-only settings lock so the user can
+    /// flip them mid-session.
     ///
-    /// Single source of truth — `VMSettingsView` uses this for change
-    /// detection, and the live-policy handler that applies these changes to
-    /// a running VM consumes the same list.
+    /// Most also affect runtime guest behavior and are pushed to the live
+    /// guest agent via `PolicyUpdate` on the vsock control channel — but the
+    /// `applyLivePolicy` handler checks each such field directly rather than
+    /// iterating this list, so a host-only UI preference like
+    /// `agentInstallNudgeDismissed` (which suppresses a sidebar nudge but
+    /// has no guest-side effect) is safe to include.
     static let hotToggleFields: [KeyPath<VMConfiguration, Bool> & Sendable] = [
         \.agentLogForwardingEnabled,
         \.clipboardSharingEnabled,
+        \.agentInstallNudgeDismissed,
     ]
 }
 

@@ -7,6 +7,7 @@ struct VMRowView: View {
     var onCommitRename: (String) -> Void = { _ in }
     var onCancelRename: () -> Void = {}
     var onMountAgentInstaller: () -> Void = {}
+    var onDismissAgentInstallNudge: () -> Void = {}
 
     @State private var editingName: String = ""
     @FocusState private var isTextFieldFocused: Bool
@@ -46,7 +47,8 @@ struct VMRowView: View {
                 SidebarAgentStatusButton(
                     vmName: instance.name,
                     status: agentStatus,
-                    onMount: onMountAgentInstaller
+                    onMount: onMountAgentInstaller,
+                    onDismiss: agentStatus == .waiting ? onDismissAgentInstallNudge : nil
                 )
             }
 
@@ -87,14 +89,23 @@ struct VMRowView: View {
     ///   seen the agent on this VM (`lastSeenAgentVersion != nil`). In that
     ///   case the `.waiting` badge would just nag — the version is safely
     ///   persisted and the live state will resurface on next start.
+    /// - Status is `.waiting` and the user has explicitly dismissed the
+    ///   install nudge for this VM
+    ///   (`configuration.agentInstallNudgeDismissed`).
     ///
     /// `.waiting`, `.outdated`, `.unresponsive`, and `.expectedMissing` are
-    /// surfaced when applicable so the user has something to act on.
+    /// surfaced when applicable so the user has something to act on. Only
+    /// `.waiting` is suppressible — the others imply something more urgent
+    /// than "you could install this."
     private var visibleAgentStatus: AgentStatus? {
         guard instance.configuration.guestOS == .macOS else { return nil }
         guard instance.installState == nil else { return nil }
         let status = instance.agentStatus
         if case .current = status { return nil }
+        if case .waiting = status,
+           instance.configuration.agentInstallNudgeDismissed {
+            return nil
+        }
         // For stopped / cold-paused VMs we'd otherwise show `.waiting`. If
         // the agent has previously connected, suppress that nudge — we only
         // want to surface live-session signals (`.outdated` / `.unresponsive`

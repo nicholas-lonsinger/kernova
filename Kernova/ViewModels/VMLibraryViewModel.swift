@@ -647,6 +647,18 @@ final class VMLibraryViewModel {
         }
     }
 
+    /// Marks this VM's `.waiting` install nudge as dismissed and persists
+    /// the choice. The sidebar icon for `.waiting` will no longer surface;
+    /// `.outdated`, `.unresponsive`, and `.expectedMissing` continue to
+    /// surface (those imply something more urgent than "you could install
+    /// this").
+    func dismissAgentInstallNudge(for instance: VMInstance) {
+        guard !instance.configuration.agentInstallNudgeDismissed else { return }
+        Self.logger.notice("User dismissed install-agent nudge for '\(instance.name, privacy: .public)'")
+        instance.configuration.agentInstallNudgeDismissed = true
+        saveConfiguration(for: instance)
+    }
+
     /// Detaches the bundled guest agent installer if currently mounted.
     /// Identified by path equality with `KernovaGuestAgentInfo.installerDiskImageURL`.
     func unmountGuestAgentInstaller(from instance: VMInstance) {

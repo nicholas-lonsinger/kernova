@@ -495,6 +495,17 @@ struct VMSettingsView: View {
             Text("Streams `os.Logger` records from the macOS guest agent to the host so they appear in Console.app under `com.kernova.guest`. Off by default; can be toggled while the VM is running.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            Toggle(
+                "Show install reminder",
+                isOn: Binding(
+                    get: { !instance.configuration.agentInstallNudgeDismissed },
+                    set: { instance.configuration.agentInstallNudgeDismissed = !$0 }
+                )
+            )
+            Text("Surfaces the install icon in the sidebar when the guest agent has not yet connected. Turn off to suppress the nudge for this VM. The more urgent indicators (update available, didn't reconnect, unresponsive) are not affected.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 

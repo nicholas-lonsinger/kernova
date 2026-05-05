@@ -10,20 +10,29 @@ import AppKit
 /// single notification surface for agent-driven features (clipboard sync today,
 /// drag/drop file copy and auto passthrough later).
 ///
-/// ## Why this uses NSPopover with an explicit contentSize
-/// SwiftUI's `.popover` modifier and `NSHostingController` with various
-/// `sizingOptions` both fail to size a multi-line-text popover correctly on
-/// macOS Tahoe — the body Text renders single-line and clips with an ellipsis.
-/// The fix is to bypass SwiftUI's sizing-up-to-host model entirely: measure
-/// the body text with `NSAttributedString.boundingRect`, set
-/// `popover.contentSize` to a known-good (width, computed-height), and let the
-/// SwiftUI view fill that bounded rectangle. Text wraps naturally to the
-/// bounded width with no `.frame(width:)` or `.fixedSize()` involved.
+/// ## Why this uses NSPopover with an explicit contentSize and AppKit text
+/// On macOS Tahoe, SwiftUI's `Text` does not reliably wrap inside an
+/// `NSHostingController` even with explicit `.frame(width:)` constraints —
+/// it renders single-line at its ideal width and overflows. The popover
+/// therefore:
+///   1. Pre-measures the body text with `NSAttributedString.boundingRect`
+///      and pins both `popover.contentSize` and the SwiftUI outer frame to
+///      that exact (width, height).
+///   2. Renders the wrapping body via `WrappingNSTextLabel`
+///      (`NSTextField(wrappingLabelWithString:)` bridged through
+///      `NSViewRepresentable`), which honors `preferredMaxLayoutWidth` and
+///      wraps reliably regardless of how SwiftUI propagates proposals.
 struct SidebarAgentStatusButton: View {
     let vmName: String
     let status: AgentStatus
     let onMount: () -> Void
+    /// Optional opt-out callback. Wired only for `.waiting` — the other
+    /// states (`.outdated`, `.unresponsive`, `.expectedMissing`) are not
+    /// dismissable because they imply something more urgent than "you could
+    /// install this."
+    let onDismiss: (() -> Void)?
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isPopoverPresented = false
 
     var body: some View {
@@ -33,6 +42,20 @@ struct SidebarAgentStatusButton: View {
             Image(systemName: symbolName)
                 .foregroundStyle(symbolColor)
                 .font(.system(size: 12, weight: .semibold))
+                // Spin the refresh symbol while we're in the post-start
+                // grace window for a previously-installed agent. The
+                // rotation stops automatically once `.connecting` resolves
+                // to `.current` (icon hidden) or `.expectedMissing` (icon
+                // becomes the warning triangle). Gated on
+                // `accessibilityReduceMotion` so users who've disabled
+                // motion in System Settings see a static icon — the gray
+                // color (vs. orange `.outdated`) still differentiates the
+                // state, and the popover/help text carry the meaning.
+                .symbolEffect(
+                    .rotate,
+                    options: .repeat(.continuous),
+                    isActive: status.isConnecting && !reduceMotion
+                )
         }
         .buttonStyle(.plain)
         .help(helpText)
@@ -50,15 +73,22 @@ struct SidebarAgentStatusButton: View {
                     status: status,
                     onAction: {
                         switch status {
-                        case .current, .unresponsive:
+                        case .current, .unresponsive, .connecting:
                             // Done — just close. Nothing to install or update;
                             // an unresponsive agent will reset itself once the
-                            // heartbeat timeout fires.
+                            // heartbeat timeout fires, and a connecting agent
+                            // is already on the way.
                             break
                         case .waiting, .outdated, .expectedMissing:
                             onMount()
                         }
                         isPopoverPresented = false
+                    },
+                    onDismiss: onDismiss.map { dismiss in
+                        {
+                            dismiss()
+                            isPopoverPresented = false
+                        }
                     }
                 )
             }
@@ -71,6 +101,10 @@ struct SidebarAgentStatusButton: View {
         switch status {
         case .waiting: "exclamationmark.circle.fill"
         case .outdated: "arrow.triangle.2.circlepath.circle.fill"
+        // Same refresh symbol as `.outdated`; a continuous-rotation
+        // `.symbolEffect` distinguishes "actively trying to connect" from
+        // "stationary update available."
+        case .connecting: "arrow.triangle.2.circlepath.circle.fill"
         case .current: "checkmark.circle.fill"
         case .unresponsive: "wifi.exclamationmark"
         // Triangle (vs the .waiting circle) signals "something went wrong"
@@ -84,6 +118,10 @@ struct SidebarAgentStatusButton: View {
         switch status {
         case .waiting: .secondary
         case .outdated: .orange
+        // Gray (not orange) — `.connecting` is informational, not an
+        // attention state. The rotation animation carries the "in
+        // progress" signal.
+        case .connecting: .secondary
         case .current: .green
         case .unresponsive: .orange
         case .expectedMissing: .orange
@@ -94,6 +132,7 @@ struct SidebarAgentStatusButton: View {
         switch status {
         case .waiting: "Guest agent not installed"
         case .outdated(let installed, let bundled): "Guest agent update available (\(installed) → \(bundled))"
+        case .connecting(let expected): "Connecting to guest agent (was \(expected))"
         case .current(let version): "Guest agent connected (\(version))"
         case .unresponsive(let version): "Guest agent unresponsive (\(version))"
         case .expectedMissing(let expected): "Guest agent didn't reconnect (was \(expected))"
@@ -103,46 +142,61 @@ struct SidebarAgentStatusButton: View {
 
 // MARK: - Popover content & metrics
 
-/// Body of the agent-status popover. Designed to **fill** its host (the
-/// popover's content area is sized externally by `AgentStatusPopoverMetrics`)
-/// rather than dictate its own size — `.frame(maxWidth: .infinity, …)` lets it
-/// expand into the bounded region, and Text wraps naturally to that width with
-/// no `.frame(width:)` or `.fixedSize()` modifiers needed.
+/// Body of the agent-status popover. The wrapping body text is rendered
+/// via `WrappingNSTextLabel` (an AppKit `NSTextField` wrapping label) because
+/// SwiftUI `Text` does not reliably wrap inside `NSHostingController` on
+/// macOS Tahoe even with explicit `.frame(width:)` and `.fixedSize(...)`.
 struct AgentStatusPopoverContent: View {
     let vmName: String
     let status: AgentStatus
     let onAction: () -> Void
+    /// When non-nil, a "Don't show again" button is rendered at the
+    /// bottom-leading edge of the action row.
+    let onDismiss: (() -> Void)?
 
     var body: some View {
+        let bodyWidth = AgentStatusPopoverMetrics.contentWidth
+            - AgentStatusPopoverMetrics.padding * 2
+        let size = AgentStatusPopoverMetrics.contentSize(forStatus: status, vmName: vmName)
+
         VStack(alignment: .leading, spacing: AgentStatusPopoverMetrics.verticalSpacing) {
             Text(AgentStatusPopoverMetrics.title(for: status))
                 .font(.headline)
+                .frame(width: bodyWidth, alignment: .leading)
 
-            Text(AgentStatusPopoverMetrics.bodyText(for: status, vmName: vmName))
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.leading)
+            WrappingNSTextLabel(
+                text: AgentStatusPopoverMetrics.bodyText(for: status, vmName: vmName),
+                font: .preferredFont(forTextStyle: .callout),
+                textColor: .secondaryLabelColor,
+                maxWidth: bodyWidth
+            )
+            .frame(width: bodyWidth, alignment: .leading)
 
             HStack {
+                if let onDismiss {
+                    Button("Don't show again", action: onDismiss)
+                        .buttonStyle(.link)
+                }
                 Spacer()
                 Button(buttonTitle, action: onAction)
                     .keyboardShortcut(.defaultAction)
             }
+            .frame(width: bodyWidth)
         }
         .padding(AgentStatusPopoverMetrics.padding)
-        // Hard-pin width so the SwiftUI ideal width is exactly contentWidth.
-        // Without this the ideal width is the body Text's single-line width
-        // (huge), and NSHostingController publishes that as preferredContentSize,
-        // overriding popover.contentSize. The result was a wide popover with
-        // the body Text on one line clipped at the screen edge.
-        .frame(width: AgentStatusPopoverMetrics.contentWidth, alignment: .topLeading)
+        // Pin both width and height to the pre-measured contentSize so the
+        // SwiftUI view exactly fills the popover. Without an explicit height,
+        // SwiftUI's ideal height could fall below the popover's contentSize
+        // and NSHostingController would float the content inside the
+        // popover, clipping the title at the top edge.
+        .frame(width: size.width, height: size.height, alignment: .topLeading)
     }
 
     private var buttonTitle: String {
         switch status {
         case .waiting: "Install Guest Agent…"
         case .outdated: "Update Guest Agent…"
-        case .current, .unresponsive: "Done"
+        case .current, .unresponsive, .connecting: "Done"
         case .expectedMissing: "Reinstall Guest Agent…"
         }
     }
@@ -195,6 +249,7 @@ enum AgentStatusPopoverMetrics {
         switch status {
         case .waiting: "Set up the Kernova guest agent"
         case .outdated: "Update available"
+        case .connecting: "Connecting to guest agent"
         case .current: "Guest agent connected"
         case .unresponsive: "Guest agent unresponsive"
         case .expectedMissing: "Guest agent didn't reconnect"
@@ -207,6 +262,8 @@ enum AgentStatusPopoverMetrics {
             return "The Kernova guest agent enables clipboard sync with \(vmName). Mounting the installer presents it as a disk inside the VM — open it in Finder and run install.command."
         case .outdated(let installed, let bundled):
             return "\(vmName) is running guest agent \(installed). Kernova bundles \(bundled). Mounting the installer presents it as a disk inside the VM — open it in Finder and run install.command."
+        case .connecting(let expected):
+            return "Waiting for guest agent \(expected) on \(vmName) to reconnect after boot. If it doesn't connect within a couple of minutes, you'll see a 'didn't reconnect' indicator with reinstall steps."
         case .current(let version):
             return "\(vmName) is connected with guest agent \(version)."
         case .unresponsive(let version):
@@ -315,6 +372,52 @@ private struct NSPopoverAnchor<Content: View>: NSViewRepresentable {
     }
 }
 
+// MARK: - Wrapping text label
+
+/// AppKit-backed multi-line wrapping label. SwiftUI's `Text` doesn't
+/// reliably wrap inside an `NSHostingController` on macOS Tahoe (it renders
+/// single-line at its ideal width and overflows), so the popover renders
+/// the wrapping body string through `NSTextField(wrappingLabelWithString:)`
+/// instead. AppKit's `preferredMaxLayoutWidth` property does what
+/// SwiftUI's `.frame(width:)` should: caps the line width and produces a
+/// correct intrinsic content size for the wrapped layout.
+struct WrappingNSTextLabel: NSViewRepresentable {
+    let text: String
+    let font: NSFont
+    let textColor: NSColor
+    let maxWidth: CGFloat
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField(wrappingLabelWithString: text)
+        field.font = font
+        field.textColor = textColor
+        field.preferredMaxLayoutWidth = maxWidth
+        // Default for `wrappingLabelWithString:` is non-selectable. Enable
+        // selection so users can copy specific strings out of the body
+        // (e.g. `install.command`, version numbers).
+        field.isSelectable = true
+        field.setContentHuggingPriority(.required, for: .vertical)
+        field.setContentCompressionResistancePriority(.required, for: .vertical)
+        return field
+    }
+
+    func updateNSView(_ nsView: NSTextField, context: Context) {
+        // Guard `stringValue` and `preferredMaxLayoutWidth` because they
+        // trigger layout invalidation when set; `font` and `textColor` are
+        // unconditionally assigned because their `!=` comparison uses
+        // pointer equality on `NSColor` / `NSFont`, and dynamic system
+        // colors (e.g. `.secondaryLabelColor` adapts to dark mode) can
+        // resolve to the same pointer across appearance changes — the
+        // guard would skip a needed update.
+        if nsView.stringValue != text { nsView.stringValue = text }
+        nsView.font = font
+        nsView.textColor = textColor
+        if nsView.preferredMaxLayoutWidth != maxWidth {
+            nsView.preferredMaxLayoutWidth = maxWidth
+        }
+    }
+}
+
 // MARK: - Previews
 
 // Sidebar button + click target. Click the icon to open the live popover.
@@ -322,7 +425,8 @@ private struct NSPopoverAnchor<Content: View>: NSViewRepresentable {
     SidebarAgentStatusButton(
         vmName: "Sequoia Dev",
         status: .waiting,
-        onMount: {}
+        onMount: {},
+        onDismiss: {}
     )
     .padding(40)
 }
@@ -331,7 +435,8 @@ private struct NSPopoverAnchor<Content: View>: NSViewRepresentable {
     SidebarAgentStatusButton(
         vmName: "Sequoia Dev",
         status: .outdated(installed: "0.9.1", bundled: "0.9.2"),
-        onMount: {}
+        onMount: {},
+        onDismiss: nil
     )
     .padding(40)
 }
@@ -340,7 +445,8 @@ private struct NSPopoverAnchor<Content: View>: NSViewRepresentable {
     SidebarAgentStatusButton(
         vmName: "Sequoia Dev",
         status: .current(version: "0.9.2"),
-        onMount: {}
+        onMount: {},
+        onDismiss: nil
     )
     .padding(40)
 }
@@ -349,7 +455,8 @@ private struct NSPopoverAnchor<Content: View>: NSViewRepresentable {
     SidebarAgentStatusButton(
         vmName: "Sequoia Dev",
         status: .unresponsive(version: "0.9.2"),
-        onMount: {}
+        onMount: {},
+        onDismiss: nil
     )
     .padding(40)
 }
@@ -358,7 +465,8 @@ private struct NSPopoverAnchor<Content: View>: NSViewRepresentable {
     SidebarAgentStatusButton(
         vmName: "Sequoia Dev",
         status: .expectedMissing(expected: "0.9.2"),
-        onMount: {}
+        onMount: {},
+        onDismiss: nil
     )
     .padding(40)
 }
@@ -369,7 +477,8 @@ private struct NSPopoverAnchor<Content: View>: NSViewRepresentable {
     AgentStatusPopoverContent(
         vmName: "Sequoia Dev",
         status: .waiting,
-        onAction: {}
+        onAction: {},
+        onDismiss: {}
     )
     .frame(
         width: AgentStatusPopoverMetrics.contentSize(forStatus: .waiting, vmName: "Sequoia Dev").width,
@@ -381,7 +490,8 @@ private struct NSPopoverAnchor<Content: View>: NSViewRepresentable {
     AgentStatusPopoverContent(
         vmName: "Sequoia Dev",
         status: .outdated(installed: "0.9.1", bundled: "0.9.2"),
-        onAction: {}
+        onAction: {},
+        onDismiss: nil
     )
     .frame(
         width: AgentStatusPopoverMetrics.contentSize(forStatus: .outdated(installed: "0.9.1", bundled: "0.9.2"), vmName: "Sequoia Dev").width,
@@ -393,7 +503,8 @@ private struct NSPopoverAnchor<Content: View>: NSViewRepresentable {
     AgentStatusPopoverContent(
         vmName: "Sequoia Dev",
         status: .current(version: "0.9.2"),
-        onAction: {}
+        onAction: {},
+        onDismiss: nil
     )
     .frame(
         width: AgentStatusPopoverMetrics.contentSize(forStatus: .current(version: "0.9.2"), vmName: "Sequoia Dev").width,
@@ -405,7 +516,8 @@ private struct NSPopoverAnchor<Content: View>: NSViewRepresentable {
     AgentStatusPopoverContent(
         vmName: "Sequoia Dev",
         status: .expectedMissing(expected: "0.9.2"),
-        onAction: {}
+        onAction: {},
+        onDismiss: nil
     )
     .frame(
         width: AgentStatusPopoverMetrics.contentSize(forStatus: .expectedMissing(expected: "0.9.2"), vmName: "Sequoia Dev").width,
@@ -417,7 +529,8 @@ private struct NSPopoverAnchor<Content: View>: NSViewRepresentable {
     AgentStatusPopoverContent(
         vmName: "My Very Long macOS Sequoia Development VM Name",
         status: .outdated(installed: "0.9.1", bundled: "0.9.2"),
-        onAction: {}
+        onAction: {},
+        onDismiss: nil
     )
     .frame(
         width: AgentStatusPopoverMetrics.contentSize(forStatus: .outdated(installed: "0.9.1", bundled: "0.9.2"), vmName: "My Very Long macOS Sequoia Development VM Name").width,

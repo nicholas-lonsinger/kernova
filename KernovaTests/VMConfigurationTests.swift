@@ -675,6 +675,50 @@ struct VMConfigurationTests {
         #expect(config.lastSeenAgentVersion == nil)
     }
 
+    // MARK: - agentInstallNudgeDismissed Tests
+
+    @Test("Default agentInstallNudgeDismissed is false")
+    func defaultAgentInstallNudgeDismissed() {
+        let config = VMConfiguration(
+            name: "Test VM",
+            guestOS: .macOS,
+            bootMode: .macOS
+        )
+        #expect(config.agentInstallNudgeDismissed == false)
+    }
+
+    @Test("Configuration round-trips agentInstallNudgeDismissed")
+    func agentInstallNudgeDismissedRoundTrip() throws {
+        let config = VMConfiguration(
+            name: "Dismissed VM",
+            guestOS: .macOS,
+            bootMode: .macOS,
+            agentInstallNudgeDismissed: true
+        )
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(config)
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(VMConfiguration.self, from: data)
+
+        #expect(decoded.agentInstallNudgeDismissed == true)
+    }
+
+    @Test("Missing agentInstallNudgeDismissed decodes as false (existing-VM migration)")
+    func missingAgentInstallNudgeDismissedDecodesFalse() throws {
+        // Older configs predate the field — they must still decode, with the
+        // flag defaulting to off so the install nudge keeps surfacing for
+        // VMs the user has never actively dismissed.
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
+
+        #expect(config.agentInstallNudgeDismissed == false)
+    }
+
     // MARK: - microphoneEnabled Tests
 
     @Test("Default microphoneEnabled is false")
