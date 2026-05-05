@@ -53,7 +53,8 @@ struct VsockControlServiceTests {
         bundledAgentVersion: String? = "0.9.0",
         heartbeatInterval: Duration? = nil,
         unresponsiveAfter: Duration? = nil,
-        terminateAfter: Duration? = nil
+        terminateAfter: Duration? = nil,
+        policyProvider: (@MainActor () -> AgentPolicySnapshot)? = nil
     ) -> VsockControlService {
         VsockControlService(
             channel: channel,
@@ -61,7 +62,8 @@ struct VsockControlServiceTests {
             bundledAgentVersion: bundledAgentVersion,
             heartbeatInterval: heartbeatInterval ?? Self.testHeartbeat,
             unresponsiveAfter: unresponsiveAfter ?? Self.testUnresponsive,
-            terminateAfter: terminateAfter ?? Self.testTerminate
+            terminateAfter: terminateAfter ?? Self.testTerminate,
+            policyProvider: policyProvider
         )
     }
 
@@ -457,5 +459,93 @@ struct VsockControlServiceTests {
         // Second stop() is a no-op.
         service.stop()
         #expect(!service.isConnected)
+    }
+
+    // MARK: - PolicyUpdate
+
+    @Test("Sends initial PolicyUpdate after guest Hello when policyProvider is supplied")
+    func sendsInitialPolicyAfterHello() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = makeService(
+            channel: host,
+            policyProvider: {
+                AgentPolicySnapshot(logForwardingEnabled: true, clipboardSharingEnabled: false)
+            }
+        )
+        service.start()
+        defer { service.stop() }
+
+        _ = try await nextFrame(from: guest) // host hello
+        try guest.send(makeGuestHello(agentVersion: "0.9.0"))
+
+        // Skip frames until we see PolicyUpdate (heartbeat may interleave).
+        var policy: Kernova_V1_PolicyUpdate?
+        for _ in 0..<5 where policy == nil {
+            let next = try await nextFrame(from: guest)
+            if case .policyUpdate(let p) = next.payload {
+                policy = p
+            }
+        }
+        let received = try #require(policy)
+        #expect(received.logForwardingEnabled == true)
+        #expect(received.clipboardSharingEnabled == false)
+    }
+
+    @Test("Does not send PolicyUpdate when no policyProvider is supplied")
+    func skipsPolicyWhenProviderAbsent() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = makeService(channel: host) // no policyProvider
+        service.start()
+        defer { service.stop() }
+
+        _ = try await nextFrame(from: guest) // host hello
+        try guest.send(makeGuestHello(agentVersion: "0.9.0"))
+        try await waitUntil { service.isConnected }
+
+        // Read a few frames; none should be PolicyUpdate.
+        for _ in 0..<3 {
+            let next = try await nextFrame(from: guest, timeout: .milliseconds(200))
+            if case .policyUpdate = next.payload {
+                Issue.record("Unexpected PolicyUpdate when no provider was supplied")
+                return
+            }
+        }
+    }
+
+    @Test("sendPolicyUpdate emits a PolicyUpdate frame with the supplied snapshot")
+    func sendPolicyUpdateEmitsFrame() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = makeService(channel: host)
+        service.start()
+        defer { service.stop() }
+
+        _ = try await nextFrame(from: guest) // host hello
+
+        service.sendPolicyUpdate(
+            AgentPolicySnapshot(logForwardingEnabled: false, clipboardSharingEnabled: true)
+        )
+
+        var policy: Kernova_V1_PolicyUpdate?
+        for _ in 0..<5 where policy == nil {
+            let next = try await nextFrame(from: guest)
+            if case .policyUpdate(let p) = next.payload {
+                policy = p
+            }
+        }
+        let received = try #require(policy)
+        #expect(received.logForwardingEnabled == false)
+        #expect(received.clipboardSharingEnabled == true)
     }
 }
