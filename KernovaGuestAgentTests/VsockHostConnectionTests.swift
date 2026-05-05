@@ -26,6 +26,7 @@ struct VsockHostConnectionTests {
     @Test("forwardLog buffers frames when no live channel is present")
     func buffersWhenNoChannel() {
         let conn = VsockHostConnection()
+        conn.setEnabled(true) // production agents are default-disabled until host policy enables them
 
         for i in 0..<5 {
             conn.forwardLog(level: .info, subsystem: "test", category: "test", message: "msg\(i)")
@@ -37,6 +38,7 @@ struct VsockHostConnectionTests {
     @Test("buffered frames are in FIFO order")
     func bufferedFramesInFIFOOrder() {
         let conn = VsockHostConnection()
+        conn.setEnabled(true)
 
         for i in 0..<3 {
             conn.forwardLog(level: .info, subsystem: "test", category: "test", message: "msg\(i)")
@@ -264,9 +266,65 @@ struct VsockHostConnectionTests {
     @Test("forwardLog buffers frame when no live channel is present")
     func forwardLogNoChannelBuffers() {
         let conn = VsockHostConnection()
+        conn.setEnabled(true)
 
         let result = conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "x")
         #expect(result == false)
+        #expect(pendingLogCount(conn) == 1)
+    }
+
+    // MARK: - Policy enforcement
+
+    @Test("Default-disabled: forwardLog drops the frame and skips the buffer")
+    func defaultDisabledDropsForwardLog() {
+        let conn = VsockHostConnection()
+        // No setEnabled — production default is disabled.
+
+        let result = conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "msg")
+        #expect(result == false)
+        #expect(pendingLogCount(conn) == 0)
+        #expect(conn.isEnabledForTesting == false)
+    }
+
+    @Test("setEnabled(true) allows forwardLog to buffer when no channel exists")
+    func enabledAllowsBuffering() {
+        let conn = VsockHostConnection()
+        conn.setEnabled(true)
+
+        conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "msg")
+        #expect(pendingLogCount(conn) == 1)
+        #expect(conn.isEnabledForTesting == true)
+    }
+
+    @Test("setEnabled(false) discards the buffered frames")
+    func disablingClearsBuffer() {
+        let conn = VsockHostConnection()
+        conn.setEnabled(true)
+
+        for i in 0..<10 {
+            conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "msg\(i)")
+        }
+        #expect(pendingLogCount(conn) == 10)
+
+        conn.setEnabled(false)
+        #expect(pendingLogCount(conn) == 0)
+        #expect(conn.isEnabledForTesting == false)
+    }
+
+    @Test("setEnabled is idempotent — repeat calls with same value are no-ops")
+    func setEnabledIsIdempotent() {
+        let conn = VsockHostConnection()
+
+        conn.setEnabled(false)
+        conn.setEnabled(false)
+        #expect(conn.isEnabledForTesting == false)
+
+        conn.setEnabled(true)
+        conn.setEnabled(true)
+        #expect(conn.isEnabledForTesting == true)
+
+        // Buffering still works after a no-op repeat enable.
+        conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "x")
         #expect(pendingLogCount(conn) == 1)
     }
 }

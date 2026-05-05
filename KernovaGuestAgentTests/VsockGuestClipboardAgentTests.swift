@@ -62,30 +62,32 @@ struct VsockGuestClipboardAgentTests {
     // MARK: - Agent factory helpers
 
     /// Sets up an agent with the given pasteboard and a socket provider that
-    /// returns the given fd on first call, transient failure thereafter. Does
-    /// NOT retry (long retry interval) so tests don't interfere with each other.
+    /// returns the given fd on first call, transient failure thereafter. The
+    /// short retry interval keeps the pause/resume wake-up snappy — the agent
+    /// is now default-paused at construction, and `setEnabled(true)` only
+    /// takes effect on the next loop iteration after the current sleep.
     private func makeAgent(pasteboard: FakePasteboard, agentFd: Int32) -> VsockGuestClipboardAgent {
         let provided = AtomicInt()
         let client = VsockGuestClient(
             port: 49152,
             label: "clipboard-test",
-            retryInterval: .seconds(60)
+            retryInterval: .milliseconds(50)
         ) { _, _ in
             provided.increment() == 1 ? .success(agentFd) : .failure(.transient("test: no fd"))
         }
         return VsockGuestClipboardAgent(pasteboard: pasteboard, client: client)
     }
 
-    /// Starts the agent and waits until `liveChannel` is published on the main
-    /// queue. The clipboard channel no longer exchanges Hello frames — the
-    /// version handshake lives on the always-on control channel
-    /// (`VsockGuestControlAgent`). After this returns, callers driving
+    /// Starts the agent, enables it (production agents are default-disabled
+    /// until host policy says otherwise), and waits until `liveChannel` is
+    /// published on the main queue. After this returns, callers driving
     /// `checkClipboardChange()` see a non-nil channel.
     private func startAgentAndWaitForLiveChannel(
         agent: VsockGuestClipboardAgent,
         hostChannel: VsockChannel
     ) async throws {
         agent.start()
+        agent.setEnabled(true)
         try await waitUntil { agent.liveChannelForTesting != nil }
     }
 
@@ -192,6 +194,7 @@ struct VsockGuestClipboardAgentTests {
         defer { agent.stop() }
 
         agent.start()
+        agent.setEnabled(true) // production agents are default-disabled until host policy enables them
 
         // First connection: wait for liveChannel to be published.
         try await waitUntil { agent.liveChannelForTesting != nil }
@@ -492,7 +495,7 @@ struct VsockGuestClipboardAgentTests {
         let client = VsockGuestClient(
             port: 49152,
             label: "clipboard-sync-publish-test",
-            retryInterval: .seconds(60)
+            retryInterval: .milliseconds(50)
         ) { _, _ in
             provideCount.increment() == 1 ? .success(agentFd) : .failure(.transient("test: no more fds"))
         }
@@ -500,6 +503,7 @@ struct VsockGuestClipboardAgentTests {
         let agent = VsockGuestClipboardAgent(pasteboard: pasteboard, client: client)
         defer { agent.stop() }
         agent.start()
+        agent.setEnabled(true) // production agents are default-disabled until host policy enables them
 
         // Wait until publish settles. Under the current code (await MainActor.run),
         // this happens before the read loop starts.
@@ -563,6 +567,47 @@ struct VsockGuestClipboardAgentTests {
         // (all mutable state is main-queue-exclusive).
         let pendingGen = DispatchQueue.main.sync { agent.pendingInboundGenerationForTesting }
         #expect(pendingGen == nil)
+    }
+
+    // MARK: - Policy enforcement
+
+    @Test("Default-disabled: setEnabled(false) is the construction state")
+    func defaultDisabledAtConstruction() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, _) = try makeRawSocketPair()
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        // Sanity: read enabled flag via the test seam from the main queue.
+        let isEnabled = DispatchQueue.main.sync { agent.isEnabledForTesting }
+        #expect(isEnabled == false)
+    }
+
+    @Test("setEnabled(true) brings up the connection; setEnabled(false) tears it down")
+    func setEnabledTogglesLiveChannel() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        agent.start()
+
+        // Without setEnabled(true), no connection should come up.
+        try await Task.sleep(for: .milliseconds(150))
+        let stillNil = DispatchQueue.main.sync { agent.liveChannelForTesting }
+        #expect(stillNil == nil)
+
+        // Enable: connection comes up.
+        agent.setEnabled(true)
+        try await waitUntil { agent.liveChannelForTesting != nil }
+
+        // Disable: liveChannel is cleared.
+        agent.setEnabled(false)
+        try await waitUntil { agent.liveChannelForTesting == nil }
     }
 }
 

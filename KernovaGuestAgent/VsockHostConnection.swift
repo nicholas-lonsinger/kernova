@@ -32,8 +32,21 @@ final class VsockHostConnection: @unchecked Sendable {
     let lock = NSLock()
     var pendingLogs: [Frame] = []
 
+    /// Whether log forwarding is currently allowed by host policy. Default
+    /// `false` so the agent doesn't connect or buffer until the host's
+    /// initial `PolicyUpdate` says otherwise. Toggled by `setEnabled(_:)`.
+    private var enabled: Bool = false
+
+    /// Test seam: read the current enabled state without exposing the mutator.
+    var isEnabledForTesting: Bool {
+        lock.withLock { enabled }
+    }
+
     init() {
         self.client = VsockGuestClient(port: KernovaVsockPort.log, label: "log")
+        // Default-disabled: pause the reconnect loop until the host sends its
+        // first `PolicyUpdate(logForwardingEnabled: true)`.
+        self.client.pause()
     }
 
     /// Begins the connect/serve/reconnect loop. Idempotent.
@@ -50,6 +63,31 @@ final class VsockHostConnection: @unchecked Sendable {
         lock.withLock { pendingLogs.removeAll(keepingCapacity: false) }
     }
 
+    /// Applies a host policy update for log forwarding.
+    ///
+    /// When disabling: closes any active channel via the underlying client,
+    /// discards buffered log frames so the host doesn't get a flood of
+    /// retroactive records on the next enable, and pauses the reconnect
+    /// loop. When enabling: resumes the loop so the next connect happens
+    /// within `retryInterval`. Idempotent — repeated calls with the same
+    /// value are no-ops.
+    func setEnabled(_ enabled: Bool) {
+        let needsTransition: Bool = lock.withLock {
+            let was = self.enabled
+            self.enabled = enabled
+            return was != enabled
+        }
+        guard needsTransition else { return }
+        if enabled {
+            client.resume()
+            Self.logger.notice("Log forwarding enabled by host policy")
+        } else {
+            client.pause()
+            lock.withLock { pendingLogs.removeAll(keepingCapacity: false) }
+            Self.logger.notice("Log forwarding disabled by host policy")
+        }
+    }
+
     /// Builds and best-effort sends a `LogRecord` frame to the host. When no
     /// connection is currently active, the frame is buffered (up to
     /// `logBufferLimit` records, oldest dropped first) and flushed once the
@@ -62,6 +100,11 @@ final class VsockHostConnection: @unchecked Sendable {
         category: String,
         message: String
     ) -> Bool {
+        // Drop the frame entirely when host policy disables log forwarding —
+        // not just buffer it for later. The user's intent is "stop sending,
+        // don't fill a pipe to flush on the next enable".
+        guard lock.withLock({ enabled }) else { return false }
+
         var frame = Frame()
         frame.protocolVersion = 1
         frame.logRecord = Kernova_V1_LogRecord.with {

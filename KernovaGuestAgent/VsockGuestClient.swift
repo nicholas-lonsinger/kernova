@@ -68,6 +68,12 @@ final class VsockGuestClient: @unchecked Sendable {
     private var reconnectTask: Task<Void, Never>?
     private var stopped = false
 
+    /// When `true`, the reconnect loop skips connect attempts and waits for
+    /// `resume()`. Distinct from `stopped` — pause is reversible, stop is
+    /// terminal. Used by higher-level agents to honor host policy updates
+    /// (e.g., log forwarding disabled → pause the client → no connects).
+    private var paused = false
+
     // MARK: - Init
 
     /// Creates a client for the given port. Pass a custom `socketProvider` and
@@ -101,6 +107,25 @@ final class VsockGuestClient: @unchecked Sendable {
         }
     }
 
+    /// Pauses the reconnect loop and tears down any active channel.
+    /// Subsequent reconnect attempts are skipped until `resume()` is called.
+    /// Idempotent. Distinct from `stop()` — pause is reversible.
+    func pause() {
+        let ch: VsockChannel? = lock.withLock {
+            paused = true
+            let c = currentChannel
+            currentChannel = nil
+            return c
+        }
+        ch?.close()
+    }
+
+    /// Resumes the reconnect loop after `pause()`. The next reconnect attempt
+    /// happens within `retryInterval`. Idempotent.
+    func resume() {
+        lock.withLock { paused = false }
+    }
+
     /// Stops the loop and tears down any active channel. Subsequent `start`
     /// calls are no-ops.
     func stop() {
@@ -127,13 +152,16 @@ final class VsockGuestClient: @unchecked Sendable {
 
     private func runReconnectLoop(serve: @Sendable @escaping (VsockChannel) async -> Void) async {
         while !Task.isCancelled {
-            let outcome = await connectAndServe(serve: serve)
-            switch outcome {
-            case .terminate:
-                lock.withLock { stopped = true }
-                return
-            case .retry:
-                break
+            let isPaused = lock.withLock { paused }
+            if !isPaused {
+                let outcome = await connectAndServe(serve: serve)
+                switch outcome {
+                case .terminate:
+                    lock.withLock { stopped = true }
+                    return
+                case .retry:
+                    break
+                }
             }
             guard !Task.isCancelled else { break }
             try? await Task.sleep(for: retryInterval)
