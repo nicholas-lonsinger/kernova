@@ -171,6 +171,11 @@ final class VsockGuestControlAgent: @unchecked Sendable {
             Self.logger.warning(
                 "Host control error: \(error.code, privacy: .public) — \(error.message, privacy: .public)"
             )
+        case .policyUpdate:
+            // PolicyUpdate is the right channel and the right direction
+            // (host→guest), but routing to the log + clipboard agents is
+            // wired up in a follow-up change. For now, log and drop.
+            Self.logger.debug("PolicyUpdate received but routing not yet wired")
         case .clipboardOffer, .clipboardRequest, .clipboardData, .clipboardRelease, .logRecord, .none:
             Self.logger.warning("Unexpected payload on control channel — wrong port")
         }

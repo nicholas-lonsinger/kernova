@@ -110,10 +110,18 @@ public struct Kernova_V1_Frame: Sendable {
 
   /// Service payloads occupy reserved number ranges so each service can grow
   /// independently without colliding:
-  ///   12..19 reserved for control plane (heartbeat, future control payloads)
+  ///   12..19 reserved for control plane (heartbeat, policy, future control)
   ///   20..29 reserved for clipboard
   ///   30..39 reserved for logging
   ///   40..49 reserved for drag/drop
+  public var policyUpdate: Kernova_V1_PolicyUpdate {
+    get {
+      if case .policyUpdate(let v)? = payload {return v}
+      return Kernova_V1_PolicyUpdate()
+    }
+    set {payload = .policyUpdate(newValue)}
+  }
+
   public var clipboardOffer: Kernova_V1_ClipboardOffer {
     get {
       if case .clipboardOffer(let v)? = payload {return v}
@@ -162,10 +170,11 @@ public struct Kernova_V1_Frame: Sendable {
     case heartbeat(Kernova_V1_Heartbeat)
     /// Service payloads occupy reserved number ranges so each service can grow
     /// independently without colliding:
-    ///   12..19 reserved for control plane (heartbeat, future control payloads)
+    ///   12..19 reserved for control plane (heartbeat, policy, future control)
     ///   20..29 reserved for clipboard
     ///   30..39 reserved for logging
     ///   40..49 reserved for drag/drop
+    case policyUpdate(Kernova_V1_PolicyUpdate)
     case clipboardOffer(Kernova_V1_ClipboardOffer)
     case clipboardRequest(Kernova_V1_ClipboardRequest)
     case clipboardData(Kernova_V1_ClipboardData)
@@ -409,6 +418,35 @@ public struct Kernova_V1_Heartbeat: Sendable {
   public init() {}
 }
 
+/// Sent by the host on the control channel to tell the guest agent which
+/// optional capabilities are currently enabled for this VM. The guest agent
+/// uses it to actually stop work for disabled capabilities (close channels,
+/// stop pasteboard polling, drop buffered records) rather than just having
+/// the host ignore inbound traffic.
+///
+/// The host sends one `PolicyUpdate` immediately after the control-plane
+/// `Hello` exchange and one each time the user toggles a capability while
+/// the VM is running. Each message carries the full current policy snapshot;
+/// receivers compare against their last applied state and act on diffs.
+public struct Kernova_V1_PolicyUpdate: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// Whether the guest's log-forwarding agent should connect on the log port
+  /// and stream `LogRecord` frames to the host.
+  public var logForwardingEnabled: Bool = false
+
+  /// Whether the guest's clipboard agent should poll `NSPasteboard.general`
+  /// and exchange `ClipboardOffer`/`ClipboardRequest`/`ClipboardData` with
+  /// the host on the clipboard port.
+  public var clipboardSharingEnabled: Bool = false
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 /// Reported by either side when a request cannot be fulfilled, or as an
 /// asynchronous notification of a problem (e.g. malformed request, capability
 /// mismatch). The receiver may log and continue; it should not assume the
@@ -454,7 +492,7 @@ extension Kernova_V1_ClipboardFormat: SwiftProtobuf._ProtoNameProviding {
 
 extension Kernova_V1_Frame: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Frame"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}protocol_version\0\u{2}\u{9}hello\0\u{1}error\0\u{1}heartbeat\0\u{4}\u{8}clipboard_offer\0\u{3}clipboard_request\0\u{3}clipboard_data\0\u{3}clipboard_release\0\u{4}\u{7}log_record\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}protocol_version\0\u{2}\u{9}hello\0\u{1}error\0\u{1}heartbeat\0\u{3}policy_update\0\u{4}\u{7}clipboard_offer\0\u{3}clipboard_request\0\u{3}clipboard_data\0\u{3}clipboard_release\0\u{4}\u{7}log_record\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -500,6 +538,19 @@ extension Kernova_V1_Frame: SwiftProtobuf.Message, SwiftProtobuf._MessageImpleme
         if let v = v {
           if hadOneofValue {try decoder.handleConflictingOneOf()}
           self.payload = .heartbeat(v)
+        }
+      }()
+      case 13: try {
+        var v: Kernova_V1_PolicyUpdate?
+        var hadOneofValue = false
+        if let current = self.payload {
+          hadOneofValue = true
+          if case .policyUpdate(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.payload = .policyUpdate(v)
         }
       }()
       case 20: try {
@@ -592,6 +643,10 @@ extension Kernova_V1_Frame: SwiftProtobuf.Message, SwiftProtobuf._MessageImpleme
     case .heartbeat?: try {
       guard case .heartbeat(let v)? = self.payload else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 12)
+    }()
+    case .policyUpdate?: try {
+      guard case .policyUpdate(let v)? = self.payload else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 13)
     }()
     case .clipboardOffer?: try {
       guard case .clipboardOffer(let v)? = self.payload else { preconditionFailure() }
@@ -929,6 +984,41 @@ extension Kernova_V1_Heartbeat: SwiftProtobuf.Message, SwiftProtobuf._MessageImp
 
   public static func ==(lhs: Kernova_V1_Heartbeat, rhs: Kernova_V1_Heartbeat) -> Bool {
     if lhs.nonce != rhs.nonce {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Kernova_V1_PolicyUpdate: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".PolicyUpdate"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}log_forwarding_enabled\0\u{3}clipboard_sharing_enabled\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularBoolField(value: &self.logForwardingEnabled) }()
+      case 2: try { try decoder.decodeSingularBoolField(value: &self.clipboardSharingEnabled) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.logForwardingEnabled != false {
+      try visitor.visitSingularBoolField(value: self.logForwardingEnabled, fieldNumber: 1)
+    }
+    if self.clipboardSharingEnabled != false {
+      try visitor.visitSingularBoolField(value: self.clipboardSharingEnabled, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Kernova_V1_PolicyUpdate, rhs: Kernova_V1_PolicyUpdate) -> Bool {
+    if lhs.logForwardingEnabled != rhs.logForwardingEnabled {return false}
+    if lhs.clipboardSharingEnabled != rhs.clipboardSharingEnabled {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

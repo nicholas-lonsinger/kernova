@@ -210,10 +210,11 @@ final class VsockClipboardService: ClipboardServicing {
             Self.logger.warning(
                 "Guest clipboard error for '\(self.label, privacy: .public)': \(error.code, privacy: .public) — \(error.message, privacy: .public)"
             )
-        case .hello, .heartbeat, .logRecord, .none:
-            // Hello and Heartbeat belong on the control channel, LogRecord on
-            // the log channel. .none means a frame with no payload. Any of
-            // these arriving here means the peer crossed wires — log and ignore.
+        case .hello, .heartbeat, .policyUpdate, .logRecord, .none:
+            // Hello, Heartbeat, and PolicyUpdate belong on the control
+            // channel, LogRecord on the log channel. .none means a frame with
+            // no payload. Any of these arriving here means the peer crossed
+            // wires — log and ignore.
             Self.logger.warning(
                 "Unexpected payload on clipboard channel for '\(self.label, privacy: .public)' — wrong port"
             )
