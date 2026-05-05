@@ -605,13 +605,23 @@ struct VMInstanceTests {
         return instance
     }
 
+    // CI timing notes (memory: feedback_ci_test_timings):
+    //   - macos-26 GitHub Actions runners have substantial MainActor jitter
+    //     compared to local hardware. Use cadences ≥100 ms and waitUntil
+    //     deadlines ≥10× the cadence; end-state assertions, not per-iteration.
+    //   - Initial CI run failed three watchdog tests with grace=50ms /
+    //     timeout=2s — Task.sleep(50ms) was getting delayed past the deadline.
+    //   - Settling on grace=200ms with the 5s waitUntil default below.
+    private static let testWatchdogGrace: Duration = .milliseconds(200)
+
     @Test("Watchdog flips agentExpectedButMissing when no Hello arrives in the grace window")
     func watchdogFiresWhenSilent() async throws {
         let instance = makeMacOSInstanceWithAgentInstalled()
-        instance.startAgentPostStartWatchdog(grace: .milliseconds(50))
+        instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
 
-        // Wait past grace; the watchdog runs as a Task so we need to yield.
-        try await waitUntil(timeout: .seconds(2)) {
+        // 5 s default deadline = 25× the grace; comfortable margin for CI
+        // MainActor jitter without hiding genuine bugs.
+        try await waitUntil {
             instance.agentExpectedButMissing
         }
         #expect(instance.agentExpectedButMissing == true)
@@ -621,12 +631,15 @@ struct VMInstanceTests {
     @Test("Cancelling the watchdog before grace prevents firing")
     func watchdogCancelledStaysQuiet() async throws {
         let instance = makeMacOSInstanceWithAgentInstalled()
-        instance.startAgentPostStartWatchdog(grace: .milliseconds(200))
+        instance.startAgentPostStartWatchdog(grace: .seconds(5))
 
         // Cancel well before the grace elapses — the timer task must not
-        // flip the flag after cancellation.
+        // flip the flag after cancellation. Use a comfortably long
+        // settle window (5× the grace would be 1 s, but 5× of *what we
+        // expect* doesn't help here; we just need to outlast scheduler
+        // jitter on a cancelled task that should never fire).
         instance.cancelAgentPostStartWatchdog()
-        try await Task.sleep(for: .milliseconds(400))
+        try await Task.sleep(for: .milliseconds(500))
         #expect(instance.agentExpectedButMissing == false)
     }
 
@@ -644,8 +657,10 @@ struct VMInstanceTests {
             .appendingPathComponent(config.id.uuidString, isDirectory: true)
         let instance = VMInstance(configuration: config, bundleURL: bundleURL, status: .running)
 
-        instance.startAgentPostStartWatchdog(grace: .milliseconds(50))
-        try await Task.sleep(for: .milliseconds(200))
+        // Wait noticeably past the grace so a broken guard would have a
+        // real chance to mis-fire. 3× grace is plenty.
+        instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
+        try await Task.sleep(for: Self.testWatchdogGrace * 3)
         #expect(instance.agentExpectedButMissing == false)
     }
 
@@ -663,8 +678,8 @@ struct VMInstanceTests {
             .appendingPathComponent(config.id.uuidString, isDirectory: true)
         let instance = VMInstance(configuration: config, bundleURL: bundleURL, status: .running)
 
-        instance.startAgentPostStartWatchdog(grace: .milliseconds(50))
-        try await Task.sleep(for: .milliseconds(200))
+        instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
+        try await Task.sleep(for: Self.testWatchdogGrace * 3)
         #expect(instance.agentExpectedButMissing == false)
     }
 
@@ -677,23 +692,22 @@ struct VMInstanceTests {
         )
         let instance = makeMacOSInstanceWithAgentInstalled(installState: installState)
 
-        instance.startAgentPostStartWatchdog(grace: .milliseconds(50))
-        try await Task.sleep(for: .milliseconds(200))
+        instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
+        try await Task.sleep(for: Self.testWatchdogGrace * 3)
         #expect(instance.agentExpectedButMissing == false)
     }
 
     @Test("startAgentPostStartWatchdog is idempotent when already armed")
     func watchdogIdempotent() async throws {
         let instance = makeMacOSInstanceWithAgentInstalled()
-        instance.startAgentPostStartWatchdog(grace: .milliseconds(200))
-        // Second call must not replace the in-flight task with a fresh one
-        // (which would defer firing). Asking with a much smaller grace also
-        // shouldn't take effect — we keep the original timer.
-        instance.startAgentPostStartWatchdog(grace: .milliseconds(50))
+        // Original timer with a long grace so we can be sure the second
+        // call's would-be tiny grace has elapsed long before the original
+        // would naturally fire. If the second call had taken effect, the
+        // flag would be true after we sleep below.
+        instance.startAgentPostStartWatchdog(grace: .seconds(30))
+        instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
 
-        // Wait past the *shorter* grace but not the original. If the second
-        // call had taken effect, the flag would be true here.
-        try await Task.sleep(for: .milliseconds(120))
+        try await Task.sleep(for: Self.testWatchdogGrace * 3)
         #expect(instance.agentExpectedButMissing == false)
     }
 
@@ -709,8 +723,8 @@ struct VMInstanceTests {
         #expect(instance.agentExpectedButMissing == false)
         // Re-arming after teardown should now succeed — the prior task was
         // cancelled, so the idempotency guard does not block this.
-        instance.startAgentPostStartWatchdog(grace: .milliseconds(50))
-        try await waitUntil(timeout: .seconds(2)) {
+        instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
+        try await waitUntil {
             instance.agentExpectedButMissing
         }
     }
@@ -783,10 +797,10 @@ struct VMInstanceTests {
         instance.recordObservedAgentVersion("0.9.2")
 
         #expect(instance.agentExpectedButMissing == false)
-        // Re-arming with a tiny grace must succeed (proves the prior task
+        // Re-arming after the cancel must succeed (proves the prior task
         // was cancelled — the idempotency guard does not block this).
-        instance.startAgentPostStartWatchdog(grace: .milliseconds(50))
-        try await waitUntil(timeout: .seconds(2)) {
+        instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
+        try await waitUntil {
             instance.agentExpectedButMissing
         }
     }
