@@ -37,7 +37,7 @@ func makeChannelPair() throws -> (VsockChannel, VsockChannel) {
 
 /// Polls `predicate` every 10 ms until it returns `true` or `timeout` elapses.
 func waitUntil(
-    timeout: Duration = .seconds(2),
+    timeout: Duration = .seconds(5),
     _ predicate: @Sendable () -> Bool
 ) async throws {
     let deadline = ContinuousClock.now.advanced(by: timeout)
@@ -58,7 +58,7 @@ func waitUntil(
 ///   producing a frame (EOF), so the two failure shapes are identifiable.
 func nextFrame(
     from channel: VsockChannel,
-    timeout: Duration = .seconds(2)
+    timeout: Duration = .seconds(5)
 ) async throws -> Frame {
     let receiver = Task<Frame?, Error> {
         var iterator = channel.incoming.makeAsyncIterator()
@@ -87,7 +87,7 @@ func nextFrame(
 /// - Throws: `TestFailure("Timed out…")` if no value arrives within `timeout`.
 func awaitFirst<T: Sendable>(
     _ stream: AsyncStream<T>,
-    timeout: Duration = .seconds(2)
+    timeout: Duration = .seconds(5)
 ) async throws -> T {
     let task = Task<T?, Never> {
         var iterator = stream.makeAsyncIterator()

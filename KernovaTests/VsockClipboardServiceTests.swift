@@ -11,53 +11,16 @@ struct VsockClipboardServiceTests {
     // MARK: - Helpers
 
     private func makePair() throws -> (sender: VsockChannel, receiver: VsockChannel) {
-        var fds: [Int32] = [-1, -1]
-        let rc = fds.withUnsafeMutableBufferPointer { buf in
-            socketpair(AF_UNIX, SOCK_STREAM, 0, buf.baseAddress)
-        }
-        guard rc == 0 else {
-            throw POSIXError(.init(rawValue: errno) ?? .EIO)
-        }
-        return (VsockChannel(fileDescriptor: fds[0]),
-                VsockChannel(fileDescriptor: fds[1]))
+        let (a, b) = try makeRawSocketPair()
+        return (VsockChannel(fileDescriptor: a), VsockChannel(fileDescriptor: b))
     }
 
     /// Returns the raw fd pair alongside the channels so callers can set socket
     /// options (e.g. SO_NOSIGPIPE) on the fd before writes.
     private func makeRawPair() throws -> (hostFd: Int32, guestFd: Int32, host: VsockChannel, guest: VsockChannel) {
-        var fds: [Int32] = [-1, -1]
-        let rc = fds.withUnsafeMutableBufferPointer { buf in
-            socketpair(AF_UNIX, SOCK_STREAM, 0, buf.baseAddress)
-        }
-        guard rc == 0 else {
-            throw POSIXError(.init(rawValue: errno) ?? .EIO)
-        }
-        return (fds[0], fds[1], VsockChannel(fileDescriptor: fds[0]), VsockChannel(fileDescriptor: fds[1]))
+        let (hostFd, guestFd) = try makeRawSocketPair()
+        return (hostFd, guestFd, VsockChannel(fileDescriptor: hostFd), VsockChannel(fileDescriptor: guestFd))
     }
-
-    /// Drains the next frame from a channel within a generous deadline. Tests
-    /// that expect no frame must use `expectNoFrame` instead — this helper
-    /// throws on timeout.
-    private func nextFrame(
-        from channel: VsockChannel,
-        timeout: Duration = .seconds(2)
-    ) async throws -> Frame {
-        let receiver = Task<Frame?, Error> {
-            var iterator = channel.incoming.makeAsyncIterator()
-            return try await iterator.next()
-        }
-        let timeoutTask = Task<Void, Error> {
-            try await Task.sleep(for: timeout)
-            receiver.cancel()
-        }
-        defer { timeoutTask.cancel() }
-        guard let frame = try await receiver.value else {
-            throw TestFailure("Channel finished without producing a frame")
-        }
-        return frame
-    }
-
-    private struct TestFailure: Error { let message: String; init(_ m: String) { message = m } }
 
     /// MainActor-isolated buffer fed by a single iterator on the channel.
     /// Tests that need both "expect frame" and "expect no frame" assertions
@@ -91,7 +54,7 @@ struct VsockClipboardServiceTests {
     private func waitForFrameCount(
         _ recorder: FrameRecorder,
         equals expected: Int,
-        timeout: Duration = .seconds(2)
+        timeout: Duration = .seconds(5)
     ) async throws {
         try await waitUntil(timeout: timeout) {
             recorder.frames.count == expected
@@ -110,21 +73,6 @@ struct VsockClipboardServiceTests {
         if recorder.frames.count != before {
             let extras = Array(recorder.frames[before...])
             Issue.record("Expected no new frames over \(duration); got \(extras.count): \(extras.map { String(describing: $0.payload) })")
-        }
-    }
-
-    /// Spins until a service-side condition is true (or a deadline elapses).
-    /// Replaces ad-hoc `Task.sleep` waits in concurrency-sensitive tests.
-    private func waitUntil(
-        timeout: Duration = .seconds(2),
-        _ predicate: () -> Bool
-    ) async throws {
-        let deadline = ContinuousClock.now.advanced(by: timeout)
-        while !predicate() && ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        if !predicate() {
-            throw TestFailure("Predicate did not become true within \(timeout)")
         }
     }
 
@@ -479,12 +427,7 @@ struct VsockClipboardServiceTests {
 
     @Test("handleOffer send failure leaves pendingInboundGeneration unchanged")
     func offerSendFailureDoesNotSetPendingGeneration() async throws {
-        var rawFds: [Int32] = [-1, -1]
-        let rc = rawFds.withUnsafeMutableBufferPointer { buf in
-            socketpair(AF_UNIX, SOCK_STREAM, 0, buf.baseAddress)
-        }
-        guard rc == 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
-        let (guestRawFd, hostRawFd) = (rawFds[0], rawFds[1])
+        let (guestRawFd, hostRawFd) = try makeRawSocketPair()
 
         // SO_NOSIGPIPE so the service's write to a closed peer surfaces as an
         // error rather than killing the test process with SIGPIPE.

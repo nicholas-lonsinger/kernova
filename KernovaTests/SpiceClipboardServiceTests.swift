@@ -207,11 +207,7 @@ struct SpiceClipboardServiceTests {
 
         try outputPipe.fileHandleForWriting.close()
 
-        let deadline = Date().addingTimeInterval(1.0)
-        while service.isConnected && Date() < deadline {
-            try await Task.sleep(for: .milliseconds(20))
-        }
-
+        try await waitUntil { !service.isConnected }
         #expect(!service.isConnected)
         service.stop()
     }

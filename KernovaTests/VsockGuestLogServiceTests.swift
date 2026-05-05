@@ -11,15 +11,8 @@ struct VsockGuestLogServiceTests {
     // MARK: - Helpers
 
     private func makePair() throws -> (sender: VsockChannel, receiver: VsockChannel) {
-        var fds: [Int32] = [-1, -1]
-        let rc = fds.withUnsafeMutableBufferPointer { buf in
-            socketpair(AF_UNIX, SOCK_STREAM, 0, buf.baseAddress)
-        }
-        guard rc == 0 else {
-            throw POSIXError(.init(rawValue: errno) ?? .EIO)
-        }
-        return (VsockChannel(fileDescriptor: fds[0]),
-                VsockChannel(fileDescriptor: fds[1]))
+        let (a, b) = try makeRawSocketPair()
+        return (VsockChannel(fileDescriptor: a), VsockChannel(fileDescriptor: b))
     }
 
     // Generous default — multi-frame tests on slower CI runners were

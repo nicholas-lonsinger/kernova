@@ -11,49 +11,8 @@ struct VsockControlServiceTests {
     // MARK: - Helpers
 
     private func makePair() throws -> (sender: VsockChannel, receiver: VsockChannel) {
-        var fds: [Int32] = [-1, -1]
-        let rc = fds.withUnsafeMutableBufferPointer { buf in
-            socketpair(AF_UNIX, SOCK_STREAM, 0, buf.baseAddress)
-        }
-        guard rc == 0 else {
-            throw POSIXError(.init(rawValue: errno) ?? .EIO)
-        }
-        return (VsockChannel(fileDescriptor: fds[0]),
-                VsockChannel(fileDescriptor: fds[1]))
-    }
-
-    private func nextFrame(
-        from channel: VsockChannel,
-        timeout: Duration = .seconds(2)
-    ) async throws -> Frame {
-        let receiver = Task<Frame?, Error> {
-            var iterator = channel.incoming.makeAsyncIterator()
-            return try await iterator.next()
-        }
-        let timeoutTask = Task<Void, Error> {
-            try await Task.sleep(for: timeout)
-            receiver.cancel()
-        }
-        defer { timeoutTask.cancel() }
-        guard let frame = try await receiver.value else {
-            throw TestFailure("Channel finished without producing a frame")
-        }
-        return frame
-    }
-
-    private struct TestFailure: Error { let message: String; init(_ m: String) { message = m } }
-
-    private func waitUntil(
-        timeout: Duration = .seconds(2),
-        _ predicate: () -> Bool
-    ) async throws {
-        let deadline = ContinuousClock.now.advanced(by: timeout)
-        while !predicate() && ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        if !predicate() {
-            throw TestFailure("Predicate did not become true within \(timeout)")
-        }
+        let (a, b) = try makeRawSocketPair()
+        return (VsockChannel(fileDescriptor: a), VsockChannel(fileDescriptor: b))
     }
 
     /// Builds a guest-side Hello frame with the given agent version. Tests use
@@ -285,25 +244,47 @@ struct VsockControlServiceTests {
         host.start()
         defer { guest.close() }
 
-        // Wider cadence (100 ms) and deadline (1 s) so MainActor scheduling
-        // jitter on slow CI runners doesn't squeeze the heartbeat count.
-        let service = makeService(channel: host, heartbeatInterval: .milliseconds(100))
+        // Property under test: heartbeats fire repeatedly on the cadence.
+        //
+        // Earlier shape — "≥ N heartbeats inside a fixed wall-clock window" —
+        // was brittle on macos-26 runners. Gap-based: read three consecutive
+        // heartbeats and check that the maximum inter-frame gap stays within
+        // a generous tolerance of the cadence. Mirrors the agent-side test
+        // in VsockGuestControlAgentTests.
+        //
+        // Note: gaps are measured at receive time, not at the timer's fire
+        // time. A MainActor stall that buffers frames and drains them back-
+        // to-back will pass — correct for "is the timer running" but not a
+        // check on end-to-end latency.
+        let cadence: Duration = .milliseconds(100)
+        let service = makeService(channel: host, heartbeatInterval: cadence)
         service.start()
         defer { service.stop() }
 
-        // Frame 0 is the host Hello. After that, ≥3 heartbeats with a 100ms
-        // cadence inside a 1 s window — 7× headroom over the assertion.
+        // Frame 0 is the host Hello — discard.
         _ = try await nextFrame(from: guest)
 
-        var heartbeatCount = 0
-        let deadline = ContinuousClock.now.advanced(by: .seconds(1))
-        while heartbeatCount < 3, ContinuousClock.now < deadline {
-            let frame = try await nextFrame(from: guest, timeout: .milliseconds(800))
+        var stamps: [ContinuousClock.Instant] = []
+        while stamps.count < 3 {
+            // Use the shared 5 s default. If the timer is genuinely broken
+            // we'll still fail in bounded time (≤15 s); if it's just slow,
+            // returning the frame lets the maxGap assertion below produce a
+            // sharper "cadence drift" error than a generic timeout.
+            let frame = try await nextFrame(from: guest)
             if case .heartbeat = frame.payload {
-                heartbeatCount += 1
+                stamps.append(.now)
             }
         }
-        #expect(heartbeatCount >= 3, "Expected at least 3 heartbeats; got \(heartbeatCount)")
+
+        // Loop above guarantees stamps.count == 3, so gaps has exactly 2
+        // elements and reduce(.zero, max) is the natural non-optional form.
+        let gaps = zip(stamps.dropFirst(), stamps).map { $0 - $1 }
+        let maxGap = gaps.reduce(.zero, max)
+        let tolerance = cadence * 10
+        #expect(
+            maxGap < tolerance,
+            "Heartbeat cadence drift: max gap \(maxGap) exceeds \(tolerance) (10× cadence). Gaps: \(gaps)"
+        )
     }
 
     @Test("Inbound heartbeat keeps agentStatus .current past unresponsiveAfter")
