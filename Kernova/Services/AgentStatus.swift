@@ -65,4 +65,57 @@ enum AgentStatus: Equatable, Sendable {
         if case .connecting = self { return true }
         return false
     }
+
+    /// Resolves an upstream `AgentStatus` (sourced from `VsockControlService`
+    /// or a SPICE service) plus persisted host-side context into the final
+    /// `AgentStatus` the UI should render. Pure function — given the same
+    /// inputs, always produces the same output — so it can be unit-tested
+    /// without standing up a `VZVirtualMachine`.
+    ///
+    /// Precedence (top wins):
+    ///   1. **`.expectedMissing`** when `agentExpectedButMissing == true`
+    ///      *and* `lastSeenAgentVersion` is a non-empty string. This
+    ///      overrides any upstream value because the watchdog fires only
+    ///      after the post-start grace and represents host knowledge the
+    ///      upstream service can't have. If the persisted version is `nil`
+    ///      or empty the branch falls through — the watchdog shouldn't
+    ///      fire without a version, but synthesizing
+    ///      `.expectedMissing("")` would render with an empty version
+    ///      string in the UI ("guest agent  didn't reconnect"), which is
+    ///      worse than letting upstream win.
+    ///   2. **`.connecting`** when upstream is `.waiting`, the VM is in a
+    ///      live session (`isInLiveSession == true`), and we have a
+    ///      non-empty `lastSeenAgentVersion`. Surfaces the "we're aware
+    ///      and we're waiting" reconnect indicator instead of the install
+    ///      nudge during the post-start window for VMs that have had an
+    ///      agent before. Resolves to `.current` once Hello arrives, or to
+    ///      `.expectedMissing` (case 1) if the watchdog fires. Same
+    ///      empty-string defense as case 1.
+    ///   3. **upstream** otherwise — pass through `.current`, `.outdated`,
+    ///      `.unresponsive`, and `.waiting` (when none of the synthesis
+    ///      conditions apply) unchanged.
+    ///
+    /// Used by `VMInstance.agentStatus` for macOS guests. Linux guests get
+    /// their value directly from `SpiceClipboardService` and bypass this
+    /// helper — `spice-vdagent` is user-installed, so there's no install
+    /// nudge / reconnect window for the host to model.
+    static func synthesize(
+        upstream: AgentStatus,
+        lastSeenAgentVersion: String?,
+        isInLiveSession: Bool,
+        agentExpectedButMissing: Bool
+    ) -> AgentStatus {
+        if agentExpectedButMissing,
+           let expected = lastSeenAgentVersion,
+           !expected.isEmpty {
+            return .expectedMissing(expected: expected)
+        }
+        if case .waiting = upstream,
+           let lastSeen = lastSeenAgentVersion,
+           !lastSeen.isEmpty,
+           isInLiveSession {
+            return .connecting(expected: lastSeen)
+        }
+        return upstream
+    }
 }
