@@ -10,15 +10,18 @@ import AppKit
 /// single notification surface for agent-driven features (clipboard sync today,
 /// drag/drop file copy and auto passthrough later).
 ///
-/// ## Why this uses NSPopover with an explicit contentSize
-/// SwiftUI's `.popover` modifier and `NSHostingController` with various
-/// `sizingOptions` both fail to size a multi-line-text popover correctly on
-/// macOS Tahoe — the body Text renders single-line and clips with an ellipsis.
-/// The fix is to bypass SwiftUI's sizing-up-to-host model entirely: measure
-/// the body text with `NSAttributedString.boundingRect`, set
-/// `popover.contentSize` to a known-good (width, computed-height), and let the
-/// SwiftUI view fill that bounded rectangle. Text wraps naturally to the
-/// bounded width with no `.frame(width:)` or `.fixedSize()` involved.
+/// ## Why this uses NSPopover with an explicit contentSize and AppKit text
+/// On macOS Tahoe, SwiftUI's `Text` does not reliably wrap inside an
+/// `NSHostingController` even with explicit `.frame(width:)` constraints —
+/// it renders single-line at its ideal width and overflows. The popover
+/// therefore:
+///   1. Pre-measures the body text with `NSAttributedString.boundingRect`
+///      and pins both `popover.contentSize` and the SwiftUI outer frame to
+///      that exact (width, height).
+///   2. Renders the wrapping body via `WrappingNSTextLabel`
+///      (`NSTextField(wrappingLabelWithString:)` bridged through
+///      `NSViewRepresentable`), which honors `preferredMaxLayoutWidth` and
+///      wraps reliably regardless of how SwiftUI propagates proposals.
 struct SidebarAgentStatusButton: View {
     let vmName: String
     let status: AgentStatus
@@ -103,39 +106,47 @@ struct SidebarAgentStatusButton: View {
 
 // MARK: - Popover content & metrics
 
-/// Body of the agent-status popover. Designed to **fill** its host (the
-/// popover's content area is sized externally by `AgentStatusPopoverMetrics`)
-/// rather than dictate its own size — `.frame(maxWidth: .infinity, …)` lets it
-/// expand into the bounded region, and Text wraps naturally to that width with
-/// no `.frame(width:)` or `.fixedSize()` modifiers needed.
+/// Body of the agent-status popover. The wrapping body text is rendered
+/// via `WrappingNSTextLabel` (an AppKit `NSTextField` wrapping label) because
+/// SwiftUI `Text` does not reliably wrap inside `NSHostingController` on
+/// macOS Tahoe even with explicit `.frame(width:)` and `.fixedSize(...)`.
 struct AgentStatusPopoverContent: View {
     let vmName: String
     let status: AgentStatus
     let onAction: () -> Void
 
     var body: some View {
+        let bodyWidth = AgentStatusPopoverMetrics.contentWidth
+            - AgentStatusPopoverMetrics.padding * 2
+        let size = AgentStatusPopoverMetrics.contentSize(forStatus: status, vmName: vmName)
+
         VStack(alignment: .leading, spacing: AgentStatusPopoverMetrics.verticalSpacing) {
             Text(AgentStatusPopoverMetrics.title(for: status))
                 .font(.headline)
+                .frame(width: bodyWidth, alignment: .leading)
 
-            Text(AgentStatusPopoverMetrics.bodyText(for: status, vmName: vmName))
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.leading)
+            WrappingNSTextLabel(
+                text: AgentStatusPopoverMetrics.bodyText(for: status, vmName: vmName),
+                font: .preferredFont(forTextStyle: .callout),
+                textColor: .secondaryLabelColor,
+                maxWidth: bodyWidth
+            )
+            .frame(width: bodyWidth, alignment: .leading)
 
             HStack {
                 Spacer()
                 Button(buttonTitle, action: onAction)
                     .keyboardShortcut(.defaultAction)
             }
+            .frame(width: bodyWidth)
         }
         .padding(AgentStatusPopoverMetrics.padding)
-        // Hard-pin width so the SwiftUI ideal width is exactly contentWidth.
-        // Without this the ideal width is the body Text's single-line width
-        // (huge), and NSHostingController publishes that as preferredContentSize,
-        // overriding popover.contentSize. The result was a wide popover with
-        // the body Text on one line clipped at the screen edge.
-        .frame(width: AgentStatusPopoverMetrics.contentWidth, alignment: .topLeading)
+        // Pin both width and height to the pre-measured contentSize so the
+        // SwiftUI view exactly fills the popover. Without an explicit height,
+        // SwiftUI's ideal height could fall below the popover's contentSize
+        // and NSHostingController would float the content inside the
+        // popover, clipping the title at the top edge.
+        .frame(width: size.width, height: size.height, alignment: .topLeading)
     }
 
     private var buttonTitle: String {
@@ -311,6 +322,41 @@ private struct NSPopoverAnchor<Content: View>: NSViewRepresentable {
             if isPresented.wrappedValue {
                 isPresented.wrappedValue = false
             }
+        }
+    }
+}
+
+// MARK: - Wrapping text label
+
+/// AppKit-backed multi-line wrapping label. SwiftUI's `Text` doesn't
+/// reliably wrap inside an `NSHostingController` on macOS Tahoe (it renders
+/// single-line at its ideal width and overflows), so the popover renders
+/// the wrapping body string through `NSTextField(wrappingLabelWithString:)`
+/// instead. AppKit's `preferredMaxLayoutWidth` property does what
+/// SwiftUI's `.frame(width:)` should: caps the line width and produces a
+/// correct intrinsic content size for the wrapped layout.
+struct WrappingNSTextLabel: NSViewRepresentable {
+    let text: String
+    let font: NSFont
+    let textColor: NSColor
+    let maxWidth: CGFloat
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField(wrappingLabelWithString: text)
+        field.font = font
+        field.textColor = textColor
+        field.preferredMaxLayoutWidth = maxWidth
+        field.setContentHuggingPriority(.required, for: .vertical)
+        field.setContentCompressionResistancePriority(.required, for: .vertical)
+        return field
+    }
+
+    func updateNSView(_ nsView: NSTextField, context: Context) {
+        if nsView.stringValue != text { nsView.stringValue = text }
+        if nsView.font != font { nsView.font = font }
+        if nsView.textColor != textColor { nsView.textColor = textColor }
+        if nsView.preferredMaxLayoutWidth != maxWidth {
+            nsView.preferredMaxLayoutWidth = maxWidth
         }
     }
 }
