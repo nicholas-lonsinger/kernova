@@ -103,7 +103,7 @@ struct VMSettingsView: View {
         HStack(spacing: 10) {
             Image(systemName: "lock.fill")
                 .foregroundStyle(.orange)
-            Text("Sections marked with \(Image(systemName: "lock.fill")) are locked while the VM is running. Stop the VM to change them. Other sections can be edited live.")
+            Text("Sections marked with \(Text(Image(systemName: "lock.fill")).foregroundStyle(.orange)) are locked while the VM is running. Stop the VM to change them. Other sections can be edited live.")
                 .font(.callout)
             Spacer()
         }
@@ -121,8 +121,12 @@ struct VMSettingsView: View {
     /// VM is running. Hot-toggleable sections (Guest Agent, Clipboard) keep
     /// their plain headers so the absence of the lock is itself the signal
     /// that those sections remain editable.
+    ///
+    /// `LocalizedStringKey` matches SwiftUI's built-in `Section("...")`
+    /// initializer behavior so passing a literal participates in the same
+    /// localization lookup as the rest of the app's titles would.
     @ViewBuilder
-    private func lockableHeader(_ title: String) -> some View {
+    private func lockableHeader(_ title: LocalizedStringKey) -> some View {
         HStack(spacing: 6) {
             Text(title)
             if isReadOnly {
