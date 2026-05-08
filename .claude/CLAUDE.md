@@ -11,7 +11,7 @@ This is an Xcode project (not Swift Package Manager). Inside Xcode, use âŒ˜B / â
 ```bash
 make build               # Build for macOS
 make test                # Run the full test suite
-make test-suite SUITE=VMConfigurationTests   # Run a single suite
+make test-suite SUITE=KernovaTests/VMConfigurationTests   # Run a single suite (Target/Suite form)
 make clean               # Remove DerivedData/
 ```
 

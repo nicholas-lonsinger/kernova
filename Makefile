@@ -21,8 +21,8 @@ help:
 	@printf 'Kernova build targets:\n\n'
 	@printf '  make build               Build the app for macOS\n'
 	@printf '  make test                Run the full test suite\n'
-	@printf '  make test-suite SUITE=X  Run a single test suite\n'
-	@printf '                           (e.g. SUITE=VMConfigurationTests)\n'
+	@printf '  make test-suite SUITE=X  Run a single test suite (Target/Suite form)\n'
+	@printf '                           (e.g. SUITE=KernovaTests/VMConfigurationTests)\n'
 	@printf '  make clean               Remove the DerivedData directory\n'
 
 build:
@@ -33,10 +33,11 @@ test:
 
 test-suite:
 	@if [ -z "$(SUITE)" ]; then \
-		echo 'Usage: make test-suite SUITE=<TestSuiteName>' >&2; \
+		echo 'Usage: make test-suite SUITE=<Target/Suite>' >&2; \
+		echo 'Example: make test-suite SUITE=KernovaTests/VMConfigurationTests' >&2; \
 		exit 2; \
 	fi
-	xcodebuild $(XCODEBUILD_FLAGS) test -only-testing:KernovaTests/$(SUITE)
+	xcodebuild $(XCODEBUILD_FLAGS) test -only-testing:$(SUITE)
 
 clean:
 	rm -rf $(DERIVED_DATA)
