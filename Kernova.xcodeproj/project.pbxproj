@@ -197,10 +197,10 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = A1000030 /* Build configuration list for PBXNativeTarget "Kernova" */;
 			buildPhases = (
+				A10000D0 /* Set Build Number from Git */,
 				A1000040 /* Sources */,
 				A1000010 /* Frameworks */,
 				A1000050 /* Resources */,
-				A10000D0 /* Set Build Number from Git */,
 				A100010A /* Embed Helpers */,
 				A100020A /* Package Guest Agent DMG */,
 			);
@@ -407,10 +407,11 @@
 			outputFileListPaths = (
 			);
 			outputPaths = (
+				"$(DERIVED_FILE_DIR)/KernovaBuildNumber.h",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "BUILD_NUMBER=$(git rev-list --count HEAD)\n/usr/libexec/PlistBuddy -c \"Set :CFBundleVersion $BUILD_NUMBER\" \"${BUILT_PRODUCTS_DIR}/${INFOPLIST_PATH}\"\n";
+			shellScript = "set -euo pipefail\nBUILD_NUMBER=$(git -C \"${SRCROOT}\" rev-list --count HEAD)\nif [ -z \"${BUILD_NUMBER}\" ]; then\n    echo \"error: Could not determine app build number from git history\" >&2\n    exit 1\nfi\nmkdir -p \"${DERIVED_FILE_DIR}\"\necho \"#define KERNOVA_BUILD_NUMBER ${BUILD_NUMBER}\" > \"${DERIVED_FILE_DIR}/KernovaBuildNumber.h\"\n";
 		};
 		A100020A /* Package Guest Agent DMG */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -454,7 +455,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -euo pipefail\nBUILD_NUMBER=$(git rev-list --count HEAD -- KernovaGuestAgent/)\nif [ -z \"${BUILD_NUMBER}\" ]; then\n    echo \"error: Could not determine agent build number from git history\" >&2\n    exit 1\nfi\nmkdir -p \"${DERIVED_FILE_DIR}\"\necho \"#define AGENT_BUILD_NUMBER ${BUILD_NUMBER}\" > \"${DERIVED_FILE_DIR}/AgentBuildNumber.h\"\n";
+			shellScript = "set -euo pipefail\nBUILD_NUMBER=$(git -C \"${SRCROOT}\" rev-list --count HEAD -- KernovaGuestAgent/)\nif [ -z \"${BUILD_NUMBER}\" ]; then\n    echo \"error: Could not determine agent build number from git history\" >&2\n    exit 1\nfi\nmkdir -p \"${DERIVED_FILE_DIR}\"\necho \"#define AGENT_BUILD_NUMBER ${BUILD_NUMBER}\" > \"${DERIVED_FILE_DIR}/AgentBuildNumber.h\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -657,6 +658,8 @@
 				INFOPLIST_FILE = Kernova/App/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright 2025 Kernova. All rights reserved.";
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
+				INFOPLIST_PREFIX_HEADER = "$(DERIVED_FILE_DIR)/KernovaBuildNumber.h";
+				INFOPLIST_PREPROCESS = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -682,6 +685,8 @@
 				INFOPLIST_FILE = Kernova/App/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright 2025 Kernova. All rights reserved.";
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
+				INFOPLIST_PREFIX_HEADER = "$(DERIVED_FILE_DIR)/KernovaBuildNumber.h";
+				INFOPLIST_PREPROCESS = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",

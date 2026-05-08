@@ -23,6 +23,10 @@ xcodebuild -project Kernova.xcodeproj -scheme Kernova -destination 'platform=mac
 
 The `-derivedDataPath DerivedData` flag ensures build output goes to a deterministic local `DerivedData/` directory (already gitignored) instead of the per-path-hashed `~/Library/Developer/Xcode/DerivedData/` location. This avoids glob ambiguity when worktrees or parallel builds create multiple DerivedData folders. Xcode itself still uses the per-user default — they don't need to share.
 
+### Build version
+
+`CFBundleVersion` is `git rev-list --count HEAD` (the total commit count), substituted into the source `Info.plist` via `INFOPLIST_PREPROCESS`. The `Set Build Number from Git` build phase generates `KernovaBuildNumber.h` with `#define KERNOVA_BUILD_NUMBER N`, and `Kernova/App/Info.plist` references the symbol directly (`<string>KERNOVA_BUILD_NUMBER</string>`). Substitution happens inside `ProcessInfoPlistFile` so build-graph reordering can't clobber it. The `KernovaGuestAgent` target uses the same pattern with its own `AGENT_BUILD_NUMBER` (scoped to `git rev-list --count HEAD -- KernovaGuestAgent/`). When adding a new top-level target that needs a dynamic build number, replicate this pattern instead of patching the built `Info.plist` after the fact.
+
 Requires **macOS 26 (Tahoe)**, **Xcode 26**, **Swift 6**, and **Apple Silicon** (for macOS guest support). The app uses the `com.apple.security.virtualization` entitlement.
 
 ## Architecture
