@@ -13,26 +13,26 @@ struct VMConfigurationTests {
     ) -> String {
         let extra = extraFields.isEmpty ? "" : ",\n            \(extraFields)"
         return """
-        {
-            "id": "12345678-1234-1234-1234-123456789012",
-            "name": "\(name)",
-            "guestOS": "linux",
-            "bootMode": "efi",
-            "cpuCount": 4,
-            "memorySizeInGB": 8,
-            "diskSizeInGB": 64,
-            "displayWidth": 1920,
-            "displayHeight": 1200,
-            "displayPPI": 144,
-            "displayPreference": "inline",
-            "networkEnabled": true,
-            "clipboardSharingEnabled": false,
-            "microphoneEnabled": false,
-            "discImageReadOnly": true,
-            "bootFromDiscImage": false,
-            "createdAt": "2025-01-01T00:00:00Z"\(extra)
-        }
-        """
+            {
+                "id": "12345678-1234-1234-1234-123456789012",
+                "name": "\(name)",
+                "guestOS": "linux",
+                "bootMode": "efi",
+                "cpuCount": 4,
+                "memorySizeInGB": 8,
+                "diskSizeInGB": 64,
+                "displayWidth": 1920,
+                "displayHeight": 1200,
+                "displayPPI": 144,
+                "displayPreference": "inline",
+                "networkEnabled": true,
+                "clipboardSharingEnabled": false,
+                "microphoneEnabled": false,
+                "discImageReadOnly": true,
+                "bootFromDiscImage": false,
+                "createdAt": "2025-01-01T00:00:00Z"\(extra)
+            }
+            """
     }
 
     @Test("Default macOS configuration has correct defaults")
@@ -798,14 +798,14 @@ struct VMConfigurationTests {
                     readOnly: true,
                     label: "data",
                     isInternal: false
-                ),
+                )
             ],
             sharedDirectories: [
                 SharedDirectory(
                     id: UUID(uuidString: "22222222-2222-2222-2222-222222222222")!,
                     path: "/host/shared",
                     readOnly: true
-                ),
+                )
             ],
             // Whole-second timestamp so .iso8601 (no fractional seconds)
             // round-trips without precision loss.
@@ -833,21 +833,21 @@ struct VMConfigurationTests {
         // Intentionally omits: displayPreference, clipboardSharingEnabled,
         // microphoneEnabled, discImageReadOnly, bootFromDiscImage
         let json = """
-        {
-            "id": "12345678-1234-1234-1234-123456789012",
-            "name": "Incomplete VM",
-            "guestOS": "linux",
-            "bootMode": "efi",
-            "cpuCount": 4,
-            "memorySizeInGB": 8,
-            "diskSizeInGB": 64,
-            "displayWidth": 1920,
-            "displayHeight": 1200,
-            "displayPPI": 144,
-            "networkEnabled": true,
-            "createdAt": "2025-01-01T00:00:00Z"
-        }
-        """
+            {
+                "id": "12345678-1234-1234-1234-123456789012",
+                "name": "Incomplete VM",
+                "guestOS": "linux",
+                "bootMode": "efi",
+                "cpuCount": 4,
+                "memorySizeInGB": 8,
+                "diskSizeInGB": 64,
+                "displayWidth": 1920,
+                "displayHeight": 1200,
+                "displayPPI": 144,
+                "networkEnabled": true,
+                "createdAt": "2025-01-01T00:00:00Z"
+            }
+            """
 
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601

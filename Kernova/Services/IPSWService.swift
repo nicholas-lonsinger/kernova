@@ -134,7 +134,9 @@ private final class IPSWDownloadDelegate: NSObject, URLSessionDownloadDelegate, 
         if elapsed > 0, lastProgressReport > 0 {
             let deltaBytes = Double(totalBytesWritten - previousBytesWritten)
             guard deltaBytes >= 0 else {
-                Self.logger.warning("Negative byte delta detected (\(totalBytesWritten) < \(self.previousBytesWritten)) — skipping speed sample")
+                Self.logger.warning(
+                    "Negative byte delta detected (\(totalBytesWritten) < \(self.previousBytesWritten)) — skipping speed sample"
+                )
                 previousBytesWritten = totalBytesWritten
                 lastProgressReport = now
                 return
@@ -143,7 +145,8 @@ private final class IPSWDownloadDelegate: NSObject, URLSessionDownloadDelegate, 
             if smoothedBytesPerSecond == 0 {
                 smoothedBytesPerSecond = instantSpeed
             } else {
-                smoothedBytesPerSecond = Self.smoothingAlpha * instantSpeed
+                smoothedBytesPerSecond =
+                    Self.smoothingAlpha * instantSpeed
                     + (1 - Self.smoothingAlpha) * smoothedBytesPerSecond
             }
         }
@@ -169,7 +172,9 @@ private final class IPSWDownloadDelegate: NSObject, URLSessionDownloadDelegate, 
         do {
             try FileManager.default.moveItem(at: location, to: destinationURL)
         } catch {
-            Self.logger.error("Failed to move IPSW from '\(location.path(percentEncoded: false), privacy: .public)' to '\(self.destinationURL.path(percentEncoded: false), privacy: .public)': \(error.localizedDescription, privacy: .public)")
+            Self.logger.error(
+                "Failed to move IPSW from '\(location.path(percentEncoded: false), privacy: .public)' to '\(self.destinationURL.path(percentEncoded: false), privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
             self.moveError = error
         }
     }
@@ -188,14 +193,17 @@ private final class IPSWDownloadDelegate: NSObject, URLSessionDownloadDelegate, 
             do {
                 try FileManager.default.removeItem(at: destinationURL)
             } catch {
-                Self.logger.warning("Failed to clean up partial download at '\(self.destinationURL.path(percentEncoded: false), privacy: .public)': \(error.localizedDescription, privacy: .public)")
+                Self.logger.warning(
+                    "Failed to clean up partial download at '\(self.destinationURL.path(percentEncoded: false), privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                )
             }
 
             // Propagate cancellation as CancellationError so callers can distinguish
             // user-initiated cancellation from genuine download failures.
             if let nsError = error as NSError?,
-               nsError.domain == NSURLErrorDomain,
-               nsError.code == NSURLErrorCancelled {
+                nsError.domain == NSURLErrorDomain,
+                nsError.code == NSURLErrorCancelled
+            {
                 Self.logger.info("Restore image download cancelled")
                 continuation.resume(throwing: CancellationError())
             } else {

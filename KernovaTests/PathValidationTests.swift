@@ -33,7 +33,8 @@ struct PathValidationTests {
             try PathValidation.resolveFile(at: "/nonexistent/path/file.img")
         } throws: { error in
             guard let failure = error as? PathValidation.Failure,
-                  case .notFound = failure else { return false }
+                case .notFound = failure
+            else { return false }
             return true
         }
     }
@@ -47,7 +48,8 @@ struct PathValidationTests {
             try PathValidation.resolveFile(at: dir.path(percentEncoded: false))
         } throws: { error in
             guard let failure = error as? PathValidation.Failure,
-                  case .unexpectedType = failure else { return false }
+                case .unexpectedType = failure
+            else { return false }
             return true
         }
     }
@@ -81,7 +83,8 @@ struct PathValidationTests {
             try PathValidation.resolveFile(at: linkPath)
         } throws: { error in
             guard let failure = error as? PathValidation.Failure,
-                  case .notFound = failure else { return false }
+                case .notFound = failure
+            else { return false }
             return true
         }
     }
@@ -109,7 +112,8 @@ struct PathValidationTests {
             try PathValidation.resolveDirectory(at: filePath)
         } throws: { error in
             guard let failure = error as? PathValidation.Failure,
-                  case .unexpectedType = failure else { return false }
+                case .unexpectedType = failure
+            else { return false }
             return true
         }
     }
@@ -120,7 +124,8 @@ struct PathValidationTests {
             try PathValidation.resolveDirectory(at: "/nonexistent/directory")
         } throws: { error in
             guard let failure = error as? PathValidation.Failure,
-                  case .notFound = failure else { return false }
+                case .notFound = failure
+            else { return false }
             return true
         }
     }

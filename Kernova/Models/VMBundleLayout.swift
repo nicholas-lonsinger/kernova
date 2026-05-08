@@ -54,8 +54,10 @@ struct VMBundleLayout: Sendable {
     /// Uses `totalFileAllocatedSizeKey` (`st_blocks * 512`) rather than logical file size,
     /// so sparse ASIF images report their true on-disk footprint instead of the virtual capacity.
     var diskUsageBytes: UInt64? {
-        guard let size = (try? diskImageURL.resourceValues(forKeys: [.totalFileAllocatedSizeKey]))?
-            .totalFileAllocatedSize else {
+        guard
+            let size = (try? diskImageURL.resourceValues(forKeys: [.totalFileAllocatedSizeKey]))?
+                .totalFileAllocatedSize
+        else {
             return nil
         }
         return UInt64(size)

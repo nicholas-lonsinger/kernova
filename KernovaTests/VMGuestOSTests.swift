@@ -112,7 +112,11 @@ struct VMGuestOSTests {
     func linuxAvailableDiskSizes() {
         let sizes = VMGuestOS.linux.availableDiskSizes
         #expect(sizes.first == 10)
-        #expect(sizes == [10, 15, 20, 25, 50, 75, 100, 125, 150, 175, 200, 225, 250, 500, 750, 1000, 1500, 2000, 2500, 3000, 3500, 4000])
+        #expect(
+            sizes == [
+                10, 15, 20, 25, 50, 75, 100, 125, 150, 175, 200, 225, 250, 500, 750, 1000, 1500, 2000, 2500, 3000, 3500,
+                4000,
+            ])
     }
 
     @Test("Default disk size is contained in available disk sizes for both OS types")

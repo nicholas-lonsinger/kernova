@@ -27,7 +27,9 @@ final class VMDirectoryWatcher {
     func start(directory: URL) {
         let fd = open(directory.path(percentEncoded: false), O_EVTONLY)
         guard fd >= 0 else {
-            Self.logger.warning("Could not open VMs directory for monitoring: \(directory.path(percentEncoded: false), privacy: .public)")
+            Self.logger.warning(
+                "Could not open VMs directory for monitoring: \(directory.path(percentEncoded: false), privacy: .public)"
+            )
             return
         }
 

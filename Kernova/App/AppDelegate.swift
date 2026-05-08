@@ -39,12 +39,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// Stable since macOS 13 (Ventura) when System Preferences was replaced by
     /// System Settings with per-pane extensions. May differ on earlier versions.
     private static let tccSenderBundleIDs: Set<String> = [
-        "com.apple.settings.PrivacySecurity.extension",
+        "com.apple.settings.PrivacySecurity.extension"
     ]
 
     private static let logger = Logger(subsystem: "com.kernova.app", category: "AppDelegate")
     private static let guestAgentDiskPath: String? = {
-        guard let path = Bundle.main.url(forResource: "KernovaGuestAgent", withExtension: "dmg")?.path(percentEncoded: false) else {
+        guard
+            let path = Bundle.main.url(forResource: "KernovaGuestAgent", withExtension: "dmg")?.path(
+                percentEncoded: false)
+        else {
             logger.warning("Guest agent disk image not found in app bundle — 'Install Guest Agent' will be unavailable")
             return nil
         }
@@ -114,7 +117,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
         // Stay alive if VMs are active or display windows still exist
         if hasActiveVMs || !displayWindows.isEmpty {
-            Self.logger.debug("applicationShouldTerminateAfterLastWindowClosed: false (activeVMs=\(hasActiveVMs, privacy: .public), displayWindows=\(self.displayWindows.count, privacy: .public))")
+            Self.logger.debug(
+                "applicationShouldTerminateAfterLastWindowClosed: false (activeVMs=\(hasActiveVMs, privacy: .public), displayWindows=\(self.displayWindows.count, privacy: .public))"
+            )
             return false
         }
 
@@ -172,7 +177,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             do {
                 try FileManager.default.trashItem(at: instance.bundleURL, resultingItemURL: nil)
             } catch {
-                Self.logger.warning("Failed to clean up partial bundle for '\(instance.name, privacy: .public)' during termination: \(error.localizedDescription, privacy: .public)")
+                Self.logger.warning(
+                    "Failed to clean up partial bundle for '\(instance.name, privacy: .public)' during termination: \(error.localizedDescription, privacy: .public)"
+                )
             }
             return true
         }
@@ -203,16 +210,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                     viewModel.saveConfiguration(for: instance)
                     savedCount += 1
                 } catch {
-                    Self.logger.error("Failed to save '\(instance.name, privacy: .public)' during termination: \(error.localizedDescription, privacy: .public)")
+                    Self.logger.error(
+                        "Failed to save '\(instance.name, privacy: .public)' during termination: \(error.localizedDescription, privacy: .public)"
+                    )
                     failedCount += 1
                     do {
                         try await viewModel.tryForceStop(instance)
                     } catch {
-                        Self.logger.error("Failed to force-stop '\(instance.name, privacy: .public)' during termination: \(error.localizedDescription, privacy: .public)")
+                        Self.logger.error(
+                            "Failed to force-stop '\(instance.name, privacy: .public)' during termination: \(error.localizedDescription, privacy: .public)"
+                        )
                     }
                 }
             }
-            Self.logger.notice("Termination save complete: \(savedCount, privacy: .public) saved, \(failedCount, privacy: .public) failed of \(runningInstances.count, privacy: .public) total")
+            Self.logger.notice(
+                "Termination save complete: \(savedCount, privacy: .public) saved, \(failedCount, privacy: .public) failed of \(runningInstances.count, privacy: .public) total"
+            )
             NSApplication.shared.reply(toApplicationShouldTerminate: true)
         }
 
@@ -237,15 +250,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             let senderPID = senderPIDDescriptor.int32Value
             if let senderApp = NSRunningApplication(processIdentifier: senderPID) {
                 if let bundleID = senderApp.bundleIdentifier {
-                    Self.logger.debug("Quit Apple Event received from '\(bundleID, privacy: .public)' (PID \(senderPID, privacy: .public))")
+                    Self.logger.debug(
+                        "Quit Apple Event received from '\(bundleID, privacy: .public)' (PID \(senderPID, privacy: .public))"
+                    )
                     if Self.tccSenderBundleIDs.contains(bundleID) {
                         terminationIsTCCRevocation = true
                     }
                 } else {
-                    Self.logger.warning("Quit Apple Event: sender PID \(senderPID, privacy: .public) resolved to an application with no bundle identifier — TCC detection may miss this event")
+                    Self.logger.warning(
+                        "Quit Apple Event: sender PID \(senderPID, privacy: .public) resolved to an application with no bundle identifier — TCC detection may miss this event"
+                    )
                 }
             } else {
-                Self.logger.warning("Quit Apple Event: sender PID \(senderPID, privacy: .public) could not be resolved to a running application (process may have already exited) — TCC detection may miss this event")
+                Self.logger.warning(
+                    "Quit Apple Event: sender PID \(senderPID, privacy: .public) could not be resolved to a running application (process may have already exited) — TCC detection may miss this event"
+                )
             }
         } else {
             Self.logger.debug("Quit Apple Event received with no sender PID attribute")
@@ -258,9 +277,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// the app after it terminates. Used for TCC permission revocations where
     /// the built-in relaunch mechanism times out during VM save.
     private func launchRelaunchHelper() {
-        guard let helperURL = Bundle.main.url(
-            forAuxiliaryExecutable: "KernovaRelaunchHelper"
-        ) else {
+        guard
+            let helperURL = Bundle.main.url(
+                forAuxiliaryExecutable: "KernovaRelaunchHelper"
+            )
+        else {
             Self.logger.fault("Relaunch helper not found in app bundle")
             assertionFailure("Relaunch helper not found in app bundle")
             return
@@ -377,7 +398,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     @objc func toggleSettingsPane(_ sender: Any?) {
         guard let instance = activeInstance,
-              instance.status.hasActiveDisplay else { return }
+            instance.status.hasActiveDisplay
+        else { return }
         instance.detailPaneMode = instance.detailPaneMode == .settings ? .display : .settings
     }
 
@@ -473,7 +495,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     @objc func showRemovableMedia(_ sender: Any?) {
         guard let instance = activeInstance,
-              instance.canAttachUSBDevices else { return }
+            instance.canAttachUSBDevices
+        else { return }
 
         let popover = NSPopover()
         popover.behavior = .transient
@@ -579,7 +602,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                     if !controller.closedProgrammatically {
                         // User manually closed the display window
                         instance.configuration.displayPreference = .inline
-                        Self.logger.debug("Cleared displayPreference for '\(instance.name, privacy: .public)' (user closed display window)")
+                        Self.logger.debug(
+                            "Cleared displayPreference for '\(instance.name, privacy: .public)' (user closed display window)"
+                        )
                     }
 
                     self.viewModel.saveConfiguration(for: instance)
@@ -608,7 +633,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // For fullscreen: position on the remembered display so toggleFullScreen picks the correct screen
         if enterFullscreen {
             if let screen = targetScreen(for: instance),
-               let window = controller.window {
+                let window = controller.window
+            {
                 let frame = screen.frame
                 let centeredOrigin = NSPoint(
                     x: frame.midX - window.frame.width / 2,
@@ -628,10 +654,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private func targetScreen(for instance: VMInstance) -> NSScreen? {
         if let savedID = instance.configuration.lastFullscreenDisplayID {
             if let target = NSScreen.screens.first(where: { $0.displayID == savedID }) {
-                Self.logger.debug("targetScreen for '\(instance.name, privacy: .public)': using saved display \(savedID, privacy: .public)")
+                Self.logger.debug(
+                    "targetScreen for '\(instance.name, privacy: .public)': using saved display \(savedID, privacy: .public)"
+                )
                 return target
             }
-            Self.logger.debug("targetScreen for '\(instance.name, privacy: .public)': saved display \(savedID, privacy: .public) not found, falling back")
+            Self.logger.debug(
+                "targetScreen for '\(instance.name, privacy: .public)': saved display \(savedID, privacy: .public) not found, falling back"
+            )
         }
         if let libraryScreen = mainWindowController?.window?.screen {
             return libraryScreen
@@ -794,9 +824,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         appMenu.addItem(servicesItem)
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Hide Kernova", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
-        let hideOthersItem = appMenu.addItem(withTitle: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
+        let hideOthersItem = appMenu.addItem(
+            withTitle: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
         hideOthersItem.keyEquivalentModifierMask = [.command, .option]
-        appMenu.addItem(withTitle: "Show All", action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
+        appMenu.addItem(
+            withTitle: "Show All", action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit Kernova", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appMenuItem.submenu = appMenu
@@ -853,14 +885,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         vmMenu.addItem(.separator())
         vmMenu.addItem(withTitle: "Rename...", action: #selector(renameVM(_:)), keyEquivalent: "")
         vmMenu.addItem(withTitle: "Clone", action: #selector(cloneVM(_:)), keyEquivalent: "d")
-        let deleteItem = vmMenu.addItem(withTitle: "Move to Trash", action: #selector(deleteVM(_:)), keyEquivalent: "\u{08}")
+        let deleteItem = vmMenu.addItem(
+            withTitle: "Move to Trash", action: #selector(deleteVM(_:)), keyEquivalent: "\u{08}")
         deleteItem.keyEquivalentModifierMask = [.command]
         vmMenu.addItem(.separator())
-        vmMenu.addItem(NSMenuItem(
-            title: "Install Guest Agent…",
-            action: #selector(attachGuestAgentDisk(_:)),
-            keyEquivalent: ""
-        ))
+        vmMenu.addItem(
+            NSMenuItem(
+                title: "Install Guest Agent…",
+                action: #selector(attachGuestAgentDisk(_:)),
+                keyEquivalent: ""
+            ))
         vmMenuItem.submenu = vmMenu
         mainMenu.addItem(vmMenuItem)
 
@@ -898,10 +932,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         removableMediaItem.keyEquivalentModifierMask = [.command, .shift]
         windowMenu.addItem(removableMediaItem)
         windowMenu.addItem(.separator())
-        windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        windowMenu.addItem(
+            withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
         windowMenu.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
         windowMenu.addItem(.separator())
-        windowMenu.addItem(withTitle: "Bring All to Front", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
+        windowMenu.addItem(
+            withTitle: "Bring All to Front", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
         windowMenuItem.submenu = windowMenu
         NSApp.windowsMenu = windowMenu
         windowMenu.delegate = self

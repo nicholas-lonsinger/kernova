@@ -157,7 +157,8 @@ final class VsockHostConnection: @unchecked Sendable {
                     )
                     continue
                 }
-                Self.logger.debug("Received inbound vsock frame (type: \(String(describing: frame.payload), privacy: .public))")
+                Self.logger.debug(
+                    "Received inbound vsock frame (type: \(String(describing: frame.payload), privacy: .public))")
             }
             Self.logger.notice("Vsock channel closed by host")
         } catch {

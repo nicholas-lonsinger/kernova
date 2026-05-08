@@ -219,7 +219,9 @@ final class VMInstance: Identifiable {
         let layout = bundleLayout
         let usage = await Task.detached { layout.diskUsageBytes }.value
         cachedDiskUsageBytes = usage
-        Self.logger.debug("Refreshed disk usage for '\(self.name, privacy: .public)': \(usage.map { "\($0) bytes" } ?? "nil", privacy: .public)")
+        Self.logger.debug(
+            "Refreshed disk usage for '\(self.name, privacy: .public)': \(usage.map { "\($0) bytes" } ?? "nil", privacy: .public)"
+        )
     }
 
     // MARK: - Initializer
@@ -347,11 +349,15 @@ final class VMInstance: Identifiable {
     func removeSaveFile() {
         do {
             try FileManager.default.removeItem(at: saveFileURL)
-        } catch let error as NSError where error.domain == NSCocoaErrorDomain
-            && error.code == NSFileNoSuchFileError {
+        } catch let error as NSError
+            where error.domain == NSCocoaErrorDomain
+            && error.code == NSFileNoSuchFileError
+        {
             // File already absent — expected in some flows
         } catch {
-            Self.logger.warning("Failed to remove save file for '\(self.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
+            Self.logger.warning(
+                "Failed to remove save file for '\(self.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
         }
     }
 
@@ -373,11 +379,13 @@ final class VMInstance: Identifiable {
         do {
             let handle = try FileHandle(forWritingTo: logURL)
             do { _ = try handle.seekToEnd() } catch {
-                Self.logger.warning("Could not seek to end of serial log: \(error.localizedDescription, privacy: .public)")
+                Self.logger.warning(
+                    "Could not seek to end of serial log: \(error.localizedDescription, privacy: .public)")
             }
             serialLogFileHandle = handle
         } catch {
-            Self.logger.warning("Could not open serial log for writing: \(error.localizedDescription, privacy: .public)")
+            Self.logger.warning(
+                "Could not open serial log for writing: \(error.localizedDescription, privacy: .public)")
         }
 
         // Capture for the readability handler closure (runs on a background GCD queue)
@@ -420,11 +428,14 @@ final class VMInstance: Identifiable {
     /// Sends a string to the guest via the serial input pipe.
     func sendSerialInput(_ string: String) {
         guard let data = string.data(using: .utf8),
-              let inputPipe = serialInputPipe else { return }
+            let inputPipe = serialInputPipe
+        else { return }
         do {
             try inputPipe.fileHandleForWriting.write(contentsOf: data)
         } catch {
-            Self.logger.error("Failed to send serial input to VM '\(self.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
+            Self.logger.error(
+                "Failed to send serial input to VM '\(self.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
         }
     }
 
@@ -434,7 +445,9 @@ final class VMInstance: Identifiable {
         do {
             try serialLogFileHandle?.close()
         } catch {
-            Self.logger.warning("Failed to close serial log file for VM '\(self.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
+            Self.logger.warning(
+                "Failed to close serial log file for VM '\(self.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
         }
         serialLogFileHandle = nil
     }
@@ -453,13 +466,15 @@ final class VMInstance: Identifiable {
         case .linux:
             startSpiceClipboardService()
         case .macOS:
-            Self.logger.info("Clipboard sharing armed (vsock) for '\(self.name, privacy: .public)' — awaiting guest agent")
+            Self.logger.info(
+                "Clipboard sharing armed (vsock) for '\(self.name, privacy: .public)' — awaiting guest agent")
         }
     }
 
     private func startSpiceClipboardService() {
         guard let inputPipe = clipboardInputPipe,
-              let outputPipe = clipboardOutputPipe else {
+            let outputPipe = clipboardOutputPipe
+        else {
             Self.logger.error("SPICE clipboard pipes not configured for '\(self.name, privacy: .public)'")
             return
         }
@@ -481,22 +496,30 @@ final class VMInstance: Identifiable {
         do {
             try clipboardInputPipe?.fileHandleForReading.close()
         } catch {
-            Self.logger.warning("Failed to close clipboard input read handle for VM '\(self.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
+            Self.logger.warning(
+                "Failed to close clipboard input read handle for VM '\(self.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
         }
         do {
             try clipboardInputPipe?.fileHandleForWriting.close()
         } catch {
-            Self.logger.warning("Failed to close clipboard input write handle for VM '\(self.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
+            Self.logger.warning(
+                "Failed to close clipboard input write handle for VM '\(self.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
         }
         do {
             try clipboardOutputPipe?.fileHandleForReading.close()
         } catch {
-            Self.logger.warning("Failed to close clipboard output read handle for VM '\(self.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
+            Self.logger.warning(
+                "Failed to close clipboard output read handle for VM '\(self.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
         }
         do {
             try clipboardOutputPipe?.fileHandleForWriting.close()
         } catch {
-            Self.logger.warning("Failed to close clipboard output write handle for VM '\(self.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
+            Self.logger.warning(
+                "Failed to close clipboard output write handle for VM '\(self.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
         }
         clipboardInputPipe = nil
         clipboardOutputPipe = nil
@@ -516,7 +539,8 @@ final class VMInstance: Identifiable {
     func startVsockServices() {
         stopVsockServices()
         guard let vm = virtualMachine else { return }
-        guard let socketDevice = vm.socketDevices.first(where: { $0 is VZVirtioSocketDevice }) as? VZVirtioSocketDevice else {
+        guard let socketDevice = vm.socketDevices.first(where: { $0 is VZVirtioSocketDevice }) as? VZVirtioSocketDevice
+        else {
             return
         }
 
@@ -713,7 +737,8 @@ final class VMInstance: Identifiable {
     func applyLivePolicy(oldConfig: VMConfiguration, newConfig: VMConfiguration) {
         guard status == .running || status == .paused else { return }
         guard let vm = virtualMachine else { return }
-        guard let socketDevice = vm.socketDevices.first(where: { $0 is VZVirtioSocketDevice }) as? VZVirtioSocketDevice else {
+        guard let socketDevice = vm.socketDevices.first(where: { $0 is VZVirtioSocketDevice }) as? VZVirtioSocketDevice
+        else {
             return
         }
 
@@ -841,7 +866,9 @@ private final class VMDelegateAdapter: NSObject, VZVirtualMachineDelegate {
             instance.tearDownSession()
             instance.status = .error
             instance.errorMessage = error.localizedDescription
-            Self.logger.error("VM '\(instance.name, privacy: .public)' stopped with error: \(error.localizedDescription, privacy: .public)")
+            Self.logger.error(
+                "VM '\(instance.name, privacy: .public)' stopped with error: \(error.localizedDescription, privacy: .public)"
+            )
         }
     }
 }

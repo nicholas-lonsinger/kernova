@@ -209,14 +209,14 @@ struct DataFormattersTests {
 
     @Test("formatDuration formats minutes and seconds")
     func formatDurationMinutesSeconds() {
-        let result = DataFormatters.formatDuration(125) // 2m 5s
+        let result = DataFormatters.formatDuration(125)  // 2m 5s
         #expect(result.contains("m"))
         #expect(result.contains("s"))
     }
 
     @Test("formatDuration formats hours, minutes, and seconds")
     func formatDurationHoursMinutesSeconds() {
-        let result = DataFormatters.formatDuration(3661) // 1h 1m 1s
+        let result = DataFormatters.formatDuration(3661)  // 1h 1m 1s
         #expect(result.contains("h"))
         #expect(result.contains("m"))
         #expect(result.contains("s"))

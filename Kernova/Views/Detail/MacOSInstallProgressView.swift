@@ -129,7 +129,7 @@ struct MacOSInstallProgressView: View {
             Rectangle()
                 .fill(installState.downloadCompleted ? Color.accentColor : Color.secondary.opacity(0.3))
                 .frame(width: 2, height: 20)
-                .padding(.leading, 11) // Center under 24pt circle
+                .padding(.leading, 11)  // Center under 24pt circle
             Spacer()
         }
     }

@@ -29,7 +29,9 @@ struct ConfigurationBuilder: Sendable {
     func build(from config: VMConfiguration, bundleURL: URL) throws -> BuildResult {
         let vzConfig = VZVirtualMachineConfiguration()
 
-        Self.logger.debug("Building config: cpuCount=\(config.cpuCount, privacy: .public), memoryMB=\(config.memorySizeInBytes / (1024 * 1024), privacy: .public), bootMode=\(config.bootMode.displayName, privacy: .public)")
+        Self.logger.debug(
+            "Building config: cpuCount=\(config.cpuCount, privacy: .public), memoryMB=\(config.memorySizeInBytes / (1024 * 1024), privacy: .public), bootMode=\(config.bootMode.displayName, privacy: .public)"
+        )
 
         // Resources
         vzConfig.cpuCount = config.cpuCount
@@ -76,7 +78,9 @@ struct ConfigurationBuilder: Sendable {
         // Validate
         try vzConfig.validate()
 
-        Self.logger.info("Built VZ configuration for '\(config.name, privacy: .public)' (\(config.bootMode.displayName, privacy: .public))")
+        Self.logger.info(
+            "Built VZ configuration for '\(config.name, privacy: .public)' (\(config.bootMode.displayName, privacy: .public))"
+        )
         return BuildResult(
             configuration: vzConfig,
             serialInputPipe: inputPipe,
@@ -102,7 +106,8 @@ struct ConfigurationBuilder: Sendable {
 
         // Hardware model
         if let modelData = config.hardwareModelData,
-           let hardwareModel = VZMacHardwareModel(dataRepresentation: modelData) {
+            let hardwareModel = VZMacHardwareModel(dataRepresentation: modelData)
+        {
             platform.hardwareModel = hardwareModel
         } else {
             let modelData = try Data(contentsOf: layout.hardwareModelURL)
@@ -114,7 +119,8 @@ struct ConfigurationBuilder: Sendable {
 
         // Machine identifier
         if let idData = config.machineIdentifierData,
-           let machineID = VZMacMachineIdentifier(dataRepresentation: idData) {
+            let machineID = VZMacMachineIdentifier(dataRepresentation: idData)
+        {
             platform.machineIdentifier = machineID
         } else {
             let idData = try Data(contentsOf: layout.machineIdentifierURL)
@@ -152,7 +158,8 @@ struct ConfigurationBuilder: Sendable {
     ) throws {
         let platform = VZGenericPlatformConfiguration()
         if let idData = config.genericMachineIdentifierData,
-           let machineID = VZGenericMachineIdentifier(dataRepresentation: idData) {
+            let machineID = VZGenericMachineIdentifier(dataRepresentation: idData)
+        {
             platform.machineIdentifier = machineID
         }
         vzConfig.platform = platform
@@ -191,7 +198,8 @@ struct ConfigurationBuilder: Sendable {
     ) throws {
         let platform = VZGenericPlatformConfiguration()
         if let idData = config.genericMachineIdentifierData,
-           let machineID = VZGenericMachineIdentifier(dataRepresentation: idData) {
+            let machineID = VZGenericMachineIdentifier(dataRepresentation: idData)
+        {
             platform.machineIdentifier = machineID
         }
         vzConfig.platform = platform
@@ -201,15 +209,17 @@ struct ConfigurationBuilder: Sendable {
             throw ConfigurationBuilderError.missingKernelPath
         }
 
-        let kernel = try Self.resolveFile(at: kernelPath, context: "Kernel",
-                                          notFound: .kernelNotFound(kernelPath),
-                                          isDirectory: .kernelPathIsDirectory(kernelPath))
+        let kernel = try Self.resolveFile(
+            at: kernelPath, context: "Kernel",
+            notFound: .kernelNotFound(kernelPath),
+            isDirectory: .kernelPathIsDirectory(kernelPath))
 
         let bootLoader = VZLinuxBootLoader(kernelURL: kernel.url)
         if let initrdPath = config.initrdPath {
-            let initrd = try Self.resolveFile(at: initrdPath, context: "Initrd",
-                                              notFound: .initrdNotFound(initrdPath),
-                                              isDirectory: .initrdPathIsDirectory(initrdPath))
+            let initrd = try Self.resolveFile(
+                at: initrdPath, context: "Initrd",
+                notFound: .initrdNotFound(initrdPath),
+                isDirectory: .initrdPathIsDirectory(initrdPath))
             bootLoader.initialRamdiskURL = initrd.url
         }
         bootLoader.commandLine = config.kernelCommandLine ?? "console=hvc0"
@@ -238,7 +248,8 @@ struct ConfigurationBuilder: Sendable {
     ) throws {
         let layout = VMBundleLayout(bundleURL: bundleURL)
         guard FileManager.default.fileExists(atPath: layout.diskImageURL.path(percentEncoded: false)) else {
-            Self.logger.error("Disk image not found at '\(layout.diskImageURL.path(percentEncoded: false), privacy: .public)'")
+            Self.logger.error(
+                "Disk image not found at '\(layout.diskImageURL.path(percentEncoded: false), privacy: .public)'")
             throw ConfigurationBuilderError.diskImageNotFound(layout.diskImageURL)
         }
 
@@ -248,17 +259,21 @@ struct ConfigurationBuilder: Sendable {
 
         // Attach disc image as USB mass storage device
         if let discImagePath = config.discImagePath {
-            let discImage = try Self.resolveFile(at: discImagePath, context: "Disc image",
-                                                 requireWritable: !config.discImageReadOnly,
-                                                 notFound: .discImageNotFound(discImagePath),
-                                                 isDirectory: .discImagePathIsDirectory(discImagePath),
-                                                 notWritable: .discImageNotWritable(discImagePath))
+            let discImage = try Self.resolveFile(
+                at: discImagePath, context: "Disc image",
+                requireWritable: !config.discImageReadOnly,
+                notFound: .discImageNotFound(discImagePath),
+                isDirectory: .discImagePathIsDirectory(discImagePath),
+                notWritable: .discImageNotWritable(discImagePath))
 
             let discImageAttachment: VZDiskImageStorageDeviceAttachment
             do {
-                discImageAttachment = try VZDiskImageStorageDeviceAttachment(url: discImage.url, readOnly: config.discImageReadOnly)
+                discImageAttachment = try VZDiskImageStorageDeviceAttachment(
+                    url: discImage.url, readOnly: config.discImageReadOnly)
             } catch {
-                Self.logger.error("Failed to attach disc image at '\(discImagePath, privacy: .public)': \(error.localizedDescription, privacy: .public)")
+                Self.logger.error(
+                    "Failed to attach disc image at '\(discImagePath, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                )
                 throw error
             }
             let usbStorage = VZUSBMassStorageDeviceConfiguration(attachment: discImageAttachment)
@@ -285,14 +300,18 @@ struct ConfigurationBuilder: Sendable {
                 do {
                     attachment = try VZDiskImageStorageDeviceAttachment(url: resolved.url, readOnly: disk.readOnly)
                 } catch {
-                    Self.logger.error("Failed to attach additional disk '\(disk.label, privacy: .public)' at '\(disk.path, privacy: .public)': \(error.localizedDescription, privacy: .public)")
+                    Self.logger.error(
+                        "Failed to attach additional disk '\(disk.label, privacy: .public)' at '\(disk.path, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                    )
                     throw error
                 }
                 let blockDevice = VZVirtioBlockDeviceConfiguration(attachment: attachment)
                 blockDevice.blockDeviceIdentifier = disk.blockDeviceIdentifier
                 vzConfig.storageDevices.append(blockDevice)
 
-                Self.logger.debug("Attached additional disk '\(disk.label, privacy: .public)' (id: \(disk.blockDeviceIdentifier, privacy: .public), readOnly: \(disk.readOnly, privacy: .public))")
+                Self.logger.debug(
+                    "Attached additional disk '\(disk.label, privacy: .public)' (id: \(disk.blockDeviceIdentifier, privacy: .public), readOnly: \(disk.readOnly, privacy: .public))"
+                )
             }
         }
     }
@@ -304,7 +323,8 @@ struct ConfigurationBuilder: Sendable {
         networkDevice.attachment = VZNATNetworkDeviceAttachment()
 
         if let macString = config.macAddress,
-           let macAddress = VZMACAddress(string: macString) {
+            let macAddress = VZMACAddress(string: macString)
+        {
             networkDevice.macAddress = macAddress
         }
 
@@ -346,7 +366,7 @@ struct ConfigurationBuilder: Sendable {
     /// Configures a bidirectional virtio console serial port using pipe-backed file handles.
     /// Returns the (input, output) pipes for the host side.
     private func configureSerialPort(_ vzConfig: VZVirtualMachineConfiguration) -> (Pipe, Pipe) {
-        let inputPipe = Pipe()   // host writes → guest reads
+        let inputPipe = Pipe()  // host writes → guest reads
         let outputPipe = Pipe()  // guest writes → host reads
 
         let serialPort = VZVirtioConsoleDeviceSerialPortConfiguration()
@@ -382,7 +402,7 @@ struct ConfigurationBuilder: Sendable {
         guard config.clipboardSharingEnabled else { return nil }
         guard config.guestOS == .linux else { return nil }
 
-        let inputPipe = Pipe()   // host writes → guest reads
+        let inputPipe = Pipe()  // host writes → guest reads
         let outputPipe = Pipe()  // guest writes → host reads
 
         let consoleDevice = VZVirtioConsoleDeviceConfiguration()
@@ -462,7 +482,8 @@ struct ConfigurationBuilder: Sendable {
         }
 
         let multiShare = VZMultipleDirectoryShare(directories: shareMap)
-        let device = VZVirtioFileSystemDeviceConfiguration(tag: VZVirtioFileSystemDeviceConfiguration.macOSGuestAutomountTag)
+        let device = VZVirtioFileSystemDeviceConfiguration(
+            tag: VZVirtioFileSystemDeviceConfiguration.macOSGuestAutomountTag)
         device.share = multiShare
 
         vzConfig.directorySharingDevices = [device]
@@ -512,7 +533,9 @@ struct ConfigurationBuilder: Sendable {
             case .notWritable:
                 logger.error("\(context, privacy: .public) is not writable: '\(path, privacy: .public)'")
                 guard let notWritableError = notWritable else {
-                    logger.fault("resolveFile called with requireWritable but no notWritable error for '\(path, privacy: .public)'")
+                    logger.fault(
+                        "resolveFile called with requireWritable but no notWritable error for '\(path, privacy: .public)'"
+                    )
                     assertionFailure("'notWritable' error must be provided when 'requireWritable' is true")
                     throw notFound
                 }
@@ -552,7 +575,9 @@ struct ConfigurationBuilder: Sendable {
             case .notReadable:
                 logger.error("\(context, privacy: .public) is not readable: '\(path, privacy: .public)'")
                 guard let notReadableError = notReadable else {
-                    logger.fault("resolveDirectory called with requireReadable but no notReadable error for '\(path, privacy: .public)'")
+                    logger.fault(
+                        "resolveDirectory called with requireReadable but no notReadable error for '\(path, privacy: .public)'"
+                    )
                     assertionFailure("'notReadable' error must be provided when 'requireReadable' is true")
                     throw notFound
                 }
@@ -560,7 +585,9 @@ struct ConfigurationBuilder: Sendable {
             case .notWritable:
                 logger.error("\(context, privacy: .public) is not writable: '\(path, privacy: .public)'")
                 guard let notWritableError = notWritable else {
-                    logger.fault("resolveDirectory called with requireWritable but no notWritable error for '\(path, privacy: .public)'")
+                    logger.fault(
+                        "resolveDirectory called with requireWritable but no notWritable error for '\(path, privacy: .public)'"
+                    )
                     assertionFailure("'notWritable' error must be provided when 'requireWritable' is true")
                     throw notFound
                 }

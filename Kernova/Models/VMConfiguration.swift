@@ -271,7 +271,8 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         // Regenerate additional disk IDs to avoid blockDeviceIdentifier collisions.
         // Internal disk paths are updated by the caller after copying files.
         clone.additionalDisks = additionalDisks?.map { disk in
-            AdditionalDisk(id: UUID(), path: disk.path, readOnly: disk.readOnly, label: disk.label, isInternal: disk.isInternal)
+            AdditionalDisk(
+                id: UUID(), path: disk.path, readOnly: disk.readOnly, label: disk.label, isInternal: disk.isInternal)
         }
 
         // Regenerate shared directory IDs to avoid VirtioFS collisions

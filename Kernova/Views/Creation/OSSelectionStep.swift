@@ -47,7 +47,8 @@ struct OSSelectionStep: View {
             .background {
                 RoundedRectangle(cornerRadius: 12)
                     .fill(creationVM.selectedOS == os ? Color.accentColor.opacity(0.1) : Color.clear)
-                    .strokeBorder(creationVM.selectedOS == os ? Color.accentColor : Color.secondary.opacity(0.3), lineWidth: 1)
+                    .strokeBorder(
+                        creationVM.selectedOS == os ? Color.accentColor : Color.secondary.opacity(0.3), lineWidth: 1)
             }
         }
         .buttonStyle(.plain)

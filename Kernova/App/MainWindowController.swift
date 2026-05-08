@@ -214,13 +214,14 @@ extension MainWindowController: NSToolbarItemValidation {
         }
 
         if item.itemIdentifier == Self.toolbarNewVM
-            || toolbarManager.sharedItemIdentifiers.contains(item.itemIdentifier) {
+            || toolbarManager.sharedItemIdentifiers.contains(item.itemIdentifier)
+        {
             // Group subitems are enabled/disabled directly in updateToolbarItems()
             return true
         }
 
-        Self.logger.debug("validateToolbarItem: unrecognized identifier '\(item.itemIdentifier.rawValue, privacy: .public)'")
+        Self.logger.debug(
+            "validateToolbarItem: unrecognized identifier '\(item.itemIdentifier.rawValue, privacy: .public)'")
         return true
     }
 }
-

@@ -80,7 +80,9 @@ final class VMLifecycleCoordinator {
         body: () async throws -> T
     ) async throws -> T {
         guard activeOperations[instance.id] == nil else {
-            Self.logger.warning("Rejected \(action, privacy: .public) for '\(instance.name, privacy: .public)': operation already in progress")
+            Self.logger.warning(
+                "Rejected \(action, privacy: .public) for '\(instance.name, privacy: .public)': operation already in progress"
+            )
             throw LifecycleError.operationInProgress(vmName: instance.name)
         }
 
@@ -92,7 +94,8 @@ final class VMLifecycleCoordinator {
             }
         }
 
-        Self.logger.debug("Acquired operation lock for '\(instance.name, privacy: .public)' (action: \(action, privacy: .public))")
+        Self.logger.debug(
+            "Acquired operation lock for '\(instance.name, privacy: .public)' (action: \(action, privacy: .public))")
         return try await body()
     }
 
@@ -149,7 +152,9 @@ final class VMLifecycleCoordinator {
         storageService: any VMStorageProviding
     ) async throws {
         try await serialized(instance, action: "installMacOS") {
-            Self.logger.debug("installMacOS: entering for '\(instance.name, privacy: .public)', source=\(String(describing: wizard.ipswSource), privacy: .public)")
+            Self.logger.debug(
+                "installMacOS: entering for '\(instance.name, privacy: .public)', source=\(String(describing: wizard.ipswSource), privacy: .public)"
+            )
             do {
                 let ipswURL: URL
 

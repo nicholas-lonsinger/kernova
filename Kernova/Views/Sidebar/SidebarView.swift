@@ -35,13 +35,15 @@ struct SidebarView: View {
         }
         .contextMenu(forSelectionType: UUID.self) { selectedIDs in
             if let id = selectedIDs.first,
-               let instance = viewModel.instances.first(where: { $0.id == id }) {
+                let instance = viewModel.instances.first(where: { $0.id == id })
+            {
                 contextMenu(for: instance)
             }
         } primaryAction: { selectedIDs in
             guard let id = selectedIDs.first,
-                  let instance = viewModel.instances.first(where: { $0.id == id }),
-                  !instance.isPreparing else { return }
+                let instance = viewModel.instances.first(where: { $0.id == id }),
+                !instance.isPreparing
+            else { return }
             if instance.status.canStart {
                 Task { await viewModel.start(instance) }
             } else if instance.status.canResume {
@@ -53,8 +55,9 @@ struct SidebarView: View {
             for provider in providers {
                 provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier) { data, _ in
                     guard let data = data as? Data,
-                          let url = URL(dataRepresentation: data, relativeTo: nil),
-                          url.pathExtension == VMStorageService.bundleExtension else { return }
+                        let url = URL(dataRepresentation: data, relativeTo: nil),
+                        url.pathExtension == VMStorageService.bundleExtension
+                    else { return }
                     Task { @MainActor in
                         viewModel.importVM(from: url)
                     }

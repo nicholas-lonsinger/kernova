@@ -68,7 +68,9 @@ final class VsockGuestLogService {
             }
             logger.info("Guest log channel closed for '\(label, privacy: .public)'")
         } catch {
-            logger.warning("Guest log channel ended with error for '\(label, privacy: .public)': \(error.localizedDescription, privacy: .public)")
+            logger.warning(
+                "Guest log channel ended with error for '\(label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
         }
     }
 

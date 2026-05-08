@@ -194,7 +194,7 @@ struct VsockGuestClipboardAgentTests {
         defer { agent.stop() }
 
         agent.start()
-        agent.setEnabled(true) // production agents are default-disabled until host policy enables them
+        agent.setEnabled(true)  // production agents are default-disabled until host policy enables them
 
         // First connection: wait for liveChannel to be published.
         try await waitUntil { agent.liveChannelForTesting != nil }
@@ -404,7 +404,9 @@ struct VsockGuestClipboardAgentTests {
 
         let offerFrame = try await nextFrame(from: hostChannel)
         guard case .clipboardOffer = offerFrame.payload else {
-            throw TestFailure("Expected ClipboardOffer after user copies same text as failed host write — echo-suppression fired incorrectly (regression)")
+            throw TestFailure(
+                "Expected ClipboardOffer after user copies same text as failed host write — echo-suppression fired incorrectly (regression)"
+            )
         }
     }
 
@@ -503,7 +505,7 @@ struct VsockGuestClipboardAgentTests {
         let agent = VsockGuestClipboardAgent(pasteboard: pasteboard, client: client)
         defer { agent.stop() }
         agent.start()
-        agent.setEnabled(true) // production agents are default-disabled until host policy enables them
+        agent.setEnabled(true)  // production agents are default-disabled until host policy enables them
 
         // Wait until publish settles. Under the current code (await MainActor.run),
         // this happens before the read loop starts.
@@ -514,15 +516,17 @@ struct VsockGuestClipboardAgentTests {
         // liveChannel is still nil here, because the async dispatch may not have
         // run before the read loop already processed frames.
         let liveChannelSet = DispatchQueue.main.sync { agent.liveChannelForTesting != nil }
-        #expect(liveChannelSet,
-                "liveChannel was nil on main queue after publish — publish was not synchronous with serve()'s progression")
+        #expect(
+            liveChannelSet,
+            "liveChannel was nil on main queue after publish — publish was not synchronous with serve()'s progression")
 
         // Send an offer and verify the agent processes it, confirming the read
         // loop is running and liveChannel was already set when the frame arrived.
         try hostChannel.send(makeOfferFrame(generation: 1))
         let requestFrame = try await nextFrame(from: hostChannel)
         guard case .clipboardRequest(let req) = requestFrame.payload else {
-            throw TestFailure("Expected ClipboardRequest in response to offer, got \(String(describing: requestFrame.payload))")
+            throw TestFailure(
+                "Expected ClipboardRequest in response to offer, got \(String(describing: requestFrame.payload))")
         }
         #expect(req.generation == 1)
     }

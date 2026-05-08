@@ -14,7 +14,8 @@ private let logger = Logger(subsystem: "com.kernova.app", category: "RelaunchHel
 // MARK: - Argument parsing
 
 guard CommandLine.arguments.count == 3,
-      let pid = pid_t(CommandLine.arguments[1]) else {
+    let pid = pid_t(CommandLine.arguments[1])
+else {
     logger.error("Usage: KernovaRelaunchHelper <pid> <app-bundle-path>")
     exit(1)
 }
@@ -47,7 +48,8 @@ func relaunchApp() async {
             logger.notice("Relaunched Kernova successfully (attempt \(attempt, privacy: .public))")
             exit(0)
         } catch {
-            logger.warning("Relaunch attempt \(attempt, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+            logger.warning(
+                "Relaunch attempt \(attempt, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
             if attempt < 4 {
                 try? await Task.sleep(for: .seconds(2))
             }

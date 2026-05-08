@@ -71,7 +71,9 @@ struct VMBundleLayoutTests {
         let diskID = UUID()
         let diskURL = layout.additionalDiskURL(id: diskID)
         #expect(diskURL.lastPathComponent == "\(diskID.uuidString).asif")
-        #expect(diskURL.path(percentEncoded: false).hasPrefix(layout.additionalDisksDirectoryURL.path(percentEncoded: false)))
+        #expect(
+            diskURL.path(percentEncoded: false).hasPrefix(
+                layout.additionalDisksDirectoryURL.path(percentEncoded: false)))
     }
 
     // MARK: - hasSaveFile

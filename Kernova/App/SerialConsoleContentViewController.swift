@@ -110,7 +110,8 @@ final class SerialConsoleContentViewController: NSViewController {
         }
 
         // Update status bar
-        statusCircle.layer?.backgroundColor = isConnected
+        statusCircle.layer?.backgroundColor =
+            isConnected
             ? NSColor.systemGreen.cgColor
             : NSColor.secondaryLabelColor.cgColor
         statusLabel.stringValue = isConnected ? "Connected" : "Disconnected"

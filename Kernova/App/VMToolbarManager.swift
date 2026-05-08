@@ -84,8 +84,9 @@ final class VMToolbarManager: NSObject {
         if let clipboardID = configuration.clipboardID { allIDs.append(clipboardID) }
         if let removableMediaID = configuration.removableMediaID { allIDs.append(removableMediaID) }
         if let settingsToggleID = configuration.settingsToggleID { allIDs.append(settingsToggleID) }
-        assert(Set(allIDs).count == allIDs.count,
-               "VMToolbarManager.Configuration identifiers must be distinct")
+        assert(
+            Set(allIDs).count == allIDs.count,
+            "VMToolbarManager.Configuration identifiers must be distinct")
         self.configuration = configuration
         self.instanceProvider = instanceProvider
         super.init()
@@ -201,8 +202,11 @@ final class VMToolbarManager: NSObject {
     }
 
     private func updateLifecycleGroup(in toolbar: NSToolbar, instance: VMInstance?) {
-        guard let group = toolbar.items.first(where: { $0.itemIdentifier == configuration.lifecycleID }) as? NSToolbarItemGroup,
-              group.subitems.count == 3 else {
+        guard
+            let group = toolbar.items.first(where: { $0.itemIdentifier == configuration.lifecycleID })
+                as? NSToolbarItemGroup,
+            group.subitems.count == 3
+        else {
             Self.logger.warning("updateLifecycleGroup: lifecycle group missing or has unexpected subitem count")
             return
         }
@@ -229,8 +233,11 @@ final class VMToolbarManager: NSObject {
     }
 
     private func updateSaveStateItem(in toolbar: NSToolbar, instance: VMInstance?) {
-        guard let group = toolbar.items.first(where: { $0.itemIdentifier == configuration.saveStateID }) as? NSToolbarItemGroup,
-              let subitem = group.subitems.first else {
+        guard
+            let group = toolbar.items.first(where: { $0.itemIdentifier == configuration.saveStateID })
+                as? NSToolbarItemGroup,
+            let subitem = group.subitems.first
+        else {
             Self.logger.warning("updateSaveStateItem: save state group missing or empty")
             return
         }
@@ -245,8 +252,9 @@ final class VMToolbarManager: NSObject {
 
     private func updateClipboardItem(in toolbar: NSToolbar, instance: VMInstance?) {
         guard let clipboardID = configuration.clipboardID,
-              let group = toolbar.items.first(where: { $0.itemIdentifier == clipboardID }) as? NSToolbarItemGroup,
-              let subitem = group.subitems.first else { return }
+            let group = toolbar.items.first(where: { $0.itemIdentifier == clipboardID }) as? NSToolbarItemGroup,
+            let subitem = group.subitems.first
+        else { return }
 
         guard let instance else {
             subitem.isEnabled = false
@@ -258,8 +266,9 @@ final class VMToolbarManager: NSObject {
 
     private func updateRemovableMediaItem(in toolbar: NSToolbar, instance: VMInstance?) {
         guard let removableMediaID = configuration.removableMediaID,
-              let group = toolbar.items.first(where: { $0.itemIdentifier == removableMediaID }) as? NSToolbarItemGroup,
-              let subitem = group.subitems.first else { return }
+            let group = toolbar.items.first(where: { $0.itemIdentifier == removableMediaID }) as? NSToolbarItemGroup,
+            let subitem = group.subitems.first
+        else { return }
 
         guard let instance else {
             subitem.isEnabled = false
@@ -271,7 +280,8 @@ final class VMToolbarManager: NSObject {
 
     private func updateSettingsToggleItem(in toolbar: NSToolbar, instance: VMInstance?) {
         guard let settingsToggleID = configuration.settingsToggleID,
-              let item = toolbar.items.first(where: { $0.itemIdentifier == settingsToggleID }) else {
+            let item = toolbar.items.first(where: { $0.itemIdentifier == settingsToggleID })
+        else {
             return
         }
 
@@ -296,8 +306,11 @@ final class VMToolbarManager: NSObject {
     }
 
     private func updateDisplayGroup(in toolbar: NSToolbar, instance: VMInstance?) {
-        guard let group = toolbar.items.first(where: { $0.itemIdentifier == configuration.displayID }) as? NSToolbarItemGroup,
-              group.subitems.count == 2 else {
+        guard
+            let group = toolbar.items.first(where: { $0.itemIdentifier == configuration.displayID })
+                as? NSToolbarItemGroup,
+            group.subitems.count == 2
+        else {
             Self.logger.warning("updateDisplayGroup: display group missing or has unexpected subitem count")
             return
         }
@@ -339,7 +352,8 @@ final class VMToolbarManager: NSObject {
                     : "arrow.up.left.and.arrow.down.right",
                 accessibilityDescription: fsLabel
             )
-            fullscreenItem.toolTip = instance.isInFullscreen
+            fullscreenItem.toolTip =
+                instance.isInFullscreen
                 ? Self.exitFullscreenToolTip : Self.fullscreenToolTip
         }
     }

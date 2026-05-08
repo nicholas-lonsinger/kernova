@@ -269,7 +269,8 @@ final class VsockClipboardService: ClipboardServicing {
             )
             sendErrorFrame(
                 code: Self.errorCodeFormatUnavailable,
-                message: "Host only carries TEXT_UTF8 (gen=\(request.generation), requested format=\(request.format.rawValue))",
+                message:
+                    "Host only carries TEXT_UTF8 (gen=\(request.generation), requested format=\(request.format.rawValue))",
                 inReplyTo: "clipboard.request"
             )
             return
@@ -307,7 +308,8 @@ final class VsockClipboardService: ClipboardServicing {
             // If the channel is dead, the peer will learn via EOF — no further fallback needed.
             sendErrorFrame(
                 code: Self.errorCodeTransferFailure,
-                message: "Host failed to deliver clipboard data (gen=\(pending.generation), \(bytes.count) bytes): \(error.localizedDescription)",
+                message:
+                    "Host failed to deliver clipboard data (gen=\(pending.generation), \(bytes.count) bytes): \(error.localizedDescription)",
                 inReplyTo: "clipboard.request"
             )
         }

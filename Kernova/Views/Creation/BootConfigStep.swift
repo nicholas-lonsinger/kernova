@@ -71,10 +71,13 @@ struct BootConfigStep: View {
                 creationVM.initrdPath = url.path
             }
 
-            TextField("Kernel Command Line", text: Binding(
-                get: { creationVM.kernelCommandLine ?? "console=hvc0" },
-                set: { creationVM.kernelCommandLine = $0 }
-            ))
+            TextField(
+                "Kernel Command Line",
+                text: Binding(
+                    get: { creationVM.kernelCommandLine ?? "console=hvc0" },
+                    set: { creationVM.kernelCommandLine = $0 }
+                )
+            )
             .textFieldStyle(.roundedBorder)
         }
     }

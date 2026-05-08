@@ -47,10 +47,10 @@ test-suite:
 	xcodebuild $(XCODEBUILD_FLAGS) test -only-testing:$(SUITE)
 
 format:
-	$(SWIFT_FORMAT) format --in-place --parallel --recursive $(SWIFT_SOURCE_DIRS)
+	$(SWIFT_FORMAT) format --in-place --recursive $(SWIFT_SOURCE_DIRS)
 
 lint:
-	$(SWIFT_FORMAT) lint --strict --parallel --recursive $(SWIFT_SOURCE_DIRS)
+	$(SWIFT_FORMAT) lint --strict --recursive $(SWIFT_SOURCE_DIRS)
 
 clean:
 	rm -rf $(DERIVED_DATA)

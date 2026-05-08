@@ -19,8 +19,10 @@ struct VsockChannelTests {
         guard rc == 0 else {
             throw POSIXError(.init(rawValue: errno) ?? .EIO)
         }
-        return (VsockChannel(fileDescriptor: fds[0]),
-                VsockChannel(fileDescriptor: fds[1]))
+        return (
+            VsockChannel(fileDescriptor: fds[0]),
+            VsockChannel(fileDescriptor: fds[1])
+        )
     }
 
     /// Awaits the next frame from a channel's `incoming` stream, failing if it doesn't

@@ -24,8 +24,9 @@ struct VMStatusSerialConsoleTests {
         let instance = makeInstance(status: .running)
         // Without a real VZVirtualMachine, virtualMachine is nil
         #expect(instance.virtualMachine == nil)
-        #expect(instance.canShowSerialConsole == false,
-                "Should not allow serial console without a live virtual machine")
+        #expect(
+            instance.canShowSerialConsole == false,
+            "Should not allow serial console without a live virtual machine")
     }
 
     @Test(
@@ -36,15 +37,17 @@ struct VMStatusSerialConsoleTests {
     )
     func inactiveStatusIneligible(status: VMStatus) {
         let instance = makeInstance(status: status)
-        #expect(instance.canShowSerialConsole == false,
-                "Expected \(status) to be ineligible for serial console")
+        #expect(
+            instance.canShowSerialConsole == false,
+            "Expected \(status) to be ineligible for serial console")
     }
 
     @Test("Cold-paused VM (paused with no virtualMachine) is ineligible for serial console")
     func coldPausedVMIneligible() {
         let instance = makeInstance(status: .paused)
         #expect(instance.isColdPaused == true)
-        #expect(instance.canShowSerialConsole == false,
-                "Cold-paused VM has no live virtual machine")
+        #expect(
+            instance.canShowSerialConsole == false,
+            "Cold-paused VM has no live virtual machine")
     }
 }

@@ -29,12 +29,15 @@ enum KernovaGuestAgentInfo {
     /// is always present in a correctly-built `Kernova.app`. Returns `nil` only
     /// when the resource is missing, which indicates a build-system regression.
     static let bundledVersion: String? = {
-        guard let url = Bundle.main.url(
-            forResource: versionResourceName,
-            withExtension: versionResourceExtension
-        ) else {
+        guard
+            let url = Bundle.main.url(
+                forResource: versionResourceName,
+                withExtension: versionResourceExtension
+            )
+        else {
             logger.fault("KernovaGuestAgentVersion.txt missing from app bundle")
-            assertionFailure("KernovaGuestAgentVersion.txt missing — check 'Package Guest Agent DMG' build phase outputs")
+            assertionFailure(
+                "KernovaGuestAgentVersion.txt missing — check 'Package Guest Agent DMG' build phase outputs")
             return nil
         }
         do {

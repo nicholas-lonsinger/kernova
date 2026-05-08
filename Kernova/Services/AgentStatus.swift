@@ -106,14 +106,16 @@ enum AgentStatus: Equatable, Sendable {
         agentExpectedButMissing: Bool
     ) -> AgentStatus {
         if agentExpectedButMissing,
-           let expected = lastSeenAgentVersion,
-           !expected.isEmpty {
+            let expected = lastSeenAgentVersion,
+            !expected.isEmpty
+        {
             return .expectedMissing(expected: expected)
         }
         if case .waiting = upstream,
-           let lastSeen = lastSeenAgentVersion,
-           !lastSeen.isEmpty,
-           isInLiveSession {
+            let lastSeen = lastSeenAgentVersion,
+            !lastSeen.isEmpty,
+            isInLiveSession
+        {
             return .connecting(expected: lastSeen)
         }
         return upstream

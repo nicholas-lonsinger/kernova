@@ -305,7 +305,8 @@ struct ClassifySocketErrnoTests {
     @Test("EAFNOSUPPORT classifies as permanent")
     func eafnosupportIsPermanent() {
         let result = VsockGuestClient.classifySocketErrno(EAFNOSUPPORT, label: "test")
-        if case .permanent = result { } else {
+        if case .permanent = result {
+        } else {
             Issue.record("Expected .permanent for EAFNOSUPPORT, got \(result)")
         }
     }
@@ -313,7 +314,8 @@ struct ClassifySocketErrnoTests {
     @Test("EPROTONOSUPPORT classifies as permanent")
     func eprotonosupportIsPermanent() {
         let result = VsockGuestClient.classifySocketErrno(EPROTONOSUPPORT, label: "test")
-        if case .permanent = result { } else {
+        if case .permanent = result {
+        } else {
             Issue.record("Expected .permanent for EPROTONOSUPPORT, got \(result)")
         }
     }
@@ -321,7 +323,8 @@ struct ClassifySocketErrnoTests {
     @Test("EMFILE (resource exhaustion) classifies as transient")
     func emfileIsTransient() {
         let result = VsockGuestClient.classifySocketErrno(EMFILE, label: "test")
-        if case .transient = result { } else {
+        if case .transient = result {
+        } else {
             Issue.record("Expected .transient for EMFILE, got \(result)")
         }
     }
@@ -329,7 +332,8 @@ struct ClassifySocketErrnoTests {
     @Test("EACCES (access control) classifies as transient — sandbox may clear")
     func eaccesIsTransient() {
         let result = VsockGuestClient.classifySocketErrno(EACCES, label: "test")
-        if case .transient = result { } else {
+        if case .transient = result {
+        } else {
             Issue.record("Expected .transient for EACCES, got \(result)")
         }
     }
@@ -337,7 +341,8 @@ struct ClassifySocketErrnoTests {
     @Test("errno 0 (unknown/default) classifies as transient")
     func zeroErrnoIsTransient() {
         let result = VsockGuestClient.classifySocketErrno(0, label: "test")
-        if case .transient = result { } else {
+        if case .transient = result {
+        } else {
             Issue.record("Expected .transient for errno=0, got \(result)")
         }
     }
@@ -363,7 +368,7 @@ struct ClassifySocketErrnoTests {
         }
         defer { client.stop() }
 
-        client.pause() // pause before start
+        client.pause()  // pause before start
         client.start { _ in }
 
         // Give the loop several retry intervals to attempt a connect.
@@ -416,8 +421,9 @@ struct ClassifySocketErrnoTests {
 
         // Wait past the provider's sleep so connectAndServe has returned.
         try await Task.sleep(for: .milliseconds(providerSleepMs + 100))
-        #expect(serveCalled.value == 0,
-                "serve() must not run when pause() landed during connectAndServe")
+        #expect(
+            serveCalled.value == 0,
+            "serve() must not run when pause() landed during connectAndServe")
     }
 
     @Test("resume() lets the loop connect after a pre-start pause")

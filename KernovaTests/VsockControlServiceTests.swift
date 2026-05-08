@@ -102,7 +102,7 @@ struct VsockControlServiceTests {
         service.start()
         defer { service.stop() }
 
-        _ = try await nextFrame(from: guest) // host hello
+        _ = try await nextFrame(from: guest)  // host hello
         try guest.send(makeGuestHello(agentVersion: "0.9.0"))
 
         try await waitUntil { service.isConnected }
@@ -326,7 +326,7 @@ struct VsockControlServiceTests {
 
         // Send heartbeats every 100 ms (well below the 400 ms unresponsive
         // window) for ~800 ms total — twice unresponsiveAfter.
-        for nonce in 1 ... 8 {
+        for nonce in 1...8 {
             try guest.send(makeHeartbeat(nonce: UInt64(nonce)))
             try await Task.sleep(for: .milliseconds(100))
         }
@@ -420,7 +420,7 @@ struct VsockControlServiceTests {
         service.start()
         defer { service.stop() }
 
-        _ = try await nextFrame(from: guest) // host hello
+        _ = try await nextFrame(from: guest)  // host hello
         try guest.send(makeGuestHello(agentVersion: "0.9.0"))
         try await waitUntil { service.isConnected }
 
@@ -481,7 +481,7 @@ struct VsockControlServiceTests {
         service.start()
         defer { service.stop() }
 
-        _ = try await nextFrame(from: guest) // host hello
+        _ = try await nextFrame(from: guest)  // host hello
         try guest.send(makeGuestHello(agentVersion: "0.9.0"))
 
         // Skip frames until we see PolicyUpdate (heartbeat may interleave).
@@ -504,11 +504,11 @@ struct VsockControlServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = makeService(channel: host) // no policyProvider
+        let service = makeService(channel: host)  // no policyProvider
         service.start()
         defer { service.stop() }
 
-        _ = try await nextFrame(from: guest) // host hello
+        _ = try await nextFrame(from: guest)  // host hello
         try guest.send(makeGuestHello(agentVersion: "0.9.0"))
         try await waitUntil { service.isConnected }
 
@@ -539,7 +539,7 @@ struct VsockControlServiceTests {
         service.start()
         defer { service.stop() }
 
-        _ = try await nextFrame(from: guest) // host hello
+        _ = try await nextFrame(from: guest)  // host hello
         try guest.send(makeGuestHello(agentVersion: "0.9.2"))
         try await waitUntil { service.isConnected }
 
@@ -613,7 +613,7 @@ struct VsockControlServiceTests {
         service.start()
         defer { service.stop() }
 
-        _ = try await nextFrame(from: guest) // host hello
+        _ = try await nextFrame(from: guest)  // host hello
 
         service.sendPolicyUpdate(
             AgentPolicySnapshot(logForwardingEnabled: false, clipboardSharingEnabled: true)

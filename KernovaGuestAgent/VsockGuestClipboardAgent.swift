@@ -362,7 +362,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             sendErrorFrame(
                 on: channel,
                 code: Self.errorCodeFormatUnavailable,
-                message: "Guest agent only carries TEXT_UTF8 (gen=\(request.generation), requested format=\(request.format.rawValue))",
+                message:
+                    "Guest agent only carries TEXT_UTF8 (gen=\(request.generation), requested format=\(request.format.rawValue))",
                 inReplyTo: "clipboard.request"
             )
             return
@@ -374,7 +375,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             sendErrorFrame(
                 on: channel,
                 code: Self.errorCodeEncodingFailure,
-                message: "Guest agent could not encode \(pending.text.count) characters as UTF-8 (gen=\(pending.generation))",
+                message:
+                    "Guest agent could not encode \(pending.text.count) characters as UTF-8 (gen=\(pending.generation))",
                 inReplyTo: "clipboard.request"
             )
             return
@@ -402,7 +404,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             sendErrorFrame(
                 on: channel,
                 code: Self.errorCodeTransferFailure,
-                message: "Guest agent failed to deliver clipboard data (gen=\(pending.generation), \(bytes.count) bytes): \(error.localizedDescription)",
+                message:
+                    "Guest agent failed to deliver clipboard data (gen=\(pending.generation), \(bytes.count) bytes): \(error.localizedDescription)",
                 inReplyTo: "clipboard.request"
             )
         }

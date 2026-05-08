@@ -159,7 +159,8 @@ struct AgentStatusPopoverContent: View {
     let onDismiss: (() -> Void)?
 
     var body: some View {
-        let bodyWidth = AgentStatusPopoverMetrics.contentWidth
+        let bodyWidth =
+            AgentStatusPopoverMetrics.contentWidth
             - AgentStatusPopoverMetrics.padding * 2
         let size = AgentStatusPopoverMetrics.contentSize(forStatus: status, vmName: vmName)
 
@@ -239,13 +240,14 @@ enum AgentStatusPopoverMetrics {
             attributes: attributes
         )
 
-        let height = padding             // top
-            + titleLineHeight             // headline
-            + verticalSpacing             // gap before body
-            + ceil(bodyRect.height)       // wrapped body
-            + verticalSpacing             // gap before button row
-            + buttonHeight                // button
-            + padding                     // bottom
+        let height =
+            padding  // top
+            + titleLineHeight  // headline
+            + verticalSpacing  // gap before body
+            + ceil(bodyRect.height)  // wrapped body
+            + verticalSpacing  // gap before button row
+            + buttonHeight  // button
+            + padding  // bottom
         return NSSize(width: contentWidth, height: ceil(height))
     }
 
@@ -263,17 +265,22 @@ enum AgentStatusPopoverMetrics {
     static func bodyText(for status: AgentStatus, vmName: String) -> String {
         switch status {
         case .waiting:
-            return "The Kernova guest agent enables clipboard sync with \(vmName). Mounting the installer presents it as a disk inside the VM — open it in Finder and run install.command."
+            return
+                "The Kernova guest agent enables clipboard sync with \(vmName). Mounting the installer presents it as a disk inside the VM — open it in Finder and run install.command."
         case .outdated(let installed, let bundled):
-            return "\(vmName) is running guest agent \(installed). Kernova bundles \(bundled). Mounting the installer presents it as a disk inside the VM — open it in Finder and run install.command."
+            return
+                "\(vmName) is running guest agent \(installed). Kernova bundles \(bundled). Mounting the installer presents it as a disk inside the VM — open it in Finder and run install.command."
         case .connecting(let expected):
-            return "Waiting for guest agent \(expected) on \(vmName) to reconnect after boot. If it doesn't connect within a couple of minutes, you'll see a 'didn't reconnect' indicator with reinstall steps."
+            return
+                "Waiting for guest agent \(expected) on \(vmName) to reconnect after boot. If it doesn't connect within a couple of minutes, you'll see a 'didn't reconnect' indicator with reinstall steps."
         case .current(let version):
             return "\(vmName) is connected with guest agent \(version)."
         case .unresponsive(let version):
-            return "\(vmName) (guest agent \(version)) stopped responding to heartbeats. The control connection will reset automatically; if it persists, restart the agent inside the VM."
+            return
+                "\(vmName) (guest agent \(version)) stopped responding to heartbeats. The control connection will reset automatically; if it persists, restart the agent inside the VM."
         case .expectedMissing(let expected):
-            return "\(vmName) had guest agent \(expected) installed previously, but it didn't connect after this boot. The agent's LaunchAgent may be unloaded, or it may have been uninstalled inside the VM. Reinstalling presents the installer as a disk — open it in Finder and run install.command."
+            return
+                "\(vmName) had guest agent \(expected) installed previously, but it didn't connect after this boot. The agent's LaunchAgent may be unloaded, or it may have been uninstalled inside the VM. Reinstalling presents the installer as a disk — open it in Finder and run install.command."
         }
     }
 }
@@ -332,7 +339,8 @@ private struct NSPopoverAnchor<Content: View>: NSViewRepresentable {
             // while it's open — e.g. the agent connects mid-popover and the
             // status flips from .waiting to .current.
             if let popover, popover.isShown,
-               let hostingController = popover.contentViewController as? NSHostingController<C> {
+                let hostingController = popover.contentViewController as? NSHostingController<C>
+            {
                 hostingController.rootView = content
                 hostingController.preferredContentSize = contentSize
                 popover.contentSize = contentSize
@@ -498,8 +506,12 @@ struct WrappingNSTextLabel: NSViewRepresentable {
         onDismiss: nil
     )
     .frame(
-        width: AgentStatusPopoverMetrics.contentSize(forStatus: .outdated(installed: "0.9.1", bundled: "0.9.2"), vmName: "Sequoia Dev").width,
-        height: AgentStatusPopoverMetrics.contentSize(forStatus: .outdated(installed: "0.9.1", bundled: "0.9.2"), vmName: "Sequoia Dev").height
+        width: AgentStatusPopoverMetrics.contentSize(
+            forStatus: .outdated(installed: "0.9.1", bundled: "0.9.2"), vmName: "Sequoia Dev"
+        ).width,
+        height: AgentStatusPopoverMetrics.contentSize(
+            forStatus: .outdated(installed: "0.9.1", bundled: "0.9.2"), vmName: "Sequoia Dev"
+        ).height
     )
 }
 
@@ -511,8 +523,10 @@ struct WrappingNSTextLabel: NSViewRepresentable {
         onDismiss: nil
     )
     .frame(
-        width: AgentStatusPopoverMetrics.contentSize(forStatus: .current(version: "0.9.2"), vmName: "Sequoia Dev").width,
-        height: AgentStatusPopoverMetrics.contentSize(forStatus: .current(version: "0.9.2"), vmName: "Sequoia Dev").height
+        width: AgentStatusPopoverMetrics.contentSize(forStatus: .current(version: "0.9.2"), vmName: "Sequoia Dev")
+            .width,
+        height: AgentStatusPopoverMetrics.contentSize(forStatus: .current(version: "0.9.2"), vmName: "Sequoia Dev")
+            .height
     )
 }
 
@@ -524,8 +538,12 @@ struct WrappingNSTextLabel: NSViewRepresentable {
         onDismiss: nil
     )
     .frame(
-        width: AgentStatusPopoverMetrics.contentSize(forStatus: .expectedMissing(expected: "0.9.2"), vmName: "Sequoia Dev").width,
-        height: AgentStatusPopoverMetrics.contentSize(forStatus: .expectedMissing(expected: "0.9.2"), vmName: "Sequoia Dev").height
+        width: AgentStatusPopoverMetrics.contentSize(
+            forStatus: .expectedMissing(expected: "0.9.2"), vmName: "Sequoia Dev"
+        ).width,
+        height: AgentStatusPopoverMetrics.contentSize(
+            forStatus: .expectedMissing(expected: "0.9.2"), vmName: "Sequoia Dev"
+        ).height
     )
 }
 
@@ -537,7 +555,13 @@ struct WrappingNSTextLabel: NSViewRepresentable {
         onDismiss: nil
     )
     .frame(
-        width: AgentStatusPopoverMetrics.contentSize(forStatus: .outdated(installed: "0.9.1", bundled: "0.9.2"), vmName: "My Very Long macOS Sequoia Development VM Name").width,
-        height: AgentStatusPopoverMetrics.contentSize(forStatus: .outdated(installed: "0.9.1", bundled: "0.9.2"), vmName: "My Very Long macOS Sequoia Development VM Name").height
+        width: AgentStatusPopoverMetrics.contentSize(
+            forStatus: .outdated(installed: "0.9.1", bundled: "0.9.2"),
+            vmName: "My Very Long macOS Sequoia Development VM Name"
+        ).width,
+        height: AgentStatusPopoverMetrics.contentSize(
+            forStatus: .outdated(installed: "0.9.1", bundled: "0.9.2"),
+            vmName: "My Very Long macOS Sequoia Development VM Name"
+        ).height
     )
 }

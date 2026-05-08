@@ -42,8 +42,8 @@ final class SpiceClipboardService: ClipboardServicing {
 
     // MARK: - Private
 
-    private let inputPipe: Pipe    // host writes → guest reads
-    private let outputPipe: Pipe   // guest writes → host reads
+    private let inputPipe: Pipe  // host writes → guest reads
+    private let outputPipe: Pipe  // guest writes → host reads
     private var parser = SpiceAgentParser()
 
     /// Holds the text for the guest's `CLIPBOARD_REQUEST` response.
@@ -114,7 +114,9 @@ final class SpiceClipboardService: ClipboardServicing {
             }
         }
 
-        Self.logger.notice("Sent clipboard grab (\(self.clipboardText.utf8.count, privacy: .public) bytes pending, byDemand: \(self.guestSupportsByDemand, privacy: .public))")
+        Self.logger.notice(
+            "Sent clipboard grab (\(self.clipboardText.utf8.count, privacy: .public) bytes pending, byDemand: \(self.guestSupportsByDemand, privacy: .public))"
+        )
     }
 
     // MARK: - Reading
@@ -188,7 +190,9 @@ final class SpiceClipboardService: ClipboardServicing {
         let byDemand = SpiceMessageBuilder.hasCapability(caps, .clipboardByDemand)
 
         guard hasClipboard || byDemand else {
-            Self.logger.warning("Guest agent does not support clipboard (caps: \(caps.map { String($0, radix: 16) }, privacy: .public))")
+            Self.logger.warning(
+                "Guest agent does not support clipboard (caps: \(caps.map { String($0, radix: 16) }, privacy: .public))"
+            )
             return
         }
 
@@ -246,7 +250,8 @@ final class SpiceClipboardService: ClipboardServicing {
         }
 
         guard let text = String(data: data, encoding: .utf8) else {
-            Self.logger.warning("Failed to decode guest clipboard data as UTF-8 (\(data.count, privacy: .public) bytes)")
+            Self.logger.warning(
+                "Failed to decode guest clipboard data as UTF-8 (\(data.count, privacy: .public) bytes)")
             return
         }
 

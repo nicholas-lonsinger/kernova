@@ -65,7 +65,8 @@ struct SpiceClipboardServiceTests {
             let chunkSlice = data.subdata(in: offset..<offset + VDIChunkHeader.size)
             guard let chunk = VDIChunkHeader.deserialize(from: chunkSlice) else { break }
             if let rawType = data.readLittleEndianUInt32(at: offset + VDIChunkHeader.size + 4),
-               let type = SpiceAgentMessageType(rawValue: rawType) {
+                let type = SpiceAgentMessageType(rawValue: rawType)
+            {
                 types.append(type)
             }
             offset += VDIChunkHeader.size + Int(chunk.dataSize)

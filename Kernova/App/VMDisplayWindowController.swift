@@ -24,7 +24,10 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
 
     private static let logger = Logger(subsystem: "com.kernova.app", category: "VMDisplayWindowController")
 
-    init(instance: VMInstance, enterFullscreen: Bool, onResume: @escaping () -> Void, onSaveConfiguration: @escaping () -> Void) {
+    init(
+        instance: VMInstance, enterFullscreen: Bool, onResume: @escaping () -> Void,
+        onSaveConfiguration: @escaping () -> Void
+    ) {
         self.vmID = instance.instanceID
         self.instance = instance
         self.toolbarManager = VMToolbarManager(

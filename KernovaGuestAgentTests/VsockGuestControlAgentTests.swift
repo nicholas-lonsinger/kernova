@@ -161,7 +161,7 @@ struct VsockGuestControlAgentTests {
         // Send host Hello + a few heartbeats. Behaviorally we just verify the
         // agent stays connected (its outbound heartbeat stream keeps flowing).
         try host.send(makeHostHelloFrame())
-        for n in 1 ... 3 {
+        for n in 1...3 {
             try host.send(makeHeartbeatFrame(nonce: UInt64(n)))
             try await Task.sleep(for: .milliseconds(50))
         }
@@ -174,7 +174,8 @@ struct VsockGuestControlAgentTests {
         case .heartbeat:
             break
         default:
-            throw TestFailure("Expected heartbeat from agent after inbound traffic; got \(String(describing: frame.payload))")
+            throw TestFailure(
+                "Expected heartbeat from agent after inbound traffic; got \(String(describing: frame.payload))")
         }
     }
 
@@ -255,9 +256,11 @@ struct VsockGuestControlAgentTests {
         defer { host.close() }
 
         let received = PolicyBox()
-        let agent = makeAgent(agentFd: agentFd, onPolicy: { policy in
-            received.set(policy)
-        })
+        let agent = makeAgent(
+            agentFd: agentFd,
+            onPolicy: { policy in
+                received.set(policy)
+            })
         agent.start()
         defer { agent.stop() }
 
@@ -288,13 +291,15 @@ struct VsockGuestControlAgentTests {
         defer { host.close() }
 
         let counts = AtomicInt()
-        let agent = makeAgent(agentFd: agentFd, onPolicy: { _ in
-            _ = counts.increment()
-        })
+        let agent = makeAgent(
+            agentFd: agentFd,
+            onPolicy: { _ in
+                _ = counts.increment()
+            })
         agent.start()
         defer { agent.stop() }
 
-        _ = try await nextFrame(from: host) // drain outbound Hello
+        _ = try await nextFrame(from: host)  // drain outbound Hello
 
         for _ in 0..<3 {
             var frame = Frame()

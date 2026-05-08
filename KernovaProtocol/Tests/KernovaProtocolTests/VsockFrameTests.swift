@@ -26,10 +26,12 @@ struct VsockFrameTests {
     @Test("encode rejects payloads above maxPayloadSize")
     func encodeRejectsOversize() {
         let oversize = Data(count: VsockFrame.maxPayloadSize + 1)
-        #expect(throws: VsockFrameError.frameTooLarge(
-            declaredSize: VsockFrame.maxPayloadSize + 1,
-            maxAllowed: VsockFrame.maxPayloadSize
-        )) {
+        #expect(
+            throws: VsockFrameError.frameTooLarge(
+                declaredSize: VsockFrame.maxPayloadSize + 1,
+                maxAllowed: VsockFrame.maxPayloadSize
+            )
+        ) {
             try VsockFrame.encode(oversize)
         }
     }
@@ -53,7 +55,7 @@ struct VsockFrameTests {
     @Test("decoder returns nil when full length prefix is read but payload incomplete")
     func decoderPartialPayload() throws {
         var decoder = VsockFrameDecoder()
-        decoder.feed(Data([0x00, 0x00, 0x00, 0x05, 0xAA, 0xBB]))   // 5 expected, only 2 present
+        decoder.feed(Data([0x00, 0x00, 0x00, 0x05, 0xAA, 0xBB]))  // 5 expected, only 2 present
         #expect(try decoder.nextFrame() == nil)
     }
 
