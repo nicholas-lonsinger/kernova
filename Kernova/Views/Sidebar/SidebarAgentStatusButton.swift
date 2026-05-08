@@ -54,6 +54,7 @@ struct SidebarAgentStatusButton: View {
             if status.isConnecting && !reduceMotion {
                 ProgressView()
                     .controlSize(.mini)
+                    .tint(symbolColor)
             } else {
                 Image(systemName: symbolName)
                     .foregroundStyle(symbolColor)
