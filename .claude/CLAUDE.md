@@ -6,20 +6,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build & Test
 
-This is an Xcode project (not Swift Package Manager). Build and test via `xcodebuild`:
+This is an Xcode project (not Swift Package Manager). Inside Xcode, use ⌘B / ⌘U as normal. From the terminal, prefer the `Makefile` wrapper:
 
 ```bash
-# Build
-xcodebuild -project Kernova.xcodeproj -scheme Kernova -destination 'platform=macOS' -derivedDataPath DerivedData build
-
-# Run tests
-xcodebuild -project Kernova.xcodeproj -scheme Kernova -destination 'platform=macOS' -derivedDataPath DerivedData test
-
-# Run a single test suite
-xcodebuild -project Kernova.xcodeproj -scheme Kernova -destination 'platform=macOS' -derivedDataPath DerivedData test -only-testing:KernovaTests/VMConfigurationTests
+make build               # Build for macOS
+make test                # Run the full test suite
+make test-suite SUITE=VMConfigurationTests   # Run a single suite
+make clean               # Remove DerivedData/
 ```
 
-The `-derivedDataPath DerivedData` flag ensures build output goes to a deterministic local `DerivedData/` directory (already gitignored) instead of the per-path-hashed `~/Library/Developer/Xcode/DerivedData/` location. This avoids glob ambiguity when worktrees or parallel builds create multiple DerivedData folders.
+The Makefile wraps the canonical `xcodebuild` invocation:
+
+```bash
+xcodebuild -project Kernova.xcodeproj -scheme Kernova -destination 'platform=macOS' -derivedDataPath DerivedData <build|test>
+```
+
+The `-derivedDataPath DerivedData` flag ensures build output goes to a deterministic local `DerivedData/` directory (already gitignored) instead of the per-path-hashed `~/Library/Developer/Xcode/DerivedData/` location. This avoids glob ambiguity when worktrees or parallel builds create multiple DerivedData folders. Xcode itself still uses the per-user default — they don't need to share.
 
 Requires **macOS 26 (Tahoe)**, **Xcode 26**, **Swift 6**, and **Apple Silicon** (for macOS guest support). The app uses the `com.apple.security.virtualization` entitlement.
 
