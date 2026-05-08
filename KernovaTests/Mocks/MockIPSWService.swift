@@ -8,13 +8,21 @@ final class MockIPSWService: IPSWProviding, @unchecked Sendable {
     var downloadCallCount = 0
 
     #if arch(arm64)
+    private static let mockRestoreImageURL: URL = {
+        guard let url = URL(string: "https://example.com/restore.ipsw") else {
+            assertionFailure("MockIPSWService: failed to construct mock restore image URL")
+            return URL(filePath: "/")
+        }
+        return url
+    }()
+
     var fetchError: (any Error)?
     var downloadError: (any Error)?
 
     func fetchLatestRestoreImageURL() async throws -> URL {
         fetchCallCount += 1
         if let error = fetchError { throw error }
-        return URL(string: "https://example.com/restore.ipsw")!
+        return Self.mockRestoreImageURL
     }
 
     func downloadRestoreImage(

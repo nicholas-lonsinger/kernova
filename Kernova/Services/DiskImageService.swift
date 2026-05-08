@@ -21,6 +21,9 @@ struct DiskImageService: Sendable {
     ///   - url: The file URL where the disk image should be created.
     ///   - sizeInGB: The virtual capacity of the disk image in gigabytes. Must match
     ///     one of the sizes in ``VMGuestOS/allDiskSizes``.
+    /// - Throws: ``DiskImageError/creationFailed(_:)`` if no bundled template matches
+    ///   `sizeInGB`, or filesystem errors propagated from decompressing or writing
+    ///   the template.
     func createDiskImage(at url: URL, sizeInGB: Int) async throws {
         Self.logger.info(
             "Creating ASIF disk image: \(sizeInGB, privacy: .public) GB at \(url.lastPathComponent, privacy: .public)")

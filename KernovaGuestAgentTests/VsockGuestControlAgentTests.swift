@@ -207,11 +207,10 @@ struct VsockGuestControlAgentTests {
             retryInterval: .milliseconds(50)
         ) { _, _ in
             let n = provideCount.increment()
-            if let fd = fdBox.fd(at: n - 1) {
-                return .success(fd)
-            } else {
+            guard let fd = fdBox.fd(at: n - 1) else {
                 return .failure(.transient("test: no fd at index \(n - 1)"))
             }
+            return .success(fd)
         }
 
         let agent = VsockGuestControlAgent(

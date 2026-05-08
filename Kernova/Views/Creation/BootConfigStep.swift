@@ -42,7 +42,7 @@ struct BootConfigStep: View {
             filePickerRow(
                 label: "ISO Image",
                 path: creationVM.isoPath,
-                allowedTypes: [UTType(filenameExtension: "iso")!]
+                allowedTypes: [.iso]
             ) { url in
                 creationVM.isoPath = url.path
             }

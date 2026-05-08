@@ -11,13 +11,19 @@
     "tabWidth": 4,
     "rules": {
         "AllPublicDeclarationsHaveDocumentation": false,
-        "AlwaysUseLowerCamelCase": false,
+        "AlwaysUseLiteralForEmptyCollectionInit": true,
+        "NeverUseForceTry": true,
+        "NeverUseImplicitlyUnwrappedOptionals": false,
+        "NeverForceUnwrap": true,
+        "UseEarlyExits": true,
+        "OmitExplicitReturns": true,
+        "AlwaysUseLowerCamelCase": true,
         "BeginDocumentationCommentWithOneLineSummary": false,
-        "DontRepeatTypeInStaticProperties": false,
-        "FileScopedDeclarationPrivacy": false,
-        "NoAccessLevelOnExtensionDeclaration": false,
-        "NoBlockComments": false,
-        "UseSynthesizedInitializer": false,
-        "ValidateDocumentationComments": false
+        "DontRepeatTypeInStaticProperties": true,
+        "FileScopedDeclarationPrivacy": true,
+        "NoAccessLevelOnExtensionDeclaration": true,
+        "NoBlockComments": true,
+        "UseSynthesizedInitializer": true,
+        "ValidateDocumentationComments": true
     }
 }

@@ -220,6 +220,9 @@ extension VsockChannel {
     ///   - inReplyTo: optional ref to the request type this error replies to,
     ///     e.g. `"clipboard.request"`. When `nil`, the field is omitted from
     ///     the encoded frame and `hasInReplyTo` reads `false` on the receiving side.
+    /// - Throws: forwards any error from ``send(_:)`` — typically
+    ///   ``VsockChannelError/closed`` if the channel is closed, or
+    ///   ``VsockChannelError/write(_:)`` if the underlying `FileHandle.write` fails.
     public func sendErrorFrame(code: String, message: String, inReplyTo: String?) throws {
         var frame = Frame()
         frame.protocolVersion = 1

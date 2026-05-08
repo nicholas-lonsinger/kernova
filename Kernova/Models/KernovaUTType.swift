@@ -3,7 +3,32 @@ import os
 
 extension UTType {
     /// The document type for Kernova VM bundles (`.kernova` packages).
-    static let kernovaVM = UTType("com.kernova.vm")!
+    static let kernovaVM: UTType = {
+        let identifier = "com.kernova.vm"
+        guard let type = UTType(identifier) else {
+            let logger = Logger(subsystem: "com.kernova.app", category: "UTType")
+            logger.fault("UTType lookup failed for identifier '\(identifier, privacy: .public)'")
+            assertionFailure("UTType lookup failed for identifier: \(identifier)")
+            return .data
+        }
+        return type
+    }()
+
+    /// `.iso` filename-extension type, falling back to `.data` if lookup fails.
+    static let iso: UTType = resolvedFilenameExtension("iso")
+
+    /// `.ipsw` filename-extension type, falling back to `.data` if lookup fails.
+    static let ipsw: UTType = resolvedFilenameExtension("ipsw")
+
+    private static func resolvedFilenameExtension(_ ext: String, fallback: UTType = .data) -> UTType {
+        guard let type = UTType(filenameExtension: ext) else {
+            let logger = Logger(subsystem: "com.kernova.app", category: "UTType")
+            logger.fault("UTType lookup failed for extension '\(ext, privacy: .public)'")
+            assertionFailure("UTType lookup failed for extension: \(ext)")
+            return fallback
+        }
+        return type
+    }
 
     /// Disk image types offered in file picker panels for storage device attachment.
     ///

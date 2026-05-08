@@ -68,8 +68,8 @@ struct SpiceAgentProtocolTests {
         let data = header.serialize()
 
         // First 4 bytes should be protocol = 1 (little-endian)
-        let protocol_ = data.readLittleEndianUInt32(at: 0)
-        #expect(protocol_ == 1)
+        let protocolVersion = data.readLittleEndianUInt32(at: 0)
+        #expect(protocolVersion == 1)
     }
 
     @Test("VDAgent message header deserialization fails for unknown type")
