@@ -4,7 +4,6 @@ import Foundation
 
 @Suite("MacOSInstallState Tests")
 struct MacOSInstallStateTests {
-
     // MARK: - Initial State
 
     @Test("Initial state with download step starts in downloading phase")

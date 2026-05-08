@@ -109,18 +109,18 @@ func awaitFirst<T: Sendable>(
 /// Lock-protected integer for use in non-async closures (e.g. socket providers).
 final class AtomicInt: @unchecked Sendable {
     private let lock = NSLock()
-    private var _value: Int = 0
+    private var storedValue: Int = 0
 
     @discardableResult
     func increment() -> Int {
         lock.withLock {
-            _value += 1
-            return _value
+            storedValue += 1
+            return storedValue
         }
     }
 
     var value: Int {
-        lock.withLock { _value }
+        lock.withLock { storedValue }
     }
 }
 

@@ -4,7 +4,6 @@ import Foundation
 
 @Suite("VMBundleLayout Tests")
 struct VMBundleLayoutTests {
-
     private let bundleURL = URL(fileURLWithPath: "/tmp/TestVM.bundle", isDirectory: true)
 
     // MARK: - Path Computed Properties

@@ -21,7 +21,6 @@ import Foundation
 /// `VMInstance.agentStatus`, which dispatches by guest OS.
 @MainActor
 protocol ClipboardServicing: AnyObject {
-
     /// Bidirectional clipboard buffer. Set by the user (via the clipboard window)
     /// to seed an outbound grab; updated by the implementation when the guest
     /// pushes new content.

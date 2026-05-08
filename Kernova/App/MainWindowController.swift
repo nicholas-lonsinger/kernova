@@ -6,7 +6,6 @@ import SwiftUI
 /// and an `NSToolbar` with native toolbar items. SwiftUI views render content inside each pane.
 @MainActor
 final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindowDelegate {
-
     private let viewModel: VMLibraryViewModel
     private let toolbarManager: VMToolbarManager
     private let splitViewController = NSSplitViewController()
@@ -202,7 +201,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         item.isBordered = true
         return item
     }
-
 }
 
 // MARK: - NSToolbarItemValidation

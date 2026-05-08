@@ -30,7 +30,6 @@ enum IPSWSource: Sendable {
 @MainActor
 @Observable
 final class VMCreationViewModel {
-
     // MARK: - Wizard State
 
     var currentStep: VMCreationStep = .osSelection

@@ -4,7 +4,6 @@ import Foundation
 /// Mock for `VirtualizationProviding` that sets VM status without real VZ operations.
 @MainActor
 final class MockVirtualizationService: VirtualizationProviding {
-
     // MARK: - Call Tracking
 
     var startCallCount = 0

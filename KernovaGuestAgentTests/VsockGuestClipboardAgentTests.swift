@@ -10,22 +10,22 @@ import KernovaProtocol
 /// on DispatchQueue.main don't race the setup thread.
 final class FakePasteboard: Pasteboard, @unchecked Sendable {
     private let lock = NSLock()
-    private var _changeCount: Int = 0
-    private var _contents: [NSPasteboard.PasteboardType: String] = [:]
-    private var _setStringFailureCount: Int = 0
+    private var storedChangeCount: Int = 0
+    private var storedContents: [NSPasteboard.PasteboardType: String] = [:]
+    private var storedSetStringFailureCount: Int = 0
 
     var changeCount: Int {
-        lock.withLock { _changeCount }
+        lock.withLock { storedChangeCount }
     }
 
     func string(forType type: NSPasteboard.PasteboardType) -> String? {
-        lock.withLock { _contents[type] }
+        lock.withLock { storedContents[type] }
     }
 
     /// Make the next `n` `setString` calls return `false` and skip storage
     /// updates. Lets tests model OS-level pasteboard write failures.
     func failNextSetString(times: Int = 1) {
-        lock.withLock { _setStringFailureCount += times }
+        lock.withLock { storedSetStringFailureCount += times }
     }
 
     @discardableResult
@@ -34,21 +34,21 @@ final class FakePasteboard: Pasteboard, @unchecked Sendable {
         // the new value. Mirror that behavior so the fake's echo-suppression
         // delta matches a real pasteboard.
         lock.withLock {
-            _contents.removeAll()
-            _changeCount += 1
-            return _changeCount
+            storedContents.removeAll()
+            storedChangeCount += 1
+            return storedChangeCount
         }
     }
 
     @discardableResult
     func setString(_ string: String, forType type: NSPasteboard.PasteboardType) -> Bool {
         lock.withLock {
-            if _setStringFailureCount > 0 {
-                _setStringFailureCount -= 1
+            if storedSetStringFailureCount > 0 {
+                storedSetStringFailureCount -= 1
                 return false
             }
-            _contents[type] = string
-            _changeCount += 1
+            storedContents[type] = string
+            storedChangeCount += 1
             return true
         }
     }
@@ -58,7 +58,6 @@ final class FakePasteboard: Pasteboard, @unchecked Sendable {
 
 @Suite("VsockGuestClipboardAgent state machine")
 struct VsockGuestClipboardAgentTests {
-
     // MARK: - Agent factory helpers
 
     /// Sets up an agent with the given pasteboard and a socket provider that

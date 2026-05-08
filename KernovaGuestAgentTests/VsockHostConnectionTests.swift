@@ -5,7 +5,6 @@ import KernovaProtocol
 
 @Suite("VsockHostConnection log buffer")
 struct VsockHostConnectionTests {
-
     // MARK: - Buffer helpers
 
     private func pendingLogCount(_ conn: VsockHostConnection) -> Int {

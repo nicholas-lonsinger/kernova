@@ -2,7 +2,6 @@ import SwiftUI
 
 /// Display-layer properties that distinguish preparing, cold-paused ("Suspended"), and live-paused ("Paused") states.
 extension VMInstance {
-
     /// Display name that distinguishes preparing, cold-paused ("Suspended"), and live-paused ("Paused").
     var statusDisplayName: String {
         if let state = preparingState { return state.operation.displayLabel }

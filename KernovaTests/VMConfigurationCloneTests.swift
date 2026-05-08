@@ -4,7 +4,6 @@ import Foundation
 
 @Suite("VMConfiguration Clone Tests")
 struct VMConfigurationCloneTests {
-
     private func makeConfig(
         name: String = "My VM",
         guestOS: VMGuestOS = .linux,

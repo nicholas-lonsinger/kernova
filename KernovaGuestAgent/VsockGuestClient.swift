@@ -23,7 +23,6 @@ import os
 /// a feedback loop where a write failure logs an event that schedules
 /// another send through the broken channel.
 final class VsockGuestClient: @unchecked Sendable {
-
     /// Outcome of a `VsockSocketProvider` failure. `.transient` failures cause
     /// the reconnect loop to sleep and retry; `.permanent` failures cause the
     /// loop to exit and the client to enter its terminal "cannot be restarted"

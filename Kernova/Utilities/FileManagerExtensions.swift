@@ -1,7 +1,6 @@
 import Foundation
 
 extension FileManager {
-
     /// Returns the Kernova application support directory, creating it if necessary.
     var kernovaAppSupportDirectory: URL {
         get throws {

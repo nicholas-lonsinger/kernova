@@ -4,7 +4,6 @@ import Cocoa
 
 @Suite("NSImage.systemSymbol Tests")
 struct NSImageExtensionsTests {
-
     @Test("Returns a valid image for a known system symbol")
     func knownSymbol() {
         let image = NSImage.systemSymbol("play.fill", accessibilityDescription: "Play")

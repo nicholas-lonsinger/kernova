@@ -4,7 +4,6 @@ import Foundation
 
 @Suite("VMGuestOS Tests")
 struct VMGuestOSTests {
-
     // MARK: - Display Name
 
     @Test("displayName returns macOS for macOS guest")

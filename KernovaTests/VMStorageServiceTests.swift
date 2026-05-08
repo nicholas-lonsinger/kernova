@@ -4,7 +4,6 @@ import Foundation
 
 @Suite("VMStorageService Tests")
 struct VMStorageServiceTests {
-
     private let service = VMStorageService()
 
     @Test("Create and delete VM bundle")
@@ -124,5 +123,4 @@ struct VMStorageServiceTests {
         #expect(url.pathExtension == "kernova")
         #expect(url.lastPathComponent == "\(config.id.uuidString).kernova")
     }
-
 }

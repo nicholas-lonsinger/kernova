@@ -5,7 +5,6 @@ import Foundation
 @Suite("SpiceClipboardService Tests")
 @MainActor
 struct SpiceClipboardServiceTests {
-
     // MARK: - Helpers
 
     /// Creates a fresh service with connected pipes. The input pipe's read end

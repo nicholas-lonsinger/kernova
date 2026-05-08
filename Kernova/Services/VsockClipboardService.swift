@@ -20,7 +20,6 @@ import os
 @MainActor
 @Observable
 final class VsockClipboardService: ClipboardServicing {
-
     // MARK: - Observable state
 
     /// Bidirectional clipboard buffer. Set by the user (via the clipboard

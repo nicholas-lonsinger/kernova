@@ -5,7 +5,6 @@ import Foundation
 @Suite("VMCreationViewModel Tests")
 @MainActor
 struct VMCreationViewModelTests {
-
     // MARK: - Navigation
 
     @Test("goNext advances through all steps in order")

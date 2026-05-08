@@ -4,7 +4,6 @@ import os
 
 /// Fetches and downloads macOS restore images (IPSWs) for macOS guest installation.
 struct IPSWService: Sendable {
-
     private static let logger = Logger(subsystem: "com.kernova.app", category: "IPSWService")
 
     // MARK: - Protocol Methods
@@ -90,7 +89,6 @@ extension IPSWService: IPSWProviding {}
 // queue when delegateQueue is nil, guaranteeing all callbacks are serialised.
 // No mutable state is accessed outside of delegate callbacks.
 private final class IPSWDownloadDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
-
     private static let logger = Logger(subsystem: "com.kernova.app", category: "IPSWDownloadDelegate")
     private static let progressInterval: TimeInterval = 0.1  // 100 ms
 

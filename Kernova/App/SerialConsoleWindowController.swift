@@ -10,7 +10,6 @@ import os
 /// the VM stops or enters an error state.
 @MainActor
 final class SerialConsoleWindowController: NSWindowController, NSWindowDelegate {
-
     private static let logger = Logger(subsystem: "com.kernova.app", category: "SerialConsoleWindowController")
 
     let instance: VMInstance

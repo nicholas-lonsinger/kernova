@@ -4,7 +4,6 @@ import Foundation
 
 @Suite("VMConfiguration Tests")
 struct VMConfigurationTests {
-
     /// Builds a complete `VMConfiguration` JSON string with all required fields populated.
     /// Pass extra comma-separated JSON fields via `extraFields` to add or override entries.
     private static func makeBaseJSON(
@@ -855,5 +854,4 @@ struct VMConfigurationTests {
             _ = try decoder.decode(VMConfiguration.self, from: Data(json.utf8))
         }
     }
-
 }

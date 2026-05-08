@@ -5,7 +5,6 @@ import SwiftUI
 @main
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenuDelegate {
-
     private var mainWindowController: MainWindowController?
     private var viewModel: VMLibraryViewModel!
     private var pendingOpenURLs: [URL] = []

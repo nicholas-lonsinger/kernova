@@ -4,7 +4,6 @@ import Foundation
 
 @Suite("VsockFrame")
 struct VsockFrameTests {
-
     // MARK: - encode
 
     @Test("encode prepends a big-endian length prefix")

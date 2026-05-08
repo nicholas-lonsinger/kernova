@@ -28,7 +28,6 @@ import os
 /// this file (and `KernovaLogMessage.swift`) into the `KernovaProtocol`
 /// Swift Package.
 public struct KernovaLogger: Sendable {
-
     public let subsystem: String
     public let category: String
     private let osLogger: Logger

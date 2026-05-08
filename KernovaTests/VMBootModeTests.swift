@@ -4,7 +4,6 @@ import Foundation
 
 @Suite("VMBootMode Tests")
 struct VMBootModeTests {
-
     // MARK: - Display Name
 
     @Test("displayName returns expected string for each mode")

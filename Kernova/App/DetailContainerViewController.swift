@@ -12,7 +12,6 @@ import SwiftUI
 /// (delete, force-stop, cancel) remain functional even while the VM display is showing.
 @MainActor
 final class DetailContainerViewController: NSViewController {
-
     private let viewModel: VMLibraryViewModel
     private var backingViews: [UUID: VMDisplayBackingView] = [:]
     private var activeBackingViewID: UUID?

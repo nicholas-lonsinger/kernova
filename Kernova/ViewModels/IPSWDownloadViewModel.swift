@@ -5,7 +5,6 @@ import os
 @MainActor
 @Observable
 final class IPSWDownloadViewModel {
-
     private static let logger = Logger(subsystem: "com.kernova.app", category: "IPSWDownloadViewModel")
 
     // MARK: - State

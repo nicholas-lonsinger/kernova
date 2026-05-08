@@ -5,7 +5,6 @@ import os
 /// and triggers a reconciliation callback after a debounce period.
 @MainActor
 final class VMDirectoryWatcher {
-
     private static let logger = Logger(subsystem: "com.kernova.app", category: "VMDirectoryWatcher")
 
     /// `nonisolated(unsafe)` because `DispatchSource` is not `Sendable` and we need

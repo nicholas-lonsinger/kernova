@@ -4,7 +4,6 @@ import Foundation
 
 @Suite("SpiceAgentProtocol Tests")
 struct SpiceAgentProtocolTests {
-
     // MARK: - VDI Chunk Header
 
     @Test("VDI chunk header serializes and deserializes correctly")

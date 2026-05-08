@@ -5,7 +5,6 @@ import Virtualization
 
 @Suite("ConfigurationBuilder Tests")
 struct ConfigurationBuilderTests {
-
     // MARK: - Helpers
 
     /// Creates a temp directory with a dummy disk image. Caller must `defer` removal of the returned URL.

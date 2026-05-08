@@ -7,7 +7,6 @@ import KernovaProtocol
 @Suite("VsockControlService")
 @MainActor
 struct VsockControlServiceTests {
-
     // MARK: - Helpers
 
     private func makePair() throws -> (sender: VsockChannel, receiver: VsockChannel) {

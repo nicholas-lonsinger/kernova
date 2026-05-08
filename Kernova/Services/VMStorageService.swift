@@ -9,7 +9,6 @@ import os
 /// - macOS-specific files: `AuxiliaryStorage`, `HardwareModel`, `MachineIdentifier`
 /// - Optional: `SaveFile.vzvmsave`
 struct VMStorageService: Sendable {
-
     private static let logger = Logger(subsystem: "com.kernova.app", category: "VMStorageService")
 
     static let bundleExtension = "kernova"
@@ -137,7 +136,6 @@ struct VMStorageService: Sendable {
         try FileManager.default.trashItem(at: bundleURL, resultingItemURL: nil)
         Self.logger.notice("Moved VM bundle to Trash: \(bundleURL.lastPathComponent, privacy: .public)")
     }
-
 }
 
 // MARK: - VMStorageProviding

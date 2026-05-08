@@ -11,7 +11,6 @@ import Virtualization
 /// `VZVirtualMachine`. On close the process reverses so the inline display re-appears.
 @MainActor
 final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
-
     let vmID: UUID
     private(set) var closedProgrammatically = false
     private(set) var lastDisplayID: CGDirectDisplayID?
@@ -169,13 +168,11 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         }
         toolbarManager.updateToolbarItems(in: toolbar)
     }
-
 }
 
 // MARK: - NSToolbarDelegate
 
 extension VMDisplayWindowController: NSToolbarDelegate {
-
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [.flexibleSpace] + toolbarManager.sharedItemIdentifiers
     }

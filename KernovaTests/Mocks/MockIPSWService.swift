@@ -3,7 +3,6 @@ import Foundation
 
 /// No-op mock for `IPSWProviding`.
 final class MockIPSWService: IPSWProviding, @unchecked Sendable {
-
     var fetchCallCount = 0
     var downloadCallCount = 0
 

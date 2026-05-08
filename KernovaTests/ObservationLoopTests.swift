@@ -5,7 +5,6 @@ import Foundation
 @Suite("ObservationLoop Tests")
 @MainActor
 struct ObservationLoopTests {
-
     @Observable
     @MainActor
     final class Subject {

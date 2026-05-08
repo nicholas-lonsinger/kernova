@@ -18,7 +18,6 @@ enum VMDisplayPreference: String, Codable, Sendable, Equatable {
 /// > synthesized `init(from:)` would default to `nil` silently; the manual
 /// > initializer makes that decision explicit.
 struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
-
     // MARK: - Identity
 
     var id: UUID

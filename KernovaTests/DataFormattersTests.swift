@@ -4,7 +4,6 @@ import Foundation
 
 @Suite("DataFormatters Tests")
 struct DataFormattersTests {
-
     // MARK: - formatBytes
 
     @Test("formatBytes returns 'Zero KB' for zero bytes")

@@ -13,7 +13,6 @@ import Foundation
 /// Use `VsockFrameDecoder` on the reader side to recover whole frames from a
 /// stream of arbitrary chunks.
 public enum VsockFrame {
-
     /// Maximum payload size accepted on the wire, in bytes.
     ///
     /// A peer that announces a larger frame is treated as protocol-violating —
@@ -58,7 +57,6 @@ public enum VsockFrameError: Error, Sendable, Equatable {
 /// The decoder is `Sendable` and intended to be owned by a single actor or
 /// queue at a time.
 public struct VsockFrameDecoder: Sendable {
-
     /// Compact the consumed prefix once the read offset crosses this many
     /// bytes. Sized to amortize the shift cost (each byte is copied at most
     /// once before being dropped) without keeping more than ~64 KiB of stale

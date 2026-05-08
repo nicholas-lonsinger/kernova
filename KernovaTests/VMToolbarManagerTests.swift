@@ -5,7 +5,6 @@ import Cocoa
 @Suite("VMToolbarManager Tests")
 @MainActor
 struct VMToolbarManagerTests {
-
     // MARK: - Factories
 
     private func makeInstance(status: VMStatus = .stopped) -> VMInstance {

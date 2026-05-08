@@ -2,7 +2,6 @@ import Cocoa
 import os
 
 extension NSImage {
-
     private static let logger = Logger(subsystem: "com.kernova.app", category: "NSImage")
 
     /// Returns a system symbol image, or a zero-size fallback if the symbol is not found.

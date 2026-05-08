@@ -17,7 +17,6 @@ import os
 @MainActor
 @Observable
 final class SpiceClipboardService: ClipboardServicing {
-
     // MARK: - Observable State
 
     /// Unified clipboard text buffer shared between guest and host.
@@ -296,5 +295,4 @@ final class SpiceClipboardService: ClipboardServicing {
         _ = writeToGuest(message)
         Self.logger.debug("Sent ANNOUNCE_CAPABILITIES (requesting guest reply)")
     }
-
 }

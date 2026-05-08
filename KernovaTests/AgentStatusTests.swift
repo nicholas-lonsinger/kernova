@@ -8,7 +8,6 @@ import Testing
 /// testable without standing up a `VZVirtualMachine`.
 @Suite("AgentStatus.synthesize")
 struct AgentStatusTests {
-
     // MARK: - Pass-through (no synthesis)
 
     @Test(".current passes through unchanged")

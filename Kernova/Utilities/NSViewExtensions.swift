@@ -1,7 +1,6 @@
 import Cocoa
 
 extension NSView {
-
     /// Adds a subview and pins it to all four edges of the receiver using Auto Layout constraints.
     func addFullSizeSubview(_ subview: NSView) {
         subview.translatesAutoresizingMaskIntoConstraints = false

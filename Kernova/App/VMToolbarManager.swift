@@ -11,7 +11,6 @@ import os
 /// current `VMInstance`.
 @MainActor
 final class VMToolbarManager: NSObject {
-
     struct Configuration {
         /// Toolbar item identifiers (different strings per controller to avoid AppKit conflicts).
         let lifecycleID: NSToolbarItem.Identifier

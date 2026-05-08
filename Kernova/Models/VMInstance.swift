@@ -23,7 +23,6 @@ enum DetailPaneMode: Sendable {
 @MainActor
 @Observable
 final class VMInstance: Identifiable {
-
     // MARK: - Properties
 
     let instanceID: UUID

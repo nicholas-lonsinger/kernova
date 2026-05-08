@@ -5,7 +5,6 @@ import KernovaProtocol
 
 @Suite("VsockGuestClient connect/retry/stop lifecycle")
 struct VsockGuestClientTests {
-
     // MARK: - Tests
 
     @Test("start invokes serve closure with a connected channel")
@@ -301,7 +300,6 @@ struct VsockGuestClientTests {
 
 @Suite("VsockGuestClient.classifySocketErrno classification")
 struct ClassifySocketErrnoTests {
-
     @Test("EAFNOSUPPORT classifies as permanent")
     func eafnosupportIsPermanent() {
         let result = VsockGuestClient.classifySocketErrno(EAFNOSUPPORT, label: "test")

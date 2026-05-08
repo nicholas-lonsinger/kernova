@@ -4,7 +4,6 @@ import Foundation
 
 @Suite("PathValidation Tests")
 struct PathValidationTests {
-
     private func makeTempDir() throws -> URL {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

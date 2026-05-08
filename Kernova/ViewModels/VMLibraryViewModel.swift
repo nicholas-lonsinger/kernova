@@ -6,7 +6,6 @@ import os
 @MainActor
 @Observable
 final class VMLibraryViewModel {
-
     private static let logger = Logger(subsystem: "com.kernova.app", category: "VMLibraryViewModel")
     static let lastSelectedVMIDKey = "lastSelectedVMID"
     static let vmOrderKey = "vmOrder"

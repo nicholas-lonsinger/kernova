@@ -24,6 +24,9 @@
         "NoAccessLevelOnExtensionDeclaration": true,
         "NoBlockComments": true,
         "UseSynthesizedInitializer": true,
-        "ValidateDocumentationComments": true
+        "ValidateDocumentationComments": true,
+        "NoEmptyLinesOpeningClosingBraces": true,
+        "UseWhereClausesInForLoops": true,
+        "NoLeadingUnderscores": true
     }
 }

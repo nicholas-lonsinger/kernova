@@ -139,7 +139,6 @@ enum SpiceAgentCapability: Int, Sendable {
 /// outbound chunks therefore use `VDP_SERVER_PORT`. The retired guest-side
 /// SPICE agent was the only caller that ever needed `VDP_CLIENT_PORT`.
 enum SpiceMessageBuilder {
-
     /// Builds an `ANNOUNCE_CAPABILITIES` message advertising clipboard support.
     static func buildAnnounceCapabilities(request: Bool) -> Data {
         // Capabilities payload: request (uint32) + caps array (1 × uint32)
@@ -237,7 +236,6 @@ enum SpiceAgentParsedMessage: Sendable {
 /// VDI chunks, and multiple complete chunks may arrive in a single read.
 /// Each VDI chunk is expected to contain a complete VDAgent message.
 struct SpiceAgentParser: Sendable {
-
     private var buffer = Data()
 
     /// Maximum buffer size before the parser resets (guards against malformed streams).

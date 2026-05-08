@@ -5,7 +5,6 @@ import os
 /// Manages runtime USB mass storage device attach/detach via XHCI controller.
 @MainActor
 final class USBDeviceService: USBDeviceProviding {
-
     private static let logger = Logger(subsystem: "com.kernova.app", category: "USBDeviceService")
 
     func attach(

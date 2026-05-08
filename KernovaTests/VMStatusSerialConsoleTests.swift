@@ -5,7 +5,6 @@ import Foundation
 @Suite("VMStatus Serial Console Validation Tests")
 @MainActor
 struct VMStatusSerialConsoleTests {
-
     private func makeInstance(status: VMStatus = .stopped) -> VMInstance {
         let config = VMConfiguration(
             name: "Test VM",

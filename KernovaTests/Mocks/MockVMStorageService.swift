@@ -3,7 +3,6 @@ import Foundation
 
 /// In-memory mock for `VMStorageProviding` that tracks operations without touching disk.
 final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
-
     // MARK: - Storage
 
     var bundles: [URL: VMConfiguration] = [:]
@@ -84,5 +83,4 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
         if let error = deleteVMBundleError { throw error }
         bundles.removeValue(forKey: bundleURL)
     }
-
 }

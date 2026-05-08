@@ -12,7 +12,6 @@ import os
 /// - **EFI**: `VZGenericPlatformConfiguration` + `VZEFIBootLoader` (Linux guests)
 /// - **Linux Kernel**: `VZGenericPlatformConfiguration` + `VZLinuxBootLoader`
 struct ConfigurationBuilder: Sendable {
-
     /// Contains the built VZ configuration along with bidirectional serial port pipes
     /// and optional SPICE clipboard pipes.
     struct BuildResult: @unchecked Sendable {

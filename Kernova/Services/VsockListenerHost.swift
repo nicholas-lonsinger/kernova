@@ -11,7 +11,6 @@ import Virtualization
 /// and clipboard on different ports).
 @MainActor
 final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate {
-
     typealias OnConnect = @MainActor (VsockChannel) -> Void
 
     private static let logger = Logger(subsystem: "com.kernova.app", category: "VsockListenerHost")

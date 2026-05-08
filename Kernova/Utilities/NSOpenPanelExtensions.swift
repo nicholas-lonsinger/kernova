@@ -2,7 +2,6 @@ import AppKit
 import UniformTypeIdentifiers
 
 extension NSOpenPanel {
-
     /// Presents a pre-configured disk image browser and returns the selected URLs.
     ///
     /// Returns an empty array if the user cancels.

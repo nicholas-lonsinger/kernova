@@ -5,7 +5,6 @@ import Darwin
 
 @Suite("VsockChannel")
 struct VsockChannelTests {
-
     // MARK: - Helpers
 
     /// Creates two `VsockChannel`s connected by a `socketpair(AF_UNIX, SOCK_STREAM)`.

@@ -6,7 +6,6 @@ import os
 /// Consolidates the resolve-symlinks → check-exists → check-type → check-permissions
 /// pattern used by `ConfigurationBuilder` and `USBDeviceService`.
 enum PathValidation {
-
     /// The result of resolving a path through symlinks.
     struct ResolvedPath: Sendable {
         let url: URL

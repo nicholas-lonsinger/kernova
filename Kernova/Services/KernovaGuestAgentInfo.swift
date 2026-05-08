@@ -11,7 +11,6 @@ import os
 /// that sidecar at runtime guarantees the host can never claim to bundle a
 /// version different from what actually ships in the DMG.
 enum KernovaGuestAgentInfo {
-
     private static let logger = Logger(subsystem: "com.kernova.app", category: "KernovaGuestAgentInfo")
 
     /// Filename of the version sidecar in `Kernova.app/Contents/Resources/`.

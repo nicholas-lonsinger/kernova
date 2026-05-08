@@ -5,7 +5,6 @@ import KernovaProtocol
 
 @Suite("VsockGuestControlAgent")
 struct VsockGuestControlAgentTests {
-
     // MARK: - Helpers
 
     /// Builds a host-side Hello frame for the agent to consume.
@@ -183,7 +182,7 @@ struct VsockGuestControlAgentTests {
 
     @Test("Silent host past terminateAfter closes the channel; client reconnects with a fresh Hello")
     func unresponsiveHostTriggersReconnect() async throws {
-        let (agentFd0, _hostFd0) = try makeRawSocketPair()
+        let (agentFd0, hostFd0) = try makeRawSocketPair()
         let (agentFd1, hostFd1) = try makeRawSocketPair()
 
         // Close the first host fd immediately so any agent send to host0
@@ -192,7 +191,7 @@ struct VsockGuestControlAgentTests {
         // RATIONALE: We're testing the agent's behavior on a silent host —
         // closing host0 simulates an unresponsive peer cleanly, but the
         // critical path is the watchdog timeout, not the EOF.
-        close(_hostFd0)
+        close(hostFd0)
 
         let host1 = VsockChannel(fileDescriptor: hostFd1)
         host1.start()
@@ -242,9 +241,9 @@ struct VsockGuestControlAgentTests {
     /// onPolicy callback.
     private final class PolicyBox: @unchecked Sendable {
         private let lock = NSLock()
-        private var _value: Kernova_V1_PolicyUpdate?
-        func set(_ p: Kernova_V1_PolicyUpdate) { lock.withLock { _value = p } }
-        var value: Kernova_V1_PolicyUpdate? { lock.withLock { _value } }
+        private var storedValue: Kernova_V1_PolicyUpdate?
+        func set(_ p: Kernova_V1_PolicyUpdate) { lock.withLock { storedValue = p } }
+        var value: Kernova_V1_PolicyUpdate? { lock.withLock { storedValue } }
     }
 
     @Test("Inbound PolicyUpdate is forwarded to the onPolicy callback")

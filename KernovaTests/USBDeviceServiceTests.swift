@@ -5,7 +5,6 @@ import Foundation
 @Suite("USBDeviceService Tests")
 @MainActor
 struct USBDeviceServiceTests {
-
     private func makeInstance(status: VMStatus = .running) -> VMInstance {
         let config = VMConfiguration(
             name: "USB Test VM",

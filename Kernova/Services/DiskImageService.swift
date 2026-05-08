@@ -12,7 +12,6 @@ import os
 /// sizes (~3 KB each). At VM creation time, the template is decompressed and
 /// written to the destination — fully sandbox-safe with no process spawning.
 struct DiskImageService: Sendable {
-
     private static let logger = Logger(subsystem: "com.kernova.app", category: "DiskImageService")
 
     /// Creates an ASIF sparse disk image at the specified URL by decompressing a bundled template.

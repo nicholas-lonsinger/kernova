@@ -7,7 +7,6 @@ import KernovaProtocol
 @Suite("VsockClipboardService")
 @MainActor
 struct VsockClipboardServiceTests {
-
     // MARK: - Helpers
 
     private func makePair() throws -> (sender: VsockChannel, receiver: VsockChannel) {

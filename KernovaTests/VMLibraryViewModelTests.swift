@@ -5,7 +5,6 @@ import Foundation
 @Suite("VMLibraryViewModel Tests", .serialized)
 @MainActor
 struct VMLibraryViewModelTests {
-
     private func makeViewModel(
         storageService: MockVMStorageService = MockVMStorageService(),
         diskImageService: MockDiskImageService = MockDiskImageService(),

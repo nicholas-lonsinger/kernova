@@ -30,7 +30,6 @@ public typealias Frame = Kernova_V1_Frame
 /// The lock-based design lets either side call `send` from any context and
 /// drain `incoming` from any task without isolation hops.
 public final class VsockChannel: @unchecked Sendable {
-
     /// Inbound frames. The stream finishes on EOF and finishes-with-error on
     /// any framing or decoding failure.
     public let incoming: AsyncThrowingStream<Frame, Error>

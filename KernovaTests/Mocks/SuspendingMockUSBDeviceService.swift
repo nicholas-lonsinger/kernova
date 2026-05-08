@@ -9,7 +9,6 @@ import Foundation
 ///   operation is already suspended will trigger a precondition failure.
 @MainActor
 final class SuspendingMockUSBDeviceService: USBDeviceProviding {
-
     /// When `true`, `attach` will suspend. Set to `false` to allow subsequent calls through immediately.
     var shouldSuspendOnAttach = true
 

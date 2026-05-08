@@ -10,7 +10,6 @@ import os
 /// manager — the affordance is hidden for them.
 @MainActor
 final class ClipboardContentViewController: NSViewController, NSTextViewDelegate {
-
     private static let logger = Logger(subsystem: "com.kernova.app", category: "ClipboardContentViewController")
 
     private let instance: VMInstance
