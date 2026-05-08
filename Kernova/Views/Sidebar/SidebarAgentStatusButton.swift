@@ -39,23 +39,26 @@ struct SidebarAgentStatusButton: View {
         Button {
             isPopoverPresented.toggle()
         } label: {
-            Image(systemName: symbolName)
-                .foregroundStyle(symbolColor)
-                .font(.system(size: 12, weight: .semibold))
-                // Spin the refresh symbol while we're in the post-start
-                // grace window for a previously-installed agent. The
-                // rotation stops automatically once `.connecting` resolves
-                // to `.current` (icon hidden) or `.expectedMissing` (icon
-                // becomes the warning triangle). Gated on
-                // `accessibilityReduceMotion` so users who've disabled
-                // motion in System Settings see a static icon — the gray
-                // color (vs. orange `.outdated`) still differentiates the
-                // state, and the popover/help text carry the meaning.
-                .symbolEffect(
-                    .rotate,
-                    options: .repeat(.continuous),
-                    isActive: status.isConnecting && !reduceMotion
-                )
+            // RATIONALE: An earlier version used
+            // `.symbolEffect(.rotate, options: .repeat(.continuous))` on
+            // the SF Symbol while `.connecting`. On macOS Tahoe that
+            // modifier re-ran the SwiftUI view graph (and re-laid out
+            // the sidebar) every animation tick, generating enough CA
+            // commits to backlog the render server and freeze the main
+            // thread for the entire post-start grace window — often
+            // 10s+ after login. `ProgressView` uses
+            // `NSProgressIndicator` under the hood; it animates in
+            // Core Animation without invalidating SwiftUI. Reduce
+            // motion still falls through to the static icon, matching
+            // the prior behavior.
+            if status.isConnecting && !reduceMotion {
+                ProgressView()
+                    .controlSize(.mini)
+            } else {
+                Image(systemName: symbolName)
+                    .foregroundStyle(symbolColor)
+                    .font(.system(size: 12, weight: .semibold))
+            }
         }
         .buttonStyle(.plain)
         .help(helpText)
