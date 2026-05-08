@@ -22,15 +22,17 @@ jobs:
 
       - name: Select Xcode
         run: |
-          # Prefer Xcode 26; fall back to the latest available version
-          if [ -d "/Applications/Xcode_26.0.app" ]; then
-            sudo xcode-select -s /Applications/Xcode_26.0.app/Contents/Developer
-          elif [ -d "/Applications/Xcode_26.app" ]; then
-            sudo xcode-select -s /Applications/Xcode_26.app/Contents/Developer
-          else
-            echo "::warning::Xcode 26 not found, using default Xcode"
-          fi
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
           xcodebuild -version
+          echo "XCODE_BUILD=$(xcodebuild -version | awk '/Build version/ {print $3}')" >> "$GITHUB_ENV"
+
+      - name: Cache SwiftPM checkouts
+        uses: actions/cache@v5
+        with:
+          path: DerivedData/SourcePackages
+          key: ${{ runner.os }}-spm-${{ env.XCODE_BUILD }}-${{ hashFiles('KernovaProtocol/Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-${{ env.XCODE_BUILD }}-
 
       - name: Build for testing
         run: |
@@ -39,6 +41,8 @@ jobs:
             -project Kernova.xcodeproj \
             -scheme Kernova \
             -destination 'platform=macOS' \
+            -derivedDataPath DerivedData \
+            -skipPackagePluginValidation \
             CODE_SIGN_IDENTITY="-" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=YES \
@@ -51,7 +55,9 @@ jobs:
             -project Kernova.xcodeproj \
             -scheme Kernova \
             -destination 'platform=macOS' \
+            -derivedDataPath DerivedData \
             -resultBundlePath TestResults.xcresult \
+            -skipPackagePluginValidation \
             CODE_SIGN_IDENTITY="-" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=YES \
