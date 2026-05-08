@@ -31,8 +31,6 @@ jobs:
         with:
           path: DerivedData/SourcePackages
           key: ${{ runner.os }}-spm-${{ env.XCODE_BUILD }}-${{ hashFiles('Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
-          restore-keys: |
-            ${{ runner.os }}-spm-${{ env.XCODE_BUILD }}-
 
       - name: Build for testing
         run: |
