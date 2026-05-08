@@ -12,7 +12,6 @@ import Foundation
 /// The single read site for the UI is `VMInstance.agentStatus`, which dispatches
 /// to the right service based on `configuration.guestOS`.
 enum AgentStatus: Equatable, Sendable {
-
     /// No version handshake has been received yet. The guest agent may not be
     /// installed, or the VM may simply still be booting. The UI uses this state
     /// to offer an install affordance for macOS guests.
@@ -106,14 +105,16 @@ enum AgentStatus: Equatable, Sendable {
         agentExpectedButMissing: Bool
     ) -> AgentStatus {
         if agentExpectedButMissing,
-           let expected = lastSeenAgentVersion,
-           !expected.isEmpty {
+            let expected = lastSeenAgentVersion,
+            !expected.isEmpty
+        {
             return .expectedMissing(expected: expected)
         }
         if case .waiting = upstream,
-           let lastSeen = lastSeenAgentVersion,
-           !lastSeen.isEmpty,
-           isInLiveSession {
+            let lastSeen = lastSeenAgentVersion,
+            !lastSeen.isEmpty,
+            isInLiveSession
+        {
             return .connecting(expected: lastSeen)
         }
         return upstream

@@ -7,7 +7,6 @@ import KernovaProtocol
 @Suite("VsockClipboardService")
 @MainActor
 struct VsockClipboardServiceTests {
-
     // MARK: - Helpers
 
     private func makePair() throws -> (sender: VsockChannel, receiver: VsockChannel) {
@@ -72,7 +71,9 @@ struct VsockClipboardServiceTests {
         try await Task.sleep(for: duration)
         if recorder.frames.count != before {
             let extras = Array(recorder.frames[before...])
-            Issue.record("Expected no new frames over \(duration); got \(extras.count): \(extras.map { String(describing: $0.payload) })")
+            Issue.record(
+                "Expected no new frames over \(duration); got \(extras.count): \(extras.map { String(describing: $0.payload) })"
+            )
         }
     }
 
@@ -476,7 +477,8 @@ struct VsockClipboardServiceTests {
             if case .clipboardRequest(let r) = $0.payload { return r.generation == 42 }
             return false
         }) {
-            Issue.record("Service sent a ClipboardRequest despite send failure — pendingInboundGeneration would be stale")
+            Issue.record(
+                "Service sent a ClipboardRequest despite send failure — pendingInboundGeneration would be stale")
         }
     }
 
@@ -492,10 +494,10 @@ struct VsockClipboardServiceTests {
         defer { service.stop() }
 
         try guest.send(makeOffer(generation: 1))
-        _ = try await nextFrame(from: guest)         // request for gen=1
+        _ = try await nextFrame(from: guest)  // request for gen=1
 
         try guest.send(makeOffer(generation: 2))
-        _ = try await nextFrame(from: guest)         // request for gen=2
+        _ = try await nextFrame(from: guest)  // request for gen=2
 
         // Reply for the first (now stale) offer — must be dropped.
         try guest.send(makeData(generation: 1, text: "stale"))
@@ -506,4 +508,3 @@ struct VsockClipboardServiceTests {
         #expect(service.clipboardText == "fresh")
     }
 }
-

@@ -4,7 +4,6 @@ import Foundation
 /// No-op mock for `MacOSInstallProviding`.
 @MainActor
 final class MockMacOSInstallService: MacOSInstallProviding {
-
     var installCallCount = 0
 
     #if arch(arm64)

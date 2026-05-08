@@ -4,7 +4,6 @@ import SwiftUI
 
 @Suite("VMStatus Tests")
 struct VMStatusTests {
-
     // MARK: - State Checks
 
     @Test("canStart returns true for stopped and error states")

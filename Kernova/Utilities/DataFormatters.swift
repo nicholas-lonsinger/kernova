@@ -2,7 +2,6 @@ import Foundation
 
 /// Formatting utilities for display values.
 enum DataFormatters {
-
     private nonisolated(unsafe) static let byteFormatter: ByteCountFormatter = {
         let formatter = ByteCountFormatter()
         formatter.countStyle = .file

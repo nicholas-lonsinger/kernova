@@ -47,7 +47,6 @@ public struct LogPrivacy: Sendable {
 /// the `KernovaProtocol` Swift Package and update the consuming targets'
 /// dependencies.
 public struct KernovaLogMessage: ExpressibleByStringInterpolation, ExpressibleByStringLiteral, Sendable {
-
     public struct StringInterpolation: StringInterpolationProtocol {
         @usableFromInline var localRendered: String
         @usableFromInline var wireRendered: String

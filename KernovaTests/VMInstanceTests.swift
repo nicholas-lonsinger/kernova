@@ -6,7 +6,6 @@ import SwiftUI
 @Suite("VMInstance Tests")
 @MainActor
 struct VMInstanceTests {
-
     private func makeInstance(status: VMStatus = .stopped) -> VMInstance {
         let config = VMConfiguration(
             name: "Test VM",

@@ -10,7 +10,6 @@ import os
 /// manager — the affordance is hidden for them.
 @MainActor
 final class ClipboardContentViewController: NSViewController, NSTextViewDelegate {
-
     private static let logger = Logger(subsystem: "com.kernova.app", category: "ClipboardContentViewController")
 
     private let instance: VMInstance
@@ -91,7 +90,8 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     func textDidChange(_ notification: Notification) {
         guard !isUpdatingFromService else { return }
         guard let service = instance.clipboardService else {
-            Self.logger.warning("Clipboard edit ignored — clipboardService is nil for VM '\(self.instance.name, privacy: .public)'")
+            Self.logger.warning(
+                "Clipboard edit ignored — clipboardService is nil for VM '\(self.instance.name, privacy: .public)'")
             return
         }
         service.clipboardText = textView.string

@@ -11,7 +11,6 @@ import os
 /// 4. Run the installer with progress tracking via KVO
 @MainActor
 final class MacOSInstallService {
-
     private static let logger = Logger(subsystem: "com.kernova.app", category: "MacOSInstallService")
 
     private let configBuilder = ConfigurationBuilder()
@@ -27,6 +26,8 @@ final class MacOSInstallService {
     ///   - instance: The VM instance to install into.
     ///   - restoreImageURL: The local URL of the IPSW file.
     ///   - progressHandler: Called with installation progress (0.0–1.0).
+    /// - Throws: ``MacOSInstallError`` if the restore image is incompatible with this host,
+    ///   or any error rethrown from the underlying `VZMacOSInstaller`.
     func install(
         into instance: VMInstance,
         restoreImageURL: URL,

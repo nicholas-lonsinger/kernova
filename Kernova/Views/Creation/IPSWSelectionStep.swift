@@ -157,7 +157,7 @@ struct IPSWSelectionStep: View {
             panel.directoryURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
             panel.nameFieldStringValue = "RestoreImage.ipsw"
         }
-        panel.allowedContentTypes = [UTType(filenameExtension: "ipsw")!]
+        panel.allowedContentTypes = [.ipsw]
 
         if panel.runModal() == .OK, let url = panel.url {
             creationVM.ipswDownloadPath = url.path(percentEncoded: false)
@@ -167,7 +167,7 @@ struct IPSWSelectionStep: View {
     private func selectIPSWFile() {
         let panel = NSOpenPanel()
         panel.title = "Select macOS Restore Image"
-        panel.allowedContentTypes = [UTType(filenameExtension: "ipsw")!]
+        panel.allowedContentTypes = [.ipsw]
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
 

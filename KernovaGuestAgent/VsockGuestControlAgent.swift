@@ -28,7 +28,6 @@ import os
 /// loop where a heartbeat send failure schedules another forwarded log frame
 /// through the same broken transport.
 final class VsockGuestControlAgent: @unchecked Sendable {
-
     private static let logger = Logger(subsystem: "com.kernova.agent", category: "VsockGuestControlAgent")
 
     private let client: VsockGuestClient

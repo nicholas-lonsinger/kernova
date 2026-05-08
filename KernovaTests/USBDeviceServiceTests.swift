@@ -5,7 +5,6 @@ import Foundation
 @Suite("USBDeviceService Tests")
 @MainActor
 struct USBDeviceServiceTests {
-
     private func makeInstance(status: VMStatus = .running) -> VMInstance {
         let config = VMConfiguration(
             name: "USB Test VM",
@@ -63,7 +62,8 @@ struct USBDeviceServiceTests {
             try await service.attach(diskImagePath: "/tmp/test.dmg", readOnly: false, to: instance)
         } throws: { error in
             guard let e = error as? USBDeviceError,
-                  case .noVirtualMachine = e else { return false }
+                case .noVirtualMachine = e
+            else { return false }
             return true
         }
 
@@ -82,7 +82,8 @@ struct USBDeviceServiceTests {
             try await service.detach(deviceInfo: info, from: instance)
         } throws: { error in
             guard let e = error as? USBDeviceError,
-                  case .deviceNotFound = e else { return false }
+                case .deviceNotFound = e
+            else { return false }
             return true
         }
     }

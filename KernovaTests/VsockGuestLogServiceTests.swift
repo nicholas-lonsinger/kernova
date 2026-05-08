@@ -7,7 +7,6 @@ import KernovaProtocol
 @Suite("VsockGuestLogService")
 @MainActor
 struct VsockGuestLogServiceTests {
-
     // MARK: - Helpers
 
     private func makePair() throws -> (sender: VsockChannel, receiver: VsockChannel) {

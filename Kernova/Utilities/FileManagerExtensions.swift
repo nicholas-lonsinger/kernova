@@ -1,7 +1,6 @@
 import Foundation
 
 extension FileManager {
-
     /// Returns the Kernova application support directory, creating it if necessary.
     var kernovaAppSupportDirectory: URL {
         get throws {
@@ -24,7 +23,8 @@ extension FileManager {
     /// Returns the VMs directory within the Kernova app support folder.
     var kernovaVMsDirectory: URL {
         get throws {
-            let vmsDir = try kernovaAppSupportDirectory
+            let vmsDir =
+                try kernovaAppSupportDirectory
                 .appendingPathComponent("VMs", isDirectory: true)
 
             if !fileExists(atPath: vmsDir.path(percentEncoded: false)) {

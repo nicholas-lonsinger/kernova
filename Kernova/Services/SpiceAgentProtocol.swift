@@ -42,8 +42,9 @@ struct VDIChunkHeader: Sendable {
 
     static func deserialize(from data: Data) -> VDIChunkHeader? {
         guard data.count >= size,
-              let port = data.readLittleEndianUInt32(at: 0),
-              let dataSize = data.readLittleEndianUInt32(at: 4) else { return nil }
+            let port = data.readLittleEndianUInt32(at: 0),
+            let dataSize = data.readLittleEndianUInt32(at: 4)
+        else { return nil }
         return VDIChunkHeader(port: port, dataSize: dataSize)
     }
 }
@@ -75,10 +76,11 @@ struct VDAgentMessageHeader: Sendable {
 
     static func deserialize(from data: Data) -> VDAgentMessageHeader? {
         guard data.count >= size,
-              let typeRaw = data.readLittleEndianUInt32(at: 4),
-              let opaque = data.readLittleEndianUInt64(at: 8),
-              let dataSize = data.readLittleEndianUInt32(at: 16),
-              let type = SpiceAgentMessageType(rawValue: typeRaw) else { return nil }
+            let typeRaw = data.readLittleEndianUInt32(at: 4),
+            let opaque = data.readLittleEndianUInt64(at: 8),
+            let dataSize = data.readLittleEndianUInt32(at: 16),
+            let type = SpiceAgentMessageType(rawValue: typeRaw)
+        else { return nil }
         return VDAgentMessageHeader(type: type, opaque: opaque, dataSize: dataSize)
     }
 }
@@ -87,46 +89,46 @@ struct VDAgentMessageHeader: Sendable {
 
 /// SPICE agent message types (from `VD_AGENT_*` enum).
 enum SpiceAgentMessageType: UInt32, Sendable {
-    case mouseState             = 1
-    case monitorsConfig         = 2
-    case reply                  = 3
-    case clipboard              = 4
-    case displayConfig          = 5
-    case announceCapabilities   = 6
-    case clipboardGrab          = 7
-    case clipboardRequest       = 8
-    case clipboardRelease       = 9
+    case mouseState = 1
+    case monitorsConfig = 2
+    case reply = 3
+    case clipboard = 4
+    case displayConfig = 5
+    case announceCapabilities = 6
+    case clipboardGrab = 7
+    case clipboardRequest = 8
+    case clipboardRelease = 9
 }
 
 // MARK: - Clipboard Types
 
 /// Data format identifiers for clipboard content.
 enum SpiceClipboardType: UInt32, Sendable {
-    case none     = 0
+    case none = 0
     case utf8Text = 1
-    case png      = 2
-    case bmp      = 3
-    case tiff     = 4
-    case jpg      = 5
+    case png = 2
+    case bmp = 3
+    case tiff = 4
+    case jpg = 5
 }
 
 // MARK: - Capability Bits
 
 /// Capability bit positions for `VD_AGENT_CAP_*`.
 enum SpiceAgentCapability: Int, Sendable {
-    case mouseState                 = 0
-    case monitorsConfig             = 1
-    case reply                      = 2
-    case clipboard                  = 3
-    case displayConfig              = 4
-    case clipboardByDemand          = 5
-    case clipboardSelection         = 6
-    case sparseMonitorsConfig       = 7
-    case guestLineendLF             = 8
-    case guestLineendCRLF           = 9
-    case maxClipboard               = 10
+    case mouseState = 0
+    case monitorsConfig = 1
+    case reply = 2
+    case clipboard = 3
+    case displayConfig = 4
+    case clipboardByDemand = 5
+    case clipboardSelection = 6
+    case sparseMonitorsConfig = 7
+    case guestLineendLF = 8
+    case guestLineendCRLF = 9
+    case maxClipboard = 10
     case clipboardNoReleaseOnRegrab = 16
-    case clipboardGrabSerial        = 17
+    case clipboardGrabSerial = 17
 }
 
 // MARK: - Message Builders
@@ -137,7 +139,6 @@ enum SpiceAgentCapability: Int, Sendable {
 /// outbound chunks therefore use `VDP_SERVER_PORT`. The retired guest-side
 /// SPICE agent was the only caller that ever needed `VDP_CLIENT_PORT`.
 enum SpiceMessageBuilder {
-
     /// Builds an `ANNOUNCE_CAPABILITIES` message advertising clipboard support.
     static func buildAnnounceCapabilities(request: Bool) -> Data {
         // Capabilities payload: request (uint32) + caps array (1 × uint32)
@@ -235,7 +236,6 @@ enum SpiceAgentParsedMessage: Sendable {
 /// VDI chunks, and multiple complete chunks may arrive in a single read.
 /// Each VDI chunk is expected to contain a complete VDAgent message.
 struct SpiceAgentParser: Sendable {
-
     private var buffer = Data()
 
     /// Maximum buffer size before the parser resets (guards against malformed streams).
@@ -297,11 +297,13 @@ struct SpiceAgentParser: Sendable {
         // If the inner header is malformed or has an unknown type, skip the chunk
         // but continue parsing — don't halt the loop.
         guard chunkPayload.count >= VDAgentMessageHeader.size,
-              let msgHeader = VDAgentMessageHeader.deserialize(from: chunkPayload) else {
+            let msgHeader = VDAgentMessageHeader.deserialize(from: chunkPayload)
+        else {
             return .malformedChunk
         }
 
-        let msgData = chunkPayload.count > VDAgentMessageHeader.size
+        let msgData =
+            chunkPayload.count > VDAgentMessageHeader.size
             ? chunkPayload.subdata(in: VDAgentMessageHeader.size..<chunkPayload.count)
             : Data()
 

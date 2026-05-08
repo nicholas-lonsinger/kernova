@@ -5,7 +5,6 @@ import os
 /// Manages runtime USB mass storage device attach/detach via XHCI controller.
 @MainActor
 final class USBDeviceService: USBDeviceProviding {
-
     private static let logger = Logger(subsystem: "com.kernova.app", category: "USBDeviceService")
 
     func attach(
@@ -48,7 +47,9 @@ final class USBDeviceService: USBDeviceProviding {
         do {
             attachment = try VZDiskImageStorageDeviceAttachment(url: resolved.url, readOnly: readOnly)
         } catch {
-            Self.logger.error("Failed to create disk attachment for '\(diskImagePath, privacy: .public)': \(error.localizedDescription, privacy: .public)")
+            Self.logger.error(
+                "Failed to create disk attachment for '\(diskImagePath, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
             throw error
         }
         let usbConfig = VZUSBMassStorageDeviceConfiguration(attachment: attachment)
@@ -57,13 +58,17 @@ final class USBDeviceService: USBDeviceProviding {
         do {
             try await controller.attach(device: usbDevice)
         } catch {
-            Self.logger.error("Failed to attach USB device '\(resolved.url.lastPathComponent, privacy: .public)' to VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
+            Self.logger.error(
+                "Failed to attach USB device '\(resolved.url.lastPathComponent, privacy: .public)' to VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
             throw error
         }
 
         let info = USBDeviceInfo(id: usbConfig.uuid, path: diskImagePath, readOnly: readOnly)
 
-        Self.logger.notice("Attached USB device '\(resolved.url.lastPathComponent, privacy: .public)' to VM '\(instance.name, privacy: .public)' (readOnly: \(readOnly, privacy: .public))")
+        Self.logger.notice(
+            "Attached USB device '\(resolved.url.lastPathComponent, privacy: .public)' to VM '\(instance.name, privacy: .public)' (readOnly: \(readOnly, privacy: .public))"
+        )
         return info
     }
 
@@ -81,18 +86,24 @@ final class USBDeviceService: USBDeviceProviding {
         }
 
         guard let usbDevice = controller.usbDevices.first(where: { $0.uuid == deviceInfo.id }) else {
-            Self.logger.error("USB device '\(deviceInfo.displayName, privacy: .public)' not found on controller for VM '\(instance.name, privacy: .public)'")
+            Self.logger.error(
+                "USB device '\(deviceInfo.displayName, privacy: .public)' not found on controller for VM '\(instance.name, privacy: .public)'"
+            )
             throw USBDeviceError.deviceNotFound
         }
 
         do {
             try await controller.detach(device: usbDevice)
         } catch {
-            Self.logger.error("Failed to detach USB device '\(deviceInfo.displayName, privacy: .public)' from VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
+            Self.logger.error(
+                "Failed to detach USB device '\(deviceInfo.displayName, privacy: .public)' from VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
             throw error
         }
 
-        Self.logger.notice("Detached USB device '\(deviceInfo.displayName, privacy: .public)' from VM '\(instance.name, privacy: .public)'")
+        Self.logger.notice(
+            "Detached USB device '\(deviceInfo.displayName, privacy: .public)' from VM '\(instance.name, privacy: .public)'"
+        )
     }
 }
 

@@ -58,9 +58,11 @@ struct RemovableMediaPopoverView: View {
     }
 
     private func browseAndAttach() {
-        guard let url = NSOpenPanel.browseDiskImages(
-            message: "Select a disk image to attach as removable media"
-        ).first else { return }
+        guard
+            let url = NSOpenPanel.browseDiskImages(
+                message: "Select a disk image to attach as removable media"
+            ).first
+        else { return }
         viewModel.attachUSBDevice(
             diskImagePath: url.path(percentEncoded: false),
             readOnly: true,

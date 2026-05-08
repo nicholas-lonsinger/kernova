@@ -10,7 +10,6 @@ import os
 /// the VM stops or enters an error state.
 @MainActor
 final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
-
     private static let logger = Logger(subsystem: "com.kernova.app", category: "ClipboardWindowController")
 
     let instance: VMInstance
@@ -82,12 +81,16 @@ final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
                 guard let self else { return }
                 let status = self.instance.status
                 if status == .stopped || status == .error {
-                    Self.logger.notice("Auto-closing clipboard window for VM '\(self.instance.name, privacy: .public)' (status: \(status.displayName, privacy: .public))")
+                    Self.logger.notice(
+                        "Auto-closing clipboard window for VM '\(self.instance.name, privacy: .public)' (status: \(status.displayName, privacy: .public))"
+                    )
                     self.window?.close()
                     return
                 }
                 if !self.instance.configuration.clipboardSharingEnabled {
-                    Self.logger.notice("Auto-closing clipboard window for VM '\(self.instance.name, privacy: .public)' (clipboard sharing disabled by user)")
+                    Self.logger.notice(
+                        "Auto-closing clipboard window for VM '\(self.instance.name, privacy: .public)' (clipboard sharing disabled by user)"
+                    )
                     self.window?.close()
                 }
             }

@@ -5,7 +5,6 @@ import KernovaProtocol
 
 @Suite("VsockGuestControlAgent")
 struct VsockGuestControlAgentTests {
-
     // MARK: - Helpers
 
     /// Builds a host-side Hello frame for the agent to consume.
@@ -161,7 +160,7 @@ struct VsockGuestControlAgentTests {
         // Send host Hello + a few heartbeats. Behaviorally we just verify the
         // agent stays connected (its outbound heartbeat stream keeps flowing).
         try host.send(makeHostHelloFrame())
-        for n in 1 ... 3 {
+        for n in 1...3 {
             try host.send(makeHeartbeatFrame(nonce: UInt64(n)))
             try await Task.sleep(for: .milliseconds(50))
         }
@@ -174,7 +173,8 @@ struct VsockGuestControlAgentTests {
         case .heartbeat:
             break
         default:
-            throw TestFailure("Expected heartbeat from agent after inbound traffic; got \(String(describing: frame.payload))")
+            throw TestFailure(
+                "Expected heartbeat from agent after inbound traffic; got \(String(describing: frame.payload))")
         }
     }
 
@@ -182,7 +182,7 @@ struct VsockGuestControlAgentTests {
 
     @Test("Silent host past terminateAfter closes the channel; client reconnects with a fresh Hello")
     func unresponsiveHostTriggersReconnect() async throws {
-        let (agentFd0, _hostFd0) = try makeRawSocketPair()
+        let (agentFd0, hostFd0) = try makeRawSocketPair()
         let (agentFd1, hostFd1) = try makeRawSocketPair()
 
         // Close the first host fd immediately so any agent send to host0
@@ -191,7 +191,7 @@ struct VsockGuestControlAgentTests {
         // RATIONALE: We're testing the agent's behavior on a silent host —
         // closing host0 simulates an unresponsive peer cleanly, but the
         // critical path is the watchdog timeout, not the EOF.
-        close(_hostFd0)
+        close(hostFd0)
 
         let host1 = VsockChannel(fileDescriptor: hostFd1)
         host1.start()
@@ -206,11 +206,10 @@ struct VsockGuestControlAgentTests {
             retryInterval: .milliseconds(50)
         ) { _, _ in
             let n = provideCount.increment()
-            if let fd = fdBox.fd(at: n - 1) {
-                return .success(fd)
-            } else {
+            guard let fd = fdBox.fd(at: n - 1) else {
                 return .failure(.transient("test: no fd at index \(n - 1)"))
             }
+            return .success(fd)
         }
 
         let agent = VsockGuestControlAgent(
@@ -242,9 +241,9 @@ struct VsockGuestControlAgentTests {
     /// onPolicy callback.
     private final class PolicyBox: @unchecked Sendable {
         private let lock = NSLock()
-        private var _value: Kernova_V1_PolicyUpdate?
-        func set(_ p: Kernova_V1_PolicyUpdate) { lock.withLock { _value = p } }
-        var value: Kernova_V1_PolicyUpdate? { lock.withLock { _value } }
+        private var storedValue: Kernova_V1_PolicyUpdate?
+        func set(_ p: Kernova_V1_PolicyUpdate) { lock.withLock { storedValue = p } }
+        var value: Kernova_V1_PolicyUpdate? { lock.withLock { storedValue } }
     }
 
     @Test("Inbound PolicyUpdate is forwarded to the onPolicy callback")
@@ -255,9 +254,11 @@ struct VsockGuestControlAgentTests {
         defer { host.close() }
 
         let received = PolicyBox()
-        let agent = makeAgent(agentFd: agentFd, onPolicy: { policy in
-            received.set(policy)
-        })
+        let agent = makeAgent(
+            agentFd: agentFd,
+            onPolicy: { policy in
+                received.set(policy)
+            })
         agent.start()
         defer { agent.stop() }
 
@@ -288,13 +289,15 @@ struct VsockGuestControlAgentTests {
         defer { host.close() }
 
         let counts = AtomicInt()
-        let agent = makeAgent(agentFd: agentFd, onPolicy: { _ in
-            _ = counts.increment()
-        })
+        let agent = makeAgent(
+            agentFd: agentFd,
+            onPolicy: { _ in
+                _ = counts.increment()
+            })
         agent.start()
         defer { agent.stop() }
 
-        _ = try await nextFrame(from: host) // drain outbound Hello
+        _ = try await nextFrame(from: host)  // drain outbound Hello
 
         for _ in 0..<3 {
             var frame = Frame()

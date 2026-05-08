@@ -34,7 +34,6 @@ struct AgentPolicySnapshot: Equatable, Sendable {
 @MainActor
 @Observable
 final class VsockControlService {
-
     // MARK: - Observable state
 
     /// `true` once the guest agent has sent its `Hello`. Reset on `stop()`.

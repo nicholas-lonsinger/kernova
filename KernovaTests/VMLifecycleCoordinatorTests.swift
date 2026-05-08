@@ -5,7 +5,6 @@ import Foundation
 @Suite("VMLifecycleCoordinator Tests")
 @MainActor
 struct VMLifecycleCoordinatorTests {
-
     private func makeCoordinator() -> (
         VMLifecycleCoordinator,
         MockVirtualizationService,

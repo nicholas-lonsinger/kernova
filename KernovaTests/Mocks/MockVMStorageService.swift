@@ -3,7 +3,6 @@ import Foundation
 
 /// In-memory mock for `VMStorageProviding` that tracks operations without touching disk.
 final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
-
     // MARK: - Storage
 
     var bundles: [URL: VMConfiguration] = [:]
@@ -69,7 +68,9 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
         return url
     }
 
-    func cloneVMBundle(from sourceBundleURL: URL, newConfiguration: VMConfiguration, filesToCopy: [String]) throws -> URL {
+    func cloneVMBundle(from sourceBundleURL: URL, newConfiguration: VMConfiguration, filesToCopy: [String]) throws
+        -> URL
+    {
         cloneVMBundleCallCount += 1
         if let error = cloneVMBundleError { throw error }
         let url = try bundleURL(for: newConfiguration)
@@ -82,5 +83,4 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
         if let error = deleteVMBundleError { throw error }
         bundles.removeValue(forKey: bundleURL)
     }
-
 }

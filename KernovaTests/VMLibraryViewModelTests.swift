@@ -5,13 +5,15 @@ import Foundation
 @Suite("VMLibraryViewModel Tests", .serialized)
 @MainActor
 struct VMLibraryViewModelTests {
-
     private func makeViewModel(
         storageService: MockVMStorageService = MockVMStorageService(),
         diskImageService: MockDiskImageService = MockDiskImageService(),
         virtualizationService: MockVirtualizationService = MockVirtualizationService(),
         usbDeviceService: any USBDeviceProviding = MockUSBDeviceService()
-    ) -> (VMLibraryViewModel, MockVMStorageService, MockDiskImageService, MockVirtualizationService, any USBDeviceProviding) {
+    ) -> (
+        VMLibraryViewModel, MockVMStorageService, MockDiskImageService, MockVirtualizationService,
+        any USBDeviceProviding
+    ) {
         UserDefaults.standard.removeObject(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
         UserDefaults.standard.removeObject(forKey: VMLibraryViewModel.vmOrderKey)
         let vm = VMLibraryViewModel(
@@ -1411,9 +1413,12 @@ struct VMLibraryViewModelTests {
     @Test("loadVMs applies custom order from UserDefaults")
     func loadVMsAppliesCustomOrder() {
         let storage = MockVMStorageService()
-        let config1 = VMConfiguration(name: "First", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 100))
-        let config2 = VMConfiguration(name: "Second", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 200))
-        let config3 = VMConfiguration(name: "Third", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 300))
+        let config1 = VMConfiguration(
+            name: "First", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 100))
+        let config2 = VMConfiguration(
+            name: "Second", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 200))
+        let config3 = VMConfiguration(
+            name: "Third", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 300))
         let url1 = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(config1.id.uuidString).kernova", isDirectory: true)
         let url2 = FileManager.default.temporaryDirectory
@@ -1445,8 +1450,10 @@ struct VMLibraryViewModelTests {
     @Test("loadVMs falls back to createdAt when no custom order exists")
     func loadVMsFallsBackToCreatedAt() {
         let storage = MockVMStorageService()
-        let config1 = VMConfiguration(name: "Older", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 100))
-        let config2 = VMConfiguration(name: "Newer", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 200))
+        let config1 = VMConfiguration(
+            name: "Older", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 100))
+        let config2 = VMConfiguration(
+            name: "Newer", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 200))
         let url1 = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(config1.id.uuidString).kernova", isDirectory: true)
         let url2 = FileManager.default.temporaryDirectory
@@ -1462,7 +1469,8 @@ struct VMLibraryViewModelTests {
     @Test("reconcileWithDisk appends new VMs after custom-ordered ones")
     func reconcileAppendsNewVMs() {
         let storage = MockVMStorageService()
-        let config1 = VMConfiguration(name: "Existing", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 200))
+        let config1 = VMConfiguration(
+            name: "Existing", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 200))
         let url1 = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(config1.id.uuidString).kernova", isDirectory: true)
         storage.bundles[url1] = config1
@@ -1471,7 +1479,8 @@ struct VMLibraryViewModelTests {
         #expect(viewModel.instances.count == 1)
 
         // Simulate a new VM appearing on disk
-        let config2 = VMConfiguration(name: "Discovered", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 100))
+        let config2 = VMConfiguration(
+            name: "Discovered", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 100))
         let url2 = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(config2.id.uuidString).kernova", isDirectory: true)
         storage.bundles[url2] = config2
@@ -1575,10 +1584,10 @@ struct VMLibraryViewModelTests {
         let instance = makeInstance()
         viewModel.instances.append(instance)
 
-        viewModel.mountGuestAgentInstaller(on: instance)   // Task A — will suspend in attach
+        viewModel.mountGuestAgentInstaller(on: instance)  // Task A — will suspend in attach
         await suspending.waitUntilSuspended()
 
-        viewModel.mountGuestAgentInstaller(on: instance)   // should early-return on mutex guard
+        viewModel.mountGuestAgentInstaller(on: instance)  // should early-return on mutex guard
 
         suspending.resumeSuspended()
         // Drain by awaiting alert state — the spawned Task sets it before returning
@@ -1598,7 +1607,7 @@ struct VMLibraryViewModelTests {
         viewModel.instances.append(instance)
 
         viewModel.mountGuestAgentInstaller(on: instance)
-        while !viewModel.showError { await Task.yield() }   // spin until the spawned Task surfaces error
+        while !viewModel.showError { await Task.yield() }  // spin until the spawned Task surfaces error
 
         #expect(mock.attachCallCount == 1)
         #expect(viewModel.errorMessage != nil)

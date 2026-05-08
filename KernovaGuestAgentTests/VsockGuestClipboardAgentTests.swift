@@ -10,22 +10,22 @@ import KernovaProtocol
 /// on DispatchQueue.main don't race the setup thread.
 final class FakePasteboard: Pasteboard, @unchecked Sendable {
     private let lock = NSLock()
-    private var _changeCount: Int = 0
-    private var _contents: [NSPasteboard.PasteboardType: String] = [:]
-    private var _setStringFailureCount: Int = 0
+    private var storedChangeCount: Int = 0
+    private var storedContents: [NSPasteboard.PasteboardType: String] = [:]
+    private var storedSetStringFailureCount: Int = 0
 
     var changeCount: Int {
-        lock.withLock { _changeCount }
+        lock.withLock { storedChangeCount }
     }
 
     func string(forType type: NSPasteboard.PasteboardType) -> String? {
-        lock.withLock { _contents[type] }
+        lock.withLock { storedContents[type] }
     }
 
     /// Make the next `n` `setString` calls return `false` and skip storage
     /// updates. Lets tests model OS-level pasteboard write failures.
     func failNextSetString(times: Int = 1) {
-        lock.withLock { _setStringFailureCount += times }
+        lock.withLock { storedSetStringFailureCount += times }
     }
 
     @discardableResult
@@ -34,21 +34,21 @@ final class FakePasteboard: Pasteboard, @unchecked Sendable {
         // the new value. Mirror that behavior so the fake's echo-suppression
         // delta matches a real pasteboard.
         lock.withLock {
-            _contents.removeAll()
-            _changeCount += 1
-            return _changeCount
+            storedContents.removeAll()
+            storedChangeCount += 1
+            return storedChangeCount
         }
     }
 
     @discardableResult
     func setString(_ string: String, forType type: NSPasteboard.PasteboardType) -> Bool {
         lock.withLock {
-            if _setStringFailureCount > 0 {
-                _setStringFailureCount -= 1
+            if storedSetStringFailureCount > 0 {
+                storedSetStringFailureCount -= 1
                 return false
             }
-            _contents[type] = string
-            _changeCount += 1
+            storedContents[type] = string
+            storedChangeCount += 1
             return true
         }
     }
@@ -58,7 +58,6 @@ final class FakePasteboard: Pasteboard, @unchecked Sendable {
 
 @Suite("VsockGuestClipboardAgent state machine")
 struct VsockGuestClipboardAgentTests {
-
     // MARK: - Agent factory helpers
 
     /// Sets up an agent with the given pasteboard and a socket provider that
@@ -183,18 +182,17 @@ struct VsockGuestClipboardAgentTests {
             retryInterval: .milliseconds(50)
         ) { _, _ in
             let n = provideCount.increment()
-            if let fd = fdBox.fd(at: n - 1) {
-                return .success(fd)
-            } else {
+            guard let fd = fdBox.fd(at: n - 1) else {
                 return .failure(.transient("test: no fd at index \(n - 1)"))
             }
+            return .success(fd)
         }
 
         let agent = VsockGuestClipboardAgent(pasteboard: pasteboard, client: client)
         defer { agent.stop() }
 
         agent.start()
-        agent.setEnabled(true) // production agents are default-disabled until host policy enables them
+        agent.setEnabled(true)  // production agents are default-disabled until host policy enables them
 
         // First connection: wait for liveChannel to be published.
         try await waitUntil { agent.liveChannelForTesting != nil }
@@ -404,7 +402,9 @@ struct VsockGuestClipboardAgentTests {
 
         let offerFrame = try await nextFrame(from: hostChannel)
         guard case .clipboardOffer = offerFrame.payload else {
-            throw TestFailure("Expected ClipboardOffer after user copies same text as failed host write — echo-suppression fired incorrectly (regression)")
+            throw TestFailure(
+                "Expected ClipboardOffer after user copies same text as failed host write — echo-suppression fired incorrectly (regression)"
+            )
         }
     }
 
@@ -503,7 +503,7 @@ struct VsockGuestClipboardAgentTests {
         let agent = VsockGuestClipboardAgent(pasteboard: pasteboard, client: client)
         defer { agent.stop() }
         agent.start()
-        agent.setEnabled(true) // production agents are default-disabled until host policy enables them
+        agent.setEnabled(true)  // production agents are default-disabled until host policy enables them
 
         // Wait until publish settles. Under the current code (await MainActor.run),
         // this happens before the read loop starts.
@@ -514,15 +514,17 @@ struct VsockGuestClipboardAgentTests {
         // liveChannel is still nil here, because the async dispatch may not have
         // run before the read loop already processed frames.
         let liveChannelSet = DispatchQueue.main.sync { agent.liveChannelForTesting != nil }
-        #expect(liveChannelSet,
-                "liveChannel was nil on main queue after publish — publish was not synchronous with serve()'s progression")
+        #expect(
+            liveChannelSet,
+            "liveChannel was nil on main queue after publish — publish was not synchronous with serve()'s progression")
 
         // Send an offer and verify the agent processes it, confirming the read
         // loop is running and liveChannel was already set when the frame arrived.
         try hostChannel.send(makeOfferFrame(generation: 1))
         let requestFrame = try await nextFrame(from: hostChannel)
         guard case .clipboardRequest(let req) = requestFrame.payload else {
-            throw TestFailure("Expected ClipboardRequest in response to offer, got \(String(describing: requestFrame.payload))")
+            throw TestFailure(
+                "Expected ClipboardRequest in response to offer, got \(String(describing: requestFrame.payload))")
         }
         #expect(req.generation == 1)
     }

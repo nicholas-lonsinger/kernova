@@ -40,7 +40,9 @@ struct MainDetailView: View {
         ) { _ in
             Button("OK", role: .cancel) {}
         } message: { vmName in
-            Text("The Kernova guest agent installer has been attached to \(vmName) as a USB disk. Inside the VM, open the “Kernova Guest Agent” disk in Finder and run install.command to complete setup.")
+            Text(
+                "The Kernova guest agent installer has been attached to \(vmName) as a USB disk. Inside the VM, open the “Kernova Guest Agent” disk in Finder and run install.command to complete setup."
+            )
         }
     }
 }

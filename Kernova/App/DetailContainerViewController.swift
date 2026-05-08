@@ -12,7 +12,6 @@ import SwiftUI
 /// (delete, force-stop, cancel) remain functional even while the VM display is showing.
 @MainActor
 final class DetailContainerViewController: NSViewController {
-
     private let viewModel: VMLibraryViewModel
     private var backingViews: [UUID: VMDisplayBackingView] = [:]
     private var activeBackingViewID: UUID?
@@ -75,7 +74,7 @@ final class DetailContainerViewController: NSViewController {
         let instanceID = instance.id
         backing.onResume = { [weak viewModel] in
             guard let viewModel,
-                  let target = viewModel.instances.first(where: { $0.id == instanceID })
+                let target = viewModel.instances.first(where: { $0.id == instanceID })
             else { return }
             Task { await viewModel.resume(target) }
         }
@@ -133,8 +132,10 @@ final class DetailContainerViewController: NSViewController {
         // Evict backing views for VMs no longer running inline
         let activeInlineIDs = Set(
             viewModel.instances
-                .filter { $0.virtualMachine != nil && $0.displayMode == .inline
-                    && $0.status.hasActiveDisplay }
+                .filter {
+                    $0.virtualMachine != nil && $0.displayMode == .inline
+                        && $0.status.hasActiveDisplay
+                }
                 .map(\.id)
         )
         let staleIDs = backingViews.keys.filter { !activeInlineIDs.contains($0) }
@@ -144,10 +145,10 @@ final class DetailContainerViewController: NSViewController {
         }
 
         guard let instance = viewModel.selectedInstance,
-              let vm = instance.virtualMachine,
-              instance.displayMode == .inline,
-              instance.status.hasActiveDisplay,
-              instance.detailPaneMode == .display
+            let vm = instance.virtualMachine,
+            instance.displayMode == .inline,
+            instance.status.hasActiveDisplay,
+            instance.detailPaneMode == .display
         else {
             if let currentID = activeBackingViewID, let current = backingViews[currentID] {
                 current.isHidden = true
@@ -158,7 +159,8 @@ final class DetailContainerViewController: NSViewController {
         }
 
         if let currentID = activeBackingViewID, currentID != instance.id,
-           let current = backingViews[currentID] {
+            let current = backingViews[currentID]
+        {
             current.isHidden = true
         }
 

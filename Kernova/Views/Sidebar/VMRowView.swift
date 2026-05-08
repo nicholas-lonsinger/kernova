@@ -103,7 +103,8 @@ struct VMRowView: View {
         let status = instance.agentStatus
         if case .current = status { return nil }
         if case .waiting = status,
-           instance.configuration.agentInstallNudgeDismissed {
+            instance.configuration.agentInstallNudgeDismissed
+        {
             return nil
         }
         // For stopped / cold-paused VMs we'd otherwise show `.waiting`. If
@@ -113,8 +114,9 @@ struct VMRowView: View {
         // running, so `.expectedMissing` only reaches here for live sessions.
         let isLiveSession = instance.virtualMachine != nil
         if !isLiveSession,
-           case .waiting = status,
-           instance.configuration.lastSeenAgentVersion != nil {
+            case .waiting = status,
+            instance.configuration.lastSeenAgentVersion != nil
+        {
             return nil
         }
         return status

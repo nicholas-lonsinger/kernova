@@ -5,7 +5,6 @@ import Cocoa
 @Suite("VMToolbarManager Tests")
 @MainActor
 struct VMToolbarManagerTests {
-
     // MARK: - Factories
 
     private func makeInstance(status: VMStatus = .stopped) -> VMInstance {
@@ -207,8 +206,8 @@ struct VMToolbarManagerTests {
 
         let lifecycle = toolbar.items.first { $0.itemIdentifier.rawValue == "testLifecycle" } as? NSToolbarItemGroup
         #expect(lifecycle?.subitems[0].isEnabled == true)  // play
-        #expect(lifecycle?.subitems[1].isEnabled == false) // pause
-        #expect(lifecycle?.subitems[2].isEnabled == false) // stop
+        #expect(lifecycle?.subitems[1].isEnabled == false)  // pause
+        #expect(lifecycle?.subitems[2].isEnabled == false)  // stop
     }
 
     @Test("Pause and stop enabled when running")
@@ -220,7 +219,7 @@ struct VMToolbarManagerTests {
         manager.updateToolbarItems(in: toolbar)
 
         let lifecycle = toolbar.items.first { $0.itemIdentifier.rawValue == "testLifecycle" } as? NSToolbarItemGroup
-        #expect(lifecycle?.subitems[0].isEnabled == false) // play (can't start when running)
+        #expect(lifecycle?.subitems[0].isEnabled == false)  // play (can't start when running)
         #expect(lifecycle?.subitems[1].isEnabled == true)  // pause
         #expect(lifecycle?.subitems[2].isEnabled == true)  // stop
     }
@@ -235,7 +234,7 @@ struct VMToolbarManagerTests {
 
         let lifecycle = toolbar.items.first { $0.itemIdentifier.rawValue == "testLifecycle" } as? NSToolbarItemGroup
         #expect(lifecycle?.subitems[0].isEnabled == true)  // resume
-        #expect(lifecycle?.subitems[1].isEnabled == false) // pause (already paused)
+        #expect(lifecycle?.subitems[1].isEnabled == false)  // pause (already paused)
         #expect(lifecycle?.subitems[2].isEnabled == true)  // stop
     }
 
@@ -281,7 +280,7 @@ struct VMToolbarManagerTests {
 
     @Test("Display items disabled when gatesDisplayOnCapability=true and canUseExternalDisplay is false")
     func displayGatedAndDisabled() {
-        let instance = makeInstance(status: .stopped) // canUseExternalDisplay = false
+        let instance = makeInstance(status: .stopped)  // canUseExternalDisplay = false
         let manager = makeManager(instance: instance, gatesDisplayOnCapability: true)
         let (toolbar, _, _) = makeToolbar(manager: manager)
 

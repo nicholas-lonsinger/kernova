@@ -23,7 +23,6 @@ import os
 /// a feedback loop where a write failure logs an event that schedules
 /// another send through the broken channel.
 final class VsockGuestClient: @unchecked Sendable {
-
     /// Outcome of a `VsockSocketProvider` failure. `.transient` failures cause
     /// the reconnect loop to sleep and retry; `.permanent` failures cause the
     /// loop to exit and the client to enter its terminal "cannot be restarted"
@@ -87,9 +86,10 @@ final class VsockGuestClient: @unchecked Sendable {
         self.port = port
         self.label = label
         self.retryInterval = retryInterval
-        self.socketProvider = socketProvider ?? { port, label in
-            VsockGuestClient.openVsockToHost(port: port, label: label)
-        }
+        self.socketProvider =
+            socketProvider ?? { port, label in
+                VsockGuestClient.openVsockToHost(port: port, label: label)
+            }
     }
 
     // MARK: - Lifecycle
@@ -214,7 +214,8 @@ final class VsockGuestClient: @unchecked Sendable {
             return .retry
         }
 
-        Self.logger.notice("Connected '\(self.label, privacy: .public)' to host vsock port \(self.port, privacy: .public)")
+        Self.logger.notice(
+            "Connected '\(self.label, privacy: .public)' to host vsock port \(self.port, privacy: .public)")
 
         await serve(channel)
 
@@ -258,7 +259,8 @@ final class VsockGuestClient: @unchecked Sendable {
         guard fcntl(fd, F_SETFL, originalFlags | O_NONBLOCK) >= 0 else {
             let err = errno
             close(fd)
-            logger.error("fcntl(F_SETFL, O_NONBLOCK) failed for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
+            logger.error(
+                "fcntl(F_SETFL, O_NONBLOCK) failed for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
             return .failure(.transient("fcntl(F_SETFL, O_NONBLOCK) failed for '\(label)': errno=\(err)"))
         }
 
@@ -281,7 +283,9 @@ final class VsockGuestClient: @unchecked Sendable {
             let connectErr = errno
             guard connectErr == EINPROGRESS else {
                 close(fd)
-                logger.warning("connect() to '\(label, privacy: .public)' port \(port, privacy: .public) failed: errno=\(connectErr, privacy: .public)")
+                logger.warning(
+                    "connect() to '\(label, privacy: .public)' port \(port, privacy: .public) failed: errno=\(connectErr, privacy: .public)"
+                )
                 return .failure(.transient("connect() to '\(label)' port \(port) failed: errno=\(connectErr)"))
             }
             guard awaitConnectCompletion(fd: fd, label: label, port: port) else {
@@ -293,7 +297,8 @@ final class VsockGuestClient: @unchecked Sendable {
         guard fcntl(fd, F_SETFL, originalFlags) >= 0 else {
             let err = errno
             close(fd)
-            logger.error("fcntl(F_SETFL) restore failed for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
+            logger.error(
+                "fcntl(F_SETFL) restore failed for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
             return .failure(.transient("fcntl(F_SETFL) restore failed for '\(label)': errno=\(err)"))
         }
 
@@ -309,7 +314,8 @@ final class VsockGuestClient: @unchecked Sendable {
     static func classifySocketErrno(_ err: Int32, label: String) -> VsockProviderError {
         switch err {
         case EAFNOSUPPORT, EPROTONOSUPPORT:
-            logger.error("socket(AF_VSOCK) unsupported for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
+            logger.error(
+                "socket(AF_VSOCK) unsupported for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
             return .permanent("socket(AF_VSOCK) unsupported for '\(label)': errno=\(err)")
         default:
             logger.warning("socket(AF_VSOCK) failed for '\(label, privacy: .public)': errno=\(err, privacy: .public)")
@@ -328,18 +334,24 @@ final class VsockGuestClient: @unchecked Sendable {
         var pollRc: Int32
         repeat {
             let remaining = deadline - ContinuousClock.now
-            let remainingMs = Int32(max(0, Double(remaining.components.seconds) * 1000
-                + Double(remaining.components.attoseconds) / 1e15))
+            let remainingMs = Int32(
+                max(
+                    0,
+                    Double(remaining.components.seconds) * 1000
+                        + Double(remaining.components.attoseconds) / 1e15))
             pollRc = withUnsafeMutablePointer(to: &pfd) { poll($0, 1, remainingMs) }
             let err = errno
             if pollRc < 0 && err != EINTR {
-                logger.warning("poll() while connecting '\(label, privacy: .public)' failed: errno=\(err, privacy: .public)")
+                logger.warning(
+                    "poll() while connecting '\(label, privacy: .public)' failed: errno=\(err, privacy: .public)")
                 return false
             }
         } while pollRc < 0
 
         if pollRc == 0 {
-            logger.warning("connect() to '\(label, privacy: .public)' port \(port, privacy: .public) timed out after \(connectTimeoutSeconds, privacy: .public)s")
+            logger.warning(
+                "connect() to '\(label, privacy: .public)' port \(port, privacy: .public) timed out after \(connectTimeoutSeconds, privacy: .public)s"
+            )
             return false
         }
 
@@ -356,7 +368,9 @@ final class VsockGuestClient: @unchecked Sendable {
             } else {
                 errStr = "revents=\(pfd.revents)"
             }
-            logger.warning("connect() to '\(label, privacy: .public)' port \(port, privacy: .public) failed: \(errStr, privacy: .public)")
+            logger.warning(
+                "connect() to '\(label, privacy: .public)' port \(port, privacy: .public) failed: \(errStr, privacy: .public)"
+            )
             return false
         }
 
@@ -364,11 +378,14 @@ final class VsockGuestClient: @unchecked Sendable {
         var soErrorLen = socklen_t(MemoryLayout<Int32>.size)
         guard getsockopt(fd, SOL_SOCKET, SO_ERROR, &soError, &soErrorLen) == 0 else {
             let err = errno
-            logger.warning("getsockopt(SO_ERROR) for '\(label, privacy: .public)' failed: errno=\(err, privacy: .public)")
+            logger.warning(
+                "getsockopt(SO_ERROR) for '\(label, privacy: .public)' failed: errno=\(err, privacy: .public)")
             return false
         }
         guard soError == 0 else {
-            logger.warning("connect() to '\(label, privacy: .public)' port \(port, privacy: .public) failed (deferred): errno=\(soError, privacy: .public)")
+            logger.warning(
+                "connect() to '\(label, privacy: .public)' port \(port, privacy: .public) failed (deferred): errno=\(soError, privacy: .public)"
+            )
             return false
         }
         return true
@@ -383,10 +400,12 @@ final class VsockGuestClient: @unchecked Sendable {
         let optionSize = socklen_t(MemoryLayout<timeval>.size)
 
         if setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, optionSize) != 0 {
-            logger.warning("setsockopt SO_RCVTIMEO failed for '\(label, privacy: .public)': errno=\(errno, privacy: .public)")
+            logger.warning(
+                "setsockopt SO_RCVTIMEO failed for '\(label, privacy: .public)': errno=\(errno, privacy: .public)")
         }
         if setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, optionSize) != 0 {
-            logger.warning("setsockopt SO_SNDTIMEO failed for '\(label, privacy: .public)': errno=\(errno, privacy: .public)")
+            logger.warning(
+                "setsockopt SO_SNDTIMEO failed for '\(label, privacy: .public)': errno=\(errno, privacy: .public)")
         }
     }
 }

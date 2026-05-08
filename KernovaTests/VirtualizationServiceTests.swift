@@ -6,7 +6,6 @@ import Virtualization
 @Suite("VirtualizationService Tests")
 @MainActor
 struct VirtualizationServiceTests {
-
     private let service = VirtualizationService()
 
     private func makeInstance(status: VMStatus = .stopped) -> VMInstance {

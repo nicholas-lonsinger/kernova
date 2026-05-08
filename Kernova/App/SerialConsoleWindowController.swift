@@ -10,7 +10,6 @@ import os
 /// the VM stops or enters an error state.
 @MainActor
 final class SerialConsoleWindowController: NSWindowController, NSWindowDelegate {
-
     private static let logger = Logger(subsystem: "com.kernova.app", category: "SerialConsoleWindowController")
 
     let instance: VMInstance
@@ -72,7 +71,9 @@ final class SerialConsoleWindowController: NSWindowController, NSWindowDelegate 
                 guard let self else { return }
                 let status = self.instance.status
                 if status == .stopped || status == .error {
-                    Self.logger.notice("Auto-closing serial console for VM '\(self.instance.name, privacy: .public)' (status: \(status.displayName, privacy: .public))")
+                    Self.logger.notice(
+                        "Auto-closing serial console for VM '\(self.instance.name, privacy: .public)' (status: \(status.displayName, privacy: .public))"
+                    )
                     self.window?.close()
                 }
             }

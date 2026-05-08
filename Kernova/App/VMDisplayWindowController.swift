@@ -11,7 +11,6 @@ import Virtualization
 /// `VZVirtualMachine`. On close the process reverses so the inline display re-appears.
 @MainActor
 final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
-
     let vmID: UUID
     private(set) var closedProgrammatically = false
     private(set) var lastDisplayID: CGDirectDisplayID?
@@ -24,7 +23,10 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
 
     private static let logger = Logger(subsystem: "com.kernova.app", category: "VMDisplayWindowController")
 
-    init(instance: VMInstance, enterFullscreen: Bool, onResume: @escaping () -> Void, onSaveConfiguration: @escaping () -> Void) {
+    init(
+        instance: VMInstance, enterFullscreen: Bool, onResume: @escaping () -> Void,
+        onSaveConfiguration: @escaping () -> Void
+    ) {
         self.vmID = instance.instanceID
         self.instance = instance
         self.toolbarManager = VMToolbarManager(
@@ -166,13 +168,11 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         }
         toolbarManager.updateToolbarItems(in: toolbar)
     }
-
 }
 
 // MARK: - NSToolbarDelegate
 
 extension VMDisplayWindowController: NSToolbarDelegate {
-
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [.flexibleSpace] + toolbarManager.sharedItemIdentifiers
     }

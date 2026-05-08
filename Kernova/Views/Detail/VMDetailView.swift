@@ -78,7 +78,9 @@ private struct LifecycleAlerts: ViewModifier {
                 }
                 Button("Cancel", role: .cancel) {}
             } message: { vm in
-                Text("\"\(vm.name)\" will be moved to the Trash. You can restore it using Finder's Put Back command. Empty the Trash to permanently delete the VM and reclaim disk space.")
+                Text(
+                    "\"\(vm.name)\" will be moved to the Trash. You can restore it using Finder's Put Back command. Empty the Trash to permanently delete the VM and reclaim disk space."
+                )
             }
             .alert(
                 viewModel.preparingInstanceToCancel?.preparingState?.operation.cancelAlertTitle ?? "",
@@ -112,9 +114,13 @@ private struct LifecycleAlerts: ViewModifier {
                 Button("Cancel", role: .cancel) {}
             } message: { vm in
                 if vm.isColdPaused {
-                    Text("\"\(vm.name)\" has its state saved to disk. Discarding will permanently delete the saved state.")
+                    Text(
+                        "\"\(vm.name)\" has its state saved to disk. Discarding will permanently delete the saved state."
+                    )
                 } else {
-                    Text("\"\(vm.name)\" will be immediately terminated. Any unsaved data inside the guest will be lost.")
+                    Text(
+                        "\"\(vm.name)\" will be immediately terminated. Any unsaved data inside the guest will be lost."
+                    )
                 }
             }
             .alert(
@@ -135,7 +141,9 @@ private struct LifecycleAlerts: ViewModifier {
                 }
                 Button("Cancel", role: .cancel) {}
             } message: { vm in
-                Text("\"\(vm.name)\" is paused and cannot be shut down directly. Resume it to send a graceful shutdown, or force stop to terminate it immediately (any unsaved data inside the guest will be lost).")
+                Text(
+                    "\"\(vm.name)\" is paused and cannot be shut down directly. Resume it to send a graceful shutdown, or force stop to terminate it immediately (any unsaved data inside the guest will be lost)."
+                )
             }
     }
 }

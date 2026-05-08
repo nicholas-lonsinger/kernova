@@ -42,7 +42,7 @@ struct BootConfigStep: View {
             filePickerRow(
                 label: "ISO Image",
                 path: creationVM.isoPath,
-                allowedTypes: [UTType(filenameExtension: "iso")!]
+                allowedTypes: [.iso]
             ) { url in
                 creationVM.isoPath = url.path
             }
@@ -71,10 +71,13 @@ struct BootConfigStep: View {
                 creationVM.initrdPath = url.path
             }
 
-            TextField("Kernel Command Line", text: Binding(
-                get: { creationVM.kernelCommandLine ?? "console=hvc0" },
-                set: { creationVM.kernelCommandLine = $0 }
-            ))
+            TextField(
+                "Kernel Command Line",
+                text: Binding(
+                    get: { creationVM.kernelCommandLine ?? "console=hvc0" },
+                    set: { creationVM.kernelCommandLine = $0 }
+                )
+            )
             .textFieldStyle(.roundedBorder)
         }
     }

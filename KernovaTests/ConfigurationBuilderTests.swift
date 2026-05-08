@@ -5,7 +5,6 @@ import Virtualization
 
 @Suite("ConfigurationBuilder Tests")
 struct ConfigurationBuilderTests {
-
     // MARK: - Helpers
 
     /// Creates a temp directory with a dummy disk image. Caller must `defer` removal of the returned URL.
@@ -40,7 +39,8 @@ struct ConfigurationBuilderTests {
             try builder.build(from: makeLinuxConfig(), bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
-                  case .diskImageNotFound = e else { return false }
+                case .diskImageNotFound = e
+            else { return false }
             return true
         }
     }
@@ -56,7 +56,8 @@ struct ConfigurationBuilderTests {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
-                  case .missingKernelPath = e else { return false }
+                case .missingKernelPath = e
+            else { return false }
             return true
         }
     }
@@ -91,7 +92,8 @@ struct ConfigurationBuilderTests {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
-                  case .sharedDirectoryNotFound = e else { return false }
+                case .sharedDirectoryNotFound = e
+            else { return false }
             return true
         }
     }
@@ -114,7 +116,8 @@ struct ConfigurationBuilderTests {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
-                  case .sharedDirectoryNotADirectory = e else { return false }
+                case .sharedDirectoryNotADirectory = e
+            else { return false }
             return true
         }
     }
@@ -127,8 +130,12 @@ struct ConfigurationBuilderTests {
         // Create a read-only directory
         let shareDir = bundleURL.appendingPathComponent("readonly-share")
         try FileManager.default.createDirectory(at: shareDir, withIntermediateDirectories: true)
-        try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: shareDir.path(percentEncoded: false))
-        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: shareDir.path(percentEncoded: false)) }
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o444], ofItemAtPath: shareDir.path(percentEncoded: false))
+        defer {
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o755], ofItemAtPath: shareDir.path(percentEncoded: false))
+        }
 
         let config = makeLinuxConfig(sharedDirectories: [
             SharedDirectory(path: shareDir.path(percentEncoded: false), readOnly: false)
@@ -139,7 +146,8 @@ struct ConfigurationBuilderTests {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
-                  case .sharedDirectoryNotWritable = e else { return false }
+                case .sharedDirectoryNotWritable = e
+            else { return false }
             return true
         }
     }
@@ -163,7 +171,8 @@ struct ConfigurationBuilderTests {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
-                  case .sharedDirectoryNotFound = e else { return false }
+                case .sharedDirectoryNotFound = e
+            else { return false }
             return true
         }
     }
@@ -188,7 +197,8 @@ struct ConfigurationBuilderTests {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
-                  case .sharedDirectoryNotADirectory = e else { return false }
+                case .sharedDirectoryNotADirectory = e
+            else { return false }
             return true
         }
     }
@@ -202,7 +212,8 @@ struct ConfigurationBuilderTests {
         let realDir = bundleURL.appendingPathComponent("real-share")
         try FileManager.default.createDirectory(at: realDir, withIntermediateDirectories: true)
         let symlinkPath = bundleURL.appendingPathComponent("link-to-share").path(percentEncoded: false)
-        try FileManager.default.createSymbolicLink(atPath: symlinkPath, withDestinationPath: realDir.path(percentEncoded: false))
+        try FileManager.default.createSymbolicLink(
+            atPath: symlinkPath, withDestinationPath: realDir.path(percentEncoded: false))
 
         let config = makeLinuxConfig(sharedDirectories: [
             SharedDirectory(path: symlinkPath, readOnly: true)
@@ -217,16 +228,16 @@ struct ConfigurationBuilderTests {
             switch error {
             // Path validation errors — these MUST NOT occur:
             case .sharedDirectoryNotFound, .sharedDirectoryNotADirectory,
-                 .sharedDirectoryNotReadable, .sharedDirectoryNotWritable,
-                 .kernelNotFound, .kernelPathIsDirectory,
-                 .initrdNotFound, .initrdPathIsDirectory,
-                 .discImageNotFound, .discImagePathIsDirectory, .discImageNotWritable,
-                 .additionalDiskNotFound, .additionalDiskPathIsDirectory, .additionalDiskNotWritable:
+                .sharedDirectoryNotReadable, .sharedDirectoryNotWritable,
+                .kernelNotFound, .kernelPathIsDirectory,
+                .initrdNotFound, .initrdPathIsDirectory,
+                .discImageNotFound, .discImagePathIsDirectory, .discImageNotWritable,
+                .additionalDiskNotFound, .additionalDiskPathIsDirectory, .additionalDiskNotWritable:
                 Issue.record("Unexpected path validation error: \(error)")
             // Non-path-validation errors — tolerated if they occur:
             case .macOSGuestRequiresAppleSilicon,
-                 .invalidHardwareModel, .invalidMachineIdentifier,
-                 .missingKernelPath, .diskImageNotFound:
+                .invalidHardwareModel, .invalidMachineIdentifier,
+                .missingKernelPath, .diskImageNotFound:
                 break
             }
         } catch {
@@ -249,7 +260,8 @@ struct ConfigurationBuilderTests {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
-                  case .kernelNotFound = e else { return false }
+                case .kernelNotFound = e
+            else { return false }
             return true
         }
     }
@@ -272,7 +284,8 @@ struct ConfigurationBuilderTests {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
-                  case .initrdNotFound = e else { return false }
+                case .initrdNotFound = e
+            else { return false }
             return true
         }
     }
@@ -292,7 +305,8 @@ struct ConfigurationBuilderTests {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
-                  case .discImageNotFound = e else { return false }
+                case .discImageNotFound = e
+            else { return false }
             return true
         }
     }
@@ -317,7 +331,8 @@ struct ConfigurationBuilderTests {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
-                  case .discImageNotWritable = e else { return false }
+                case .discImageNotWritable = e
+            else { return false }
             return true
         }
     }
@@ -339,7 +354,8 @@ struct ConfigurationBuilderTests {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
-                  case .additionalDiskNotFound = e else { return false }
+                case .additionalDiskNotFound = e
+            else { return false }
             return true
         }
     }
@@ -362,7 +378,8 @@ struct ConfigurationBuilderTests {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
-                  case .additionalDiskPathIsDirectory = e else { return false }
+                case .additionalDiskPathIsDirectory = e
+            else { return false }
             return true
         }
     }
@@ -387,7 +404,8 @@ struct ConfigurationBuilderTests {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
-                  case .additionalDiskNotWritable = e else { return false }
+                case .additionalDiskNotWritable = e
+            else { return false }
             return true
         }
     }
@@ -413,15 +431,15 @@ struct ConfigurationBuilderTests {
         } catch let error as ConfigurationBuilderError {
             switch error {
             case .sharedDirectoryNotFound, .sharedDirectoryNotADirectory,
-                 .sharedDirectoryNotReadable, .sharedDirectoryNotWritable,
-                 .kernelNotFound, .kernelPathIsDirectory,
-                 .initrdNotFound, .initrdPathIsDirectory,
-                 .discImageNotFound, .discImagePathIsDirectory, .discImageNotWritable,
-                 .additionalDiskNotFound, .additionalDiskPathIsDirectory, .additionalDiskNotWritable:
+                .sharedDirectoryNotReadable, .sharedDirectoryNotWritable,
+                .kernelNotFound, .kernelPathIsDirectory,
+                .initrdNotFound, .initrdPathIsDirectory,
+                .discImageNotFound, .discImagePathIsDirectory, .discImageNotWritable,
+                .additionalDiskNotFound, .additionalDiskPathIsDirectory, .additionalDiskNotWritable:
                 Issue.record("Unexpected path validation error: \(error)")
             case .macOSGuestRequiresAppleSilicon,
-                 .invalidHardwareModel, .invalidMachineIdentifier,
-                 .missingKernelPath, .diskImageNotFound:
+                .invalidHardwareModel, .invalidMachineIdentifier,
+                .missingKernelPath, .diskImageNotFound:
                 break
             }
         } catch {
@@ -437,8 +455,12 @@ struct ConfigurationBuilderTests {
         // Create a read-only directory
         let shareDir = bundleURL.appendingPathComponent("readonly-share")
         try FileManager.default.createDirectory(at: shareDir, withIntermediateDirectories: true)
-        try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: shareDir.path(percentEncoded: false))
-        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: shareDir.path(percentEncoded: false)) }
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o444], ofItemAtPath: shareDir.path(percentEncoded: false))
+        defer {
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o755], ofItemAtPath: shareDir.path(percentEncoded: false))
+        }
 
         let config = makeLinuxConfig(sharedDirectories: [
             SharedDirectory(path: shareDir.path(percentEncoded: false), readOnly: true)
@@ -453,16 +475,16 @@ struct ConfigurationBuilderTests {
             switch error {
             // Path validation errors — these MUST NOT occur:
             case .sharedDirectoryNotFound, .sharedDirectoryNotADirectory,
-                 .sharedDirectoryNotReadable, .sharedDirectoryNotWritable,
-                 .kernelNotFound, .kernelPathIsDirectory,
-                 .initrdNotFound, .initrdPathIsDirectory,
-                 .discImageNotFound, .discImagePathIsDirectory, .discImageNotWritable,
-                 .additionalDiskNotFound, .additionalDiskPathIsDirectory, .additionalDiskNotWritable:
+                .sharedDirectoryNotReadable, .sharedDirectoryNotWritable,
+                .kernelNotFound, .kernelPathIsDirectory,
+                .initrdNotFound, .initrdPathIsDirectory,
+                .discImageNotFound, .discImagePathIsDirectory, .discImageNotWritable,
+                .additionalDiskNotFound, .additionalDiskPathIsDirectory, .additionalDiskNotWritable:
                 Issue.record("Unexpected path validation error: \(error)")
             // Non-path-validation errors — tolerated if they occur:
             case .macOSGuestRequiresAppleSilicon,
-                 .invalidHardwareModel, .invalidMachineIdentifier,
-                 .missingKernelPath, .diskImageNotFound:
+                .invalidHardwareModel, .invalidMachineIdentifier,
+                .missingKernelPath, .diskImageNotFound:
                 break
             }
         } catch {
@@ -490,7 +512,8 @@ struct ConfigurationBuilderTests {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
-                  case .kernelNotFound = e else { return false }
+                case .kernelNotFound = e
+            else { return false }
             return true
         }
     }
@@ -517,7 +540,8 @@ struct ConfigurationBuilderTests {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
-                  case .initrdNotFound = e else { return false }
+                case .initrdNotFound = e
+            else { return false }
             return true
         }
     }
@@ -539,7 +563,8 @@ struct ConfigurationBuilderTests {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
-                  case .discImageNotFound = e else { return false }
+                case .discImageNotFound = e
+            else { return false }
             return true
         }
     }
@@ -562,7 +587,8 @@ struct ConfigurationBuilderTests {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
-                  case .kernelPathIsDirectory = e else { return false }
+                case .kernelPathIsDirectory = e
+            else { return false }
             return true
         }
     }
@@ -588,7 +614,8 @@ struct ConfigurationBuilderTests {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
-                  case .initrdPathIsDirectory = e else { return false }
+                case .initrdPathIsDirectory = e
+            else { return false }
             return true
         }
     }
@@ -609,7 +636,8 @@ struct ConfigurationBuilderTests {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
-                  case .discImagePathIsDirectory = e else { return false }
+                case .discImagePathIsDirectory = e
+            else { return false }
             return true
         }
     }
@@ -624,7 +652,8 @@ struct ConfigurationBuilderTests {
         let dirPath = bundleURL.appendingPathComponent("kernel-dir")
         try FileManager.default.createDirectory(at: dirPath, withIntermediateDirectories: true)
         let symlinkPath = bundleURL.appendingPathComponent("link-to-kernel-dir").path(percentEncoded: false)
-        try FileManager.default.createSymbolicLink(atPath: symlinkPath, withDestinationPath: dirPath.path(percentEncoded: false))
+        try FileManager.default.createSymbolicLink(
+            atPath: symlinkPath, withDestinationPath: dirPath.path(percentEncoded: false))
 
         var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .linuxKernel)
         config.kernelPath = symlinkPath
@@ -634,7 +663,8 @@ struct ConfigurationBuilderTests {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
-                  case .kernelPathIsDirectory = e else { return false }
+                case .kernelPathIsDirectory = e
+            else { return false }
             return true
         }
     }
@@ -651,7 +681,8 @@ struct ConfigurationBuilderTests {
         let dirPath = bundleURL.appendingPathComponent("initrd-dir")
         try FileManager.default.createDirectory(at: dirPath, withIntermediateDirectories: true)
         let symlinkPath = bundleURL.appendingPathComponent("link-to-initrd-dir").path(percentEncoded: false)
-        try FileManager.default.createSymbolicLink(atPath: symlinkPath, withDestinationPath: dirPath.path(percentEncoded: false))
+        try FileManager.default.createSymbolicLink(
+            atPath: symlinkPath, withDestinationPath: dirPath.path(percentEncoded: false))
 
         var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .linuxKernel)
         config.kernelPath = kernelPath
@@ -662,7 +693,8 @@ struct ConfigurationBuilderTests {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
-                  case .initrdPathIsDirectory = e else { return false }
+                case .initrdPathIsDirectory = e
+            else { return false }
             return true
         }
     }
@@ -675,7 +707,8 @@ struct ConfigurationBuilderTests {
         let dirPath = bundleURL.appendingPathComponent("iso-dir")
         try FileManager.default.createDirectory(at: dirPath, withIntermediateDirectories: true)
         let symlinkPath = bundleURL.appendingPathComponent("link-to-iso-dir").path(percentEncoded: false)
-        try FileManager.default.createSymbolicLink(atPath: symlinkPath, withDestinationPath: dirPath.path(percentEncoded: false))
+        try FileManager.default.createSymbolicLink(
+            atPath: symlinkPath, withDestinationPath: dirPath.path(percentEncoded: false))
 
         var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
         config.discImagePath = symlinkPath
@@ -685,7 +718,8 @@ struct ConfigurationBuilderTests {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
-                  case .discImagePathIsDirectory = e else { return false }
+                case .discImagePathIsDirectory = e
+            else { return false }
             return true
         }
     }
@@ -715,16 +749,16 @@ struct ConfigurationBuilderTests {
             switch error {
             // Path validation errors — these MUST NOT occur:
             case .sharedDirectoryNotFound, .sharedDirectoryNotADirectory,
-                 .sharedDirectoryNotReadable, .sharedDirectoryNotWritable,
-                 .kernelNotFound, .kernelPathIsDirectory,
-                 .initrdNotFound, .initrdPathIsDirectory,
-                 .discImageNotFound, .discImagePathIsDirectory, .discImageNotWritable,
-                 .additionalDiskNotFound, .additionalDiskPathIsDirectory, .additionalDiskNotWritable:
+                .sharedDirectoryNotReadable, .sharedDirectoryNotWritable,
+                .kernelNotFound, .kernelPathIsDirectory,
+                .initrdNotFound, .initrdPathIsDirectory,
+                .discImageNotFound, .discImagePathIsDirectory, .discImageNotWritable,
+                .additionalDiskNotFound, .additionalDiskPathIsDirectory, .additionalDiskNotWritable:
                 Issue.record("Unexpected path validation error: \(error)")
             // Non-path-validation errors — tolerated if they occur:
             case .macOSGuestRequiresAppleSilicon,
-                 .invalidHardwareModel, .invalidMachineIdentifier,
-                 .missingKernelPath, .diskImageNotFound:
+                .invalidHardwareModel, .invalidMachineIdentifier,
+                .missingKernelPath, .diskImageNotFound:
                 break
             }
         } catch {

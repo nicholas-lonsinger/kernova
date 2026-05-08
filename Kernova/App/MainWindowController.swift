@@ -6,7 +6,6 @@ import SwiftUI
 /// and an `NSToolbar` with native toolbar items. SwiftUI views render content inside each pane.
 @MainActor
 final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindowDelegate {
-
     private let viewModel: VMLibraryViewModel
     private let toolbarManager: VMToolbarManager
     private let splitViewController = NSSplitViewController()
@@ -202,7 +201,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         item.isBordered = true
         return item
     }
-
 }
 
 // MARK: - NSToolbarItemValidation
@@ -214,13 +212,14 @@ extension MainWindowController: NSToolbarItemValidation {
         }
 
         if item.itemIdentifier == Self.toolbarNewVM
-            || toolbarManager.sharedItemIdentifiers.contains(item.itemIdentifier) {
+            || toolbarManager.sharedItemIdentifiers.contains(item.itemIdentifier)
+        {
             // Group subitems are enabled/disabled directly in updateToolbarItems()
             return true
         }
 
-        Self.logger.debug("validateToolbarItem: unrecognized identifier '\(item.itemIdentifier.rawValue, privacy: .public)'")
+        Self.logger.debug(
+            "validateToolbarItem: unrecognized identifier '\(item.itemIdentifier.rawValue, privacy: .public)'")
         return true
     }
 }
-

@@ -8,7 +8,6 @@ import Cocoa
 /// `withObservationTracking`.
 @MainActor
 final class SerialConsoleContentViewController: NSViewController {
-
     private let instance: VMInstance
     private var textView: SerialTextView!
     private var scrollView: NSScrollView!
@@ -110,7 +109,8 @@ final class SerialConsoleContentViewController: NSViewController {
         }
 
         // Update status bar
-        statusCircle.layer?.backgroundColor = isConnected
+        statusCircle.layer?.backgroundColor =
+            isConnected
             ? NSColor.systemGreen.cgColor
             : NSColor.secondaryLabelColor.cgColor
         statusLabel.stringValue = isConnected ? "Connected" : "Disconnected"
@@ -200,7 +200,6 @@ final class SerialConsoleContentViewController: NSViewController {
 /// Custom `NSTextView` that intercepts keyboard input and forwards it
 /// to the guest VM's serial input pipe instead of editing the text buffer.
 final class SerialTextView: NSTextView {
-
     /// Closure called with raw input characters to send to the guest VM.
     var sendInput: ((String) -> Void)?
 

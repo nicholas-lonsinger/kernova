@@ -2,7 +2,6 @@ import Testing
 
 @Suite("KernovaLogMessage privacy redaction")
 struct KernovaLogMessageTests {
-
     // MARK: - .public
 
     @Test("public String interpolation renders cleartext in both local and wire forms")

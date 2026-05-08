@@ -9,7 +9,6 @@ import Foundation
 ///   operation is already suspended will trigger a precondition failure.
 @MainActor
 final class SuspendingMockVirtualizationService: VirtualizationProviding {
-
     /// When `true`, `start` will suspend. Set to `false` to allow subsequent calls through immediately.
     var shouldSuspendOnStart = true
 

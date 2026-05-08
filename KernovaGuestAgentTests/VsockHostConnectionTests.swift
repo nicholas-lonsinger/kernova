@@ -5,7 +5,6 @@ import KernovaProtocol
 
 @Suite("VsockHostConnection log buffer")
 struct VsockHostConnectionTests {
-
     // MARK: - Buffer helpers
 
     private func pendingLogCount(_ conn: VsockHostConnection) -> Int {
@@ -26,7 +25,7 @@ struct VsockHostConnectionTests {
     @Test("forwardLog buffers frames when no live channel is present")
     func buffersWhenNoChannel() {
         let conn = VsockHostConnection()
-        conn.setEnabled(true) // production agents are default-disabled until host policy enables them
+        conn.setEnabled(true)  // production agents are default-disabled until host policy enables them
 
         for i in 0..<5 {
             conn.forwardLog(level: .info, subsystem: "test", category: "test", message: "msg\(i)")

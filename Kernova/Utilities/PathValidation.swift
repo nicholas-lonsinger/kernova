@@ -6,7 +6,6 @@ import os
 /// Consolidates the resolve-symlinks → check-exists → check-type → check-permissions
 /// pattern used by `ConfigurationBuilder` and `USBDeviceService`.
 enum PathValidation {
-
     /// The result of resolving a path through symlinks.
     struct ResolvedPath: Sendable {
         let url: URL
@@ -18,7 +17,9 @@ enum PathValidation {
         /// Logs an info message when the path was a symlink, using the given context label.
         func logResolution(logger: Logger, context: String) {
             guard wasSymlink else { return }
-            logger.info("\(context, privacy: .public) path '\(originalPath, privacy: .public)' resolved to '\(resolvedPath, privacy: .public)'")
+            logger.info(
+                "\(context, privacy: .public) path '\(originalPath, privacy: .public)' resolved to '\(resolvedPath, privacy: .public)'"
+            )
         }
     }
 

@@ -103,8 +103,10 @@ struct VMSettingsView: View {
         HStack(spacing: 10) {
             Image(systemName: "lock.fill")
                 .foregroundStyle(.orange)
-            Text("Sections marked with \(Text(Image(systemName: "lock.fill")).foregroundStyle(.orange)) are locked while the VM is running. Stop the VM to change them. Other sections can be edited live.")
-                .font(.callout)
+            Text(
+                "Sections marked with \(Text(Image(systemName: "lock.fill")).foregroundStyle(.orange)) are locked while the VM is running. Stop the VM to change them. Other sections can be edited live."
+            )
+            .font(.callout)
             Spacer()
         }
         .padding(12)
@@ -153,7 +155,9 @@ struct VMSettingsView: View {
                         viewModel.cancelRename()
                     }
             } else {
-                Button { viewModel.renameVM(instance) } label: {
+                Button {
+                    viewModel.renameVM(instance)
+                } label: {
                     LabeledContent("Name") {
                         Text(instance.name)
                     }
@@ -163,7 +167,8 @@ struct VMSettingsView: View {
             }
             LabeledContent("Type", value: instance.configuration.guestOS.displayName)
             LabeledContent("Boot Mode", value: instance.configuration.bootMode.displayName)
-            LabeledContent("Created", value: instance.configuration.createdAt.formatted(date: .abbreviated, time: .shortened))
+            LabeledContent(
+                "Created", value: instance.configuration.createdAt.formatted(date: .abbreviated, time: .shortened))
         }
         .onChange(of: isRenaming) { _, renaming in
             if renaming {
@@ -221,16 +226,20 @@ struct VMSettingsView: View {
                 browseRemovableMedia()
             }
 
-            Text("Appears as a USB drive in the guest. Use for installer ISOs, recovery images, or file transfer. When read-only is off, changes are written back to the disk image file.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            Text(
+                "Appears as a USB drive in the guest. Use for installer ISOs, recovery images, or file transfer. When read-only is off, changes are written back to the disk image file."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
     }
 
     private func browseRemovableMedia() {
-        guard let url = NSOpenPanel.browseDiskImages(
-            message: "Select a disk image to attach to the VM"
-        ).first else { return }
+        guard
+            let url = NSOpenPanel.browseDiskImages(
+                message: "Select a disk image to attach to the VM"
+            ).first
+        else { return }
         instance.configuration.discImagePath = url.path(percentEncoded: false)
     }
 
@@ -293,9 +302,11 @@ struct VMSettingsView: View {
                 }
             }
 
-            Text("Storage disks provide high-performance persistent storage. They appear as block devices in the guest (e.g., /dev/vdb on Linux) and support TRIM for efficient space usage.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            Text(
+                "Storage disks provide high-performance persistent storage. They appear as block devices in the guest (e.g., /dev/vdb on Linux) and support TRIM for efficient space usage."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
 
             if instance.configuration.guestOS == .linux && !disks.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
@@ -391,7 +402,9 @@ struct VMSettingsView: View {
             LabeledContent {
                 HStack {
                     if let usage = instance.cachedDiskUsageBytes {
-                        Text("\(DataFormatters.formatBytes(usage)) (on disk) / \(DataFormatters.formatDiskSize(instance.configuration.diskSizeInGB)) (allocated)")
+                        Text(
+                            "\(DataFormatters.formatBytes(usage)) (on disk) / \(DataFormatters.formatDiskSize(instance.configuration.diskSizeInGB)) (allocated)"
+                        )
                     } else {
                         Text(DataFormatters.formatDiskSize(instance.configuration.diskSizeInGB))
                     }
@@ -449,8 +462,10 @@ struct VMSettingsView: View {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundStyle(.red)
 
-                        Text("Microphone permission is denied. Enable it in System Settings for Kernova to pass your microphone to VMs.")
-                            .font(.caption)
+                        Text(
+                            "Microphone permission is denied. Enable it in System Settings for Kernova to pass your microphone to VMs."
+                        )
+                        .font(.caption)
 
                         Spacer()
 
@@ -492,9 +507,11 @@ struct VMSettingsView: View {
                 "Forward guest logs",
                 isOn: $instance.configuration.agentLogForwardingEnabled
             )
-            Text("Streams `os.Logger` records from the macOS guest agent to the host so they appear in Console.app under `com.kernova.guest`. Off by default; can be toggled while the VM is running.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            Text(
+                "Streams `os.Logger` records from the macOS guest agent to the host so they appear in Console.app under `com.kernova.guest`. Off by default; can be toggled while the VM is running."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
 
             Toggle(
                 "Show install reminder",
@@ -503,9 +520,11 @@ struct VMSettingsView: View {
                     set: { instance.configuration.agentInstallNudgeDismissed = !$0 }
                 )
             )
-            Text("Surfaces the install icon in the sidebar when the guest agent has not yet connected. Turn off to suppress the nudge for this VM. The more urgent indicators (update available, didn't reconnect, unresponsive) are not affected.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            Text(
+                "Surfaces the install icon in the sidebar when the guest agent has not yet connected. Turn off to suppress the nudge for this VM. The more urgent indicators (update available, didn't reconnect, unresponsive) are not affected."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
     }
 
@@ -513,9 +532,11 @@ struct VMSettingsView: View {
     private var clipboardSection: some View {
         Section("Clipboard") {
             Toggle("Clipboard Sharing", isOn: $instance.configuration.clipboardSharingEnabled)
-            Text("Exchanges clipboard text between host and guest. macOS guests use the bundled Kernova guest agent — Kernova will offer to install or update it from the clipboard window. Linux guests need spice-vdagent installed via the guest's package manager.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            Text(
+                "Exchanges clipboard text between host and guest. macOS guests use the bundled Kernova guest agent — Kernova will offer to install or update it from the clipboard window. Linux guests need spice-vdagent installed via the guest's package manager."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
             if isReadOnly && instance.configuration.guestOS == .linux {
                 Text("Takes effect on next start — Linux guests configure SPICE at VM start time.")
                     .font(.caption)
@@ -572,9 +593,11 @@ struct VMSettingsView: View {
             }
 
             if instance.configuration.guestOS == .linux {
-                Text("Shared directories are available as virtiofs mounts in the guest. Mount them with `mount -t virtiofs <tag> <mountpoint>`.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text(
+                    "Shared directories are available as virtiofs mounts in the guest. Mount them with `mount -t virtiofs <tag> <mountpoint>`."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
                 if !directories.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Mount in guest:")
@@ -595,9 +618,11 @@ struct VMSettingsView: View {
             }
 
             if !directories.isEmpty {
-                Text("Note: File sharing uses VirtioFS which has known framework limitations — files may intermittently appear missing, and permission mapping between host and guest can differ.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text(
+                    "Note: File sharing uses VirtioFS which has known framework limitations — files may intermittently appear missing, and permission mapping between host and guest can differ."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
         } header: {
             lockableHeader("Shared Directories")
@@ -632,7 +657,9 @@ struct VMSettingsView: View {
             Text("Disk Size")
                 .font(.headline)
 
-            Text("This VM uses a fixed-size ASIF (Apple Sparse Image Format) disk. The image only consumes physical disk space as data is written.")
+            Text(
+                "This VM uses a fixed-size ASIF (Apple Sparse Image Format) disk. The image only consumes physical disk space as data is written."
+            )
 
             Divider()
 

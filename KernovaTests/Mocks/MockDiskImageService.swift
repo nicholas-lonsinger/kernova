@@ -3,7 +3,6 @@ import Foundation
 
 /// No-op mock for `DiskImageProviding` that tracks calls without creating real disk images.
 final class MockDiskImageService: DiskImageProviding, @unchecked Sendable {
-
     var createDiskImageCallCount = 0
     var lastCreatedSizeInGB: Int?
 

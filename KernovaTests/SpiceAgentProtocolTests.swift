@@ -4,7 +4,6 @@ import Foundation
 
 @Suite("SpiceAgentProtocol Tests")
 struct SpiceAgentProtocolTests {
-
     // MARK: - VDI Chunk Header
 
     @Test("VDI chunk header serializes and deserializes correctly")
@@ -68,8 +67,8 @@ struct SpiceAgentProtocolTests {
         let data = header.serialize()
 
         // First 4 bytes should be protocol = 1 (little-endian)
-        let protocol_ = data.readLittleEndianUInt32(at: 0)
-        #expect(protocol_ == 1)
+        let protocolVersion = data.readLittleEndianUInt32(at: 0)
+        #expect(protocolVersion == 1)
     }
 
     @Test("VDAgent message header deserialization fails for unknown type")
@@ -178,12 +177,14 @@ struct SpiceAgentProtocolTests {
         caps |= 1 << UInt32(SpiceAgentCapability.clipboard.rawValue)
         caps |= 1 << UInt32(SpiceAgentCapability.clipboardByDemand.rawValue)
 
-        let message = buildGuestMessage(type: .announceCapabilities, payload: {
-            var data = Data()
-            data.appendLittleEndian(UInt32(1)) // request = true
-            data.appendLittleEndian(caps)
-            return data
-        }())
+        let message = buildGuestMessage(
+            type: .announceCapabilities,
+            payload: {
+                var data = Data()
+                data.appendLittleEndian(UInt32(1))  // request = true
+                data.appendLittleEndian(caps)
+                return data
+            }())
 
         var parser = SpiceAgentParser()
         let results = parser.feed(message)
@@ -386,11 +387,12 @@ struct SpiceAgentProtocolTests {
         }
     }
 
-    @Test("Parser returns malformedChunk for invalid payloads",
-          arguments: [
-              Data(repeating: 0, count: 4),  // truncated: needs 20 bytes, only 4
-              Data(),                          // empty payload
-          ])
+    @Test(
+        "Parser returns malformedChunk for invalid payloads",
+        arguments: [
+            Data(repeating: 0, count: 4),  // truncated: needs 20 bytes, only 4
+            Data(),  // empty payload
+        ])
     func malformedPayloadReturnsMalformed(payload: Data) {
         var parser = SpiceAgentParser()
 

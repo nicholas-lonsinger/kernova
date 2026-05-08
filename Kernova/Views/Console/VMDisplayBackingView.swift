@@ -8,7 +8,6 @@ import Virtualization
 /// bridging — `VZVirtualMachineView` stays entirely in AppKit.
 @MainActor
 final class VMDisplayBackingView: NSView {
-
     private(set) var machineView: VZVirtualMachineView = {
         let view = VZVirtualMachineView()
         view.capturesSystemKeys = true

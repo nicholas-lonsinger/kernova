@@ -47,7 +47,7 @@ enum VMGuestOS: String, Codable, CaseIterable, Sendable {
     /// All offered disk sizes in GB, matching bundled ASIF templates.
     static let allDiskSizes = [
         10, 15, 20, 25, 50, 75, 100, 125, 150, 175, 200, 225, 250,
-        500, 750, 1000, 1500, 2000, 2500, 3000, 3500, 4000
+        500, 750, 1000, 1500, 2000, 2500, 3000, 3500, 4000,
     ]
 
     /// The disk sizes available for this guest OS, filtered by minimum.

@@ -10,7 +10,6 @@ import os
 /// disconnect or local teardown).
 @MainActor
 final class VsockGuestLogService {
-
     private static let logger = Logger(subsystem: "com.kernova.app", category: "VsockGuestLogService")
 
     private let channel: VsockChannel
@@ -68,7 +67,9 @@ final class VsockGuestLogService {
             }
             logger.info("Guest log channel closed for '\(label, privacy: .public)'")
         } catch {
-            logger.warning("Guest log channel ended with error for '\(label, privacy: .public)': \(error.localizedDescription, privacy: .public)")
+            logger.warning(
+                "Guest log channel ended with error for '\(label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
         }
     }
 
@@ -114,7 +115,6 @@ protocol GuestLogEmitter: Sendable {
 /// the closest matching host log level, with the guest's subsystem and
 /// category preserved in the message body.
 struct OSLogGuestLogEmitter: GuestLogEmitter {
-
     private let logger: Logger
 
     init(label: String) {

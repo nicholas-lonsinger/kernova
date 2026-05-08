@@ -4,7 +4,6 @@ import Foundation
 
 @Suite("MacOSInstallState Tests")
 struct MacOSInstallStateTests {
-
     // MARK: - Initial State
 
     @Test("Initial state with download step starts in downloading phase")
@@ -72,11 +71,12 @@ struct MacOSInstallStateTests {
             currentPhase: .downloading(.zero)
         )
 
-        state.currentPhase = .downloading(DownloadProgress(
-            bytesWritten: 500_000,
-            totalBytes: 1_000_000,
-            bytesPerSecond: 42_500_000
-        ))
+        state.currentPhase = .downloading(
+            DownloadProgress(
+                bytesWritten: 500_000,
+                totalBytes: 1_000_000,
+                bytesPerSecond: 42_500_000
+            ))
 
         if case .downloading(let dl) = state.currentPhase {
             #expect(dl.fraction == 0.5)

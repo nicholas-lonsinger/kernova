@@ -14,7 +14,6 @@ import os
 /// frames are buffered in a bounded ring (oldest dropped first) and flushed
 /// once the next connection comes up.
 final class VsockHostConnection: @unchecked Sendable {
-
     private static let logger = Logger(subsystem: "com.kernova.agent", category: "VsockHostConnection")
 
     /// Maximum number of `LogRecord` frames buffered while the channel is
@@ -157,7 +156,8 @@ final class VsockHostConnection: @unchecked Sendable {
                     )
                     continue
                 }
-                Self.logger.debug("Received inbound vsock frame (type: \(String(describing: frame.payload), privacy: .public))")
+                Self.logger.debug(
+                    "Received inbound vsock frame (type: \(String(describing: frame.payload), privacy: .public))")
             }
             Self.logger.notice("Vsock channel closed by host")
         } catch {
@@ -193,5 +193,4 @@ final class VsockHostConnection: @unchecked Sendable {
         }
         Self.logger.debug("Flushed \(drained.count, privacy: .public) buffered log frame(s)")
     }
-
 }

@@ -9,7 +9,6 @@ import os
 /// - macOS-specific files: `AuxiliaryStorage`, `HardwareModel`, `MachineIdentifier`
 /// - Optional: `SaveFile.vzvmsave`
 struct VMStorageService: Sendable {
-
     private static let logger = Logger(subsystem: "com.kernova.app", category: "VMStorageService")
 
     static let bundleExtension = "kernova"
@@ -25,7 +24,8 @@ struct VMStorageService: Sendable {
                 appropriateFor: nil,
                 create: true
             )
-            let vmsDir = appSupport
+            let vmsDir =
+                appSupport
                 .appendingPathComponent("Kernova", isDirectory: true)
                 .appendingPathComponent("VMs", isDirectory: true)
 
@@ -77,7 +77,9 @@ struct VMStorageService: Sendable {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let data = try encoder.encode(configuration)
         try data.write(to: configURL, options: .atomic)
-        Self.logger.info("Saved configuration for VM '\(configuration.name, privacy: .public)' to \(bundleURL.lastPathComponent, privacy: .public)")
+        Self.logger.info(
+            "Saved configuration for VM '\(configuration.name, privacy: .public)' to \(bundleURL.lastPathComponent, privacy: .public)"
+        )
     }
 
     /// Creates a new VM bundle directory and saves the initial configuration.
@@ -91,12 +93,16 @@ struct VMStorageService: Sendable {
         try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
         try saveConfiguration(configuration, to: bundle)
 
-        Self.logger.notice("Created VM bundle for '\(configuration.name, privacy: .public)' at \(bundle.lastPathComponent, privacy: .public)")
+        Self.logger.notice(
+            "Created VM bundle for '\(configuration.name, privacy: .public)' at \(bundle.lastPathComponent, privacy: .public)"
+        )
         return bundle
     }
 
     /// Clones a VM bundle by creating a new bundle directory and copying specified files.
-    func cloneVMBundle(from sourceBundleURL: URL, newConfiguration: VMConfiguration, filesToCopy: [String]) throws -> URL {
+    func cloneVMBundle(from sourceBundleURL: URL, newConfiguration: VMConfiguration, filesToCopy: [String]) throws
+        -> URL
+    {
         let destinationBundle = try bundleURL(for: newConfiguration)
 
         if FileManager.default.fileExists(atPath: destinationBundle.path(percentEncoded: false)) {
@@ -116,7 +122,9 @@ struct VMStorageService: Sendable {
 
         try saveConfiguration(newConfiguration, to: destinationBundle)
 
-        Self.logger.notice("Cloned VM bundle from '\(sourceBundleURL.lastPathComponent, privacy: .public)' to '\(destinationBundle.lastPathComponent, privacy: .public)'")
+        Self.logger.notice(
+            "Cloned VM bundle from '\(sourceBundleURL.lastPathComponent, privacy: .public)' to '\(destinationBundle.lastPathComponent, privacy: .public)'"
+        )
         return destinationBundle
     }
 
@@ -128,7 +136,6 @@ struct VMStorageService: Sendable {
         try FileManager.default.trashItem(at: bundleURL, resultingItemURL: nil)
         Self.logger.notice("Moved VM bundle to Trash: \(bundleURL.lastPathComponent, privacy: .public)")
     }
-
 }
 
 // MARK: - VMStorageProviding

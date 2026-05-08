@@ -30,7 +30,6 @@ enum IPSWSource: Sendable {
 @MainActor
 @Observable
 final class VMCreationViewModel {
-
     // MARK: - Wizard State
 
     var currentStep: VMCreationStep = .osSelection
@@ -149,14 +148,16 @@ final class VMCreationViewModel {
     private var nextStep: VMCreationStep? {
         let allSteps = VMCreationStep.allCases
         guard let currentIndex = allSteps.firstIndex(of: currentStep),
-              currentIndex + 1 < allSteps.count else { return nil }
+            currentIndex + 1 < allSteps.count
+        else { return nil }
         return allSteps[currentIndex + 1]
     }
 
     private var previousStep: VMCreationStep? {
         let allSteps = VMCreationStep.allCases
         guard let currentIndex = allSteps.firstIndex(of: currentStep),
-              currentIndex > 0 else { return nil }
+            currentIndex > 0
+        else { return nil }
         return allSteps[currentIndex - 1]
     }
 
@@ -204,12 +205,14 @@ final class VMCreationViewModel {
         let bootMode = effectiveBootMode
 
         // Generate a stable MAC address so save/restore uses a consistent config
-        let macAddress: String? = networkEnabled
+        let macAddress: String? =
+            networkEnabled
             ? VZMACAddress.randomLocallyAdministered().string
             : nil
 
         // For EFI/Linux VMs, generate a stable machine identifier
-        let genericMachineIdentifierData: Data? = (bootMode == .efi || bootMode == .linuxKernel)
+        let genericMachineIdentifierData: Data? =
+            (bootMode == .efi || bootMode == .linuxKernel)
             ? VZGenericMachineIdentifier().dataRepresentation
             : nil
 

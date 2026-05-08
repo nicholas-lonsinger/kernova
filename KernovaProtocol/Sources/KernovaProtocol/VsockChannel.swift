@@ -30,7 +30,6 @@ public typealias Frame = Kernova_V1_Frame
 /// The lock-based design lets either side call `send` from any context and
 /// drain `incoming` from any task without isolation hops.
 public final class VsockChannel: @unchecked Sendable {
-
     /// Inbound frames. The stream finishes on EOF and finishes-with-error on
     /// any framing or decoding failure.
     public let incoming: AsyncThrowingStream<Frame, Error>
@@ -220,6 +219,9 @@ extension VsockChannel {
     ///   - inReplyTo: optional ref to the request type this error replies to,
     ///     e.g. `"clipboard.request"`. When `nil`, the field is omitted from
     ///     the encoded frame and `hasInReplyTo` reads `false` on the receiving side.
+    /// - Throws: forwards any error from ``send(_:)`` — typically
+    ///   ``VsockChannelError/closed`` if the channel is closed, or
+    ///   ``VsockChannelError/write(_:)`` if the underlying `FileHandle.write` fails.
     public func sendErrorFrame(code: String, message: String, inReplyTo: String?) throws {
         var frame = Frame()
         frame.protocolVersion = 1
