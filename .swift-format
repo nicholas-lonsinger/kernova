@@ -1,0 +1,23 @@
+{
+    "version": 1,
+    "indentation": { "spaces": 4 },
+    "indentConditionalCompilationBlocks": false,
+    "lineLength": 120,
+    "maximumBlankLines": 1,
+    "respectsExistingLineBreaks": true,
+    "lineBreakBeforeControlFlowKeywords": false,
+    "lineBreakBeforeEachArgument": false,
+    "spacesBeforeEndOfLineComments": 2,
+    "tabWidth": 4,
+    "rules": {
+        "AllPublicDeclarationsHaveDocumentation": false,
+        "AlwaysUseLowerCamelCase": false,
+        "BeginDocumentationCommentWithOneLineSummary": false,
+        "DontRepeatTypeInStaticProperties": false,
+        "FileScopedDeclarationPrivacy": false,
+        "NoAccessLevelOnExtensionDeclaration": false,
+        "NoBlockComments": false,
+        "UseSynthesizedInitializer": false,
+        "ValidateDocumentationComments": false
+    }
+}

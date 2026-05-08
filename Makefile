@@ -14,8 +14,13 @@ XCODEBUILD_FLAGS := -project $(PROJECT) \
                     -destination '$(DESTINATION)' \
                     -derivedDataPath $(DERIVED_DATA)
 
+# swift-format ships with the Xcode toolchain (Xcode 26+); use xcrun so the
+# command resolves the same binary in CI and locally without a brew install.
+SWIFT_FORMAT      := xcrun swift-format
+SWIFT_SOURCE_DIRS := Kernova KernovaTests KernovaGuestAgent KernovaGuestAgentTests KernovaProtocol KernovaRelaunchHelper
+
 .DEFAULT_GOAL := help
-.PHONY: help build test test-suite clean
+.PHONY: help build test test-suite clean format lint
 
 help:
 	@printf 'Kernova build targets:\n\n'
@@ -23,6 +28,8 @@ help:
 	@printf '  make test                Run the full test suite\n'
 	@printf '  make test-suite SUITE=X  Run a single test suite (Target/Suite form)\n'
 	@printf '                           (e.g. SUITE=KernovaTests/VMConfigurationTests)\n'
+	@printf '  make format              Rewrite Swift sources in place via swift-format\n'
+	@printf '  make lint                Check Swift sources with swift-format (--strict)\n'
 	@printf '  make clean               Remove the DerivedData directory\n'
 
 build:
@@ -38,6 +45,12 @@ test-suite:
 		exit 2; \
 	fi
 	xcodebuild $(XCODEBUILD_FLAGS) test -only-testing:$(SUITE)
+
+format:
+	$(SWIFT_FORMAT) format --in-place --parallel --recursive $(SWIFT_SOURCE_DIRS)
+
+lint:
+	$(SWIFT_FORMAT) lint --strict --parallel --recursive $(SWIFT_SOURCE_DIRS)
 
 clean:
 	rm -rf $(DERIVED_DATA)
