@@ -63,6 +63,13 @@ jobs:
             COMPILER_INDEX_STORE_ENABLE=NO \
             2>&1 | if command -v xcbeautify &>/dev/null; then xcbeautify --renderer github-actions; else cat; fi
 
+      # The Kernova scheme's xcodebuild test pass does not exercise the
+      # KernovaProtocol SwiftPM package's own test target. Run it directly so
+      # KernovaProtocolTests is gated by CI alongside the project suites.
+      # See issue #215.
+      - name: Test KernovaProtocol package
+        run: xcrun swift test --package-path KernovaProtocol
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v6
