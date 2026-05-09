@@ -30,34 +30,10 @@
       shouldUseLaunchSchemeArgsEnv = "YES">
       <TestPlans>
          <TestPlanReference
-            reference = "container:Kernova.xctestplan"
+            reference = "container:Kernova.xcodeproj/xcshareddata/xctestplans/Kernova.xctestplan"
             default = "YES">
          </TestPlanReference>
       </TestPlans>
-      <Testables>
-         <TestableReference
-            skipped = "NO"
-            parallelizable = "YES">
-            <BuildableReference
-               BuildableIdentifier = "primary"
-               BlueprintIdentifier = "A1000060"
-               BuildableName = "KernovaTests.xctest"
-               BlueprintName = "KernovaTests"
-               ReferencedContainer = "container:Kernova.xcodeproj">
-            </BuildableReference>
-         </TestableReference>
-         <TestableReference
-            skipped = "NO"
-            parallelizable = "NO">
-            <BuildableReference
-               BuildableIdentifier = "primary"
-               BlueprintIdentifier = "A1000303"
-               BuildableName = "KernovaGuestAgentTests.xctest"
-               BlueprintName = "KernovaGuestAgentTests"
-               ReferencedContainer = "container:Kernova.xcodeproj">
-            </BuildableReference>
-         </TestableReference>
-      </Testables>
    </TestAction>
    <LaunchAction
       buildConfiguration = "Debug"

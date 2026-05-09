@@ -67,7 +67,6 @@
 		A1000200 /* KernovaGuestAgent */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = KernovaGuestAgent; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000300 /* KernovaGuestAgentTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KernovaGuestAgentTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B62FC33F2FAFDBB1003775B7 /* KernovaProtocol */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = KernovaProtocol; sourceTree = "<group>"; };
-		B62FC3402FAFDCB3003775B7 /* Kernova.xctestplan */ = {isa = PBXFileReference; lastKnownFileType = text; path = Kernova.xctestplan; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -170,7 +169,6 @@
 		A1000020 = {
 			isa = PBXGroup;
 			children = (
-				B62FC3402FAFDCB3003775B7 /* Kernova.xctestplan */,
 				A1000006 /* Kernova */,
 				A1000007 /* KernovaTests */,
 				A1000101 /* KernovaRelaunchHelper */,
