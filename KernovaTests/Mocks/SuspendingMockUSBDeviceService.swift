@@ -2,6 +2,7 @@ import Foundation
 @testable import Kernova
 
 /// A mock USB device service whose `attach` method suspends until explicitly resumed.
+///
 /// Used to test the rapid-double-click mount mutex in `VMLibraryViewModel`.
 ///
 /// - Important: Only **one** operation can be suspended at a time. The mock stores a
@@ -9,7 +10,9 @@ import Foundation
 ///   operation is already suspended will trigger a precondition failure.
 @MainActor
 final class SuspendingMockUSBDeviceService: USBDeviceProviding {
-    /// When `true`, `attach` will suspend. Set to `false` to allow subsequent calls through immediately.
+    /// When `true`, `attach` will suspend.
+    ///
+    /// Set to `false` to allow subsequent calls through immediately.
     var shouldSuspendOnAttach = true
 
     var attachCallCount = 0

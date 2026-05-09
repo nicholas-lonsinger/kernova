@@ -3,7 +3,9 @@ import Testing
 
 /// Unit tests for `AgentStatus.synthesize(...)` — the pure function that
 /// folds the upstream service value, persisted host context, and live-
-/// session flag into the final UI-facing `AgentStatus`. The function is
+/// session flag into the final UI-facing `AgentStatus`.
+///
+/// The function is
 /// extracted from `VMInstance.agentStatus` specifically to make this logic
 /// testable without standing up a `VZVirtualMachine`.
 @Suite("AgentStatus.synthesize")

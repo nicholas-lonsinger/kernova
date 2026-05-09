@@ -22,6 +22,7 @@ struct VsockClipboardServiceTests {
     }
 
     /// MainActor-isolated buffer fed by a single iterator on the channel.
+    ///
     /// Tests that need both "expect frame" and "expect no frame" assertions
     /// against the same channel must not hand-roll iterators per call —
     /// `AsyncThrowingStream` is single-consumer and cancelling an iterator
@@ -61,6 +62,7 @@ struct VsockClipboardServiceTests {
     }
 
     /// Sleeps `duration` then asserts no frames arrived since `before`.
+    ///
     /// Used in suppression tests where we want to prove a `grabIfChanged()`
     /// call produced *no* wire traffic, not just "fewer than the next two".
     private func expectNoNewFrames(

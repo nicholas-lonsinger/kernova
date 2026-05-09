@@ -585,8 +585,9 @@ struct VMInstanceTests {
     //   - No Hello arrives during the grace window.
     // Tests inject a millisecond-scale grace so the suite stays fast.
 
-    /// Builds a macOS VMInstance with a known `lastSeenAgentVersion`. The
-    /// caller is responsible for explicitly clearing the watchdog if needed
+    /// Builds a macOS VMInstance with a known `lastSeenAgentVersion`.
+    ///
+    /// The caller is responsible for explicitly clearing the watchdog if needed
     /// across tests.
     private func makeMacOSInstanceWithAgentInstalled(
         lastSeen: String = "0.9.2",

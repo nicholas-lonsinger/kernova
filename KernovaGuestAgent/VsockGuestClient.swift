@@ -68,14 +68,18 @@ final class VsockGuestClient: @unchecked Sendable {
     private var stopped = false
 
     /// When `true`, the reconnect loop skips connect attempts and waits for
-    /// `resume()`. Distinct from `stopped` — pause is reversible, stop is
+    /// `resume()`.
+    ///
+    /// Distinct from `stopped` — pause is reversible, stop is
     /// terminal. Used by higher-level agents to honor host policy updates
     /// (e.g., log forwarding disabled → pause the client → no connects).
     private var paused = false
 
     // MARK: - Init
 
-    /// Creates a client for the given port. Pass a custom `socketProvider` and
+    /// Creates a client for the given port.
+    ///
+    /// Pass a custom `socketProvider` and
     /// `retryInterval` in tests; production callers can use the defaults.
     init(
         port: UInt32,
@@ -94,7 +98,9 @@ final class VsockGuestClient: @unchecked Sendable {
 
     // MARK: - Lifecycle
 
-    /// Begins the connect/serve/reconnect loop. Idempotent — repeated calls
+    /// Begins the connect/serve/reconnect loop.
+    ///
+    /// Idempotent — repeated calls
     /// after the first are no-ops. Once stopped (or permanently terminated by a
     /// permanent provider failure), the client cannot be restarted; create a
     /// new instance.
@@ -108,6 +114,7 @@ final class VsockGuestClient: @unchecked Sendable {
     }
 
     /// Pauses the reconnect loop and tears down any active channel.
+    ///
     /// Subsequent reconnect attempts are skipped until `resume()` is called.
     /// Idempotent. Distinct from `stop()` — pause is reversible.
     func pause() {
@@ -120,13 +127,17 @@ final class VsockGuestClient: @unchecked Sendable {
         ch?.close()
     }
 
-    /// Resumes the reconnect loop after `pause()`. The next reconnect attempt
+    /// Resumes the reconnect loop after `pause()`.
+    ///
+    /// The next reconnect attempt
     /// happens within `retryInterval`. Idempotent.
     func resume() {
         lock.withLock { paused = false }
     }
 
-    /// Stops the loop and tears down any active channel. Subsequent `start`
+    /// Stops the loop and tears down any active channel.
+    ///
+    /// Subsequent `start`
     /// calls are no-ops.
     func stop() {
         let (task, ch): (Task<Void, Never>?, VsockChannel?) = lock.withLock {
@@ -141,7 +152,9 @@ final class VsockGuestClient: @unchecked Sendable {
         ch?.close()
     }
 
-    /// Currently-attached channel, or nil. Useful for callers that need to
+    /// Currently-attached channel, or nil.
+    ///
+    /// Useful for callers that need to
     /// peek for synchronous best-effort sends (e.g. log forwarding) without
     /// owning the loop.
     var liveChannel: VsockChannel? {
@@ -324,7 +337,9 @@ final class VsockGuestClient: @unchecked Sendable {
     }
 
     /// Waits up to `connectTimeoutSeconds` for an in-flight non-blocking connect
-    /// to complete on `fd`. Returns true on success, false on timeout, poll
+    /// to complete on `fd`.
+    ///
+    /// Returns true on success, false on timeout, poll
     /// error, or a deferred connect error. Caller owns `fd` on both paths and
     /// must `close()` it on false return — this helper does not assume ownership.
     private static func awaitConnectCompletion(fd: Int32, label: String, port: UInt32) -> Bool {

@@ -7,7 +7,9 @@ import Foundation
 struct SpiceClipboardServiceTests {
     // MARK: - Helpers
 
-    /// Creates a fresh service with connected pipes. The input pipe's read end
+    /// Creates a fresh service with connected pipes.
+    ///
+    /// The input pipe's read end
     /// is set to non-blocking so `drainPipe` returns immediately when empty.
     private func makeService() -> (service: SpiceClipboardService, inputPipe: Pipe, outputPipe: Pipe) {
         let inputPipe = Pipe()

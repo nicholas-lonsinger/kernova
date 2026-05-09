@@ -10,7 +10,9 @@ final class SystemSleepWatcher {
     private static let logger = Logger(subsystem: "com.kernova.app", category: "SystemSleepWatcher")
 
     /// `nonisolated(unsafe)` because `NSObjectProtocol` observer tokens are not `Sendable`
-    /// and we need to remove them in `deinit` (which is nonisolated). Safe because they are
+    /// and we need to remove them in `deinit` (which is nonisolated).
+    ///
+    /// Safe because they are
     /// only written in `start()` and read in `deinit`.
     nonisolated(unsafe) private var sleepObserver: (any NSObjectProtocol)?
     nonisolated(unsafe) private var wakeObserver: (any NSObjectProtocol)?

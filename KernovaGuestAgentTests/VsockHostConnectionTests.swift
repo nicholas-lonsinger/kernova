@@ -123,8 +123,9 @@ struct VsockHostConnectionTests {
     // MARK: - flushPendingLogs: partial failure re-enqueue (Critical #1)
 
     /// Verifies the interesting bug-prone path: some frames are successfully
-    /// sent, then send fails mid-flush. The unflushed remainder must be
-    /// re-enqueued in order at the front of the buffer.
+    /// sent, then send fails mid-flush.
+    ///
+    /// The unflushed remainder must be re-enqueued in order at the front of the buffer.
     ///
     /// Technique: set a tiny SO_SNDBUF on the sender fd so the kernel buffer
     /// fills after a few frames, causing the N-th write to fail. Then close

@@ -5,6 +5,7 @@ import Foundation
 @Suite("VMConfiguration Tests")
 struct VMConfigurationTests {
     /// Builds a complete `VMConfiguration` JSON string with all required fields populated.
+    ///
     /// Pass extra comma-separated JSON fields via `extraFields` to add or override entries.
     private static func makeBaseJSON(
         name: String = "Old VM",
@@ -753,7 +754,9 @@ struct VMConfigurationTests {
     // MARK: - Full-field round-trip
 
     /// Populates every property with a non-default value, encodes to JSON,
-    /// decodes back, and asserts equality. Tripwire for the custom
+    /// decodes back, and asserts equality.
+    ///
+    /// Tripwire for the custom
     /// `init(from:)`: if a new field is added to `VMConfiguration` but the
     /// decoder is not updated, the missed field will silently default-
     /// initialize on decode and the round-trip equality will fail.

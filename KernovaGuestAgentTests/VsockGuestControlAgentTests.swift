@@ -30,7 +30,9 @@ struct VsockGuestControlAgentTests {
         return frame
     }
 
-    /// Builds a single-fd-shot agent at small test cadences. The agent's
+    /// Builds a single-fd-shot agent at small test cadences.
+    ///
+    /// The agent's
     /// `client` provider hands `agentFd` on the first call, transient failure
     /// after — so reconnect tests must use a multi-fd provider explicitly.
     private func makeAgent(

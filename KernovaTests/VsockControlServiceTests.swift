@@ -14,7 +14,9 @@ struct VsockControlServiceTests {
         return (VsockChannel(fileDescriptor: a), VsockChannel(fileDescriptor: b))
     }
 
-    /// Builds a guest-side Hello frame with the given agent version. Tests use
+    /// Builds a guest-side Hello frame with the given agent version.
+    ///
+    /// Tests use
     /// this to drive the `agentStatus` numeric-comparison matrix.
     private func makeGuestHello(agentVersion: String) -> Frame {
         var frame = Frame()
@@ -38,13 +40,17 @@ struct VsockControlServiceTests {
         return frame
     }
 
-    /// Default test cadences. Small enough that liveness assertions don't
+    /// Default test cadences.
+    ///
+    /// Small enough that liveness assertions don't
     /// drag the suite, large enough to avoid scheduler-induced flakiness.
     private static let testHeartbeat: Duration = .milliseconds(40)
     private static let testUnresponsive: Duration = .milliseconds(160)
     private static let testTerminate: Duration = .milliseconds(400)
 
-    /// Builds a service with the test cadences applied. Caller decides
+    /// Builds a service with the test cadences applied.
+    ///
+    /// Caller decides
     /// `bundledAgentVersion`. The service is NOT started — caller invokes
     /// `start()` after wiring the recorder.
     private func makeService(
@@ -632,6 +638,7 @@ struct VsockControlServiceTests {
 }
 
 /// MainActor-isolated recorder for the `onAgentVersionObserved` closure.
+///
 /// Reference type so the observer's closure capture and the test's read site
 /// see the same buffer without `inout` shenanigans.
 @MainActor

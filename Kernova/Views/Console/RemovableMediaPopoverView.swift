@@ -1,6 +1,7 @@
 import SwiftUI
 
 /// Popover content for managing runtime USB mass storage devices on a running VM.
+///
 /// Shown from the "Removable Media" toolbar button.
 struct RemovableMediaPopoverView: View {
     @Bindable var instance: VMInstance

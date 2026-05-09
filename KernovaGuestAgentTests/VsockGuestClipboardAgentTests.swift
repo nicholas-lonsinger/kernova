@@ -6,7 +6,9 @@ import KernovaProtocol
 
 // MARK: - Fake Pasteboard
 
-/// In-memory `Pasteboard` substitute. Thread-safe via NSLock so tests running
+/// In-memory `Pasteboard` substitute.
+///
+/// Thread-safe via NSLock so tests running
 /// on DispatchQueue.main don't race the setup thread.
 final class FakePasteboard: Pasteboard, @unchecked Sendable {
     private let lock = NSLock()
@@ -23,7 +25,9 @@ final class FakePasteboard: Pasteboard, @unchecked Sendable {
     }
 
     /// Make the next `n` `setString` calls return `false` and skip storage
-    /// updates. Lets tests model OS-level pasteboard write failures.
+    /// updates.
+    ///
+    /// Lets tests model OS-level pasteboard write failures.
     func failNextSetString(times: Int = 1) {
         lock.withLock { storedSetStringFailureCount += times }
     }
@@ -61,8 +65,9 @@ struct VsockGuestClipboardAgentTests {
     // MARK: - Agent factory helpers
 
     /// Sets up an agent with the given pasteboard and a socket provider that
-    /// returns the given fd on first call, transient failure thereafter. The
-    /// short retry interval keeps the pause/resume wake-up snappy — the agent
+    /// returns the given fd on first call, transient failure thereafter.
+    ///
+    /// The short retry interval keeps the pause/resume wake-up snappy — the agent
     /// is now default-paused at construction, and `setEnabled(true)` only
     /// takes effect on the next loop iteration after the current sleep.
     private func makeAgent(pasteboard: FakePasteboard, agentFd: Int32) -> VsockGuestClipboardAgent {
@@ -79,7 +84,9 @@ struct VsockGuestClipboardAgentTests {
 
     /// Starts the agent, enables it (production agents are default-disabled
     /// until host policy says otherwise), and waits until `liveChannel` is
-    /// published on the main queue. After this returns, callers driving
+    /// published on the main queue.
+    ///
+    /// After this returns, callers driving
     /// `checkClipboardChange()` see a non-nil channel.
     private func startAgentAndWaitForLiveChannel(
         agent: VsockGuestClipboardAgent,

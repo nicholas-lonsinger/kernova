@@ -18,7 +18,9 @@ final class ObservationLoop {
         register()
     }
 
-    /// Stops the observation loop. Idempotent; safe to call multiple times.
+    /// Stops the observation loop.
+    ///
+    /// Idempotent; safe to call multiple times.
     func cancel() {
         isCancelled = true
     }

@@ -36,7 +36,9 @@ final class VsockGuestControlAgent: @unchecked Sendable {
     private let terminateAfter: Duration
     private let livenessTickInterval: Duration
 
-    /// Invoked on every inbound `PolicyUpdate`. The closure receives the raw
+    /// Invoked on every inbound `PolicyUpdate`.
+    ///
+    /// The closure receives the raw
     /// protobuf snapshot; main.swift wires it to `VsockHostConnection` and
     /// `VsockGuestClipboardAgent` so each capability honors host policy.
     private let onPolicy: (@Sendable (Kernova_V1_PolicyUpdate) -> Void)?
@@ -83,7 +85,9 @@ final class VsockGuestControlAgent: @unchecked Sendable {
 
     // MARK: - Lifecycle
 
-    /// Begins the connect/serve/reconnect loop. Idempotent.
+    /// Begins the connect/serve/reconnect loop.
+    ///
+    /// Idempotent.
     func start() {
         client.start { [weak self] channel in
             await self?.serve(channel: channel)

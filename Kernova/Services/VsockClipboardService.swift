@@ -22,12 +22,16 @@ import os
 final class VsockClipboardService: ClipboardServicing {
     // MARK: - Observable state
 
-    /// Bidirectional clipboard buffer. Set by the user (via the clipboard
+    /// Bidirectional clipboard buffer.
+    ///
+    /// Set by the user (via the clipboard
     /// window) to seed an outbound offer; updated when the guest sends
     /// fresh data.
     var clipboardText: String = ""
 
-    /// `true` once `start()` has been called. The clipboard channel is
+    /// `true` once `start()` has been called.
+    ///
+    /// The clipboard channel is
     /// established by `VsockListenerHost` accepting a connection — by the time
     /// this service is constructed the socket is up, so connectivity is
     /// equivalent to "started and not yet stopped". A separate liveness signal
@@ -50,20 +54,27 @@ final class VsockClipboardService: ClipboardServicing {
 
     private var consumeTask: Task<Void, Never>?
 
-    /// Counter for outbound offer generations. Starts at 1 so 0 can serve as
+    /// Counter for outbound offer generations.
+    ///
+    /// Starts at 1 so 0 can serve as
     /// "no pending request" sentinel for the inbound side.
     private var nextLocalGeneration: UInt64 = 1
 
-    /// The most recent offer we sent the guest. Held until the guest requests
+    /// The most recent offer we sent the guest.
+    ///
+    /// Held until the guest requests
     /// (or supersedes) it so we can answer `ClipboardRequest`.
     private var pendingOutbound: (generation: UInt64, text: String)?
 
-    /// The most recent offer the guest sent us that we asked to receive. We
-    /// track it so a delayed `ClipboardData` for an older offer can be
+    /// The most recent offer the guest sent us that we asked to receive.
+    ///
+    /// We track it so a delayed `ClipboardData` for an older offer can be
     /// dropped.
     private var pendingInboundGeneration: UInt64?
 
-    /// Last text we successfully announced. Skips redundant offers when
+    /// Last text we successfully announced.
+    ///
+    /// Skips redundant offers when
     /// `grabIfChanged()` is called repeatedly with the same content.
     private var lastGrabbedText: String?
 

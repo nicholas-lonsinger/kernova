@@ -27,6 +27,7 @@ final class VMLifecycleCoordinator {
     let usbDeviceService: any USBDeviceProviding
 
     /// Maps VM ID → operation token for VMs that currently have a lifecycle operation in flight.
+    ///
     /// The token allows `defer` blocks to avoid clobbering entries inserted by a later operation.
     private var activeOperations: [UUID: UUID] = [:]
 
@@ -63,6 +64,7 @@ final class VMLifecycleCoordinator {
     }
 
     /// Removes any active-operation tracking for the given VM.
+    ///
     /// Call when a VM is deleted to avoid stale entries in the dictionary.
     func clearActiveOperation(for instanceID: UUID) {
         activeOperations.removeValue(forKey: instanceID)
@@ -106,7 +108,9 @@ final class VMLifecycleCoordinator {
         }
     }
 
-    /// Requests a graceful stop. Bypasses serialization so users can always
+    /// Requests a graceful stop.
+    ///
+    /// Bypasses serialization so users can always
     /// interrupt an in-progress operation (e.g. a hung start). Clears the
     /// active-operation token *before* calling the service, invalidating any
     /// in-flight operation's defer guard.
@@ -115,7 +119,9 @@ final class VMLifecycleCoordinator {
         try virtualizationService.stop(instance)
     }
 
-    /// Immediately terminates the VM. Bypasses serialization so users can
+    /// Immediately terminates the VM.
+    ///
+    /// Bypasses serialization so users can
     /// always force-kill, even during another in-flight operation. Clears the
     /// active-operation token *before* calling the service, invalidating any
     /// in-flight operation's defer guard.
@@ -224,6 +230,7 @@ final class VMLifecycleCoordinator {
     // MARK: - USB Device Management
 
     /// Attaches a USB mass storage device to a running VM.
+    ///
     /// Does not use the lifecycle operation token — USB operations are short
     /// and independent of start/stop/save lifecycle transitions.
     func attachUSBDevice(diskImagePath: String, readOnly: Bool, to instance: VMInstance) async throws -> USBDeviceInfo {

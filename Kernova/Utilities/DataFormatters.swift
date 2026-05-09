@@ -14,6 +14,7 @@ enum DataFormatters {
     }
 
     /// Formats a byte count with fixed width for stable progress display (e.g., "861.900 MB").
+    ///
     /// Uses `%7.3f` padding so the numeric part is always 7 characters wide, preventing
     /// horizontal jitter as values change during downloads.
     static func formatBytesFixedWidth(_ bytes: UInt64) -> String {
@@ -37,6 +38,7 @@ enum DataFormatters {
     }
 
     /// Formats a download speed in bytes/second into a human-readable string (e.g., "42.5 MB/s").
+    ///
     /// Uses fixed-width formatting to prevent horizontal jitter during rapid updates.
     static func formatSpeed(_ bytesPerSecond: Double) -> String {
         let kb = bytesPerSecond / 1_000
@@ -56,6 +58,7 @@ enum DataFormatters {
     }
 
     /// Formats an ETA from remaining bytes and current speed into a human-readable string.
+    ///
     /// Returns `nil` if speed is negligible, the estimate exceeds 100 hours, or the result is non-finite.
     static func formatETA(remainingBytes: Int64, bytesPerSecond: Double) -> String? {
         guard bytesPerSecond > 1_000 else { return nil }

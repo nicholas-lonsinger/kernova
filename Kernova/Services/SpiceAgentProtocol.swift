@@ -10,6 +10,7 @@ enum SpiceConstants {
     static let agentProtocol: UInt32 = 1
 
     /// Destination port for host → guest messages (`VDP_SERVER_PORT`).
+    ///
     /// Host-side `SpiceClipboardService` writes everything with this port.
     /// (`VDP_CLIENT_PORT = 1` is part of the SPICE wire format but no longer
     /// referenced now that macOS guests have moved to vsock — the
@@ -245,10 +246,12 @@ struct SpiceAgentParser: Sendable {
     private static let maxChunkDataSize: UInt32 = 1_048_576  // 1 MB
 
     /// `true` when the buffer was reset due to overflow or corruption.
+    ///
     /// Consumers should check this after each `feed()` call to log appropriately.
     private(set) var didReset = false
 
     /// Feed raw bytes from the pipe into the parser.
+    ///
     /// Returns zero or more fully parsed messages.
     mutating func feed(_ data: Data) -> [SpiceAgentParsedMessage] {
         buffer.append(data)
@@ -271,6 +274,7 @@ struct SpiceAgentParser: Sendable {
     }
 
     /// Attempts to parse one complete message from the buffer.
+    ///
     /// Consumes the bytes on success, leaves the buffer unchanged when incomplete,
     /// or resets it entirely when corruption is detected.
     private mutating func tryParseNext() -> SpiceAgentParsedMessage? {

@@ -37,7 +37,9 @@ final class VsockGuestLogService {
         self.emitter = emitter ?? OSLogGuestLogEmitter(label: label)
     }
 
-    /// Begins consuming frames from the channel. Idempotent.
+    /// Begins consuming frames from the channel.
+    ///
+    /// Idempotent.
     func start() {
         guard consumeTask == nil else { return }
         let label = self.label
@@ -105,13 +107,16 @@ final class VsockGuestLogService {
 
 // MARK: - GuestLogEmitter
 
-/// Receives `LogRecord` payloads forwarded from a guest agent. Production
-/// code uses `OSLogGuestLogEmitter`; tests substitute a recording emitter.
+/// Receives `LogRecord` payloads forwarded from a guest agent.
+///
+/// Production code uses `OSLogGuestLogEmitter`; tests substitute a recording emitter.
 protocol GuestLogEmitter: Sendable {
     func emit(_ record: Kernova_V1_LogRecord)
 }
 
-/// Republishes guest log records via `os.Logger`. Each record is emitted at
+/// Republishes guest log records via `os.Logger`.
+///
+/// Each record is emitted at
 /// the closest matching host log level, with the guest's subsystem and
 /// category preserved in the message body.
 struct OSLogGuestLogEmitter: GuestLogEmitter {

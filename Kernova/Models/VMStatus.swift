@@ -53,12 +53,16 @@ enum VMStatus: String, Codable, Sendable {
     }
 
     var canStart: Bool { self == .stopped || self == .error }
-    /// Status-level stop eligibility. Does not account for cold-paused state;
+    /// Status-level stop eligibility.
+    ///
+    /// Does not account for cold-paused state;
     /// prefer `VMInstance.canStop` for runtime checks.
     var canStop: Bool { self == .running || self == .paused }
     var canPause: Bool { self == .running }
     var canResume: Bool { self == .paused }
-    /// Status-level save eligibility. Does not account for cold-paused state;
+    /// Status-level save eligibility.
+    ///
+    /// Does not account for cold-paused state;
     /// prefer `VMInstance.canSave` for runtime checks.
     var canSave: Bool { self == .running || self == .paused }
     var canEditSettings: Bool { self == .stopped || self == .error }
@@ -80,6 +84,7 @@ enum VMStatus: String, Codable, Sendable {
     }
 
     /// Whether this status represents an active VM that should keep the app alive.
+    ///
     /// Note: live-paused VMs (`.paused` with a non-nil `VZVirtualMachine`) should
     /// be handled separately by the caller.
     var isActive: Bool {

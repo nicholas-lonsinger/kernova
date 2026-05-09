@@ -3,7 +3,9 @@ import KernovaProtocol
 import os
 
 /// Snapshot of the toggle state delivered to the guest agent via
-/// `PolicyUpdate` on the control channel. Decouples `VsockControlService`
+/// `PolicyUpdate` on the control channel.
+///
+/// Decouples `VsockControlService`
 /// from `VMConfiguration` — the host supplies a closure that reads the
 /// fields each time policy is sent.
 struct AgentPolicySnapshot: Equatable, Sendable {
@@ -36,19 +38,27 @@ struct AgentPolicySnapshot: Equatable, Sendable {
 final class VsockControlService {
     // MARK: - Observable state
 
-    /// `true` once the guest agent has sent its `Hello`. Reset on `stop()`.
+    /// `true` once the guest agent has sent its `Hello`.
+    ///
+    /// Reset on `stop()`.
     private(set) var isConnected: Bool = false
 
-    /// The guest-reported `Hello.agent_info.agent_version`. `nil` until the
+    /// The guest-reported `Hello.agent_info.agent_version`.
+    ///
+    /// `nil` until the
     /// guest sends its `Hello`. Reset on `stop()`.
     private(set) var agentVersion: String?
 
     /// `true` when the inbound liveness watchdog has fired but the channel has
-    /// not yet been torn down. Surfaces as `.unresponsive` in `agentStatus`.
+    /// not yet been torn down.
+    ///
+    /// Surfaces as `.unresponsive` in `agentStatus`.
     private(set) var isUnresponsive: Bool = false
 
     /// Whether the guest agent is missing, current, outdated, or unresponsive
-    /// relative to the bundled binary. Drives sidebar / clipboard-window
+    /// relative to the bundled binary.
+    ///
+    /// Drives sidebar / clipboard-window
     /// install/update affordances and the unresponsive indicator.
     var agentStatus: AgentStatus {
         guard let installed = agentVersion else { return .waiting }
@@ -78,13 +88,17 @@ final class VsockControlService {
     private let terminateAfter: Duration
     private let livenessTickInterval: Duration
 
-    /// Reads the latest policy from the host configuration. Invoked once per
+    /// Reads the latest policy from the host configuration.
+    ///
+    /// Invoked once per
     /// guest `Hello` so the guest receives the current snapshot at every
     /// (re)connect. `nil` in tests that don't exercise policy delivery.
     private let policyProvider: (@MainActor () -> AgentPolicySnapshot)?
 
     /// Notified each time the guest reports a non-empty `agentVersion` in its
-    /// `Hello`. Fire-and-forget — this service does not care whether the host
+    /// `Hello`.
+    ///
+    /// Fire-and-forget — this service does not care whether the host
     /// persists the value. Wired by `VMInstance.startVsockServices()` to write
     /// the version into `VMConfiguration.lastSeenAgentVersion`. `nil` in tests
     /// and contexts where persistence is not exercised.
@@ -99,7 +113,9 @@ final class VsockControlService {
     /// inbound frame arrives.
     private var lastInboundFrame: ContinuousClock.Instant?
 
-    /// Outbound heartbeat sequence number. Echoed only for diagnostics — the
+    /// Outbound heartbeat sequence number.
+    ///
+    /// Echoed only for diagnostics — the
     /// peer does not respond to a specific nonce.
     private var nextHeartbeatNonce: UInt64 = 1
 
@@ -222,7 +238,9 @@ final class VsockControlService {
     }
 
     /// Sends a `PolicyUpdate` frame carrying the current toggle snapshot to
-    /// the guest. Called once on Hello receipt and again any time the user
+    /// the guest.
+    ///
+    /// Called once on Hello receipt and again any time the user
     /// flips a hot-toggleable setting while the VM is running.
     func sendPolicyUpdate(_ policy: AgentPolicySnapshot) {
         var frame = Frame()

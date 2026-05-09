@@ -34,14 +34,18 @@ final class VMLibraryViewModel {
     var showError = false
     var errorMessage: String?
 
-    /// Drives the post-mount instructions alert. Set after a successful
+    /// Drives the post-mount instructions alert.
+    ///
+    /// Set after a successful
     /// `mountGuestAgentInstaller(on:)` so the user gets unified guidance no
     /// matter which entry point (sidebar popover, clipboard window button, or
     /// menubar item) triggered the mount.
     var showInstallerMountedAlert = false
     var installerMountedVMName: String?
 
-    /// VMs with an in-flight installer mount. Prevents rapid double-clicks
+    /// VMs with an in-flight installer mount.
+    ///
+    /// Prevents rapid double-clicks
     /// from spawning two parallel attaches — the second would race the first
     /// and likely surface as a spurious "operation in progress" error alert.
     private var mountingInstanceIDs: Set<UUID> = []
@@ -61,6 +65,7 @@ final class VMLibraryViewModel {
     private var customOrder: [UUID] = []
 
     /// Bundle names whose load failures have already been reported to the user.
+    ///
     /// Prevents repeated error dialogs for persistently corrupted bundles across successive
     /// `reconcileWithDisk()` calls. Populated by both `loadVMs()` and `reconcileWithDisk()`.
     /// Reset on full reload (`loadVMs`), when a previously-failed bundle loads successfully,
@@ -280,7 +285,9 @@ final class VMLibraryViewModel {
         }
     }
 
-    /// Resumes a paused VM then requests a graceful ACPI shutdown. Used by the
+    /// Resumes a paused VM then requests a graceful ACPI shutdown.
+    ///
+    /// Used by the
     /// stop-paused confirmation sheet's "Resume and Shut Down" action.
     ///
     /// Note: `lifecycle.resume` is serialized through the lifecycle coordinator,
@@ -367,12 +374,16 @@ final class VMLibraryViewModel {
         }
     }
 
-    /// Saves VM state. Throws on failure (used by suspend-on-quit in AppDelegate).
+    /// Saves VM state.
+    ///
+    /// Throws on failure (used by suspend-on-quit in AppDelegate).
     func trySave(_ instance: VMInstance) async throws {
         try await lifecycle.save(instance)
     }
 
-    /// Force-stops a VM. Throws on failure (used by suspend-on-quit fallback in AppDelegate).
+    /// Force-stops a VM.
+    ///
+    /// Throws on failure (used by suspend-on-quit fallback in AppDelegate).
     func tryForceStop(_ instance: VMInstance) async throws {
         try await lifecycle.forceStop(instance)
     }
@@ -569,7 +580,9 @@ final class VMLibraryViewModel {
 
     /// Wires `instance.onConfigurationDidChange` so host-driven mutations
     /// (e.g. the guest reporting a new agent version via `Hello`) flow back
-    /// through the storage abstraction. Called at every VMInstance
+    /// through the storage abstraction.
+    ///
+    /// Called at every VMInstance
     /// construction site in this view model.
     private func wirePersistence(for instance: VMInstance) {
         instance.onConfigurationDidChange = { [weak self] inst in
@@ -577,7 +590,9 @@ final class VMLibraryViewModel {
         }
     }
 
-    /// Pushes a configuration change to a running VM. Hot-toggleable fields
+    /// Pushes a configuration change to a running VM.
+    ///
+    /// Hot-toggleable fields
     /// (`agentLogForwardingEnabled`, `clipboardSharingEnabled`) take effect
     /// immediately via `VMInstance.applyLivePolicy`; everything else is
     /// persisted-only and waits for next start.
@@ -629,7 +644,9 @@ final class VMLibraryViewModel {
     // MARK: - Guest Agent Installer
 
     /// Mounts the bundled `KernovaGuestAgent.dmg` as a read-only USB device so
-    /// the user can run `install.command` inside the guest. Used by the
+    /// the user can run `install.command` inside the guest.
+    ///
+    /// Used by the
     /// clipboard window's "Install Guest Agent…" affordance, the sidebar's
     /// agent-status popover, and the menubar item.
     ///
@@ -688,7 +705,9 @@ final class VMLibraryViewModel {
     }
 
     /// Marks this VM's `.waiting` install nudge as dismissed and persists
-    /// the choice. The sidebar icon for `.waiting` will no longer surface;
+    /// the choice.
+    ///
+    /// The sidebar icon for `.waiting` will no longer surface;
     /// `.outdated`, `.unresponsive`, and `.expectedMissing` continue to
     /// surface (those imply something more urgent than "you could install
     /// this").
@@ -700,6 +719,7 @@ final class VMLibraryViewModel {
     }
 
     /// Detaches the bundled guest agent installer if currently mounted.
+    ///
     /// Identified by path equality with `KernovaGuestAgentInfo.installerDiskImageURL`.
     func unmountGuestAgentInstaller(from instance: VMInstance) {
         guard let url = KernovaGuestAgentInfo.installerDiskImageURL else { return }
@@ -949,7 +969,9 @@ final class VMLibraryViewModel {
 
     // MARK: - Sleep/Wake
 
-    /// Pauses all running VMs before system sleep. Tracks which VMs were auto-paused
+    /// Pauses all running VMs before system sleep.
+    ///
+    /// Tracks which VMs were auto-paused
     /// so only those are resumed on wake (preserving user-paused VMs).
     func pauseAllForSleep() async {
         let runningInstances = instances.filter { $0.status == .running }
@@ -1169,7 +1191,9 @@ final class VMLibraryViewModel {
 
     // MARK: - Reorder
 
-    /// Moves VMs in the sidebar list and persists the new order. Called by SwiftUI's onMove handler.
+    /// Moves VMs in the sidebar list and persists the new order.
+    ///
+    /// Called by SwiftUI's onMove handler.
     func moveVM(fromOffsets source: IndexSet, toOffset destination: Int) {
         instances.move(fromOffsets: source, toOffset: destination)
         persistOrder()

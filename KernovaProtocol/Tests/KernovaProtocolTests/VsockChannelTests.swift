@@ -8,6 +8,7 @@ struct VsockChannelTests {
     // MARK: - Helpers
 
     /// Creates two `VsockChannel`s connected by a `socketpair(AF_UNIX, SOCK_STREAM)`.
+    ///
     /// AF_UNIX behaves identically to AF_VSOCK at the SOCK_STREAM level for our purposes
     /// and is testable on the host.
     private func makePair() throws -> (a: VsockChannel, b: VsockChannel) {

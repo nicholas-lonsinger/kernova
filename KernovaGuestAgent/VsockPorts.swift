@@ -7,7 +7,9 @@ import Foundation
 /// an older host). The port numbers are part of the wire contract — keep
 /// both sides in sync.
 enum KernovaVsockPort {
-    /// Always-on control plane. Carries the agent version handshake and
+    /// Always-on control plane.
+    ///
+    /// Carries the agent version handshake and
     /// bidirectional heartbeats independent of any optional feature toggle,
     /// so the host can detect agent presence/liveness even when clipboard
     /// sharing or other features are disabled.

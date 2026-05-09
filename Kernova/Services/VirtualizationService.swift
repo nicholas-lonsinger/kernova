@@ -233,7 +233,9 @@ final class VirtualizationService {
     // MARK: - Error Classification
 
     /// Returns `true` when the error is a transient environmental condition (e.g. too many
-    /// concurrent VMs) rather than a problem with the VM itself. Transient errors leave the
+    /// concurrent VMs) rather than a problem with the VM itself.
+    ///
+    /// Transient errors leave the
     /// VM in `.stopped` so the indicator stays grey; permanent errors set `.error` (red).
     static func isTransientStartError(_ error: Error) -> Bool {
         if error is ConfigurationBuilderError { return false }
@@ -262,6 +264,7 @@ final class VirtualizationService {
     }
 
     /// Builds a `VZVirtualMachine`, restores from a save file, and resumes.
+    ///
     /// On restore failure, deletes the stale save file and falls back to a cold boot.
     private func restoreOrColdBoot(_ instance: VMInstance) async throws {
         let result = try await buildConfiguration(for: instance)

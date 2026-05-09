@@ -58,7 +58,9 @@ enum AgentStatus: Equatable, Sendable {
     case connecting(expected: String)
 
     /// True when this case carries the "actively trying to reconnect"
-    /// semantic. Convenience for UI code that wants to attach a continuous
+    /// semantic.
+    ///
+    /// Convenience for UI code that wants to attach a continuous
     /// rotation `.symbolEffect` to the icon.
     var isConnecting: Bool {
         if case .connecting = self { return true }
@@ -67,7 +69,9 @@ enum AgentStatus: Equatable, Sendable {
 
     /// Resolves an upstream `AgentStatus` (sourced from `VsockControlService`
     /// or a SPICE service) plus persisted host-side context into the final
-    /// `AgentStatus` the UI should render. Pure function — given the same
+    /// `AgentStatus` the UI should render.
+    ///
+    /// Pure function — given the same
     /// inputs, always produces the same output — so it can be unit-tested
     /// without standing up a `VZVirtualMachine`.
     ///

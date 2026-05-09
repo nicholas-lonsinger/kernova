@@ -53,7 +53,9 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
     // MARK: - Audio
 
     /// When `true`, the host microphone is passed through to the guest as a
-    /// virtio sound input stream. Defaults to `false` so guests cannot silently
+    /// virtio sound input stream.
+    ///
+    /// Defaults to `false` so guests cannot silently
     /// listen to the host. Speaker output is always enabled regardless of this flag.
     var microphoneEnabled: Bool
 
@@ -61,7 +63,9 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
 
     /// When `true`, the macOS guest agent forwards `os.Logger` records to the
     /// host over vsock so they appear in Console.app under
-    /// `com.kernova.guest`. Defaults to `false` for new and existing VMs:
+    /// `com.kernova.guest`.
+    ///
+    /// Defaults to `false` for new and existing VMs:
     /// log forwarding is opt-in. Linux guests have no Kernova agent and ignore
     /// this flag.
     ///
@@ -86,7 +90,9 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
     var lastSeenAgentVersion: String?
 
     /// When `true`, the user has explicitly dismissed the sidebar "install
-    /// guest agent" nudge for this VM. Suppresses only the gentle `.waiting`
+    /// guest agent" nudge for this VM.
+    ///
+    /// Suppresses only the gentle `.waiting`
     /// affordance — the `.outdated`, `.unresponsive`, and `.expectedMissing`
     /// states still surface because they imply something more urgent than
     /// "you could install this." Defaults to `false` for new and migrated
@@ -109,10 +115,13 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
     // MARK: - Removable Media
 
     /// Path to a disk image attached as a USB mass storage device at VM start time.
+    ///
     /// For runtime hot-plug, see `USBDeviceService`.
     var discImagePath: String?
 
-    /// When `true`, the disc image attachment is read-only. Defaults to `true`.
+    /// When `true`, the disc image attachment is read-only.
+    ///
+    /// Defaults to `true`.
     var discImageReadOnly: Bool
 
     /// When `true` and `bootMode == .efi`, the disc image device is placed before the main disk
@@ -303,7 +312,9 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
 
     // MARK: - Hot-Toggleable Fields
 
-    /// Fields the user may edit while the VM is running. Changes to these
+    /// Fields the user may edit while the VM is running.
+    ///
+    /// Changes to these
     /// bypass the `VMSettingsView` read-only settings lock so the user can
     /// flip them mid-session.
     ///

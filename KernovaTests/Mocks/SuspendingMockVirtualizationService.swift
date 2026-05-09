@@ -2,17 +2,23 @@ import Foundation
 @testable import Kernova
 
 /// A mock virtualization service whose `start` and `pause` methods suspend until
-/// explicitly resumed. Used to test operation serialization in `VMLifecycleCoordinator`.
+/// explicitly resumed.
+///
+/// Used to test operation serialization in `VMLifecycleCoordinator`.
 ///
 /// - Important: Only **one** operation can be suspended at a time. The mock stores a
 ///   single `suspendedContinuation` slot; calling `suspendIfNeeded()` while another
 ///   operation is already suspended will trigger a precondition failure.
 @MainActor
 final class SuspendingMockVirtualizationService: VirtualizationProviding {
-    /// When `true`, `start` will suspend. Set to `false` to allow subsequent calls through immediately.
+    /// When `true`, `start` will suspend.
+    ///
+    /// Set to `false` to allow subsequent calls through immediately.
     var shouldSuspendOnStart = true
 
-    /// When `true`, `pause` will suspend. Set to `false` to allow subsequent calls through immediately.
+    /// When `true`, `pause` will suspend.
+    ///
+    /// Set to `false` to allow subsequent calls through immediately.
     var shouldSuspendOnPause = true
 
     // MARK: - Suspension Mechanism

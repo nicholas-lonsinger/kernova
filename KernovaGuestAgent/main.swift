@@ -46,7 +46,9 @@ if CommandLine.arguments.contains("--version") {
 
 // MARK: - Vsock connections
 
-/// Long-lived vsock connection to the host for log forwarding. Created and
+/// Long-lived vsock connection to the host for log forwarding.
+///
+/// Created and
 /// registered with `VsockLogBridge` *before* the `logger.notice(...)`
 /// startup banner emission below, so that banner is buffered into the
 /// connection's pre-connect ring buffer rather than dropped.
@@ -62,7 +64,9 @@ VsockLogBridge.connection = vsockConnection
 
 logger.notice("Kernova Guest Agent v\(version, privacy: .public) (\(buildNumber, privacy: .public)) started")
 
-/// Clipboard sync agent. Maintains its own connection on
+/// Clipboard sync agent.
+///
+/// Maintains its own connection on
 /// `KernovaVsockPort.clipboard` independent of the log connection, so a
 /// disconnect on one channel doesn't take the other down.
 ///
@@ -70,7 +74,9 @@ logger.notice("Kernova Guest Agent v\(version, privacy: .public) (\(buildNumber,
 /// `PolicyUpdate(clipboardSharingEnabled: true)` arrives.
 let clipboardAgent = VsockGuestClipboardAgent()
 
-/// Control-plane agent. Always-on connection on `KernovaVsockPort.control`
+/// Control-plane agent.
+///
+/// Always-on connection on `KernovaVsockPort.control`
 /// carrying the version handshake, bidirectional heartbeats, and the
 /// `PolicyUpdate` push that drives `vsockConnection.setEnabled(_:)` and
 /// `clipboardAgent.setEnabled(_:)`. Independent of any feature toggle on the

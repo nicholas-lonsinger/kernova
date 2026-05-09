@@ -3,7 +3,9 @@ import KernovaProtocol
 import os
 
 /// Forwards guest-emitted log records to the host on `KernovaVsockPort.log`
-/// (49153). Connection lifecycle is delegated to `VsockGuestClient`; this
+/// (49153).
+///
+/// Connection lifecycle is delegated to `VsockGuestClient`; this
 /// class layers log-specific buffering and inbound drain on top.
 ///
 /// The version handshake and agent liveness live on the always-on control
@@ -17,7 +19,9 @@ final class VsockHostConnection: @unchecked Sendable {
     private static let logger = Logger(subsystem: "com.kernova.agent", category: "VsockHostConnection")
 
     /// Maximum number of `LogRecord` frames buffered while the channel is
-    /// down. Older entries are dropped first.
+    /// down.
+    ///
+    /// Older entries are dropped first.
     ///
     /// Sized for the bursty pre-connect window: agent boot can take 30s+
     /// from VM-start to first vsock connect on macOS, and clipboard activity
@@ -31,8 +35,9 @@ final class VsockHostConnection: @unchecked Sendable {
     let lock = NSLock()
     var pendingLogs: [Frame] = []
 
-    /// Whether log forwarding is currently allowed by host policy. Default
-    /// `false` so the agent doesn't connect or buffer until the host's
+    /// Whether log forwarding is currently allowed by host policy.
+    ///
+    /// Default `false` so the agent doesn't connect or buffer until the host's
     /// initial `PolicyUpdate` says otherwise. Toggled by `setEnabled(_:)`.
     private var enabled: Bool = false
 
@@ -48,7 +53,9 @@ final class VsockHostConnection: @unchecked Sendable {
         self.client.pause()
     }
 
-    /// Begins the connect/serve/reconnect loop. Idempotent.
+    /// Begins the connect/serve/reconnect loop.
+    ///
+    /// Idempotent.
     func start() {
         client.start { [weak self] channel in
             await self?.serveLogChannel(channel)
@@ -87,7 +94,9 @@ final class VsockHostConnection: @unchecked Sendable {
         }
     }
 
-    /// Builds and best-effort sends a `LogRecord` frame to the host. When no
+    /// Builds and best-effort sends a `LogRecord` frame to the host.
+    ///
+    /// When no
     /// connection is currently active, the frame is buffered (up to
     /// `logBufferLimit` records, oldest dropped first) and flushed once the
     /// next connection comes up. Returns `true` when the frame was handed to a
