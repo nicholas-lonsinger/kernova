@@ -10,9 +10,6 @@ import os
 /// that reject manual construction from outside the `os` module —
 /// so we redact privately-marked values ourselves instead of relying on
 /// the OS's runtime privacy machinery.
-// periphery:ignore - Resolved through type inference on the `privacy:`
-// label of `appendInterpolation(_:privacy:)`; Periphery's symbol graph
-// doesn't trace argument-type inference back to the type declaration.
 struct LogPrivacy: Sendable {
     enum Kind: Sendable {
         case `public`
