@@ -14,10 +14,11 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
     private let instance: VMInstance
     private weak var viewModel: VMLibraryViewModel?
-    private var textView: NSTextView!
-    private var statusCircle: NSView!
-    private var statusLabel: NSTextField!
-    private var actionButton: NSButton!
+    private let textView: NSTextView
+    private let scrollView: NSScrollView
+    private let statusCircle: NSView
+    private let statusLabel: NSTextField
+    private let actionButton: NSButton
     private var isUpdatingFromService = false
     private var serviceObservation: ObservationLoop?
 
@@ -29,7 +30,60 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     init(instance: VMInstance, viewModel: VMLibraryViewModel) {
         self.instance = instance
         self.viewModel = viewModel
+
+        let textView = NSTextView()
+        textView.isEditable = true
+        textView.isSelectable = true
+        textView.isRichText = false
+        textView.allowsUndo = true
+        textView.usesFindPanel = true
+        textView.font = .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        textView.textContainerInset = NSSize(width: 4, height: 8)
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.containerSize = NSSize(
+            width: 0,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        self.textView = textView
+
+        let scrollView = NSScrollView()
+        scrollView.documentView = textView
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.drawsBackground = false
+        self.scrollView = scrollView
+
+        let circle = NSView()
+        circle.wantsLayer = true
+        circle.layer?.cornerRadius = 4
+        circle.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            circle.widthAnchor.constraint(equalToConstant: 8),
+            circle.heightAnchor.constraint(equalToConstant: 8),
+        ])
+        self.statusCircle = circle
+
+        let label = NSTextField(labelWithString: "")
+        label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        label.textColor = .secondaryLabelColor
+        label.lineBreakMode = .byTruncatingTail
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        self.statusLabel = label
+
+        let button = NSButton(title: "", target: nil, action: nil)
+        button.bezelStyle = .accessoryBarAction
+        button.controlSize = .small
+        button.isHidden = true
+        self.actionButton = button
+
         super.init(nibName: nil, bundle: nil)
+
+        textView.delegate = self
+        button.target = self
+        button.action = #selector(actionButtonClicked(_:))
     }
 
     required init?(coder: NSCoder) {
@@ -41,18 +95,14 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     override func loadView() {
         let container = NSView()
 
-        // Text editor
-        let scrollView = makeScrollableTextView()
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(scrollView)
 
-        // Divider
         let divider = NSBox()
         divider.boxType = .separator
         divider.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(divider)
 
-        // Status bar
         let statusBar = makeStatusBar()
         statusBar.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(statusBar)
@@ -191,59 +241,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
     // MARK: - View Construction
 
-    private func makeScrollableTextView() -> NSScrollView {
-        let textView = NSTextView()
-        textView.isEditable = true
-        textView.isSelectable = true
-        textView.isRichText = false
-        textView.allowsUndo = true
-        textView.usesFindPanel = true
-        textView.font = .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
-        textView.textContainerInset = NSSize(width: 4, height: 8)
-        textView.isVerticallyResizable = true
-        textView.isHorizontallyResizable = false
-        textView.textContainer?.widthTracksTextView = true
-        textView.textContainer?.containerSize = NSSize(
-            width: 0,
-            height: CGFloat.greatestFiniteMagnitude
-        )
-        textView.delegate = self
-        self.textView = textView
-
-        let scrollView = NSScrollView()
-        scrollView.documentView = textView
-        scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = false
-        scrollView.autohidesScrollers = true
-        scrollView.drawsBackground = false
-
-        return scrollView
-    }
-
     private func makeStatusBar() -> NSView {
-        let circle = NSView()
-        circle.wantsLayer = true
-        circle.layer?.cornerRadius = 4
-        circle.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            circle.widthAnchor.constraint(equalToConstant: 8),
-            circle.heightAnchor.constraint(equalToConstant: 8),
-        ])
-        self.statusCircle = circle
-
-        let label = NSTextField(labelWithString: "")
-        label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        label.textColor = .secondaryLabelColor
-        label.lineBreakMode = .byTruncatingTail
-        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        self.statusLabel = label
-
-        let button = NSButton(title: "", target: self, action: #selector(actionButtonClicked(_:)))
-        button.bezelStyle = .accessoryBarAction
-        button.controlSize = .small
-        button.isHidden = true
-        self.actionButton = button
-
         // Spacer needs an explicit low horizontal hugging priority to actually
         // expand inside the NSStackView. NSView's default hugging priority is
         // 250 — same as the label's — so without this, the stack view has no
@@ -252,7 +250,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        let stack = NSStackView(views: [circle, label, spacer, button])
+        let stack = NSStackView(views: [statusCircle, statusLabel, spacer, actionButton])
         stack.orientation = .horizontal
         stack.spacing = 6
         stack.edgeInsets = NSEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)

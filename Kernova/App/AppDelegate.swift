@@ -6,8 +6,7 @@ import SwiftUI
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenuDelegate {
     private var mainWindowController: MainWindowController?
-    private var viewModel: VMLibraryViewModel!
-    private var pendingOpenURLs: [URL] = []
+    private let viewModel: VMLibraryViewModel
     private var serialConsoleWindows: [UUID: SerialConsoleWindowController] = [:]
     private var serialConsoleObservers: [UUID: Any] = [:]
     private var clipboardWindows: [UUID: ClipboardWindowController] = [:]
@@ -15,8 +14,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private var displayWindows: [UUID: VMDisplayWindowController] = [:]
     private var displayWindowObservers: [UUID: Any] = [:]
     private var terminationObservation: ObservationLoop?
-    private var serialConsoleMenuItem: NSMenuItem!
-    private var clipboardMenuItem: NSMenuItem!
+    private let serialConsoleMenuItem: NSMenuItem
+    private let clipboardMenuItem: NSMenuItem
     /// Set in `applicationWillBecomeActive` and read in `applicationShouldHandleReopen`
     /// to distinguish a dock click that activates the app from one on an already-active app.
     ///
@@ -82,24 +81,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         app.run()
     }
 
-    // MARK: - NSApplicationDelegate
+    override init() {
+        self.viewModel = VMLibraryViewModel()
 
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        viewModel = VMLibraryViewModel()
+        let serialItem = NSMenuItem(
+            title: "Serial Console",
+            action: #selector(showSerialConsole(_:)),
+            keyEquivalent: "t"
+        )
+        serialItem.keyEquivalentModifierMask = [.command, .shift]
+        self.serialConsoleMenuItem = serialItem
+
+        let clipboardItem = NSMenuItem(
+            title: "Clipboard",
+            action: #selector(showClipboard(_:)),
+            keyEquivalent: "v"
+        )
+        clipboardItem.keyEquivalentModifierMask = [.command, .shift]
+        self.clipboardMenuItem = clipboardItem
+
+        super.init()
+
         viewModel.onOpenDisplayWindow = { [weak self] instance in
             self?.openDisplayWindow(for: instance)
         }
+    }
+
+    // MARK: - NSApplicationDelegate
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
         setupMainMenu()
 
         let windowController = MainWindowController(viewModel: viewModel)
         windowController.showWindow(nil)
         mainWindowController = windowController
-
-        // Process any URLs received before the view model was ready
-        for url in pendingOpenURLs {
-            viewModel.importVM(from: url)
-        }
-        pendingOpenURLs.removeAll()
 
         observeForTermination()
 
@@ -310,13 +325,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     func application(_ application: NSApplication, open urls: [URL]) {
         let vmURLs = urls.filter { $0.pathExtension == VMStorageService.bundleExtension }
-
-        guard let viewModel else {
-            // Called before applicationDidFinishLaunching — queue for later
-            pendingOpenURLs.append(contentsOf: vmURLs)
-            return
-        }
-
         for url in vmURLs {
             viewModel.importVM(from: url)
         }
@@ -915,22 +923,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         )
         windowMenu.addItem(showLibraryItem)
         windowMenu.addItem(.separator())
-        let serialItem = NSMenuItem(
-            title: "Serial Console",
-            action: #selector(showSerialConsole(_:)),
-            keyEquivalent: "t"
-        )
-        serialItem.keyEquivalentModifierMask = [.command, .shift]
-        self.serialConsoleMenuItem = serialItem
-        windowMenu.addItem(serialItem)
-        let clipboardItem = NSMenuItem(
-            title: "Clipboard",
-            action: #selector(showClipboard(_:)),
-            keyEquivalent: "v"
-        )
-        clipboardItem.keyEquivalentModifierMask = [.command, .shift]
-        self.clipboardMenuItem = clipboardItem
-        windowMenu.addItem(clipboardItem)
+        windowMenu.addItem(serialConsoleMenuItem)
+        windowMenu.addItem(clipboardMenuItem)
         let removableMediaItem = NSMenuItem(
             title: "Removable Media",
             action: #selector(showRemovableMedia(_:)),
