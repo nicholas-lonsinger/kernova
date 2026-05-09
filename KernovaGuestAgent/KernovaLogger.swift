@@ -27,12 +27,12 @@ import os
 /// case needs the same wrapper on the host or in another target, relocate
 /// this file (and `KernovaLogMessage.swift`) into the `KernovaProtocol`
 /// Swift Package.
-public struct KernovaLogger: Sendable {
-    public let subsystem: String
-    public let category: String
+struct KernovaLogger: Sendable {
+    let subsystem: String
+    let category: String
     private let osLogger: Logger
 
-    public init(subsystem: String, category: String) {
+    init(subsystem: String, category: String) {
         self.subsystem = subsystem
         self.category = category
         self.osLogger = Logger(subsystem: subsystem, category: category)
@@ -40,32 +40,32 @@ public struct KernovaLogger: Sendable {
 
     // MARK: - Levels
 
-    public func debug(_ message: KernovaLogMessage) {
+    func debug(_ message: KernovaLogMessage) {
         osLogger.debug("\(message.localRendered, privacy: .public)")
         forward(level: .debug, message: message.wireRendered)
     }
 
-    public func info(_ message: KernovaLogMessage) {
+    func info(_ message: KernovaLogMessage) {
         osLogger.info("\(message.localRendered, privacy: .public)")
         forward(level: .info, message: message.wireRendered)
     }
 
-    public func notice(_ message: KernovaLogMessage) {
+    func notice(_ message: KernovaLogMessage) {
         osLogger.notice("\(message.localRendered, privacy: .public)")
         forward(level: .notice, message: message.wireRendered)
     }
 
-    public func warning(_ message: KernovaLogMessage) {
+    func warning(_ message: KernovaLogMessage) {
         osLogger.warning("\(message.localRendered, privacy: .public)")
         forward(level: .warning, message: message.wireRendered)
     }
 
-    public func error(_ message: KernovaLogMessage) {
+    func error(_ message: KernovaLogMessage) {
         osLogger.error("\(message.localRendered, privacy: .public)")
         forward(level: .error, message: message.wireRendered)
     }
 
-    public func fault(_ message: KernovaLogMessage) {
+    func fault(_ message: KernovaLogMessage) {
         osLogger.fault("\(message.localRendered, privacy: .public)")
         forward(level: .fault, message: message.wireRendered)
     }

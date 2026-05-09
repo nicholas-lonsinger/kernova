@@ -10,7 +10,7 @@
     "spacesBeforeEndOfLineComments": 2,
     "tabWidth": 4,
     "rules": {
-        "AllPublicDeclarationsHaveDocumentation": false,
+        "AllPublicDeclarationsHaveDocumentation": true,
         "AlwaysUseLiteralForEmptyCollectionInit": true,
         "NeverUseForceTry": true,
         "NeverUseImplicitlyUnwrappedOptionals": false,
