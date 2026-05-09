@@ -12,21 +12,15 @@
     "rules": {
         "AllPublicDeclarationsHaveDocumentation": true,
         "AlwaysUseLiteralForEmptyCollectionInit": true,
+        "BeginDocumentationCommentWithOneLineSummary": true,
+        "NeverForceUnwrap": true,
         "NeverUseForceTry": true,
         "NeverUseImplicitlyUnwrappedOptionals": true,
-        "NeverForceUnwrap": true,
-        "UseEarlyExits": true,
-        "OmitExplicitReturns": true,
-        "AlwaysUseLowerCamelCase": true,
-        "BeginDocumentationCommentWithOneLineSummary": true,
-        "DontRepeatTypeInStaticProperties": true,
-        "FileScopedDeclarationPrivacy": true,
-        "NoAccessLevelOnExtensionDeclaration": true,
-        "NoBlockComments": true,
-        "UseSynthesizedInitializer": true,
-        "ValidateDocumentationComments": true,
         "NoEmptyLinesOpeningClosingBraces": true,
+        "NoLeadingUnderscores": true,
+        "OmitExplicitReturns": true,
+        "UseEarlyExits": true,
         "UseWhereClausesInForLoops": true,
-        "NoLeadingUnderscores": true
+        "ValidateDocumentationComments": true
     }
 }
