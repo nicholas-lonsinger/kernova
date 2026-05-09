@@ -61,6 +61,7 @@ struct VMDetailView: View {
 }
 
 /// Lifecycle confirmation alerts (delete, cancel preparing, force stop, stop paused).
+///
 /// Extracted into a separate modifier to keep the parent `body` expression within
 /// the Swift type-checker's complexity budget.
 private struct LifecycleAlerts: ViewModifier {

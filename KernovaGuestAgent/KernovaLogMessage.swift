@@ -96,12 +96,16 @@ public struct KernovaLogMessage: ExpressibleByStringInterpolation, ExpressibleBy
         }
     }
 
-    /// String suitable for emission to local `os.Logger`. Values marked
+    /// String suitable for emission to local `os.Logger`.
+    ///
+    /// Values marked
     /// `.private` or `.sensitive` have already been replaced with the
     /// `<private>` placeholder.
     public let localRendered: String
 
-    /// String suitable for forwarding over vsock. Every interpolated
+    /// String suitable for forwarding over vsock.
+    ///
+    /// Every interpolated
     /// value is rendered in cleartext.
     public let wireRendered: String
 

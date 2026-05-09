@@ -27,14 +27,18 @@ final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate {
         self.listener.delegate = self
     }
 
-    /// Installs this listener on the supplied socket device. Connections to
+    /// Installs this listener on the supplied socket device.
+    ///
+    /// Connections to
     /// `port` from the guest will subsequently invoke `onConnect`.
     func attach(to socketDevice: VZVirtioSocketDevice) {
         socketDevice.setSocketListener(listener, forPort: port)
         Self.logger.info("Listening on vsock port \(self.port, privacy: .public)")
     }
 
-    /// Removes the listener from the socket device. Safe to call after the VM
+    /// Removes the listener from the socket device.
+    ///
+    /// Safe to call after the VM
     /// has stopped — the device may already have torn down its listener map.
     func detach(from socketDevice: VZVirtioSocketDevice) {
         socketDevice.removeSocketListener(forPort: port)

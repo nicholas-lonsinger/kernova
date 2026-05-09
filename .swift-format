@@ -18,7 +18,7 @@
         "UseEarlyExits": true,
         "OmitExplicitReturns": true,
         "AlwaysUseLowerCamelCase": true,
-        "BeginDocumentationCommentWithOneLineSummary": false,
+        "BeginDocumentationCommentWithOneLineSummary": true,
         "DontRepeatTypeInStaticProperties": true,
         "FileScopedDeclarationPrivacy": true,
         "NoAccessLevelOnExtensionDeclaration": true,

@@ -1,7 +1,9 @@
 import Cocoa
 import os
 
-/// Shared toolbar logic for VM window controllers. Creates and manages the lifecycle,
+/// Shared toolbar logic for VM window controllers.
+///
+/// Creates and manages the lifecycle,
 /// suspend, and display toolbar item groups that appear in both the main window
 /// and per-VM display windows.
 ///
@@ -19,7 +21,9 @@ final class VMToolbarManager: NSObject {
         let removableMediaID: NSToolbarItem.Identifier?
         let displayID: NSToolbarItem.Identifier
         /// When non-nil, a gear-icon button that toggles the detail pane between the live
-        /// display and the (read-only) settings form. Only the main window sets this; the
+        /// display and the (read-only) settings form.
+        ///
+        /// Only the main window sets this; the
         /// pop-out window has no settings pane.
         let settingsToggleID: NSToolbarItem.Identifier?
 
@@ -94,7 +98,9 @@ final class VMToolbarManager: NSObject {
     // MARK: - Item Factory
 
     /// Creates the `NSToolbarItem` for the given identifier, or returns `nil` if it is not
-    /// a shared item managed by this manager. Called from the controller's
+    /// a shared item managed by this manager.
+    ///
+    /// Called from the controller's
     /// `toolbar(_:itemForItemIdentifier:willBeInsertedIntoToolbar:)`.
     func makeToolbarItem(for identifier: NSToolbarItem.Identifier) -> NSToolbarItem? {
         switch identifier {

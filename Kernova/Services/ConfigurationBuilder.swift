@@ -363,6 +363,7 @@ struct ConfigurationBuilder: Sendable {
     // MARK: - Serial Port
 
     /// Configures a bidirectional virtio console serial port using pipe-backed file handles.
+    ///
     /// Returns the (input, output) pipes for the host side.
     private func configureSerialPort(_ vzConfig: VZVirtualMachineConfiguration) -> (Pipe, Pipe) {
         let inputPipe = Pipe()  // host writes → guest reads
@@ -423,7 +424,9 @@ struct ConfigurationBuilder: Sendable {
 
     // MARK: - Vsock
 
-    /// Adds a single virtio-socket device to the configuration. Listeners are
+    /// Adds a single virtio-socket device to the configuration.
+    ///
+    /// Listeners are
     /// installed post-VM-create against the live `VZVirtioSocketDevice` rather
     /// than declared on the configuration.
     private func configureVsockDevice(_ vzConfig: VZVirtualMachineConfiguration) {

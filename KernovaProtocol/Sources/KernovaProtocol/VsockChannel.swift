@@ -30,7 +30,9 @@ public typealias Frame = Kernova_V1_Frame
 /// The lock-based design lets either side call `send` from any context and
 /// drain `incoming` from any task without isolation hops.
 public final class VsockChannel: @unchecked Sendable {
-    /// Inbound frames. The stream finishes on EOF and finishes-with-error on
+    /// Inbound frames.
+    ///
+    /// The stream finishes on EOF and finishes-with-error on
     /// any framing or decoding failure.
     public let incoming: AsyncThrowingStream<Frame, Error>
 
@@ -45,8 +47,9 @@ public final class VsockChannel: @unchecked Sendable {
 
     /// Set once on first `VsockChannel` construction: ignore `SIGPIPE`
     /// process-wide so a write to a peer whose read side has closed surfaces
-    /// as `EPIPE` from `write(2)` instead of killing the process. Belt-and-
-    /// suspenders alongside the per-fd `SO_NOSIGPIPE` set in `init` —
+    /// as `EPIPE` from `write(2)` instead of killing the process.
+    ///
+    /// Belt-and-suspenders alongside the per-fd `SO_NOSIGPIPE` set in `init` —
     /// `SO_NOSIGPIPE` doesn't appear to take effect on every code path
     /// across macOS versions / `FileHandle` write internals (CI on macOS-26.3
     /// VMs still delivers `SIGPIPE` despite the socket option being set), so
@@ -55,7 +58,9 @@ public final class VsockChannel: @unchecked Sendable {
         signal(SIGPIPE, SIG_IGN)
     }()
 
-    /// Wraps the given file descriptor. The descriptor must be a connected
+    /// Wraps the given file descriptor.
+    ///
+    /// The descriptor must be a connected
     /// SOCK_STREAM endpoint; the channel will close it on teardown.
     public init(fileDescriptor: Int32) {
         _ = Self.suppressSIGPIPEOnce
@@ -89,7 +94,7 @@ public final class VsockChannel: @unchecked Sendable {
         close()
     }
 
-    /// Begins reading from the underlying descriptor. Idempotent.
+    /// Begins reading from the underlying descriptor (idempotent).
     public func start() {
         lock.lock()
         defer { lock.unlock() }
@@ -102,7 +107,9 @@ public final class VsockChannel: @unchecked Sendable {
         }
     }
 
-    /// Encodes and sends a frame. Multiple concurrent calls are safe — they
+    /// Encodes and sends a frame.
+    ///
+    /// Multiple concurrent calls are safe — they
     /// serialize on an internal lock.
     ///
     /// Errors thrown:
@@ -128,7 +135,9 @@ public final class VsockChannel: @unchecked Sendable {
         }
     }
 
-    /// Tears down the channel. Subsequent `send` calls throw `.closed` and
+    /// Tears down the channel.
+    ///
+    /// Subsequent `send` calls throw `.closed` and
     /// the `incoming` stream finishes (without error).
     public func close() {
         lock.lock()

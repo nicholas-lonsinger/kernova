@@ -6,7 +6,9 @@ import SwiftUI
 struct VMSettingsView: View {
     @Bindable var instance: VMInstance
     @Bindable var viewModel: VMLibraryViewModel
-    /// When `true`, all controls are disabled and a banner explains why. Used when the
+    /// When `true`, all controls are disabled and a banner explains why.
+    ///
+    /// Used when the
     /// user toggles the detail pane to settings while the VM is running.
     let isReadOnly: Bool
 
@@ -120,7 +122,9 @@ struct VMSettingsView: View {
 
     /// Section header that appends a lock SF Symbol when `isReadOnly` is
     /// `true`, signaling that the section's controls are locked while the
-    /// VM is running. Hot-toggleable sections (Guest Agent, Clipboard) keep
+    /// VM is running.
+    ///
+    /// Hot-toggleable sections (Guest Agent, Clipboard) keep
     /// their plain headers so the absence of the lock is itself the signal
     /// that those sections remain editable.
     ///

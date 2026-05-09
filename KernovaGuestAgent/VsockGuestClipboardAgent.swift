@@ -51,7 +51,9 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
 
     // MARK: - Main-queue state
 
-    /// Live channel for the current connection, if any. Nil between
+    /// Live channel for the current connection, if any.
+    ///
+    /// Nil between
     /// connections; checked by the polling timer to short-circuit when
     /// the host isn't reachable.
     private var liveChannel: VsockChannel?
@@ -71,7 +73,9 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// commit logic itself.
     var pendingInboundGenerationForTesting: UInt64? { pendingInboundGeneration }
 
-    /// Counter for outbound offer generations. Starts at 1 so 0 can serve as
+    /// Counter for outbound offer generations.
+    ///
+    /// Starts at 1 so 0 can serve as
     /// "no pending request" sentinel for the inbound side.
     private var nextLocalGeneration: UInt64 = 1
 
@@ -79,24 +83,31 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// with a request (or supersedes it with a newer offer of our own).
     private var pendingOutbound: (generation: UInt64, text: String)?
 
-    /// Last inbound offer we requested data for. Used to drop a delayed
+    /// Last inbound offer we requested data for.
+    ///
+    /// Used to drop a delayed
     /// `ClipboardData` for an older offer.
     private var pendingInboundGeneration: UInt64?
 
-    /// Last `NSPasteboard.changeCount` we observed. Set after every
+    /// Last `NSPasteboard.changeCount` we observed.
+    ///
+    /// Set after every
     /// poll cycle and after every host write so we don't echo back our own
     /// content.
     private var lastPasteboardChangeCount: Int
 
-    /// The most recent text we sent or wrote. Suppresses re-offering after
+    /// The most recent text we sent or wrote.
+    ///
+    /// Suppresses re-offering after
     /// a host-driven write and avoids redundant offers when the user
     /// touches the clipboard without changing the contents.
     private var lastSeenText: String?
 
     private var pollingTimer: DispatchSourceTimer?
 
-    /// Whether clipboard sync is currently allowed by host policy. Default
-    /// `false` so the agent doesn't connect or poll until the host's first
+    /// Whether clipboard sync is currently allowed by host policy.
+    ///
+    /// Default `false` so the agent doesn't connect or poll until the host's first
     /// `PolicyUpdate(clipboardSharingEnabled: true)` arrives. Mutated only
     /// on the main queue.
     private var enabled: Bool = false
@@ -126,7 +137,9 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
 
     // MARK: - Lifecycle
 
-    /// Begins the connect/serve loop. The pasteboard poll is started when
+    /// Begins the connect/serve loop.
+    ///
+    /// The pasteboard poll is started when
     /// host policy enables clipboard sharing — see `setEnabled(_:)`.
     func start() {
         client.start { [weak self] channel in
@@ -148,7 +161,9 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         }
     }
 
-    /// Main-queue body of `setEnabled(_:)`. Caller must dispatch to main.
+    /// Main-queue body of `setEnabled(_:)`.
+    ///
+    /// Caller must dispatch to main.
     private func applyEnabledOnMain(_ enabled: Bool) {
         guard self.enabled != enabled else { return }
         self.enabled = enabled

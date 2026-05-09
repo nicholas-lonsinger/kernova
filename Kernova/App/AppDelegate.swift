@@ -30,11 +30,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private var terminationIsTCCRevocation = false
 
     /// Set in `applicationShouldTerminate` when TCC revocation is detected AND
-    /// running VMs require an async save (`.terminateLater`). Checked in
+    /// running VMs require an async save (`.terminateLater`).
+    ///
+    /// Checked in
     /// `applicationWillTerminate` to launch the relaunch helper at the last moment.
     private var relaunchAfterTermination = false
 
     /// Bundle identifiers that indicate a TCC-initiated quit.
+    ///
     /// Stable since macOS 13 (Ventura) when System Preferences was replaced by
     /// System Settings with per-pane extensions. May differ on earlier versions.
     private static let tccSenderBundleIDs: Set<String> = [
@@ -238,6 +241,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     /// Handles the `kAEQuitApplication` Apple Event by inspecting the sender.
+    ///
     /// If the sender is System Settings or the TCC daemon, sets `terminationIsTCCRevocation`
     /// so that `applicationShouldTerminate` knows to launch the relaunch helper.
     @objc private func handleQuitAppleEvent(
@@ -273,7 +277,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     /// Launches the relaunch helper, which monitors this process and re-opens
-    /// the app after it terminates. Used for TCC permission revocations where
+    /// the app after it terminates.
+    ///
+    /// Used for TCC permission revocations where
     /// the built-in relaunch mechanism times out during VM save.
     private func launchRelaunchHelper() {
         guard
@@ -646,7 +652,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         controller.showWindow(nil)
     }
 
-    /// Returns the best screen for entering fullscreen, using a fallback chain:
+    /// Returns the best screen for entering fullscreen, using a fallback chain.
+    ///
     /// 1. The display the VM was last fullscreen on (persisted in configuration)
     /// 2. The library window's current display
     /// 3. The primary display
@@ -671,6 +678,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     // MARK: - Idle Termination
 
     /// Whether the main library window has been dismissed (closed by the user).
+    ///
     /// Distinguishes closed from hidden (Cmd+H) and minimized (Cmd+M) via runtime inspection.
     /// Returns `false` if the window controller or its window is nil (no window to inspect).
     private var isMainWindowDismissed: Bool {

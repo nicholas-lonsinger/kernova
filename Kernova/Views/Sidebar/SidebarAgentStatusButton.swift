@@ -146,7 +146,9 @@ struct SidebarAgentStatusButton: View {
 
 // MARK: - Popover content & metrics
 
-/// Body of the agent-status popover. The wrapping body text is rendered
+/// Body of the agent-status popover.
+///
+/// The wrapping body text is rendered
 /// via `WrappingNSTextLabel` (an AppKit `NSTextField` wrapping label) because
 /// SwiftUI `Text` does not reliably wrap inside `NSHostingController` on
 /// macOS Tahoe even with explicit `.frame(width:)` and `.fixedSize(...)`.
@@ -207,17 +209,18 @@ struct AgentStatusPopoverContent: View {
     }
 }
 
-/// Static helpers that compute the popover's `contentSize` and the per-status
-/// strings. Centralized here so `AgentStatusPopoverContent` and
-/// `SidebarAgentStatusButton` agree on the layout numbers used for the
-/// `NSPopover` content size and the SwiftUI padding/spacing.
+/// Static helpers that compute the popover's `contentSize` and the per-status strings.
+///
+/// Centralized here so `AgentStatusPopoverContent` and `SidebarAgentStatusButton` agree on the
+/// layout numbers used for the `NSPopover` content size and the SwiftUI padding/spacing.
 enum AgentStatusPopoverMetrics {
     static let contentWidth: CGFloat = 360
     static let padding: CGFloat = 16
     static let verticalSpacing: CGFloat = 10
 
-    /// Line height of the `.headline` font as currently configured. Reading
-    /// from `NSFont.preferredFont` honors the user's Dynamic Type setting, so
+    /// Line height of the `.headline` font as currently configured.
+    ///
+    /// Reading from `NSFont.preferredFont` honors the user's Dynamic Type setting, so
     /// the popover height stays correct under accessibility text scaling.
     /// `descender` is negative on macOS, so subtracting it adds the descent
     /// portion to the total height.
@@ -287,10 +290,10 @@ enum AgentStatusPopoverMetrics {
 
 // MARK: - NSPopover bridge
 
-/// Bridges a SwiftUI `Bool` binding to an `NSPopover` whose `contentSize` is
-/// supplied by the caller. The host SwiftUI view (typically placed via
-/// `.background(NSPopoverAnchor(...))`) provides the anchor `NSView`; flipping
-/// the binding shows or closes the popover.
+/// Bridges a SwiftUI `Bool` binding to an `NSPopover` whose `contentSize` is supplied by the caller.
+///
+/// The host SwiftUI view (typically placed via `.background(NSPopoverAnchor(...))`) provides the
+/// anchor `NSView`; flipping the binding shows or closes the popover.
 private struct NSPopoverAnchor<Content: View>: NSViewRepresentable {
     @Binding var isPresented: Bool
     let contentSize: NSSize
@@ -386,7 +389,9 @@ private struct NSPopoverAnchor<Content: View>: NSViewRepresentable {
 
 // MARK: - Wrapping text label
 
-/// AppKit-backed multi-line wrapping label. SwiftUI's `Text` doesn't
+/// AppKit-backed multi-line wrapping label.
+///
+/// SwiftUI's `Text` doesn't
 /// reliably wrap inside an `NSHostingController` on macOS Tahoe (it renders
 /// single-line at its ideal width and overflows), so the popover renders
 /// the wrapping body string through `NSTextField(wrappingLabelWithString:)`

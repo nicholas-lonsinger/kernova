@@ -1,9 +1,10 @@
 import SwiftUI
 
 /// Console view that displays placeholder content when the VM display is unavailable: popped out,
-/// fullscreen, suspended (cold-paused), or no virtual machine assigned. When the display is
-/// inline and active, the AppKit `VMDisplayBackingView` layer covers this view, so the inline
-/// branch shows an inert black background.
+/// fullscreen, suspended (cold-paused), or no virtual machine assigned.
+///
+/// When the display is inline and active, the AppKit `VMDisplayBackingView` layer covers this
+/// view, so the inline branch shows an inert black background.
 struct VMConsoleView: View {
     @Bindable var instance: VMInstance
 

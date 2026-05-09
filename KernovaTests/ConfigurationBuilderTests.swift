@@ -7,7 +7,9 @@ import Virtualization
 struct ConfigurationBuilderTests {
     // MARK: - Helpers
 
-    /// Creates a temp directory with a dummy disk image. Caller must `defer` removal of the returned URL.
+    /// Creates a temp directory with a dummy disk image.
+    ///
+    /// Caller must `defer` removal of the returned URL.
     private func makeTempBundle(withDisk: Bool = false) throws -> URL {
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)

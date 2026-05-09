@@ -32,7 +32,9 @@ final class SpiceClipboardService: ClipboardServicing {
 
     /// SPICE agents (e.g. `spice-vdagent` on Linux) are user-installed and
     /// version-tracked by the guest's package manager — Kernova does not bundle
-    /// or update them. The UI distinguishes Linux guests from macOS guests
+    /// or update them.
+    ///
+    /// The UI distinguishes Linux guests from macOS guests
     /// before offering an install affordance, so reporting `.current` once
     /// connected is enough to suppress the host-side install/update flow.
     var agentStatus: AgentStatus {
@@ -52,6 +54,7 @@ final class SpiceClipboardService: ClipboardServicing {
     private var lastGrabbedText: String?
 
     /// Whether the guest advertised `VD_AGENT_CAP_CLIPBOARD_BY_DEMAND`.
+    ///
     /// When `false` (legacy mode), we send clipboard data immediately after GRAB
     /// instead of waiting for a REQUEST.
     private var guestSupportsByDemand = false

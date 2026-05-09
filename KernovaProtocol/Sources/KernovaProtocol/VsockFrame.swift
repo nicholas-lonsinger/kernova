@@ -58,7 +58,9 @@ public enum VsockFrameError: Error, Sendable, Equatable {
 /// queue at a time.
 public struct VsockFrameDecoder: Sendable {
     /// Compact the consumed prefix once the read offset crosses this many
-    /// bytes. Sized to amortize the shift cost (each byte is copied at most
+    /// bytes.
+    ///
+    /// Sized to amortize the shift cost (each byte is copied at most
     /// once before being dropped) without keeping more than ~64 KiB of stale
     /// storage live per decoder.
     private static let compactionThreshold: Int = 64 * 1024
@@ -68,7 +70,7 @@ public struct VsockFrameDecoder: Sendable {
 
     public init() {}
 
-    /// Appends raw bytes to the internal buffer. Does not parse.
+    /// Appends raw bytes to the internal buffer (does not parse).
     public mutating func feed(_ chunk: Data) {
         buffer.append(chunk)
     }

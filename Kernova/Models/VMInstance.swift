@@ -13,6 +13,7 @@ enum VMDisplayMode: Sendable {
 }
 
 /// Which inline detail pane the user has chosen to view for a running VM.
+///
 /// Ignored when the VM is stopped (settings are always shown then).
 enum DetailPaneMode: Sendable {
     case display
@@ -67,7 +68,9 @@ final class VMInstance: Identifiable {
         }
     }
 
-    /// Tracks an in-flight clone or import operation. Non-nil when this instance is a
+    /// Tracks an in-flight clone or import operation.
+    ///
+    /// Non-nil when this instance is a
     /// "phantom row" awaiting a file copy to finish (see `VMLibraryViewModel`).
     struct PreparingState {
         let operation: PreparingOperation
@@ -87,17 +90,21 @@ final class VMInstance: Identifiable {
     var displayMode: VMDisplayMode = .inline
 
     /// Which inline detail pane is shown for this VM while it has an active display.
+    ///
     /// When the VM is stopped, the settings pane is always shown regardless of this value.
     var detailPaneMode: DetailPaneMode = .display
 
     // MARK: - Clipboard Sharing
 
     /// Bidirectional pipes for the SPICE clipboard console port (Linux guests).
+    ///
     /// Unused for macOS guests, which sync clipboard over vsock instead.
     var clipboardInputPipe: Pipe?
     var clipboardOutputPipe: Pipe?
 
-    /// Active clipboard service for this VM. The concrete type depends on the
+    /// Active clipboard service for this VM.
+    ///
+    /// The concrete type depends on the
     /// guest OS: `SpiceClipboardService` for Linux, `VsockClipboardService`
     /// for macOS. Held as the existential so consumers don't need to branch.
     /// May be nil on macOS until the guest agent connects.
@@ -109,7 +116,9 @@ final class VMInstance: Identifiable {
     /// while the VM has a live `VZVirtualMachine`.
     var vsockLogListenerHost: VsockListenerHost?
 
-    /// Service handling an active guest log connection. Populated when a
+    /// Service handling an active guest log connection.
+    ///
+    /// Populated when a
     /// guest agent has connected and forwarded its first frame; cleared on
     /// disconnect or VM teardown.
     var vsockLogService: VsockGuestLogService?
@@ -120,12 +129,16 @@ final class VMInstance: Identifiable {
     var vsockClipboardListenerHost: VsockListenerHost?
 
     /// Listener for the always-on guest control channel; populated for macOS
-    /// guests while the VM has a live `VZVirtualMachine`. Carries the agent
+    /// guests while the VM has a live `VZVirtualMachine`.
+    ///
+    /// Carries the agent
     /// version handshake and a bidirectional heartbeat independent of any
     /// optional feature toggle.
     var vsockControlListenerHost: VsockListenerHost?
 
-    /// Service handling an active guest control connection. Populated when
+    /// Service handling an active guest control connection.
+    ///
+    /// Populated when
     /// the guest agent's control channel connects; cleared on disconnect or
     /// VM teardown.
     var vsockControlService: VsockControlService?
@@ -133,19 +146,24 @@ final class VMInstance: Identifiable {
     /// `true` when this VM has reached `.running`, the host previously saw a
     /// guest agent connect (`configuration.lastSeenAgentVersion != nil`), and
     /// the post-start grace period has elapsed without a fresh `Hello`
-    /// arriving over the control channel. Drives the sidebar's louder
+    /// arriving over the control channel.
+    ///
+    /// Drives the sidebar's louder
     /// "didn't reconnect" badge — distinct from the gentler `.waiting` state
     /// shown on VMs that have never had an agent. Reset on `tearDownSession`
     /// and on the next successful Hello.
     var agentExpectedButMissing: Bool = false
 
-    /// Backing task for the post-start agent-arrival watchdog. One-shot per
+    /// Backing task for the post-start agent-arrival watchdog.
+    ///
+    /// One-shot per
     /// VM session. Set in `startAgentPostStartWatchdog`; cancelled in
     /// `tearDownSession` and on the first Hello of the session.
     private var agentPostStartTask: Task<Void, Never>?
 
     /// Notified whenever a host-side mutation to `configuration` should be
     /// persisted (e.g. the guest reported a new agent version via Hello).
+    ///
     /// Wired by `VMLibraryViewModel` to `saveConfiguration(for:)` so the
     /// JSON on disk stays in sync. Direct file writes from inside the
     /// instance would bypass the storage abstraction the rest of the app
@@ -182,7 +200,9 @@ final class VMInstance: Identifiable {
 
     // MARK: - Serial Console
 
-    /// Observable text buffer driven by serial port output. Capped at 1 MB in memory;
+    /// Observable text buffer driven by serial port output.
+    ///
+    /// Capped at 1 MB in memory;
     /// full history is preserved on disk in `serial.log`.
     var serialOutputText: String = ""
 
@@ -247,6 +267,7 @@ final class VMInstance: Identifiable {
     // MARK: - Runtime USB Devices
 
     /// USB mass storage devices currently attached via the XHCI controller.
+    ///
     /// Populated at runtime only; cleared on VM stop/teardown.
     var attachedUSBDevices: [USBDeviceInfo] = []
 
@@ -310,8 +331,9 @@ final class VMInstance: Identifiable {
 
     /// Tears down the live VM session: stops clipboard and serial I/O, releases
     /// pipes, clears attached USB devices, and nils the delegate adapter and
-    /// `VZVirtualMachine` reference. Does **not** change `status` — callers set
-    /// the appropriate status after calling this.
+    /// `VZVirtualMachine` reference.
+    ///
+    /// Does **not** change `status` — callers set the appropriate status after calling this.
     func tearDownSession() {
         stopVsockServices()
         stopClipboardService()
@@ -335,7 +357,9 @@ final class VMInstance: Identifiable {
         detailPaneMode = .display
     }
 
-    /// Creates a VZVirtualMachine, assigns it, and wires up the delegate. Returns the VM.
+    /// Creates a VZVirtualMachine, assigns it, and wires up the delegate.
+    ///
+    /// Returns the VM.
     @discardableResult
     func attachVirtualMachine(from vzConfig: VZVirtualMachineConfiguration) -> VZVirtualMachine {
         let vm = VZVirtualMachine(configuration: vzConfig)
@@ -362,7 +386,9 @@ final class VMInstance: Identifiable {
 
     // MARK: - Serial Console I/O
 
-    /// Begins reading from the serial output pipe. Output is appended to
+    /// Begins reading from the serial output pipe.
+    ///
+    /// Output is appended to
     /// `serialOutputText` (for the UI) and written to the on-disk log file.
     func startSerialReading() {
         guard let outputPipe = serialOutputPipe else { return }
@@ -483,8 +509,9 @@ final class VMInstance: Identifiable {
         Self.logger.info("SPICE clipboard service started for '\(self.name, privacy: .public)'")
     }
 
-    /// Stops and releases the clipboard service and (for SPICE) closes pipe
-    /// file handles. Safe to call when no service is active.
+    /// Stops and releases the clipboard service and (for SPICE) closes pipe file handles.
+    ///
+    /// Safe to call when no service is active.
     func stopClipboardService() {
         clipboardService?.stop()
         clipboardService = nil
@@ -526,8 +553,9 @@ final class VMInstance: Identifiable {
 
     // MARK: - Vsock Service Lifecycle
 
-    /// Installs vsock listeners on the live VM's `VZVirtioSocketDevice`. Safe
-    /// to call when no socket device is present (Linux guests, or macOS guests
+    /// Installs vsock listeners on the live VM's `VZVirtioSocketDevice`.
+    ///
+    /// Safe to call when no socket device is present (Linux guests, or macOS guests
     /// whose configuration omitted it) — the call becomes a no-op.
     /// Idempotent: any previously installed listeners are torn down first.
     ///
@@ -610,8 +638,9 @@ final class VMInstance: Identifiable {
 
     // MARK: - Agent Post-Start Watchdog
 
-    /// Default grace period before the post-start watchdog fires. Forgiving
-    /// enough to cover slow first boots and post-OS-update boots inside the
+    /// Default grace period before the post-start watchdog fires.
+    ///
+    /// Forgiving enough to cover slow first boots and post-OS-update boots inside the
     /// guest. Tests override this with a millisecond-scale duration.
     static let defaultAgentPostStartGrace: Duration = .seconds(120)
 
@@ -667,7 +696,9 @@ final class VMInstance: Identifiable {
         }
     }
 
-    /// Cancels the post-start watchdog if armed. Used both when an agent
+    /// Cancels the post-start watchdog if armed.
+    ///
+    /// Used both when an agent
     /// Hello arrives during the grace window and from `tearDownSession`.
     /// Does not clear `agentExpectedButMissing` — callers do that explicitly
     /// where appropriate.
@@ -679,9 +710,11 @@ final class VMInstance: Identifiable {
     /// Reacts to a fresh, non-empty `agent_version` reported by the guest:
     /// cancel the post-start watchdog, clear the expected-missing flag, and
     /// persist the new value via `onConfigurationDidChange` if it differs
-    /// from what's on record. Wired by `startVsockServices()` into the
-    /// `VsockControlService` callback; exposed at this scope so tests can
-    /// drive the path without standing up a real control channel.
+    /// from what's on record.
+    ///
+    /// Wired by `startVsockServices()` into the `VsockControlService` callback;
+    /// exposed at this scope so tests can drive the path without standing up a
+    /// real control channel.
     ///
     /// Empty strings are filtered upstream by `VsockControlService` — they
     /// would represent an agent that didn't populate the field, and
@@ -704,6 +737,7 @@ final class VMInstance: Identifiable {
     }
 
     /// Tears down all vsock listeners and any active services running on them.
+    ///
     /// The clipboard service is only stopped here when it's the vsock variant —
     /// the SPICE service is owned by `stopClipboardService()` and would already
     /// be nil at this point under normal teardown order.
@@ -725,7 +759,9 @@ final class VMInstance: Identifiable {
 
     /// Reacts to a configuration change while the VM is running by installing
     /// or tearing down vsock listeners and pushing a fresh `PolicyUpdate` to
-    /// the guest agent. No-op when the VM isn't running, when no socket
+    /// the guest agent.
+    ///
+    /// No-op when the VM isn't running, when no socket
     /// device is attached, or when neither hot-toggleable field changed.
     ///
     /// Only `agentLogForwardingEnabled` and `clipboardSharingEnabled` are
