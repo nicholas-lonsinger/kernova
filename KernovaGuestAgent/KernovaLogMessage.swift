@@ -10,6 +10,9 @@ import os
 /// that reject manual construction from outside the `os` module —
 /// so we redact privately-marked values ourselves instead of relying on
 /// the OS's runtime privacy machinery.
+// periphery:ignore - Resolved through type inference on the `privacy:`
+// label of `appendInterpolation(_:privacy:)`; Periphery's symbol graph
+// doesn't trace argument-type inference back to the type declaration.
 struct LogPrivacy: Sendable {
     enum Kind: Sendable {
         case `public`
@@ -65,6 +68,9 @@ struct KernovaLogMessage: ExpressibleByStringInterpolation, ExpressibleByStringL
 
         // Default-privacy = `.private` matches `os.Logger`'s string default.
 
+        // periphery:ignore - StringInterpolationProtocol witness, called by
+        // Swift's compiler-emitted interpolation machinery rather than from
+        // source — Periphery's symbol graph never sees the call site.
         mutating func appendInterpolation(
             _ value: String,
             privacy: LogPrivacy = .private
@@ -76,6 +82,7 @@ struct KernovaLogMessage: ExpressibleByStringInterpolation, ExpressibleByStringL
         // Generic fallback for non-`String` types — numbers, booleans,
         // arrays, anything `CustomStringConvertible`. Rendered via
         // `String(describing:)`.
+        // periphery:ignore - Same rationale as the `String` overload above.
         mutating func appendInterpolation<T>(
             _ value: T,
             privacy: LogPrivacy = .private
@@ -85,6 +92,9 @@ struct KernovaLogMessage: ExpressibleByStringInterpolation, ExpressibleByStringL
             localRendered += redacted(s, privacy: privacy)
         }
 
+        // periphery:ignore - Only called from the `appendInterpolation`
+        // witnesses above; transitively unreachable to Periphery for the
+        // same reason.
         func redacted(_ value: String, privacy: LogPrivacy) -> String {
             switch privacy.kind {
             case .public, .auto:

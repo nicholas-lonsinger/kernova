@@ -45,11 +45,6 @@ struct KernovaLogger: Sendable {
         forward(level: .debug, message: message.wireRendered)
     }
 
-    func info(_ message: KernovaLogMessage) {
-        osLogger.info("\(message.localRendered, privacy: .public)")
-        forward(level: .info, message: message.wireRendered)
-    }
-
     func notice(_ message: KernovaLogMessage) {
         osLogger.notice("\(message.localRendered, privacy: .public)")
         forward(level: .notice, message: message.wireRendered)
