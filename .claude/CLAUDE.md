@@ -10,16 +10,20 @@ This is an Xcode project (not Swift Package Manager). Inside Xcode, use ⌘B / �
 
 ```bash
 make build               # Build for macOS
-make test                # Run the full test suite
-make test-suite SUITE=KernovaTests/VMConfigurationTests   # Run a single suite (Target/Suite form)
+make test                # Run the full test suite (project + KernovaProtocol package)
+make test-suite SUITE=KernovaTests/VMConfigurationTests   # Run a single project suite
+make test-package        # Run only the KernovaProtocol SwiftPM package tests
 make clean               # Remove DerivedData/
 ```
 
-The Makefile wraps the canonical `xcodebuild` invocation:
+`make test` runs the canonical `xcodebuild` invocation and then `swift test --package-path KernovaProtocol`:
 
 ```bash
 xcodebuild -project Kernova.xcodeproj -scheme Kernova -destination 'platform=macOS' -derivedDataPath DerivedData <build|test>
+swift test --package-path KernovaProtocol  # only as part of `make test`
 ```
+
+The package's own test target has to be invoked via `swift test` because Xcode's project-level test plan picker does not enumerate SwiftPM package test targets — `xcodebuild test -scheme Kernova` would otherwise silently skip `KernovaProtocolTests`. The two runners are sequential in `make test` (project tests first, then package tests).
 
 The `-derivedDataPath DerivedData` flag ensures build output goes to a deterministic local `DerivedData/` directory (already gitignored) instead of the per-path-hashed `~/Library/Developer/Xcode/DerivedData/` location. This avoids glob ambiguity when worktrees or parallel builds create multiple DerivedData folders. Xcode itself still uses the per-user default — they don't need to share.
 
