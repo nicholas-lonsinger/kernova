@@ -66,6 +66,8 @@
 		A1000100 /* KernovaRelaunchHelper */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = KernovaRelaunchHelper; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000200 /* KernovaGuestAgent */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = KernovaGuestAgent; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000300 /* KernovaGuestAgentTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KernovaGuestAgentTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		B62FC33F2FAFDBB1003775B7 /* KernovaProtocol */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = KernovaProtocol; sourceTree = "<group>"; };
+		B62FC3402FAFDCB3003775B7 /* Kernova.xctestplan */ = {isa = PBXFileReference; lastKnownFileType = text; path = Kernova.xctestplan; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -168,11 +170,13 @@
 		A1000020 = {
 			isa = PBXGroup;
 			children = (
+				B62FC3402FAFDCB3003775B7 /* Kernova.xctestplan */,
 				A1000006 /* Kernova */,
 				A1000007 /* KernovaTests */,
 				A1000101 /* KernovaRelaunchHelper */,
 				A1000201 /* KernovaGuestAgent */,
 				A1000302 /* KernovaGuestAgentTests */,
+				B62FC33F2FAFDBB1003775B7 /* KernovaProtocol */,
 				A10000F0 /* DiskTemplates */,
 				A1000021 /* Products */,
 			);
@@ -351,7 +355,6 @@
 			mainGroup = A1000020;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				A2000003 /* XCLocalSwiftPackageReference "KernovaProtocol" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = A1000021 /* Products */;
@@ -876,13 +879,6 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
-
-/* Begin XCLocalSwiftPackageReference section */
-		A2000003 /* XCLocalSwiftPackageReference "KernovaProtocol" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = KernovaProtocol;
-		};
-/* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
 		A2000002 /* KernovaProtocol */ = {

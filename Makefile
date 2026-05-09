@@ -25,8 +25,8 @@ SWIFT_SOURCE_DIRS := Kernova KernovaTests KernovaGuestAgent KernovaGuestAgentTes
 help:
 	@printf 'Kernova build targets:\n\n'
 	@printf '  make build               Build the app for macOS\n'
-	@printf '  make test                Run the full test suite (project + KernovaProtocol package)\n'
-	@printf '  make test-suite SUITE=X  Run a single project test suite (Target/Suite form)\n'
+	@printf '  make test                Run the full test suite (all three test targets via Kernova.xctestplan)\n'
+	@printf '  make test-suite SUITE=X  Run a single test suite (Target/Suite form)\n'
 	@printf '                           (e.g. SUITE=KernovaTests/VMConfigurationTests)\n'
 	@printf '  make test-package        Run only the KernovaProtocol SwiftPM package tests\n'
 	@printf '  make format              Rewrite Swift sources in place via swift-format\n'
@@ -36,15 +36,11 @@ help:
 build:
 	xcodebuild $(XCODEBUILD_FLAGS) build
 
-# `xcodebuild test -scheme Kernova` does not auto-discover SwiftPM package
-# test targets; KernovaProtocolTests lives inside the local package and has
-# to be run via `swift test`. Use `xcrun` so the toolchain matches the one
-# selected via `xcode-select` (same rationale as `xcrun swift-format`
-# above). See issue #215.
 test:
 	xcodebuild $(XCODEBUILD_FLAGS) test
-	xcrun swift test --package-path KernovaProtocol
 
+# `xcrun` so the toolchain matches the one selected via `xcode-select`
+# (same rationale as the `xcrun swift-format` invocation above).
 test-package:
 	xcrun swift test --package-path KernovaProtocol
 

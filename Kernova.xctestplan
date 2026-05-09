@@ -1,0 +1,45 @@
+{
+  "configurations" : [
+    {
+      "id" : "3888DB80-2E5F-406C-8111-A06CD1B3CE39",
+      "name" : "Test Scheme Action",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "performanceAntipatternCheckerEnabled" : true,
+    "targetForVariableExpansion" : {
+      "containerPath" : "container:Kernova.xcodeproj",
+      "identifier" : "A1000003",
+      "name" : "Kernova"
+    }
+  },
+  "testTargets" : [
+    {
+      "parallelizable" : true,
+      "target" : {
+        "containerPath" : "container:Kernova.xcodeproj",
+        "identifier" : "A1000060",
+        "name" : "KernovaTests"
+      }
+    },
+    {
+      "parallelizable" : false,
+      "target" : {
+        "containerPath" : "container:Kernova.xcodeproj",
+        "identifier" : "A1000303",
+        "name" : "KernovaGuestAgentTests"
+      }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:KernovaProtocol",
+        "identifier" : "KernovaProtocolTests",
+        "name" : "KernovaProtocolTests"
+      }
+    }
+  ],
+  "version" : 1
+}
