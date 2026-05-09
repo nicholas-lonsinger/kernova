@@ -509,8 +509,7 @@ final class VMInstance: Identifiable {
         Self.logger.info("SPICE clipboard service started for '\(self.name, privacy: .public)'")
     }
 
-    /// Stops and releases the clipboard service and (for SPICE) closes pipe
-    /// file handles.
+    /// Stops and releases the clipboard service and (for SPICE) closes pipe file handles.
     ///
     /// Safe to call when no service is active.
     func stopClipboardService() {

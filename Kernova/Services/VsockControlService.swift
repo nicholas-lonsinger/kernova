@@ -2,12 +2,10 @@ import Foundation
 import KernovaProtocol
 import os
 
-/// Snapshot of the toggle state delivered to the guest agent via
-/// `PolicyUpdate` on the control channel.
+/// Snapshot of the toggle state delivered to the guest agent via `PolicyUpdate` on the control channel.
 ///
-/// Decouples `VsockControlService`
-/// from `VMConfiguration` — the host supplies a closure that reads the
-/// fields each time policy is sent.
+/// Decouples `VsockControlService` from `VMConfiguration` — the host supplies a closure that reads
+/// the fields each time policy is sent.
 struct AgentPolicySnapshot: Equatable, Sendable {
     var logForwardingEnabled: Bool
     var clipboardSharingEnabled: Bool
@@ -45,21 +43,17 @@ final class VsockControlService {
 
     /// The guest-reported `Hello.agent_info.agent_version`.
     ///
-    /// `nil` until the
-    /// guest sends its `Hello`. Reset on `stop()`.
+    /// `nil` until the guest sends its `Hello`. Reset on `stop()`.
     private(set) var agentVersion: String?
 
-    /// `true` when the inbound liveness watchdog has fired but the channel has
-    /// not yet been torn down.
+    /// `true` when the inbound liveness watchdog has fired but the channel has not yet been torn down.
     ///
     /// Surfaces as `.unresponsive` in `agentStatus`.
     private(set) var isUnresponsive: Bool = false
 
-    /// Whether the guest agent is missing, current, outdated, or unresponsive
-    /// relative to the bundled binary.
+    /// Whether the guest agent is missing, current, outdated, or unresponsive relative to the bundled binary.
     ///
-    /// Drives sidebar / clipboard-window
-    /// install/update affordances and the unresponsive indicator.
+    /// Drives sidebar / clipboard-window install/update affordances and the unresponsive indicator.
     var agentStatus: AgentStatus {
         guard let installed = agentVersion else { return .waiting }
         if isUnresponsive { return .unresponsive(version: installed) }
@@ -90,18 +84,16 @@ final class VsockControlService {
 
     /// Reads the latest policy from the host configuration.
     ///
-    /// Invoked once per
-    /// guest `Hello` so the guest receives the current snapshot at every
-    /// (re)connect. `nil` in tests that don't exercise policy delivery.
+    /// Invoked once per guest `Hello` so the guest receives the current snapshot at every (re)connect.
+    /// `nil` in tests that don't exercise policy delivery.
     private let policyProvider: (@MainActor () -> AgentPolicySnapshot)?
 
-    /// Notified each time the guest reports a non-empty `agentVersion` in its
-    /// `Hello`.
+    /// Notified each time the guest reports a non-empty `agentVersion` in its `Hello`.
     ///
-    /// Fire-and-forget — this service does not care whether the host
-    /// persists the value. Wired by `VMInstance.startVsockServices()` to write
-    /// the version into `VMConfiguration.lastSeenAgentVersion`. `nil` in tests
-    /// and contexts where persistence is not exercised.
+    /// Fire-and-forget — this service does not care whether the host persists the value. Wired by
+    /// `VMInstance.startVsockServices()` to write the version into
+    /// `VMConfiguration.lastSeenAgentVersion`. `nil` in tests and contexts where persistence is not
+    /// exercised.
     private let onAgentVersionObserved: (@MainActor (String) -> Void)?
 
     private var consumeTask: Task<Void, Never>?
@@ -237,11 +229,10 @@ final class VsockControlService {
         }
     }
 
-    /// Sends a `PolicyUpdate` frame carrying the current toggle snapshot to
-    /// the guest.
+    /// Sends a `PolicyUpdate` frame carrying the current toggle snapshot to the guest.
     ///
-    /// Called once on Hello receipt and again any time the user
-    /// flips a hot-toggleable setting while the VM is running.
+    /// Called once on Hello receipt and again any time the user flips a hot-toggleable setting while
+    /// the VM is running.
     func sendPolicyUpdate(_ policy: AgentPolicySnapshot) {
         var frame = Frame()
         frame.protocolVersion = 1

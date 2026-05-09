@@ -700,13 +700,11 @@ final class VMLibraryViewModel {
         }
     }
 
-    /// Marks this VM's `.waiting` install nudge as dismissed and persists
-    /// the choice.
+    /// Marks this VM's `.waiting` install nudge as dismissed and persists the choice.
     ///
-    /// The sidebar icon for `.waiting` will no longer surface;
-    /// `.outdated`, `.unresponsive`, and `.expectedMissing` continue to
-    /// surface (those imply something more urgent than "you could install
-    /// this").
+    /// The sidebar icon for `.waiting` will no longer surface; `.outdated`, `.unresponsive`, and
+    /// `.expectedMissing` continue to surface (those imply something more urgent than "you could
+    /// install this").
     func dismissAgentInstallNudge(for instance: VMInstance) {
         guard !instance.configuration.agentInstallNudgeDismissed else { return }
         Self.logger.notice("User dismissed install-agent nudge for '\(instance.name, privacy: .public)'")

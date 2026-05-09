@@ -2,8 +2,7 @@ import Cocoa
 import os
 import SwiftUI
 
-/// AppKit container that layers pure-AppKit VM displays on top of an always-present SwiftUI
-/// hosting controller.
+/// AppKit container that layers pure-AppKit VM displays on top of an always-present SwiftUI hosting controller.
 ///
 /// Each running VM that displays inline gets its own `VMDisplayBackingView`
 /// (and thus its own `VZVirtualMachineView`). Switching VMs swaps visibility rather than

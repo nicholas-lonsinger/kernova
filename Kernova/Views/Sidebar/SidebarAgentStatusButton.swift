@@ -209,12 +209,10 @@ struct AgentStatusPopoverContent: View {
     }
 }
 
-/// Static helpers that compute the popover's `contentSize` and the per-status
-/// strings.
+/// Static helpers that compute the popover's `contentSize` and the per-status strings.
 ///
-/// Centralized here so `AgentStatusPopoverContent` and
-/// `SidebarAgentStatusButton` agree on the layout numbers used for the
-/// `NSPopover` content size and the SwiftUI padding/spacing.
+/// Centralized here so `AgentStatusPopoverContent` and `SidebarAgentStatusButton` agree on the
+/// layout numbers used for the `NSPopover` content size and the SwiftUI padding/spacing.
 enum AgentStatusPopoverMetrics {
     static let contentWidth: CGFloat = 360
     static let padding: CGFloat = 16
@@ -292,12 +290,10 @@ enum AgentStatusPopoverMetrics {
 
 // MARK: - NSPopover bridge
 
-/// Bridges a SwiftUI `Bool` binding to an `NSPopover` whose `contentSize` is
-/// supplied by the caller.
+/// Bridges a SwiftUI `Bool` binding to an `NSPopover` whose `contentSize` is supplied by the caller.
 ///
-/// The host SwiftUI view (typically placed via
-/// `.background(NSPopoverAnchor(...))`) provides the anchor `NSView`; flipping
-/// the binding shows or closes the popover.
+/// The host SwiftUI view (typically placed via `.background(NSPopoverAnchor(...))`) provides the
+/// anchor `NSView`; flipping the binding shows or closes the popover.
 private struct NSPopoverAnchor<Content: View>: NSViewRepresentable {
     @Binding var isPresented: Bool
     let contentSize: NSSize
