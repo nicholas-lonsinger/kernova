@@ -45,6 +45,10 @@ struct KernovaLogger: Sendable {
         forward(level: .debug, message: message.wireRendered)
     }
 
+    // periphery:ignore - Preserves a complete `os.Logger`-shaped surface
+    // (debug / info / notice / warning / error / fault). No agent code
+    // currently calls `.info`, but keeping the level lets new call sites
+    // pick the right severity without asymmetric workarounds.
     func info(_ message: KernovaLogMessage) {
         osLogger.info("\(message.localRendered, privacy: .public)")
         forward(level: .info, message: message.wireRendered)

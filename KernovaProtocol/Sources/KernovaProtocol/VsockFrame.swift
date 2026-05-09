@@ -12,19 +12,19 @@ import Foundation
 /// Use `encode(_:)` on the writer side to produce a self-delimiting frame.
 /// Use `VsockFrameDecoder` on the reader side to recover whole frames from a
 /// stream of arbitrary chunks.
-public enum VsockFrame {
+enum VsockFrame {
     /// Maximum payload size accepted on the wire, in bytes.
     ///
     /// A peer that announces a larger frame is treated as protocol-violating —
     /// `VsockFrameDecoder.nextFrame()` throws `VsockFrameError.frameTooLarge`
     /// rather than buffer unboundedly.
-    public static let maxPayloadSize: Int = 16 * 1024 * 1024
+    static let maxPayloadSize: Int = 16 * 1024 * 1024
 
     /// Number of bytes occupied by the length prefix.
-    public static let lengthPrefixSize: Int = 4
+    static let lengthPrefixSize: Int = 4
 
     /// Returns `payload` prefixed with its big-endian `UInt32` length.
-    public static func encode(_ payload: Data) throws -> Data {
+    static func encode(_ payload: Data) throws -> Data {
         guard payload.count <= maxPayloadSize else {
             throw VsockFrameError.frameTooLarge(
                 declaredSize: payload.count,
@@ -41,7 +41,7 @@ public enum VsockFrame {
 }
 
 /// Errors thrown by the framing layer.
-public enum VsockFrameError: Error, Sendable, Equatable {
+enum VsockFrameError: Error, Sendable, Equatable {
     /// A frame's declared payload size exceeds `VsockFrame.maxPayloadSize`.
     /// The stream is unrecoverable at this point and the caller should close
     /// the connection.
@@ -56,7 +56,7 @@ public enum VsockFrameError: Error, Sendable, Equatable {
 ///
 /// The decoder is `Sendable` and intended to be owned by a single actor or
 /// queue at a time.
-public struct VsockFrameDecoder: Sendable {
+struct VsockFrameDecoder: Sendable {
     /// Compact the consumed prefix once the read offset crosses this many
     /// bytes.
     ///
@@ -69,10 +69,10 @@ public struct VsockFrameDecoder: Sendable {
     private var readOffset: Int = 0
 
     /// Creates an empty decoder ready to accept bytes via `feed(_:)`.
-    public init() {}
+    init() {}
 
     /// Appends raw bytes to the internal buffer (does not parse).
-    public mutating func feed(_ chunk: Data) {
+    mutating func feed(_ chunk: Data) {
         buffer.append(chunk)
     }
 
@@ -84,7 +84,7 @@ public struct VsockFrameDecoder: Sendable {
     ///   exceeds `VsockFrame.maxPayloadSize`. After this throws, the decoder
     ///   should be discarded — the buffer is left in place but the stream is
     ///   considered corrupt.
-    public mutating func nextFrame() throws -> Data? {
+    mutating func nextFrame() throws -> Data? {
         let unread = buffer.count - readOffset
         guard unread >= VsockFrame.lengthPrefixSize else { return nil }
 
@@ -110,10 +110,14 @@ public struct VsockFrameDecoder: Sendable {
     }
 
     /// `true` when no buffered bytes remain.
-    public var isEmpty: Bool { buffer.count == readOffset }
+    // periphery:ignore - Used by `VsockFrameTests` via `@testable import`,
+    // which Periphery's scheme-based scan doesn't currently index for the
+    // SwiftPM package test target.
+    var isEmpty: Bool { buffer.count == readOffset }
 
     /// Number of buffered bytes not yet consumed.
-    public var bufferedByteCount: Int { buffer.count - readOffset }
+    // periphery:ignore - Same rationale as `isEmpty` above.
+    var bufferedByteCount: Int { buffer.count - readOffset }
 
     private func readLengthPrefix() -> UInt32 {
         let start = buffer.startIndex + readOffset
