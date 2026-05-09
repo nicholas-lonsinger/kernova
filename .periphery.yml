@@ -13,12 +13,14 @@ schemes:
   - KernovaGuestAgent
   - KernovaRelaunchHelper
 
-# Conservative retain rules for v1 — dial down once we know the false-positive
-# shape on this codebase.
-
-# `KernovaProtocol` exposes a public API surface across module boundaries; the
-# Kernova app target itself has few public symbols, so this stays conservative.
-retain_public: true
+# `KernovaProtocol` is a closed monorepo package — every consumer (the
+# `Kernova` app and `KernovaGuestAgent`) lives in this same project, so
+# Periphery's cross-target index can resolve real usage of public symbols.
+# We let it surface unused public declarations rather than retaining them
+# wholesale. If a specific public symbol is exported intentionally but
+# unused in-repo, prefer a per-symbol `// periphery:ignore` over flipping
+# this back to `true`.
+retain_public: false
 
 # Keeps AppKit selectors, NSMenuItemValidation conformance, target/action
 # wiring, and KVO observers from being flagged.
