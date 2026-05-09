@@ -262,7 +262,6 @@ final class VMInstance: Identifiable {
     var saveFileURL: URL { bundleLayout.saveFileURL }
     var hasSaveFile: Bool { bundleLayout.hasSaveFile }
     var serialLogURL: URL { bundleLayout.serialLogURL }
-    var diskUsageBytes: UInt64? { bundleLayout.diskUsageBytes }
 
     // MARK: - Runtime USB Devices
 

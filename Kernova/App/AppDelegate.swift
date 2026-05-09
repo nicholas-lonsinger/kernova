@@ -261,7 +261,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// so that `applicationShouldTerminate` knows to launch the relaunch helper.
     @objc private func handleQuitAppleEvent(
         _ event: NSAppleEventDescriptor,
-        withReplyEvent reply: NSAppleEventDescriptor
+        withReplyEvent _: NSAppleEventDescriptor
     ) {
         // Extract the sender's PID from the Apple Event and resolve its bundle ID.
         if let senderPIDDescriptor = event.attributeDescriptor(forKeyword: keySenderPIDAttr) {

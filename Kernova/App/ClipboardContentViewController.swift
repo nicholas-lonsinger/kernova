@@ -235,7 +235,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         }
     }
 
-    @objc private func actionButtonClicked(_ sender: Any?) {
+    @objc private func actionButtonClicked(_: Any?) {
         viewModel?.mountGuestAgentInstaller(on: instance)
     }
 

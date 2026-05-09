@@ -89,8 +89,7 @@ struct VsockGuestClipboardAgentTests {
     /// After this returns, callers driving
     /// `checkClipboardChange()` see a non-nil channel.
     private func startAgentAndWaitForLiveChannel(
-        agent: VsockGuestClipboardAgent,
-        hostChannel: VsockChannel
+        agent: VsockGuestClipboardAgent
     ) async throws {
         agent.start()
         agent.setEnabled(true)
@@ -110,7 +109,7 @@ struct VsockGuestClipboardAgentTests {
         let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
         defer { agent.stop() }
 
-        try await startAgentAndWaitForLiveChannel(agent: agent, hostChannel: hostChannel)
+        try await startAgentAndWaitForLiveChannel(agent: agent)
 
         pasteboard.setString("hello from guest", forType: .string)
         await MainActor.run { agent.checkClipboardChange() }
@@ -134,7 +133,7 @@ struct VsockGuestClipboardAgentTests {
         let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
         defer { agent.stop() }
 
-        try await startAgentAndWaitForLiveChannel(agent: agent, hostChannel: hostChannel)
+        try await startAgentAndWaitForLiveChannel(agent: agent)
 
         // Host sends offer → agent requests → host sends data → agent writes pasteboard
         try hostChannel.send(makeOfferFrame(generation: 1))
@@ -241,7 +240,7 @@ struct VsockGuestClipboardAgentTests {
         let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
         defer { agent.stop() }
 
-        try await startAgentAndWaitForLiveChannel(agent: agent, hostChannel: hostChannel)
+        try await startAgentAndWaitForLiveChannel(agent: agent)
 
         try hostChannel.send(makeOfferFrame(generation: 5))
         _ = try await nextFrame(from: hostChannel)  // Consume agent's request
@@ -264,7 +263,7 @@ struct VsockGuestClipboardAgentTests {
         let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
         defer { agent.stop() }
 
-        try await startAgentAndWaitForLiveChannel(agent: agent, hostChannel: hostChannel)
+        try await startAgentAndWaitForLiveChannel(agent: agent)
 
         pasteboard.setString("guest content", forType: .string)
         await MainActor.run { agent.checkClipboardChange() }
@@ -309,7 +308,7 @@ struct VsockGuestClipboardAgentTests {
         let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
         defer { agent.stop() }
 
-        try await startAgentAndWaitForLiveChannel(agent: agent, hostChannel: hostChannel)
+        try await startAgentAndWaitForLiveChannel(agent: agent)
 
         pasteboard.setString("guest data", forType: .string)
         await MainActor.run { agent.checkClipboardChange() }
@@ -349,7 +348,7 @@ struct VsockGuestClipboardAgentTests {
         let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
         defer { agent.stop() }
 
-        try await startAgentAndWaitForLiveChannel(agent: agent, hostChannel: hostChannel)
+        try await startAgentAndWaitForLiveChannel(agent: agent)
 
         try hostChannel.send(makeOfferFrame(generation: 42))
 
@@ -382,7 +381,7 @@ struct VsockGuestClipboardAgentTests {
         let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
         defer { agent.stop() }
 
-        try await startAgentAndWaitForLiveChannel(agent: agent, hostChannel: hostChannel)
+        try await startAgentAndWaitForLiveChannel(agent: agent)
 
         // Inject a single setString failure, then have the host send offer + data.
         pasteboard.failNextSetString()
@@ -426,7 +425,7 @@ struct VsockGuestClipboardAgentTests {
         let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
         defer { agent.stop() }
 
-        try await startAgentAndWaitForLiveChannel(agent: agent, hostChannel: hostChannel)
+        try await startAgentAndWaitForLiveChannel(agent: agent)
 
         // First attempt: inject failure, send offer + data.
         let countBeforeFirstAttempt = pasteboard.changeCount
@@ -552,7 +551,7 @@ struct VsockGuestClipboardAgentTests {
         let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
         defer { agent.stop() }
 
-        try await startAgentAndWaitForLiveChannel(agent: agent, hostChannel: hostChannel)
+        try await startAgentAndWaitForLiveChannel(agent: agent)
 
         // Push the offer into the kernel buffer, then close the host channel.
         // The agent reads the offer; its subsequent attempt to send a request

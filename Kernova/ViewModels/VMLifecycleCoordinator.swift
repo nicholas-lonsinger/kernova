@@ -153,8 +153,7 @@ final class VMLifecycleCoordinator {
     #if arch(arm64)
     func installMacOS(
         on instance: VMInstance,
-        wizard: VMCreationViewModel,
-        storageService: any VMStorageProviding
+        wizard: VMCreationViewModel
     ) async throws {
         try await serialized(instance, action: "installMacOS") {
             Self.logger.debug(

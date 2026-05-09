@@ -199,37 +199,6 @@ final class VirtualizationService {
         }
     }
 
-    /// Restores a VM from a saved state file.
-    func restore(_ instance: VMInstance) async throws {
-        guard let vm = instance.virtualMachine else {
-            throw VirtualizationError.noVirtualMachine
-        }
-
-        guard instance.hasSaveFile else {
-            throw VirtualizationError.noSaveFile
-        }
-
-        instance.status = .restoring
-
-        do {
-            try await restoreMachineState(vm, from: instance.saveFileURL)
-            try await vm.resume()
-            instance.status = .running
-
-            // Remove save file after successful restore
-            instance.removeSaveFile()
-            Self.logger.notice("Restored state for VM '\(instance.name, privacy: .public)'")
-        } catch {
-            Self.logger.error(
-                "Failed to restore VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-            )
-            instance.tearDownSession()
-            instance.status = .error
-            instance.errorMessage = error.localizedDescription
-            throw error
-        }
-    }
-
     // MARK: - Error Classification
 
     /// Returns `true` when the error is a transient environmental condition (e.g. too many

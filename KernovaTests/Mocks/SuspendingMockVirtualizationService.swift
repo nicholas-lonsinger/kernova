@@ -94,8 +94,4 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
         instance.tearDownSession()
         instance.status = .paused
     }
-
-    func restore(_ instance: VMInstance) async throws {
-        instance.status = .running
-    }
 }

@@ -12,7 +12,6 @@ final class MockVirtualizationService: VirtualizationProviding {
     var pauseCallCount = 0
     var resumeCallCount = 0
     var saveCallCount = 0
-    var restoreCallCount = 0
 
     // MARK: - Error Injection & Recovery
 
@@ -24,7 +23,6 @@ final class MockVirtualizationService: VirtualizationProviding {
     var pauseError: (any Error)?
     var resumeError: (any Error)?
     var saveError: (any Error)?
-    var restoreError: (any Error)?
 
     // MARK: - VirtualizationProviding
 
@@ -82,16 +80,5 @@ final class MockVirtualizationService: VirtualizationProviding {
         }
         instance.tearDownSession()
         instance.status = .paused
-    }
-
-    func restore(_ instance: VMInstance) async throws {
-        restoreCallCount += 1
-        if let error = restoreError {
-            instance.tearDownSession()
-            instance.status = .error
-            instance.errorMessage = error.localizedDescription
-            throw error
-        }
-        instance.status = .running
     }
 }

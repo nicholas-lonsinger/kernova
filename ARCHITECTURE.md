@@ -53,7 +53,6 @@ Kernova/
 │   ├── VMLibraryViewModel.swift        # Central view model — owns [VMInstance], delegates to coordinator
 │   ├── VMLifecycleCoordinator.swift    # Owns services, orchestrates multi-step operations (@MainActor)
 │   ├── VMCreationViewModel.swift       # Drives the multi-step VM creation wizard
-│   ├── IPSWDownloadViewModel.swift     # Manages IPSW download state for macOS VM creation
 │   └── VMDirectoryWatcher.swift        # DispatchSource monitor for external filesystem changes
 ├── Views/                              # SwiftUI views
 │   ├── VMInstance+Display.swift        # Display-layer extension: cold-paused vs live-paused distinction
@@ -79,7 +78,6 @@ Kernova/
 │       └── ReviewStep.swift            # Step 4: Review and create
 ├── Utilities/
 │   ├── DataFormatters.swift            # Human-readable formatting for bytes, CPU counts, etc.
-│   ├── FileManagerExtensions.swift     # FileManager convenience methods
 │   ├── NSImageExtensions.swift         # Nil-safe SF Symbol image loading
 │   ├── NSViewExtensions.swift          # Full-size subview constraint helper
 │   └── ObservationLoop.swift           # observeRecurring(track:apply:) helper wrapping withObservationTracking
@@ -248,15 +246,13 @@ All service implementations conform to protocols defined in `Services/Protocols/
 
 ### ViewModels
 
-**Files:** `VMLibraryViewModel.swift`, `VMLifecycleCoordinator.swift`, `VMCreationViewModel.swift`, `IPSWDownloadViewModel.swift`, `VMDirectoryWatcher.swift`
+**Files:** `VMLibraryViewModel.swift`, `VMLifecycleCoordinator.swift`, `VMCreationViewModel.swift`, `VMDirectoryWatcher.swift`
 
 - **`VMLibraryViewModel`** is the central `@Observable` view model. It owns the array of `VMInstance`s and handles list-level operations: add, remove, rename, reorder, selection tracking. VM order is user-customizable via drag-and-drop in the sidebar, persisted as a UUID array in `UserDefaults` (key `"vmOrder"`). VMs not in the custom order (newly created/discovered) sort after ordered VMs by `createdAt`. For lifecycle operations (start, stop, install), it delegates to `VMLifecycleCoordinator`. Clone and import operations use a "phantom row" pattern: a `VMInstance` with `isPreparing = true` appears immediately in the sidebar with a spinner while the file copy runs asynchronously via `Task.detached`. The `hasPreparing` computed property enforces serialization — only one clone/import at a time. Cancellation removes the phantom row, cancels the task, and cleans up partial files on disk. Force-stop is surfaced via `confirmForceStop()` which presents a confirmation dialog.
 
 - **`VMLifecycleCoordinator`** is an `@MainActor` coordinator that owns the lifecycle services (`VirtualizationService`, `MacOSInstallService`, `IPSWService`). It orchestrates multi-step operations like macOS installation (which involves IPSW download → platform file creation → VM configuration → installation). This separation keeps `VMLibraryViewModel` focused on list management. The coordinator enforces **per-VM operation serialization** — at most one lifecycle operation can be in flight for a given VM at any time; concurrent requests are rejected with `VMLifecycleCoordinator.LifecycleError.operationInProgress`. `stop` and `forceStop` bypass serialization entirely (clearing the active-operation token before calling the service) so users can always cancel hung operations.
 
 - **`VMCreationViewModel`** drives the multi-step creation wizard. It tracks the current step, validates inputs at each stage, and produces a `VMConfiguration` + disk image on completion.
-
-- **`IPSWDownloadViewModel`** manages IPSW download state (progress, cancellation) during macOS VM creation.
 
 - **`VMDirectoryWatcher`** uses `DispatchSource.makeFileSystemObjectSource` to monitor the VMs directory for external changes (e.g., a user restoring a VM from Trash via Finder). When changes are detected, it triggers reconciliation in `VMLibraryViewModel` to sync the in-memory list with disk.
 
@@ -318,10 +314,9 @@ SystemSleepWatcher ──sleep/wake──→ VMLibraryViewModel ──pause/resu
 
 ### Utilities
 
-**Files:** `DataFormatters.swift`, `FileManagerExtensions.swift`, `NSImageExtensions.swift`, `NSViewExtensions.swift`, `ObservationLoop.swift`
+**Files:** `DataFormatters.swift`, `NSImageExtensions.swift`, `NSViewExtensions.swift`, `ObservationLoop.swift`
 
 - `DataFormatters` — human-readable formatting for bytes (e.g., "107.4 GB"), CPU counts, etc.
-- `FileManagerExtensions` — convenience methods on `FileManager`
 - `NSImageExtensions` — `NSImage.systemSymbol(_:accessibilityDescription:)` for nil-safe SF Symbol loading with error logging
 - `ObservationLoop` — `observeRecurring(track:apply:) -> ObservationLoop` helper that encapsulates the `withObservationTracking` + `Task { @MainActor }` + recursive re-register dance. Returns a cancel token stored by the caller; the loop stops when the token is deallocated or `cancel()` is called. Used by all 8 observation sites (`MainWindowController`, `VMDisplayWindowController`, `ClipboardWindowController`, `SerialConsoleWindowController`, `DetailContainerViewController`, `ClipboardContentViewController`, `SerialConsoleContentViewController`, `AppDelegate.observeForTermination`) so each site only declares *what* to track and *what* to do — not how to sustain the loop.
 
@@ -402,7 +397,7 @@ Three standalone targets are built alongside the main app — two CLI tools and 
 | **Virtualization** | Core VM lifecycle — create, configure, start, stop, pause, resume VMs. Requires `com.apple.security.virtualization` entitlement. |
 | **AppKit** | Window management (`NSWindowController`, `NSSplitViewController`), toolbar (`NSToolbar`), menus, app delegate. |
 | **SwiftUI** | UI views (settings, sidebar, wizards), hosted in `NSHostingController` children within AppKit window controllers. VM display is pure AppKit via `VMDisplayBackingView`. |
-| **Observation** | `@Observable` macro for `VMInstance`, `VMLibraryViewModel`, `VMCreationViewModel`, `IPSWDownloadViewModel`. |
+| **Observation** | `@Observable` macro for `VMInstance`, `VMLibraryViewModel`, `VMCreationViewModel`. |
 | **UniformTypeIdentifiers** | `UTType` declaration for `.kernova` VM bundles. |
 | **os** | Unified logging via `os.Logger`. |
 | **SwiftProtobuf** | Wire-protocol codegen + runtime, consumed only by the local `KernovaProtocol` SPM package. From `apple/swift-protobuf` — the lone non-system-framework dependency, accepted because it is Apple-published. |
@@ -453,9 +448,7 @@ These services interact with system processes, the network, or VZ installer inte
 
 - `VMDirectoryWatcher` — relies on `DispatchSource` file system monitoring
 - `SystemSleepWatcher` — relies on `NSWorkspace` sleep/wake notifications (sleep/wake logic tested via `VMLibraryViewModel`)
-- `IPSWDownloadViewModel` — wraps async download state
 - `KernovaUTType` — static UTType declaration
-- `FileManagerExtensions` — FileManager convenience methods
 - All window controllers (`MainWindowController`, `VMDisplayWindowController`, `SerialConsoleWindowController`, `ClipboardWindowController`)
 - `AppDelegate` — app lifecycle and window management
 - All SwiftUI views
