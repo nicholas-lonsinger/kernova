@@ -109,6 +109,16 @@ struct VsockFrameDecoder: Sendable {
         return payload
     }
 
+    /// `true` when no buffered bytes remain.
+    // periphery:ignore - Used by `VsockFrameTests` via `@testable import`,
+    // which Periphery's scheme-based scan doesn't currently index for the
+    // SwiftPM package test target.
+    var isEmpty: Bool { buffer.count == readOffset }
+
+    /// Number of buffered bytes not yet consumed.
+    // periphery:ignore - Same rationale as `isEmpty` above.
+    var bufferedByteCount: Int { buffer.count - readOffset }
+
     private func readLengthPrefix() -> UInt32 {
         let start = buffer.startIndex + readOffset
         let end = start + VsockFrame.lengthPrefixSize
