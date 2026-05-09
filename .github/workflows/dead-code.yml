@@ -1,0 +1,152 @@
+name: Dead Code Scan
+
+on:
+  schedule:
+    - cron: '0 14 * * 1'  # Mondays 14:00 UTC
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: macos-26
+    timeout-minutes: 30
+    env:
+      PERIPHERY_VERSION: 3.7.4
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
+          echo "XCODE_BUILD=$(xcodebuild -version | awk '/Build version/ {print $3}')" >> "$GITHUB_ENV"
+
+      - name: Cache Periphery binary
+        id: cache-periphery
+        uses: actions/cache@v5
+        with:
+          # The periphery binary uses @rpath/libIndexStore.dylib, so the dylib
+          # must live alongside it in /usr/local/bin/. Cache both files together.
+          path: |
+            /usr/local/bin/periphery
+            /usr/local/bin/libIndexStore.dylib
+          key: periphery-${{ env.PERIPHERY_VERSION }}-${{ runner.os }}
+
+      - name: Install Periphery
+        if: steps.cache-periphery.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://github.com/peripheryapp/periphery/releases/download/${PERIPHERY_VERSION}/periphery-${PERIPHERY_VERSION}.zip" -o /tmp/periphery.zip
+          unzip -o /tmp/periphery.zip -d /tmp/periphery-extract
+          sudo mv /tmp/periphery-extract/periphery /usr/local/bin/periphery
+          sudo mv /tmp/periphery-extract/libIndexStore.dylib /usr/local/bin/libIndexStore.dylib
+          sudo chmod +x /usr/local/bin/periphery
+          periphery version
+
+      - name: Run Periphery scan
+        id: scan
+        run: |
+          set +e
+          # Periphery 3.x already passes its own `-derivedDataPath`, `-quiet`,
+          # `build-for-testing`, `CODE_SIGNING_ALLOWED=NO`, and
+          # `COMPILER_INDEX_STORE_ENABLE=YES` to xcodebuild. We only need to
+          # append `-skipPackagePluginValidation` because the project consumes
+          # SwiftPM packages.
+          periphery scan -- -skipPackagePluginValidation \
+            > scan-output.txt 2> scan-stderr.txt
+          PERIPHERY_EXIT=$?
+          set -e
+
+          if [ "$PERIPHERY_EXIT" -ne 0 ]; then
+            echo "::error::Periphery exited with code $PERIPHERY_EXIT"
+            echo "--- stderr ---"
+            cat scan-stderr.txt
+            echo "--- stdout (first 200 lines) ---"
+            head -200 scan-output.txt
+            exit "$PERIPHERY_EXIT"
+          fi
+
+          findings=$(grep -cE ":[0-9]+:[0-9]+: warning:" scan-output.txt || true)
+          echo "findings=$findings" >> "$GITHUB_OUTPUT"
+          echo "Periphery surfaced $findings finding(s)"
+
+          if [ "$findings" -gt 0 ]; then
+            echo "--- Findings ---"
+            cat scan-output.txt
+          fi
+
+      - name: Upload scan output
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: periphery-scan
+          path: |
+            scan-output.txt
+            scan-stderr.txt
+          retention-days: 14
+
+      - name: Manage tracking issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FINDINGS: ${{ steps.scan.outputs.findings }}
+        run: |
+          set -euo pipefail
+
+          ISSUE_NUMBER=$(gh issue list \
+            --label "review-debt/dead-code" \
+            --state all \
+            --limit 1 \
+            --json number,title \
+            --jq 'map(select(.title | startswith("Dead-code scan"))) | .[0].number // empty')
+
+          if [ "$FINDINGS" -eq 0 ]; then
+            if [ -n "$ISSUE_NUMBER" ]; then
+              STATE=$(gh issue view "$ISSUE_NUMBER" --json state --jq '.state')
+              if [ "$STATE" = "OPEN" ]; then
+                gh issue comment "$ISSUE_NUMBER" \
+                  --body "Scan ran clean on $(date -u +%Y-%m-%dT%H:%MZ) — closing. Reopened automatically when new findings appear."
+                gh issue close "$ISSUE_NUMBER"
+              fi
+            fi
+            exit 0
+          fi
+
+          BODY_FILE=$(mktemp)
+          {
+            echo "Last scan: $(date -u +%Y-%m-%dT%H:%MZ) — **$FINDINGS finding(s)**"
+            echo
+            echo "Auto-managed by [\`.github/workflows/dead-code.yml\`](.github/workflows/dead-code.yml). Runs weekly (Mondays 14:00 UTC) and on \`workflow_dispatch\`. Closes automatically on the next clean run."
+            echo
+            echo "<details><summary>Periphery output</summary>"
+            echo
+            echo '```'
+            cat scan-output.txt
+            echo '```'
+            echo
+            echo "</details>"
+          } > "$BODY_FILE"
+
+          if [ -n "$ISSUE_NUMBER" ]; then
+            gh issue edit "$ISSUE_NUMBER" \
+              --title "Dead-code scan: $FINDINGS finding(s)" \
+              --body-file "$BODY_FILE"
+            STATE=$(gh issue view "$ISSUE_NUMBER" --json state --jq '.state')
+            if [ "$STATE" = "CLOSED" ]; then
+              gh issue reopen "$ISSUE_NUMBER"
+            fi
+          else
+            gh issue create \
+              --title "Dead-code scan: $FINDINGS finding(s)" \
+              --label "review-debt/dead-code" \
+              --body-file "$BODY_FILE"
+          fi
