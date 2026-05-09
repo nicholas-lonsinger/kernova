@@ -35,7 +35,11 @@ jobs:
         id: cache-periphery
         uses: actions/cache@v5
         with:
-          path: /usr/local/bin/periphery
+          # The periphery binary uses @rpath/libIndexStore.dylib, so the dylib
+          # must live alongside it in /usr/local/bin/. Cache both files together.
+          path: |
+            /usr/local/bin/periphery
+            /usr/local/bin/libIndexStore.dylib
           key: periphery-${{ env.PERIPHERY_VERSION }}-${{ runner.os }}
 
       - name: Install Periphery
@@ -45,6 +49,7 @@ jobs:
           curl -fsSL "https://github.com/peripheryapp/periphery/releases/download/${PERIPHERY_VERSION}/periphery-${PERIPHERY_VERSION}.zip" -o /tmp/periphery.zip
           unzip -o /tmp/periphery.zip -d /tmp/periphery-extract
           sudo mv /tmp/periphery-extract/periphery /usr/local/bin/periphery
+          sudo mv /tmp/periphery-extract/libIndexStore.dylib /usr/local/bin/libIndexStore.dylib
           sudo chmod +x /usr/local/bin/periphery
           periphery version
 
