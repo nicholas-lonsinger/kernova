@@ -63,8 +63,15 @@ jobs:
         id: scan
         run: |
           set +e
+          # Periphery 3.x takes xcodebuild args positionally after the options.
           periphery scan \
-            --xcargs "-skipPackagePluginValidation -derivedDataPath DerivedData CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=YES COMPILER_INDEX_STORE_ENABLE=YES" \
+            -- \
+            -skipPackagePluginValidation \
+            -derivedDataPath DerivedData \
+            CODE_SIGN_IDENTITY=- \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=YES \
+            COMPILER_INDEX_STORE_ENABLE=YES \
             > scan-output.txt 2> scan-stderr.txt
           PERIPHERY_EXIT=$?
           set -e
