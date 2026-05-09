@@ -38,13 +38,15 @@ build:
 
 # `xcodebuild test -scheme Kernova` does not auto-discover SwiftPM package
 # test targets; KernovaProtocolTests lives inside the local package and has
-# to be run via `swift test`. See issue #215.
+# to be run via `swift test`. Use `xcrun` so the toolchain matches the one
+# selected via `xcode-select` (same rationale as `xcrun swift-format`
+# above). See issue #215.
 test:
 	xcodebuild $(XCODEBUILD_FLAGS) test
-	swift test --package-path KernovaProtocol
+	xcrun swift test --package-path KernovaProtocol
 
 test-package:
-	swift test --package-path KernovaProtocol
+	xcrun swift test --package-path KernovaProtocol
 
 test-suite:
 	@if [ -z "$(SUITE)" ]; then \

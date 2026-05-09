@@ -68,7 +68,7 @@ jobs:
       # KernovaProtocolTests is gated by CI alongside the project suites.
       # See issue #215.
       - name: Test KernovaProtocol package
-        run: swift test --package-path KernovaProtocol
+        run: xcrun swift test --package-path KernovaProtocol
 
       - name: Upload test results
         if: always()
