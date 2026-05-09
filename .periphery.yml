@@ -10,6 +10,8 @@
 project: Kernova.xcodeproj
 schemes:
   - Kernova
+  - KernovaGuestAgent
+  - KernovaRelaunchHelper
 
 # Conservative retain rules for v1 — dial down once we know the false-positive
 # shape on this codebase.

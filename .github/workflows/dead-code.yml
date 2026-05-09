@@ -16,7 +16,7 @@ concurrency:
 jobs:
   scan:
     runs-on: macos-26
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       PERIPHERY_VERSION: 3.7.4
     steps:
