@@ -196,8 +196,7 @@ final class VMLibraryViewModel {
                     do {
                         try await lifecycle.installMacOS(
                             on: instance,
-                            wizard: wizard,
-                            storageService: storageService
+                            wizard: wizard
                         )
                     } catch {
                         if !Task.isCancelled {
@@ -530,12 +529,6 @@ final class VMLibraryViewModel {
     enum RenameTarget: Equatable {
         case sidebar(UUID)
         case detail(UUID)
-
-        var instanceID: UUID {
-            switch self {
-            case .sidebar(let id), .detail(let id): return id
-            }
-        }
     }
 
     func renameVMInSidebar(_ instance: VMInstance) {

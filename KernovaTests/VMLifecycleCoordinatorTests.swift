@@ -364,13 +364,7 @@ struct VMLifecycleCoordinatorTests {
         wizard.ipswSource = .localFile
         wizard.ipswPath = "/tmp/restore.ipsw"
 
-        let storageService = MockVMStorageService()
-
-        try await coordinator.installMacOS(
-            on: instance,
-            wizard: wizard,
-            storageService: storageService
-        )
+        try await coordinator.installMacOS(on: instance, wizard: wizard)
 
         #expect(installService.installCallCount == 1)
     }
@@ -385,13 +379,7 @@ struct VMLifecycleCoordinatorTests {
         wizard.ipswDownloadPath = FileManager.default.temporaryDirectory
             .appendingPathComponent("test-restore.ipsw").path(percentEncoded: false)
 
-        let storageService = MockVMStorageService()
-
-        try await coordinator.installMacOS(
-            on: instance,
-            wizard: wizard,
-            storageService: storageService
-        )
+        try await coordinator.installMacOS(on: instance, wizard: wizard)
 
         #expect(ipswService.fetchCallCount == 1)
         #expect(ipswService.downloadCallCount == 1)
@@ -408,14 +396,8 @@ struct VMLifecycleCoordinatorTests {
         wizard.ipswSource = .localFile
         wizard.ipswPath = "/tmp/restore.ipsw"
 
-        let storageService = MockVMStorageService()
-
         do {
-            try await coordinator.installMacOS(
-                on: instance,
-                wizard: wizard,
-                storageService: storageService
-            )
+            try await coordinator.installMacOS(on: instance, wizard: wizard)
             Issue.record("Expected error to be thrown")
         } catch {
             #expect(instance.status == .error)

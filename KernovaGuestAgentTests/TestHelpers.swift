@@ -147,16 +147,6 @@ func makeDataFrame(generation: UInt64, text: String) -> Frame {
     return frame
 }
 
-func makeRequestFrame(generation: UInt64) -> Frame {
-    var frame = Frame()
-    frame.protocolVersion = 1
-    frame.clipboardRequest = Kernova_V1_ClipboardRequest.with {
-        $0.generation = generation
-        $0.format = .textUtf8
-    }
-    return frame
-}
-
 func makeLogFrame(message: String) -> Frame {
     var frame = Frame()
     frame.protocolVersion = 1

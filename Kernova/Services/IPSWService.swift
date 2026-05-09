@@ -69,11 +69,6 @@ struct IPSWService: Sendable {
 
         Self.logger.info("Restore image downloaded to \(destinationURL.lastPathComponent, privacy: .public)")
     }
-
-    /// Loads a restore image from a local IPSW file.
-    func loadRestoreImage(from url: URL) async throws -> VZMacOSRestoreImage {
-        try await VZMacOSRestoreImage.image(from: url)
-    }
     #endif
 }
 

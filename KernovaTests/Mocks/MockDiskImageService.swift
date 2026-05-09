@@ -15,8 +15,4 @@ final class MockDiskImageService: DiskImageProviding, @unchecked Sendable {
         if let error = createDiskImageError { throw error }
         lastCreatedSizeInGB = sizeInGB
     }
-
-    func physicalSize(of url: URL) throws -> UInt64 {
-        0
-    }
 }

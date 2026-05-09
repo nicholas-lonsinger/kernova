@@ -29,9 +29,6 @@ protocol ClipboardServicing: AnyObject {
     /// `true` once the implementation has completed its handshake with the guest.
     var isConnected: Bool { get }
 
-    /// Begins protocol I/O with the guest.
-    func start()
-
     /// Stops protocol I/O. Idempotent.
     func stop()
 
