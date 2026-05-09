@@ -53,25 +53,16 @@ jobs:
           sudo chmod +x /usr/local/bin/periphery
           periphery version
 
-      - name: Cache SwiftPM checkouts
-        uses: actions/cache@v5
-        with:
-          path: DerivedData/SourcePackages
-          key: ${{ runner.os }}-spm-${{ env.XCODE_BUILD }}-${{ hashFiles('Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
-
       - name: Run Periphery scan
         id: scan
         run: |
           set +e
-          # Periphery 3.x takes xcodebuild args positionally after the options.
-          periphery scan \
-            -- \
-            -skipPackagePluginValidation \
-            -derivedDataPath DerivedData \
-            CODE_SIGN_IDENTITY=- \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=YES \
-            COMPILER_INDEX_STORE_ENABLE=YES \
+          # Periphery 3.x already passes its own `-derivedDataPath`, `-quiet`,
+          # `build-for-testing`, `CODE_SIGNING_ALLOWED=NO`, and
+          # `COMPILER_INDEX_STORE_ENABLE=YES` to xcodebuild. We only need to
+          # append `-skipPackagePluginValidation` because the project consumes
+          # SwiftPM packages.
+          periphery scan -- -skipPackagePluginValidation \
             > scan-output.txt 2> scan-stderr.txt
           PERIPHERY_EXIT=$?
           set -e
