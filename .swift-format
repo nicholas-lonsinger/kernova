@@ -13,7 +13,7 @@
         "AllPublicDeclarationsHaveDocumentation": true,
         "AlwaysUseLiteralForEmptyCollectionInit": true,
         "NeverUseForceTry": true,
-        "NeverUseImplicitlyUnwrappedOptionals": false,
+        "NeverUseImplicitlyUnwrappedOptionals": true,
         "NeverForceUnwrap": true,
         "UseEarlyExits": true,
         "OmitExplicitReturns": true,

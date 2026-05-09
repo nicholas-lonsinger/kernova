@@ -9,16 +9,77 @@ import Cocoa
 @MainActor
 final class SerialConsoleContentViewController: NSViewController {
     private let instance: VMInstance
-    private var textView: SerialTextView!
-    private var scrollView: NSScrollView!
-    private var statusCircle: NSView!
-    private var statusLabel: NSTextField!
-    private var characterCountLabel: NSTextField!
+    private let textView: SerialTextView
+    private let scrollView: NSScrollView
+    private let statusCircle: NSView
+    private let statusLabel: NSTextField
+    private let characterCountLabel: NSTextField
     private var instanceObservation: ObservationLoop?
 
     init(instance: VMInstance) {
         self.instance = instance
+
+        let textView = SerialTextView()
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.isRichText = false
+        textView.isFieldEditor = false
+        textView.allowsUndo = false
+        textView.usesFindPanel = true
+        textView.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        textView.textColor = .init(white: 0.9, alpha: 1.0)
+        textView.backgroundColor = .init(white: 0.1, alpha: 1.0)
+        textView.insertionPointColor = .init(white: 0.9, alpha: 1.0)
+        textView.isAutomaticQuoteSubstitutionEnabled = false
+        textView.isAutomaticDashSubstitutionEnabled = false
+        textView.isAutomaticTextReplacementEnabled = false
+        textView.isAutomaticSpellingCorrectionEnabled = false
+        textView.isContinuousSpellCheckingEnabled = false
+        textView.isGrammarCheckingEnabled = false
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.containerSize = NSSize(
+            width: 0,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        self.textView = textView
+
+        let scrollView = NSScrollView()
+        scrollView.documentView = textView
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.drawsBackground = true
+        scrollView.backgroundColor = .init(white: 0.1, alpha: 1.0)
+        self.scrollView = scrollView
+
+        let circle = NSView()
+        circle.wantsLayer = true
+        circle.layer?.cornerRadius = 4
+        circle.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            circle.widthAnchor.constraint(equalToConstant: 8),
+            circle.heightAnchor.constraint(equalToConstant: 8),
+        ])
+        self.statusCircle = circle
+
+        let label = NSTextField(labelWithString: "")
+        label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        label.textColor = .secondaryLabelColor
+        self.statusLabel = label
+
+        let countLabel = NSTextField(labelWithString: "")
+        countLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        countLabel.textColor = .secondaryLabelColor
+        countLabel.alignment = .right
+        self.characterCountLabel = countLabel
+
         super.init(nibName: nil, bundle: nil)
+
+        textView.sendInput = { [weak self] string in
+            self?.instance.sendSerialInput(string)
+        }
     }
 
     required init?(coder: NSCoder) {
@@ -30,19 +91,14 @@ final class SerialConsoleContentViewController: NSViewController {
     override func loadView() {
         let container = NSView()
 
-        // Terminal
-        let scrollView = makeTerminalScrollView()
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(scrollView)
-        self.scrollView = scrollView
 
-        // Divider
         let divider = NSBox()
         divider.boxType = .separator
         divider.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(divider)
 
-        // Status bar
         let statusBar = makeStatusBar()
         statusBar.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(statusBar)
@@ -119,74 +175,12 @@ final class SerialConsoleContentViewController: NSViewController {
 
     // MARK: - View Construction
 
-    private func makeTerminalScrollView() -> NSScrollView {
-        let textView = SerialTextView()
-        textView.sendInput = { [weak self] string in
-            self?.instance.sendSerialInput(string)
-        }
-        textView.isEditable = false
-        textView.isSelectable = true
-        textView.isRichText = false
-        textView.isFieldEditor = false
-        textView.allowsUndo = false
-        textView.usesFindPanel = true
-        textView.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
-        textView.textColor = .init(white: 0.9, alpha: 1.0)
-        textView.backgroundColor = .init(white: 0.1, alpha: 1.0)
-        textView.insertionPointColor = .init(white: 0.9, alpha: 1.0)
-        textView.isAutomaticQuoteSubstitutionEnabled = false
-        textView.isAutomaticDashSubstitutionEnabled = false
-        textView.isAutomaticTextReplacementEnabled = false
-        textView.isAutomaticSpellingCorrectionEnabled = false
-        textView.isContinuousSpellCheckingEnabled = false
-        textView.isGrammarCheckingEnabled = false
-        textView.isVerticallyResizable = true
-        textView.isHorizontallyResizable = false
-        textView.textContainer?.widthTracksTextView = true
-        textView.textContainer?.containerSize = NSSize(
-            width: 0,
-            height: CGFloat.greatestFiniteMagnitude
-        )
-        self.textView = textView
-
-        let scrollView = NSScrollView()
-        scrollView.documentView = textView
-        scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = false
-        scrollView.autohidesScrollers = true
-        scrollView.drawsBackground = true
-        scrollView.backgroundColor = .init(white: 0.1, alpha: 1.0)
-
-        return scrollView
-    }
-
     private func makeStatusBar() -> NSView {
-        let circle = NSView()
-        circle.wantsLayer = true
-        circle.layer?.cornerRadius = 4
-        circle.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            circle.widthAnchor.constraint(equalToConstant: 8),
-            circle.heightAnchor.constraint(equalToConstant: 8),
-        ])
-        self.statusCircle = circle
-
-        let label = NSTextField(labelWithString: "")
-        label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        label.textColor = .secondaryLabelColor
-        self.statusLabel = label
-
-        let countLabel = NSTextField(labelWithString: "")
-        countLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        countLabel.textColor = .secondaryLabelColor
-        countLabel.alignment = .right
-        self.characterCountLabel = countLabel
-
-        let leftStack = NSStackView(views: [circle, label])
+        let leftStack = NSStackView(views: [statusCircle, statusLabel])
         leftStack.orientation = .horizontal
         leftStack.spacing = 6
 
-        let stack = NSStackView(views: [leftStack, countLabel])
+        let stack = NSStackView(views: [leftStack, characterCountLabel])
         stack.orientation = .horizontal
         stack.distribution = .fill
         stack.edgeInsets = NSEdgeInsets(top: 5, left: 10, bottom: 5, right: 10)
