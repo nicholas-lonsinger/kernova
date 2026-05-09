@@ -70,9 +70,7 @@ public struct VsockFrameDecoder: Sendable {
 
     public init() {}
 
-    /// Appends raw bytes to the internal buffer.
-    ///
-    /// Does not parse.
+    /// Appends raw bytes to the internal buffer (does not parse).
     public mutating func feed(_ chunk: Data) {
         buffer.append(chunk)
     }

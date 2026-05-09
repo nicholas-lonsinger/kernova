@@ -53,9 +53,7 @@ final class VsockHostConnection: @unchecked Sendable {
         self.client.pause()
     }
 
-    /// Begins the connect/serve/reconnect loop.
-    ///
-    /// Idempotent.
+    /// Begins the connect/serve/reconnect loop (idempotent).
     func start() {
         client.start { [weak self] channel in
             await self?.serveLogChannel(channel)

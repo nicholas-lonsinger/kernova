@@ -17,9 +17,7 @@ final class MockVirtualizationService: VirtualizationProviding {
     // MARK: - Error Injection & Recovery
 
     var startError: (any Error)?
-    /// Status to set on start failure.
-    ///
-    /// Defaults to `.error`; set to `.stopped` to simulate transient errors.
+    /// Status to set on start failure (defaults to `.error`; set to `.stopped` to simulate transient errors).
     var startErrorRecoveryStatus: VMStatus = .error
     var stopError: (any Error)?
     var forceStopError: (any Error)?

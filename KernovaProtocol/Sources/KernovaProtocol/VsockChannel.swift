@@ -94,9 +94,7 @@ public final class VsockChannel: @unchecked Sendable {
         close()
     }
 
-    /// Begins reading from the underlying descriptor.
-    ///
-    /// Idempotent.
+    /// Begins reading from the underlying descriptor (idempotent).
     public func start() {
         lock.lock()
         defer { lock.unlock() }

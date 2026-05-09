@@ -37,9 +37,7 @@ final class VsockGuestLogService {
         self.emitter = emitter ?? OSLogGuestLogEmitter(label: label)
     }
 
-    /// Begins consuming frames from the channel.
-    ///
-    /// Idempotent.
+    /// Begins consuming frames from the channel (idempotent).
     func start() {
         guard consumeTask == nil else { return }
         let label = self.label

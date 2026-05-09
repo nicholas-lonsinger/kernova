@@ -374,16 +374,12 @@ final class VMLibraryViewModel {
         }
     }
 
-    /// Saves VM state.
-    ///
-    /// Throws on failure (used by suspend-on-quit in AppDelegate).
+    /// Saves VM state, throwing on failure (used by suspend-on-quit in AppDelegate).
     func trySave(_ instance: VMInstance) async throws {
         try await lifecycle.save(instance)
     }
 
-    /// Force-stops a VM.
-    ///
-    /// Throws on failure (used by suspend-on-quit fallback in AppDelegate).
+    /// Force-stops a VM, throwing on failure (used by suspend-on-quit fallback in AppDelegate).
     func tryForceStop(_ instance: VMInstance) async throws {
         try await lifecycle.forceStop(instance)
     }
