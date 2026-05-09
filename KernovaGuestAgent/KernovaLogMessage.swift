@@ -10,19 +10,19 @@ import os
 /// that reject manual construction from outside the `os` module —
 /// so we redact privately-marked values ourselves instead of relying on
 /// the OS's runtime privacy machinery.
-public struct LogPrivacy: Sendable {
-    @usableFromInline enum Kind: Sendable {
+struct LogPrivacy: Sendable {
+    enum Kind: Sendable {
         case `public`
         case `private`
         case sensitive
         case auto
     }
-    @usableFromInline let kind: Kind
+    let kind: Kind
 
-    public static let `public` = LogPrivacy(kind: .public)
-    public static let `private` = LogPrivacy(kind: .private)
-    public static let sensitive = LogPrivacy(kind: .sensitive)
-    public static let auto = LogPrivacy(kind: .auto)
+    static let `public` = LogPrivacy(kind: .public)
+    static let `private` = LogPrivacy(kind: .private)
+    static let sensitive = LogPrivacy(kind: .sensitive)
+    static let auto = LogPrivacy(kind: .auto)
 }
 
 /// Captures a log message in two parallel rendered forms — one suitable
@@ -46,26 +46,26 @@ public struct LogPrivacy: Sendable {
 /// another target, relocate this file (and `KernovaLogger.swift`) into
 /// the `KernovaProtocol` Swift Package and update the consuming targets'
 /// dependencies.
-public struct KernovaLogMessage: ExpressibleByStringInterpolation, ExpressibleByStringLiteral, Sendable {
-    public struct StringInterpolation: StringInterpolationProtocol {
-        @usableFromInline var localRendered: String
-        @usableFromInline var wireRendered: String
+struct KernovaLogMessage: ExpressibleByStringInterpolation, ExpressibleByStringLiteral, Sendable {
+    struct StringInterpolation: StringInterpolationProtocol {
+        var localRendered: String
+        var wireRendered: String
 
-        public init(literalCapacity: Int, interpolationCount: Int) {
+        init(literalCapacity: Int, interpolationCount: Int) {
             localRendered = ""
             wireRendered = ""
             localRendered.reserveCapacity(literalCapacity * 2)
             wireRendered.reserveCapacity(literalCapacity * 2)
         }
 
-        public mutating func appendLiteral(_ literal: String) {
+        mutating func appendLiteral(_ literal: String) {
             localRendered += literal
             wireRendered += literal
         }
 
         // Default-privacy = `.private` matches `os.Logger`'s string default.
 
-        public mutating func appendInterpolation(
+        mutating func appendInterpolation(
             _ value: String,
             privacy: LogPrivacy = .private
         ) {
@@ -76,7 +76,7 @@ public struct KernovaLogMessage: ExpressibleByStringInterpolation, ExpressibleBy
         // Generic fallback for non-`String` types — numbers, booleans,
         // arrays, anything `CustomStringConvertible`. Rendered via
         // `String(describing:)`.
-        public mutating func appendInterpolation<T>(
+        mutating func appendInterpolation<T>(
             _ value: T,
             privacy: LogPrivacy = .private
         ) {
@@ -85,7 +85,6 @@ public struct KernovaLogMessage: ExpressibleByStringInterpolation, ExpressibleBy
             localRendered += redacted(s, privacy: privacy)
         }
 
-        @usableFromInline
         func redacted(_ value: String, privacy: LogPrivacy) -> String {
             switch privacy.kind {
             case .public, .auto:
@@ -101,20 +100,20 @@ public struct KernovaLogMessage: ExpressibleByStringInterpolation, ExpressibleBy
     /// Values marked
     /// `.private` or `.sensitive` have already been replaced with the
     /// `<private>` placeholder.
-    public let localRendered: String
+    let localRendered: String
 
     /// String suitable for forwarding over vsock.
     ///
     /// Every interpolated
     /// value is rendered in cleartext.
-    public let wireRendered: String
+    let wireRendered: String
 
-    public init(stringInterpolation: StringInterpolation) {
+    init(stringInterpolation: StringInterpolation) {
         localRendered = stringInterpolation.localRendered
         wireRendered = stringInterpolation.wireRendered
     }
 
-    public init(stringLiteral value: String) {
+    init(stringLiteral value: String) {
         localRendered = value
         wireRendered = value
     }

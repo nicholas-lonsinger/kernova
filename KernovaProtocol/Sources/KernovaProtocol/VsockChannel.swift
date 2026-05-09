@@ -199,6 +199,11 @@ public enum VsockChannelError: Error, Sendable {
 }
 
 extension VsockChannelError: Equatable {
+    /// Compares two errors by case only.
+    ///
+    /// `.write` cases are equal regardless of the wrapped underlying error;
+    /// callers needing the exact cause should switch and inspect the
+    /// associated value directly.
     public static func == (lhs: VsockChannelError, rhs: VsockChannelError) -> Bool {
         switch (lhs, rhs) {
         case (.closed, .closed): return true

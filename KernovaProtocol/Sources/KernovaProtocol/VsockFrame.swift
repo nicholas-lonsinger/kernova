@@ -68,6 +68,7 @@ public struct VsockFrameDecoder: Sendable {
     private var buffer: Data = Data()
     private var readOffset: Int = 0
 
+    /// Creates an empty decoder ready to accept bytes via `feed(_:)`.
     public init() {}
 
     /// Appends raw bytes to the internal buffer (does not parse).
