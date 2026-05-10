@@ -1027,4 +1027,32 @@ struct VMConfigurationTests {
         )
         #expect(config.discImageDeviceUUID == explicit)
     }
+
+    @Test("discFieldsChanged detects each disc field independently")
+    func discFieldsChangedDetectsEachField() {
+        var base = VMConfiguration(name: "VM", guestOS: .linux, bootMode: .efi)
+        base.discImagePath = "/tmp/install.iso"
+        base.discImageReadOnly = true
+        base.discImageDeviceUUID = UUID()
+
+        var pathChange = base
+        pathChange.discImagePath = "/tmp/other.iso"
+        #expect(VMConfiguration.discFieldsChanged(old: base, new: pathChange))
+
+        var readOnlyChange = base
+        readOnlyChange.discImageReadOnly = false
+        #expect(VMConfiguration.discFieldsChanged(old: base, new: readOnlyChange))
+
+        var uuidChange = base
+        uuidChange.discImageDeviceUUID = UUID()
+        #expect(VMConfiguration.discFieldsChanged(old: base, new: uuidChange))
+
+        // Non-disc fields (e.g. bootFromDiscImage, name) must not register.
+        var unrelated = base
+        unrelated.bootFromDiscImage = !base.bootFromDiscImage
+        unrelated.name = "renamed"
+        #expect(!VMConfiguration.discFieldsChanged(old: base, new: unrelated))
+
+        #expect(!VMConfiguration.discFieldsChanged(old: base, new: base))
+    }
 }

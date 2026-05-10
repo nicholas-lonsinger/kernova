@@ -48,6 +48,38 @@ struct VMSettingsView: View {
         )
     }
 
+    /// Section header for `removableMediaSection` — shows a lock badge when
+    /// the disc is cold-locked on the boot path so the user understands why
+    /// the eject/swap/readOnly controls aren't responding.
+    @ViewBuilder
+    private var removableMediaHeader: some View {
+        HStack(spacing: 6) {
+            Text("Removable Media")
+            if isBootDiscColdLocked {
+                Image(systemName: "lock.fill")
+                    .foregroundStyle(.orange)
+                    .imageScale(.small)
+                    .help(
+                        "Locked while the VM is running — the disc is on the EFI boot path, which Virtualization.framework doesn't support hot-modifying. Stop the VM to change."
+                    )
+            }
+        }
+    }
+
+    /// `true` when the disc is attached on the EFI boot path
+    /// (`storageDevices[0]`) while the VM is running.
+    ///
+    /// VZ only supports hot detach/attach on `usbControllers.usbDevices`;
+    /// storage devices are fixed at start time. In this case the eject,
+    /// swap, and readOnly controls would write to the persisted config
+    /// without affecting the running VM, so the whole section is locked.
+    private var isBootDiscColdLocked: Bool {
+        isReadOnly
+            && instance.configuration.discImagePath != nil
+            && instance.configuration.bootFromDiscImage
+            && instance.configuration.bootMode == .efi
+    }
+
     var body: some View {
         // Banner lives outside the ScrollView so it stays pinned at the top of the
         // detail pane — keeps the "read-only" cue visible even when the form is scrolled.
@@ -73,7 +105,11 @@ struct VMSettingsView: View {
                     generalSection.disabled(isReadOnly)
                     resourcesSection
                     storageDiskSection.disabled(isReadOnly)
-                    removableMediaSection
+                    // `removableMediaSection` self-disables when the disc is on
+                    // the EFI boot path (`isBootDiscColdLocked`) — VZ can't
+                    // hot-modify devices on `storageDevices`, so eject / swap /
+                    // readOnly edits would silently desync from the live VM.
+                    removableMediaSection.disabled(isBootDiscColdLocked)
                     sharedDirectoriesSection.disabled(isReadOnly)
                     networkSection.disabled(isReadOnly)
                     audioSection
@@ -191,7 +227,7 @@ struct VMSettingsView: View {
 
     @ViewBuilder
     private var removableMediaSection: some View {
-        Section("Removable Media") {
+        Section(header: removableMediaHeader) {
             if let discImagePath = instance.configuration.discImagePath {
                 HStack {
                     Image(systemName: "opticaldisc")

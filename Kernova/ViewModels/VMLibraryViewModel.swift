@@ -609,14 +609,7 @@ final class VMLibraryViewModel {
     func applyLivePolicy(for instance: VMInstance, old: VMConfiguration, new: VMConfiguration) {
         instance.applyLivePolicy(oldConfig: old, newConfig: new)
 
-        // Keep in sync with `VMConfiguration.liveEditableFieldsChanged`'s
-        // disc image branch — both must agree on what counts as a live
-        // disc edit, or settings could save a UUID change without dispatching
-        // a reconcile, leaving the runtime device identity stale.
-        let discChanged =
-            old.discImagePath != new.discImagePath
-            || old.discImageReadOnly != new.discImageReadOnly
-            || old.discImageDeviceUUID != new.discImageDeviceUUID
+        let discChanged = VMConfiguration.discFieldsChanged(old: old, new: new)
         // Only dispatch when running/paused — stopped VMs persist the new
         // disc config and pick it up on next start. The lifecycle layer
         // surfaces a noVirtualMachine error if status is running but no live

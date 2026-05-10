@@ -368,17 +368,9 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
     /// Returns `true` if any field that is editable while the VM is running
     /// differs between `old` and `new`.
     ///
-    /// Combines the `Bool`-typed
-    /// `hotToggleFields` with the disc image fields (`discImagePath`,
-    /// `discImageReadOnly`, `discImageDeviceUUID`) which are not `Bool` and
-    /// therefore can't fit in the typed key-path array. `discImageDeviceUUID`
-    /// is included for defense in depth: today the picker pairs it with
-    /// `discImagePath`, but a future programmatic mutation that rotates the
-    /// UUID without changing the path still requires a live reconcile so the
-    /// runtime device's identity stays in sync with the persisted config.
-    /// `bootFromDiscImage` is intentionally excluded — it controls EFI
-    /// firmware boot order at start time, so flipping it while running is
-    /// restart-only.
+    /// Combines the `Bool`-typed `hotToggleFields` with the disc image
+    /// fields (via `discFieldsChanged`) which are not `Bool` and therefore
+    /// can't fit in the typed key-path array.
     static func liveEditableFieldsChanged(
         old: VMConfiguration,
         new: VMConfiguration
@@ -386,10 +378,23 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         if hotToggleFields.contains(where: { old[keyPath: $0] != new[keyPath: $0] }) {
             return true
         }
-        if old.discImagePath != new.discImagePath { return true }
-        if old.discImageReadOnly != new.discImageReadOnly { return true }
-        if old.discImageDeviceUUID != new.discImageDeviceUUID { return true }
-        return false
+        return discFieldsChanged(old: old, new: new)
+    }
+
+    /// Returns `true` if any disc-image field that should trigger a live
+    /// reconcile differs between `old` and `new`.
+    ///
+    /// `discImageDeviceUUID` is included for defense in depth: today the
+    /// picker pairs it with `discImagePath`, but a future programmatic
+    /// mutation that rotates the UUID without changing the path still
+    /// requires a reconcile so the runtime device's identity stays in
+    /// sync with the persisted config. `bootFromDiscImage` is intentionally
+    /// excluded — it controls EFI firmware boot order at start time, so
+    /// flipping it while running is restart-only.
+    static func discFieldsChanged(old: VMConfiguration, new: VMConfiguration) -> Bool {
+        old.discImagePath != new.discImagePath
+            || old.discImageReadOnly != new.discImageReadOnly
+            || old.discImageDeviceUUID != new.discImageDeviceUUID
     }
 }
 
