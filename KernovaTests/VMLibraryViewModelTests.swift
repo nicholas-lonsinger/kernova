@@ -1858,6 +1858,39 @@ struct VMLibraryViewModelTests {
         #expect(instance.liveDiscImageDevice?.path == "/tmp/new.iso")
     }
 
+    @Test("Detach noVirtualMachine error bails the reconcile without firing attach")
+    func liveDiscDetachNoVMBailsWithoutAttachOrError() async throws {
+        // If the VM is torn down between the loop's status guard and the
+        // detach's `await`, `lifecycle.detachUSBDevice` throws
+        // `USBDeviceError.noVirtualMachine`. The reconcile must abandon
+        // immediately — proceeding to attach would also throw the same
+        // error and surface a spurious alert.
+        let mock = MockUSBDeviceService()
+        mock.detachError = USBDeviceError.noVirtualMachine
+        let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
+        let instance = makeInstance()
+        instance.status = .running
+        instance.liveDiscImageDevice = USBDeviceInfo(path: "/tmp/old.iso", readOnly: true)
+        viewModel.instances.append(instance)
+
+        var old = instance.configuration
+        old.discImagePath = "/tmp/old.iso"
+        var new = old
+        new.discImagePath = "/tmp/new.iso"
+
+        viewModel.applyLivePolicy(for: instance, old: old, new: new)
+
+        while instance.liveDiscImageDevice != nil { await Task.yield() }
+        for _ in 0..<5 { await Task.yield() }
+
+        #expect(mock.detachCallCount == 1)
+        // No attach attempted — the bail short-circuits before reaching it.
+        #expect(mock.attachCallCount == 0)
+        // No spurious error alert — bail is silent in the UI (only a
+        // .notice log line).
+        #expect(!viewModel.showError)
+    }
+
     @Test("Reconcile loop bails out when VM stops mid-pass — no spurious error")
     func liveDiscReconcileBailsOutOnVMStop() async throws {
         // Drive the suspending mock so we can interleave a VM stop between

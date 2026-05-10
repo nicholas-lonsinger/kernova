@@ -276,6 +276,15 @@ struct VMSettingsView: View {
                             }
                         }
                     }
+                    // `.disabled(isReadOnly)` is the load-bearing disable for
+                    // the hot-disc path (`isBootDiscColdLocked == false`)
+                    // where the surrounding section stays interactive but
+                    // this specific toggle must remain cold-locked. When the
+                    // disc IS on the boot path, the section-level
+                    // `.disabled(isBootDiscColdLocked)` already covers this
+                    // toggle, so the per-control disable becomes redundant
+                    // but harmless — SwiftUI ORs the propagated and local
+                    // disabled states.
                     .disabled(isReadOnly)
                 }
             } else {

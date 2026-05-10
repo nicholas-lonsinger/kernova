@@ -659,10 +659,22 @@ final class VMLibraryViewModel {
     private func applyLiveDiscImageChange(for instance: VMInstance, target: VMConfiguration) async {
         // Detach the previous live disc device, if any. Best-effort: if the
         // detach fails (e.g. the guest already ejected it), log and proceed
-        // with the attach so the new disc still becomes visible.
+        // with the attach so the new disc still becomes visible. The one
+        // exception is `noVirtualMachine` — that signals the VM was torn
+        // down between when the reconcile loop's status guard ran and
+        // when we awaited the detach. There's no point attempting the
+        // attach in that state (it would just surface a spurious error
+        // alert), so we bail cleanly and let the cold-start path on the
+        // next launch pick up the persisted config.
         if let previous = instance.liveDiscImageDevice {
             do {
                 try await lifecycle.detachUSBDevice(previous, from: instance)
+            } catch USBDeviceError.noVirtualMachine {
+                Self.logger.notice(
+                    "VM '\(instance.name, privacy: .public)' torn down during live disc detach; abandoning reconcile"
+                )
+                instance.liveDiscImageDevice = nil
+                return
             } catch {
                 Self.logger.warning(
                     "Live disc detach failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public). Continuing with attach."
