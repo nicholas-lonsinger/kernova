@@ -129,6 +129,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
     var bootFromDiscImage: Bool
 
     /// Persisted `VZUSBDeviceConfiguration.uuid` for the disc image device.
+    ///
     /// Mirrors the pattern used by `macAddress`: auto-generated runtime
     /// identity that travels with the bundle so saved-state restore matches
     /// the configured device. Generated atomically with `discImagePath` at
@@ -217,7 +218,12 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         self.discImagePath = discImagePath
         self.discImageReadOnly = discImageReadOnly
         self.bootFromDiscImage = bootFromDiscImage
-        self.discImageDeviceUUID = discImageDeviceUUID
+        // Mirror the decoder migration: a disc-attached config must always
+        // carry a stable UUID even when callers forget to supply one. The
+        // picker explicitly threads both fields, but programmatic call sites
+        // (the creation wizard, future imports) shouldn't have to repeat the
+        // pairing for save-state restore to work.
+        self.discImageDeviceUUID = discImageDeviceUUID ?? (discImagePath != nil ? UUID() : nil)
         self.kernelPath = kernelPath
         self.initrdPath = initrdPath
         self.kernelCommandLine = kernelCommandLine
@@ -360,12 +366,19 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
     ]
 
     /// Returns `true` if any field that is editable while the VM is running
-    /// differs between `old` and `new`. Combines the `Bool`-typed
+    /// differs between `old` and `new`.
+    ///
+    /// Combines the `Bool`-typed
     /// `hotToggleFields` with the disc image fields (`discImagePath`,
-    /// `discImageReadOnly`) which are not `Bool` and therefore can't fit in
-    /// the typed key-path array. `bootFromDiscImage` is intentionally
-    /// excluded — it controls EFI firmware boot order at start time, so
-    /// flipping it while running is restart-only.
+    /// `discImageReadOnly`, `discImageDeviceUUID`) which are not `Bool` and
+    /// therefore can't fit in the typed key-path array. `discImageDeviceUUID`
+    /// is included for defense in depth: today the picker pairs it with
+    /// `discImagePath`, but a future programmatic mutation that rotates the
+    /// UUID without changing the path still requires a live reconcile so the
+    /// runtime device's identity stays in sync with the persisted config.
+    /// `bootFromDiscImage` is intentionally excluded — it controls EFI
+    /// firmware boot order at start time, so flipping it while running is
+    /// restart-only.
     static func liveEditableFieldsChanged(
         old: VMConfiguration,
         new: VMConfiguration
@@ -375,6 +388,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         }
         if old.discImagePath != new.discImagePath { return true }
         if old.discImageReadOnly != new.discImageReadOnly { return true }
+        if old.discImageDeviceUUID != new.discImageDeviceUUID { return true }
         return false
     }
 }

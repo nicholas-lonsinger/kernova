@@ -270,11 +270,12 @@ final class VMInstance: Identifiable {
     /// Populated at runtime only; cleared on VM stop/teardown.
     var attachedUSBDevices: [USBDeviceInfo] = []
 
-    /// Tracks the live disc image device (configured via
-    /// `VMConfiguration.discImagePath`) so it can be located in
-    /// `controller.usbDevices` for hot-detach when the user changes the disc
-    /// image path / readOnly flag while the VM is running. Set on VM start
-    /// from `BuildResult.coldDiscImageDeviceInfo`; updated as the user
+    /// Tracks the live disc image device for hot-detach during settings edits.
+    ///
+    /// Configured via `VMConfiguration.discImagePath` and located in
+    /// `controller.usbDevices` when the user changes the disc image path /
+    /// readOnly flag while the VM is running. Set on VM start from
+    /// `BuildResult.coldDiscImageDeviceInfo`; updated as the user
     /// swaps/removes the disc; cleared on `tearDownSession`.
     ///
     /// Held separately from `attachedUSBDevices` (which tracks user-driven

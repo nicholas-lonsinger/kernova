@@ -61,12 +61,40 @@ struct VMStorageService: Sendable {
     }
 
     /// Loads a `VMConfiguration` from a bundle directory.
+    ///
+    /// Persists legacy field migrations atomically before returning, so the
+    /// auto-generated `discImageDeviceUUID` is durable from this point on.
+    /// Without this, a user who suspends a legacy VM and quits without
+    /// editing settings would generate a fresh UUID on every launch and
+    /// break save-state restore silently.
     func loadConfiguration(from bundleURL: URL) throws -> VMConfiguration {
         let configURL = bundleURL.appendingPathComponent("config.json")
         let data = try Data(contentsOf: configURL)
+
+        // Detect the legacy migration condition before decoding: a config
+        // saved before `discImageDeviceUUID` existed has `discImagePath` set
+        // but no UUID key. The decoder will fill in a fresh UUID; we then
+        // save the result back so the UUID is stable across launches.
+        let needsLegacyDiscUUIDPersistence: Bool
+        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            needsLegacyDiscUUIDPersistence =
+                json["discImagePath"] is String && json["discImageDeviceUUID"] == nil
+        } else {
+            needsLegacyDiscUUIDPersistence = false
+        }
+
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        return try decoder.decode(VMConfiguration.self, from: data)
+        let configuration = try decoder.decode(VMConfiguration.self, from: data)
+
+        if needsLegacyDiscUUIDPersistence {
+            Self.logger.notice(
+                "Persisting migrated discImageDeviceUUID for VM '\(configuration.name, privacy: .public)'"
+            )
+            try saveConfiguration(configuration, to: bundleURL)
+        }
+
+        return configuration
     }
 
     /// Saves a `VMConfiguration` to a bundle directory.

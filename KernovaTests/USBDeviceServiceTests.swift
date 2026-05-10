@@ -31,7 +31,8 @@ struct USBDeviceServiceTests {
         let service = MockUSBDeviceService()
         let instance = makeInstance()
 
-        let info = try await service.attach(diskImagePath: "/tmp/test.dmg", readOnly: false, desiredUUID: nil, to: instance)
+        let info = try await service.attach(
+            diskImagePath: "/tmp/test.dmg", readOnly: false, desiredUUID: nil, to: instance)
 
         #expect(info.path == "/tmp/test.dmg")
         #expect(info.readOnly == false)
@@ -63,7 +64,8 @@ struct USBDeviceServiceTests {
         let service = MockUSBDeviceService()
         let instance = makeInstance()
 
-        let info = try await service.attach(diskImagePath: "/tmp/test.dmg", readOnly: false, desiredUUID: nil, to: instance)
+        let info = try await service.attach(
+            diskImagePath: "/tmp/test.dmg", readOnly: false, desiredUUID: nil, to: instance)
         try await service.detach(deviceInfo: info, from: instance)
 
         #expect(service.detachCallCount == 1)

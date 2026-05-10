@@ -20,12 +20,12 @@ struct ConfigurationBuilder: Sendable {
         let serialOutputPipe: Pipe
         let clipboardInputPipe: Pipe?
         let clipboardOutputPipe: Pipe?
-        /// `USBDeviceInfo` for the disc image attached via the XHCI controller at
-        /// config-build time (non-boot path). `nil` when no disc image is set, or
-        /// when the disc is on the boot path (`storageDevices` index 0). The UUID
-        /// matches the one set on `VZUSBMassStorageDeviceConfiguration.uuid` so
-        /// callers can locate the runtime device in `controller.usbDevices` for
-        /// hot-detach.
+        /// `USBDeviceInfo` for a non-boot disc image attached at config-build time.
+        ///
+        /// `nil` when no disc image is set, or when the disc is on the boot path
+        /// (`storageDevices` index 0). The UUID matches the one set on
+        /// `VZUSBMassStorageDeviceConfiguration.uuid` so callers can locate the
+        /// runtime device in `controller.usbDevices` for hot-detach.
         let coldDiscImageDeviceInfo: USBDeviceInfo?
     }
 
@@ -33,6 +33,18 @@ struct ConfigurationBuilder: Sendable {
 
     /// Builds a validated `VZVirtualMachineConfiguration` from the given VM configuration and bundle URL.
     func build(from config: VMConfiguration, bundleURL: URL) throws -> BuildResult {
+        try assemble(from: config, bundleURL: bundleURL, validate: true)
+    }
+
+    /// Assembles the `BuildResult` with optional VZ validation.
+    ///
+    /// Production callers go through `build(from:bundleURL:)` and always
+    /// validate. The `validate: false` path exists for tests that need to
+    /// inspect the assembled configuration on hosts where `vzConfig.validate()`
+    /// throws `VZErrorDomain Code=2 ("Virtualization is not available on this
+    /// hardware")` — most notably GitHub's macOS runners, which are themselves
+    /// nested VMs without virtualization support.
+    func assemble(from config: VMConfiguration, bundleURL: URL, validate: Bool) throws -> BuildResult {
         let vzConfig = VZVirtualMachineConfiguration()
 
         Self.logger.debug(
@@ -89,7 +101,9 @@ struct ConfigurationBuilder: Sendable {
         }
 
         // Validate
-        try vzConfig.validate()
+        if validate {
+            try vzConfig.validate()
+        }
 
         Self.logger.info(
             "Built VZ configuration for '\(config.name, privacy: .public)' (\(config.bootMode.displayName, privacy: .public))"
@@ -255,8 +269,9 @@ struct ConfigurationBuilder: Sendable {
 
     // MARK: - Common Devices
 
-    /// Returns a `USBDeviceInfo` describing a non-boot disc image attached to
-    /// the XHCI controller, so the caller can locate the runtime device for
+    /// Returns a `USBDeviceInfo` describing a non-boot disc image attached to the XHCI controller.
+    ///
+    /// The caller uses the returned info to locate the runtime device for
     /// hot-detach. Returns `nil` when no disc image is set, or when the disc
     /// is on the boot path (in which case it lives on `storageDevices` and is
     /// not hot-detachable).

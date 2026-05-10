@@ -234,7 +234,9 @@ struct VMSettingsView: View {
                                 Image(systemName: "lock.fill")
                                     .foregroundStyle(.orange)
                                     .imageScale(.small)
-                                    .help("Locked while the VM is running — affects EFI boot order, which is fixed at start time")
+                                    .help(
+                                        "Locked while the VM is running — affects EFI boot order, which is fixed at start time"
+                                    )
                             }
                         }
                     }

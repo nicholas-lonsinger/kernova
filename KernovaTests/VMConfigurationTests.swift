@@ -972,4 +972,59 @@ struct VMConfigurationTests {
         let base = VMConfiguration(name: "VM", guestOS: .linux, bootMode: .efi)
         #expect(!VMConfiguration.liveEditableFieldsChanged(old: base, new: base))
     }
+
+    @Test("liveEditableFieldsChanged detects a UUID-only change")
+    func liveEditableDetectsUUIDOnlyChange() {
+        // Defends against a programmatic mutation that rotates the device UUID
+        // without touching the path or readOnly flag — the runtime device's
+        // identity must stay in sync with the persisted config so save-state
+        // restore continues to work.
+        var base = VMConfiguration(name: "VM", guestOS: .linux, bootMode: .efi)
+        base.discImagePath = "/tmp/install.iso"
+        base.discImageDeviceUUID = UUID()
+        var modified = base
+        modified.discImageDeviceUUID = UUID()
+
+        #expect(VMConfiguration.liveEditableFieldsChanged(old: base, new: modified))
+    }
+
+    @Test("Designated init auto-generates discImageDeviceUUID when path is set but UUID is nil")
+    func designatedInitAutoGeneratesDiscUUID() {
+        // Mirrors the decoder migration so programmatic call sites (creation
+        // wizard, future imports) never silently create a disc-attached config
+        // without a stable device identity.
+        let config = VMConfiguration(
+            name: "Auto UUID",
+            guestOS: .linux,
+            bootMode: .efi,
+            discImagePath: "/tmp/install.iso",
+            discImageDeviceUUID: nil
+        )
+        #expect(config.discImageDeviceUUID != nil)
+    }
+
+    @Test("Designated init leaves discImageDeviceUUID nil when no disc path is set")
+    func designatedInitLeavesUUIDNilWithoutDisc() {
+        let config = VMConfiguration(
+            name: "No Disc",
+            guestOS: .linux,
+            bootMode: .efi,
+            discImagePath: nil,
+            discImageDeviceUUID: nil
+        )
+        #expect(config.discImageDeviceUUID == nil)
+    }
+
+    @Test("Designated init honors an explicitly-supplied discImageDeviceUUID")
+    func designatedInitHonorsExplicitUUID() {
+        let explicit = UUID()
+        let config = VMConfiguration(
+            name: "Explicit",
+            guestOS: .linux,
+            bootMode: .efi,
+            discImagePath: "/tmp/install.iso",
+            discImageDeviceUUID: explicit
+        )
+        #expect(config.discImageDeviceUUID == explicit)
+    }
 }

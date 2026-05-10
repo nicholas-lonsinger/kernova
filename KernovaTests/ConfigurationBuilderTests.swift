@@ -328,7 +328,7 @@ struct ConfigurationBuilderTests {
         config.bootFromDiscImage = false
 
         let builder = ConfigurationBuilder()
-        let result = try builder.build(from: config, bundleURL: bundleURL)
+        let result = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
         let vz = result.configuration
 
         // storageDevices contains only the main disk — disc is NOT here
@@ -356,7 +356,7 @@ struct ConfigurationBuilderTests {
         config.bootFromDiscImage = false
 
         let builder = ConfigurationBuilder()
-        let result = try builder.build(from: config, bundleURL: bundleURL)
+        let result = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
 
         let info = try #require(result.coldDiscImageDeviceInfo)
         #expect(info.path == discImagePath)
@@ -383,7 +383,7 @@ struct ConfigurationBuilderTests {
         config.bootFromDiscImage = true
 
         let builder = ConfigurationBuilder()
-        let result = try builder.build(from: config, bundleURL: bundleURL)
+        let result = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
 
         // Boot-from-disc lives on storageDevices, not on the XHCI controller,
         // so it's NOT hot-detachable and we don't track it as a live device.
@@ -406,7 +406,7 @@ struct ConfigurationBuilderTests {
         config.discImageDeviceUUID = configuredUUID
 
         let builder = ConfigurationBuilder()
-        let result = try builder.build(from: config, bundleURL: bundleURL)
+        let result = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
 
         let info = try #require(result.coldDiscImageDeviceInfo)
         #expect(info.id == configuredUUID)
@@ -427,10 +427,10 @@ struct ConfigurationBuilderTests {
         var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
         config.discImagePath = discImagePath
         config.discImageReadOnly = true
-        config.discImageDeviceUUID = nil    // legacy / unmigrated config
+        config.discImageDeviceUUID = nil  // legacy / unmigrated config
 
         let builder = ConfigurationBuilder()
-        let result = try builder.build(from: config, bundleURL: bundleURL)
+        let result = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
 
         let info = try #require(result.coldDiscImageDeviceInfo)
         // The fallback UUID is freshly generated; we can't assert a value,
@@ -447,7 +447,7 @@ struct ConfigurationBuilderTests {
 
         let config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
         let builder = ConfigurationBuilder()
-        let result = try builder.build(from: config, bundleURL: bundleURL)
+        let result = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
 
         #expect(result.coldDiscImageDeviceInfo == nil)
     }
@@ -466,7 +466,7 @@ struct ConfigurationBuilderTests {
         config.bootFromDiscImage = true
 
         let builder = ConfigurationBuilder()
-        let result = try builder.build(from: config, bundleURL: bundleURL)
+        let result = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
         let vz = result.configuration
 
         // storageDevices: disc at 0, main disk at 1
