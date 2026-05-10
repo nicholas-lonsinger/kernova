@@ -705,6 +705,14 @@ final class VMLibraryViewModel {
             Self.logger.notice(
                 "Live disc attached to '\(instance.name, privacy: .public)' (readOnly: \(target.discImageReadOnly, privacy: .public))"
             )
+        } catch USBDeviceError.noVirtualMachine {
+            // Symmetric with the detach bail above: VM was torn down between
+            // the successful detach (or no-previous case) and the attach
+            // await. Silent abandon — no alert, the cold-start path picks up
+            // the persisted config on next launch.
+            Self.logger.notice(
+                "VM '\(instance.name, privacy: .public)' torn down during live disc attach; abandoning reconcile"
+            )
         } catch {
             Self.logger.error(
                 "Live disc attach failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
