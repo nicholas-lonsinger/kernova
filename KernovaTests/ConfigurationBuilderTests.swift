@@ -239,7 +239,8 @@ struct ConfigurationBuilderTests {
             // Non-path-validation errors — tolerated if they occur:
             case .macOSGuestRequiresAppleSilicon,
                 .invalidHardwareModel, .invalidMachineIdentifier,
-                .missingKernelPath, .diskImageNotFound:
+                .missingKernelPath, .diskImageNotFound,
+                .missingUSBControllerForDiscImage:
                 break
             }
         } catch {
@@ -606,7 +607,8 @@ struct ConfigurationBuilderTests {
                 Issue.record("Unexpected path validation error: \(error)")
             case .macOSGuestRequiresAppleSilicon,
                 .invalidHardwareModel, .invalidMachineIdentifier,
-                .missingKernelPath, .diskImageNotFound:
+                .missingKernelPath, .diskImageNotFound,
+                .missingUSBControllerForDiscImage:
                 break
             }
         } catch {
@@ -651,7 +653,8 @@ struct ConfigurationBuilderTests {
             // Non-path-validation errors — tolerated if they occur:
             case .macOSGuestRequiresAppleSilicon,
                 .invalidHardwareModel, .invalidMachineIdentifier,
-                .missingKernelPath, .diskImageNotFound:
+                .missingKernelPath, .diskImageNotFound,
+                .missingUSBControllerForDiscImage:
                 break
             }
         } catch {
@@ -925,7 +928,8 @@ struct ConfigurationBuilderTests {
             // Non-path-validation errors — tolerated if they occur:
             case .macOSGuestRequiresAppleSilicon,
                 .invalidHardwareModel, .invalidMachineIdentifier,
-                .missingKernelPath, .diskImageNotFound:
+                .missingKernelPath, .diskImageNotFound,
+                .missingUSBControllerForDiscImage:
                 break
             }
         } catch {

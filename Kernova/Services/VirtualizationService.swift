@@ -186,10 +186,10 @@ final class VirtualizationService {
             }
 
             try await saveMachineState(vm, to: instance.saveFileURL)
-            // The disc image USB device UUID is persisted in `config.json` via
-            // `VMConfiguration.discImageDeviceUUID`, so the rebuilt config on
-            // the restore path will match the device list VZ recorded inside
-            // the save file. No sidecar required.
+            // No sidecar metadata needed alongside the save file: the disc
+            // image's `VZUSBDeviceConfiguration.uuid` is the only piece of
+            // device identity VZ needs to match on restore, and it's already
+            // in `config.json` via `VMConfiguration.discImageDeviceUUID`.
             instance.tearDownSession()
             instance.status = .paused
             Self.logger.notice("Saved state for VM '\(instance.name, privacy: .public)'")

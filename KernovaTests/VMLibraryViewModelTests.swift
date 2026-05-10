@@ -1852,4 +1852,54 @@ struct VMLibraryViewModelTests {
         #expect(mock.attachCallCount == 1)
         #expect(instance.liveDiscImageDevice?.path == "/tmp/new.iso")
     }
+
+    @Test("Rapid-fire disc swaps coalesce — one Task drains to the latest target")
+    func liveDiscRapidFireCoalescesToLatest() async throws {
+        // SuspendingMockUSBDeviceService preconditions on a second
+        // suspended attach, so if the coalescing breaks and two Tasks run
+        // their attaches in parallel, the precondition trips and the test
+        // crashes loudly — which is exactly the regression signal we want.
+        let mock = SuspendingMockUSBDeviceService()
+        let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
+        let instance = makeInstance()
+        instance.status = .running
+        viewModel.instances.append(instance)
+
+        let baseConfig = instance.configuration
+        var configA = baseConfig
+        configA.discImagePath = "/tmp/A.iso"
+        configA.discImageDeviceUUID = UUID()
+        var configB = baseConfig
+        configB.discImagePath = "/tmp/B.iso"
+        configB.discImageDeviceUUID = UUID()
+        var configC = baseConfig
+        configC.discImagePath = "/tmp/C.iso"
+        configC.discImageDeviceUUID = UUID()
+
+        // Fire three rapid edits before the first attach can complete.
+        // After the first call, a Task is spawned and immediately suspends
+        // inside the mock's `attach` (no prior live device → no detach).
+        // The next two calls must NOT spawn additional Tasks; they should
+        // just overwrite the pending target.
+        viewModel.applyLivePolicy(for: instance, old: baseConfig, new: configA)
+        await mock.waitUntilSuspended()
+        viewModel.applyLivePolicy(for: instance, old: configA, new: configB)
+        viewModel.applyLivePolicy(for: instance, old: configB, new: configC)
+
+        // Release the suspended attach (A); the loop should then detach A,
+        // attach C (B was overwritten before any attach started for it).
+        mock.resumeSuspended()
+        await mock.waitUntilSuspended()
+        mock.resumeSuspended()
+
+        while instance.liveDiscImageDevice?.path != "/tmp/C.iso" { await Task.yield() }
+
+        // Final state: A then C attached; A detached. B was skipped entirely
+        // — coalescing collapsed it into the latest pending target.
+        #expect(mock.attachCallCount == 2)
+        #expect(mock.detachCallCount == 1)
+        #expect(mock.lastAttachedPath == "/tmp/C.iso")
+        #expect(instance.liveDiscImageDevice?.path == "/tmp/C.iso")
+        #expect(instance.liveDiscImageDevice?.id == configC.discImageDeviceUUID)
+    }
 }

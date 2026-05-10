@@ -283,13 +283,51 @@ struct VMConfigurationTests {
         #expect(decoded.discImageDeviceUUID == uuid)
     }
 
-    @Test("Missing optional discImageDeviceUUID decodes as nil")
+    @Test("Missing optional discImageDeviceUUID decodes as nil when no disc is set")
     func missingOptionalDiscImageDeviceUUID() throws {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
 
+        // No discImagePath in the base JSON → no UUID is generated; the
+        // migration only fires when a disc is actually attached.
+        #expect(config.discImagePath == nil)
         #expect(config.discImageDeviceUUID == nil)
+    }
+
+    @Test("Legacy config with discImagePath but no UUID is migrated to a generated UUID")
+    func legacyDiscImageGetsMigratedUUID() throws {
+        // Simulates a config saved before `discImageDeviceUUID` existed:
+        // `discImagePath` is set but the UUID key is absent. The decoder must
+        // generate a UUID so the next save persists it — otherwise every
+        // build would assign a fresh UUID and `restoreMachineStateFrom`
+        // would silently fail to match the device in the save file.
+        let json = Self.makeBaseJSON(extraFields: "\"discImagePath\": \"/tmp/legacy.iso\"")
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let config = try decoder.decode(VMConfiguration.self, from: Data(json.utf8))
+
+        #expect(config.discImagePath == "/tmp/legacy.iso")
+        #expect(config.discImageDeviceUUID != nil)
+    }
+
+    @Test("Legacy migration is stable across re-encode and decode")
+    func legacyMigrationStableAcrossReEncode() throws {
+        // The migrated UUID must survive a save→load round trip, otherwise
+        // the next launch would generate yet another UUID and never
+        // converge — defeating the point of the migration.
+        let json = Self.makeBaseJSON(extraFields: "\"discImagePath\": \"/tmp/legacy.iso\"")
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let first = try decoder.decode(VMConfiguration.self, from: Data(json.utf8))
+        let migratedUUID = try #require(first.discImageDeviceUUID)
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let reEncoded = try encoder.encode(first)
+        let second = try decoder.decode(VMConfiguration.self, from: reEncoded)
+
+        #expect(second.discImageDeviceUUID == migratedUUID)
     }
 
     @Test("Missing optional sharedDirectories decodes as nil")

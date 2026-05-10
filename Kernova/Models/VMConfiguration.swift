@@ -261,7 +261,17 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         self.discImagePath = try c.decodeIfPresent(String.self, forKey: .discImagePath)
         self.discImageReadOnly = try c.decode(Bool.self, forKey: .discImageReadOnly)
         self.bootFromDiscImage = try c.decode(Bool.self, forKey: .bootFromDiscImage)
-        self.discImageDeviceUUID = try c.decodeIfPresent(UUID.self, forKey: .discImageDeviceUUID)
+        // Migrate legacy configs: any pre-`discImageDeviceUUID` bundle with a
+        // disc attached gets a stable UUID at decode time so the next save
+        // persists it. Without this, a fresh UUID would be generated at every
+        // build, and `restoreMachineStateFrom` would silently fail to match
+        // the device in the save file and fall through to a cold boot.
+        let decodedDiscUUID = try c.decodeIfPresent(UUID.self, forKey: .discImageDeviceUUID)
+        if decodedDiscUUID == nil, self.discImagePath != nil {
+            self.discImageDeviceUUID = UUID()
+        } else {
+            self.discImageDeviceUUID = decodedDiscUUID
+        }
         self.kernelPath = try c.decodeIfPresent(String.self, forKey: .kernelPath)
         self.initrdPath = try c.decodeIfPresent(String.self, forKey: .initrdPath)
         self.kernelCommandLine = try c.decodeIfPresent(String.self, forKey: .kernelCommandLine)

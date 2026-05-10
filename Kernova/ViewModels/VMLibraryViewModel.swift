@@ -49,6 +49,21 @@ final class VMLibraryViewModel {
     /// from spawning two parallel attaches — the second would race the first
     /// and likely surface as a spurious "operation in progress" error alert.
     private var mountingInstanceIDs: Set<UUID> = []
+
+    /// VMs with an in-flight live disc reconciliation Task.
+    ///
+    /// Together with `pendingLiveDiscTarget`, implements a coalesce-and-drain
+    /// loop so multiple rapid disc edits collapse to a single in-flight Task
+    /// per instance that always converges on the latest configuration. Without
+    /// this, two `await` suspensions inside `applyLiveDiscImageChange`
+    /// (detach, attach) leave the actor reentrant and let a second Task read
+    /// the same `previous` device and issue a duplicate detach.
+    private var reconcilingDiscInstances: Set<UUID> = []
+
+    /// Latest desired disc configuration per instance, written every time
+    /// `applyLivePolicy` sees a disc-field change on a running/paused VM and
+    /// drained by `runLiveDiscReconciliation` until empty.
+    private var pendingLiveDiscTarget: [UUID: VMConfiguration] = [:]
     var instanceToDelete: VMInstance?
     var activeRename: RenameTarget?
     var showCancelPreparingConfirmation = false
@@ -595,30 +610,47 @@ final class VMLibraryViewModel {
         instance.applyLivePolicy(oldConfig: old, newConfig: new)
 
         let discChanged =
-            old.discImagePath != new.discImagePath ||
-            old.discImageReadOnly != new.discImageReadOnly
+            old.discImagePath != new.discImagePath || old.discImageReadOnly != new.discImageReadOnly
         // Only dispatch when running/paused — stopped VMs persist the new
         // disc config and pick it up on next start. The lifecycle layer
         // surfaces a noVirtualMachine error if status is running but no live
         // VZ machine is present (rare race during teardown), so we don't
         // duplicate that guard here.
-        if discChanged && (instance.status == .running || instance.status == .paused) {
-            Task { [weak self] in
-                await self?.applyLiveDiscImageChange(for: instance, old: old, new: new)
-            }
+        guard discChanged, instance.status == .running || instance.status == .paused else { return }
+
+        // Record the latest target and start a reconciliation Task if one
+        // isn't already draining. The Task loops until `pendingLiveDiscTarget`
+        // is empty so rapid swaps converge on the final state without
+        // spawning racing detach/attach pairs.
+        let id = instance.instanceID
+        pendingLiveDiscTarget[id] = new
+        guard !reconcilingDiscInstances.contains(id) else { return }
+        reconcilingDiscInstances.insert(id)
+        Task { [weak self] in
+            await self?.runLiveDiscReconciliation(for: instance, id: id)
         }
     }
 
-    /// Reconciles the live disc image device with the new configuration:
-    /// detaches the previous device (if any) and attaches a new one
-    /// (if `discImagePath != nil`). Failures surface via `presentError` and
-    /// do not revert the persisted config — the user can retry by editing
-    /// the path or readOnly flag again.
-    private func applyLiveDiscImageChange(
-        for instance: VMInstance,
-        old: VMConfiguration,
-        new: VMConfiguration
-    ) async {
+    /// Drains `pendingLiveDiscTarget` for a single instance until empty.
+    ///
+    /// Each pass calls `applyLiveDiscImageChange` to reconcile the live
+    /// device to the latest pending target. New writes that arrive during a
+    /// pass (between the dictionary read at the top of the loop and the next
+    /// iteration) are picked up by the next iteration so rapid swaps always
+    /// converge to the final user-selected state.
+    private func runLiveDiscReconciliation(for instance: VMInstance, id: UUID) async {
+        defer { reconcilingDiscInstances.remove(id) }
+        while let target = pendingLiveDiscTarget.removeValue(forKey: id) {
+            await applyLiveDiscImageChange(for: instance, target: target)
+        }
+    }
+
+    /// Reconciles the live disc image device with `target`: detaches the
+    /// previous device (if any) and attaches a new one (if
+    /// `target.discImagePath != nil`). Failures surface via `presentError`
+    /// and do not revert the persisted config — the user can retry by
+    /// editing the path or readOnly flag again.
+    private func applyLiveDiscImageChange(for instance: VMInstance, target: VMConfiguration) async {
         // Detach the previous live disc device, if any. Best-effort: if the
         // detach fails (e.g. the guest already ejected it), log and proceed
         // with the attach so the new disc still becomes visible.
@@ -633,7 +665,7 @@ final class VMLibraryViewModel {
             instance.liveDiscImageDevice = nil
         }
 
-        guard let newPath = new.discImagePath else {
+        guard let newPath = target.discImagePath else {
             Self.logger.notice("Live disc removed from '\(instance.name, privacy: .public)'")
             return
         }
@@ -641,13 +673,13 @@ final class VMLibraryViewModel {
         do {
             let info = try await lifecycle.attachUSBDevice(
                 diskImagePath: newPath,
-                readOnly: new.discImageReadOnly,
-                desiredUUID: new.discImageDeviceUUID,
+                readOnly: target.discImageReadOnly,
+                desiredUUID: target.discImageDeviceUUID,
                 to: instance
             )
             instance.liveDiscImageDevice = info
             Self.logger.notice(
-                "Live disc attached to '\(instance.name, privacy: .public)' (readOnly: \(new.discImageReadOnly, privacy: .public))"
+                "Live disc attached to '\(instance.name, privacy: .public)' (readOnly: \(target.discImageReadOnly, privacy: .public))"
             )
         } catch {
             Self.logger.error(

@@ -304,16 +304,28 @@ struct ConfigurationBuilder: Sendable {
                 // the boot candidate. Devices on the XHCI usbDevices list are not
                 // visible to EFI as boot media in array-position order.
                 vzConfig.storageDevices.insert(usbStorage, at: 0)
-            } else if let xhci = vzConfig.usbControllers.first {
+            } else {
                 // Non-boot disc: attach to the XHCI controller so it appears in
                 // VZUSBController.usbDevices at runtime and can be hot-detached.
                 // The UUID is sourced from `config.discImageDeviceUUID` (set
-                // atomically with the path at the picker) so it's stable
-                // across launches — required for `restoreMachineStateFrom`
-                // to match the configured device against the saved-state
-                // device list. The fallback to a fresh UUID covers configs
-                // that pre-date this field; save-restore won't survive a
-                // relaunch in that case until the user re-picks the disc.
+                // atomically with the path at the picker; back-filled at
+                // decode time for legacy configs) so it's stable across
+                // launches — required for `restoreMachineStateFrom` to match
+                // the configured device against the saved-state device list.
+                // The fallback to a fresh UUID is defensive: every code path
+                // that sets `discImagePath` also sets the UUID, but a
+                // hand-edited config could still arrive here without one.
+                guard let xhci = vzConfig.usbControllers.first else {
+                    // Unreachable in practice — `configureUSBControllers` runs
+                    // unconditionally before `configureStorage`. Throwing
+                    // rather than silently appending to `storageDevices`
+                    // surfaces the bug instead of degrading to a
+                    // non-hot-detachable device in release builds.
+                    Self.logger.fault(
+                        "USB controller missing when attaching non-boot disc image — \(discImagePath, privacy: .public)"
+                    )
+                    throw ConfigurationBuilderError.missingUSBControllerForDiscImage
+                }
                 let discUUID = config.discImageDeviceUUID ?? UUID()
                 usbStorage.uuid = discUUID
                 xhci.usbDevices = xhci.usbDevices + [usbStorage]
@@ -322,10 +334,6 @@ struct ConfigurationBuilder: Sendable {
                     path: discImagePath,
                     readOnly: config.discImageReadOnly
                 )
-            } else {
-                Self.logger.fault("USB controller missing when attaching non-boot disc image")
-                assertionFailure("USB controller must be configured before storage")
-                vzConfig.storageDevices.append(usbStorage)
             }
         }
 
@@ -667,6 +675,7 @@ enum ConfigurationBuilderError: LocalizedError {
     case sharedDirectoryNotADirectory(String)
     case sharedDirectoryNotReadable(String)
     case sharedDirectoryNotWritable(String)
+    case missingUSBControllerForDiscImage
 
     var errorDescription: String? {
         switch self {
@@ -708,6 +717,8 @@ enum ConfigurationBuilderError: LocalizedError {
             "Shared directory is not readable: \(path)."
         case .sharedDirectoryNotWritable(let path):
             "Shared directory is not writable: \(path)."
+        case .missingUSBControllerForDiscImage:
+            "Internal error: USB controller was not configured before attaching a non-boot disc image."
         }
     }
 }
