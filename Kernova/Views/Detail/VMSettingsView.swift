@@ -73,9 +73,19 @@ struct VMSettingsView: View {
     /// storage devices are fixed at start time. In this case the eject,
     /// swap, and readOnly controls would write to the persisted config
     /// without affecting the running VM, so the whole section is locked.
+    ///
+    /// `liveDiscImageDevice == nil` is the authoritative topology signal:
+    /// the builder populates it when (and only when) the disc went on the
+    /// hot-pluggable XHCI path. The `bootFromDiscImage` and `bootMode`
+    /// checks remain as belt-and-suspenders so this predicate matches the
+    /// builder's branch even in edge cases where a hot disc was attached
+    /// at runtime while the config still has `bootFromDiscImage == true`
+    /// from a prior session — in that case `liveDiscImageDevice != nil`
+    /// short-circuits the lock so the user can still eject.
     private var isBootDiscColdLocked: Bool {
         isReadOnly
             && instance.configuration.discImagePath != nil
+            && instance.liveDiscImageDevice == nil
             && instance.configuration.bootFromDiscImage
             && instance.configuration.bootMode == .efi
     }

@@ -657,30 +657,42 @@ final class VMLibraryViewModel {
     /// and do not revert the persisted config — the user can retry by
     /// editing the path or readOnly flag again.
     private func applyLiveDiscImageChange(for instance: VMInstance, target: VMConfiguration) async {
-        // Detach the previous live disc device, if any. Best-effort: if the
-        // detach fails (e.g. the guest already ejected it), log and proceed
-        // with the attach so the new disc still becomes visible. The one
-        // exception is `noVirtualMachine` — that signals the VM was torn
-        // down between when the reconcile loop's status guard ran and
-        // when we awaited the detach. There's no point attempting the
-        // attach in that state (it would just surface a spurious error
-        // alert), so we bail cleanly and let the cold-start path on the
-        // next launch pick up the persisted config.
+        // Detach the previous live disc device, if any. The branches handle
+        // three distinct outcomes:
+        //
+        // - **Success or `deviceNotFound`** — the device is confirmed gone
+        //   (we removed it, or the guest already ejected it). Clear
+        //   tracking and proceed to attach.
+        // - **`noVirtualMachine`** — VM was torn down between the loop's
+        //   status guard and our await. Clear tracking and bail; attempting
+        //   the attach would just surface a spurious error alert. The
+        //   cold-start path picks up the persisted config on next launch.
+        // - **Any other error** — likely a transient framework state or
+        //   guest-side lock. The device may still be physically attached,
+        //   so we KEEP `liveDiscImageDevice` populated and proceed with
+        //   the attach. If the attach succeeds, the live tracking points
+        //   at the new device; if it fails, the next reconcile pass can
+        //   re-attempt the detach.
         if let previous = instance.liveDiscImageDevice {
             do {
                 try await lifecycle.detachUSBDevice(previous, from: instance)
+                instance.liveDiscImageDevice = nil
             } catch USBDeviceError.noVirtualMachine {
                 Self.logger.notice(
                     "VM '\(instance.name, privacy: .public)' torn down during live disc detach; abandoning reconcile"
                 )
                 instance.liveDiscImageDevice = nil
                 return
+            } catch USBDeviceError.deviceNotFound {
+                Self.logger.notice(
+                    "Live disc was already detached from '\(instance.name, privacy: .public)' (deviceNotFound); continuing with attach"
+                )
+                instance.liveDiscImageDevice = nil
             } catch {
                 Self.logger.warning(
-                    "Live disc detach failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public). Continuing with attach."
+                    "Live disc detach failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public). Keeping tracking and continuing with attach."
                 )
             }
-            instance.liveDiscImageDevice = nil
         }
 
         guard let newPath = target.discImagePath else {
