@@ -237,10 +237,20 @@ final class VMLifecycleCoordinator {
     /// so the runtime device matches a persisted identity (e.g.
     /// `VMConfiguration.discImageDeviceUUID`). Pass `nil` for callers that
     /// don't care (e.g. the guest agent installer).
+    ///
+    /// `trackInList` controls whether the returned `USBDeviceInfo` is
+    /// appended to `instance.attachedUSBDevices`. Pass `true` (default) for
+    /// installer-style transient mounts that share that list. Pass `false`
+    /// for the settings-driven disc image flow, which tracks its device
+    /// separately on `instance.liveDiscImageDevice` so an
+    /// `unmountGuestAgentInstaller` path lookup can't accidentally match
+    /// and detach a user-selected disc that happens to live at the same
+    /// file path.
     func attachUSBDevice(
         diskImagePath: String,
         readOnly: Bool,
         desiredUUID: UUID? = nil,
+        trackInList: Bool = true,
         to instance: VMInstance
     ) async throws -> USBDeviceInfo {
         let info = try await usbDeviceService.attach(
@@ -249,7 +259,9 @@ final class VMLifecycleCoordinator {
             desiredUUID: desiredUUID,
             to: instance
         )
-        instance.attachedUSBDevices.append(info)
+        if trackInList {
+            instance.attachedUSBDevices.append(info)
+        }
         return info
     }
 

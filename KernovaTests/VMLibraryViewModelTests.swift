@@ -1690,6 +1690,11 @@ struct VMLibraryViewModelTests {
         #expect(mock.lastAttachedDesiredUUID == configuredUUID)
         #expect(instance.liveDiscImageDevice?.id == configuredUUID)
         #expect(instance.liveDiscImageDevice?.path == "/tmp/install.iso")
+        // The settings-driven disc must NOT pollute `attachedUSBDevices`
+        // (reserved for transient installer-style mounts). Otherwise an
+        // `unmountGuestAgentInstaller` path lookup could accidentally
+        // detach the user-selected disc.
+        #expect(instance.attachedUSBDevices.isEmpty)
     }
 
     @Test("applyLivePolicy detaches and clears tracking when disc removed")
@@ -1851,6 +1856,45 @@ struct VMLibraryViewModelTests {
         #expect(mock.detachCallCount == 1)
         #expect(mock.attachCallCount == 1)
         #expect(instance.liveDiscImageDevice?.path == "/tmp/new.iso")
+    }
+
+    @Test("Reconcile loop bails out when VM stops mid-pass — no spurious error")
+    func liveDiscReconcileBailsOutOnVMStop() async throws {
+        // Drive the suspending mock so we can interleave a VM stop between
+        // passes of the drain loop. After the first attach completes, the
+        // loop should re-check `instance.status`, see `.stopped`, and break
+        // — no second attach attempt, no spurious noVirtualMachine alert.
+        let mock = SuspendingMockUSBDeviceService()
+        let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
+        let instance = makeInstance()
+        instance.status = .running
+        viewModel.instances.append(instance)
+
+        let baseConfig = instance.configuration
+        var configA = baseConfig
+        configA.discImagePath = "/tmp/A.iso"
+        configA.discImageDeviceUUID = UUID()
+        var configB = baseConfig
+        configB.discImagePath = "/tmp/B.iso"
+        configB.discImageDeviceUUID = UUID()
+
+        // Pass 1 starts: attaches A and suspends inside the mock. Then we
+        // enqueue a second target (B) and stop the VM before resuming.
+        viewModel.applyLivePolicy(for: instance, old: baseConfig, new: configA)
+        await mock.waitUntilSuspended()
+        viewModel.applyLivePolicy(for: instance, old: configA, new: configB)
+        instance.status = .stopped
+
+        // Resume the suspended attach; the loop's next iteration must see
+        // `.stopped` and break, leaving B untouched.
+        mock.resumeSuspended()
+
+        // Yield generously to confirm no second attach happens.
+        for _ in 0..<10 { await Task.yield() }
+
+        #expect(mock.attachCallCount == 1)
+        #expect(mock.lastAttachedPath == "/tmp/A.iso")
+        #expect(!viewModel.showError)
     }
 
     @Test("Rapid-fire disc swaps coalesce — one Task drains to the latest target")

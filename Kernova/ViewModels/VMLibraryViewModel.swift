@@ -640,6 +640,12 @@ final class VMLibraryViewModel {
     private func runLiveDiscReconciliation(for instance: VMInstance, id: UUID) async {
         defer { reconcilingDiscInstances.remove(id) }
         while let target = pendingLiveDiscTarget.removeValue(forKey: id) {
+            // If the VM stopped (or transitioned out of a hot-pluggable state)
+            // while we were awaiting the previous pass, abandon reconciliation:
+            // the stopped VM picks up the latest config on next start, and
+            // hitting XHCI on a torn-down VM would surface a spurious
+            // `noVirtualMachine` error to the user.
+            guard instance.status == .running || instance.status == .paused else { break }
             await applyLiveDiscImageChange(for: instance, target: target)
         }
     }
@@ -671,10 +677,16 @@ final class VMLibraryViewModel {
         }
 
         do {
+            // `trackInList: false` keeps the settings-driven disc out of
+            // `instance.attachedUSBDevices`, which is reserved for transient
+            // installer-style mounts. Without this, an installer-flow lookup
+            // by path could accidentally match (and detach) a user-selected
+            // disc that happens to share a file path.
             let info = try await lifecycle.attachUSBDevice(
                 diskImagePath: newPath,
                 readOnly: target.discImageReadOnly,
                 desiredUUID: target.discImageDeviceUUID,
+                trackInList: false,
                 to: instance
             )
             instance.liveDiscImageDevice = info
