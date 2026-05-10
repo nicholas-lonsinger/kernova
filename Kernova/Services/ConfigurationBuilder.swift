@@ -20,6 +20,13 @@ struct ConfigurationBuilder: Sendable {
         let serialOutputPipe: Pipe
         let clipboardInputPipe: Pipe?
         let clipboardOutputPipe: Pipe?
+        /// `USBDeviceInfo` for the disc image attached via the XHCI controller at
+        /// config-build time (non-boot path). `nil` when no disc image is set, or
+        /// when the disc is on the boot path (`storageDevices` index 0). The UUID
+        /// matches the one set on `VZUSBMassStorageDeviceConfiguration.uuid` so
+        /// callers can locate the runtime device in `controller.usbDevices` for
+        /// hot-detach.
+        let coldDiscImageDeviceInfo: USBDeviceInfo?
     }
 
     private static let logger = Logger(subsystem: "com.kernova.app", category: "ConfigurationBuilder")
@@ -52,12 +59,19 @@ struct ConfigurationBuilder: Sendable {
             try configureLinuxKernelBoot(vzConfig, config: config)
         }
 
-        // Common devices
-        try configureStorage(vzConfig, config: config, bundleURL: bundleURL)
+        // Common devices.
+        // configureUSBControllers must run before configureStorage so a non-boot
+        // disc image can be attached to the XHCI controller's usbDevices list
+        // (and thus be hot-detachable at runtime via VZUSBController.detach).
+        configureUSBControllers(vzConfig)
+        let coldDiscImageDeviceInfo = try configureStorage(
+            vzConfig,
+            config: config,
+            bundleURL: bundleURL
+        )
         configureNetwork(vzConfig, config: config)
         configureEntropy(vzConfig)
         configureAudio(vzConfig, config: config)
-        configureUSBControllers(vzConfig)
         try configureDirectorySharing(vzConfig, config: config)
 
         // Serial port
@@ -85,7 +99,8 @@ struct ConfigurationBuilder: Sendable {
             serialInputPipe: inputPipe,
             serialOutputPipe: outputPipe,
             clipboardInputPipe: clipboardPipes?.input,
-            clipboardOutputPipe: clipboardPipes?.output
+            clipboardOutputPipe: clipboardPipes?.output,
+            coldDiscImageDeviceInfo: coldDiscImageDeviceInfo
         )
     }
 
@@ -240,11 +255,16 @@ struct ConfigurationBuilder: Sendable {
 
     // MARK: - Common Devices
 
+    /// Returns a `USBDeviceInfo` describing a non-boot disc image attached to
+    /// the XHCI controller, so the caller can locate the runtime device for
+    /// hot-detach. Returns `nil` when no disc image is set, or when the disc
+    /// is on the boot path (in which case it lives on `storageDevices` and is
+    /// not hot-detachable).
     private func configureStorage(
         _ vzConfig: VZVirtualMachineConfiguration,
         config: VMConfiguration,
         bundleURL: URL
-    ) throws {
+    ) throws -> USBDeviceInfo? {
         let layout = VMBundleLayout(bundleURL: bundleURL)
         guard FileManager.default.fileExists(atPath: layout.diskImageURL.path(percentEncoded: false)) else {
             Self.logger.error(
@@ -255,6 +275,8 @@ struct ConfigurationBuilder: Sendable {
         let diskAttachment = try VZDiskImageStorageDeviceAttachment(url: layout.diskImageURL, readOnly: false)
         let storage = VZVirtioBlockDeviceConfiguration(attachment: diskAttachment)
         vzConfig.storageDevices = [storage]
+
+        var coldDiscImageDeviceInfo: USBDeviceInfo?
 
         // Attach disc image as USB mass storage device
         if let discImagePath = config.discImagePath {
@@ -276,11 +298,33 @@ struct ConfigurationBuilder: Sendable {
                 throw error
             }
             let usbStorage = VZUSBMassStorageDeviceConfiguration(attachment: discImageAttachment)
-            // For EFI boot with boot-from-disc enabled, insert before main disk
-            // so the firmware discovers it first
             if config.bootFromDiscImage && config.bootMode == .efi {
+                // Boot-from-disc must live on storageDevices at index 0 so the EFI
+                // firmware enumerates it ahead of the main disk and selects it as
+                // the boot candidate. Devices on the XHCI usbDevices list are not
+                // visible to EFI as boot media in array-position order.
                 vzConfig.storageDevices.insert(usbStorage, at: 0)
+            } else if let xhci = vzConfig.usbControllers.first {
+                // Non-boot disc: attach to the XHCI controller so it appears in
+                // VZUSBController.usbDevices at runtime and can be hot-detached.
+                // The UUID is sourced from `config.discImageDeviceUUID` (set
+                // atomically with the path at the picker) so it's stable
+                // across launches — required for `restoreMachineStateFrom`
+                // to match the configured device against the saved-state
+                // device list. The fallback to a fresh UUID covers configs
+                // that pre-date this field; save-restore won't survive a
+                // relaunch in that case until the user re-picks the disc.
+                let discUUID = config.discImageDeviceUUID ?? UUID()
+                usbStorage.uuid = discUUID
+                xhci.usbDevices = xhci.usbDevices + [usbStorage]
+                coldDiscImageDeviceInfo = USBDeviceInfo(
+                    id: discUUID,
+                    path: discImagePath,
+                    readOnly: config.discImageReadOnly
+                )
             } else {
+                Self.logger.fault("USB controller missing when attaching non-boot disc image")
+                assertionFailure("USB controller must be configured before storage")
                 vzConfig.storageDevices.append(usbStorage)
             }
         }
@@ -313,6 +357,8 @@ struct ConfigurationBuilder: Sendable {
                 )
             }
         }
+
+        return coldDiscImageDeviceInfo
     }
 
     private func configureNetwork(_ vzConfig: VZVirtualMachineConfiguration, config: VMConfiguration) {

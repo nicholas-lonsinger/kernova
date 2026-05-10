@@ -18,7 +18,6 @@ final class VMToolbarManager: NSObject {
         let lifecycleID: NSToolbarItem.Identifier
         let saveStateID: NSToolbarItem.Identifier
         let clipboardID: NSToolbarItem.Identifier?
-        let removableMediaID: NSToolbarItem.Identifier?
         let displayID: NSToolbarItem.Identifier
         /// When non-nil, a gear-icon button that toggles the detail pane between the live
         /// display and the (read-only) settings form.
@@ -42,9 +41,6 @@ final class VMToolbarManager: NSObject {
         var ids = [configuration.lifecycleID, configuration.saveStateID]
         if let clipboardID = configuration.clipboardID {
             ids.append(clipboardID)
-        }
-        if let removableMediaID = configuration.removableMediaID {
-            ids.append(removableMediaID)
         }
         ids.append(configuration.displayID)
         if let settingsToggleID = configuration.settingsToggleID {
@@ -85,7 +81,6 @@ final class VMToolbarManager: NSObject {
     init(configuration: Configuration, instanceProvider: @escaping () -> VMInstance?) {
         var allIDs = [configuration.lifecycleID, configuration.saveStateID, configuration.displayID]
         if let clipboardID = configuration.clipboardID { allIDs.append(clipboardID) }
-        if let removableMediaID = configuration.removableMediaID { allIDs.append(removableMediaID) }
         if let settingsToggleID = configuration.settingsToggleID { allIDs.append(settingsToggleID) }
         assert(
             Set(allIDs).count == allIDs.count,
@@ -142,20 +137,6 @@ final class VMToolbarManager: NSObject {
                 toolTip: "Open the clipboard sharing window"
             )
 
-        case configuration.removableMediaID:
-            let group = NSToolbarItemGroup(
-                itemIdentifier: identifier,
-                images: [.systemSymbol("opticaldisc", accessibilityDescription: "Removable Media")],
-                selectionMode: .momentary,
-                labels: ["Removable Media"],
-                target: self,
-                action: #selector(removableMediaAction(_:))
-            )
-            group.label = "Removable Media"
-            group.subitems.first?.toolTip = "Attach or eject removable media"
-            group.autovalidates = false
-            return group
-
         case configuration.displayID:
             let group = NSToolbarItemGroup(
                 itemIdentifier: identifier,
@@ -201,7 +182,6 @@ final class VMToolbarManager: NSObject {
         updateLifecycleGroup(in: toolbar, instance: instance)
         updateSaveStateItem(in: toolbar, instance: instance)
         updateClipboardItem(in: toolbar, instance: instance)
-        updateRemovableMediaItem(in: toolbar, instance: instance)
         updateDisplayGroup(in: toolbar, instance: instance)
         updateSettingsToggleItem(in: toolbar, instance: instance)
     }
@@ -267,20 +247,6 @@ final class VMToolbarManager: NSObject {
         }
 
         subitem.isEnabled = instance.canShowClipboard
-    }
-
-    private func updateRemovableMediaItem(in toolbar: NSToolbar, instance: VMInstance?) {
-        guard let removableMediaID = configuration.removableMediaID,
-            let group = toolbar.items.first(where: { $0.itemIdentifier == removableMediaID }) as? NSToolbarItemGroup,
-            let subitem = group.subitems.first
-        else { return }
-
-        guard let instance else {
-            subitem.isEnabled = false
-            return
-        }
-
-        subitem.isEnabled = instance.canAttachUSBDevices
     }
 
     private func updateSettingsToggleItem(in toolbar: NSToolbar, instance: VMInstance?) {
@@ -364,14 +330,6 @@ final class VMToolbarManager: NSObject {
     }
 
     // MARK: - Actions
-
-    @objc private func removableMediaAction(_ group: NSToolbarItemGroup) {
-        NSApp.sendAction(
-            #selector(AppDelegate.showRemovableMedia(_:)),
-            to: nil,
-            from: group
-        )
-    }
 
     @objc private func lifecycleAction(_ group: NSToolbarItemGroup) {
         guard let segment = LifecycleSegment(rawValue: group.selectedIndex) else {

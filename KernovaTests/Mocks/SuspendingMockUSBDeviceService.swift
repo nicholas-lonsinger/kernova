@@ -66,13 +66,15 @@ final class SuspendingMockUSBDeviceService: USBDeviceProviding {
     func attach(
         diskImagePath: String,
         readOnly: Bool,
+        desiredUUID: UUID?,
         to instance: VMInstance
     ) async throws -> USBDeviceInfo {
         attachCallCount += 1
         lastAttachedPath = diskImagePath
         lastAttachedReadOnly = readOnly
         if shouldSuspendOnAttach { await suspendIfNeeded() }
-        return USBDeviceInfo(path: diskImagePath, readOnly: readOnly)
+        let id = desiredUUID ?? UUID()
+        return USBDeviceInfo(id: id, path: diskImagePath, readOnly: readOnly)
     }
 
     func detach(

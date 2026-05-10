@@ -63,12 +63,11 @@ Kernova/
 │   ├── Detail/
 │   │   ├── MainDetailView.swift        # Detail pane wrapper — selection switch, creation sheet, error alert
 │   │   ├── VMDetailView.swift          # VM detail — console/settings switch (honors detailPaneMode), confirmation alerts
-│   │   ├── VMSettingsView.swift        # VM configuration editor; supports read-only mode when the VM is running
+│   │   ├── VMSettingsView.swift        # VM configuration editor; mostly read-only when the VM is running, but live-editable fields (clipboard, guest agent, removable media) stay interactive
 │   │   └── MacOSInstallProgressView.swift # Two-phase install progress (download + install)
 │   ├── Console/
 │   │   ├── VMConsoleView.swift         # Placeholder for non-inline display states (popped out, fullscreen, suspended, no display)
-│   │   ├── VMDisplayBackingView.swift  # Pure AppKit VM display with pause/transition overlays
-│   │   └── RemovableMediaPopoverView.swift # Toolbar popover for runtime USB attach/eject
+│   │   └── VMDisplayBackingView.swift  # Pure AppKit VM display with pause/transition overlays
 │   └── Creation/
 │       ├── VMCreationWizardView.swift  # Multi-step wizard container
 │       ├── OSSelectionStep.swift       # Step 1: Choose macOS or Linux
@@ -242,6 +241,12 @@ Services are split by concurrency requirements:
 
 - **`VsockPorts`** — Central registry of port assignments (`KernovaVsockPort.control = 49154`, `KernovaVsockPort.clipboard = 49152`, `KernovaVsockPort.log = 49153`) so each service gets its own listener on a distinct port instead of in-band multiplexing. The control listener is always installed for macOS guests with a `VZVirtioSocketDevice`; the log listener is gated on `configuration.agentLogForwardingEnabled`; the clipboard listener is gated on `configuration.clipboardSharingEnabled`. Both gates are also re-evaluated at runtime via `VMInstance.applyLivePolicy(oldConfig:newConfig:)` — flipping the toggle while a macOS VM is running installs or tears down the listener and pushes a fresh `PolicyUpdate` to the guest agent. Linux clipboard sharing is restart-only (the SPICE port must be declared at config-build time).
 
+**Live-editable fields and their dispatch.** `VMConfiguration.liveEditableFieldsChanged(old:new:)` is the single source of truth for "did anything change that should take effect while the VM is running?" It combines `hotToggleFields` (a typed `[KeyPath<VMConfiguration, Bool>]`) with the disc image fields (`discImagePath`, `discImageReadOnly`) which can't fit the keypath array because they aren't `Bool`. `VMSettingsView.onChange` uses this helper to decide both whether to bypass the read-only guard and whether to call `applyLivePolicy`. `VMLibraryViewModel.applyLivePolicy(for:old:new:)` then forks: vsock listener changes go through `VMInstance.applyLivePolicy`, while disc image changes spawn an async `applyLiveDiscImageChange` that detaches the previous live device (tracked on `VMInstance.liveDiscImageDevice`) and attaches a new one through `USBDeviceService`. `bootFromDiscImage` is intentionally not part of `liveEditableFieldsChanged` — it controls EFI firmware boot order, which is fixed at start time, so it stays cold-locked in the UI.
+
+**Disc image attachment topology.** `ConfigurationBuilder` routes disc images through one of two paths depending on `bootFromDiscImage`. For boot-from-disc (EFI only), the `VZUSBMassStorageDeviceConfiguration` is inserted at index 0 of `vzConfig.storageDevices` so the firmware enumerates it as a boot candidate before the main disk. For non-boot disc images, it's added to `vzConfig.usbControllers[0].usbDevices` instead, so it appears in `VZUSBController.usbDevices` at runtime and can be hot-detached via `controller.detach(device:)`. The builder assigns an explicit UUID to the non-boot path's config and returns a `USBDeviceInfo` (via `BuildResult.coldDiscImageDeviceInfo`) so `VirtualizationService.start` can store it on `VMInstance.liveDiscImageDevice`, which is what the live-policy detach lookup uses. Disc image changes from `VMSettingsView` (path swap, eject, readOnly flip) flow through `VMLibraryViewModel.applyLiveDiscImageChange` regardless of whether the VM was started cold or had its disc swapped previously — both produce a `USBDeviceInfo` in the same slot.
+
+**Save-state device UUID persistence.** `VZUSBDeviceConfiguration.uuid` is matched against the saved-state file's recorded device list during `restoreMachineStateFrom(url:)` — fresh UUIDs each launch would break restore. The disc image's UUID lives in `VMConfiguration.discImageDeviceUUID` (persisted to `config.json`), assigned atomically with `discImagePath` at the picker call site so it's stable for the lifetime of the attachment. `ConfigurationBuilder` reads it and applies it to the `VZUSBMassStorageDeviceConfiguration` for both cold start and the runtime XHCI hot-attach path (`USBDeviceService.attach` accepts a `desiredUUID:` parameter that callers thread through from `config.discImageDeviceUUID`). `clonedForNewInstance` regenerates the UUID so two bundles with the same disc path don't share device identity, mirroring the existing `additionalDisks` regeneration. Configs predating this field decode the UUID as `nil` and fall back to a fresh UUID at build time — save-restore won't survive a relaunch in that case until the user re-picks the disc, but no other behavior is affected.
+
 All service implementations conform to protocols defined in `Services/Protocols/`. This enables full dependency injection — tests use mock implementations that track call counts and support error injection.
 
 ### ViewModels
@@ -410,12 +415,12 @@ No third-party (non-Apple) package dependencies. No CocoaPods or Carthage.
 
 | Component | Tests | Notes |
 |-----------|-------|-------|
-| `VMConfiguration` | 47 tests + clone suite | Encoding/decoding, defaults, validation, all fields including `lastSeenAgentVersion` migration and clone preservation |
-| `VMLibraryViewModel` | 80 tests | Add/remove/rename/reorder VMs, selection, auto-select on load, selection preservation on reload, delegation to coordinator, sleep/wake, clone/import phantom rows, cancel preparing, force-stop confirmation, stop escalation timing, custom order persistence, guest agent installer mount/unmount state machines |
+| `VMConfiguration` | 52 tests + clone suite | Encoding/decoding, defaults, validation, all fields including `lastSeenAgentVersion` migration, clone preservation, and `liveEditableFieldsChanged` covering disc fields + hot-toggle booleans |
+| `VMLibraryViewModel` | 88 tests | Add/remove/rename/reorder VMs, selection, auto-select on load, selection preservation on reload, delegation to coordinator, sleep/wake, clone/import phantom rows, cancel preparing, force-stop confirmation, stop escalation timing, custom order persistence, guest agent installer mount/unmount state machines, live disc image hot-config (add / remove / swap / readOnly flip / boot-flip no-op / stopped-VM no-op / attach-failure / detach-failure-during-swap) |
 | `VMCreationViewModel` | 44 tests | All wizard steps, validation, OS-specific paths |
 | `VMLifecycleCoordinator` | Yes | Multi-step orchestration, error handling, service delegation, token-based operation serialization, stop/forceStop bypass, stale-token race condition coverage |
 | `VMInstance` | Yes | Status transitions, configuration updates, bundle layout, preparing state display properties, post-start agent watchdog (firing/cancellation/no-op guards/idempotency), `recordObservedAgentVersion` persistence + dedup |
-| `ConfigurationBuilder` | Yes | All three boot paths, device configuration, path validation (symlinks, missing kernel/initrd/ISO, directory rejection for file paths) |
+| `ConfigurationBuilder` | Yes | All three boot paths, device configuration, path validation (symlinks, missing kernel/initrd/ISO, directory rejection for file paths), disc image topology split (boot-from-disc on `storageDevices` index 0 vs. non-boot on `usbControllers[0].usbDevices` with explicit UUID returned via `BuildResult.coldDiscImageDeviceInfo`) |
 | `VirtualizationService` | Yes | Start/stop/pause/resume via mock VZ objects |
 | `VMStorageService` | Yes | CRUD operations, cloning |
 | `VMBundleLayout` | Yes | Path derivation from bundle root |

@@ -313,6 +313,171 @@ struct ConfigurationBuilderTests {
         }
     }
 
+    @Test("Non-boot disc image is attached to XHCI controller, not storageDevices")
+    func nonBootDiscImageOnXHCIController() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        let discImagePath = bundleURL.appendingPathComponent("install.iso").path(percentEncoded: false)
+        try Data().write(to: URL(fileURLWithPath: discImagePath))
+
+        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        config.discImagePath = discImagePath
+        config.discImageReadOnly = true
+        config.bootFromDiscImage = false
+
+        let builder = ConfigurationBuilder()
+        let result = try builder.build(from: config, bundleURL: bundleURL)
+        let vz = result.configuration
+
+        // storageDevices contains only the main disk — disc is NOT here
+        #expect(vz.storageDevices.count == 1)
+        #expect(vz.storageDevices.first is VZVirtioBlockDeviceConfiguration)
+
+        // XHCI controller carries the disc image as a USB device
+        #expect(vz.usbControllers.count == 1)
+        let xhci = try #require(vz.usbControllers.first)
+        #expect(xhci.usbDevices.count == 1)
+        #expect(xhci.usbDevices.first is VZUSBMassStorageDeviceConfiguration)
+    }
+
+    @Test("Non-boot disc image returns coldDiscImageDeviceInfo with matching UUID")
+    func nonBootDiscImageReturnsDeviceInfo() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        let discImagePath = bundleURL.appendingPathComponent("install.iso").path(percentEncoded: false)
+        try Data().write(to: URL(fileURLWithPath: discImagePath))
+
+        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        config.discImagePath = discImagePath
+        config.discImageReadOnly = true
+        config.bootFromDiscImage = false
+
+        let builder = ConfigurationBuilder()
+        let result = try builder.build(from: config, bundleURL: bundleURL)
+
+        let info = try #require(result.coldDiscImageDeviceInfo)
+        #expect(info.path == discImagePath)
+        #expect(info.readOnly == true)
+
+        // The UUID on the returned info matches the UUID on the
+        // VZUSBMassStorageDeviceConfiguration sitting in usbControllers[0]
+        let xhci = try #require(result.configuration.usbControllers.first)
+        let usb = try #require(xhci.usbDevices.first as? VZUSBMassStorageDeviceConfiguration)
+        #expect(usb.uuid == info.id)
+    }
+
+    @Test("Boot-from-disc disc returns nil coldDiscImageDeviceInfo")
+    func bootDiscReturnsNilDeviceInfo() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        let discImagePath = bundleURL.appendingPathComponent("install.iso").path(percentEncoded: false)
+        try Data().write(to: URL(fileURLWithPath: discImagePath))
+
+        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        config.discImagePath = discImagePath
+        config.discImageReadOnly = true
+        config.bootFromDiscImage = true
+
+        let builder = ConfigurationBuilder()
+        let result = try builder.build(from: config, bundleURL: bundleURL)
+
+        // Boot-from-disc lives on storageDevices, not on the XHCI controller,
+        // so it's NOT hot-detachable and we don't track it as a live device.
+        #expect(result.coldDiscImageDeviceInfo == nil)
+    }
+
+    @Test("config.discImageDeviceUUID is honored for non-boot disc")
+    func configDiscImageDeviceUUIDIsHonored() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        let discImagePath = bundleURL.appendingPathComponent("install.iso").path(percentEncoded: false)
+        try Data().write(to: URL(fileURLWithPath: discImagePath))
+
+        let configuredUUID = UUID()
+        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        config.discImagePath = discImagePath
+        config.discImageReadOnly = true
+        config.bootFromDiscImage = false
+        config.discImageDeviceUUID = configuredUUID
+
+        let builder = ConfigurationBuilder()
+        let result = try builder.build(from: config, bundleURL: bundleURL)
+
+        let info = try #require(result.coldDiscImageDeviceInfo)
+        #expect(info.id == configuredUUID)
+
+        let xhci = try #require(result.configuration.usbControllers.first)
+        let usb = try #require(xhci.usbDevices.first as? VZUSBMassStorageDeviceConfiguration)
+        #expect(usb.uuid == configuredUUID)
+    }
+
+    @Test("Builder falls back to fresh UUID when config.discImageDeviceUUID is nil")
+    func configDiscImageDeviceUUIDFallback() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        let discImagePath = bundleURL.appendingPathComponent("install.iso").path(percentEncoded: false)
+        try Data().write(to: URL(fileURLWithPath: discImagePath))
+
+        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        config.discImagePath = discImagePath
+        config.discImageReadOnly = true
+        config.discImageDeviceUUID = nil    // legacy / unmigrated config
+
+        let builder = ConfigurationBuilder()
+        let result = try builder.build(from: config, bundleURL: bundleURL)
+
+        let info = try #require(result.coldDiscImageDeviceInfo)
+        // The fallback UUID is freshly generated; we can't assert a value,
+        // but it must match the one set on the configuration object.
+        let xhci = try #require(result.configuration.usbControllers.first)
+        let usb = try #require(xhci.usbDevices.first as? VZUSBMassStorageDeviceConfiguration)
+        #expect(usb.uuid == info.id)
+    }
+
+    @Test("No disc image returns nil coldDiscImageDeviceInfo")
+    func noDiscReturnsNilDeviceInfo() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        let config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        let builder = ConfigurationBuilder()
+        let result = try builder.build(from: config, bundleURL: bundleURL)
+
+        #expect(result.coldDiscImageDeviceInfo == nil)
+    }
+
+    @Test("Boot-from-disc disc image stays on storageDevices at index 0")
+    func bootDiscImageStaysOnStorageDevices() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        let discImagePath = bundleURL.appendingPathComponent("install.iso").path(percentEncoded: false)
+        try Data().write(to: URL(fileURLWithPath: discImagePath))
+
+        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        config.discImagePath = discImagePath
+        config.discImageReadOnly = true
+        config.bootFromDiscImage = true
+
+        let builder = ConfigurationBuilder()
+        let result = try builder.build(from: config, bundleURL: bundleURL)
+        let vz = result.configuration
+
+        // storageDevices: disc at 0, main disk at 1
+        #expect(vz.storageDevices.count == 2)
+        #expect(vz.storageDevices.first is VZUSBMassStorageDeviceConfiguration)
+        #expect(vz.storageDevices.last is VZVirtioBlockDeviceConfiguration)
+
+        // XHCI controller is empty — the disc lives on storageDevices for boot
+        let xhci = try #require(vz.usbControllers.first)
+        #expect(xhci.usbDevices.isEmpty)
+    }
+
     @Test("Builder throws for non-writable disc image when readOnly is false")
     func builderThrowsForNonWritableDiscImage() throws {
         let bundleURL = try makeTempBundle(withDisk: true)

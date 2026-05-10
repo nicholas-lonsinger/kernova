@@ -504,30 +504,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         )
     }
 
-    // MARK: - Removable Media
-
-    @objc func showRemovableMedia(_ sender: Any?) {
-        guard let instance = activeInstance,
-            instance.canAttachUSBDevices
-        else { return }
-
-        let popover = NSPopover()
-        popover.behavior = .transient
-        let hostingController = NSHostingController(
-            rootView: RemovableMediaPopoverView(instance: instance, viewModel: viewModel)
-        )
-        hostingController.sizingOptions = .preferredContentSize
-        popover.contentViewController = hostingController
-
-        if let toolbarItem = sender as? NSToolbarItem {
-            popover.show(relativeTo: toolbarItem)
-        } else if let contentView = NSApp.keyWindow?.contentView {
-            popover.show(relativeTo: contentView.bounds, of: contentView, preferredEdge: .minY)
-        } else {
-            Self.logger.warning("Cannot show removable media popover: no anchor view available")
-        }
-    }
-
     @objc func attachGuestAgentDisk(_ sender: Any?) {
         guard let instance = activeInstance else { return }
         // Route through mountGuestAgentInstaller so the post-mount instructions
@@ -769,8 +745,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             return activeInstance?.canShowSerialConsole ?? false
         case #selector(showClipboard(_:)):
             return activeInstance?.canShowClipboard ?? false
-        case #selector(showRemovableMedia(_:)):
-            return activeInstance?.canAttachUSBDevices ?? false
         case #selector(attachGuestAgentDisk(_:)):
             guard let instance = activeInstance, instance.canAttachUSBDevices else { return false }
             guard Self.guestAgentDiskPath != nil else { return false }
@@ -925,13 +899,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         windowMenu.addItem(.separator())
         windowMenu.addItem(serialConsoleMenuItem)
         windowMenu.addItem(clipboardMenuItem)
-        let removableMediaItem = NSMenuItem(
-            title: "Removable Media",
-            action: #selector(showRemovableMedia(_:)),
-            keyEquivalent: "u"
-        )
-        removableMediaItem.keyEquivalentModifierMask = [.command, .shift]
-        windowMenu.addItem(removableMediaItem)
         windowMenu.addItem(.separator())
         windowMenu.addItem(
             withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")

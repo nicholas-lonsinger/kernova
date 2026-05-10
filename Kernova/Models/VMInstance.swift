@@ -270,6 +270,19 @@ final class VMInstance: Identifiable {
     /// Populated at runtime only; cleared on VM stop/teardown.
     var attachedUSBDevices: [USBDeviceInfo] = []
 
+    /// Tracks the live disc image device (configured via
+    /// `VMConfiguration.discImagePath`) so it can be located in
+    /// `controller.usbDevices` for hot-detach when the user changes the disc
+    /// image path / readOnly flag while the VM is running. Set on VM start
+    /// from `BuildResult.coldDiscImageDeviceInfo`; updated as the user
+    /// swaps/removes the disc; cleared on `tearDownSession`.
+    ///
+    /// Held separately from `attachedUSBDevices` (which tracks user-driven
+    /// runtime mounts like the guest agent installer) so the disc image's
+    /// hot-config flow doesn't accidentally collide with installer-style
+    /// "is this already mounted?" lookups by path.
+    var liveDiscImageDevice: USBDeviceInfo?
+
     /// `true` when the VM has a live `VZVirtualMachine` in a running or paused state, enabling USB hot-plug via the XHCI controller.
     var canAttachUSBDevices: Bool {
         (status == .running || status == .paused) && virtualMachine != nil
@@ -342,6 +355,7 @@ final class VMInstance: Identifiable {
         serialInputPipe = nil
         serialOutputPipe = nil
         attachedUSBDevices = []
+        liveDiscImageDevice = nil
         virtualMachine = nil
         delegateAdapter = nil
     }

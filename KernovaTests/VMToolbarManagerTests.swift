@@ -29,7 +29,6 @@ struct VMToolbarManagerTests {
                 lifecycleID: NSToolbarItem.Identifier("testLifecycle"),
                 saveStateID: NSToolbarItem.Identifier("testSaveState"),
                 clipboardID: NSToolbarItem.Identifier("testClipboard"),
-                removableMediaID: NSToolbarItem.Identifier("testRemovableMedia"),
                 displayID: NSToolbarItem.Identifier("testDisplay"),
                 settingsToggleID: includeSettingsToggle ? NSToolbarItem.Identifier("testSettingsToggle") : nil,
                 checksPreparing: checksPreparing,
@@ -96,11 +95,10 @@ struct VMToolbarManagerTests {
     @Test("sharedItemIdentifiers contains all configured identifiers")
     func sharedIdentifiers() {
         let manager = makeManager()
-        #expect(manager.sharedItemIdentifiers.count == 6)
+        #expect(manager.sharedItemIdentifiers.count == 5)
         #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testLifecycle")))
         #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testSaveState")))
         #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testClipboard")))
-        #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testRemovableMedia")))
         #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testDisplay")))
         #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testSettingsToggle")))
     }
@@ -108,7 +106,7 @@ struct VMToolbarManagerTests {
     @Test("sharedItemIdentifiers omits settings toggle when not configured")
     func sharedIdentifiersWithoutSettingsToggle() {
         let manager = makeManager(includeSettingsToggle: false)
-        #expect(manager.sharedItemIdentifiers.count == 5)
+        #expect(manager.sharedItemIdentifiers.count == 4)
         #expect(!manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testSettingsToggle")))
     }
 

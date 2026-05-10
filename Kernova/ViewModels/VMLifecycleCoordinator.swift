@@ -232,8 +232,23 @@ final class VMLifecycleCoordinator {
     ///
     /// Does not use the lifecycle operation token — USB operations are short
     /// and independent of start/stop/save lifecycle transitions.
-    func attachUSBDevice(diskImagePath: String, readOnly: Bool, to instance: VMInstance) async throws -> USBDeviceInfo {
-        let info = try await usbDeviceService.attach(diskImagePath: diskImagePath, readOnly: readOnly, to: instance)
+    ///
+    /// `desiredUUID` overrides the framework-generated `VZUSBDeviceConfiguration.uuid`
+    /// so the runtime device matches a persisted identity (e.g.
+    /// `VMConfiguration.discImageDeviceUUID`). Pass `nil` for callers that
+    /// don't care (e.g. the guest agent installer).
+    func attachUSBDevice(
+        diskImagePath: String,
+        readOnly: Bool,
+        desiredUUID: UUID? = nil,
+        to instance: VMInstance
+    ) async throws -> USBDeviceInfo {
+        let info = try await usbDeviceService.attach(
+            diskImagePath: diskImagePath,
+            readOnly: readOnly,
+            desiredUUID: desiredUUID,
+            to: instance
+        )
         instance.attachedUSBDevices.append(info)
         return info
     }

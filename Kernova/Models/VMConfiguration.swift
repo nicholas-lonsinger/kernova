@@ -128,6 +128,15 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
     /// so the EFI firmware discovers it first.
     var bootFromDiscImage: Bool
 
+    /// Persisted `VZUSBDeviceConfiguration.uuid` for the disc image device.
+    /// Mirrors the pattern used by `macAddress`: auto-generated runtime
+    /// identity that travels with the bundle so saved-state restore matches
+    /// the configured device. Generated atomically with `discImagePath` at
+    /// the picker call site; cleared when the disc is removed; regenerated
+    /// by `clonedForNewInstance` to avoid two bundles claiming the same
+    /// device identity. `nil` whenever `discImagePath` is `nil`.
+    var discImageDeviceUUID: UUID?
+
     // MARK: - Linux kernel boot
 
     var kernelPath: String?
@@ -175,6 +184,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         discImagePath: String? = nil,
         discImageReadOnly: Bool = true,
         bootFromDiscImage: Bool = false,
+        discImageDeviceUUID: UUID? = nil,
         kernelPath: String? = nil,
         initrdPath: String? = nil,
         kernelCommandLine: String? = nil,
@@ -207,6 +217,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         self.discImagePath = discImagePath
         self.discImageReadOnly = discImageReadOnly
         self.bootFromDiscImage = bootFromDiscImage
+        self.discImageDeviceUUID = discImageDeviceUUID
         self.kernelPath = kernelPath
         self.initrdPath = initrdPath
         self.kernelCommandLine = kernelCommandLine
@@ -250,6 +261,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         self.discImagePath = try c.decodeIfPresent(String.self, forKey: .discImagePath)
         self.discImageReadOnly = try c.decode(Bool.self, forKey: .discImageReadOnly)
         self.bootFromDiscImage = try c.decode(Bool.self, forKey: .bootFromDiscImage)
+        self.discImageDeviceUUID = try c.decodeIfPresent(UUID.self, forKey: .discImageDeviceUUID)
         self.kernelPath = try c.decodeIfPresent(String.self, forKey: .kernelPath)
         self.initrdPath = try c.decodeIfPresent(String.self, forKey: .initrdPath)
         self.kernelCommandLine = try c.decodeIfPresent(String.self, forKey: .kernelCommandLine)
@@ -281,6 +293,13 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         clone.additionalDisks = additionalDisks?.map { disk in
             AdditionalDisk(
                 id: UUID(), path: disk.path, readOnly: disk.readOnly, label: disk.label, isInternal: disk.isInternal)
+        }
+
+        // Regenerate the disc image USB device UUID so the clone doesn't
+        // share device identity with the source bundle (mirrors the
+        // `additionalDisks` ID regeneration above).
+        if discImagePath != nil {
+            clone.discImageDeviceUUID = UUID()
         }
 
         // Regenerate shared directory IDs to avoid VirtioFS collisions
@@ -329,6 +348,25 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         \.clipboardSharingEnabled,
         \.agentInstallNudgeDismissed,
     ]
+
+    /// Returns `true` if any field that is editable while the VM is running
+    /// differs between `old` and `new`. Combines the `Bool`-typed
+    /// `hotToggleFields` with the disc image fields (`discImagePath`,
+    /// `discImageReadOnly`) which are not `Bool` and therefore can't fit in
+    /// the typed key-path array. `bootFromDiscImage` is intentionally
+    /// excluded — it controls EFI firmware boot order at start time, so
+    /// flipping it while running is restart-only.
+    static func liveEditableFieldsChanged(
+        old: VMConfiguration,
+        new: VMConfiguration
+    ) -> Bool {
+        if hotToggleFields.contains(where: { old[keyPath: $0] != new[keyPath: $0] }) {
+            return true
+        }
+        if old.discImagePath != new.discImagePath { return true }
+        if old.discImageReadOnly != new.discImageReadOnly { return true }
+        return false
+    }
 }
 
 // MARK: - SharedDirectory

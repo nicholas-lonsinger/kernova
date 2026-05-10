@@ -31,7 +31,7 @@ struct USBDeviceServiceTests {
         let service = MockUSBDeviceService()
         let instance = makeInstance()
 
-        let info = try await service.attach(diskImagePath: "/tmp/test.dmg", readOnly: false, to: instance)
+        let info = try await service.attach(diskImagePath: "/tmp/test.dmg", readOnly: false, desiredUUID: nil, to: instance)
 
         #expect(info.path == "/tmp/test.dmg")
         #expect(info.readOnly == false)
@@ -41,12 +41,29 @@ struct USBDeviceServiceTests {
         #expect(instance.attachedUSBDevices.isEmpty)
     }
 
+    @Test("Mock service honors desiredUUID and records it")
+    func mockServiceHonorsDesiredUUID() async throws {
+        let service = MockUSBDeviceService()
+        let instance = makeInstance()
+        let desired = UUID()
+
+        let info = try await service.attach(
+            diskImagePath: "/tmp/test.dmg",
+            readOnly: true,
+            desiredUUID: desired,
+            to: instance
+        )
+
+        #expect(info.id == desired)
+        #expect(service.lastAttachedDesiredUUID == desired)
+    }
+
     @Test("Mock service records detach call")
     func mockServiceRecordsDetach() async throws {
         let service = MockUSBDeviceService()
         let instance = makeInstance()
 
-        let info = try await service.attach(diskImagePath: "/tmp/test.dmg", readOnly: false, to: instance)
+        let info = try await service.attach(diskImagePath: "/tmp/test.dmg", readOnly: false, desiredUUID: nil, to: instance)
         try await service.detach(deviceInfo: info, from: instance)
 
         #expect(service.detachCallCount == 1)
@@ -59,7 +76,7 @@ struct USBDeviceServiceTests {
         let instance = makeInstance()
 
         await #expect {
-            try await service.attach(diskImagePath: "/tmp/test.dmg", readOnly: false, to: instance)
+            try await service.attach(diskImagePath: "/tmp/test.dmg", readOnly: false, desiredUUID: nil, to: instance)
         } throws: { error in
             guard let e = error as? USBDeviceError,
                 case .noVirtualMachine = e

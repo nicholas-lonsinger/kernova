@@ -261,6 +261,37 @@ struct VMConfigurationTests {
         #expect(config.discImagePath == nil)
     }
 
+    @Test("Configuration preserves discImageDeviceUUID through JSON")
+    func discImageDeviceUUIDRoundTrip() throws {
+        let uuid = UUID()
+        let config = VMConfiguration(
+            name: "VM",
+            guestOS: .linux,
+            bootMode: .efi,
+            discImagePath: "/tmp/install.iso",
+            discImageDeviceUUID: uuid
+        )
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(config)
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(VMConfiguration.self, from: data)
+
+        #expect(decoded.discImageDeviceUUID == uuid)
+    }
+
+    @Test("Missing optional discImageDeviceUUID decodes as nil")
+    func missingOptionalDiscImageDeviceUUID() throws {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
+
+        #expect(config.discImageDeviceUUID == nil)
+    }
+
     @Test("Missing optional sharedDirectories decodes as nil")
     func missingOptionalSharedDirectories() throws {
         let decoder = JSONDecoder()
@@ -790,6 +821,7 @@ struct VMConfigurationTests {
             discImagePath: "/path/to/disc.iso",
             discImageReadOnly: false,
             bootFromDiscImage: true,
+            discImageDeviceUUID: UUID(uuidString: "33333333-3333-3333-3333-333333333333")!,
             kernelPath: "/path/to/kernel",
             initrdPath: "/path/to/initrd",
             kernelCommandLine: "console=ttyS0",
@@ -856,5 +888,50 @@ struct VMConfigurationTests {
         #expect(throws: DecodingError.self) {
             _ = try decoder.decode(VMConfiguration.self, from: Data(json.utf8))
         }
+    }
+
+    // MARK: - Live-Editable Fields
+
+    @Test("liveEditableFieldsChanged detects discImagePath transition")
+    func liveEditableDetectsDiscPathChange() {
+        let base = VMConfiguration(name: "VM", guestOS: .linux, bootMode: .efi)
+        var modified = base
+        modified.discImagePath = "/tmp/install.iso"
+        #expect(VMConfiguration.liveEditableFieldsChanged(old: base, new: modified))
+        #expect(VMConfiguration.liveEditableFieldsChanged(old: modified, new: base))
+    }
+
+    @Test("liveEditableFieldsChanged detects discImageReadOnly flip")
+    func liveEditableDetectsReadOnlyFlip() {
+        var base = VMConfiguration(name: "VM", guestOS: .linux, bootMode: .efi)
+        base.discImagePath = "/tmp/install.iso"
+        base.discImageReadOnly = true
+        var modified = base
+        modified.discImageReadOnly = false
+        #expect(VMConfiguration.liveEditableFieldsChanged(old: base, new: modified))
+    }
+
+    @Test("liveEditableFieldsChanged ignores bootFromDiscImage flip")
+    func liveEditableIgnoresBootFromDiscFlip() {
+        var base = VMConfiguration(name: "VM", guestOS: .linux, bootMode: .efi)
+        base.discImagePath = "/tmp/install.iso"
+        var modified = base
+        modified.bootFromDiscImage = true
+        #expect(!VMConfiguration.liveEditableFieldsChanged(old: base, new: modified))
+    }
+
+    @Test("liveEditableFieldsChanged still covers existing hotToggleFields")
+    func liveEditableCoversHotToggleFields() {
+        var base = VMConfiguration(name: "VM", guestOS: .macOS, bootMode: .macOS)
+        base.clipboardSharingEnabled = false
+        var modified = base
+        modified.clipboardSharingEnabled = true
+        #expect(VMConfiguration.liveEditableFieldsChanged(old: base, new: modified))
+    }
+
+    @Test("liveEditableFieldsChanged returns false for identical configs")
+    func liveEditableReturnsFalseForIdenticalConfigs() {
+        let base = VMConfiguration(name: "VM", guestOS: .linux, bootMode: .efi)
+        #expect(!VMConfiguration.liveEditableFieldsChanged(old: base, new: base))
     }
 }

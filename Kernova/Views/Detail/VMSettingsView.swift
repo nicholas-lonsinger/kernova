@@ -64,13 +64,16 @@ struct VMSettingsView: View {
                     // `resourcesSection` and `audioSection` (which handle their own
                     // disabling per-control) remain interactive in read-only mode —
                     // SwiftUI's disabled state propagates irreversibly to descendants.
-                    // `guestAgentSection` and `clipboardSection` carry hot-toggle
-                    // fields that remain editable while the VM is running, so they
-                    // are NOT wrapped with `.disabled(isReadOnly)`.
+                    // `guestAgentSection`, `clipboardSection`, and
+                    // `removableMediaSection` carry live-editable fields that remain
+                    // interactive while the VM is running, so they are NOT wrapped
+                    // with `.disabled(isReadOnly)`. The boot-from-disc toggle inside
+                    // `removableMediaSection` self-disables since it controls EFI
+                    // boot order which is fixed at start time.
                     generalSection.disabled(isReadOnly)
                     resourcesSection
                     storageDiskSection.disabled(isReadOnly)
-                    removableMediaSection.disabled(isReadOnly)
+                    removableMediaSection
                     sharedDirectoriesSection.disabled(isReadOnly)
                     networkSection.disabled(isReadOnly)
                     audioSection
@@ -84,17 +87,16 @@ struct VMSettingsView: View {
             }
         }
         .onChange(of: instance.configuration) { old, new in
-            // RATIONALE: fields in `VMConfiguration.hotToggleFields` can
-            // change while `isReadOnly` is true because their toggles stay
-            // interactive. Save when they change; for everything else, the
+            // RATIONALE: fields covered by `liveEditableFieldsChanged` can
+            // change while `isReadOnly` is true because their controls stay
+            // interactive (clipboard, guest-agent, removable-media disc image).
+            // Save when any of those change; for everything else, the
             // read-only guard protects against spurious writes during
             // instance swap-in transitions.
-            let hotFieldsChanged = VMConfiguration.hotToggleFields.contains {
-                old[keyPath: $0] != new[keyPath: $0]
-            }
-            guard !isReadOnly || hotFieldsChanged else { return }
+            let liveChanged = VMConfiguration.liveEditableFieldsChanged(old: old, new: new)
+            guard !isReadOnly || liveChanged else { return }
             viewModel.saveConfiguration(for: instance)
-            if hotFieldsChanged {
+            if liveChanged {
                 viewModel.applyLivePolicy(for: instance, old: old, new: new)
             }
         }
@@ -189,7 +191,7 @@ struct VMSettingsView: View {
 
     @ViewBuilder
     private var removableMediaSection: some View {
-        Section(header: lockableHeader("Removable Media")) {
+        Section("Removable Media") {
             if let discImagePath = instance.configuration.discImagePath {
                 HStack {
                     Image(systemName: "opticaldisc")
@@ -207,8 +209,14 @@ struct VMSettingsView: View {
                     Spacer()
 
                     Button(role: .destructive) {
-                        instance.configuration.discImagePath = nil
-                        instance.configuration.bootFromDiscImage = false
+                        // Atomic clear so onChange fires once with all three
+                        // fields settled (otherwise three observation events
+                        // each save partial state).
+                        var updated = instance.configuration
+                        updated.discImagePath = nil
+                        updated.discImageDeviceUUID = nil
+                        updated.bootFromDiscImage = false
+                        instance.configuration = updated
                     } label: {
                         Image(systemName: "minus.circle.fill")
                             .foregroundStyle(.red)
@@ -219,7 +227,18 @@ struct VMSettingsView: View {
                 Toggle("Read Only", isOn: $instance.configuration.discImageReadOnly)
 
                 if instance.configuration.bootMode == .efi {
-                    Toggle("Boot from disc image", isOn: $instance.configuration.bootFromDiscImage)
+                    Toggle(isOn: $instance.configuration.bootFromDiscImage) {
+                        HStack(spacing: 6) {
+                            Text("Boot from disc image")
+                            if isReadOnly {
+                                Image(systemName: "lock.fill")
+                                    .foregroundStyle(.orange)
+                                    .imageScale(.small)
+                                    .help("Locked while the VM is running — affects EFI boot order, which is fixed at start time")
+                            }
+                        }
+                    }
+                    .disabled(isReadOnly)
                 }
             } else {
                 Text("No removable media attached")
@@ -244,7 +263,14 @@ struct VMSettingsView: View {
                 message: "Select a disk image to attach to the VM"
             ).first
         else { return }
-        instance.configuration.discImagePath = url.path(percentEncoded: false)
+        // Assign path + UUID atomically so the new disc carries a stable
+        // device identity from the moment it's configured. The UUID is what
+        // saved-state restore matches against, and what hot-attach passes to
+        // `VZUSBMassStorageDeviceConfiguration.uuid`.
+        var updated = instance.configuration
+        updated.discImagePath = url.path(percentEncoded: false)
+        updated.discImageDeviceUUID = UUID()
+        instance.configuration = updated
     }
 
     // MARK: - Storage Disks

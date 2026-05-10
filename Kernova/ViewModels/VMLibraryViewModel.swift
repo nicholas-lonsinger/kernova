@@ -583,7 +583,9 @@ final class VMLibraryViewModel {
     ///
     /// Hot-toggleable fields
     /// (`agentLogForwardingEnabled`, `clipboardSharingEnabled`) take effect
-    /// immediately via `VMInstance.applyLivePolicy`; everything else is
+    /// immediately via `VMInstance.applyLivePolicy`; disc image fields
+    /// (`discImagePath`, `discImageReadOnly`) trigger a runtime XHCI
+    /// detach/attach via `applyLiveDiscImageChange`; everything else is
     /// persisted-only and waits for next start.
     ///
     /// Called from `VMSettingsView.onChange` after the new value has already
@@ -591,29 +593,71 @@ final class VMLibraryViewModel {
     /// `saveConfiguration(for:)`.
     func applyLivePolicy(for instance: VMInstance, old: VMConfiguration, new: VMConfiguration) {
         instance.applyLivePolicy(oldConfig: old, newConfig: new)
-    }
 
-    // MARK: - USB Device Management
-
-    func attachUSBDevice(diskImagePath: String, readOnly: Bool, to instance: VMInstance) {
-        Self.logger.debug(
-            "Attaching USB device '\(URL(fileURLWithPath: diskImagePath).lastPathComponent, privacy: .public)' to '\(instance.name, privacy: .public)' (readOnly: \(readOnly, privacy: .public))"
-        )
-        Task {
-            do {
-                _ = try await lifecycle.attachUSBDevice(
-                    diskImagePath: diskImagePath,
-                    readOnly: readOnly,
-                    to: instance
-                )
-            } catch {
-                Self.logger.error(
-                    "USB attach failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-                )
-                presentError(error)
+        let discChanged =
+            old.discImagePath != new.discImagePath ||
+            old.discImageReadOnly != new.discImageReadOnly
+        // Only dispatch when running/paused — stopped VMs persist the new
+        // disc config and pick it up on next start. The lifecycle layer
+        // surfaces a noVirtualMachine error if status is running but no live
+        // VZ machine is present (rare race during teardown), so we don't
+        // duplicate that guard here.
+        if discChanged && (instance.status == .running || instance.status == .paused) {
+            Task { [weak self] in
+                await self?.applyLiveDiscImageChange(for: instance, old: old, new: new)
             }
         }
     }
+
+    /// Reconciles the live disc image device with the new configuration:
+    /// detaches the previous device (if any) and attaches a new one
+    /// (if `discImagePath != nil`). Failures surface via `presentError` and
+    /// do not revert the persisted config — the user can retry by editing
+    /// the path or readOnly flag again.
+    private func applyLiveDiscImageChange(
+        for instance: VMInstance,
+        old: VMConfiguration,
+        new: VMConfiguration
+    ) async {
+        // Detach the previous live disc device, if any. Best-effort: if the
+        // detach fails (e.g. the guest already ejected it), log and proceed
+        // with the attach so the new disc still becomes visible.
+        if let previous = instance.liveDiscImageDevice {
+            do {
+                try await lifecycle.detachUSBDevice(previous, from: instance)
+            } catch {
+                Self.logger.warning(
+                    "Live disc detach failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public). Continuing with attach."
+                )
+            }
+            instance.liveDiscImageDevice = nil
+        }
+
+        guard let newPath = new.discImagePath else {
+            Self.logger.notice("Live disc removed from '\(instance.name, privacy: .public)'")
+            return
+        }
+
+        do {
+            let info = try await lifecycle.attachUSBDevice(
+                diskImagePath: newPath,
+                readOnly: new.discImageReadOnly,
+                desiredUUID: new.discImageDeviceUUID,
+                to: instance
+            )
+            instance.liveDiscImageDevice = info
+            Self.logger.notice(
+                "Live disc attached to '\(instance.name, privacy: .public)' (readOnly: \(new.discImageReadOnly, privacy: .public))"
+            )
+        } catch {
+            Self.logger.error(
+                "Live disc attach failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+            presentError(error)
+        }
+    }
+
+    // MARK: - USB Device Management
 
     func detachUSBDevice(_ device: USBDeviceInfo, from instance: VMInstance) {
         Self.logger.debug(

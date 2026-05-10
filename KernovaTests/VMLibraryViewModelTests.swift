@@ -1659,4 +1659,197 @@ struct VMLibraryViewModelTests {
         #expect(mock.detachCallCount == 1)
         #expect(instance.attachedUSBDevices.isEmpty)
     }
+
+    // MARK: - Live Disc Image Hot-Config
+
+    @Test("applyLivePolicy attaches new disc when path goes from nil to set")
+    func liveDiscAddAttaches() async throws {
+        let mock = MockUSBDeviceService()
+        let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
+        let instance = makeInstance()
+        instance.status = .running
+        viewModel.instances.append(instance)
+
+        let configuredUUID = UUID()
+        let old = instance.configuration
+        var new = old
+        new.discImagePath = "/tmp/install.iso"
+        new.discImageReadOnly = true
+        new.discImageDeviceUUID = configuredUUID
+
+        viewModel.applyLivePolicy(for: instance, old: old, new: new)
+
+        while instance.liveDiscImageDevice == nil { await Task.yield() }
+
+        #expect(mock.attachCallCount == 1)
+        #expect(mock.detachCallCount == 0)
+        #expect(mock.lastAttachedPath == "/tmp/install.iso")
+        #expect(mock.lastAttachedReadOnly == true)
+        // The configured UUID must be threaded through to the runtime device
+        // so saved-state restore can match it.
+        #expect(mock.lastAttachedDesiredUUID == configuredUUID)
+        #expect(instance.liveDiscImageDevice?.id == configuredUUID)
+        #expect(instance.liveDiscImageDevice?.path == "/tmp/install.iso")
+    }
+
+    @Test("applyLivePolicy detaches and clears tracking when disc removed")
+    func liveDiscRemoveDetaches() async throws {
+        let mock = MockUSBDeviceService()
+        let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
+        let instance = makeInstance()
+        instance.status = .running
+        let existing = USBDeviceInfo(path: "/tmp/install.iso", readOnly: true)
+        instance.liveDiscImageDevice = existing
+        viewModel.instances.append(instance)
+
+        var old = instance.configuration
+        old.discImagePath = "/tmp/install.iso"
+        var new = old
+        new.discImagePath = nil
+
+        viewModel.applyLivePolicy(for: instance, old: old, new: new)
+
+        while instance.liveDiscImageDevice != nil { await Task.yield() }
+
+        #expect(mock.detachCallCount == 1)
+        #expect(mock.attachCallCount == 0)
+        #expect(instance.liveDiscImageDevice == nil)
+    }
+
+    @Test("applyLivePolicy detaches old then attaches new on path swap")
+    func liveDiscSwapDetachesThenAttaches() async throws {
+        let mock = MockUSBDeviceService()
+        let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
+        let instance = makeInstance()
+        instance.status = .running
+        let originalID = UUID()
+        instance.liveDiscImageDevice = USBDeviceInfo(id: originalID, path: "/tmp/old.iso", readOnly: true)
+        viewModel.instances.append(instance)
+
+        var old = instance.configuration
+        old.discImagePath = "/tmp/old.iso"
+        var new = old
+        new.discImagePath = "/tmp/new.iso"
+
+        viewModel.applyLivePolicy(for: instance, old: old, new: new)
+
+        while instance.liveDiscImageDevice?.path != "/tmp/new.iso" { await Task.yield() }
+
+        #expect(mock.detachCallCount == 1)
+        #expect(mock.attachCallCount == 1)
+        #expect(mock.lastAttachedPath == "/tmp/new.iso")
+        // The new tracked device must NOT be the original — proves we replaced it
+        #expect(instance.liveDiscImageDevice?.id != originalID)
+    }
+
+    @Test("applyLivePolicy detaches and reattaches on readOnly flip")
+    func liveDiscReadOnlyFlipReattaches() async throws {
+        let mock = MockUSBDeviceService()
+        let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
+        let instance = makeInstance()
+        instance.status = .running
+        instance.liveDiscImageDevice = USBDeviceInfo(path: "/tmp/install.iso", readOnly: true)
+        viewModel.instances.append(instance)
+
+        var old = instance.configuration
+        old.discImagePath = "/tmp/install.iso"
+        old.discImageReadOnly = true
+        var new = old
+        new.discImageReadOnly = false
+
+        viewModel.applyLivePolicy(for: instance, old: old, new: new)
+
+        while instance.liveDiscImageDevice?.readOnly != false { await Task.yield() }
+
+        #expect(mock.detachCallCount == 1)
+        #expect(mock.attachCallCount == 1)
+        #expect(mock.lastAttachedReadOnly == false)
+    }
+
+    @Test("applyLivePolicy is a no-op when only bootFromDiscImage flips")
+    func liveDiscBootFromDiscFlipIsNoop() async throws {
+        let mock = MockUSBDeviceService()
+        let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
+        let instance = makeInstance()
+        instance.status = .running
+        viewModel.instances.append(instance)
+
+        var old = instance.configuration
+        old.discImagePath = "/tmp/install.iso"
+        var new = old
+        new.bootFromDiscImage = true
+
+        viewModel.applyLivePolicy(for: instance, old: old, new: new)
+        // Yield enough to let any spurious Task drain
+        for _ in 0..<5 { await Task.yield() }
+
+        #expect(mock.attachCallCount == 0)
+        #expect(mock.detachCallCount == 0)
+    }
+
+    @Test("applyLivePolicy is a no-op when VM is stopped, even with disc change")
+    func liveDiscNoopWhenStopped() async throws {
+        let mock = MockUSBDeviceService()
+        let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
+        let instance = makeInstance()
+        instance.status = .stopped
+        viewModel.instances.append(instance)
+
+        let old = instance.configuration
+        var new = old
+        new.discImagePath = "/tmp/install.iso"
+
+        viewModel.applyLivePolicy(for: instance, old: old, new: new)
+        for _ in 0..<5 { await Task.yield() }
+
+        #expect(mock.attachCallCount == 0)
+        #expect(mock.detachCallCount == 0)
+        #expect(instance.liveDiscImageDevice == nil)
+    }
+
+    @Test("Live disc attach failure surfaces error and clears tracking")
+    func liveDiscAttachFailureSurfacesError() async throws {
+        let mock = MockUSBDeviceService()
+        mock.attachError = USBDeviceError.diskImageNotFound("/tmp/missing.iso")
+        let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
+        let instance = makeInstance()
+        instance.status = .running
+        viewModel.instances.append(instance)
+
+        let old = instance.configuration
+        var new = old
+        new.discImagePath = "/tmp/missing.iso"
+
+        viewModel.applyLivePolicy(for: instance, old: old, new: new)
+
+        while !viewModel.showError { await Task.yield() }
+
+        #expect(mock.attachCallCount == 1)
+        #expect(instance.liveDiscImageDevice == nil)
+        #expect(viewModel.errorMessage != nil)
+    }
+
+    @Test("Live disc detach failure during swap still proceeds with attach")
+    func liveDiscDetachFailureStillAttaches() async throws {
+        let mock = MockUSBDeviceService()
+        mock.detachError = USBDeviceError.deviceNotFound
+        let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
+        let instance = makeInstance()
+        instance.status = .running
+        instance.liveDiscImageDevice = USBDeviceInfo(path: "/tmp/old.iso", readOnly: true)
+        viewModel.instances.append(instance)
+
+        var old = instance.configuration
+        old.discImagePath = "/tmp/old.iso"
+        var new = old
+        new.discImagePath = "/tmp/new.iso"
+
+        viewModel.applyLivePolicy(for: instance, old: old, new: new)
+
+        while instance.liveDiscImageDevice?.path != "/tmp/new.iso" { await Task.yield() }
+
+        #expect(mock.detachCallCount == 1)
+        #expect(mock.attachCallCount == 1)
+        #expect(instance.liveDiscImageDevice?.path == "/tmp/new.iso")
+    }
 }

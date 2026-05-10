@@ -34,7 +34,6 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
                 lifecycleID: NSToolbarItem.Identifier("displayLifecycle"),
                 saveStateID: NSToolbarItem.Identifier("displaySaveState"),
                 clipboardID: nil,
-                removableMediaID: NSToolbarItem.Identifier("displayRemovableMedia"),
                 displayID: NSToolbarItem.Identifier("displayDisplay"),
                 settingsToggleID: nil,
                 checksPreparing: false,

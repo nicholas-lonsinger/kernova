@@ -265,4 +265,27 @@ struct VMConfigurationCloneTests {
         let clone = makeConfig().clonedForNewInstance(existingNames: [])
         #expect(clone.lastSeenAgentVersion == nil)
     }
+
+    // MARK: - discImageDeviceUUID
+
+    @Test("Clone regenerates discImageDeviceUUID when a disc is set")
+    func cloneRegeneratesDiscImageDeviceUUID() {
+        let originalUUID = UUID()
+        var config = makeConfig()
+        config.discImagePath = "/tmp/install.iso"
+        config.discImageDeviceUUID = originalUUID
+
+        let clone = config.clonedForNewInstance(existingNames: [])
+
+        #expect(clone.discImagePath == "/tmp/install.iso")
+        #expect(clone.discImageDeviceUUID != nil)
+        #expect(clone.discImageDeviceUUID != originalUUID)
+    }
+
+    @Test("Clone leaves discImageDeviceUUID nil when no disc is set")
+    func cloneLeavesDiscImageDeviceUUIDNilWithoutDisc() {
+        let clone = makeConfig().clonedForNewInstance(existingNames: [])
+        #expect(clone.discImagePath == nil)
+        #expect(clone.discImageDeviceUUID == nil)
+    }
 }
