@@ -54,25 +54,6 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
         return config
     }
 
-    /// Forces the migration-flag variant of `loadConfiguration` to report a migration for these bundles.
-    ///
-    /// Set on a per-bundle basis to make the variant toggle
-    /// `didMigrateDiscImageDeviceUUID` to `true`. Allows tests of the
-    /// viewmodel's post-load migration save path to run without touching
-    /// the on-disk JSON byte format.
-    var bundlesPretendingToMigrate: Set<URL> = []
-
-    func loadConfiguration(
-        from bundleURL: URL,
-        migrationFlag: VMConfiguration.LegacyMigrationFlag
-    ) throws -> VMConfiguration {
-        let config = try loadConfiguration(from: bundleURL)
-        if bundlesPretendingToMigrate.contains(bundleURL) {
-            migrationFlag.didMigrateDiscImageDeviceUUID = true
-        }
-        return config
-    }
-
     func saveConfiguration(_ configuration: VMConfiguration, to bundleURL: URL) throws {
         saveConfigurationCallCount += 1
         if let error = saveConfigurationError { throw error }

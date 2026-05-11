@@ -61,44 +61,11 @@ struct VMStorageService: Sendable {
     }
 
     /// Loads a `VMConfiguration` from a bundle directory.
-    ///
-    /// Pure read: never writes to disk. Callers that need to observe a
-    /// legacy `discImageDeviceUUID` migration should use
-    /// `loadConfiguration(from:migrationFlag:)` and decide whether to
-    /// persist the result themselves.
     func loadConfiguration(from bundleURL: URL) throws -> VMConfiguration {
-        try loadConfiguration(from: bundleURL, decoderUserInfo: [:])
-    }
-
-    /// Variant of `loadConfiguration` that exposes the legacy-migration
-    /// signal via the provided flag.
-    ///
-    /// The flag's `didMigrateDiscImageDeviceUUID` field is set to `true`
-    /// when `VMConfiguration.init(from:)` back-fills a missing UUID. Acting
-    /// on the signal (e.g. calling `saveConfiguration` to persist the new
-    /// UUID) is the caller's responsibility — keeping it explicit lets
-    /// downstream callers like the clone path opt out of persisting a
-    /// migration on the source bundle.
-    func loadConfiguration(
-        from bundleURL: URL,
-        migrationFlag: VMConfiguration.LegacyMigrationFlag
-    ) throws -> VMConfiguration {
-        try loadConfiguration(
-            from: bundleURL,
-            decoderUserInfo: [VMConfigurationLegacyMigrationFlagKey: migrationFlag]
-        )
-    }
-
-    /// Shared implementation used by both `loadConfiguration` variants.
-    private func loadConfiguration(
-        from bundleURL: URL,
-        decoderUserInfo: [CodingUserInfoKey: any Sendable]
-    ) throws -> VMConfiguration {
         let configURL = bundleURL.appendingPathComponent("config.json")
         let data = try Data(contentsOf: configURL)
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        decoder.userInfo = decoderUserInfo
         return try decoder.decode(VMConfiguration.self, from: data)
     }
 

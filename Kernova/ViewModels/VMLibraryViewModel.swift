@@ -137,14 +137,11 @@ final class VMLibraryViewModel {
             var failedBundles: [String] = []
             instances = bundles.compactMap { bundleURL in
                 do {
-                    let migrationFlag = VMConfiguration.LegacyMigrationFlag()
-                    let config = try storageService.loadConfiguration(
-                        from: bundleURL, migrationFlag: migrationFlag)
+                    let config = try storageService.loadConfiguration(from: bundleURL)
                     let layout = VMBundleLayout(bundleURL: bundleURL)
                     let initialStatus: VMStatus = layout.hasSaveFile ? .paused : .stopped
                     let instance = VMInstance(configuration: config, bundleURL: bundleURL, status: initialStatus)
                     wirePersistence(for: instance)
-                    persistLegacyMigrationIfNeeded(flag: migrationFlag, instance: instance)
                     return instance
                 } catch {
                     Self.logger.error(
@@ -582,30 +579,6 @@ final class VMLibraryViewModel {
                 "Failed to save configuration for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             presentError(error)
-        }
-    }
-
-    /// Persists a legacy field migration to disk if the storage layer's
-    /// `migrationFlag` indicates the decoder back-filled `discImageDeviceUUID`.
-    ///
-    /// Pulled out of `loadConfiguration` so the load stays side-effect-free.
-    /// Save failures here are logged but not surfaced — the in-memory config
-    /// is consistent, and the migration will simply re-fire on next load
-    /// until persistence eventually succeeds.
-    private func persistLegacyMigrationIfNeeded(
-        flag: VMConfiguration.LegacyMigrationFlag,
-        instance: VMInstance
-    ) {
-        guard flag.didMigrateDiscImageDeviceUUID else { return }
-        do {
-            try storageService.saveConfiguration(instance.configuration, to: instance.bundleURL)
-            Self.logger.notice(
-                "Persisted migrated discImageDeviceUUID for VM '\(instance.name, privacy: .public)'"
-            )
-        } catch {
-            Self.logger.warning(
-                "Failed to persist migrated discImageDeviceUUID for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public). Will retry on next load."
-            )
         }
     }
 
@@ -1217,15 +1190,13 @@ final class VMLibraryViewModel {
             let diskBundles = try storageService.listVMBundles()
 
             // Build a map of UUID → bundle URL for bundles currently on disk
-            var diskConfigs: [(VMConfiguration, URL, VMConfiguration.LegacyMigrationFlag)] = []
+            var diskConfigs: [(VMConfiguration, URL)] = []
             var failedBundles: [String] = []
             for bundleURL in diskBundles {
                 let bundleName = bundleURL.deletingPathExtension().lastPathComponent
                 do {
-                    let migrationFlag = VMConfiguration.LegacyMigrationFlag()
-                    let config = try storageService.loadConfiguration(
-                        from: bundleURL, migrationFlag: migrationFlag)
-                    diskConfigs.append((config, bundleURL, migrationFlag))
+                    let config = try storageService.loadConfiguration(from: bundleURL)
+                    diskConfigs.append((config, bundleURL))
                     reportedFailedBundles.remove(bundleName)
                 } catch {
                     Self.logger.error(
@@ -1239,7 +1210,7 @@ final class VMLibraryViewModel {
 
             // Additions: bundles on disk that aren't in memory
             var didChange = false
-            for (config, bundleURL, migrationFlag) in diskConfigs where !memoryIDs.contains(config.id) {
+            for (config, bundleURL) in diskConfigs where !memoryIDs.contains(config.id) {
                 let layout = VMBundleLayout(bundleURL: bundleURL)
                 let initialStatus: VMStatus = layout.hasSaveFile ? .paused : .stopped
                 let instance = VMInstance(
@@ -1250,7 +1221,6 @@ final class VMLibraryViewModel {
                 wirePersistence(for: instance)
                 instances.append(instance)
                 Self.logger.info("Discovered VM '\(config.name, privacy: .public)' on disk — added to library")
-                persistLegacyMigrationIfNeeded(flag: migrationFlag, instance: instance)
                 didChange = true
             }
 
