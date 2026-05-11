@@ -51,6 +51,38 @@ struct VMLibraryViewModelTests {
 
     // MARK: - Load
 
+    @Test("loadVMs persists a legacy discImageDeviceUUID migration after load")
+    func loadVMsPersistsLegacyMigration() {
+        // The storage layer's `loadConfiguration` is now side-effect-free.
+        // When it reports a legacy migration via the migrationFlag, the
+        // viewmodel is responsible for triggering the save — this test
+        // proves it does so once per migrated bundle on load.
+        let storage = MockVMStorageService()
+        let config = VMConfiguration(name: "Legacy VM", guestOS: .linux, bootMode: .efi)
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
+        storage.bundles[url] = config
+        storage.bundlesPretendingToMigrate.insert(url)
+
+        let (_, _, _, _, _) = makeViewModel(storageService: storage)
+
+        #expect(storage.saveConfigurationCallCount >= 1)
+    }
+
+    @Test("loadVMs does not save when no migration is reported")
+    func loadVMsDoesNotSaveWithoutMigration() {
+        let storage = MockVMStorageService()
+        let config = VMConfiguration(name: "Modern VM", guestOS: .linux, bootMode: .efi)
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
+        storage.bundles[url] = config
+        // bundlesPretendingToMigrate is left empty.
+
+        let (_, _, _, _, _) = makeViewModel(storageService: storage)
+
+        #expect(storage.saveConfigurationCallCount == 0)
+    }
+
     @Test("loadVMs auto-selects the first VM")
     func loadVMsAutoSelectsFirst() {
         let storage = MockVMStorageService()

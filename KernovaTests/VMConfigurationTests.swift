@@ -295,6 +295,25 @@ struct VMConfigurationTests {
         #expect(config.discImageDeviceUUID == nil)
     }
 
+    @Test("Config with discImagePath and explicit-null UUID is also migrated")
+    func explicitNullDiscUUIDIsAlsoMigrated() throws {
+        // Defense in depth: `c.contains` alone would skip this case (key
+        // present), but the combined `!contains || decodedUUID == nil`
+        // check ensures we migrate. Manual JSON editing is the only way
+        // to reach this state in practice, but the symmetric handling
+        // keeps the model robust to alternate encoder behavior.
+        let json = Self.makeBaseJSON(
+            extraFields:
+                "\"discImagePath\": \"/tmp/legacy.iso\",\n            \"discImageDeviceUUID\": null"
+        )
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let config = try decoder.decode(VMConfiguration.self, from: Data(json.utf8))
+
+        #expect(config.discImagePath == "/tmp/legacy.iso")
+        #expect(config.discImageDeviceUUID != nil)
+    }
+
     @Test("Legacy config with discImagePath but no UUID is migrated to a generated UUID")
     func legacyDiscImageGetsMigratedUUID() throws {
         // Simulates a config saved before `discImageDeviceUUID` existed:

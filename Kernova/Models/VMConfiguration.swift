@@ -273,13 +273,19 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         // build, and `restoreMachineStateFrom` would silently fail to match
         // the device in the save file and fall through to a cold boot.
         //
-        // We detect the legacy state via `c.contains(.discImageDeviceUUID)`
-        // (key truly absent from the source JSON) rather than `decodedUUID
-        // == nil` (could also mean an explicit `null`). If a caller wants
-        // to know about the migration so they can persist the new UUID,
-        // they pass a `LegacyMigrationFlag` via `decoder.userInfo` under
-        // `VMConfigurationLegacyMigrationFlagKey`; we toggle it here.
-        if !c.contains(.discImageDeviceUUID), self.discImagePath != nil {
+        // We migrate when EITHER the key is absent from the source JSON
+        // (legacy bundles that predate this field) OR the key is present
+        // but its decoded value is `nil` (rare: explicit `null` from a
+        // hand-edited config, or a future decoder that emits null for
+        // missing optionals). The combined check makes the migration
+        // robust to both shapes without depending on which one a future
+        // encoder picks. If a caller wants to know about the migration so
+        // they can persist the new UUID, they pass a `LegacyMigrationFlag`
+        // via `decoder.userInfo` under `VMConfigurationLegacyMigrationFlagKey`;
+        // we toggle it here.
+        let decodedDiscUUID = try c.decodeIfPresent(UUID.self, forKey: .discImageDeviceUUID)
+        let keyMissingOrNull = !c.contains(.discImageDeviceUUID) || decodedDiscUUID == nil
+        if keyMissingOrNull, self.discImagePath != nil {
             self.discImageDeviceUUID = UUID()
             if let flag = decoder.userInfo[VMConfigurationLegacyMigrationFlagKey]
                 as? VMConfiguration.LegacyMigrationFlag
@@ -287,7 +293,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
                 flag.didMigrateDiscImageDeviceUUID = true
             }
         } else {
-            self.discImageDeviceUUID = try c.decodeIfPresent(UUID.self, forKey: .discImageDeviceUUID)
+            self.discImageDeviceUUID = decodedDiscUUID
         }
         self.kernelPath = try c.decodeIfPresent(String.self, forKey: .kernelPath)
         self.initrdPath = try c.decodeIfPresent(String.self, forKey: .initrdPath)
@@ -414,8 +420,12 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
     ///
     /// `final class` rather than a struct so writes inside `init(from:)`
     /// propagate back to the caller's reference without requiring an
-    /// `inout` parameter (which `Decodable` doesn't support).
-    final class LegacyMigrationFlag {
+    /// `inout` parameter (which `Decodable` doesn't support). Marked
+    /// `@unchecked Sendable` because the flag's mutable state is always
+    /// produced and consumed on a single actor (the storage layer creates
+    /// it, hands it to `JSONDecoder`, and reads it back synchronously) —
+    /// there is no cross-actor sharing despite being a reference type.
+    final class LegacyMigrationFlag: @unchecked Sendable {
         var didMigrateDiscImageDeviceUUID: Bool = false
         init() {}
     }

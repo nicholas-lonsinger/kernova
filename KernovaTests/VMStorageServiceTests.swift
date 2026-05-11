@@ -161,50 +161,47 @@ struct VMStorageServiceTests {
         try Data(json.utf8).write(to: bundleURL.appendingPathComponent("config.json"))
     }
 
-    @Test("Loading a legacy config with disc but no UUID persists the migrated UUID")
-    func loadPersistsLegacyDiscImageDeviceUUID() throws {
+    @Test("Loading a legacy config with disc but no UUID surfaces migration via flag, without writing")
+    func loadSurfacesLegacyMigrationViaFlag() async throws {
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString + ".kernova")
         defer { try? FileManager.default.removeItem(at: bundleURL) }
 
         try writeLegacyConfigJSON(toBundle: bundleURL, includeDiscUUID: false)
 
-        // First load: migration fires and persists.
-        let firstLoad = try service.loadConfiguration(from: bundleURL)
-        let migratedUUID = try #require(firstLoad.discImageDeviceUUID)
+        let configURL = bundleURL.appendingPathComponent("config.json")
+        let mtimeBefore = try FileManager.default.attributesOfItem(atPath: configURL.path)[.modificationDate] as? Date
 
-        // Second load: the on-disk JSON now carries the UUID, so subsequent
-        // loads must return the same value (no re-migration, no re-save loop).
-        let secondLoad = try service.loadConfiguration(from: bundleURL)
-        #expect(secondLoad.discImageDeviceUUID == migratedUUID)
+        try await Task.sleep(for: .milliseconds(50))
 
-        // Spot-check: the file actually contains the UUID now.
-        let rawJSON = try Data(contentsOf: bundleURL.appendingPathComponent("config.json"))
-        let parsed = try #require(try JSONSerialization.jsonObject(with: rawJSON) as? [String: Any])
-        #expect(parsed["discImageDeviceUUID"] is String)
+        let flag = VMConfiguration.LegacyMigrationFlag()
+        let config = try service.loadConfiguration(from: bundleURL, migrationFlag: flag)
+
+        // The decoder back-filled the UUID in-memory…
+        #expect(config.discImageDeviceUUID != nil)
+        // …and reported the migration via the flag.
+        #expect(flag.didMigrateDiscImageDeviceUUID == true)
+
+        // CRITICAL: load is now side-effect-free. The mtime must NOT bump —
+        // the caller is responsible for persistence if they want it.
+        let mtimeAfter = try FileManager.default.attributesOfItem(atPath: configURL.path)[.modificationDate] as? Date
+        #expect(mtimeBefore == mtimeAfter)
     }
 
-    @Test("Loading a config without a disc image leaves no UUID and writes nothing extra")
+    @Test("Loading a config without a disc image does not signal migration")
     func loadDoesNotMigrateWhenNoDiscImage() async throws {
         let config = VMConfiguration(name: "No Disc", guestOS: .linux, bootMode: .efi)
         let bundleURL = try service.createVMBundle(for: config)
         defer { try? FileManager.default.removeItem(at: bundleURL) }
 
-        let configURL = bundleURL.appendingPathComponent("config.json")
-        let mtimeBefore = try FileManager.default.attributesOfItem(atPath: configURL.path)[.modificationDate] as? Date
-
-        // Sleep a tick so a spurious re-save would observably bump mtime.
-        try await Task.sleep(for: .milliseconds(50))
-
-        let loaded = try service.loadConfiguration(from: bundleURL)
+        let flag = VMConfiguration.LegacyMigrationFlag()
+        let loaded = try service.loadConfiguration(from: bundleURL, migrationFlag: flag)
         #expect(loaded.discImageDeviceUUID == nil)
-
-        let mtimeAfter = try FileManager.default.attributesOfItem(atPath: configURL.path)[.modificationDate] as? Date
-        #expect(mtimeBefore == mtimeAfter)
+        #expect(flag.didMigrateDiscImageDeviceUUID == false)
     }
 
-    @Test("Loading a config that already has a disc UUID does not rewrite the file")
-    func loadIsIdempotentWhenUUIDAlreadyPresent() async throws {
+    @Test("Loading a config that already has a disc UUID does not signal migration")
+    func loadDoesNotMigrateWhenUUIDAlreadyPresent() async throws {
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString + ".kernova")
         defer { try? FileManager.default.removeItem(at: bundleURL) }
@@ -216,7 +213,10 @@ struct VMStorageServiceTests {
 
         try await Task.sleep(for: .milliseconds(50))
 
-        _ = try service.loadConfiguration(from: bundleURL)
+        let flag = VMConfiguration.LegacyMigrationFlag()
+        _ = try service.loadConfiguration(from: bundleURL, migrationFlag: flag)
+
+        #expect(flag.didMigrateDiscImageDeviceUUID == false)
 
         let mtimeAfter = try FileManager.default.attributesOfItem(atPath: configURL.path)[.modificationDate] as? Date
         #expect(mtimeBefore == mtimeAfter)
