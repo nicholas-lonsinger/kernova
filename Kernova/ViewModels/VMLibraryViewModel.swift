@@ -667,12 +667,14 @@ final class VMLibraryViewModel {
         //   status guard and our await. Clear tracking and bail; attempting
         //   the attach would just surface a spurious error alert. The
         //   cold-start path picks up the persisted config on next launch.
-        // - **Any other error** — likely a transient framework state or
-        //   guest-side lock. The device may still be physically attached,
-        //   so we KEEP `liveDiscImageDevice` populated and proceed with
-        //   the attach. If the attach succeeds, the live tracking points
-        //   at the new device; if it fails, the next reconcile pass can
-        //   re-attempt the detach.
+        // - **Any other error (transient framework state, guest-side lock,
+        //   etc.)** — fail fast. Continuing to attach would overwrite
+        //   `liveDiscImageDevice` with the new device's info while the old
+        //   device is *still physically attached* to the guest, leaking
+        //   a device per failure with no way to recover its reference.
+        //   Surface the error, keep tracking pointed at the previous
+        //   device, and let the next reconcile pass (triggered by another
+        //   settings edit) retry the detach.
         if let previous = instance.liveDiscImageDevice {
             do {
                 try await lifecycle.detachUSBDevice(previous, from: instance)
@@ -689,9 +691,11 @@ final class VMLibraryViewModel {
                 )
                 instance.liveDiscImageDevice = nil
             } catch {
-                Self.logger.warning(
-                    "Live disc detach failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public). Keeping tracking and continuing with attach."
+                Self.logger.error(
+                    "Live disc detach failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public). Aborting swap to avoid leaking the previous device."
                 )
+                presentError(error)
+                return
             }
         }
 

@@ -272,11 +272,22 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         // persists it. Without this, a fresh UUID would be generated at every
         // build, and `restoreMachineStateFrom` would silently fail to match
         // the device in the save file and fall through to a cold boot.
-        let decodedDiscUUID = try c.decodeIfPresent(UUID.self, forKey: .discImageDeviceUUID)
-        if decodedDiscUUID == nil, self.discImagePath != nil {
+        //
+        // We detect the legacy state via `c.contains(.discImageDeviceUUID)`
+        // (key truly absent from the source JSON) rather than `decodedUUID
+        // == nil` (could also mean an explicit `null`). If a caller wants
+        // to know about the migration so they can persist the new UUID,
+        // they pass a `LegacyMigrationFlag` via `decoder.userInfo` under
+        // `VMConfigurationLegacyMigrationFlagKey`; we toggle it here.
+        if !c.contains(.discImageDeviceUUID), self.discImagePath != nil {
             self.discImageDeviceUUID = UUID()
+            if let flag = decoder.userInfo[VMConfigurationLegacyMigrationFlagKey]
+                as? VMConfiguration.LegacyMigrationFlag
+            {
+                flag.didMigrateDiscImageDeviceUUID = true
+            }
         } else {
-            self.discImageDeviceUUID = decodedDiscUUID
+            self.discImageDeviceUUID = try c.decodeIfPresent(UUID.self, forKey: .discImageDeviceUUID)
         }
         self.kernelPath = try c.decodeIfPresent(String.self, forKey: .kernelPath)
         self.initrdPath = try c.decodeIfPresent(String.self, forKey: .initrdPath)
@@ -396,7 +407,30 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
             || old.discImageReadOnly != new.discImageReadOnly
             || old.discImageDeviceUUID != new.discImageDeviceUUID
     }
+
+    /// Optional flag a caller (typically the storage layer) can pass into
+    /// `JSONDecoder.userInfo` to observe whether `init(from:)` filled in a
+    /// missing `discImageDeviceUUID` for a legacy config.
+    ///
+    /// `final class` rather than a struct so writes inside `init(from:)`
+    /// propagate back to the caller's reference without requiring an
+    /// `inout` parameter (which `Decodable` doesn't support).
+    final class LegacyMigrationFlag {
+        var didMigrateDiscImageDeviceUUID: Bool = false
+        init() {}
+    }
 }
+
+/// Key for `JSONDecoder.userInfo` carrying a `VMConfiguration.LegacyMigrationFlag`.
+///
+/// RATIONALE: `CodingUserInfoKey.init?(rawValue:)` only returns `nil` for an
+/// empty string, so a non-empty literal always succeeds. The force-unwrap
+/// is unreachable; if Apple ever changed that contract the optional-chain
+/// fallback would still produce a non-nil key. Marked with the
+/// `swift-format-ignore` directive so the `NeverForceUnwrap` rule doesn't
+/// flag this single literal-driven construction.
+// swift-format-ignore
+let VMConfigurationLegacyMigrationFlagKey = CodingUserInfoKey(rawValue: "VMConfigurationLegacyMigrationFlag")!
 
 // MARK: - SharedDirectory
 

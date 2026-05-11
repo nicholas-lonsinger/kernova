@@ -1862,53 +1862,18 @@ struct VMLibraryViewModelTests {
         #expect(instance.liveDiscImageDevice?.path == "/tmp/new.iso")
     }
 
-    @Test("Transient detach error keeps prior tracking until attach succeeds")
-    func liveDiscTransientDetachErrorKeepsTrackingThenAttachOverrides() async throws {
-        // Unlike `deviceNotFound`, a generic / framework error doesn't tell
-        // us the device is gone. We MUST NOT clear `liveDiscImageDevice`
-        // (the device may still be physically attached). Continue with the
-        // attach so the user gets their new disc. If attach succeeds, the
-        // single-slot tracking moves to the new device.
+    @Test("Transient detach error fails fast — no attach, tracking preserved, error surfaced")
+    func liveDiscTransientDetachErrorFailsFast() async throws {
+        // A generic / framework error during detach doesn't tell us the
+        // device is gone. Proceeding to attach would overwrite the host's
+        // single-slot tracking with the new device's info while the old
+        // device remains physically attached to the guest — a leak per
+        // failure. So we fail fast: surface the error, keep tracking
+        // pointed at the original device, and let the user retry via
+        // another settings edit.
         struct TransientError: Error {}
         let mock = MockUSBDeviceService()
         mock.detachError = TransientError()
-        let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
-        let instance = makeInstance()
-        instance.status = .running
-        let originalTracked = USBDeviceInfo(path: "/tmp/old.iso", readOnly: true)
-        instance.liveDiscImageDevice = originalTracked
-        viewModel.instances.append(instance)
-
-        var old = instance.configuration
-        old.discImagePath = "/tmp/old.iso"
-        var new = old
-        new.discImagePath = "/tmp/new.iso"
-
-        viewModel.applyLivePolicy(for: instance, old: old, new: new)
-
-        while instance.liveDiscImageDevice?.path != "/tmp/new.iso" { await Task.yield() }
-
-        #expect(mock.detachCallCount == 1)
-        #expect(mock.attachCallCount == 1)
-        // Tracking ends up on the new device because the attach succeeded.
-        // The KEY invariant being tested is below: tracking is NOT cleared
-        // to nil between the failed detach and the successful attach. We
-        // verify by injecting a deliberate fault if the code path were to
-        // clear tracking eagerly (see the next test for the
-        // attach-also-fails case).
-        #expect(instance.liveDiscImageDevice?.path == "/tmp/new.iso")
-    }
-
-    @Test("Transient detach + attach both failing leaves prior tracking intact")
-    func liveDiscTransientDetachAndAttachFailsPreservesTracking() async throws {
-        // The conservative "keep tracking on transient errors" rule pays
-        // off when the subsequent attach ALSO fails: instead of losing the
-        // reference and being unable to retry, the next reconcile pass can
-        // try to detach the same device again.
-        struct TransientError: Error {}
-        let mock = MockUSBDeviceService()
-        mock.detachError = TransientError()
-        mock.attachError = TransientError()
         let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
         let instance = makeInstance()
         instance.status = .running
@@ -1927,10 +1892,10 @@ struct VMLibraryViewModelTests {
         for _ in 0..<5 { await Task.yield() }
 
         #expect(mock.detachCallCount == 1)
-        #expect(mock.attachCallCount == 1)
-        // CRITICAL: tracking still points at the original device. If we
-        // had eagerly cleared tracking on the failed detach, this would be
-        // nil and the user would lose the ability to retry the detach.
+        // CRITICAL: no attach attempted — preventing the device-leak.
+        #expect(mock.attachCallCount == 0)
+        // Tracking still points at the original device so the next
+        // reconcile pass can retry the detach.
         #expect(instance.liveDiscImageDevice?.id == originalTracked.id)
     }
 

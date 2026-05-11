@@ -71,23 +71,17 @@ struct VMStorageService: Sendable {
         let configURL = bundleURL.appendingPathComponent("config.json")
         let data = try Data(contentsOf: configURL)
 
-        // Detect the legacy migration condition before decoding: a config
-        // saved before `discImageDeviceUUID` existed has `discImagePath` set
-        // but no UUID key. The decoder will fill in a fresh UUID; we then
-        // save the result back so the UUID is stable across launches.
-        let needsLegacyDiscUUIDPersistence: Bool
-        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            needsLegacyDiscUUIDPersistence =
-                json["discImagePath"] is String && json["discImageDeviceUUID"] == nil
-        } else {
-            needsLegacyDiscUUIDPersistence = false
-        }
-
+        // The decoder's `init(from:)` toggles this flag when it back-fills a
+        // missing `discImageDeviceUUID` for a legacy config. Threading the
+        // signal through `userInfo` avoids a second parse pass with
+        // `JSONSerialization` just to peek at the JSON keys.
+        let migrationFlag = VMConfiguration.LegacyMigrationFlag()
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
+        decoder.userInfo[VMConfigurationLegacyMigrationFlagKey] = migrationFlag
         let configuration = try decoder.decode(VMConfiguration.self, from: data)
 
-        if needsLegacyDiscUUIDPersistence {
+        if migrationFlag.didMigrateDiscImageDeviceUUID {
             Self.logger.notice(
                 "Persisting migrated discImageDeviceUUID for VM '\(configuration.name, privacy: .public)'"
             )
