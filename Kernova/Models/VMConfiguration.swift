@@ -218,11 +218,11 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         self.discImagePath = discImagePath
         self.discImageReadOnly = discImageReadOnly
         self.bootFromDiscImage = bootFromDiscImage
-        // Mirror the decoder migration: a disc-attached config must always
-        // carry a stable UUID even when callers forget to supply one. The
-        // picker explicitly threads both fields, but programmatic call sites
-        // (the creation wizard, future imports) shouldn't have to repeat the
-        // pairing for save-state restore to work.
+        // A disc-attached config must always carry a stable UUID, even
+        // when callers forget to supply one. The picker threads both
+        // fields explicitly, but programmatic call sites (the creation
+        // wizard, future imports) shouldn't have to repeat the pairing
+        // for save-state restore to work.
         self.discImageDeviceUUID = discImageDeviceUUID ?? (discImagePath != nil ? UUID() : nil)
         self.kernelPath = kernelPath
         self.initrdPath = initrdPath

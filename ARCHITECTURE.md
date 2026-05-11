@@ -415,8 +415,8 @@ No third-party (non-Apple) package dependencies. No CocoaPods or Carthage.
 
 | Component | Tests | Notes |
 |-----------|-------|-------|
-| `VMConfiguration` | 52 tests + clone suite | Encoding/decoding, defaults, validation, all fields including `lastSeenAgentVersion` migration, clone preservation, and `liveEditableFieldsChanged` covering disc fields + hot-toggle booleans |
-| `VMLibraryViewModel` | 88 tests | Add/remove/rename/reorder VMs, selection, auto-select on load, selection preservation on reload, delegation to coordinator, sleep/wake, clone/import phantom rows, cancel preparing, force-stop confirmation, stop escalation timing, custom order persistence, guest agent installer mount/unmount state machines, live disc image hot-config (add / remove / swap / readOnly flip / boot-flip no-op / stopped-VM no-op / attach-failure / detach-failure-during-swap) |
+| `VMConfiguration` | 49 tests + clone suite | Encoding/decoding, defaults, validation, all fields including `lastSeenAgentVersion` migration, clone preservation, and `liveEditableFieldsChanged` covering disc fields + hot-toggle booleans |
+| `VMLibraryViewModel` | 86 tests | Add/remove/rename/reorder VMs, selection, auto-select on load, selection preservation on reload, delegation to coordinator, sleep/wake, clone/import phantom rows, cancel preparing, force-stop confirmation, stop escalation timing, custom order persistence, guest agent installer mount/unmount state machines, live disc image hot-config (add / remove / swap / readOnly flip / boot-flip no-op / stopped-VM no-op / attach-failure / detach-failure-during-swap) |
 | `VMCreationViewModel` | 44 tests | All wizard steps, validation, OS-specific paths |
 | `VMLifecycleCoordinator` | Yes | Multi-step orchestration, error handling, service delegation, token-based operation serialization, stop/forceStop bypass, stale-token race condition coverage |
 | `VMInstance` | Yes | Status transitions, configuration updates, bundle layout, preparing state display properties, post-start agent watchdog (firing/cancellation/no-op guards/idempotency), `recordObservedAgentVersion` persistence + dedup |
