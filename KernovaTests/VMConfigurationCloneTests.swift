@@ -203,47 +203,51 @@ struct VMConfigurationCloneTests {
         #expect(clone.sharedDirectories == nil)
     }
 
-    // MARK: - Additional Disks
+    // MARK: - Storage Disks
 
-    @Test("Clone regenerates additional disk IDs")
-    func cloneRegeneratesAdditionalDiskIDs() {
+    @Test("Clone regenerates storage disk IDs")
+    func cloneRegeneratesStorageDiskIDs() {
         let disks = [
-            AdditionalDisk(path: "/tmp/data.asif", readOnly: false, label: "Data", isInternal: true),
-            AdditionalDisk(path: "/ext/backup.img", readOnly: true, label: "Backup", isInternal: false),
+            StorageDisk(path: "Disk.asif", readOnly: false, label: "Main Disk", isInternal: true, kind: .virtio),
+            StorageDisk(path: "/ext/backup.img", readOnly: true, label: "Backup", isInternal: false, kind: .virtio),
         ]
         var config = makeConfig()
-        config.additionalDisks = disks
+        config.storageDisks = disks
         let clone = config.clonedForNewInstance(existingNames: [])
 
-        #expect(clone.additionalDisks?.count == 2)
-        #expect(clone.additionalDisks?[0].id != disks[0].id)
-        #expect(clone.additionalDisks?[1].id != disks[1].id)
+        #expect(clone.storageDisks?.count == 2)
+        #expect(clone.storageDisks?[0].id != disks[0].id)
+        #expect(clone.storageDisks?[1].id != disks[1].id)
     }
 
-    @Test("Clone preserves additional disk paths, labels, readOnly, and isInternal")
-    func clonePreservesAdditionalDiskFields() {
+    @Test("Clone preserves storage disk paths, labels, readOnly, isInternal, and kind")
+    func clonePreservesStorageDiskFields() {
         let disks = [
-            AdditionalDisk(path: "/tmp/data.asif", readOnly: false, label: "Data", isInternal: true),
-            AdditionalDisk(path: "/ext/backup.img", readOnly: true, label: "Backup", isInternal: false),
+            StorageDisk(path: "Disk.asif", readOnly: false, label: "Main Disk", isInternal: true, kind: .virtio),
+            StorageDisk(
+                path: "/ext/installer.iso", readOnly: true, label: "Installer", isInternal: false, kind: .usbMassStorage
+            ),
         ]
         var config = makeConfig()
-        config.additionalDisks = disks
+        config.storageDisks = disks
         let clone = config.clonedForNewInstance(existingNames: [])
 
-        #expect(clone.additionalDisks?[0].path == "/tmp/data.asif")
-        #expect(clone.additionalDisks?[0].readOnly == false)
-        #expect(clone.additionalDisks?[0].label == "Data")
-        #expect(clone.additionalDisks?[0].isInternal == true)
-        #expect(clone.additionalDisks?[1].path == "/ext/backup.img")
-        #expect(clone.additionalDisks?[1].readOnly == true)
-        #expect(clone.additionalDisks?[1].label == "Backup")
-        #expect(clone.additionalDisks?[1].isInternal == false)
+        #expect(clone.storageDisks?[0].path == "Disk.asif")
+        #expect(clone.storageDisks?[0].readOnly == false)
+        #expect(clone.storageDisks?[0].label == "Main Disk")
+        #expect(clone.storageDisks?[0].isInternal == true)
+        #expect(clone.storageDisks?[0].kind == .virtio)
+        #expect(clone.storageDisks?[1].path == "/ext/installer.iso")
+        #expect(clone.storageDisks?[1].readOnly == true)
+        #expect(clone.storageDisks?[1].label == "Installer")
+        #expect(clone.storageDisks?[1].isInternal == false)
+        #expect(clone.storageDisks?[1].kind == .usbMassStorage)
     }
 
-    @Test("Clone with nil additional disks remains nil")
-    func cloneNilAdditionalDisks() {
+    @Test("Clone with nil storage disks remains nil")
+    func cloneNilStorageDisks() {
         let clone = makeConfig().clonedForNewInstance(existingNames: [])
-        #expect(clone.additionalDisks == nil)
+        #expect(clone.storageDisks == nil)
     }
 
     // MARK: - lastSeenAgentVersion
@@ -264,5 +268,29 @@ struct VMConfigurationCloneTests {
     func cloneNilLastSeenAgentVersion() {
         let clone = makeConfig().clonedForNewInstance(existingNames: [])
         #expect(clone.lastSeenAgentVersion == nil)
+    }
+
+    // MARK: - Removable Media
+
+    @Test("Clone regenerates removable media item IDs")
+    func cloneRegeneratesRemovableMediaIDs() {
+        let originalUUID = UUID()
+        let items = [
+            RemovableMediaItem(id: originalUUID, path: "/tmp/install.iso", readOnly: true, label: "Installer")
+        ]
+        var config = makeConfig()
+        config.removableMedia = items
+
+        let clone = config.clonedForNewInstance(existingNames: [])
+
+        #expect(clone.removableMedia?.count == 1)
+        #expect(clone.removableMedia?[0].path == "/tmp/install.iso")
+        #expect(clone.removableMedia?[0].id != originalUUID)
+    }
+
+    @Test("Clone with nil removable media remains nil")
+    func cloneLeavesRemovableMediaNil() {
+        let clone = makeConfig().clonedForNewInstance(existingNames: [])
+        #expect(clone.removableMedia == nil)
     }
 }

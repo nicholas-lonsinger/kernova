@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Virtualization
 import os
@@ -20,12 +21,31 @@ struct ConfigurationBuilder: Sendable {
         let serialOutputPipe: Pipe
         let clipboardInputPipe: Pipe?
         let clipboardOutputPipe: Pipe?
+        /// `USBDeviceInfo` for each item in `config.removableMedia`,
+        /// attached on the XHCI controller at config-build time.
+        ///
+        /// UUIDs match `VZUSBMassStorageDeviceConfiguration.uuid` so the
+        /// runtime tracking in `instance.liveRemovableMedia` can locate
+        /// the devices for hot-detach.
+        let coldRemovableMedia: [USBDeviceInfo]
     }
 
     private static let logger = Logger(subsystem: "com.kernova.app", category: "ConfigurationBuilder")
 
     /// Builds a validated `VZVirtualMachineConfiguration` from the given VM configuration and bundle URL.
     func build(from config: VMConfiguration, bundleURL: URL) throws -> BuildResult {
+        try assemble(from: config, bundleURL: bundleURL, validate: true)
+    }
+
+    /// Assembles the `BuildResult` with optional VZ validation.
+    ///
+    /// Production callers go through `build(from:bundleURL:)` and always
+    /// validate. The `validate: false` path exists for tests that need to
+    /// inspect the assembled configuration on hosts where `vzConfig.validate()`
+    /// throws `VZErrorDomain Code=2 ("Virtualization is not available on this
+    /// hardware")` — most notably GitHub's macOS runners, which are themselves
+    /// nested VMs without virtualization support.
+    func assemble(from config: VMConfiguration, bundleURL: URL, validate: Bool) throws -> BuildResult {
         let vzConfig = VZVirtualMachineConfiguration()
 
         Self.logger.debug(
@@ -52,12 +72,15 @@ struct ConfigurationBuilder: Sendable {
             try configureLinuxKernelBoot(vzConfig, config: config)
         }
 
-        // Common devices
-        try configureStorage(vzConfig, config: config, bundleURL: bundleURL)
+        // Common devices.
+        // configureUSBControllers must run before configureRemovableMedia so the
+        // XHCI controller exists for items to attach to.
+        configureUSBControllers(vzConfig)
+        try configureStorageDisks(vzConfig, config: config, bundleURL: bundleURL)
+        let coldRemovableMedia = try configureRemovableMedia(vzConfig, config: config)
         configureNetwork(vzConfig, config: config)
         configureEntropy(vzConfig)
         configureAudio(vzConfig, config: config)
-        configureUSBControllers(vzConfig)
         try configureDirectorySharing(vzConfig, config: config)
 
         // Serial port
@@ -75,7 +98,9 @@ struct ConfigurationBuilder: Sendable {
         }
 
         // Validate
-        try vzConfig.validate()
+        if validate {
+            try vzConfig.validate()
+        }
 
         Self.logger.info(
             "Built VZ configuration for '\(config.name, privacy: .public)' (\(config.bootMode.displayName, privacy: .public))"
@@ -85,7 +110,8 @@ struct ConfigurationBuilder: Sendable {
             serialInputPipe: inputPipe,
             serialOutputPipe: outputPipe,
             clipboardInputPipe: clipboardPipes?.input,
-            clipboardOutputPipe: clipboardPipes?.output
+            clipboardOutputPipe: clipboardPipes?.output,
+            coldRemovableMedia: coldRemovableMedia
         )
     }
 
@@ -240,79 +266,218 @@ struct ConfigurationBuilder: Sendable {
 
     // MARK: - Common Devices
 
-    private func configureStorage(
+    /// Resolves a `StorageDisk` entry's filesystem location.
+    ///
+    /// Internal disks are bundle-relative; external disks carry an absolute
+    /// host path. The main bundle disk is the conventional internal entry
+    /// with `path == "Disk.asif"`.
+    ///
+    /// For internal disks the resolved URL must stay within the bundle
+    /// directory — a `..`-traversing path in a hand-edited / corrupted
+    /// `config.json` would otherwise escape the sandbox and read from
+    /// arbitrary host locations.
+    private func resolvedURL(for disk: StorageDisk, bundleURL: URL) throws -> URL {
+        if disk.isInternal {
+            let bundlePath = bundleURL.standardizedFileURL.path(percentEncoded: false)
+            let resolved = bundleURL.appendingPathComponent(disk.path).standardizedFileURL
+            let resolvedPath = resolved.path(percentEncoded: false)
+            // Require the resolved path to be inside the bundle. The trailing
+            // separator on the prefix guards against bundle "Foo" matching a
+            // sibling "Foobar".
+            let bundlePrefix = bundlePath.hasSuffix("/") ? bundlePath : bundlePath + "/"
+            guard resolvedPath.hasPrefix(bundlePrefix) else {
+                Self.logger.fault(
+                    "Internal storage disk '\(disk.label, privacy: .public)' resolves outside the bundle: \(resolvedPath, privacy: .public)"
+                )
+                throw ConfigurationBuilderError.storageDiskNotFound(disk.path, disk.label)
+            }
+            return resolved
+        }
+        return URL(fileURLWithPath: disk.path)
+    }
+
+    /// Returns `true` when this disk represents the bundle's primary disk
+    /// (`Disk.asif`) — the implicit "main disk" that historically had no
+    /// `VZVirtioBlockDeviceConfiguration.blockDeviceIdentifier` set on it.
+    private static func isMainBundleDisk(_ disk: StorageDisk, layout: VMBundleLayout) -> Bool {
+        disk.isInternal && disk.path == layout.diskImageURL.lastPathComponent
+    }
+
+    /// Builds the ordered `storageDevices` array from `config.storageDisks`.
+    ///
+    /// Position [0] boots first on EFI guests. Each entry maps to either a
+    /// `VZVirtioBlockDeviceConfiguration` (kind `.virtio`) or a
+    /// `VZUSBMassStorageDeviceConfiguration` (kind `.usbMassStorage`).
+    /// When the list is `nil` or empty, the builder synthesizes a single
+    /// main-disk entry at the bundle's `Disk.asif`.
+    private func configureStorageDisks(
         _ vzConfig: VZVirtualMachineConfiguration,
         config: VMConfiguration,
         bundleURL: URL
     ) throws {
         let layout = VMBundleLayout(bundleURL: bundleURL)
-        guard FileManager.default.fileExists(atPath: layout.diskImageURL.path(percentEncoded: false)) else {
-            Self.logger.error(
-                "Disk image not found at '\(layout.diskImageURL.path(percentEncoded: false), privacy: .public)'")
-            throw ConfigurationBuilderError.diskImageNotFound(layout.diskImageURL)
+        let disks: [StorageDisk]
+        if let configured = config.storageDisks, !configured.isEmpty {
+            disks = configured
+        } else {
+            disks = [Self.defaultMainDisk(layout: layout)]
         }
 
-        let diskAttachment = try VZDiskImageStorageDeviceAttachment(url: layout.diskImageURL, readOnly: false)
-        let storage = VZVirtioBlockDeviceConfiguration(attachment: diskAttachment)
-        vzConfig.storageDevices = [storage]
+        var built: [VZStorageDeviceConfiguration] = []
+        for disk in disks {
+            // Resolve the on-disk URL VZ will attach. Internal disks are
+            // bundle-relative and go through `resolvedURL(for:bundleURL:)`
+            // for path-traversal containment + existence. External disks
+            // go through the full `PathValidation.resolveFile` pipeline
+            // (existence, type check, symlink resolution, writability);
+            // we then hand VZ the symlink-resolved URL so the attachment
+            // doesn't depend on a host-side symlink that could break at
+            // runtime.
+            let attachmentURL: URL
+            if disk.isInternal {
+                attachmentURL = try self.resolvedURL(for: disk, bundleURL: bundleURL)
+                guard FileManager.default.fileExists(atPath: attachmentURL.path(percentEncoded: false)) else {
+                    Self.logger.error(
+                        "Storage disk '\(disk.label, privacy: .public)' not found at '\(attachmentURL.path(percentEncoded: false), privacy: .public)'"
+                    )
+                    throw ConfigurationBuilderError.storageDiskNotFound(disk.path, disk.label)
+                }
+            } else {
+                let resolved = try Self.resolveFile(
+                    at: disk.path, context: "Storage disk '\(disk.label)'",
+                    requireWritable: !disk.readOnly,
+                    notFound: .storageDiskNotFound(disk.path, disk.label),
+                    isDirectory: .storageDiskPathIsDirectory(disk.path, disk.label),
+                    notWritable: .storageDiskNotWritable(disk.path, disk.label))
+                attachmentURL = resolved.url
+            }
 
-        // Attach disc image as USB mass storage device
-        if let discImagePath = config.discImagePath {
-            let discImage = try Self.resolveFile(
-                at: discImagePath, context: "Disc image",
-                requireWritable: !config.discImageReadOnly,
-                notFound: .discImageNotFound(discImagePath),
-                isDirectory: .discImagePathIsDirectory(discImagePath),
-                notWritable: .discImageNotWritable(discImagePath))
-
-            let discImageAttachment: VZDiskImageStorageDeviceAttachment
+            let attachment: VZDiskImageStorageDeviceAttachment
             do {
-                discImageAttachment = try VZDiskImageStorageDeviceAttachment(
-                    url: discImage.url, readOnly: config.discImageReadOnly)
+                attachment = try VZDiskImageStorageDeviceAttachment(
+                    url: attachmentURL, readOnly: disk.readOnly)
             } catch {
                 Self.logger.error(
-                    "Failed to attach disc image at '\(discImagePath, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                    "Failed to attach storage disk '\(disk.label, privacy: .public)' at '\(attachmentURL.path(percentEncoded: false), privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
                 throw error
             }
-            let usbStorage = VZUSBMassStorageDeviceConfiguration(attachment: discImageAttachment)
-            // For EFI boot with boot-from-disc enabled, insert before main disk
-            // so the firmware discovers it first
-            if config.bootFromDiscImage && config.bootMode == .efi {
-                vzConfig.storageDevices.insert(usbStorage, at: 0)
-            } else {
-                vzConfig.storageDevices.append(usbStorage)
-            }
-        }
 
-        // Attach additional virtio block devices
-        if let additionalDisks = config.additionalDisks {
-            for disk in additionalDisks {
-                let resolved = try Self.resolveFile(
-                    at: disk.path, context: "Additional disk '\(disk.label)'",
-                    requireWritable: !disk.readOnly,
-                    notFound: .additionalDiskNotFound(disk.path, disk.label),
-                    isDirectory: .additionalDiskPathIsDirectory(disk.path, disk.label),
-                    notWritable: .additionalDiskNotWritable(disk.path, disk.label))
-
-                let attachment: VZDiskImageStorageDeviceAttachment
-                do {
-                    attachment = try VZDiskImageStorageDeviceAttachment(url: resolved.url, readOnly: disk.readOnly)
-                } catch {
-                    Self.logger.error(
-                        "Failed to attach additional disk '\(disk.label, privacy: .public)' at '\(disk.path, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-                    )
-                    throw error
-                }
+            switch disk.kind {
+            case .virtio:
                 let blockDevice = VZVirtioBlockDeviceConfiguration(attachment: attachment)
-                blockDevice.blockDeviceIdentifier = disk.blockDeviceIdentifier
-                vzConfig.storageDevices.append(blockDevice)
-
-                Self.logger.debug(
-                    "Attached additional disk '\(disk.label, privacy: .public)' (id: \(disk.blockDeviceIdentifier, privacy: .public), readOnly: \(disk.readOnly, privacy: .public))"
-                )
+                // Leave the main bundle disk's `blockDeviceIdentifier` unset
+                // to match pre-refactor behavior: Linux guests historically
+                // had no `/dev/disk/by-id/virtio-*` symlink for the primary
+                // disk. Setting it from the synthesized default's fresh UUID
+                // would make the by-id name vary across launches, which
+                // would break any guest-side `/etc/fstab` entry that relied
+                // on it. User-added disks DO get a UUID-derived identifier
+                // because their UUID is persisted with the disk entry.
+                if !Self.isMainBundleDisk(disk, layout: layout) {
+                    blockDevice.blockDeviceIdentifier = disk.blockDeviceIdentifier
+                }
+                built.append(blockDevice)
+            case .usbMassStorage:
+                let usbStorage = VZUSBMassStorageDeviceConfiguration(attachment: attachment)
+                usbStorage.uuid = disk.id
+                built.append(usbStorage)
             }
+
+            Self.logger.debug(
+                "Attached storage disk '\(disk.label, privacy: .public)' (kind: \(disk.kind.rawValue, privacy: .public), readOnly: \(disk.readOnly, privacy: .public))"
+            )
         }
+
+        vzConfig.storageDevices = built
+    }
+
+    /// Attaches every `removableMedia` item to the XHCI controller's
+    /// `usbDevices` list and returns the matching `USBDeviceInfo`s for
+    /// runtime tracking in `instance.liveRemovableMedia`.
+    private func configureRemovableMedia(
+        _ vzConfig: VZVirtualMachineConfiguration,
+        config: VMConfiguration
+    ) throws -> [USBDeviceInfo] {
+        guard let items = config.removableMedia, !items.isEmpty else { return [] }
+        guard let xhci = vzConfig.usbControllers.first else {
+            // configureUSBControllers runs unconditionally upstream, so this is
+            // a programming error rather than a recoverable state.
+            Self.logger.fault("USB controller missing when attaching removable media")
+            preconditionFailure("USB controller must be configured before removable media")
+        }
+
+        var infos: [USBDeviceInfo] = []
+        var attached: [VZUSBDeviceConfiguration] = xhci.usbDevices
+        for item in items {
+            let resolved = try Self.resolveFile(
+                at: item.path, context: "Removable media '\(item.label)'",
+                requireWritable: !item.readOnly,
+                notFound: .removableMediaNotFound(item.path, item.label),
+                isDirectory: .removableMediaPathIsDirectory(item.path, item.label),
+                notWritable: .removableMediaNotWritable(item.path, item.label))
+
+            let attachment: VZDiskImageStorageDeviceAttachment
+            do {
+                attachment = try VZDiskImageStorageDeviceAttachment(
+                    url: resolved.url, readOnly: item.readOnly)
+            } catch {
+                Self.logger.error(
+                    "Failed to attach removable media '\(item.label, privacy: .public)' at '\(item.path, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                )
+                throw error
+            }
+
+            let usbConfig = VZUSBMassStorageDeviceConfiguration(attachment: attachment)
+            usbConfig.uuid = item.id
+            attached.append(usbConfig)
+            infos.append(USBDeviceInfo(id: item.id, path: item.path, readOnly: item.readOnly))
+
+            Self.logger.debug(
+                "Attached removable media '\(item.label, privacy: .public)' on XHCI (readOnly: \(item.readOnly, privacy: .public))"
+            )
+        }
+        xhci.usbDevices = attached
+        return infos
+    }
+
+    /// Synthesizes the default main-disk entry for a VM whose
+    /// `storageDisks` list is empty or absent.
+    ///
+    /// Visible to other layers so the settings UI can materialize the
+    /// implicit main disk into an explicit list entry on first edit.
+    static func defaultMainDisk(layout: VMBundleLayout) -> StorageDisk {
+        StorageDisk(
+            id: stableMainDiskID(forBundleAt: layout.bundleURL),
+            path: layout.diskImageURL.lastPathComponent,
+            readOnly: false,
+            label: "Main Disk",
+            isInternal: true,
+            kind: .virtio
+        )
+    }
+
+    /// Deterministic UUID for the synthesized main disk, derived from
+    /// the bundle path.
+    ///
+    /// The synthesizer fires whenever `storageDisks` is nil/empty.
+    /// Without stable identity, SwiftUI's `ForEach` would tear down the
+    /// main-disk row on every re-render, and `removeStorageDisk`'s
+    /// entry-lookup-by-id would miss the row the user just clicked —
+    /// silently no-op'ing the entry removal while still trashing the
+    /// underlying file. Once the user makes any edit, the list is
+    /// persisted with this id and the synthesizer is no longer
+    /// consulted.
+    private static func stableMainDiskID(forBundleAt bundleURL: URL) -> UUID {
+        let digest = SHA256.hash(data: Data(bundleURL.path.utf8))
+        let bytes = Array(digest.prefix(16))
+        return UUID(
+            uuid: (
+                bytes[0], bytes[1], bytes[2], bytes[3],
+                bytes[4], bytes[5], bytes[6], bytes[7],
+                bytes[8], bytes[9], bytes[10], bytes[11],
+                bytes[12], bytes[13], bytes[14], bytes[15]
+            ))
     }
 
     private func configureNetwork(_ vzConfig: VZVirtualMachineConfiguration, config: VMConfiguration) {
@@ -610,13 +775,12 @@ enum ConfigurationBuilderError: LocalizedError {
     case kernelPathIsDirectory(String)
     case initrdNotFound(String)
     case initrdPathIsDirectory(String)
-    case discImageNotFound(String)
-    case discImagePathIsDirectory(String)
-    case discImageNotWritable(String)
-    case diskImageNotFound(URL)
-    case additionalDiskNotFound(String, String)
-    case additionalDiskPathIsDirectory(String, String)
-    case additionalDiskNotWritable(String, String)
+    case storageDiskNotFound(String, String)
+    case storageDiskPathIsDirectory(String, String)
+    case storageDiskNotWritable(String, String)
+    case removableMediaNotFound(String, String)
+    case removableMediaPathIsDirectory(String, String)
+    case removableMediaNotWritable(String, String)
     case sharedDirectoryNotFound(String)
     case sharedDirectoryNotADirectory(String)
     case sharedDirectoryNotReadable(String)
@@ -640,20 +804,18 @@ enum ConfigurationBuilderError: LocalizedError {
             "Initial ramdisk not found at \(path)."
         case .initrdPathIsDirectory(let path):
             "Initial ramdisk path is a directory, not a file: \(path)."
-        case .discImageNotFound(let path):
-            "Disc image not found at \(path). Remove the disc image path from your VM configuration if the media is no longer needed."
-        case .discImagePathIsDirectory(let path):
-            "Disc image path is a directory, not a file: \(path)."
-        case .discImageNotWritable(let path):
-            "Disc image is not writable: \(path). Change it to read-only or select a writable file."
-        case .additionalDiskNotFound(let path, let label):
-            "Additional disk '\(label)' not found at \(path)."
-        case .additionalDiskPathIsDirectory(let path, let label):
-            "Additional disk '\(label)' path is a directory, not a file: \(path)."
-        case .additionalDiskNotWritable(let path, let label):
-            "Additional disk '\(label)' is not writable: \(path). Change it to read-only or select a writable file."
-        case .diskImageNotFound(let url):
-            "Disk image not found at \(url.path(percentEncoded: false))."
+        case .storageDiskNotFound(let path, let label):
+            "Storage disk '\(label)' not found at \(path)."
+        case .storageDiskPathIsDirectory(let path, let label):
+            "Storage disk '\(label)' path is a directory, not a file: \(path)."
+        case .storageDiskNotWritable(let path, let label):
+            "Storage disk '\(label)' is not writable: \(path). Change it to read-only or select a writable file."
+        case .removableMediaNotFound(let path, let label):
+            "Removable media '\(label)' not found at \(path)."
+        case .removableMediaPathIsDirectory(let path, let label):
+            "Removable media '\(label)' path is a directory, not a file: \(path)."
+        case .removableMediaNotWritable(let path, let label):
+            "Removable media '\(label)' is not writable: \(path). Change it to read-only or select a writable file."
         case .sharedDirectoryNotFound(let path):
             "Shared directory not found at \(path)."
         case .sharedDirectoryNotADirectory(let path):

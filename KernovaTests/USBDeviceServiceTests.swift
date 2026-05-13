@@ -31,14 +31,32 @@ struct USBDeviceServiceTests {
         let service = MockUSBDeviceService()
         let instance = makeInstance()
 
-        let info = try await service.attach(diskImagePath: "/tmp/test.dmg", readOnly: false, to: instance)
+        let info = try await service.attach(
+            diskImagePath: "/tmp/test.dmg", readOnly: false, desiredUUID: nil, to: instance)
 
         #expect(info.path == "/tmp/test.dmg")
         #expect(info.readOnly == false)
         #expect(service.attachCallCount == 1)
         #expect(service.lastAttachedPath == "/tmp/test.dmg")
         #expect(service.lastAttachedReadOnly == false)
-        #expect(instance.attachedUSBDevices.isEmpty)
+        #expect(instance.liveRemovableMedia.isEmpty)
+    }
+
+    @Test("Mock service honors desiredUUID and records it")
+    func mockServiceHonorsDesiredUUID() async throws {
+        let service = MockUSBDeviceService()
+        let instance = makeInstance()
+        let desired = UUID()
+
+        let info = try await service.attach(
+            diskImagePath: "/tmp/test.dmg",
+            readOnly: true,
+            desiredUUID: desired,
+            to: instance
+        )
+
+        #expect(info.id == desired)
+        #expect(service.lastAttachedDesiredUUID == desired)
     }
 
     @Test("Mock service records detach call")
@@ -46,7 +64,8 @@ struct USBDeviceServiceTests {
         let service = MockUSBDeviceService()
         let instance = makeInstance()
 
-        let info = try await service.attach(diskImagePath: "/tmp/test.dmg", readOnly: false, to: instance)
+        let info = try await service.attach(
+            diskImagePath: "/tmp/test.dmg", readOnly: false, desiredUUID: nil, to: instance)
         try await service.detach(deviceInfo: info, from: instance)
 
         #expect(service.detachCallCount == 1)
@@ -59,7 +78,7 @@ struct USBDeviceServiceTests {
         let instance = makeInstance()
 
         await #expect {
-            try await service.attach(diskImagePath: "/tmp/test.dmg", readOnly: false, to: instance)
+            try await service.attach(diskImagePath: "/tmp/test.dmg", readOnly: false, desiredUUID: nil, to: instance)
         } throws: { error in
             guard let e = error as? USBDeviceError,
                 case .noVirtualMachine = e
@@ -67,7 +86,7 @@ struct USBDeviceServiceTests {
             return true
         }
 
-        #expect(instance.attachedUSBDevices.isEmpty)
+        #expect(instance.liveRemovableMedia.isEmpty)
     }
 
     @Test("Detach propagates errors")
@@ -90,17 +109,17 @@ struct USBDeviceServiceTests {
 
     // MARK: - VMInstance State Tests
 
-    @Test("tearDownSession clears attachedUSBDevices")
+    @Test("tearDownSession clears liveRemovableMedia")
     func tearDownClearsUSBDevices() {
         let instance = makeInstance()
 
-        instance.attachedUSBDevices.append(USBDeviceInfo(path: "/tmp/a.dmg", readOnly: false))
-        instance.attachedUSBDevices.append(USBDeviceInfo(path: "/tmp/b.dmg", readOnly: true))
-        #expect(instance.attachedUSBDevices.count == 2)
+        instance.liveRemovableMedia.append(USBDeviceInfo(path: "/tmp/a.dmg", readOnly: false))
+        instance.liveRemovableMedia.append(USBDeviceInfo(path: "/tmp/b.dmg", readOnly: true))
+        #expect(instance.liveRemovableMedia.count == 2)
 
         instance.tearDownSession()
 
-        #expect(instance.attachedUSBDevices.isEmpty)
+        #expect(instance.liveRemovableMedia.isEmpty)
     }
 
     @Test("canAttachUSBDevices is true when running with VM")

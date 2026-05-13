@@ -251,7 +251,7 @@ struct VMCreationViewModelTests {
     // MARK: - buildConfiguration
 
     @Test("buildConfiguration produces configuration with correct fields for Linux EFI")
-    func buildConfigurationLinuxEFI() {
+    func buildConfigurationLinuxEFI() throws {
         let vm = VMCreationViewModel()
         vm.selectedOS = .linux
         vm.selectedBootMode = .efi
@@ -273,7 +273,15 @@ struct VMCreationViewModelTests {
         #expect(config.networkEnabled == true)
         #expect(config.macAddress != nil)  // generated for networking
         #expect(config.genericMachineIdentifierData != nil)  // generated for EFI
-        #expect(config.discImagePath == "/path/to/ubuntu.iso")
+        // EFI install wizard inserts the ISO at storageDisks[0] so EFI
+        // boots the installer; main disk goes to [1].
+        let disks = config.storageDisks ?? []
+        #expect(disks.count == 2)
+        if disks.count >= 2 {
+            #expect(disks[0].path == "/path/to/ubuntu.iso")
+            #expect(disks[1].path == "Disk.asif")
+            #expect(disks[1].isInternal)
+        }
         #expect(config.kernelPath == nil)
         #expect(config.initrdPath == nil)
         #expect(config.kernelCommandLine == nil)
@@ -301,7 +309,7 @@ struct VMCreationViewModelTests {
         #expect(config.networkEnabled == false)
         #expect(config.macAddress == nil)  // no networking
         #expect(config.genericMachineIdentifierData != nil)  // generated for linuxKernel
-        #expect(config.discImagePath == nil)  // not EFI
+        #expect(config.storageDisks == nil)  // Linux Kernel boot: no installer in storageDisks
         #expect(config.kernelPath == "/path/to/vmlinuz")
         #expect(config.initrdPath == "/path/to/initrd")
         #expect(config.kernelCommandLine == "console=hvc0")
@@ -319,8 +327,8 @@ struct VMCreationViewModelTests {
         #expect(config.name == "Spaces Around")
     }
 
-    @Test("buildConfiguration sets discImagePath only for EFI boot mode")
-    func buildConfigurationDiscImagePathOnlyForEFI() {
+    @Test("buildConfiguration only installs an installer ISO for EFI boot mode")
+    func buildConfigurationInstallerISOOnlyForEFI() {
         let vm = VMCreationViewModel()
         vm.selectedOS = .linux
         vm.selectedBootMode = .linuxKernel
@@ -329,7 +337,9 @@ struct VMCreationViewModelTests {
         vm.kernelPath = "/path/to/vmlinuz"
 
         let config = vm.buildConfiguration()
-        #expect(config.discImagePath == nil)
+        // Linux Kernel boot loads the kernel directly — no installer
+        // enters storageDisks, so the field stays nil (default main disk).
+        #expect(config.storageDisks == nil)
     }
 
     @Test("buildConfiguration sets kernel fields only for linuxKernel boot mode")

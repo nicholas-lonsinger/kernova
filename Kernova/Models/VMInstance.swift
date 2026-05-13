@@ -161,14 +161,30 @@ final class VMInstance: Identifiable {
     /// `tearDownSession` and on the first Hello of the session.
     private var agentPostStartTask: Task<Void, Never>?
 
-    /// Notified whenever a host-side mutation to `configuration` should be
-    /// persisted (e.g. the guest reported a new agent version via Hello).
+    /// Performs a host-side mutation of this instance's `configuration`
+    /// and routes it through the view model's `updateConfiguration`
+    /// pipeline (persist + apply live policy).
     ///
-    /// Wired by `VMLibraryViewModel` to `saveConfiguration(for:)` so the
-    /// JSON on disk stays in sync. Direct file writes from inside the
-    /// instance would bypass the storage abstraction the rest of the app
-    /// uses, so this closure routes the call through it.
-    @ObservationIgnored var onConfigurationDidChange: (@MainActor (VMInstance) -> Void)?
+    /// Wired by `VMLibraryViewModel.wirePersistence(for:)`. Used by
+    /// guest-driven mutators inside the instance (e.g.
+    /// `recordObservedAgentVersion`, the post-start watchdog) that
+    /// otherwise wouldn't have view-model access. Falls back to a direct
+    /// mutation when the closure isn't wired (e.g. unit-test instances
+    /// created without the view model).
+    @ObservationIgnored var onUpdateConfiguration: (@MainActor ((inout VMConfiguration) -> Void) -> Void)?
+
+    /// Applies a configuration mutation.
+    ///
+    /// If `onUpdateConfiguration` is wired, the mutation flows through the
+    /// view model's centralized dispatcher (persist + applyLivePolicy).
+    /// Otherwise, falls back to a direct in-memory write — the test-only path.
+    private func performConfigurationMutation(_ mutate: (inout VMConfiguration) -> Void) {
+        if let onUpdateConfiguration {
+            onUpdateConfiguration(mutate)
+        } else {
+            mutate(&configuration)
+        }
+    }
 
     /// The current install/version/liveness state of the guest agent for this
     /// VM. The single read site for the UI; dispatches to whichever transport
@@ -263,12 +279,15 @@ final class VMInstance: Identifiable {
     var hasSaveFile: Bool { bundleLayout.hasSaveFile }
     var serialLogURL: URL { bundleLayout.serialLogURL }
 
-    // MARK: - Runtime USB Devices
+    // MARK: - Runtime Removable Media
 
-    /// USB mass storage devices currently attached via the XHCI controller.
+    /// USB mass storage devices currently attached on the XHCI controller.
     ///
-    /// Populated at runtime only; cleared on VM stop/teardown.
-    var attachedUSBDevices: [USBDeviceInfo] = []
+    /// One entry per item in `configuration.removableMedia` while the VM
+    /// is running. Items are added/removed by the live reconcile flow in
+    /// `VMLibraryViewModel` (and via cold-start population from
+    /// `BuildResult.coldRemovableMedia`). Cleared on VM stop/teardown.
+    var liveRemovableMedia: [USBDeviceInfo] = []
 
     /// `true` when the VM has a live `VZVirtualMachine` in a running or paused state, enabling USB hot-plug via the XHCI controller.
     var canAttachUSBDevices: Bool {
@@ -341,7 +360,7 @@ final class VMInstance: Identifiable {
         agentExpectedButMissing = false
         serialInputPipe = nil
         serialOutputPipe = nil
-        attachedUSBDevices = []
+        liveRemovableMedia = []
         virtualMachine = nil
         delegateAdapter = nil
     }
@@ -687,8 +706,7 @@ final class VMInstance: Identifiable {
                 // (e.g. user wipes the VM and starts fresh, or
                 // `lastSeenAgentVersion` clears) surfaces normally.
                 if self.configuration.agentInstallNudgeDismissed {
-                    self.configuration.agentInstallNudgeDismissed = false
-                    self.onConfigurationDidChange?(self)
+                    self.performConfigurationMutation { $0.agentInstallNudgeDismissed = false }
                 }
             }
             self.agentPostStartTask = nil
@@ -708,8 +726,8 @@ final class VMInstance: Identifiable {
 
     /// Reacts to a fresh, non-empty `agent_version` reported by the guest:
     /// cancel the post-start watchdog, clear the expected-missing flag, and
-    /// persist the new value via `onConfigurationDidChange` if it differs
-    /// from what's on record.
+    /// route the new value through the view model's centralized
+    /// configuration pipeline if it differs from what's on record.
     ///
     /// Wired by `startVsockServices()` into the `VsockControlService` callback;
     /// exposed at this scope so tests can drive the path without standing up a
@@ -731,8 +749,7 @@ final class VMInstance: Identifiable {
         // skipping the no-op write keeps `VMDirectoryWatcher` from re-firing
         // reconcile on every Hello.
         guard configuration.lastSeenAgentVersion != reportedVersion else { return }
-        configuration.lastSeenAgentVersion = reportedVersion
-        onConfigurationDidChange?(self)
+        performConfigurationMutation { $0.lastSeenAgentVersion = reportedVersion }
     }
 
     /// Tears down all vsock listeners and any active services running on them.

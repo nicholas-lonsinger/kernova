@@ -228,19 +228,36 @@ final class VMLifecycleCoordinator {
 
     // MARK: - USB Device Management
 
-    /// Attaches a USB mass storage device to a running VM.
+    /// Attaches a USB mass storage device to a running VM and appends it
+    /// to `instance.liveRemovableMedia`.
     ///
-    /// Does not use the lifecycle operation token — USB operations are short
-    /// and independent of start/stop/save lifecycle transitions.
-    func attachUSBDevice(diskImagePath: String, readOnly: Bool, to instance: VMInstance) async throws -> USBDeviceInfo {
-        let info = try await usbDeviceService.attach(diskImagePath: diskImagePath, readOnly: readOnly, to: instance)
-        instance.attachedUSBDevices.append(info)
+    /// Does not use the lifecycle operation token — USB operations are
+    /// short and independent of start/stop/save lifecycle transitions.
+    ///
+    /// `desiredUUID` overrides the framework-generated
+    /// `VZUSBDeviceConfiguration.uuid` so the runtime device matches the
+    /// caller's persisted identity (e.g. `RemovableMediaItem.id`),
+    /// which is required for save-state restore matching.
+    func attachUSBDevice(
+        diskImagePath: String,
+        readOnly: Bool,
+        desiredUUID: UUID? = nil,
+        to instance: VMInstance
+    ) async throws -> USBDeviceInfo {
+        let info = try await usbDeviceService.attach(
+            diskImagePath: diskImagePath,
+            readOnly: readOnly,
+            desiredUUID: desiredUUID,
+            to: instance
+        )
+        instance.liveRemovableMedia.append(info)
         return info
     }
 
-    /// Detaches a USB mass storage device from a running VM.
+    /// Detaches a USB mass storage device from a running VM and removes
+    /// it from `instance.liveRemovableMedia`.
     func detachUSBDevice(_ deviceInfo: USBDeviceInfo, from instance: VMInstance) async throws {
         try await usbDeviceService.detach(deviceInfo: deviceInfo, from: instance)
-        instance.attachedUSBDevices.removeAll { $0.id == deviceInfo.id }
+        instance.liveRemovableMedia.removeAll { $0.id == deviceInfo.id }
     }
 }

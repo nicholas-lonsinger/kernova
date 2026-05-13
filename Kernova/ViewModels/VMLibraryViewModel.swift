@@ -43,12 +43,21 @@ final class VMLibraryViewModel {
     var showInstallerMountedAlert = false
     var installerMountedVMName: String?
 
-    /// VMs with an in-flight installer mount.
+    /// VMs with an in-flight removable-media reconciliation Task.
     ///
-    /// Prevents rapid double-clicks
-    /// from spawning two parallel attaches — the second would race the first
-    /// and likely surface as a spurious "operation in progress" error alert.
-    private var mountingInstanceIDs: Set<UUID> = []
+    /// Together with `pendingRemovableMediaTarget`, implements a
+    /// coalesce-and-drain loop so multiple rapid edits to the removable
+    /// media list collapse to a single in-flight Task per instance that
+    /// always converges on the latest configuration. Without this, two
+    /// `await` suspensions inside `applyLiveRemovableMediaChange`
+    /// (detach, attach) leave the actor reentrant and let a second Task
+    /// read the same tracking and issue duplicate operations.
+    private var reconcilingRemovableMediaInstances: Set<UUID> = []
+
+    /// Latest desired removable media list per instance, written every
+    /// time `applyLivePolicy` sees a list change on a running/paused VM
+    /// and drained by `runRemovableMediaReconciliation` until empty.
+    private var pendingRemovableMediaTarget: [UUID: [RemovableMediaItem]] = [:]
     var instanceToDelete: VMInstance?
     var activeRename: RenameTarget?
     var showCancelPreparingConfirmation = false
@@ -545,8 +554,7 @@ final class VMLibraryViewModel {
             activeRename = nil
             return
         }
-        instance.configuration.name = trimmed
-        saveConfiguration(for: instance)
+        updateConfiguration(of: instance) { $0.name = trimmed }
         activeRename = nil
     }
 
@@ -567,53 +575,242 @@ final class VMLibraryViewModel {
         }
     }
 
-    /// Wires `instance.onConfigurationDidChange` so host-driven mutations
-    /// (e.g. the guest reporting a new agent version via `Hello`) flow back
-    /// through the storage abstraction.
+    /// Wires `instance.onUpdateConfiguration` so guest-driven mutations
+    /// (e.g. the guest reporting a new agent version via `Hello`, or the
+    /// post-start watchdog clearing the install-nudge dismissal) flow
+    /// through the centralized `updateConfiguration` dispatcher.
     ///
-    /// Called at every VMInstance
-    /// construction site in this view model.
+    /// Called at every `VMInstance` construction site in this view model.
     private func wirePersistence(for instance: VMInstance) {
-        instance.onConfigurationDidChange = { [weak self] inst in
-            self?.saveConfiguration(for: inst)
+        instance.onUpdateConfiguration = { [weak self] mutate in
+            self?.updateConfiguration(of: instance, mutate: mutate)
         }
+    }
+
+    /// The single entry point for any UI-driven or programmatic mutation of
+    /// `instance.configuration`.
+    ///
+    /// Applies the mutation, persists the result, and dispatches the live
+    /// policy / removable-media reconcile. No-ops when the mutation produces
+    /// the same value, so calls that don't actually change anything are
+    /// free.
+    ///
+    /// All settings-view bindings, the guest-agent installer mount/unmount,
+    /// storage-disk add/remove, display-window window-state writes, and
+    /// guest-driven mutations (via `instance.onUpdateConfiguration`) route
+    /// through here, so there is exactly one place where the "config
+    /// changed" side effects fire. For mutations to fields that don't
+    /// affect live policy (e.g. `displayPreference`, `lastSeenAgentVersion`),
+    /// the `applyLivePolicy` call returns early — there is no overhead beyond
+    /// the dispatch check.
+    func updateConfiguration(
+        of instance: VMInstance,
+        mutate: (inout VMConfiguration) -> Void
+    ) {
+        let old = instance.configuration
+        var new = old
+        mutate(&new)
+        guard new != old else { return }
+        instance.configuration = new
+        saveConfiguration(for: instance)
+        applyLivePolicy(for: instance, old: old, new: new)
     }
 
     /// Pushes a configuration change to a running VM.
     ///
-    /// Hot-toggleable fields
-    /// (`agentLogForwardingEnabled`, `clipboardSharingEnabled`) take effect
-    /// immediately via `VMInstance.applyLivePolicy`; everything else is
-    /// persisted-only and waits for next start.
+    /// Hot-toggleable fields (`agentLogForwardingEnabled`,
+    /// `clipboardSharingEnabled`) take effect immediately via
+    /// `VMInstance.applyLivePolicy`; changes to `removableMedia` trigger
+    /// a runtime XHCI list-diff via `applyLiveRemovableMediaChange`;
+    /// everything else is persisted-only and waits for next start.
     ///
-    /// Called from `VMSettingsView.onChange` after the new value has already
-    /// been written to `instance.configuration` and persisted via
-    /// `saveConfiguration(for:)`.
+    /// Called from `updateConfiguration` after the new value has been
+    /// written to `instance.configuration` and persisted to disk.
     func applyLivePolicy(for instance: VMInstance, old: VMConfiguration, new: VMConfiguration) {
         instance.applyLivePolicy(oldConfig: old, newConfig: new)
+
+        let mediaChanged = VMConfiguration.removableMediaChanged(old: old, new: new)
+        // Only dispatch when running/paused — stopped VMs persist the new
+        // media list and pick it up on next start. The lifecycle layer
+        // surfaces a noVirtualMachine error if status is running but no live
+        // VZ machine is present (rare race during teardown), so we don't
+        // duplicate that guard here.
+        guard mediaChanged, instance.status == .running || instance.status == .paused else { return }
+
+        // Record the latest target and start a reconciliation Task if one
+        // isn't already draining. The Task loops until
+        // `pendingRemovableMediaTarget` is empty so rapid edits converge on
+        // the final state without spawning racing detach/attach pairs.
+        let id = instance.instanceID
+        pendingRemovableMediaTarget[id] = new.removableMedia ?? []
+        guard !reconcilingRemovableMediaInstances.contains(id) else { return }
+        reconcilingRemovableMediaInstances.insert(id)
+        Task { [weak self] in
+            await self?.runRemovableMediaReconciliation(for: instance, id: id)
+        }
     }
 
-    // MARK: - USB Device Management
+    /// Drains `pendingRemovableMediaTarget` for a single instance until empty.
+    ///
+    /// Each pass calls `applyLiveRemovableMediaChange` to reconcile the
+    /// live device list to the latest pending target. New writes that
+    /// arrive during a pass (between the dictionary read at the top of the
+    /// loop and the next iteration) are picked up by the next iteration so
+    /// rapid edits always converge to the final user-selected state.
+    private func runRemovableMediaReconciliation(for instance: VMInstance, id: UUID) async {
+        defer { reconcilingRemovableMediaInstances.remove(id) }
+        while let target = pendingRemovableMediaTarget.removeValue(forKey: id) {
+            // If the VM stopped (or transitioned out of a hot-pluggable state)
+            // while we were awaiting the previous pass, abandon reconciliation:
+            // the stopped VM picks up the latest config on next start, and
+            // hitting XHCI on a torn-down VM would surface a spurious
+            // `noVirtualMachine` error to the user.
+            guard instance.status == .running || instance.status == .paused else { break }
+            await applyLiveRemovableMediaChange(for: instance, target: target)
+        }
+    }
 
-    func attachUSBDevice(diskImagePath: String, readOnly: Bool, to instance: VMInstance) {
-        Self.logger.debug(
-            "Attaching USB device '\(URL(fileURLWithPath: diskImagePath).lastPathComponent, privacy: .public)' to '\(instance.name, privacy: .public)' (readOnly: \(readOnly, privacy: .public))"
-        )
-        Task {
+    /// Reconciles the live removable media list with `target`.
+    ///
+    /// Performs a per-id diff against `instance.liveRemovableMedia`:
+    /// - present in tracking but not target → detach
+    /// - present in target but not tracking → attach
+    /// - present in both with changed `path` or `readOnly` → detach + reattach
+    ///
+    /// On unexpected detach or attach errors, the persisted config is
+    /// rolled back to match `instance.liveRemovableMedia` so the UI snaps
+    /// to what is actually attached and the user sees an alert describing
+    /// the failure. `deviceNotFound` and `noVirtualMachine` errors are
+    /// handled as confirmed-gone / silent bail respectively (this is also
+    /// what covers the case where the user ejected the disc from inside
+    /// the guest).
+    private func applyLiveRemovableMediaChange(
+        for instance: VMInstance,
+        target: [RemovableMediaItem]
+    ) async {
+        let tracked = instance.liveRemovableMedia
+        // Tolerate duplicate ids defensively — a hand-edited or corrupted
+        // config.json could in theory ship two `removableMedia` entries with
+        // the same UUID. Crashing here would take the host app down; instead,
+        // keep the first occurrence so the reconcile can still make progress.
+        let targetByID = Dictionary(target.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let trackedByID = Dictionary(tracked.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+
+        // Lookup table used by the rollback path so a failed reconcile can
+        // rebuild `config.removableMedia` from whatever is still in live
+        // tracking. Tracked entries win over target entries on id collisions
+        // so a mutated row that failed mid-swap restores its original
+        // path/readOnly; new ids only present in target supply metadata
+        // for successful attaches.
+        var rollbackLookup: [UUID: RemovableMediaItem] = [:]
+        for info in tracked {
+            rollbackLookup[info.id] = RemovableMediaItem(
+                id: info.id, path: info.path, readOnly: info.readOnly)
+        }
+        for item in target where rollbackLookup[item.id] == nil {
+            rollbackLookup[item.id] = item
+        }
+
+        // Classify each id by what action it needs.
+        var toDetach: [USBDeviceInfo] = []
+        var toAttach: [RemovableMediaItem] = []
+        for trackedItem in tracked {
+            guard let desired = targetByID[trackedItem.id] else {
+                toDetach.append(trackedItem)
+                continue
+            }
+            if desired.path != trackedItem.path || desired.readOnly != trackedItem.readOnly {
+                toDetach.append(trackedItem)
+                toAttach.append(desired)
+            }
+        }
+        // Iterate the deduped dictionary, not `target`, so a config with
+        // duplicate ids can't queue two attaches for the same UUID.
+        for targetItem in targetByID.values where trackedByID[targetItem.id] == nil {
+            toAttach.append(targetItem)
+        }
+
+        // Apply detaches first so duplicate-UUID conflicts can't fire when
+        // a swap reuses an id with a different attachment.
+        for device in toDetach {
             do {
-                _ = try await lifecycle.attachUSBDevice(
-                    diskImagePath: diskImagePath,
-                    readOnly: readOnly,
-                    to: instance
+                try await lifecycle.detachUSBDevice(device, from: instance)
+            } catch USBDeviceError.noVirtualMachine {
+                Self.logger.notice(
+                    "VM '\(instance.name, privacy: .public)' torn down during media detach; abandoning reconcile"
                 )
+                return
+            } catch USBDeviceError.deviceNotFound {
+                // Guest ejected this item (or it was never attached). The
+                // lifecycle layer's `removeAll` is skipped when the framework
+                // call throws, so clear stale tracking explicitly to keep
+                // the host model converged with reality.
+                Self.logger.notice(
+                    "Removable media '\(device.displayName, privacy: .public)' was already gone on '\(instance.name, privacy: .public)' (deviceNotFound); clearing tracking"
+                )
+                instance.liveRemovableMedia.removeAll { $0.id == device.id }
             } catch {
                 Self.logger.error(
-                    "USB attach failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                    "Removable media detach failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
+                reconcileConfigToLiveState(for: instance, lookup: rollbackLookup)
                 presentError(error)
+                return
+            }
+        }
+
+        for item in toAttach {
+            do {
+                _ = try await lifecycle.attachUSBDevice(
+                    diskImagePath: item.path,
+                    readOnly: item.readOnly,
+                    desiredUUID: item.id,
+                    to: instance
+                )
+                Self.logger.notice(
+                    "Attached removable media '\(item.label, privacy: .public)' on '\(instance.name, privacy: .public)' (readOnly: \(item.readOnly, privacy: .public))"
+                )
+            } catch USBDeviceError.noVirtualMachine {
+                Self.logger.notice(
+                    "VM '\(instance.name, privacy: .public)' torn down during media attach; abandoning reconcile"
+                )
+                return
+            } catch {
+                Self.logger.error(
+                    "Removable media attach failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                )
+                reconcileConfigToLiveState(for: instance, lookup: rollbackLookup)
+                presentError(error)
+                return
             }
         }
     }
+
+    /// Rolls `instance.configuration.removableMedia` back to whatever is
+    /// actually attached in `liveRemovableMedia`.
+    ///
+    /// Called from the reconcile error paths so the user sees an alert
+    /// AND a UI that matches reality, rather than a persisted config
+    /// describing devices the framework refused to attach (or refused to
+    /// detach). The write bypasses `updateConfiguration` to avoid
+    /// re-entering the reconcile pipeline — we want to land on the
+    /// rolled-back state, not retry it.
+    private func reconcileConfigToLiveState(
+        for instance: VMInstance,
+        lookup: [UUID: RemovableMediaItem]
+    ) {
+        let rolled = instance.liveRemovableMedia.compactMap { lookup[$0.id] }
+        var newConfig = instance.configuration
+        newConfig.removableMedia = rolled.isEmpty ? nil : rolled
+        guard newConfig != instance.configuration else { return }
+        instance.configuration = newConfig
+        saveConfiguration(for: instance)
+        Self.logger.notice(
+            "Rolled removable media config for '\(instance.name, privacy: .public)' back to live state after reconcile error"
+        )
+    }
+
+    // MARK: - USB Device Management
 
     func detachUSBDevice(_ device: USBDeviceInfo, from instance: VMInstance) {
         Self.logger.debug(
@@ -644,25 +841,17 @@ final class VMLibraryViewModel {
     /// guest's Finder, run install.command). The alert unifies the
     /// post-click experience across all three entry points.
     ///
-    /// No-op if a device already mounted at the bundled DMG path is present —
-    /// duplicate mounts don't help the user.
+    /// No-op if the bundled DMG is already present in this VM's
+    /// `removableMedia` list — duplicate mounts don't help the user.
     func mountGuestAgentInstaller(on instance: VMInstance) {
-        let id = instance.instanceID
-        // Coalesce rapid double-clicks: if a mount Task is already in flight
-        // for this VM, ignore the new click. Prevents the second attach from
-        // racing the first and surfacing as a spurious error alert.
-        guard !mountingInstanceIDs.contains(id) else {
-            Self.logger.debug(
-                "Mount already in flight for '\(instance.name, privacy: .public)' — ignoring duplicate click")
-            return
-        }
         guard let url = KernovaGuestAgentInfo.installerDiskImageURL else {
             Self.logger.fault("Guest agent installer DMG missing from app bundle")
             assertionFailure("KernovaGuestAgent.dmg missing — check 'Package Guest Agent DMG' build phase outputs")
             return
         }
-        let path = url.path
-        if instance.attachedUSBDevices.contains(where: { $0.path == path }) {
+        let path = url.path(percentEncoded: false)
+        let existing = instance.configuration.removableMedia ?? []
+        if existing.contains(where: { $0.path == path }) {
             Self.logger.debug("Guest agent installer already mounted on '\(instance.name, privacy: .public)'")
             // Still surface the instructions — the user just clicked an
             // install/update affordance and is owed feedback even if the
@@ -672,25 +861,18 @@ final class VMLibraryViewModel {
             return
         }
         Self.logger.notice("Mounting guest agent installer on '\(instance.name, privacy: .public)'")
-        let vmName = instance.name
-        mountingInstanceIDs.insert(id)
-        Task { [weak self] in
-            do {
-                _ = try await self?.lifecycle.attachUSBDevice(
-                    diskImagePath: path,
-                    readOnly: true,
-                    to: instance
-                )
-                self?.installerMountedVMName = vmName
-                self?.showInstallerMountedAlert = true
-            } catch {
-                Self.logger.error(
-                    "USB attach failed for '\(vmName, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-                )
-                self?.presentError(error)
-            }
-            self?.mountingInstanceIDs.remove(id)
+        updateConfiguration(of: instance) { config in
+            config.removableMedia =
+                (config.removableMedia ?? []) + [
+                    RemovableMediaItem(
+                        path: path,
+                        readOnly: true,
+                        label: "Kernova Guest Agent"
+                    )
+                ]
         }
+        installerMountedVMName = instance.name
+        showInstallerMountedAlert = true
     }
 
     /// Marks this VM's `.waiting` install nudge as dismissed and persists the choice.
@@ -701,50 +883,70 @@ final class VMLibraryViewModel {
     func dismissAgentInstallNudge(for instance: VMInstance) {
         guard !instance.configuration.agentInstallNudgeDismissed else { return }
         Self.logger.notice("User dismissed install-agent nudge for '\(instance.name, privacy: .public)'")
-        instance.configuration.agentInstallNudgeDismissed = true
-        saveConfiguration(for: instance)
+        updateConfiguration(of: instance) { $0.agentInstallNudgeDismissed = true }
     }
 
-    /// Detaches the bundled guest agent installer if currently mounted.
+    /// Removes the bundled guest agent installer entry from
+    /// `removableMedia` if currently present.
     ///
-    /// Identified by path equality with `KernovaGuestAgentInfo.installerDiskImageURL`.
+    /// Identified by path equality with
+    /// `KernovaGuestAgentInfo.installerDiskImageURL`. The reconcile flow
+    /// performs the runtime detach.
     func unmountGuestAgentInstaller(from instance: VMInstance) {
         guard let url = KernovaGuestAgentInfo.installerDiskImageURL else { return }
-        let path = url.path
-        guard let device = instance.attachedUSBDevices.first(where: { $0.path == path }) else { return }
+        let path = url.path(percentEncoded: false)
+        guard (instance.configuration.removableMedia ?? []).contains(where: { $0.path == path }) else { return }
         Self.logger.notice("Unmounting guest agent installer from '\(instance.name, privacy: .public)'")
-        detachUSBDevice(device, from: instance)
-    }
-
-    // MARK: - Additional Disks
-
-    /// Removes an additional disk from the configuration and trashes the file if internal.
-    func removeAdditionalDisk(_ disk: AdditionalDisk, from instance: VMInstance) {
-        instance.configuration.additionalDisks?.removeAll { $0.id == disk.id }
-        if instance.configuration.additionalDisks?.isEmpty == true {
-            instance.configuration.additionalDisks = nil
-        }
-        saveConfiguration(for: instance)
-
-        if disk.isInternal {
-            let layout = VMBundleLayout(bundleURL: instance.bundleURL)
-            let diskURL = layout.additionalDiskURL(id: disk.id)
-            do {
-                try FileManager.default.trashItem(at: diskURL, resultingItemURL: nil)
-                Self.logger.notice(
-                    "Trashed internal disk '\(disk.label, privacy: .public)' for VM '\(instance.name, privacy: .public)'"
-                )
-            } catch {
-                Self.logger.warning(
-                    "Failed to trash internal disk '\(disk.label, privacy: .public)' at '\(diskURL.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-                )
-                presentError(error)
-            }
+        updateConfiguration(of: instance) { config in
+            let pruned = (config.removableMedia ?? []).filter { $0.path != path }
+            config.removableMedia = pruned.isEmpty ? nil : pruned
         }
     }
 
-    /// Creates a new ASIF disk image inside the VM bundle and adds it to the configuration.
-    func createAdditionalDisk(for instance: VMInstance, sizeInGB: Int) {
+    // MARK: - Storage Disks
+
+    /// Removes a storage disk entry from the configuration.
+    ///
+    /// When `trashFile` is `true` and the disk is internal (bundle-owned),
+    /// the underlying file is moved to Trash. External disks ignore the
+    /// flag — they belong to the user, not the bundle.
+    func removeStorageDisk(_ disk: StorageDisk, from instance: VMInstance, trashFile: Bool) {
+        updateConfiguration(of: instance) { config in
+            var disks = config.storageDisks ?? Self.defaultStorageDisks(for: instance)
+            disks.removeAll { $0.id == disk.id }
+            config.storageDisks = disks.isEmpty ? nil : disks
+        }
+
+        guard disk.isInternal && trashFile else { return }
+        let diskURL = instance.bundleURL.appendingPathComponent(disk.path)
+        do {
+            try FileManager.default.trashItem(at: diskURL, resultingItemURL: nil)
+            Self.logger.notice(
+                "Trashed internal disk '\(disk.label, privacy: .public)' for VM '\(instance.name, privacy: .public)'"
+            )
+        } catch {
+            Self.logger.warning(
+                "Failed to trash internal disk '\(disk.label, privacy: .public)' at '\(diskURL.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+            presentError(error)
+        }
+    }
+
+    /// Returns the storage disks list to render when `storageDisks` is
+    /// `nil` / empty.
+    ///
+    /// The settings view uses this so the user always sees the main disk
+    /// as a row, and mutating helpers fall back to it when initializing
+    /// the list on first edit. Static because it depends only on the
+    /// bundle layout, not on view-model state.
+    static func defaultStorageDisks(for instance: VMInstance) -> [StorageDisk] {
+        let layout = VMBundleLayout(bundleURL: instance.bundleURL)
+        return [ConfigurationBuilder.defaultMainDisk(layout: layout)]
+    }
+
+    /// Creates a new ASIF disk image inside the VM bundle and adds it to
+    /// `storageDisks`.
+    func createStorageDisk(for instance: VMInstance, sizeInGB: Int) {
         let layout = VMBundleLayout(bundleURL: instance.bundleURL)
         let diskID = UUID()
         let diskURL = layout.additionalDiskURL(id: diskID)
@@ -756,20 +958,25 @@ final class VMLibraryViewModel {
 
                 try await diskImageService.createDiskImage(at: diskURL, sizeInGB: sizeInGB)
 
-                let disk = AdditionalDisk(
+                // Bundle-relative path (`AdditionalDisks/<id>.asif`) so the
+                // entry travels with the bundle on clone / move.
+                let relativePath = "AdditionalDisks/\(diskID.uuidString).asif"
+                let disk = StorageDisk(
                     id: diskID,
-                    path: diskURL.path(percentEncoded: false),
+                    path: relativePath,
                     readOnly: false,
                     label: "\(sizeInGB) GB Disk",
-                    isInternal: true
+                    isInternal: true,
+                    kind: .virtio
                 )
-                var disks = instance.configuration.additionalDisks ?? []
-                disks.append(disk)
-                instance.configuration.additionalDisks = disks
-                saveConfiguration(for: instance)
+                updateConfiguration(of: instance) { config in
+                    var disks = config.storageDisks ?? Self.defaultStorageDisks(for: instance)
+                    disks.append(disk)
+                    config.storageDisks = disks
+                }
 
                 Self.logger.notice(
-                    "Created in-bundle additional disk '\(disk.label, privacy: .public)' (\(sizeInGB, privacy: .public) GB) for VM '\(instance.name, privacy: .public)'"
+                    "Created in-bundle storage disk '\(disk.label, privacy: .public)' (\(sizeInGB, privacy: .public) GB) for VM '\(instance.name, privacy: .public)'"
                 )
             } catch {
                 // Clean up the disk file if it was created before the failure
@@ -781,7 +988,7 @@ final class VMLibraryViewModel {
                     )
                 }
                 Self.logger.error(
-                    "Failed to create additional disk for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                    "Failed to create storage disk for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
                 presentError(error)
             }
@@ -830,12 +1037,15 @@ final class VMLibraryViewModel {
             }
         }
 
-        // Track internal additional disks that need to be copied and remapped
-        let originalDisks = instance.configuration.additionalDisks ?? []
-        let clonedDisks = clonedConfig.additionalDisks ?? []
-        let internalDiskMapping: [(sourceID: UUID, clonedDisk: AdditionalDisk)] = zip(originalDisks, clonedDisks)
+        // Track internal storage disks that need to be copied. The main
+        // bundle disk (`Disk.asif`) lives at a fixed relative path so it
+        // doesn't need remapping — only `AdditionalDisks/<id>.asif` entries
+        // do, because the cloned IDs differ from the originals.
+        let originalDisks = instance.configuration.storageDisks ?? []
+        let clonedDisks = clonedConfig.storageDisks ?? []
+        let internalDiskMapping: [(sourceID: UUID, clonedDisk: StorageDisk)] = zip(originalDisks, clonedDisks)
             .compactMap { original, cloned in
-                guard cloned.isInternal else { return nil }
+                guard cloned.isInternal, cloned.path.hasPrefix("AdditionalDisks/") else { return nil }
                 return (sourceID: original.id, clonedDisk: cloned)
             }
 
@@ -904,19 +1114,14 @@ final class VMLibraryViewModel {
                     return skipped
                 }.value
 
-                // Remove skipped disks and remap internal disk paths to the new bundle location
+                // Remove skipped disks. Internal disk paths are
+                // bundle-relative (`AdditionalDisks/<id>.asif`) so they
+                // travel with the bundle and don't need remapping.
                 if !diskMapping.isEmpty {
-                    let newLayout = VMBundleLayout(bundleURL: phantom.bundleURL)
-                    phantom.configuration.additionalDisks = phantom.configuration.additionalDisks?
+                    phantom.configuration.storageDisks = phantom.configuration.storageDisks?
                         .filter { !skippedDiskIDs.contains($0.id) }
-                        .map { disk in
-                            guard disk.isInternal else { return disk }
-                            var updated = disk
-                            updated.path = newLayout.additionalDiskURL(id: disk.id).path(percentEncoded: false)
-                            return updated
-                        }
-                    if phantom.configuration.additionalDisks?.isEmpty == true {
-                        phantom.configuration.additionalDisks = nil
+                    if phantom.configuration.storageDisks?.isEmpty == true {
+                        phantom.configuration.storageDisks = nil
                     }
                     try storage.saveConfiguration(phantom.configuration, to: phantom.bundleURL)
                 }

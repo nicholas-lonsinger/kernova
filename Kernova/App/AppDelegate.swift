@@ -504,30 +504,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         )
     }
 
-    // MARK: - Removable Media
-
-    @objc func showRemovableMedia(_ sender: Any?) {
-        guard let instance = activeInstance,
-            instance.canAttachUSBDevices
-        else { return }
-
-        let popover = NSPopover()
-        popover.behavior = .transient
-        let hostingController = NSHostingController(
-            rootView: RemovableMediaPopoverView(instance: instance, viewModel: viewModel)
-        )
-        hostingController.sizingOptions = .preferredContentSize
-        popover.contentViewController = hostingController
-
-        if let toolbarItem = sender as? NSToolbarItem {
-            popover.show(relativeTo: toolbarItem)
-        } else if let contentView = NSApp.keyWindow?.contentView {
-            popover.show(relativeTo: contentView.bounds, of: contentView, preferredEdge: .minY)
-        } else {
-            Self.logger.warning("Cannot show removable media popover: no anchor view available")
-        }
-    }
-
     @objc func attachGuestAgentDisk(_ sender: Any?) {
         guard let instance = activeInstance else { return }
         // Route through mountGuestAgentInstaller so the post-mount instructions
@@ -547,8 +523,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             return
         }
 
-        instance.configuration.displayPreference = .popOut
-        viewModel.saveConfiguration(for: instance)
+        viewModel.updateConfiguration(of: instance) { $0.displayPreference = .popOut }
         openDisplayWindow(for: instance, enterFullscreen: false)
     }
 
@@ -560,8 +535,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             return
         }
 
-        instance.configuration.displayPreference = .fullscreen
-        viewModel.saveConfiguration(for: instance)
+        viewModel.updateConfiguration(of: instance) { $0.displayPreference = .fullscreen }
         openDisplayWindow(for: instance, enterFullscreen: true)
     }
 
@@ -582,8 +556,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 guard let self else { return }
                 Task { await self.viewModel.resume(instance) }
             },
-            onSaveConfiguration: { [weak self] in
-                self?.viewModel.saveConfiguration(for: instance)
+            onUpdateConfiguration: { [weak self] mutate in
+                self?.viewModel.updateConfiguration(of: instance, mutate: mutate)
             }
         )
         displayWindows[vmID] = controller
@@ -607,20 +581,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                     NotificationCenter.default.removeObserver(token)
                 }
                 if let controller = self.displayWindows.removeValue(forKey: vmID) {
-                    // Always remember which display the VM was on
-                    if let displayID = controller.lastDisplayID {
-                        instance.configuration.lastFullscreenDisplayID = displayID
+                    self.viewModel.updateConfiguration(of: instance) { config in
+                        // Always remember which display the VM was on
+                        if let displayID = controller.lastDisplayID {
+                            config.lastFullscreenDisplayID = displayID
+                        }
+                        if !controller.closedProgrammatically {
+                            // User manually closed the display window
+                            config.displayPreference = .inline
+                            Self.logger.debug(
+                                "Cleared displayPreference for '\(instance.name, privacy: .public)' (user closed display window)"
+                            )
+                        }
                     }
-
-                    if !controller.closedProgrammatically {
-                        // User manually closed the display window
-                        instance.configuration.displayPreference = .inline
-                        Self.logger.debug(
-                            "Cleared displayPreference for '\(instance.name, privacy: .public)' (user closed display window)"
-                        )
-                    }
-
-                    self.viewModel.saveConfiguration(for: instance)
 
                     if controller.closedProgrammatically {
                         // VM stopped/errored/cold-paused — check if app should quit
@@ -769,8 +742,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             return activeInstance?.canShowSerialConsole ?? false
         case #selector(showClipboard(_:)):
             return activeInstance?.canShowClipboard ?? false
-        case #selector(showRemovableMedia(_:)):
-            return activeInstance?.canAttachUSBDevices ?? false
         case #selector(attachGuestAgentDisk(_:)):
             guard let instance = activeInstance, instance.canAttachUSBDevices else { return false }
             guard Self.guestAgentDiskPath != nil else { return false }
@@ -925,13 +896,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         windowMenu.addItem(.separator())
         windowMenu.addItem(serialConsoleMenuItem)
         windowMenu.addItem(clipboardMenuItem)
-        let removableMediaItem = NSMenuItem(
-            title: "Removable Media",
-            action: #selector(showRemovableMedia(_:)),
-            keyEquivalent: "u"
-        )
-        removableMediaItem.keyEquivalentModifierMask = [.command, .shift]
-        windowMenu.addItem(removableMediaItem)
         windowMenu.addItem(.separator())
         windowMenu.addItem(
             withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")

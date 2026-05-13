@@ -17,7 +17,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
     let instance: VMInstance
     private let toolbarManager: VMToolbarManager
     private let enterFullscreen: Bool
-    private let onSaveConfiguration: () -> Void
+    private let onUpdateConfiguration: ((inout VMConfiguration) -> Void) -> Void
     private let backingView: VMDisplayBackingView
     private var instanceObservation: ObservationLoop?
 
@@ -25,7 +25,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
 
     init(
         instance: VMInstance, enterFullscreen: Bool, onResume: @escaping () -> Void,
-        onSaveConfiguration: @escaping () -> Void
+        onUpdateConfiguration: @escaping ((inout VMConfiguration) -> Void) -> Void
     ) {
         self.vmID = instance.instanceID
         self.instance = instance
@@ -34,7 +34,6 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
                 lifecycleID: NSToolbarItem.Identifier("displayLifecycle"),
                 saveStateID: NSToolbarItem.Identifier("displaySaveState"),
                 clipboardID: nil,
-                removableMediaID: NSToolbarItem.Identifier("displayRemovableMedia"),
                 displayID: NSToolbarItem.Identifier("displayDisplay"),
                 settingsToggleID: nil,
                 checksPreparing: false,
@@ -43,7 +42,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
             instanceProvider: { [weak instance] in instance }
         )
         self.enterFullscreen = enterFullscreen
-        self.onSaveConfiguration = onSaveConfiguration
+        self.onUpdateConfiguration = onUpdateConfiguration
 
         let backing = VMDisplayBackingView()
         backing.onResume = onResume
@@ -108,10 +107,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
     func windowDidEnterFullScreen(_ notification: Notification) {
         instance.displayMode = .fullscreen
         window?.toolbar?.isVisible = false
-        if instance.configuration.displayPreference != .fullscreen {
-            instance.configuration.displayPreference = .fullscreen
-            onSaveConfiguration()
-        }
+        onUpdateConfiguration { $0.displayPreference = .fullscreen }
     }
 
     func windowDidExitFullScreen(_ notification: Notification) {
@@ -122,10 +118,8 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         // During programmatic close (VM stopped/errored/cold-paused), the
         // preference should remain .fullscreen so it restores correctly
         // when the display window is next opened.
-        if !closedProgrammatically && instance.configuration.displayPreference != .popOut {
-            instance.configuration.displayPreference = .popOut
-            onSaveConfiguration()
-        }
+        guard !closedProgrammatically else { return }
+        onUpdateConfiguration { $0.displayPreference = .popOut }
     }
 
     // MARK: - Instance Observation

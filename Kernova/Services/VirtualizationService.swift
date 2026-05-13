@@ -33,6 +33,7 @@ final class VirtualizationService {
                 instance.serialOutputPipe = result.serialOutputPipe
                 instance.clipboardInputPipe = result.clipboardInputPipe
                 instance.clipboardOutputPipe = result.clipboardOutputPipe
+                instance.liveRemovableMedia = result.coldRemovableMedia
                 let vm = instance.attachVirtualMachine(from: result.configuration)
                 instance.startSerialReading()
                 instance.startClipboardService()
@@ -185,6 +186,11 @@ final class VirtualizationService {
             }
 
             try await saveMachineState(vm, to: instance.saveFileURL)
+            // No sidecar metadata needed alongside the save file: every
+            // hot-pluggable removable media item carries a stable UUID in
+            // `config.removableMedia`, and storage disks carry stable
+            // virtio block identifiers in `config.storageDisks`. VZ matches
+            // both on restore.
             instance.tearDownSession()
             instance.status = .paused
             Self.logger.notice("Saved state for VM '\(instance.name, privacy: .public)'")
@@ -236,12 +242,17 @@ final class VirtualizationService {
     ///
     /// On restore failure, deletes the stale save file and falls back to a cold boot.
     private func restoreOrColdBoot(_ instance: VMInstance) async throws {
+        // Per-item UUIDs in `VMConfiguration.removableMedia` and per-disk
+        // identifiers in `VMConfiguration.storageDisks` are applied by the
+        // builder, so the rebuilt configuration matches what VZ recorded
+        // when the save was written.
         let result = try await buildConfiguration(for: instance)
 
         instance.serialInputPipe = result.serialInputPipe
         instance.serialOutputPipe = result.serialOutputPipe
         instance.clipboardInputPipe = result.clipboardInputPipe
         instance.clipboardOutputPipe = result.clipboardOutputPipe
+        instance.liveRemovableMedia = result.coldRemovableMedia
         let vm = instance.attachVirtualMachine(from: result.configuration)
         instance.startSerialReading()
         instance.startClipboardService()

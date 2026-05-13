@@ -31,7 +31,7 @@ struct ConfigurationBuilderTests {
 
     // MARK: - Boot Validation
 
-    @Test("Builder throws for EFI boot without disk image")
+    @Test("Builder throws when the default main disk file is missing")
     func efiBootWithoutDisk() throws {
         let bundleURL = try makeTempBundle()
         defer { try? FileManager.default.removeItem(at: bundleURL) }
@@ -41,7 +41,7 @@ struct ConfigurationBuilderTests {
             try builder.build(from: makeLinuxConfig(), bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
-                case .diskImageNotFound = e
+                case .storageDiskNotFound = e
             else { return false }
             return true
         }
@@ -233,13 +233,13 @@ struct ConfigurationBuilderTests {
                 .sharedDirectoryNotReadable, .sharedDirectoryNotWritable,
                 .kernelNotFound, .kernelPathIsDirectory,
                 .initrdNotFound, .initrdPathIsDirectory,
-                .discImageNotFound, .discImagePathIsDirectory, .discImageNotWritable,
-                .additionalDiskNotFound, .additionalDiskPathIsDirectory, .additionalDiskNotWritable:
+                .storageDiskNotFound, .storageDiskPathIsDirectory, .storageDiskNotWritable,
+                .removableMediaNotFound, .removableMediaPathIsDirectory, .removableMediaNotWritable:
                 Issue.record("Unexpected path validation error: \(error)")
             // Non-path-validation errors — tolerated if they occur:
             case .macOSGuestRequiresAppleSilicon,
                 .invalidHardwareModel, .invalidMachineIdentifier,
-                .missingKernelPath, .diskImageNotFound:
+                .missingKernelPath:
                 break
             }
         } catch {
@@ -292,63 +292,16 @@ struct ConfigurationBuilderTests {
         }
     }
 
-    // MARK: - Disc Image Path Validation
+    // MARK: - Removable Media
 
-    @Test("Builder throws for nonexistent disc image path")
-    func builderThrowsForNonexistentDiscImagePath() throws {
+    @Test("Builder throws for nonexistent removable media path")
+    func builderThrowsForNonexistentRemovableMediaPath() throws {
         let bundleURL = try makeTempBundle(withDisk: true)
         defer { try? FileManager.default.removeItem(at: bundleURL) }
 
         var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
-        config.discImagePath = "/nonexistent/\(UUID().uuidString)/install.iso"
-
-        let builder = ConfigurationBuilder()
-        #expect {
-            try builder.build(from: config, bundleURL: bundleURL)
-        } throws: { error in
-            guard let e = error as? ConfigurationBuilderError,
-                case .discImageNotFound = e
-            else { return false }
-            return true
-        }
-    }
-
-    @Test("Builder throws for non-writable disc image when readOnly is false")
-    func builderThrowsForNonWritableDiscImage() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
-
-        // Create a read-only file to use as disc image
-        let discImagePath = bundleURL.appendingPathComponent("readonly.iso").path(percentEncoded: false)
-        FileManager.default.createFile(atPath: discImagePath, contents: Data([0]))
-        try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: discImagePath)
-        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: discImagePath) }
-
-        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
-        config.discImagePath = discImagePath
-        config.discImageReadOnly = false
-
-        let builder = ConfigurationBuilder()
-        #expect {
-            try builder.build(from: config, bundleURL: bundleURL)
-        } throws: { error in
-            guard let e = error as? ConfigurationBuilderError,
-                case .discImageNotWritable = e
-            else { return false }
-            return true
-        }
-    }
-
-    // MARK: - Additional Disk Validation
-
-    @Test("Builder throws for nonexistent additional disk path")
-    func builderThrowsForNonexistentAdditionalDisk() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
-
-        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
-        config.additionalDisks = [
-            AdditionalDisk(path: "/nonexistent/\(UUID().uuidString)/data.asif", label: "Data")
+        config.removableMedia = [
+            RemovableMediaItem(path: "/nonexistent/\(UUID().uuidString)/install.iso", readOnly: true)
         ]
 
         let builder = ConfigurationBuilder()
@@ -356,14 +309,180 @@ struct ConfigurationBuilderTests {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
-                case .additionalDiskNotFound = e
+                case .removableMediaNotFound = e
             else { return false }
             return true
         }
     }
 
-    @Test("Builder throws for directory as additional disk path")
-    func builderThrowsForDirectoryAsAdditionalDisk() throws {
+    @Test("Removable media is attached to XHCI controller, not storageDevices")
+    func removableMediaOnXHCIController() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        let isoPath = bundleURL.appendingPathComponent("install.iso").path(percentEncoded: false)
+        try Data().write(to: URL(fileURLWithPath: isoPath))
+
+        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        config.removableMedia = [RemovableMediaItem(path: isoPath, readOnly: true)]
+
+        let builder = ConfigurationBuilder()
+        let result = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
+        let vz = result.configuration
+
+        #expect(vz.storageDevices.count == 1)
+        #expect(vz.storageDevices.first is VZVirtioBlockDeviceConfiguration)
+        let xhci = try #require(vz.usbControllers.first)
+        #expect(xhci.usbDevices.count == 1)
+        #expect(xhci.usbDevices.first is VZUSBMassStorageDeviceConfiguration)
+    }
+
+    @Test("Removable media returns coldRemovableMedia infos with matching UUIDs")
+    func removableMediaReturnsDeviceInfos() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        let isoPath = bundleURL.appendingPathComponent("install.iso").path(percentEncoded: false)
+        try Data().write(to: URL(fileURLWithPath: isoPath))
+
+        let configuredUUID = UUID()
+        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        config.removableMedia = [
+            RemovableMediaItem(id: configuredUUID, path: isoPath, readOnly: true)
+        ]
+
+        let builder = ConfigurationBuilder()
+        let result = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
+
+        #expect(result.coldRemovableMedia.count == 1)
+        let info = try #require(result.coldRemovableMedia.first)
+        #expect(info.id == configuredUUID)
+        #expect(info.path == isoPath)
+        #expect(info.readOnly == true)
+
+        let xhci = try #require(result.configuration.usbControllers.first)
+        let usb = try #require(xhci.usbDevices.first as? VZUSBMassStorageDeviceConfiguration)
+        #expect(usb.uuid == configuredUUID)
+    }
+
+    @Test("No removable media returns empty coldRemovableMedia")
+    func noRemovableMediaReturnsEmpty() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        let config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        let builder = ConfigurationBuilder()
+        let result = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
+        #expect(result.coldRemovableMedia.isEmpty)
+    }
+
+    @Test("Builder throws for non-writable removable media when readOnly is false")
+    func builderThrowsForNonWritableRemovableMedia() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        let isoPath = bundleURL.appendingPathComponent("readonly.iso").path(percentEncoded: false)
+        FileManager.default.createFile(atPath: isoPath, contents: Data([0]))
+        try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: isoPath)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: isoPath) }
+
+        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        config.removableMedia = [RemovableMediaItem(path: isoPath, readOnly: false)]
+
+        let builder = ConfigurationBuilder()
+        #expect {
+            try builder.build(from: config, bundleURL: bundleURL)
+        } throws: { error in
+            guard let e = error as? ConfigurationBuilderError,
+                case .removableMediaNotWritable = e
+            else { return false }
+            return true
+        }
+    }
+
+    // MARK: - Storage Disks
+
+    @Test("Default storage disks list synthesizes the main disk at index 0")
+    func defaultStorageDisksSynthesizesMainDisk() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        let config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        let builder = ConfigurationBuilder()
+        let result = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
+
+        #expect(result.configuration.storageDevices.count == 1)
+        #expect(result.configuration.storageDevices.first is VZVirtioBlockDeviceConfiguration)
+    }
+
+    @Test("Storage disks list orders devices on storageDevices by position")
+    func storageDisksOrderingPreserved() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        let isoPath = bundleURL.appendingPathComponent("install.iso").path(percentEncoded: false)
+        try Data().write(to: URL(fileURLWithPath: isoPath))
+
+        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        config.storageDisks = [
+            StorageDisk(path: isoPath, readOnly: true, label: "Installer"),
+            StorageDisk(path: "Disk.asif", readOnly: false, label: "Main Disk", isInternal: true, kind: .virtio),
+        ]
+
+        let builder = ConfigurationBuilder()
+        let result = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
+
+        // Position [0] is the ISO (USB mass storage), [1] is virtio main disk.
+        #expect(result.configuration.storageDevices.count == 2)
+        #expect(result.configuration.storageDevices.first is VZUSBMassStorageDeviceConfiguration)
+        #expect(result.configuration.storageDevices.last is VZVirtioBlockDeviceConfiguration)
+
+        // ISO does NOT live on XHCI — it's on storageDevices for boot.
+        let xhci = try #require(result.configuration.usbControllers.first)
+        #expect(xhci.usbDevices.isEmpty)
+    }
+
+    @Test("StorageDisk.defaultKind dispatches by file extension")
+    func defaultKindByExtension() {
+        #expect(StorageDisk.defaultKind(forPath: "/tmp/install.iso") == .usbMassStorage)
+        #expect(StorageDisk.defaultKind(forPath: "/tmp/Ubuntu.ISO") == .usbMassStorage)
+        #expect(StorageDisk.defaultKind(forPath: "/tmp/installer.dmg") == .usbMassStorage)
+        #expect(StorageDisk.defaultKind(forPath: "Disk.asif") == .virtio)
+        #expect(StorageDisk.defaultKind(forPath: "/tmp/data.img") == .virtio)
+        #expect(StorageDisk.defaultKind(forPath: "/tmp/data.qcow2") == .virtio)
+        #expect(StorageDisk.defaultKind(forPath: "/tmp/no-ext") == .virtio)
+    }
+
+    @Test("Builder throws for nonexistent external storage disk")
+    func builderThrowsForNonexistentStorageDisk() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        config.storageDisks = [
+            StorageDisk(path: "Disk.asif", readOnly: false, label: "Main Disk", isInternal: true, kind: .virtio),
+            StorageDisk(
+                path: "/nonexistent/\(UUID().uuidString)/data.asif",
+                readOnly: false,
+                label: "Data",
+                isInternal: false,
+                kind: .virtio
+            ),
+        ]
+
+        let builder = ConfigurationBuilder()
+        #expect {
+            try builder.build(from: config, bundleURL: bundleURL)
+        } throws: { error in
+            guard let e = error as? ConfigurationBuilderError,
+                case .storageDiskNotFound = e
+            else { return false }
+            return true
+        }
+    }
+
+    @Test("Builder throws for directory as external storage disk")
+    func builderThrowsForDirectoryAsStorageDisk() throws {
         let bundleURL = try makeTempBundle(withDisk: true)
         defer { try? FileManager.default.removeItem(at: bundleURL) }
 
@@ -371,8 +490,15 @@ struct ConfigurationBuilderTests {
         try FileManager.default.createDirectory(at: dirPath, withIntermediateDirectories: true)
 
         var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
-        config.additionalDisks = [
-            AdditionalDisk(path: dirPath.path(percentEncoded: false), label: "Data")
+        config.storageDisks = [
+            StorageDisk(path: "Disk.asif", readOnly: false, label: "Main Disk", isInternal: true, kind: .virtio),
+            StorageDisk(
+                path: dirPath.path(percentEncoded: false),
+                readOnly: false,
+                label: "Data",
+                isInternal: false,
+                kind: .virtio
+            ),
         ]
 
         let builder = ConfigurationBuilder()
@@ -380,14 +506,14 @@ struct ConfigurationBuilderTests {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
-                case .additionalDiskPathIsDirectory = e
+                case .storageDiskPathIsDirectory = e
             else { return false }
             return true
         }
     }
 
-    @Test("Builder throws for non-writable read-write additional disk")
-    func builderThrowsForNonWritableAdditionalDisk() throws {
+    @Test("Builder throws for non-writable read-write external storage disk")
+    func builderThrowsForNonWritableStorageDisk() throws {
         let bundleURL = try makeTempBundle(withDisk: true)
         defer { try? FileManager.default.removeItem(at: bundleURL) }
 
@@ -397,8 +523,9 @@ struct ConfigurationBuilderTests {
         defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: diskPath) }
 
         var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
-        config.additionalDisks = [
-            AdditionalDisk(path: diskPath, readOnly: false, label: "Data")
+        config.storageDisks = [
+            StorageDisk(path: "Disk.asif", readOnly: false, label: "Main Disk", isInternal: true, kind: .virtio),
+            StorageDisk(path: diskPath, readOnly: false, label: "Data", isInternal: false, kind: .virtio),
         ]
 
         let builder = ConfigurationBuilder()
@@ -406,14 +533,14 @@ struct ConfigurationBuilderTests {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
-                case .additionalDiskNotWritable = e
+                case .storageDiskNotWritable = e
             else { return false }
             return true
         }
     }
 
-    @Test("Builder accepts read-only additional disk for non-writable file")
-    func builderAcceptsReadOnlyAdditionalDisk() throws {
+    @Test("Builder accepts read-only storage disk for non-writable file")
+    func builderAcceptsReadOnlyStorageDisk() throws {
         let bundleURL = try makeTempBundle(withDisk: true)
         defer { try? FileManager.default.removeItem(at: bundleURL) }
 
@@ -423,8 +550,9 @@ struct ConfigurationBuilderTests {
         defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: diskPath) }
 
         var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
-        config.additionalDisks = [
-            AdditionalDisk(path: diskPath, readOnly: true, label: "Data")
+        config.storageDisks = [
+            StorageDisk(path: "Disk.asif", readOnly: false, label: "Main Disk", isInternal: true, kind: .virtio),
+            StorageDisk(path: diskPath, readOnly: true, label: "Data", isInternal: false, kind: .virtio),
         ]
 
         let builder = ConfigurationBuilder()
@@ -436,12 +564,12 @@ struct ConfigurationBuilderTests {
                 .sharedDirectoryNotReadable, .sharedDirectoryNotWritable,
                 .kernelNotFound, .kernelPathIsDirectory,
                 .initrdNotFound, .initrdPathIsDirectory,
-                .discImageNotFound, .discImagePathIsDirectory, .discImageNotWritable,
-                .additionalDiskNotFound, .additionalDiskPathIsDirectory, .additionalDiskNotWritable:
+                .storageDiskNotFound, .storageDiskPathIsDirectory, .storageDiskNotWritable,
+                .removableMediaNotFound, .removableMediaPathIsDirectory, .removableMediaNotWritable:
                 Issue.record("Unexpected path validation error: \(error)")
             case .macOSGuestRequiresAppleSilicon,
                 .invalidHardwareModel, .invalidMachineIdentifier,
-                .missingKernelPath, .diskImageNotFound:
+                .missingKernelPath:
                 break
             }
         } catch {
@@ -480,13 +608,13 @@ struct ConfigurationBuilderTests {
                 .sharedDirectoryNotReadable, .sharedDirectoryNotWritable,
                 .kernelNotFound, .kernelPathIsDirectory,
                 .initrdNotFound, .initrdPathIsDirectory,
-                .discImageNotFound, .discImagePathIsDirectory, .discImageNotWritable,
-                .additionalDiskNotFound, .additionalDiskPathIsDirectory, .additionalDiskNotWritable:
+                .storageDiskNotFound, .storageDiskPathIsDirectory, .storageDiskNotWritable,
+                .removableMediaNotFound, .removableMediaPathIsDirectory, .removableMediaNotWritable:
                 Issue.record("Unexpected path validation error: \(error)")
             // Non-path-validation errors — tolerated if they occur:
             case .macOSGuestRequiresAppleSilicon,
                 .invalidHardwareModel, .invalidMachineIdentifier,
-                .missingKernelPath, .diskImageNotFound:
+                .missingKernelPath:
                 break
             }
         } catch {
@@ -548,8 +676,8 @@ struct ConfigurationBuilderTests {
         }
     }
 
-    @Test("Builder throws for dangling symlink as disc image path")
-    func builderThrowsForDanglingSymlinkDiscImagePath() throws {
+    @Test("Builder throws for dangling symlink as removable media path")
+    func builderThrowsForDanglingSymlinkRemovableMediaPath() throws {
         let bundleURL = try makeTempBundle(withDisk: true)
         defer { try? FileManager.default.removeItem(at: bundleURL) }
 
@@ -558,14 +686,14 @@ struct ConfigurationBuilderTests {
         try FileManager.default.createSymbolicLink(atPath: symlinkPath, withDestinationPath: nonexistentTarget)
 
         var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
-        config.discImagePath = symlinkPath
+        config.removableMedia = [RemovableMediaItem(path: symlinkPath, readOnly: true)]
 
         let builder = ConfigurationBuilder()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
-                case .discImageNotFound = e
+                case .removableMediaNotFound = e
             else { return false }
             return true
         }
@@ -622,8 +750,8 @@ struct ConfigurationBuilderTests {
         }
     }
 
-    @Test("Builder throws for directory as disc image path")
-    func builderThrowsForDirectoryAsDiscImagePath() throws {
+    @Test("Builder throws for directory as removable media path")
+    func builderThrowsForDirectoryAsRemovableMediaPath() throws {
         let bundleURL = try makeTempBundle(withDisk: true)
         defer { try? FileManager.default.removeItem(at: bundleURL) }
 
@@ -631,14 +759,16 @@ struct ConfigurationBuilderTests {
         try FileManager.default.createDirectory(at: dirPath, withIntermediateDirectories: true)
 
         var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
-        config.discImagePath = dirPath.path(percentEncoded: false)
+        config.removableMedia = [
+            RemovableMediaItem(path: dirPath.path(percentEncoded: false), readOnly: true)
+        ]
 
         let builder = ConfigurationBuilder()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
-                case .discImagePathIsDirectory = e
+                case .removableMediaPathIsDirectory = e
             else { return false }
             return true
         }
@@ -701,8 +831,8 @@ struct ConfigurationBuilderTests {
         }
     }
 
-    @Test("Builder throws for symlink to directory as disc image path")
-    func builderThrowsForSymlinkToDirectoryAsDiscImagePath() throws {
+    @Test("Builder throws for symlink to directory as removable media path")
+    func builderThrowsForSymlinkToDirectoryAsRemovableMediaPath() throws {
         let bundleURL = try makeTempBundle(withDisk: true)
         defer { try? FileManager.default.removeItem(at: bundleURL) }
 
@@ -713,14 +843,14 @@ struct ConfigurationBuilderTests {
             atPath: symlinkPath, withDestinationPath: dirPath.path(percentEncoded: false))
 
         var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
-        config.discImagePath = symlinkPath
+        config.removableMedia = [RemovableMediaItem(path: symlinkPath, readOnly: true)]
 
         let builder = ConfigurationBuilder()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
-                case .discImagePathIsDirectory = e
+                case .removableMediaPathIsDirectory = e
             else { return false }
             return true
         }
@@ -754,13 +884,13 @@ struct ConfigurationBuilderTests {
                 .sharedDirectoryNotReadable, .sharedDirectoryNotWritable,
                 .kernelNotFound, .kernelPathIsDirectory,
                 .initrdNotFound, .initrdPathIsDirectory,
-                .discImageNotFound, .discImagePathIsDirectory, .discImageNotWritable,
-                .additionalDiskNotFound, .additionalDiskPathIsDirectory, .additionalDiskNotWritable:
+                .storageDiskNotFound, .storageDiskPathIsDirectory, .storageDiskNotWritable,
+                .removableMediaNotFound, .removableMediaPathIsDirectory, .removableMediaNotWritable:
                 Issue.record("Unexpected path validation error: \(error)")
             // Non-path-validation errors — tolerated if they occur:
             case .macOSGuestRequiresAppleSilicon,
                 .invalidHardwareModel, .invalidMachineIdentifier,
-                .missingKernelPath, .diskImageNotFound:
+                .missingKernelPath:
                 break
             }
         } catch {
@@ -876,5 +1006,115 @@ struct ConfigurationBuilderTests {
                 Issue.record("Unexpected non-VZ error: \(error)")
             }
         }
+    }
+
+    // MARK: - Path-Traversal Containment
+
+    @Test("Internal storage disk path with .. escape is rejected as storageDiskNotFound")
+    func internalStorageDiskRejectsPathTraversal() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        // Marking the entry `isInternal: true` opts into bundle-containment
+        // validation. A `..` segment that resolves outside the bundle must
+        // be rejected before the framework ever opens the file.
+        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        config.storageDisks = [
+            StorageDisk(
+                path: "../escape/passwd",
+                readOnly: true,
+                label: "evil",
+                isInternal: true,
+                kind: .virtio
+            )
+        ]
+
+        let builder = ConfigurationBuilder()
+        #expect {
+            try builder.build(from: config, bundleURL: bundleURL)
+        } throws: { error in
+            guard let e = error as? ConfigurationBuilderError,
+                case .storageDiskNotFound = e
+            else { return false }
+            return true
+        }
+    }
+
+    // MARK: - Synthetic Main-Disk Identity
+
+    @Test("defaultMainDisk produces a stable UUID for the same bundle URL")
+    func defaultMainDiskUUIDIsStableAcrossCalls() {
+        let bundleURL = URL(fileURLWithPath: "/tmp/kernova-test-stable.kernova")
+        let layout = VMBundleLayout(bundleURL: bundleURL)
+        let first = ConfigurationBuilder.defaultMainDisk(layout: layout)
+        let second = ConfigurationBuilder.defaultMainDisk(layout: layout)
+        #expect(first.id == second.id)
+    }
+
+    @Test("defaultMainDisk produces distinct UUIDs for distinct bundle URLs")
+    func defaultMainDiskUUIDsDifferAcrossBundles() {
+        let aLayout = VMBundleLayout(
+            bundleURL: URL(fileURLWithPath: "/tmp/kernova-test-a.kernova"))
+        let bLayout = VMBundleLayout(
+            bundleURL: URL(fileURLWithPath: "/tmp/kernova-test-b.kernova"))
+        #expect(
+            ConfigurationBuilder.defaultMainDisk(layout: aLayout).id
+                != ConfigurationBuilder.defaultMainDisk(layout: bLayout).id)
+    }
+
+    // MARK: - Symlink Resolution for External Storage Disks
+
+    @Test("External storage disk via symlink attaches to symlink target, not symlink path")
+    func externalStorageDiskFollowsSymlink() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        // Real file in a scratch directory outside the bundle, plus a
+        // symlink to it. The builder must hand VZ the resolved target
+        // URL so the attachment doesn't depend on the symlink surviving.
+        let scratchDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: scratchDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: scratchDir) }
+
+        // Need a 1 MB zeroed raw disk image — VZ rejects smaller / empty
+        // files as "disk image format not recognized" inside the
+        // `VZDiskImageStorageDeviceAttachment` constructor.
+        let realPath = scratchDir.appendingPathComponent("real.asif").path(percentEncoded: false)
+        FileManager.default.createFile(atPath: realPath, contents: Data(count: 1_048_576))
+        let symlinkPath = scratchDir.appendingPathComponent("symlink.asif").path(percentEncoded: false)
+        try FileManager.default.createSymbolicLink(atPath: symlinkPath, withDestinationPath: realPath)
+
+        // The bundle's own Disk.asif also needs to be sized for the same
+        // reason; replace the zero-byte stub created by makeTempBundle.
+        let mainDiskURL = VMBundleLayout(bundleURL: bundleURL).diskImageURL
+        try? FileManager.default.removeItem(at: mainDiskURL)
+        FileManager.default.createFile(
+            atPath: mainDiskURL.path(percentEncoded: false), contents: Data(count: 1_048_576))
+
+        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        config.storageDisks = [
+            StorageDisk(
+                path: "Disk.asif", readOnly: false, label: "Main Disk",
+                isInternal: true, kind: .virtio),
+            StorageDisk(
+                path: symlinkPath, readOnly: true, label: "Via Symlink",
+                isInternal: false, kind: .virtio),
+        ]
+
+        let builder = ConfigurationBuilder()
+        // `assemble(validate: false)` skips VZ's "is this a real disk image?"
+        // check, which would otherwise reject the tiny stub file.
+        let result = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
+        let storageDevices = result.configuration.storageDevices
+        #expect(storageDevices.count == 2)
+        let viaSymlink = try #require(storageDevices.last as? VZVirtioBlockDeviceConfiguration)
+        let attachment = try #require(viaSymlink.attachment as? VZDiskImageStorageDeviceAttachment)
+
+        let attachedPath = attachment.url.standardizedFileURL.path(percentEncoded: false)
+        let realCanonical = URL(fileURLWithPath: realPath).standardizedFileURL.path(percentEncoded: false)
+        #expect(
+            attachedPath == realCanonical,
+            "Attachment URL should be the symlink target. Got: \(attachedPath), expected: \(realCanonical)")
     }
 }

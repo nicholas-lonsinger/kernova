@@ -10,6 +10,7 @@ final class USBDeviceService: USBDeviceProviding {
     func attach(
         diskImagePath: String,
         readOnly: Bool,
+        desiredUUID: UUID?,
         to instance: VMInstance
     ) async throws -> USBDeviceInfo {
         guard let vm = instance.virtualMachine else {
@@ -53,6 +54,12 @@ final class USBDeviceService: USBDeviceProviding {
             throw error
         }
         let usbConfig = VZUSBMassStorageDeviceConfiguration(attachment: attachment)
+        if let desiredUUID {
+            // Override the framework-generated UUID so the live device
+            // matches the caller's persisted identity (e.g.
+            // `RemovableMediaItem.id`) for save-state restore matching.
+            usbConfig.uuid = desiredUUID
+        }
         let usbDevice = VZUSBMassStorageDevice(configuration: usbConfig)
 
         do {

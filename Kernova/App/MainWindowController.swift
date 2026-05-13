@@ -27,7 +27,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
                 lifecycleID: NSToolbarItem.Identifier("lifecycle"),
                 saveStateID: NSToolbarItem.Identifier("saveState"),
                 clipboardID: NSToolbarItem.Identifier("clipboard"),
-                removableMediaID: NSToolbarItem.Identifier("removableMedia"),
                 displayID: NSToolbarItem.Identifier("display"),
                 settingsToggleID: NSToolbarItem.Identifier("settingsToggle"),
                 checksPreparing: true,

@@ -424,8 +424,8 @@ struct VMLifecycleCoordinatorTests {
         #expect(usbService.lastAttachedReadOnly == true)
         #expect(info.path == "/tmp/test.dmg")
         #expect(info.readOnly == true)
-        #expect(instance.attachedUSBDevices.count == 1)
-        #expect(instance.attachedUSBDevices[0].id == info.id)
+        #expect(instance.liveRemovableMedia.count == 1)
+        #expect(instance.liveRemovableMedia[0].id == info.id)
     }
 
     @Test("detachUSBDevice forwards to USB device service")
@@ -442,7 +442,7 @@ struct VMLifecycleCoordinatorTests {
         try await coordinator.detachUSBDevice(info, from: instance)
 
         #expect(usbService.detachCallCount == 1)
-        #expect(instance.attachedUSBDevices.isEmpty)
+        #expect(instance.liveRemovableMedia.isEmpty)
     }
 
     @Test("attachUSBDevice propagates error from USB device service")
@@ -478,6 +478,6 @@ struct VMLifecycleCoordinatorTests {
         }
 
         // Device should still be tracked since detach failed
-        #expect(instance.attachedUSBDevices.count == 1)
+        #expect(instance.liveRemovableMedia.count == 1)
     }
 }
