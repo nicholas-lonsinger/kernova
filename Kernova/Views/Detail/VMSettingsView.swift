@@ -15,7 +15,7 @@ struct VMSettingsView: View {
     @State private var editingName = ""
     @State private var showingMicPermissionInfo = false
     @State private var micPermission: AVAuthorizationStatus = AVCaptureDevice.authorizationStatus(for: .audio)
-    @State private var showingCreateDisk = false
+    @State private var createDiskRequest: CreateDiskRequest?
     @State private var newDiskSizeInGB = 50
     @State private var diskToRemove: StorageDisk?
     @State private var showingRemoveDiskAlert = false
@@ -346,9 +346,9 @@ struct VMSettingsView: View {
 
                 Button("Create New Disk...") {
                     newDiskSizeInGB = instance.configuration.guestOS == .macOS ? 100 : 50
-                    showingCreateDisk = true
+                    createDiskRequest = CreateDiskRequest()
                 }
-                .popover(isPresented: $showingCreateDisk, arrowEdge: .bottom) {
+                .popover(item: $createDiskRequest, arrowEdge: .bottom) { _ in
                     createDiskPopover
                 }
             }
@@ -469,11 +469,11 @@ struct VMSettingsView: View {
 
             HStack {
                 Button("Cancel") {
-                    showingCreateDisk = false
+                    createDiskRequest = nil
                 }
                 Spacer()
                 Button("Create") {
-                    showingCreateDisk = false
+                    createDiskRequest = nil
                     viewModel.createStorageDisk(for: instance, sizeInGB: newDiskSizeInGB)
                 }
                 .buttonStyle(.borderedProminent)
@@ -758,4 +758,13 @@ struct VMSettingsView: View {
         .padding()
         .frame(width: 340)
     }
+}
+
+// RATIONALE: Fresh identity per click so `.popover(item:)` rebuilds the
+// content (and its child Picker) from scratch. `.popover(isPresented:)`
+// reuses the cached content view, and Picker's MenuPickerStyle leaves the
+// menu's checkmark on the prior binding value when the selection is
+// mutated in the same tick as the presentation toggle.
+private struct CreateDiskRequest: Identifiable {
+    let id = UUID()
 }
