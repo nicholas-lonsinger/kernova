@@ -724,7 +724,10 @@ struct VMInstanceTests {
         instance.configuration.agentInstallNudgeDismissed = true
 
         var persistCallCount = 0
-        instance.onConfigurationDidChange = { _ in persistCallCount += 1 }
+        instance.onUpdateConfiguration = { mutate in
+            mutate(&instance.configuration)
+            persistCallCount += 1
+        }
 
         instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
 
@@ -740,7 +743,10 @@ struct VMInstanceTests {
         let instance = makeMacOSInstanceWithAgentInstalled()
         // Default: agentInstallNudgeDismissed == false
         var persistCallCount = 0
-        instance.onConfigurationDidChange = { _ in persistCallCount += 1 }
+        instance.onUpdateConfiguration = { mutate in
+            mutate(&instance.configuration)
+            persistCallCount += 1
+        }
 
         instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
 
@@ -787,7 +793,10 @@ struct VMInstanceTests {
     func recordObservedPersistsOnChange() {
         let instance = makeMacOSInstanceWithAgentInstalled(lastSeen: "0.9.0")
         var savedConfig: VMConfiguration?
-        instance.onConfigurationDidChange = { savedConfig = $0.configuration }
+        instance.onUpdateConfiguration = { mutate in
+            mutate(&instance.configuration)
+            savedConfig = instance.configuration
+        }
 
         instance.recordObservedAgentVersion("0.9.2")
 
@@ -804,7 +813,10 @@ struct VMInstanceTests {
             .appendingPathComponent(config.id.uuidString, isDirectory: true)
         let instance = VMInstance(configuration: config, bundleURL: bundleURL, status: .running)
         var saveCount = 0
-        instance.onConfigurationDidChange = { _ in saveCount += 1 }
+        instance.onUpdateConfiguration = { mutate in
+            mutate(&instance.configuration)
+            saveCount += 1
+        }
 
         instance.recordObservedAgentVersion("0.9.0")
 
@@ -816,7 +828,10 @@ struct VMInstanceTests {
     func recordObservedSkipsRedundantWrites() {
         let instance = makeMacOSInstanceWithAgentInstalled(lastSeen: "0.9.2")
         var saveCount = 0
-        instance.onConfigurationDidChange = { _ in saveCount += 1 }
+        instance.onUpdateConfiguration = { mutate in
+            mutate(&instance.configuration)
+            saveCount += 1
+        }
 
         instance.recordObservedAgentVersion("0.9.2")
         instance.recordObservedAgentVersion("0.9.2")

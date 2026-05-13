@@ -33,21 +33,44 @@ struct VMSettingsView: View {
         viewModel.activeRename == .detail(instance.id)
     }
 
+    /// Returns a SwiftUI binding for a configuration property that routes
+    /// every write through `viewModel.updateConfiguration`.
+    ///
+    /// Centralizing the dispatch means there is exactly one place where
+    /// "config changed" side effects (persist to disk + apply live policy)
+    /// fire. The view becomes a pure consumer of these bindings and no
+    /// longer needs an `.onChange(of: instance.configuration)` observer.
+    private func configBinding<Value: Equatable>(
+        _ keyPath: WritableKeyPath<VMConfiguration, Value>
+    ) -> Binding<Value> {
+        Binding(
+            get: { instance.configuration[keyPath: keyPath] },
+            set: { newValue in
+                viewModel.updateConfiguration(of: instance) { $0[keyPath: keyPath] = newValue }
+            }
+        )
+    }
+
     /// Binding for `storageDisks` that materializes the implicit default
     /// main-disk entry when the configuration's list is `nil` / empty.
     ///
-    /// This means the first reorder / remove edit converts the implicit
-    /// default into a persisted explicit list, after which the user-visible
-    /// state always matches the stored data.
+    /// Writes flow through `updateConfiguration`. The first reorder /
+    /// remove edit converts the implicit default into a persisted
+    /// explicit list, after which the user-visible state always matches
+    /// the stored data.
     private var storageDiskBinding: Binding<[StorageDisk]> {
         Binding(
             get: {
                 if let disks = instance.configuration.storageDisks, !disks.isEmpty {
                     return disks
                 }
-                return viewModel.defaultStorageDisks(for: instance)
+                return VMLibraryViewModel.defaultStorageDisks(for: instance)
             },
-            set: { instance.configuration.storageDisks = $0.isEmpty ? nil : $0 }
+            set: { newValue in
+                viewModel.updateConfiguration(of: instance) { config in
+                    config.storageDisks = newValue.isEmpty ? nil : newValue
+                }
+            }
         )
     }
 
@@ -55,7 +78,11 @@ struct VMSettingsView: View {
     private var removableMediaBinding: Binding<[RemovableMediaItem]> {
         Binding(
             get: { instance.configuration.removableMedia ?? [] },
-            set: { instance.configuration.removableMedia = $0.isEmpty ? nil : $0 }
+            set: { newValue in
+                viewModel.updateConfiguration(of: instance) { config in
+                    config.removableMedia = newValue.isEmpty ? nil : newValue
+                }
+            }
         )
     }
 
@@ -63,7 +90,11 @@ struct VMSettingsView: View {
     private var sharedDirectoriesBinding: Binding<[SharedDirectory]> {
         Binding(
             get: { instance.configuration.sharedDirectories ?? [] },
-            set: { instance.configuration.sharedDirectories = $0.isEmpty ? nil : $0 }
+            set: { newValue in
+                viewModel.updateConfiguration(of: instance) { config in
+                    config.sharedDirectories = newValue.isEmpty ? nil : newValue
+                }
+            }
         )
     }
 
@@ -125,20 +156,6 @@ struct VMSettingsView: View {
                 Text("The disk image is stored inside the VM bundle. Move to Trash to delete it, or Remove from VM to delist the entry while keeping the file.")
             } else {
                 Text("This will delist the disk from the VM. The file at \(disk.path) is left alone.")
-            }
-        }
-        .onChange(of: instance.configuration) { old, new in
-            // RATIONALE: fields covered by `liveEditableFieldsChanged` can
-            // change while `isReadOnly` is true because their controls stay
-            // interactive (clipboard, guest-agent, removable-media list).
-            // Save when any of those change; for everything else, the
-            // read-only guard protects against spurious writes during
-            // instance swap-in transitions.
-            let liveChanged = VMConfiguration.liveEditableFieldsChanged(old: old, new: new)
-            guard !isReadOnly || liveChanged else { return }
-            viewModel.saveConfiguration(for: instance)
-            if liveChanged {
-                viewModel.applyLivePolicy(for: instance, old: old, new: new)
             }
         }
     }
@@ -469,14 +486,14 @@ struct VMSettingsView: View {
 
             Stepper(
                 "CPU Cores: \(instance.configuration.cpuCount)",
-                value: $instance.configuration.cpuCount,
+                value: configBinding(\.cpuCount),
                 in: os.minCPUCount...os.maxCPUCount
             )
             .disabled(isReadOnly)
 
             Stepper(
                 "Memory: \(instance.configuration.memorySizeInGB) GB",
-                value: $instance.configuration.memorySizeInGB,
+                value: configBinding(\.memorySizeInGB),
                 in: os.minMemoryInGB...os.maxMemoryInGB
             )
             .disabled(isReadOnly)
@@ -489,7 +506,7 @@ struct VMSettingsView: View {
     @ViewBuilder
     private var networkSection: some View {
         Section(header: lockableHeader("Network")) {
-            Toggle("Networking Enabled", isOn: $instance.configuration.networkEnabled)
+            Toggle("Networking Enabled", isOn: configBinding(\.networkEnabled))
             if let mac = instance.configuration.macAddress {
                 LabeledContent("MAC Address", value: mac)
             }
@@ -499,7 +516,7 @@ struct VMSettingsView: View {
     @ViewBuilder
     private var audioSection: some View {
         Section(header: lockableHeader("Audio")) {
-            Toggle("Microphone", isOn: $instance.configuration.microphoneEnabled)
+            Toggle("Microphone", isOn: configBinding(\.microphoneEnabled))
                 .disabled(isReadOnly)
             Text("Allows the guest to access the host microphone. Speaker output is always enabled.")
                 .font(.caption)
@@ -561,7 +578,7 @@ struct VMSettingsView: View {
         Section("Guest Agent") {
             Toggle(
                 "Forward guest logs",
-                isOn: $instance.configuration.agentLogForwardingEnabled
+                isOn: configBinding(\.agentLogForwardingEnabled)
             )
             Text(
                 "Streams `os.Logger` records from the macOS guest agent to the host so they appear in Console.app under `com.kernova.guest`. Off by default; can be toggled while the VM is running."
@@ -573,7 +590,11 @@ struct VMSettingsView: View {
                 "Show install reminder",
                 isOn: Binding(
                     get: { !instance.configuration.agentInstallNudgeDismissed },
-                    set: { instance.configuration.agentInstallNudgeDismissed = !$0 }
+                    set: { newValue in
+                        viewModel.updateConfiguration(of: instance) {
+                            $0.agentInstallNudgeDismissed = !newValue
+                        }
+                    }
                 )
             )
             Text(
@@ -587,7 +608,7 @@ struct VMSettingsView: View {
     @ViewBuilder
     private var clipboardSection: some View {
         Section("Clipboard") {
-            Toggle("Clipboard Sharing", isOn: $instance.configuration.clipboardSharingEnabled)
+            Toggle("Clipboard Sharing", isOn: configBinding(\.clipboardSharingEnabled))
             Text(
                 "Exchanges clipboard text between host and guest. macOS guests use the bundled Kernova guest agent — Kernova will offer to install or update it from the clipboard window. Linux guests need spice-vdagent installed via the guest's package manager."
             )

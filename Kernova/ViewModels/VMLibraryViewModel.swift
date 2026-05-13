@@ -554,8 +554,7 @@ final class VMLibraryViewModel {
             activeRename = nil
             return
         }
-        instance.configuration.name = trimmed
-        saveConfiguration(for: instance)
+        updateConfiguration(of: instance) { $0.name = trimmed }
         activeRename = nil
     }
 
@@ -576,16 +575,45 @@ final class VMLibraryViewModel {
         }
     }
 
-    /// Wires `instance.onConfigurationDidChange` so host-driven mutations
-    /// (e.g. the guest reporting a new agent version via `Hello`) flow back
-    /// through the storage abstraction.
+    /// Wires `instance.onUpdateConfiguration` so guest-driven mutations
+    /// (e.g. the guest reporting a new agent version via `Hello`, or the
+    /// post-start watchdog clearing the install-nudge dismissal) flow
+    /// through the centralized `updateConfiguration` dispatcher.
     ///
-    /// Called at every VMInstance
-    /// construction site in this view model.
+    /// Called at every `VMInstance` construction site in this view model.
     private func wirePersistence(for instance: VMInstance) {
-        instance.onConfigurationDidChange = { [weak self] inst in
-            self?.saveConfiguration(for: inst)
+        instance.onUpdateConfiguration = { [weak self] mutate in
+            self?.updateConfiguration(of: instance, mutate: mutate)
         }
+    }
+
+    /// The single entry point for any UI-driven or programmatic mutation of
+    /// `instance.configuration`.
+    ///
+    /// Applies the mutation, persists the result, and dispatches the live
+    /// policy / removable-media reconcile. No-ops when the mutation produces
+    /// the same value, so calls that don't actually change anything are
+    /// free.
+    ///
+    /// All settings-view bindings, the guest-agent installer mount/unmount,
+    /// storage-disk add/remove, display-window window-state writes, and
+    /// guest-driven mutations (via `instance.onUpdateConfiguration`) route
+    /// through here, so there is exactly one place where the "config
+    /// changed" side effects fire. For mutations to fields that don't
+    /// affect live policy (e.g. `displayPreference`, `lastSeenAgentVersion`),
+    /// the `applyLivePolicy` call returns early — there is no overhead beyond
+    /// the dispatch check.
+    func updateConfiguration(
+        of instance: VMInstance,
+        mutate: (inout VMConfiguration) -> Void
+    ) {
+        let old = instance.configuration
+        var new = old
+        mutate(&new)
+        guard new != old else { return }
+        instance.configuration = new
+        saveConfiguration(for: instance)
+        applyLivePolicy(for: instance, old: old, new: new)
     }
 
     /// Pushes a configuration change to a running VM.
@@ -596,9 +624,8 @@ final class VMLibraryViewModel {
     /// a runtime XHCI list-diff via `applyLiveRemovableMediaChange`;
     /// everything else is persisted-only and waits for next start.
     ///
-    /// Called from `VMSettingsView.onChange` after the new value has already
-    /// been written to `instance.configuration` and persisted via
-    /// `saveConfiguration(for:)`.
+    /// Called from `updateConfiguration` after the new value has been
+    /// written to `instance.configuration` and persisted to disk.
     func applyLivePolicy(for instance: VMInstance, old: VMConfiguration, new: VMConfiguration) {
         instance.applyLivePolicy(oldConfig: old, newConfig: new)
 
@@ -785,21 +812,13 @@ final class VMLibraryViewModel {
             return
         }
         Self.logger.notice("Mounting guest agent installer on '\(instance.name, privacy: .public)'")
-        let old = instance.configuration
-        var new = old
-        new.removableMedia = existing + [RemovableMediaItem(
-            path: path,
-            readOnly: true,
-            label: "Kernova Guest Agent"
-        )]
-        instance.configuration = new
-        saveConfiguration(for: instance)
-        // Menu/sidebar callers bypass VMSettingsView's onChange observer, so
-        // drive the live reconcile explicitly. (When called from a settings
-        // toggle the observer would fire applyLivePolicy too — calling it
-        // here is harmless because the second pass diffs against an unchanged
-        // tracking list and queues no work.)
-        applyLivePolicy(for: instance, old: old, new: new)
+        updateConfiguration(of: instance) { config in
+            config.removableMedia = (config.removableMedia ?? []) + [RemovableMediaItem(
+                path: path,
+                readOnly: true,
+                label: "Kernova Guest Agent"
+            )]
+        }
         installerMountedVMName = instance.name
         showInstallerMountedAlert = true
     }
@@ -812,8 +831,7 @@ final class VMLibraryViewModel {
     func dismissAgentInstallNudge(for instance: VMInstance) {
         guard !instance.configuration.agentInstallNudgeDismissed else { return }
         Self.logger.notice("User dismissed install-agent nudge for '\(instance.name, privacy: .public)'")
-        instance.configuration.agentInstallNudgeDismissed = true
-        saveConfiguration(for: instance)
+        updateConfiguration(of: instance) { $0.agentInstallNudgeDismissed = true }
     }
 
     /// Removes the bundled guest agent installer entry from
@@ -825,16 +843,12 @@ final class VMLibraryViewModel {
     func unmountGuestAgentInstaller(from instance: VMInstance) {
         guard let url = KernovaGuestAgentInfo.installerDiskImageURL else { return }
         let path = url.path(percentEncoded: false)
-        let existing = instance.configuration.removableMedia ?? []
-        guard existing.contains(where: { $0.path == path }) else { return }
+        guard (instance.configuration.removableMedia ?? []).contains(where: { $0.path == path }) else { return }
         Self.logger.notice("Unmounting guest agent installer from '\(instance.name, privacy: .public)'")
-        let old = instance.configuration
-        var new = old
-        let pruned = existing.filter { $0.path != path }
-        new.removableMedia = pruned.isEmpty ? nil : pruned
-        instance.configuration = new
-        saveConfiguration(for: instance)
-        applyLivePolicy(for: instance, old: old, new: new)
+        updateConfiguration(of: instance) { config in
+            let pruned = (config.removableMedia ?? []).filter { $0.path != path }
+            config.removableMedia = pruned.isEmpty ? nil : pruned
+        }
     }
 
     // MARK: - Storage Disks
@@ -845,10 +859,11 @@ final class VMLibraryViewModel {
     /// the underlying file is moved to Trash. External disks ignore the
     /// flag — they belong to the user, not the bundle.
     func removeStorageDisk(_ disk: StorageDisk, from instance: VMInstance, trashFile: Bool) {
-        var disks = instance.configuration.storageDisks ?? defaultStorageDisks(for: instance)
-        disks.removeAll { $0.id == disk.id }
-        instance.configuration.storageDisks = disks.isEmpty ? nil : disks
-        saveConfiguration(for: instance)
+        updateConfiguration(of: instance) { config in
+            var disks = config.storageDisks ?? Self.defaultStorageDisks(for: instance)
+            disks.removeAll { $0.id == disk.id }
+            config.storageDisks = disks.isEmpty ? nil : disks
+        }
 
         guard disk.isInternal && trashFile else { return }
         let diskURL = instance.bundleURL.appendingPathComponent(disk.path)
@@ -865,28 +880,14 @@ final class VMLibraryViewModel {
         }
     }
 
-    /// Reorders the storage disks list.
+    /// Returns the storage disks list to render when `storageDisks` is
+    /// `nil` / empty.
     ///
-    /// Materializes the implicit main-disk entry on first reorder so the
-    /// new order persists explicitly.
-    func reorderStorageDisks(
-        from source: IndexSet,
-        to destination: Int,
-        on instance: VMInstance
-    ) {
-        var disks = instance.configuration.storageDisks ?? defaultStorageDisks(for: instance)
-        disks.move(fromOffsets: source, toOffset: destination)
-        instance.configuration.storageDisks = disks
-        saveConfiguration(for: instance)
-    }
-
-    /// Returns the storage disks list, materializing the implicit
-    /// main-disk entry if the configuration's list is `nil` / empty.
-    ///
-    /// Used by the settings view so the user always sees the main disk
-    /// as a row, and by mutating helpers so the first edit converts the
-    /// implicit default into a persisted explicit list.
-    func defaultStorageDisks(for instance: VMInstance) -> [StorageDisk] {
+    /// The settings view uses this so the user always sees the main disk
+    /// as a row, and mutating helpers fall back to it when initializing
+    /// the list on first edit. Static because it depends only on the
+    /// bundle layout, not on view-model state.
+    static func defaultStorageDisks(for instance: VMInstance) -> [StorageDisk] {
         let layout = VMBundleLayout(bundleURL: instance.bundleURL)
         return [ConfigurationBuilder.defaultMainDisk(layout: layout)]
     }
@@ -916,10 +917,11 @@ final class VMLibraryViewModel {
                     isInternal: true,
                     kind: .virtio
                 )
-                var disks = instance.configuration.storageDisks ?? defaultStorageDisks(for: instance)
-                disks.append(disk)
-                instance.configuration.storageDisks = disks
-                saveConfiguration(for: instance)
+                updateConfiguration(of: instance) { config in
+                    var disks = config.storageDisks ?? Self.defaultStorageDisks(for: instance)
+                    disks.append(disk)
+                    config.storageDisks = disks
+                }
 
                 Self.logger.notice(
                     "Created in-bundle storage disk '\(disk.label, privacy: .public)' (\(sizeInGB, privacy: .public) GB) for VM '\(instance.name, privacy: .public)'"

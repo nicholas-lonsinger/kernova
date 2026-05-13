@@ -523,8 +523,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             return
         }
 
-        instance.configuration.displayPreference = .popOut
-        viewModel.saveConfiguration(for: instance)
+        viewModel.updateConfiguration(of: instance) { $0.displayPreference = .popOut }
         openDisplayWindow(for: instance, enterFullscreen: false)
     }
 
@@ -536,8 +535,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             return
         }
 
-        instance.configuration.displayPreference = .fullscreen
-        viewModel.saveConfiguration(for: instance)
+        viewModel.updateConfiguration(of: instance) { $0.displayPreference = .fullscreen }
         openDisplayWindow(for: instance, enterFullscreen: true)
     }
 
@@ -558,8 +556,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 guard let self else { return }
                 Task { await self.viewModel.resume(instance) }
             },
-            onSaveConfiguration: { [weak self] in
-                self?.viewModel.saveConfiguration(for: instance)
+            onUpdateConfiguration: { [weak self] mutate in
+                self?.viewModel.updateConfiguration(of: instance, mutate: mutate)
             }
         )
         displayWindows[vmID] = controller
@@ -583,20 +581,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                     NotificationCenter.default.removeObserver(token)
                 }
                 if let controller = self.displayWindows.removeValue(forKey: vmID) {
-                    // Always remember which display the VM was on
-                    if let displayID = controller.lastDisplayID {
-                        instance.configuration.lastFullscreenDisplayID = displayID
+                    self.viewModel.updateConfiguration(of: instance) { config in
+                        // Always remember which display the VM was on
+                        if let displayID = controller.lastDisplayID {
+                            config.lastFullscreenDisplayID = displayID
+                        }
+                        if !controller.closedProgrammatically {
+                            // User manually closed the display window
+                            config.displayPreference = .inline
+                            Self.logger.debug(
+                                "Cleared displayPreference for '\(instance.name, privacy: .public)' (user closed display window)"
+                            )
+                        }
                     }
-
-                    if !controller.closedProgrammatically {
-                        // User manually closed the display window
-                        instance.configuration.displayPreference = .inline
-                        Self.logger.debug(
-                            "Cleared displayPreference for '\(instance.name, privacy: .public)' (user closed display window)"
-                        )
-                    }
-
-                    self.viewModel.saveConfiguration(for: instance)
 
                     if controller.closedProgrammatically {
                         // VM stopped/errored/cold-paused — check if app should quit
