@@ -327,7 +327,7 @@ struct VMSettingsView: View {
 
     @ViewBuilder
     private var storageDiskSection: some View {
-        Section {
+        Section(header: lockableHeader("Storage Disks")) {
             let disks = storageDiskBinding.wrappedValue
 
             ForEach(storageDiskBinding) { $disk in
@@ -375,8 +375,6 @@ struct VMSettingsView: View {
                     }
                 }
             }
-        } header: {
-            lockableHeader("Storage Disks")
         }
     }
 
@@ -630,7 +628,7 @@ struct VMSettingsView: View {
 
     @ViewBuilder
     private var sharedDirectoriesSection: some View {
-        Section {
+        Section(header: lockableHeader("Shared Directories")) {
             let directories = sharedDirectoriesBinding.wrappedValue
 
             if directories.isEmpty {
@@ -707,8 +705,6 @@ struct VMSettingsView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
-        } header: {
-            lockableHeader("Shared Directories")
         }
     }
 

@@ -325,33 +325,40 @@ struct ConfigurationBuilder: Sendable {
 
         var built: [VZStorageDeviceConfiguration] = []
         for disk in disks {
-            let resolvedURL = try self.resolvedURL(for: disk, bundleURL: bundleURL)
-            guard FileManager.default.fileExists(atPath: resolvedURL.path(percentEncoded: false)) else {
-                Self.logger.error(
-                    "Storage disk '\(disk.label, privacy: .public)' not found at '\(resolvedURL.path(percentEncoded: false), privacy: .public)'"
-                )
-                throw ConfigurationBuilderError.storageDiskNotFound(disk.path, disk.label)
-            }
-
-            // Non-internal external disks go through the full PathValidation
-            // pipeline (symlink resolution, writable check). Internal disks
-            // are bundle-managed; the existence check above is sufficient.
-            if !disk.isInternal {
-                _ = try Self.resolveFile(
+            // Resolve the on-disk URL VZ will attach. Internal disks are
+            // bundle-relative and go through `resolvedURL(for:bundleURL:)`
+            // for path-traversal containment + existence. External disks
+            // go through the full `PathValidation.resolveFile` pipeline
+            // (existence, type check, symlink resolution, writability);
+            // we then hand VZ the symlink-resolved URL so the attachment
+            // doesn't depend on a host-side symlink that could break at
+            // runtime.
+            let attachmentURL: URL
+            if disk.isInternal {
+                attachmentURL = try self.resolvedURL(for: disk, bundleURL: bundleURL)
+                guard FileManager.default.fileExists(atPath: attachmentURL.path(percentEncoded: false)) else {
+                    Self.logger.error(
+                        "Storage disk '\(disk.label, privacy: .public)' not found at '\(attachmentURL.path(percentEncoded: false), privacy: .public)'"
+                    )
+                    throw ConfigurationBuilderError.storageDiskNotFound(disk.path, disk.label)
+                }
+            } else {
+                let resolved = try Self.resolveFile(
                     at: disk.path, context: "Storage disk '\(disk.label)'",
                     requireWritable: !disk.readOnly,
                     notFound: .storageDiskNotFound(disk.path, disk.label),
                     isDirectory: .storageDiskPathIsDirectory(disk.path, disk.label),
                     notWritable: .storageDiskNotWritable(disk.path, disk.label))
+                attachmentURL = resolved.url
             }
 
             let attachment: VZDiskImageStorageDeviceAttachment
             do {
                 attachment = try VZDiskImageStorageDeviceAttachment(
-                    url: resolvedURL, readOnly: disk.readOnly)
+                    url: attachmentURL, readOnly: disk.readOnly)
             } catch {
                 Self.logger.error(
-                    "Failed to attach storage disk '\(disk.label, privacy: .public)' at '\(resolvedURL.path(percentEncoded: false), privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                    "Failed to attach storage disk '\(disk.label, privacy: .public)' at '\(attachmentURL.path(percentEncoded: false), privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
                 throw error
             }

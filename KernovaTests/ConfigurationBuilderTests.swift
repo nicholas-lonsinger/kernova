@@ -1061,4 +1061,60 @@ struct ConfigurationBuilderTests {
             ConfigurationBuilder.defaultMainDisk(layout: aLayout).id
                 != ConfigurationBuilder.defaultMainDisk(layout: bLayout).id)
     }
+
+    // MARK: - Symlink Resolution for External Storage Disks
+
+    @Test("External storage disk via symlink attaches to symlink target, not symlink path")
+    func externalStorageDiskFollowsSymlink() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        // Real file in a scratch directory outside the bundle, plus a
+        // symlink to it. The builder must hand VZ the resolved target
+        // URL so the attachment doesn't depend on the symlink surviving.
+        let scratchDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: scratchDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: scratchDir) }
+
+        // Need a 1 MB zeroed raw disk image — VZ rejects smaller / empty
+        // files as "disk image format not recognized" inside the
+        // `VZDiskImageStorageDeviceAttachment` constructor.
+        let realPath = scratchDir.appendingPathComponent("real.asif").path(percentEncoded: false)
+        FileManager.default.createFile(atPath: realPath, contents: Data(count: 1_048_576))
+        let symlinkPath = scratchDir.appendingPathComponent("symlink.asif").path(percentEncoded: false)
+        try FileManager.default.createSymbolicLink(atPath: symlinkPath, withDestinationPath: realPath)
+
+        // The bundle's own Disk.asif also needs to be sized for the same
+        // reason; replace the zero-byte stub created by makeTempBundle.
+        let mainDiskURL = VMBundleLayout(bundleURL: bundleURL).diskImageURL
+        try? FileManager.default.removeItem(at: mainDiskURL)
+        FileManager.default.createFile(
+            atPath: mainDiskURL.path(percentEncoded: false), contents: Data(count: 1_048_576))
+
+        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        config.storageDisks = [
+            StorageDisk(
+                path: "Disk.asif", readOnly: false, label: "Main Disk",
+                isInternal: true, kind: .virtio),
+            StorageDisk(
+                path: symlinkPath, readOnly: true, label: "Via Symlink",
+                isInternal: false, kind: .virtio),
+        ]
+
+        let builder = ConfigurationBuilder()
+        // `assemble(validate: false)` skips VZ's "is this a real disk image?"
+        // check, which would otherwise reject the tiny stub file.
+        let result = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
+        let storageDevices = result.configuration.storageDevices
+        #expect(storageDevices.count == 2)
+        let viaSymlink = try #require(storageDevices.last as? VZVirtioBlockDeviceConfiguration)
+        let attachment = try #require(viaSymlink.attachment as? VZDiskImageStorageDeviceAttachment)
+
+        let attachedPath = attachment.url.standardizedFileURL.path(percentEncoded: false)
+        let realCanonical = URL(fileURLWithPath: realPath).standardizedFileURL.path(percentEncoded: false)
+        #expect(
+            attachedPath == realCanonical,
+            "Attachment URL should be the symlink target. Got: \(attachedPath), expected: \(realCanonical)")
+    }
 }
