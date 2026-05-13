@@ -15,11 +15,23 @@ struct VMSettingsView: View {
     @State private var editingName = ""
     @State private var showingMicPermissionInfo = false
     @State private var micPermission: AVAuthorizationStatus = AVCaptureDevice.authorizationStatus(for: .audio)
-    @State private var createDiskRequest: CreateDiskRequest?
-    @State private var newDiskSizeInGB = 50
+    @State private var showingCreateDisk = false
+    @State private var newDiskSizeInGB: Int
     @State private var diskToRemove: StorageDisk?
     @State private var showingRemoveDiskAlert = false
     @FocusState private var isNameFieldFocused: Bool
+
+    init(instance: VMInstance, viewModel: VMLibraryViewModel, isReadOnly: Bool) {
+        self.instance = instance
+        self.viewModel = viewModel
+        self.isReadOnly = isReadOnly
+        // Seed the picker selection from the guest OS default so the popover's
+        // MenuPickerStyle renders the checkmark on the same value its closed-state
+        // button displays. Mutating @State in the same tick as the popover toggle
+        // updates the button label but leaves the underlying NSPopupButton's
+        // selectedTag on the initial @State value.
+        _newDiskSizeInGB = State(initialValue: instance.configuration.guestOS.defaultDiskSizeInGB)
+    }
 
     private var currentMicPermission: AVAuthorizationStatus {
         AVCaptureDevice.authorizationStatus(for: .audio)
@@ -159,6 +171,13 @@ struct VMSettingsView: View {
             } else {
                 Text("This will delist the disk from the VM. The file at \(disk.path) is left alone.")
             }
+        }
+        // VMSettingsView shares one identity across sibling VMs in the sidebar
+        // (same position in the hierarchy), so @State persists when the user
+        // switches VMs. Reset the picker default so the popover opens with the
+        // new VM's OS default, not the previous VM's.
+        .onChange(of: instance.id) {
+            newDiskSizeInGB = instance.configuration.guestOS.defaultDiskSizeInGB
         }
     }
 
@@ -345,10 +364,9 @@ struct VMSettingsView: View {
                 }
 
                 Button("Create New Disk...") {
-                    newDiskSizeInGB = instance.configuration.guestOS == .macOS ? 100 : 50
-                    createDiskRequest = CreateDiskRequest()
+                    showingCreateDisk = true
                 }
-                .popover(item: $createDiskRequest, arrowEdge: .bottom) { _ in
+                .popover(isPresented: $showingCreateDisk, arrowEdge: .bottom) {
                     createDiskPopover
                 }
             }
@@ -469,11 +487,11 @@ struct VMSettingsView: View {
 
             HStack {
                 Button("Cancel") {
-                    createDiskRequest = nil
+                    showingCreateDisk = false
                 }
                 Spacer()
                 Button("Create") {
-                    createDiskRequest = nil
+                    showingCreateDisk = false
                     viewModel.createStorageDisk(for: instance, sizeInGB: newDiskSizeInGB)
                 }
                 .buttonStyle(.borderedProminent)
@@ -758,13 +776,4 @@ struct VMSettingsView: View {
         .padding()
         .frame(width: 340)
     }
-}
-
-// RATIONALE: Fresh identity per click so `.popover(item:)` rebuilds the
-// content (and its child Picker) from scratch. `.popover(isPresented:)`
-// reuses the cached content view, and Picker's MenuPickerStyle leaves the
-// menu's checkmark on the prior binding value when the selection is
-// mutated in the same tick as the presentation toggle.
-private struct CreateDiskRequest: Identifiable {
-    let id = UUID()
 }
