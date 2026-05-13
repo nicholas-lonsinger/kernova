@@ -677,11 +677,13 @@ final class VMLibraryViewModel {
     /// - present in target but not tracking → attach
     /// - present in both with changed `path` or `readOnly` → detach + reattach
     ///
-    /// `deviceNotFound` and `noVirtualMachine` errors are handled as
-    /// confirmed-gone / silent bail respectively (this is also what
-    /// covers the case where the user ejected the disc from inside the
-    /// guest). Other errors surface via `presentError` and the persisted
-    /// config is left as-is — the user can retry with another edit.
+    /// On unexpected detach or attach errors, the persisted config is
+    /// rolled back to match `instance.liveRemovableMedia` so the UI snaps
+    /// to what is actually attached and the user sees an alert describing
+    /// the failure. `deviceNotFound` and `noVirtualMachine` errors are
+    /// handled as confirmed-gone / silent bail respectively (this is also
+    /// what covers the case where the user ejected the disc from inside
+    /// the guest).
     private func applyLiveRemovableMediaChange(
         for instance: VMInstance,
         target: [RemovableMediaItem]
@@ -693,6 +695,21 @@ final class VMLibraryViewModel {
         // keep the first occurrence so the reconcile can still make progress.
         let targetByID = Dictionary(target.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let trackedByID = Dictionary(tracked.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+
+        // Lookup table used by the rollback path so a failed reconcile can
+        // rebuild `config.removableMedia` from whatever is still in live
+        // tracking. Tracked entries win over target entries on id collisions
+        // so a mutated row that failed mid-swap restores its original
+        // path/readOnly; new ids only present in target supply metadata
+        // for successful attaches.
+        var rollbackLookup: [UUID: RemovableMediaItem] = [:]
+        for info in tracked {
+            rollbackLookup[info.id] = RemovableMediaItem(
+                id: info.id, path: info.path, readOnly: info.readOnly)
+        }
+        for item in target where rollbackLookup[item.id] == nil {
+            rollbackLookup[item.id] = item
+        }
 
         // Classify each id by what action it needs.
         var toDetach: [USBDeviceInfo] = []
@@ -707,7 +724,9 @@ final class VMLibraryViewModel {
                 toAttach.append(desired)
             }
         }
-        for targetItem in target where trackedByID[targetItem.id] == nil {
+        // Iterate the deduped dictionary, not `target`, so a config with
+        // duplicate ids can't queue two attaches for the same UUID.
+        for targetItem in targetByID.values where trackedByID[targetItem.id] == nil {
             toAttach.append(targetItem)
         }
 
@@ -734,6 +753,7 @@ final class VMLibraryViewModel {
                 Self.logger.error(
                     "Removable media detach failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
+                reconcileConfigToLiveState(for: instance, lookup: rollbackLookup)
                 presentError(error)
                 return
             }
@@ -759,10 +779,35 @@ final class VMLibraryViewModel {
                 Self.logger.error(
                     "Removable media attach failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
+                reconcileConfigToLiveState(for: instance, lookup: rollbackLookup)
                 presentError(error)
                 return
             }
         }
+    }
+
+    /// Rolls `instance.configuration.removableMedia` back to whatever is
+    /// actually attached in `liveRemovableMedia`.
+    ///
+    /// Called from the reconcile error paths so the user sees an alert
+    /// AND a UI that matches reality, rather than a persisted config
+    /// describing devices the framework refused to attach (or refused to
+    /// detach). The write bypasses `updateConfiguration` to avoid
+    /// re-entering the reconcile pipeline — we want to land on the
+    /// rolled-back state, not retry it.
+    private func reconcileConfigToLiveState(
+        for instance: VMInstance,
+        lookup: [UUID: RemovableMediaItem]
+    ) {
+        let rolled = instance.liveRemovableMedia.compactMap { lookup[$0.id] }
+        var newConfig = instance.configuration
+        newConfig.removableMedia = rolled.isEmpty ? nil : rolled
+        guard newConfig != instance.configuration else { return }
+        instance.configuration = newConfig
+        saveConfiguration(for: instance)
+        Self.logger.notice(
+            "Rolled removable media config for '\(instance.name, privacy: .public)' back to live state after reconcile error"
+        )
     }
 
     // MARK: - USB Device Management

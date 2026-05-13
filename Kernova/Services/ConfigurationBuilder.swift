@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Virtualization
 import os
@@ -440,13 +441,36 @@ struct ConfigurationBuilder: Sendable {
     /// implicit main disk into an explicit list entry on first edit.
     static func defaultMainDisk(layout: VMBundleLayout) -> StorageDisk {
         StorageDisk(
-            id: UUID(),
+            id: stableMainDiskID(forBundleAt: layout.bundleURL),
             path: layout.diskImageURL.lastPathComponent,
             readOnly: false,
             label: "Main Disk",
             isInternal: true,
             kind: .virtio
         )
+    }
+
+    /// Deterministic UUID for the synthesized main disk, derived from
+    /// the bundle path.
+    ///
+    /// The synthesizer fires whenever `storageDisks` is nil/empty.
+    /// Without stable identity, SwiftUI's `ForEach` would tear down the
+    /// main-disk row on every re-render, and `removeStorageDisk`'s
+    /// entry-lookup-by-id would miss the row the user just clicked —
+    /// silently no-op'ing the entry removal while still trashing the
+    /// underlying file. Once the user makes any edit, the list is
+    /// persisted with this id and the synthesizer is no longer
+    /// consulted.
+    private static func stableMainDiskID(forBundleAt bundleURL: URL) -> UUID {
+        let digest = SHA256.hash(data: Data(bundleURL.path.utf8))
+        let bytes = Array(digest.prefix(16))
+        return UUID(
+            uuid: (
+                bytes[0], bytes[1], bytes[2], bytes[3],
+                bytes[4], bytes[5], bytes[6], bytes[7],
+                bytes[8], bytes[9], bytes[10], bytes[11],
+                bytes[12], bytes[13], bytes[14], bytes[15]
+            ))
     }
 
     private func configureNetwork(_ vzConfig: VZVirtualMachineConfiguration, config: VMConfiguration) {

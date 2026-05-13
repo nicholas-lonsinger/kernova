@@ -1007,4 +1007,58 @@ struct ConfigurationBuilderTests {
             }
         }
     }
+
+    // MARK: - Path-Traversal Containment
+
+    @Test("Internal storage disk path with .. escape is rejected as storageDiskNotFound")
+    func internalStorageDiskRejectsPathTraversal() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        // Marking the entry `isInternal: true` opts into bundle-containment
+        // validation. A `..` segment that resolves outside the bundle must
+        // be rejected before the framework ever opens the file.
+        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        config.storageDisks = [
+            StorageDisk(
+                path: "../escape/passwd",
+                readOnly: true,
+                label: "evil",
+                isInternal: true,
+                kind: .virtio
+            )
+        ]
+
+        let builder = ConfigurationBuilder()
+        #expect {
+            try builder.build(from: config, bundleURL: bundleURL)
+        } throws: { error in
+            guard let e = error as? ConfigurationBuilderError,
+                case .storageDiskNotFound = e
+            else { return false }
+            return true
+        }
+    }
+
+    // MARK: - Synthetic Main-Disk Identity
+
+    @Test("defaultMainDisk produces a stable UUID for the same bundle URL")
+    func defaultMainDiskUUIDIsStableAcrossCalls() {
+        let bundleURL = URL(fileURLWithPath: "/tmp/kernova-test-stable.kernova")
+        let layout = VMBundleLayout(bundleURL: bundleURL)
+        let first = ConfigurationBuilder.defaultMainDisk(layout: layout)
+        let second = ConfigurationBuilder.defaultMainDisk(layout: layout)
+        #expect(first.id == second.id)
+    }
+
+    @Test("defaultMainDisk produces distinct UUIDs for distinct bundle URLs")
+    func defaultMainDiskUUIDsDifferAcrossBundles() {
+        let aLayout = VMBundleLayout(
+            bundleURL: URL(fileURLWithPath: "/tmp/kernova-test-a.kernova"))
+        let bLayout = VMBundleLayout(
+            bundleURL: URL(fileURLWithPath: "/tmp/kernova-test-b.kernova"))
+        #expect(
+            ConfigurationBuilder.defaultMainDisk(layout: aLayout).id
+                != ConfigurationBuilder.defaultMainDisk(layout: bLayout).id)
+    }
 }

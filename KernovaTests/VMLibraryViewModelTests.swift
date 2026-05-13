@@ -2046,4 +2046,170 @@ struct VMLibraryViewModelTests {
         #expect(diskService.lastCreatedSizeInGB == 32)
         #expect(!viewModel.showError)
     }
+
+    // MARK: - Reconcile Rollback
+
+    @Test("Reorder-only removableMedia change triggers no detach/attach")
+    func liveRemovableReorderIsNoOp() async throws {
+        let mock = MockUSBDeviceService()
+        let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
+        let instance = makeInstance()
+        instance.status = .running
+        let idA = UUID()
+        let idB = UUID()
+        instance.liveRemovableMedia = [
+            USBDeviceInfo(id: idA, path: "/tmp/a.iso", readOnly: true),
+            USBDeviceInfo(id: idB, path: "/tmp/b.iso", readOnly: true),
+        ]
+        var old = instance.configuration
+        old.removableMedia = [
+            RemovableMediaItem(id: idA, path: "/tmp/a.iso", readOnly: true),
+            RemovableMediaItem(id: idB, path: "/tmp/b.iso", readOnly: true),
+        ]
+        instance.configuration = old
+        viewModel.instances.append(instance)
+
+        var new = old
+        new.removableMedia = [
+            // Swapped order; identical items.
+            RemovableMediaItem(id: idB, path: "/tmp/b.iso", readOnly: true),
+            RemovableMediaItem(id: idA, path: "/tmp/a.iso", readOnly: true),
+        ]
+
+        viewModel.applyLivePolicy(for: instance, old: old, new: new)
+        // Drain whatever the reconcile Task may have scheduled.
+        for _ in 0..<20 { await Task.yield() }
+
+        #expect(mock.detachCallCount == 0)
+        #expect(mock.attachCallCount == 0)
+        #expect(instance.liveRemovableMedia.count == 2)
+        #expect(!viewModel.showError)
+    }
+
+    @Test("Failed detach rolls config back to live state (item stays attached)")
+    func liveRemovableRollbackOnDetachFailure() async throws {
+        struct TransientError: Error {}
+        let mock = MockUSBDeviceService()
+        mock.detachError = TransientError()
+        let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
+        let instance = makeInstance()
+        instance.status = .running
+        let id = UUID()
+        instance.liveRemovableMedia = [
+            USBDeviceInfo(id: id, path: "/tmp/old.iso", readOnly: true)
+        ]
+        var old = instance.configuration
+        old.removableMedia = [
+            RemovableMediaItem(id: id, path: "/tmp/old.iso", readOnly: true)
+        ]
+        instance.configuration = old
+        viewModel.instances.append(instance)
+
+        // Simulate `updateConfiguration` having already persisted the
+        // user's removal intent — config says "no media", live still has it.
+        var new = old
+        new.removableMedia = nil
+        instance.configuration = new
+
+        viewModel.applyLivePolicy(for: instance, old: old, new: new)
+        while !viewModel.showError { await Task.yield() }
+        for _ in 0..<5 { await Task.yield() }
+
+        // Detach failed → device still mounted → config must reflect that.
+        let rolled = try #require(instance.configuration.removableMedia)
+        #expect(rolled.count == 1)
+        #expect(rolled.first?.id == id)
+        #expect(rolled.first?.path == "/tmp/old.iso")
+        #expect(rolled.first?.readOnly == true)
+    }
+
+    @Test("Failed attach rolls config back to live state (entry strips from config)")
+    func liveRemovableRollbackOnAttachFailure() async throws {
+        struct TransientError: Error {}
+        let mock = MockUSBDeviceService()
+        mock.attachError = TransientError()
+        let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
+        let instance = makeInstance()
+        instance.status = .running
+        let id = UUID()
+        instance.liveRemovableMedia = []
+        var old = instance.configuration
+        old.removableMedia = nil
+        instance.configuration = old
+        viewModel.instances.append(instance)
+
+        // The user added a removable item; updateConfiguration already
+        // persisted it before applyLivePolicy fired.
+        var new = old
+        new.removableMedia = [
+            RemovableMediaItem(id: id, path: "/tmp/missing.iso", readOnly: true)
+        ]
+        instance.configuration = new
+
+        viewModel.applyLivePolicy(for: instance, old: old, new: new)
+        while !viewModel.showError { await Task.yield() }
+        for _ in 0..<5 { await Task.yield() }
+
+        // Attach failed → device never mounted → config rolled back to nil.
+        #expect(instance.configuration.removableMedia == nil)
+    }
+
+    @Test("Failed swap rollback restores the original entry, not the target")
+    func liveRemovableRollbackOnSwapFailureRestoresOriginal() async throws {
+        struct TransientError: Error {}
+        let mock = MockUSBDeviceService()
+        mock.detachError = TransientError()
+        let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
+        let instance = makeInstance()
+        instance.status = .running
+        let id = UUID()
+        instance.liveRemovableMedia = [
+            USBDeviceInfo(id: id, path: "/tmp/old.iso", readOnly: true)
+        ]
+        var old = instance.configuration
+        old.removableMedia = [
+            RemovableMediaItem(id: id, path: "/tmp/old.iso", readOnly: true)
+        ]
+        instance.configuration = old
+        viewModel.instances.append(instance)
+
+        // Same id, different path (path swap) — and `updateConfiguration`
+        // has already persisted the target.
+        var new = old
+        new.removableMedia = [
+            RemovableMediaItem(id: id, path: "/tmp/new.iso", readOnly: true)
+        ]
+        instance.configuration = new
+
+        viewModel.applyLivePolicy(for: instance, old: old, new: new)
+        while !viewModel.showError { await Task.yield() }
+        for _ in 0..<5 { await Task.yield() }
+
+        let rolled = try #require(instance.configuration.removableMedia)
+        #expect(rolled.count == 1)
+        #expect(rolled.first?.id == id)
+        // Critical: path is the ORIGINAL one, not the failed-swap target.
+        #expect(rolled.first?.path == "/tmp/old.iso")
+    }
+
+    @Test("removeStorageDisk on synthetic main disk leaves storageDisks empty")
+    func removeSyntheticMainDiskClearsList() {
+        // Regression test: with a non-deterministic synthesized UUID, the
+        // remove path would no-op the entry removal (UUID mismatch between
+        // binding and removeStorageDisk's own re-synthesis) while still
+        // trashing `Disk.asif` — bricking the VM.
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        instance.configuration.storageDisks = nil
+        viewModel.instances.append(instance)
+
+        let layout = VMBundleLayout(bundleURL: instance.bundleURL)
+        let synthetic = ConfigurationBuilder.defaultMainDisk(layout: layout)
+
+        viewModel.removeStorageDisk(synthetic, from: instance, trashFile: false)
+
+        // Either nil (the empty-collapses-to-nil persistence) or empty.
+        let surviving = instance.configuration.storageDisks ?? []
+        #expect(surviving.isEmpty)
+    }
 }
