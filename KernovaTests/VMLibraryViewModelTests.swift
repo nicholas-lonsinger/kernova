@@ -1966,4 +1966,84 @@ struct VMLibraryViewModelTests {
         #expect(instance.liveRemovableMedia.first?.path == "/tmp/C.iso")
         #expect(instance.liveRemovableMedia.first?.id == configC.removableMedia?.first?.id)
     }
+
+    // MARK: - Storage Disk Helpers
+
+    @Test("removeStorageDisk with trashFile=false removes the entry without touching the file")
+    func removeStorageDiskKeepsFile() {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        let mainDisk = StorageDisk(
+            path: "Disk.asif", readOnly: false, label: "Main Disk",
+            isInternal: true, kind: .virtio
+        )
+        let extra = StorageDisk(
+            path: "AdditionalDisks/\(UUID().uuidString).asif",
+            readOnly: false, label: "Extra", isInternal: true, kind: .virtio
+        )
+        instance.configuration.storageDisks = [mainDisk, extra]
+        viewModel.instances.append(instance)
+
+        viewModel.removeStorageDisk(extra, from: instance, trashFile: false)
+
+        let disks = try? #require(instance.configuration.storageDisks)
+        #expect(disks?.count == 1)
+        #expect(disks?.first?.id == mainDisk.id)
+        // No presentError side effect — no file op was attempted.
+        #expect(!viewModel.showError)
+    }
+
+    @Test("removeStorageDisk on external disk ignores trashFile flag")
+    func removeStorageDiskExternalIgnoresTrashFlag() {
+        // External disks aren't bundle-owned — the trashFile branch only
+        // applies to `isInternal == true`. Passing `true` for an external
+        // disk should be a no-op for file handling.
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        let external = StorageDisk(
+            path: "/some/host/path/data.img",
+            readOnly: false, label: "External", isInternal: false, kind: .virtio
+        )
+        instance.configuration.storageDisks = [external]
+        viewModel.instances.append(instance)
+
+        viewModel.removeStorageDisk(external, from: instance, trashFile: true)
+
+        #expect(instance.configuration.storageDisks == nil)
+        // No error from a missing-file trash attempt — the branch was skipped.
+        #expect(!viewModel.showError)
+    }
+
+    @Test("createStorageDisk appends an internal virtio disk with the expected fields")
+    func createStorageDiskAppends() async throws {
+        let (viewModel, _, diskService, _, _) = makeViewModel()
+        let instance = makeInstance()
+        viewModel.instances.append(instance)
+
+        // The viewmodel creates a real directory inside `instance.bundleURL`,
+        // so set up a unique scratch bundle and clean it up.
+        try FileManager.default.createDirectory(at: instance.bundleURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
+
+        viewModel.createStorageDisk(for: instance, sizeInGB: 32)
+
+        // The disk-creation Task is async; spin until the config materializes.
+        while instance.configuration.storageDisks == nil { await Task.yield() }
+
+        let disks = try #require(instance.configuration.storageDisks)
+        // Pre-existing default main disk + the newly-created one.
+        #expect(disks.count == 2)
+
+        let newDisk = try #require(disks.last)
+        #expect(newDisk.isInternal == true)
+        #expect(newDisk.kind == .virtio)
+        #expect(newDisk.readOnly == false)
+        #expect(newDisk.path.hasPrefix("AdditionalDisks/"))
+        #expect(newDisk.path.hasSuffix(".asif"))
+        #expect(newDisk.label == "32 GB Disk")
+
+        #expect(diskService.createDiskImageCallCount == 1)
+        #expect(diskService.lastCreatedSizeInGB == 32)
+        #expect(!viewModel.showError)
+    }
 }

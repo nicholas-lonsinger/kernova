@@ -687,8 +687,12 @@ final class VMLibraryViewModel {
         target: [RemovableMediaItem]
     ) async {
         let tracked = instance.liveRemovableMedia
-        let targetByID: [UUID: RemovableMediaItem] = Dictionary(uniqueKeysWithValues: target.map { ($0.id, $0) })
-        let trackedByID: [UUID: USBDeviceInfo] = Dictionary(uniqueKeysWithValues: tracked.map { ($0.id, $0) })
+        // Tolerate duplicate ids defensively — a hand-edited or corrupted
+        // config.json could in theory ship two `removableMedia` entries with
+        // the same UUID. Crashing here would take the host app down; instead,
+        // keep the first occurrence so the reconcile can still make progress.
+        let targetByID = Dictionary(target.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let trackedByID = Dictionary(tracked.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
 
         // Classify each id by what action it needs.
         var toDetach: [USBDeviceInfo] = []

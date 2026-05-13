@@ -270,11 +270,36 @@ struct ConfigurationBuilder: Sendable {
     /// Internal disks are bundle-relative; external disks carry an absolute
     /// host path. The main bundle disk is the conventional internal entry
     /// with `path == "Disk.asif"`.
-    private func resolvedURL(for disk: StorageDisk, bundleURL: URL) -> URL {
+    ///
+    /// For internal disks the resolved URL must stay within the bundle
+    /// directory — a `..`-traversing path in a hand-edited / corrupted
+    /// `config.json` would otherwise escape the sandbox and read from
+    /// arbitrary host locations.
+    private func resolvedURL(for disk: StorageDisk, bundleURL: URL) throws -> URL {
         if disk.isInternal {
-            return bundleURL.appendingPathComponent(disk.path)
+            let bundlePath = bundleURL.standardizedFileURL.path(percentEncoded: false)
+            let resolved = bundleURL.appendingPathComponent(disk.path).standardizedFileURL
+            let resolvedPath = resolved.path(percentEncoded: false)
+            // Require the resolved path to be inside the bundle. The trailing
+            // separator on the prefix guards against bundle "Foo" matching a
+            // sibling "Foobar".
+            let bundlePrefix = bundlePath.hasSuffix("/") ? bundlePath : bundlePath + "/"
+            guard resolvedPath.hasPrefix(bundlePrefix) else {
+                Self.logger.fault(
+                    "Internal storage disk '\(disk.label, privacy: .public)' resolves outside the bundle: \(resolvedPath, privacy: .public)"
+                )
+                throw ConfigurationBuilderError.storageDiskNotFound(disk.path, disk.label)
+            }
+            return resolved
         }
         return URL(fileURLWithPath: disk.path)
+    }
+
+    /// Returns `true` when this disk represents the bundle's primary disk
+    /// (`Disk.asif`) — the implicit "main disk" that historically had no
+    /// `VZVirtioBlockDeviceConfiguration.blockDeviceIdentifier` set on it.
+    private static func isMainBundleDisk(_ disk: StorageDisk, layout: VMBundleLayout) -> Bool {
+        disk.isInternal && disk.path == layout.diskImageURL.lastPathComponent
     }
 
     /// Builds the ordered `storageDevices` array from `config.storageDisks`.
@@ -299,7 +324,7 @@ struct ConfigurationBuilder: Sendable {
 
         var built: [VZStorageDeviceConfiguration] = []
         for disk in disks {
-            let resolvedURL = resolvedURL(for: disk, bundleURL: bundleURL)
+            let resolvedURL = try self.resolvedURL(for: disk, bundleURL: bundleURL)
             guard FileManager.default.fileExists(atPath: resolvedURL.path(percentEncoded: false)) else {
                 Self.logger.error(
                     "Storage disk '\(disk.label, privacy: .public)' not found at '\(resolvedURL.path(percentEncoded: false), privacy: .public)'"
@@ -333,7 +358,17 @@ struct ConfigurationBuilder: Sendable {
             switch disk.kind {
             case .virtio:
                 let blockDevice = VZVirtioBlockDeviceConfiguration(attachment: attachment)
-                blockDevice.blockDeviceIdentifier = disk.blockDeviceIdentifier
+                // Leave the main bundle disk's `blockDeviceIdentifier` unset
+                // to match pre-refactor behavior: Linux guests historically
+                // had no `/dev/disk/by-id/virtio-*` symlink for the primary
+                // disk. Setting it from the synthesized default's fresh UUID
+                // would make the by-id name vary across launches, which
+                // would break any guest-side `/etc/fstab` entry that relied
+                // on it. User-added disks DO get a UUID-derived identifier
+                // because their UUID is persisted with the disk entry.
+                if !Self.isMainBundleDisk(disk, layout: layout) {
+                    blockDevice.blockDeviceIdentifier = disk.blockDeviceIdentifier
+                }
                 built.append(blockDevice)
             case .usbMassStorage:
                 let usbStorage = VZUSBMassStorageDeviceConfiguration(attachment: attachment)
