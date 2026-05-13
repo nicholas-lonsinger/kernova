@@ -275,11 +275,13 @@ struct VMCreationViewModelTests {
         #expect(config.genericMachineIdentifierData != nil)  // generated for EFI
         // EFI install wizard inserts the ISO at storageDisks[0] so EFI
         // boots the installer; main disk goes to [1].
-        let disks = try #require(config.storageDisks)
+        let disks = config.storageDisks ?? []
         #expect(disks.count == 2)
-        #expect(disks[0].path == "/path/to/ubuntu.iso")
-        #expect(disks[1].path == "Disk.asif")
-        #expect(disks[1].isInternal)
+        if disks.count >= 2 {
+            #expect(disks[0].path == "/path/to/ubuntu.iso")
+            #expect(disks[1].path == "Disk.asif")
+            #expect(disks[1].isInternal)
+        }
         #expect(config.kernelPath == nil)
         #expect(config.initrdPath == nil)
         #expect(config.kernelCommandLine == nil)

@@ -1986,9 +1986,9 @@ struct VMLibraryViewModelTests {
 
         viewModel.removeStorageDisk(extra, from: instance, trashFile: false)
 
-        let disks = try? #require(instance.configuration.storageDisks)
-        #expect(disks?.count == 1)
-        #expect(disks?.first?.id == mainDisk.id)
+        let disks = instance.configuration.storageDisks ?? []
+        #expect(disks.count == 1)
+        #expect(disks.first?.id == mainDisk.id)
         // No presentError side effect — no file op was attempted.
         #expect(!viewModel.showError)
     }
@@ -2030,7 +2030,7 @@ struct VMLibraryViewModelTests {
         // The disk-creation Task is async; spin until the config materializes.
         while instance.configuration.storageDisks == nil { await Task.yield() }
 
-        let disks = try #require(instance.configuration.storageDisks)
+        let disks = instance.configuration.storageDisks ?? []
         // Pre-existing default main disk + the newly-created one.
         #expect(disks.count == 2)
 

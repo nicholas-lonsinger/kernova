@@ -363,14 +363,16 @@ struct VMConfigurationTests {
         decoder.dateDecodingStrategy = .iso8601
         let decoded = try decoder.decode(VMConfiguration.self, from: data)
 
-        let disks = try #require(decoded.storageDisks)
+        let disks = decoded.storageDisks ?? []
         #expect(disks.count == 3)
-        #expect(disks[0].label == "Main Disk")
-        #expect(disks[0].isInternal == true)
-        #expect(disks[0].kind == .virtio)
-        #expect(disks[2].label == "Installer")
-        #expect(disks[2].kind == .usbMassStorage)
-        #expect(disks[2].readOnly == true)
+        #expect(disks.first?.label == "Main Disk")
+        #expect(disks.first?.isInternal == true)
+        #expect(disks.first?.kind == .virtio)
+        if disks.count >= 3 {
+            #expect(disks[2].label == "Installer")
+            #expect(disks[2].kind == .usbMassStorage)
+            #expect(disks[2].readOnly == true)
+        }
     }
 
     @Test("Missing optional storageDisks decodes as nil")
