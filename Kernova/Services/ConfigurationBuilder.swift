@@ -20,13 +20,13 @@ struct ConfigurationBuilder: Sendable {
         let serialOutputPipe: Pipe
         let clipboardInputPipe: Pipe?
         let clipboardOutputPipe: Pipe?
-        /// `USBDeviceInfo` for a non-boot disc image attached at config-build time.
+        /// `USBDeviceInfo` for each item in `config.removableMedia`,
+        /// attached on the XHCI controller at config-build time.
         ///
-        /// `nil` when no disc image is set, or when the disc is on the boot path
-        /// (`storageDevices` index 0). The UUID matches the one set on
-        /// `VZUSBMassStorageDeviceConfiguration.uuid` so callers can locate the
-        /// runtime device in `controller.usbDevices` for hot-detach.
-        let coldDiscImageDeviceInfo: USBDeviceInfo?
+        /// UUIDs match `VZUSBMassStorageDeviceConfiguration.uuid` so the
+        /// runtime tracking in `instance.liveRemovableMedia` can locate
+        /// the devices for hot-detach.
+        let coldRemovableMedia: [USBDeviceInfo]
     }
 
     private static let logger = Logger(subsystem: "com.kernova.app", category: "ConfigurationBuilder")
@@ -72,15 +72,11 @@ struct ConfigurationBuilder: Sendable {
         }
 
         // Common devices.
-        // configureUSBControllers must run before configureStorage so a non-boot
-        // disc image can be attached to the XHCI controller's usbDevices list
-        // (and thus be hot-detachable at runtime via VZUSBController.detach).
+        // configureUSBControllers must run before configureRemovableMedia so the
+        // XHCI controller exists for items to attach to.
         configureUSBControllers(vzConfig)
-        let coldDiscImageDeviceInfo = try configureStorage(
-            vzConfig,
-            config: config,
-            bundleURL: bundleURL
-        )
+        try configureStorageDisks(vzConfig, config: config, bundleURL: bundleURL)
+        let coldRemovableMedia = try configureRemovableMedia(vzConfig, config: config)
         configureNetwork(vzConfig, config: config)
         configureEntropy(vzConfig)
         configureAudio(vzConfig, config: config)
@@ -114,7 +110,7 @@ struct ConfigurationBuilder: Sendable {
             serialOutputPipe: outputPipe,
             clipboardInputPipe: clipboardPipes?.input,
             clipboardOutputPipe: clipboardPipes?.output,
-            coldDiscImageDeviceInfo: coldDiscImageDeviceInfo
+            coldRemovableMedia: coldRemovableMedia
         )
     }
 
@@ -269,119 +265,153 @@ struct ConfigurationBuilder: Sendable {
 
     // MARK: - Common Devices
 
-    /// Returns a `USBDeviceInfo` describing a non-boot disc image attached to the XHCI controller.
+    /// Resolves a `StorageDisk` entry's filesystem location.
     ///
-    /// The caller uses the returned info to locate the runtime device for
-    /// hot-detach. Returns `nil` when no disc image is set, or when the disc
-    /// is on the boot path (in which case it lives on `storageDevices` and is
-    /// not hot-detachable).
-    private func configureStorage(
+    /// Internal disks are bundle-relative; external disks carry an absolute
+    /// host path. The main bundle disk is the conventional internal entry
+    /// with `path == "Disk.asif"`.
+    private func resolvedURL(for disk: StorageDisk, bundleURL: URL) -> URL {
+        if disk.isInternal {
+            return bundleURL.appendingPathComponent(disk.path)
+        }
+        return URL(fileURLWithPath: disk.path)
+    }
+
+    /// Builds the ordered `storageDevices` array from `config.storageDisks`.
+    ///
+    /// Position [0] boots first on EFI guests. Each entry maps to either a
+    /// `VZVirtioBlockDeviceConfiguration` (kind `.virtio`) or a
+    /// `VZUSBMassStorageDeviceConfiguration` (kind `.usbMassStorage`).
+    /// When the list is `nil` or empty, the builder synthesizes a single
+    /// main-disk entry at the bundle's `Disk.asif`.
+    private func configureStorageDisks(
         _ vzConfig: VZVirtualMachineConfiguration,
         config: VMConfiguration,
         bundleURL: URL
-    ) throws -> USBDeviceInfo? {
+    ) throws {
         let layout = VMBundleLayout(bundleURL: bundleURL)
-        guard FileManager.default.fileExists(atPath: layout.diskImageURL.path(percentEncoded: false)) else {
-            Self.logger.error(
-                "Disk image not found at '\(layout.diskImageURL.path(percentEncoded: false), privacy: .public)'")
-            throw ConfigurationBuilderError.diskImageNotFound(layout.diskImageURL)
+        let disks: [StorageDisk]
+        if let configured = config.storageDisks, !configured.isEmpty {
+            disks = configured
+        } else {
+            disks = [Self.defaultMainDisk(layout: layout)]
         }
 
-        let diskAttachment = try VZDiskImageStorageDeviceAttachment(url: layout.diskImageURL, readOnly: false)
-        let storage = VZVirtioBlockDeviceConfiguration(attachment: diskAttachment)
-        vzConfig.storageDevices = [storage]
+        var built: [VZStorageDeviceConfiguration] = []
+        for disk in disks {
+            let resolvedURL = resolvedURL(for: disk, bundleURL: bundleURL)
+            guard FileManager.default.fileExists(atPath: resolvedURL.path(percentEncoded: false)) else {
+                Self.logger.error(
+                    "Storage disk '\(disk.label, privacy: .public)' not found at '\(resolvedURL.path(percentEncoded: false), privacy: .public)'"
+                )
+                throw ConfigurationBuilderError.storageDiskNotFound(disk.path, disk.label)
+            }
 
-        var coldDiscImageDeviceInfo: USBDeviceInfo?
+            // Non-internal external disks go through the full PathValidation
+            // pipeline (symlink resolution, writable check). Internal disks
+            // are bundle-managed; the existence check above is sufficient.
+            if !disk.isInternal {
+                _ = try Self.resolveFile(
+                    at: disk.path, context: "Storage disk '\(disk.label)'",
+                    requireWritable: !disk.readOnly,
+                    notFound: .storageDiskNotFound(disk.path, disk.label),
+                    isDirectory: .storageDiskPathIsDirectory(disk.path, disk.label),
+                    notWritable: .storageDiskNotWritable(disk.path, disk.label))
+            }
 
-        // Attach disc image as USB mass storage device
-        if let discImagePath = config.discImagePath {
-            let discImage = try Self.resolveFile(
-                at: discImagePath, context: "Disc image",
-                requireWritable: !config.discImageReadOnly,
-                notFound: .discImageNotFound(discImagePath),
-                isDirectory: .discImagePathIsDirectory(discImagePath),
-                notWritable: .discImageNotWritable(discImagePath))
-
-            let discImageAttachment: VZDiskImageStorageDeviceAttachment
+            let attachment: VZDiskImageStorageDeviceAttachment
             do {
-                discImageAttachment = try VZDiskImageStorageDeviceAttachment(
-                    url: discImage.url, readOnly: config.discImageReadOnly)
+                attachment = try VZDiskImageStorageDeviceAttachment(
+                    url: resolvedURL, readOnly: disk.readOnly)
             } catch {
                 Self.logger.error(
-                    "Failed to attach disc image at '\(discImagePath, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                    "Failed to attach storage disk '\(disk.label, privacy: .public)' at '\(resolvedURL.path(percentEncoded: false), privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
                 throw error
             }
-            let usbStorage = VZUSBMassStorageDeviceConfiguration(attachment: discImageAttachment)
-            if config.bootFromDiscImage && config.bootMode == .efi {
-                // Boot-from-disc must live on storageDevices at index 0 so the EFI
-                // firmware enumerates it ahead of the main disk and selects it as
-                // the boot candidate. Devices on the XHCI usbDevices list are not
-                // visible to EFI as boot media in array-position order.
-                vzConfig.storageDevices.insert(usbStorage, at: 0)
-            } else {
-                // Non-boot disc: attach to the XHCI controller so it appears in
-                // VZUSBController.usbDevices at runtime and can be hot-detached.
-                // The UUID is sourced from `config.discImageDeviceUUID` (set
-                // atomically with the path at the picker; back-filled at
-                // decode time for legacy configs) so it's stable across
-                // launches — required for `restoreMachineStateFrom` to match
-                // the configured device against the saved-state device list.
-                // The fallback to a fresh UUID is defensive: every code path
-                // that sets `discImagePath` also sets the UUID, but a
-                // hand-edited config could still arrive here without one.
-                guard let xhci = vzConfig.usbControllers.first else {
-                    // Unreachable in practice — `configureUSBControllers` runs
-                    // unconditionally before `configureStorage`. Throwing
-                    // rather than silently appending to `storageDevices`
-                    // surfaces the bug instead of degrading to a
-                    // non-hot-detachable device in release builds.
-                    Self.logger.fault(
-                        "USB controller missing when attaching non-boot disc image — \(discImagePath, privacy: .public)"
-                    )
-                    throw ConfigurationBuilderError.missingUSBControllerForDiscImage
-                }
-                let discUUID = config.discImageDeviceUUID ?? UUID()
-                usbStorage.uuid = discUUID
-                xhci.usbDevices = xhci.usbDevices + [usbStorage]
-                coldDiscImageDeviceInfo = USBDeviceInfo(
-                    id: discUUID,
-                    path: discImagePath,
-                    readOnly: config.discImageReadOnly
-                )
-            }
-        }
 
-        // Attach additional virtio block devices
-        if let additionalDisks = config.additionalDisks {
-            for disk in additionalDisks {
-                let resolved = try Self.resolveFile(
-                    at: disk.path, context: "Additional disk '\(disk.label)'",
-                    requireWritable: !disk.readOnly,
-                    notFound: .additionalDiskNotFound(disk.path, disk.label),
-                    isDirectory: .additionalDiskPathIsDirectory(disk.path, disk.label),
-                    notWritable: .additionalDiskNotWritable(disk.path, disk.label))
-
-                let attachment: VZDiskImageStorageDeviceAttachment
-                do {
-                    attachment = try VZDiskImageStorageDeviceAttachment(url: resolved.url, readOnly: disk.readOnly)
-                } catch {
-                    Self.logger.error(
-                        "Failed to attach additional disk '\(disk.label, privacy: .public)' at '\(disk.path, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-                    )
-                    throw error
-                }
+            switch disk.kind {
+            case .virtio:
                 let blockDevice = VZVirtioBlockDeviceConfiguration(attachment: attachment)
                 blockDevice.blockDeviceIdentifier = disk.blockDeviceIdentifier
-                vzConfig.storageDevices.append(blockDevice)
-
-                Self.logger.debug(
-                    "Attached additional disk '\(disk.label, privacy: .public)' (id: \(disk.blockDeviceIdentifier, privacy: .public), readOnly: \(disk.readOnly, privacy: .public))"
-                )
+                built.append(blockDevice)
+            case .usbMassStorage:
+                let usbStorage = VZUSBMassStorageDeviceConfiguration(attachment: attachment)
+                usbStorage.uuid = disk.id
+                built.append(usbStorage)
             }
+
+            Self.logger.debug(
+                "Attached storage disk '\(disk.label, privacy: .public)' (kind: \(disk.kind.rawValue, privacy: .public), readOnly: \(disk.readOnly, privacy: .public))"
+            )
         }
 
-        return coldDiscImageDeviceInfo
+        vzConfig.storageDevices = built
+    }
+
+    /// Attaches every `removableMedia` item to the XHCI controller's
+    /// `usbDevices` list and returns the matching `USBDeviceInfo`s for
+    /// runtime tracking in `instance.liveRemovableMedia`.
+    private func configureRemovableMedia(
+        _ vzConfig: VZVirtualMachineConfiguration,
+        config: VMConfiguration
+    ) throws -> [USBDeviceInfo] {
+        guard let items = config.removableMedia, !items.isEmpty else { return [] }
+        guard let xhci = vzConfig.usbControllers.first else {
+            // configureUSBControllers runs unconditionally upstream, so this is
+            // a programming error rather than a recoverable state.
+            Self.logger.fault("USB controller missing when attaching removable media")
+            preconditionFailure("USB controller must be configured before removable media")
+        }
+
+        var infos: [USBDeviceInfo] = []
+        var attached: [VZUSBDeviceConfiguration] = xhci.usbDevices
+        for item in items {
+            let resolved = try Self.resolveFile(
+                at: item.path, context: "Removable media '\(item.label)'",
+                requireWritable: !item.readOnly,
+                notFound: .removableMediaNotFound(item.path, item.label),
+                isDirectory: .removableMediaPathIsDirectory(item.path, item.label),
+                notWritable: .removableMediaNotWritable(item.path, item.label))
+
+            let attachment: VZDiskImageStorageDeviceAttachment
+            do {
+                attachment = try VZDiskImageStorageDeviceAttachment(
+                    url: resolved.url, readOnly: item.readOnly)
+            } catch {
+                Self.logger.error(
+                    "Failed to attach removable media '\(item.label, privacy: .public)' at '\(item.path, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                )
+                throw error
+            }
+
+            let usbConfig = VZUSBMassStorageDeviceConfiguration(attachment: attachment)
+            usbConfig.uuid = item.id
+            attached.append(usbConfig)
+            infos.append(USBDeviceInfo(id: item.id, path: item.path, readOnly: item.readOnly))
+
+            Self.logger.debug(
+                "Attached removable media '\(item.label, privacy: .public)' on XHCI (readOnly: \(item.readOnly, privacy: .public))"
+            )
+        }
+        xhci.usbDevices = attached
+        return infos
+    }
+
+    /// Synthesizes the default main-disk entry for a VM whose
+    /// `storageDisks` list is empty or absent.
+    ///
+    /// Visible to other layers so the settings UI can materialize the
+    /// implicit main disk into an explicit list entry on first edit.
+    static func defaultMainDisk(layout: VMBundleLayout) -> StorageDisk {
+        StorageDisk(
+            id: UUID(),
+            path: layout.diskImageURL.lastPathComponent,
+            readOnly: false,
+            label: "Main Disk",
+            isInternal: true,
+            kind: .virtio
+        )
     }
 
     private func configureNetwork(_ vzConfig: VZVirtualMachineConfiguration, config: VMConfiguration) {
@@ -679,18 +709,16 @@ enum ConfigurationBuilderError: LocalizedError {
     case kernelPathIsDirectory(String)
     case initrdNotFound(String)
     case initrdPathIsDirectory(String)
-    case discImageNotFound(String)
-    case discImagePathIsDirectory(String)
-    case discImageNotWritable(String)
-    case diskImageNotFound(URL)
-    case additionalDiskNotFound(String, String)
-    case additionalDiskPathIsDirectory(String, String)
-    case additionalDiskNotWritable(String, String)
+    case storageDiskNotFound(String, String)
+    case storageDiskPathIsDirectory(String, String)
+    case storageDiskNotWritable(String, String)
+    case removableMediaNotFound(String, String)
+    case removableMediaPathIsDirectory(String, String)
+    case removableMediaNotWritable(String, String)
     case sharedDirectoryNotFound(String)
     case sharedDirectoryNotADirectory(String)
     case sharedDirectoryNotReadable(String)
     case sharedDirectoryNotWritable(String)
-    case missingUSBControllerForDiscImage
 
     var errorDescription: String? {
         switch self {
@@ -710,20 +738,18 @@ enum ConfigurationBuilderError: LocalizedError {
             "Initial ramdisk not found at \(path)."
         case .initrdPathIsDirectory(let path):
             "Initial ramdisk path is a directory, not a file: \(path)."
-        case .discImageNotFound(let path):
-            "Disc image not found at \(path). Remove the disc image path from your VM configuration if the media is no longer needed."
-        case .discImagePathIsDirectory(let path):
-            "Disc image path is a directory, not a file: \(path)."
-        case .discImageNotWritable(let path):
-            "Disc image is not writable: \(path). Change it to read-only or select a writable file."
-        case .additionalDiskNotFound(let path, let label):
-            "Additional disk '\(label)' not found at \(path)."
-        case .additionalDiskPathIsDirectory(let path, let label):
-            "Additional disk '\(label)' path is a directory, not a file: \(path)."
-        case .additionalDiskNotWritable(let path, let label):
-            "Additional disk '\(label)' is not writable: \(path). Change it to read-only or select a writable file."
-        case .diskImageNotFound(let url):
-            "Disk image not found at \(url.path(percentEncoded: false))."
+        case .storageDiskNotFound(let path, let label):
+            "Storage disk '\(label)' not found at \(path)."
+        case .storageDiskPathIsDirectory(let path, let label):
+            "Storage disk '\(label)' path is a directory, not a file: \(path)."
+        case .storageDiskNotWritable(let path, let label):
+            "Storage disk '\(label)' is not writable: \(path). Change it to read-only or select a writable file."
+        case .removableMediaNotFound(let path, let label):
+            "Removable media '\(label)' not found at \(path)."
+        case .removableMediaPathIsDirectory(let path, let label):
+            "Removable media '\(label)' path is a directory, not a file: \(path)."
+        case .removableMediaNotWritable(let path, let label):
+            "Removable media '\(label)' is not writable: \(path). Change it to read-only or select a writable file."
         case .sharedDirectoryNotFound(let path):
             "Shared directory not found at \(path)."
         case .sharedDirectoryNotADirectory(let path):
@@ -732,8 +758,6 @@ enum ConfigurationBuilderError: LocalizedError {
             "Shared directory is not readable: \(path)."
         case .sharedDirectoryNotWritable(let path):
             "Shared directory is not writable: \(path)."
-        case .missingUSBControllerForDiscImage:
-            "Internal error: USB controller was not configured before attaching a non-boot disc image."
         }
     }
 }

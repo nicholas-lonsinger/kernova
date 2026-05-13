@@ -112,32 +112,6 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
     /// Serialized `VZGenericMachineIdentifier.dataRepresentation`.
     var genericMachineIdentifierData: Data?
 
-    // MARK: - Removable Media
-
-    /// Path to a disk image attached as a USB mass storage device at VM start time.
-    ///
-    /// For runtime hot-plug, see `USBDeviceService`.
-    var discImagePath: String?
-
-    /// When `true`, the disc image attachment is read-only.
-    ///
-    /// Defaults to `true`.
-    var discImageReadOnly: Bool
-
-    /// When `true` and `bootMode == .efi`, the disc image device is placed before the main disk
-    /// so the EFI firmware discovers it first.
-    var bootFromDiscImage: Bool
-
-    /// Persisted `VZUSBDeviceConfiguration.uuid` for the disc image device.
-    ///
-    /// Mirrors the pattern used by `macAddress`: auto-generated runtime
-    /// identity that travels with the bundle so saved-state restore matches
-    /// the configured device. Generated atomically with `discImagePath` at
-    /// the picker call site; cleared when the disc is removed; regenerated
-    /// by `clonedForNewInstance` to avoid two bundles claiming the same
-    /// device identity. `nil` whenever `discImagePath` is `nil`.
-    var discImageDeviceUUID: UUID?
-
     // MARK: - Linux kernel boot
 
     var kernelPath: String?
@@ -146,8 +120,23 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
 
     // MARK: - Storage Disks
 
-    /// Extra disk images attached as virtio block devices (e.g., /dev/vdb on Linux).
-    var additionalDisks: [AdditionalDisk]?
+    /// Ordered list of disks attached on `vzConfig.storageDevices`.
+    ///
+    /// Position [0] boots first on EFI guests. The list includes the
+    /// bundle's primary disk (`Disk.asif`) and any user-added internal
+    /// disks or installer images. `nil` means "use defaults" — the
+    /// builder synthesizes a single main-disk entry on first load.
+    var storageDisks: [StorageDisk]?
+
+    // MARK: - Removable Media
+
+    /// Hot-pluggable USB mass storage devices on the XHCI controller.
+    ///
+    /// Each item's `id` is used as the `VZUSBMassStorageDeviceConfiguration.uuid`
+    /// so save-state restore can match the configured item against the
+    /// saved-state device list. Mutations while the VM is running trigger
+    /// a live attach/detach reconcile in `VMLibraryViewModel`.
+    var removableMedia: [RemovableMediaItem]?
 
     // MARK: - Shared Directories
 
@@ -182,14 +171,11 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         hardwareModelData: Data? = nil,
         machineIdentifierData: Data? = nil,
         genericMachineIdentifierData: Data? = nil,
-        discImagePath: String? = nil,
-        discImageReadOnly: Bool = true,
-        bootFromDiscImage: Bool = false,
-        discImageDeviceUUID: UUID? = nil,
         kernelPath: String? = nil,
         initrdPath: String? = nil,
         kernelCommandLine: String? = nil,
-        additionalDisks: [AdditionalDisk]? = nil,
+        storageDisks: [StorageDisk]? = nil,
+        removableMedia: [RemovableMediaItem]? = nil,
         sharedDirectories: [SharedDirectory]? = nil,
         createdAt: Date = Date()
     ) {
@@ -215,31 +201,21 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         self.hardwareModelData = hardwareModelData
         self.machineIdentifierData = machineIdentifierData
         self.genericMachineIdentifierData = genericMachineIdentifierData
-        self.discImagePath = discImagePath
-        self.discImageReadOnly = discImageReadOnly
-        self.bootFromDiscImage = bootFromDiscImage
-        // A disc-attached config must always carry a stable UUID, even
-        // when callers forget to supply one. The picker threads both
-        // fields explicitly, but programmatic call sites (the creation
-        // wizard, future imports) shouldn't have to repeat the pairing
-        // for save-state restore to work.
-        self.discImageDeviceUUID = discImageDeviceUUID ?? (discImagePath != nil ? UUID() : nil)
         self.kernelPath = kernelPath
         self.initrdPath = initrdPath
         self.kernelCommandLine = kernelCommandLine
-        self.additionalDisks = additionalDisks
+        self.storageDisks = storageDisks
+        self.removableMedia = removableMedia
         self.sharedDirectories = sharedDirectories
         self.createdAt = createdAt
     }
 
     // MARK: - Codable
 
-    // RATIONALE: Custom `init(from:)` so newly added fields default cleanly
-    // when decoding configs that pre-date their introduction
-    // (`agentLogForwardingEnabled` defaults to `false`,
-    // `lastSeenAgentVersion` defaults to `nil`,
-    // `agentInstallNudgeDismissed` defaults to `false`). Other fields keep
-    // their existing required/optional decoding semantics.
+    // RATIONALE: Custom `init(from:)` so newly added optional fields decode
+    // as `nil` / their natural default when absent in older configs, rather
+    // than failing the whole decode. Every new property must be added here
+    // as well — synthesized `Codable` would not surface the choice.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.id = try c.decode(UUID.self, forKey: .id)
@@ -264,14 +240,11 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         self.hardwareModelData = try c.decodeIfPresent(Data.self, forKey: .hardwareModelData)
         self.machineIdentifierData = try c.decodeIfPresent(Data.self, forKey: .machineIdentifierData)
         self.genericMachineIdentifierData = try c.decodeIfPresent(Data.self, forKey: .genericMachineIdentifierData)
-        self.discImagePath = try c.decodeIfPresent(String.self, forKey: .discImagePath)
-        self.discImageReadOnly = try c.decode(Bool.self, forKey: .discImageReadOnly)
-        self.bootFromDiscImage = try c.decode(Bool.self, forKey: .bootFromDiscImage)
-        self.discImageDeviceUUID = try c.decodeIfPresent(UUID.self, forKey: .discImageDeviceUUID)
         self.kernelPath = try c.decodeIfPresent(String.self, forKey: .kernelPath)
         self.initrdPath = try c.decodeIfPresent(String.self, forKey: .initrdPath)
         self.kernelCommandLine = try c.decodeIfPresent(String.self, forKey: .kernelCommandLine)
-        self.additionalDisks = try c.decodeIfPresent([AdditionalDisk].self, forKey: .additionalDisks)
+        self.storageDisks = try c.decodeIfPresent([StorageDisk].self, forKey: .storageDisks)
+        self.removableMedia = try c.decodeIfPresent([RemovableMediaItem].self, forKey: .removableMedia)
         self.sharedDirectories = try c.decodeIfPresent([SharedDirectory].self, forKey: .sharedDirectories)
         self.createdAt = try c.decode(Date.self, forKey: .createdAt)
     }
@@ -294,18 +267,29 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         clone.displayPreference = .inline
         clone.lastFullscreenDisplayID = nil
 
-        // Regenerate additional disk IDs to avoid blockDeviceIdentifier collisions.
-        // Internal disk paths are updated by the caller after copying files.
-        clone.additionalDisks = additionalDisks?.map { disk in
-            AdditionalDisk(
-                id: UUID(), path: disk.path, readOnly: disk.readOnly, label: disk.label, isInternal: disk.isInternal)
+        // Regenerate storage disk IDs so virtio block device identifiers
+        // and USB UUIDs don't collide with the source bundle. Internal
+        // disk paths are updated by the caller after copying files.
+        clone.storageDisks = storageDisks?.map { disk in
+            StorageDisk(
+                id: UUID(),
+                path: disk.path,
+                readOnly: disk.readOnly,
+                label: disk.label,
+                isInternal: disk.isInternal,
+                kind: disk.kind
+            )
         }
 
-        // Regenerate the disc image USB device UUID so the clone doesn't
-        // share device identity with the source bundle (mirrors the
-        // `additionalDisks` ID regeneration above).
-        if discImagePath != nil {
-            clone.discImageDeviceUUID = UUID()
+        // Regenerate removable media UUIDs for the same reason — VZ save-state
+        // matches by device UUID, and two bundles must not claim the same one.
+        clone.removableMedia = removableMedia?.map { item in
+            RemovableMediaItem(
+                id: UUID(),
+                path: item.path,
+                readOnly: item.readOnly,
+                label: item.label
+            )
         }
 
         // Regenerate shared directory IDs to avoid VirtioFS collisions
@@ -358,9 +342,9 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
     /// Returns `true` if any field that is editable while the VM is running
     /// differs between `old` and `new`.
     ///
-    /// Combines the `Bool`-typed `hotToggleFields` with the disc image
-    /// fields (via `discFieldsChanged`) which are not `Bool` and therefore
-    /// can't fit in the typed key-path array.
+    /// Combines the `Bool`-typed `hotToggleFields` with the removable
+    /// media list (which is not `Bool` and therefore can't fit in the
+    /// typed key-path array).
     static func liveEditableFieldsChanged(
         old: VMConfiguration,
         new: VMConfiguration
@@ -368,23 +352,16 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         if hotToggleFields.contains(where: { old[keyPath: $0] != new[keyPath: $0] }) {
             return true
         }
-        return discFieldsChanged(old: old, new: new)
+        return removableMediaChanged(old: old, new: new)
     }
 
-    /// Returns `true` if any disc-image field that should trigger a live
-    /// reconcile differs between `old` and `new`.
+    /// Returns `true` if the removable media list differs between `old`
+    /// and `new`.
     ///
-    /// `discImageDeviceUUID` is included for defense in depth: today the
-    /// picker pairs it with `discImagePath`, but a future programmatic
-    /// mutation that rotates the UUID without changing the path still
-    /// requires a reconcile so the runtime device's identity stays in
-    /// sync with the persisted config. `bootFromDiscImage` is intentionally
-    /// excluded — it controls EFI firmware boot order at start time, so
-    /// flipping it while running is restart-only.
-    static func discFieldsChanged(old: VMConfiguration, new: VMConfiguration) -> Bool {
-        old.discImagePath != new.discImagePath
-            || old.discImageReadOnly != new.discImageReadOnly
-            || old.discImageDeviceUUID != new.discImageDeviceUUID
+    /// Compares the lists by value; the reconcile flow does the per-item
+    /// diff to determine which entries need attach / detach / reattach.
+    static func removableMediaChanged(old: VMConfiguration, new: VMConfiguration) -> Bool {
+        (old.removableMedia ?? []) != (new.removableMedia ?? [])
     }
 }
 
@@ -408,34 +385,3 @@ struct SharedDirectory: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
-// MARK: - AdditionalDisk
-
-/// A disk image attached as an additional virtio block device.
-struct AdditionalDisk: Codable, Sendable, Equatable, Identifiable {
-    var id: UUID
-    var path: String
-    var readOnly: Bool
-    var label: String
-    var isInternal: Bool
-
-    init(id: UUID = UUID(), path: String, readOnly: Bool = false, label: String? = nil, isInternal: Bool = false) {
-        self.id = id
-        self.path = path
-        self.readOnly = readOnly
-        self.label = label ?? URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
-        self.isInternal = isInternal
-    }
-
-    /// The last path component, used as the display name in the UI.
-    var displayName: String {
-        URL(fileURLWithPath: path).lastPathComponent
-    }
-
-    /// Block device identifier for the guest (up to 20 ASCII chars).
-    ///
-    /// Derived from the UUID prefix for uniqueness and stability.
-    /// Visible in Linux guests at `/dev/disk/by-id/virtio-<identifier>`.
-    var blockDeviceIdentifier: String {
-        String(id.uuidString.prefix(20))
-    }
-}

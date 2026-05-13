@@ -228,29 +228,20 @@ final class VMLifecycleCoordinator {
 
     // MARK: - USB Device Management
 
-    /// Attaches a USB mass storage device to a running VM.
+    /// Attaches a USB mass storage device to a running VM and appends it
+    /// to `instance.liveRemovableMedia`.
     ///
-    /// Does not use the lifecycle operation token — USB operations are short
-    /// and independent of start/stop/save lifecycle transitions.
+    /// Does not use the lifecycle operation token — USB operations are
+    /// short and independent of start/stop/save lifecycle transitions.
     ///
-    /// `desiredUUID` overrides the framework-generated `VZUSBDeviceConfiguration.uuid`
-    /// so the runtime device matches a persisted identity (e.g.
-    /// `VMConfiguration.discImageDeviceUUID`). Pass `nil` for callers that
-    /// don't care (e.g. the guest agent installer).
-    ///
-    /// `trackInList` controls whether the returned `USBDeviceInfo` is
-    /// appended to `instance.attachedUSBDevices`. Pass `true` (default) for
-    /// installer-style transient mounts that share that list. Pass `false`
-    /// for the settings-driven disc image flow, which tracks its device
-    /// separately on `instance.liveDiscImageDevice` so an
-    /// `unmountGuestAgentInstaller` path lookup can't accidentally match
-    /// and detach a user-selected disc that happens to live at the same
-    /// file path.
+    /// `desiredUUID` overrides the framework-generated
+    /// `VZUSBDeviceConfiguration.uuid` so the runtime device matches the
+    /// caller's persisted identity (e.g. `RemovableMediaItem.id`),
+    /// which is required for save-state restore matching.
     func attachUSBDevice(
         diskImagePath: String,
         readOnly: Bool,
         desiredUUID: UUID? = nil,
-        trackInList: Bool = true,
         to instance: VMInstance
     ) async throws -> USBDeviceInfo {
         let info = try await usbDeviceService.attach(
@@ -259,15 +250,14 @@ final class VMLifecycleCoordinator {
             desiredUUID: desiredUUID,
             to: instance
         )
-        if trackInList {
-            instance.attachedUSBDevices.append(info)
-        }
+        instance.liveRemovableMedia.append(info)
         return info
     }
 
-    /// Detaches a USB mass storage device from a running VM.
+    /// Detaches a USB mass storage device from a running VM and removes
+    /// it from `instance.liveRemovableMedia`.
     func detachUSBDevice(_ deviceInfo: USBDeviceInfo, from instance: VMInstance) async throws {
         try await usbDeviceService.detach(deviceInfo: deviceInfo, from: instance)
-        instance.attachedUSBDevices.removeAll { $0.id == deviceInfo.id }
+        instance.liveRemovableMedia.removeAll { $0.id == deviceInfo.id }
     }
 }

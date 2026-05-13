@@ -263,26 +263,15 @@ final class VMInstance: Identifiable {
     var hasSaveFile: Bool { bundleLayout.hasSaveFile }
     var serialLogURL: URL { bundleLayout.serialLogURL }
 
-    // MARK: - Runtime USB Devices
+    // MARK: - Runtime Removable Media
 
-    /// USB mass storage devices currently attached via the XHCI controller.
+    /// USB mass storage devices currently attached on the XHCI controller.
     ///
-    /// Populated at runtime only; cleared on VM stop/teardown.
-    var attachedUSBDevices: [USBDeviceInfo] = []
-
-    /// Tracks the live disc image device for hot-detach during settings edits.
-    ///
-    /// Configured via `VMConfiguration.discImagePath` and located in
-    /// `controller.usbDevices` when the user changes the disc image path /
-    /// readOnly flag while the VM is running. Set on VM start from
-    /// `BuildResult.coldDiscImageDeviceInfo`; updated as the user
-    /// swaps/removes the disc; cleared on `tearDownSession`.
-    ///
-    /// Held separately from `attachedUSBDevices` (which tracks user-driven
-    /// runtime mounts like the guest agent installer) so the disc image's
-    /// hot-config flow doesn't accidentally collide with installer-style
-    /// "is this already mounted?" lookups by path.
-    var liveDiscImageDevice: USBDeviceInfo?
+    /// One entry per item in `configuration.removableMedia` while the VM
+    /// is running. Items are added/removed by the live reconcile flow in
+    /// `VMLibraryViewModel` (and via cold-start population from
+    /// `BuildResult.coldRemovableMedia`). Cleared on VM stop/teardown.
+    var liveRemovableMedia: [USBDeviceInfo] = []
 
     /// `true` when the VM has a live `VZVirtualMachine` in a running or paused state, enabling USB hot-plug via the XHCI controller.
     var canAttachUSBDevices: Bool {
@@ -355,8 +344,7 @@ final class VMInstance: Identifiable {
         agentExpectedButMissing = false
         serialInputPipe = nil
         serialOutputPipe = nil
-        attachedUSBDevices = []
-        liveDiscImageDevice = nil
+        liveRemovableMedia = []
         virtualMachine = nil
         delegateAdapter = nil
     }

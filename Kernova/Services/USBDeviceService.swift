@@ -57,7 +57,7 @@ final class USBDeviceService: USBDeviceProviding {
         if let desiredUUID {
             // Override the framework-generated UUID so the live device
             // matches the caller's persisted identity (e.g.
-            // `VMConfiguration.discImageDeviceUUID` for save-state matching).
+            // `RemovableMediaItem.id`) for save-state restore matching.
             usbConfig.uuid = desiredUUID
         }
         let usbDevice = VZUSBMassStorageDevice(configuration: usbConfig)

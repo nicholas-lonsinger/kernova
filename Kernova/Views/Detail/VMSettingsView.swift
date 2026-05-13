@@ -13,11 +13,12 @@ struct VMSettingsView: View {
     let isReadOnly: Bool
 
     @State private var editingName = ""
-    @State private var showingDiskInfo = false
     @State private var showingMicPermissionInfo = false
     @State private var micPermission: AVAuthorizationStatus = AVCaptureDevice.authorizationStatus(for: .audio)
     @State private var showingCreateDisk = false
     @State private var newDiskSizeInGB = 50
+    @State private var diskToRemove: StorageDisk?
+    @State private var showingRemoveDiskAlert = false
     @FocusState private var isNameFieldFocused: Bool
 
     private var currentMicPermission: AVAuthorizationStatus {
@@ -32,11 +33,29 @@ struct VMSettingsView: View {
         viewModel.activeRename == .detail(instance.id)
     }
 
-    /// Binding that unwraps the optional storage disks array, defaulting to empty.
-    private var storageDiskBinding: Binding<[AdditionalDisk]> {
+    /// Binding for `storageDisks` that materializes the implicit default
+    /// main-disk entry when the configuration's list is `nil` / empty.
+    ///
+    /// This means the first reorder / remove edit converts the implicit
+    /// default into a persisted explicit list, after which the user-visible
+    /// state always matches the stored data.
+    private var storageDiskBinding: Binding<[StorageDisk]> {
         Binding(
-            get: { instance.configuration.additionalDisks ?? [] },
-            set: { instance.configuration.additionalDisks = $0.isEmpty ? nil : $0 }
+            get: {
+                if let disks = instance.configuration.storageDisks, !disks.isEmpty {
+                    return disks
+                }
+                return viewModel.defaultStorageDisks(for: instance)
+            },
+            set: { instance.configuration.storageDisks = $0.isEmpty ? nil : $0 }
+        )
+    }
+
+    /// Binding for `removableMedia`, defaulting to empty.
+    private var removableMediaBinding: Binding<[RemovableMediaItem]> {
+        Binding(
+            get: { instance.configuration.removableMedia ?? [] },
+            set: { instance.configuration.removableMedia = $0.isEmpty ? nil : $0 }
         )
     }
 
@@ -46,48 +65,6 @@ struct VMSettingsView: View {
             get: { instance.configuration.sharedDirectories ?? [] },
             set: { instance.configuration.sharedDirectories = $0.isEmpty ? nil : $0 }
         )
-    }
-
-    /// Section header for `removableMediaSection` — shows a lock badge when
-    /// the disc is cold-locked on the boot path so the user understands why
-    /// the eject/swap/readOnly controls aren't responding.
-    @ViewBuilder
-    private var removableMediaHeader: some View {
-        HStack(spacing: 6) {
-            Text("Removable Media")
-            if isBootDiscColdLocked {
-                Image(systemName: "lock.fill")
-                    .foregroundStyle(.orange)
-                    .imageScale(.small)
-                    .help(
-                        "Locked while the VM is running — the disc is on the EFI boot path, which Virtualization.framework doesn't support hot-modifying. Stop the VM to change."
-                    )
-            }
-        }
-    }
-
-    /// `true` when the disc is attached on the EFI boot path
-    /// (`storageDevices[0]`) while the VM is running.
-    ///
-    /// VZ only supports hot detach/attach on `usbControllers.usbDevices`;
-    /// storage devices are fixed at start time. In this case the eject,
-    /// swap, and readOnly controls would write to the persisted config
-    /// without affecting the running VM, so the whole section is locked.
-    ///
-    /// `liveDiscImageDevice == nil` is the authoritative topology signal:
-    /// the builder populates it when (and only when) the disc went on the
-    /// hot-pluggable XHCI path. The `bootFromDiscImage` and `bootMode`
-    /// checks remain as belt-and-suspenders so this predicate matches the
-    /// builder's branch even in edge cases where a hot disc was attached
-    /// at runtime while the config still has `bootFromDiscImage == true`
-    /// from a prior session — in that case `liveDiscImageDevice != nil`
-    /// short-circuits the lock so the user can still eject.
-    private var isBootDiscColdLocked: Bool {
-        isReadOnly
-            && instance.configuration.discImagePath != nil
-            && instance.liveDiscImageDevice == nil
-            && instance.configuration.bootFromDiscImage
-            && instance.configuration.bootMode == .efi
     }
 
     var body: some View {
@@ -107,19 +84,14 @@ struct VMSettingsView: View {
                     // disabling per-control) remain interactive in read-only mode —
                     // SwiftUI's disabled state propagates irreversibly to descendants.
                     // `guestAgentSection`, `clipboardSection`, and
-                    // `removableMediaSection` carry live-editable fields that remain
-                    // interactive while the VM is running, so they are NOT wrapped
-                    // with `.disabled(isReadOnly)`. The boot-from-disc toggle inside
-                    // `removableMediaSection` self-disables since it controls EFI
-                    // boot order which is fixed at start time.
+                    // `removableMediaSection` carry live-editable fields that
+                    // remain interactive while the VM is running. Storage Disks
+                    // is `storageDevices`-backed and therefore restart-only;
+                    // Removable Media is XHCI-backed and hot-pluggable.
                     generalSection.disabled(isReadOnly)
                     resourcesSection
                     storageDiskSection.disabled(isReadOnly)
-                    // `removableMediaSection` self-disables when the disc is on
-                    // the EFI boot path (`isBootDiscColdLocked`) — VZ can't
-                    // hot-modify devices on `storageDevices`, so eject / swap /
-                    // readOnly edits would silently desync from the live VM.
-                    removableMediaSection.disabled(isBootDiscColdLocked)
+                    removableMediaSection
                     sharedDirectoriesSection.disabled(isReadOnly)
                     networkSection.disabled(isReadOnly)
                     audioSection
@@ -132,10 +104,33 @@ struct VMSettingsView: View {
                 .padding()
             }
         }
+        .alert(
+            "Remove \(diskToRemove?.label ?? "Disk")?",
+            isPresented: $showingRemoveDiskAlert,
+            presenting: diskToRemove
+        ) { disk in
+            Button("Move to Trash", role: .destructive) {
+                viewModel.removeStorageDisk(disk, from: instance, trashFile: true)
+                diskToRemove = nil
+            }
+            Button("Remove from VM") {
+                viewModel.removeStorageDisk(disk, from: instance, trashFile: false)
+                diskToRemove = nil
+            }
+            Button("Cancel", role: .cancel) {
+                diskToRemove = nil
+            }
+        } message: { disk in
+            if disk.isInternal {
+                Text("The disk image is stored inside the VM bundle. Move to Trash to delete it, or Remove from VM to delist the entry while keeping the file.")
+            } else {
+                Text("This will delist the disk from the VM. The file at \(disk.path) is left alone.")
+            }
+        }
         .onChange(of: instance.configuration) { old, new in
             // RATIONALE: fields covered by `liveEditableFieldsChanged` can
             // change while `isReadOnly` is true because their controls stay
-            // interactive (clipboard, guest-agent, removable-media disc image).
+            // interactive (clipboard, guest-agent, removable-media list).
             // Save when any of those change; for everything else, the
             // read-only guard protects against spurious writes during
             // instance swap-in transitions.
@@ -237,77 +232,53 @@ struct VMSettingsView: View {
 
     @ViewBuilder
     private var removableMediaSection: some View {
-        Section(header: removableMediaHeader) {
-            if let discImagePath = instance.configuration.discImagePath {
-                HStack {
-                    Image(systemName: "opticaldisc")
-                        .foregroundStyle(.secondary)
+        Section("Removable Media") {
+            let items = removableMediaBinding.wrappedValue
 
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(URL(fileURLWithPath: discImagePath).lastPathComponent)
-                        Text(discImagePath)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-
-                    Spacer()
-
-                    Button(role: .destructive) {
-                        // Atomic clear so onChange fires once with all three
-                        // fields settled (otherwise three observation events
-                        // each save partial state).
-                        var updated = instance.configuration
-                        updated.discImagePath = nil
-                        updated.discImageDeviceUUID = nil
-                        updated.bootFromDiscImage = false
-                        instance.configuration = updated
-                    } label: {
-                        Image(systemName: "minus.circle.fill")
-                            .foregroundStyle(.red)
-                    }
-                    .buttonStyle(.plain)
-                }
-
-                Toggle("Read Only", isOn: $instance.configuration.discImageReadOnly)
-
-                if instance.configuration.bootMode == .efi {
-                    Toggle(isOn: $instance.configuration.bootFromDiscImage) {
-                        HStack(spacing: 6) {
-                            Text("Boot from disc image")
-                            if isReadOnly {
-                                Image(systemName: "lock.fill")
-                                    .foregroundStyle(.orange)
-                                    .imageScale(.small)
-                                    .help(
-                                        "Locked while the VM is running — affects EFI boot order, which is fixed at start time"
-                                    )
-                            }
-                        }
-                    }
-                    // `.disabled(isReadOnly)` is the load-bearing disable for
-                    // the hot-disc path (`isBootDiscColdLocked == false`)
-                    // where the surrounding section stays interactive but
-                    // this specific toggle must remain cold-locked. When the
-                    // disc IS on the boot path, the section-level
-                    // `.disabled(isBootDiscColdLocked)` already covers this
-                    // toggle, so the per-control disable becomes redundant
-                    // but harmless — SwiftUI ORs the propagated and local
-                    // disabled states.
-                    .disabled(isReadOnly)
-                }
-            } else {
+            if items.isEmpty {
                 Text("No removable media attached")
                     .foregroundStyle(.secondary)
+            } else {
+                ForEach(removableMediaBinding) { $item in
+                    HStack {
+                        Image(systemName: "opticaldisc")
+                            .foregroundStyle(.secondary)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(item.label)
+                            Text(item.path)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+
+                        Spacer()
+
+                        Toggle("Read Only", isOn: $item.readOnly)
+                            .toggleStyle(.switch)
+                            .labelsHidden()
+                        Text("Read Only")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        Button(role: .destructive) {
+                            removableMediaBinding.wrappedValue.removeAll { $0.id == item.id }
+                        } label: {
+                            Image(systemName: "minus.circle.fill")
+                                .foregroundStyle(.red)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
             }
 
-            Button(instance.configuration.discImagePath != nil ? "Change Disc Image..." : "Attach Disc Image...") {
+            Button("Attach Disc Image...") {
                 browseRemovableMedia()
             }
 
             Text(
-                "Appears as a USB drive in the guest. Use for installer ISOs, recovery images, or file transfer. When read-only is off, changes are written back to the disk image file."
+                "Appears as a USB drive in the guest. Hot-pluggable — changes take effect immediately while the VM is running. For boot media, use Storage Disks instead."
             )
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -315,19 +286,22 @@ struct VMSettingsView: View {
     }
 
     private func browseRemovableMedia() {
-        guard
-            let url = NSOpenPanel.browseDiskImages(
-                message: "Select a disk image to attach to the VM"
-            ).first
-        else { return }
-        // Assign path + UUID atomically so the new disc carries a stable
-        // device identity from the moment it's configured. The UUID is what
-        // saved-state restore matches against, and what hot-attach passes to
-        // `VZUSBMassStorageDeviceConfiguration.uuid`.
-        var updated = instance.configuration
-        updated.discImagePath = url.path(percentEncoded: false)
-        updated.discImageDeviceUUID = UUID()
-        instance.configuration = updated
+        let urls = NSOpenPanel.browseDiskImages(
+            message: "Select disk images to attach to the VM",
+            allowsMultipleSelection: true
+        )
+        guard !urls.isEmpty else { return }
+
+        var current = removableMediaBinding.wrappedValue
+        let existingPaths = Set(current.map(\.path))
+
+        for url in urls {
+            let path = url.path(percentEncoded: false)
+            guard !existingPaths.contains(path) else { continue }
+            current.append(RemovableMediaItem(path: path, readOnly: true))
+        }
+
+        removableMediaBinding.wrappedValue = current
     }
 
     // MARK: - Storage Disks
@@ -337,42 +311,13 @@ struct VMSettingsView: View {
         Section {
             let disks = storageDiskBinding.wrappedValue
 
-            if disks.isEmpty {
-                Text("No storage disks attached")
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(storageDiskBinding) { $disk in
-                    HStack {
-                        Image(systemName: disk.isInternal ? "internaldrive" : "externaldrive")
-                            .foregroundStyle(.secondary)
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(disk.label)
-                            Text(disk.isInternal ? "In-bundle ASIF disk" : disk.path)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                        }
-
-                        Spacer()
-
-                        Toggle("Read Only", isOn: $disk.readOnly)
-                            .toggleStyle(.switch)
-                            .labelsHidden()
-                        Text("Read Only")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-
-                        Button(role: .destructive) {
-                            viewModel.removeAdditionalDisk(disk, from: instance)
-                        } label: {
-                            Image(systemName: "minus.circle.fill")
-                                .foregroundStyle(.red)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
+            ForEach(storageDiskBinding) { $disk in
+                storageDiskRow(disk: $disk)
+            }
+            .onMove { source, destination in
+                var current = storageDiskBinding.wrappedValue
+                current.move(fromOffsets: source, toOffset: destination)
+                storageDiskBinding.wrappedValue = current
             }
 
             HStack {
@@ -390,27 +335,80 @@ struct VMSettingsView: View {
             }
 
             Text(
-                "Storage disks provide high-performance persistent storage. They appear as block devices in the guest (e.g., /dev/vdb on Linux) and support TRIM for efficient space usage."
+                "Position 1 boots first on EFI guests. On macOS and Linux Kernel boot, position affects guest device enumeration. Installer images (.iso, .dmg) appear as USB drives in the guest; permanent disks appear as virtio block devices, so reordering an installer doesn't change your main disk's /dev/vda letter."
             )
             .font(.caption)
             .foregroundStyle(.secondary)
 
-            if instance.configuration.guestOS == .linux && !disks.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Find in guest:")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    ForEach(disks) { disk in
-                        Text("/dev/disk/by-id/virtio-\(disk.blockDeviceIdentifier)")
-                            .font(.system(.caption, design: .monospaced))
+            if instance.configuration.guestOS == .linux {
+                let virtioDisks = disks.filter { $0.kind == .virtio }
+                if !virtioDisks.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Find in guest:")
+                            .font(.caption)
                             .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
+                        ForEach(virtioDisks) { disk in
+                            Text("/dev/disk/by-id/virtio-\(disk.blockDeviceIdentifier)")
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
                     }
                 }
             }
         } header: {
             lockableHeader("Storage Disks")
         }
+    }
+
+    @ViewBuilder
+    private func storageDiskRow(disk: Binding<StorageDisk>) -> some View {
+        HStack {
+            Image(systemName: disk.wrappedValue.kind == .usbMassStorage ? "opticaldisc" : (disk.wrappedValue.isInternal ? "internaldrive" : "externaldrive"))
+                .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(disk.wrappedValue.label)
+                Text(diskSubtitle(for: disk.wrappedValue))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            Spacer()
+
+            Toggle("Read Only", isOn: disk.readOnly)
+                .toggleStyle(.switch)
+                .labelsHidden()
+            Text("Read Only")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Button(role: .destructive) {
+                diskToRemove = disk.wrappedValue
+                showingRemoveDiskAlert = true
+            } label: {
+                Image(systemName: "minus.circle.fill")
+                    .foregroundStyle(.red)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    /// Subtitle string: disk usage stats for the main bundle disk, path or
+    /// label for everything else.
+    private func diskSubtitle(for disk: StorageDisk) -> String {
+        if disk.isInternal && disk.path == instance.bundleLayout.diskImageURL.lastPathComponent {
+            if let usage = instance.cachedDiskUsageBytes {
+                return "\(DataFormatters.formatBytes(usage)) (on disk) / \(DataFormatters.formatDiskSize(instance.configuration.diskSizeInGB)) (allocated)"
+            }
+            return "\(DataFormatters.formatDiskSize(instance.configuration.diskSizeInGB)) allocated"
+        }
+        if disk.isInternal {
+            return "In-bundle disk image"
+        }
+        return disk.path
     }
 
     private func addExternalDisk() {
@@ -426,7 +424,7 @@ struct VMSettingsView: View {
         for url in urls {
             let path = url.path(percentEncoded: false)
             guard !existingPaths.contains(path) else { continue }
-            current.append(AdditionalDisk(path: path))
+            current.append(StorageDisk(path: path))
         }
 
         storageDiskBinding.wrappedValue = current
@@ -455,7 +453,7 @@ struct VMSettingsView: View {
                 Spacer()
                 Button("Create") {
                     showingCreateDisk = false
-                    viewModel.createAdditionalDisk(for: instance, sizeInGB: newDiskSizeInGB)
+                    viewModel.createStorageDisk(for: instance, sizeInGB: newDiskSizeInGB)
                 }
                 .buttonStyle(.borderedProminent)
             }
@@ -482,35 +480,6 @@ struct VMSettingsView: View {
                 in: os.minMemoryInGB...os.maxMemoryInGB
             )
             .disabled(isReadOnly)
-
-            // Disk Size row — the value is read-only everywhere (resize requires CLI);
-            // leaving the row un-disabled keeps the info-popover button tappable in
-            // read-only mode.
-            LabeledContent {
-                HStack {
-                    if let usage = instance.cachedDiskUsageBytes {
-                        Text(
-                            "\(DataFormatters.formatBytes(usage)) (on disk) / \(DataFormatters.formatDiskSize(instance.configuration.diskSizeInGB)) (allocated)"
-                        )
-                    } else {
-                        Text(DataFormatters.formatDiskSize(instance.configuration.diskSizeInGB))
-                    }
-                }
-            } label: {
-                HStack(spacing: 4) {
-                    Text("Disk Size")
-                    Button {
-                        showingDiskInfo.toggle()
-                    } label: {
-                        Image(systemName: "info.circle")
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .popover(isPresented: $showingDiskInfo, arrowEdge: .trailing) {
-                        diskInfoPopover
-                    }
-                }
-            }
         }
         .task(id: instance.id) {
             await instance.refreshDiskUsage()
@@ -736,40 +705,6 @@ struct VMSettingsView: View {
         }
 
         sharedDirectoriesBinding.wrappedValue = current
-    }
-
-    @ViewBuilder
-    private var diskInfoPopover: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Disk Size")
-                .font(.headline)
-
-            Text(
-                "This VM uses a fixed-size ASIF (Apple Sparse Image Format) disk. The image only consumes physical disk space as data is written."
-            )
-
-            Divider()
-
-            Text("Expanding the disk")
-                .font(.subheadline)
-                .fontWeight(.medium)
-
-            Text("To resize the disk image, use Terminal:")
-                .font(.callout)
-
-            Text("diskutil image resize --size <new-size>g \\\n  <path-to-Disk.asif>")
-                .font(.system(.caption, design: .monospaced))
-                .padding(8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.quaternary)
-                .clipShape(RoundedRectangle(cornerRadius: 4))
-
-            Text("Alternatively, add a storage disk or shared directory to transfer data without resizing.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-        }
-        .padding()
-        .frame(width: 340)
     }
 
     @ViewBuilder

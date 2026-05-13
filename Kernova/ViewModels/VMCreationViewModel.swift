@@ -216,6 +216,28 @@ final class VMCreationViewModel {
             ? VZGenericMachineIdentifier().dataRepresentation
             : nil
 
+        // Storage disks: for EFI installs that picked an ISO, prepend the
+        // installer as `storageDevices[0]` so EFI boots it ahead of the
+        // main disk. macOS install uses `VZMacOSInstaller` (not boot media),
+        // and Linux Kernel boot loads the kernel directly — both leave the
+        // list as nil so the builder synthesizes the default main disk.
+        var storageDisks: [StorageDisk]? = nil
+        if selectedBootMode == .efi, let isoPath, !isoPath.isEmpty {
+            let installerDisk = StorageDisk(
+                path: isoPath,
+                readOnly: true,
+                label: URL(fileURLWithPath: isoPath).deletingPathExtension().lastPathComponent
+            )
+            let mainDisk = StorageDisk(
+                path: "Disk.asif",
+                readOnly: false,
+                label: "Main Disk",
+                isInternal: true,
+                kind: .virtio
+            )
+            storageDisks = [installerDisk, mainDisk]
+        }
+
         return VMConfiguration(
             name: vmName.trimmingCharacters(in: .whitespaces),
             guestOS: selectedOS,
@@ -226,10 +248,10 @@ final class VMCreationViewModel {
             networkEnabled: networkEnabled,
             macAddress: macAddress,
             genericMachineIdentifierData: genericMachineIdentifierData,
-            discImagePath: selectedBootMode == .efi ? isoPath : nil,
             kernelPath: selectedBootMode == .linuxKernel ? kernelPath : nil,
             initrdPath: selectedBootMode == .linuxKernel ? initrdPath : nil,
-            kernelCommandLine: selectedBootMode == .linuxKernel ? kernelCommandLine : nil
+            kernelCommandLine: selectedBootMode == .linuxKernel ? kernelCommandLine : nil,
+            storageDisks: storageDisks
         )
     }
 }

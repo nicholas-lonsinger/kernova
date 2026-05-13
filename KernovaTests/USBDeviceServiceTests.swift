@@ -39,7 +39,7 @@ struct USBDeviceServiceTests {
         #expect(service.attachCallCount == 1)
         #expect(service.lastAttachedPath == "/tmp/test.dmg")
         #expect(service.lastAttachedReadOnly == false)
-        #expect(instance.attachedUSBDevices.isEmpty)
+        #expect(instance.liveRemovableMedia.isEmpty)
     }
 
     @Test("Mock service honors desiredUUID and records it")
@@ -86,7 +86,7 @@ struct USBDeviceServiceTests {
             return true
         }
 
-        #expect(instance.attachedUSBDevices.isEmpty)
+        #expect(instance.liveRemovableMedia.isEmpty)
     }
 
     @Test("Detach propagates errors")
@@ -109,17 +109,17 @@ struct USBDeviceServiceTests {
 
     // MARK: - VMInstance State Tests
 
-    @Test("tearDownSession clears attachedUSBDevices")
+    @Test("tearDownSession clears liveRemovableMedia")
     func tearDownClearsUSBDevices() {
         let instance = makeInstance()
 
-        instance.attachedUSBDevices.append(USBDeviceInfo(path: "/tmp/a.dmg", readOnly: false))
-        instance.attachedUSBDevices.append(USBDeviceInfo(path: "/tmp/b.dmg", readOnly: true))
-        #expect(instance.attachedUSBDevices.count == 2)
+        instance.liveRemovableMedia.append(USBDeviceInfo(path: "/tmp/a.dmg", readOnly: false))
+        instance.liveRemovableMedia.append(USBDeviceInfo(path: "/tmp/b.dmg", readOnly: true))
+        #expect(instance.liveRemovableMedia.count == 2)
 
         instance.tearDownSession()
 
-        #expect(instance.attachedUSBDevices.isEmpty)
+        #expect(instance.liveRemovableMedia.isEmpty)
     }
 
     @Test("canAttachUSBDevices is true when running with VM")

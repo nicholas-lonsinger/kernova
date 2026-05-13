@@ -1538,132 +1538,106 @@ struct VMLibraryViewModelTests {
 
     // MARK: - Guest Agent Installer
 
-    @Test("mountGuestAgentInstaller attaches DMG and shows post-mount alert")
-    func mountGuestAgentInstallerAttachesAndShowsAlert() async throws {
+    @Test("mountGuestAgentInstaller appends DMG to removableMedia and shows alert")
+    func mountGuestAgentInstallerAppendsAndShowsAlert() async throws {
         let installerURL = try #require(KernovaGuestAgentInfo.installerDiskImageURL)
         let mock = MockUSBDeviceService()
         let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
         let instance = makeInstance()
+        instance.status = .running
         viewModel.instances.append(instance)
 
         viewModel.mountGuestAgentInstaller(on: instance)
 
-        // Spin until the spawned Task sets the alert flag
-        while !viewModel.showInstallerMountedAlert { await Task.yield() }
-
-        #expect(mock.attachCallCount == 1)
-        #expect(mock.lastAttachedPath == installerURL.path)
-        #expect(mock.lastAttachedReadOnly == true)
+        // Alert is set synchronously; reconcile attach is async.
         #expect(viewModel.showInstallerMountedAlert == true)
         #expect(viewModel.installerMountedVMName == instance.name)
+        #expect(instance.configuration.removableMedia?.count == 1)
+        #expect(instance.configuration.removableMedia?.first?.path == installerURL.path(percentEncoded: false))
+
+        while instance.liveRemovableMedia.isEmpty { await Task.yield() }
+
+        #expect(mock.attachCallCount == 1)
+        #expect(mock.lastAttachedReadOnly == true)
     }
 
-    @Test("mountGuestAgentInstaller is no-op when DMG already attached but still surfaces alert")
-    func mountGuestAgentInstallerAlreadyAttachedSurfacesAlert() throws {
+    @Test("mountGuestAgentInstaller is a no-op when DMG already in removableMedia, but still surfaces alert")
+    func mountGuestAgentInstallerAlreadyMountedSurfacesAlert() throws {
         let installerURL = try #require(KernovaGuestAgentInfo.installerDiskImageURL)
         let mock = MockUSBDeviceService()
         let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
         let instance = makeInstance()
-        // Pre-populate with the installer DMG already attached
-        instance.attachedUSBDevices.append(USBDeviceInfo(path: installerURL.path, readOnly: true))
+        instance.configuration.removableMedia = [
+            RemovableMediaItem(path: installerURL.path(percentEncoded: false), readOnly: true)
+        ]
         viewModel.instances.append(instance)
 
         viewModel.mountGuestAgentInstaller(on: instance)
 
-        // The early-return path sets the alert synchronously — no Task needed
         #expect(mock.attachCallCount == 0)
         #expect(viewModel.showInstallerMountedAlert == true)
         #expect(viewModel.installerMountedVMName == instance.name)
+        // List unchanged
+        #expect(instance.configuration.removableMedia?.count == 1)
     }
 
-    @Test("rapid double-click mounts only once via mountingInstanceIDs guard")
-    func rapidDoubleClickMountsOnce() async throws {
-        _ = try #require(KernovaGuestAgentInfo.installerDiskImageURL)
-        let suspending = SuspendingMockUSBDeviceService()
-        let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: suspending)
-        let instance = makeInstance()
-        viewModel.instances.append(instance)
-
-        viewModel.mountGuestAgentInstaller(on: instance)  // Task A — will suspend in attach
-        await suspending.waitUntilSuspended()
-
-        viewModel.mountGuestAgentInstaller(on: instance)  // should early-return on mutex guard
-
-        suspending.resumeSuspended()
-        // Drain by awaiting alert state — the spawned Task sets it before returning
-        while !viewModel.showInstallerMountedAlert { await Task.yield() }
-
-        #expect(suspending.attachCallCount == 1)
-        #expect(viewModel.installerMountedVMName == instance.name)
-    }
-
-    @Test("mountGuestAgentInstaller surfaces error and clears mounting state on attach failure")
-    func mountGuestAgentInstallerAttachFailureClearsState() async throws {
-        _ = try #require(KernovaGuestAgentInfo.installerDiskImageURL)
-        let mock = MockUSBDeviceService()
-        mock.attachError = USBDeviceError.noVirtualMachine
-        let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
-        let instance = makeInstance()
-        viewModel.instances.append(instance)
-
-        viewModel.mountGuestAgentInstaller(on: instance)
-        while !viewModel.showError { await Task.yield() }  // spin until the spawned Task surfaces error
-
-        #expect(mock.attachCallCount == 1)
-        #expect(viewModel.errorMessage != nil)
-        #expect(viewModel.showInstallerMountedAlert == false)
-
-        // Second call must not be blocked — proves mountingInstanceIDs was cleaned up
-        mock.attachError = nil
-        viewModel.mountGuestAgentInstaller(on: instance)
-        while !viewModel.showInstallerMountedAlert { await Task.yield() }
-        #expect(mock.attachCallCount == 2)
-    }
-
-    @Test("unmountGuestAgentInstaller is no-op when DMG not attached")
-    func unmountGuestAgentInstallerNoOpWhenNotAttached() async throws {
+    @Test("unmountGuestAgentInstaller is no-op when DMG not in removableMedia")
+    func unmountGuestAgentInstallerNoOpWhenNotPresent() async throws {
         _ = try #require(KernovaGuestAgentInfo.installerDiskImageURL)
         let mock = MockUSBDeviceService()
         let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
         let instance = makeInstance()
-        // Attach only an unrelated device
-        let unrelated = USBDeviceInfo(path: "/some/other/disk.img", readOnly: false)
-        instance.attachedUSBDevices.append(unrelated)
+        // List has an unrelated item only
+        let unrelated = RemovableMediaItem(path: "/some/other/disk.img", readOnly: false)
+        instance.configuration.removableMedia = [unrelated]
         viewModel.instances.append(instance)
 
         viewModel.unmountGuestAgentInstaller(from: instance)
-
-        // Give any spawned Task time to run (though none should be spawned)
         await Task.yield()
 
         #expect(mock.detachCallCount == 0)
-        #expect(instance.attachedUSBDevices.count == 1)
-        #expect(instance.attachedUSBDevices.first?.path == unrelated.path)
+        #expect(instance.configuration.removableMedia?.count == 1)
+        #expect(instance.configuration.removableMedia?.first?.path == unrelated.path)
     }
 
-    @Test("unmountGuestAgentInstaller detaches DMG when attached")
-    func unmountGuestAgentInstallerDetachesWhenAttached() async throws {
+    @Test("unmountGuestAgentInstaller removes DMG entry and triggers detach")
+    func unmountGuestAgentInstallerRemovesEntry() async throws {
         let installerURL = try #require(KernovaGuestAgentInfo.installerDiskImageURL)
         let mock = MockUSBDeviceService()
         let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
         let instance = makeInstance()
-        let installerDevice = USBDeviceInfo(path: installerURL.path, readOnly: true)
-        instance.attachedUSBDevices.append(installerDevice)
+        instance.status = .running
+        let installerItem = RemovableMediaItem(path: installerURL.path(percentEncoded: false), readOnly: true)
+        instance.configuration.removableMedia = [installerItem]
+        instance.liveRemovableMedia = [
+            USBDeviceInfo(id: installerItem.id, path: installerItem.path, readOnly: installerItem.readOnly)
+        ]
         viewModel.instances.append(instance)
 
         viewModel.unmountGuestAgentInstaller(from: instance)
 
-        // Spin until the detach Task clears the attached devices list
-        while !instance.attachedUSBDevices.isEmpty { await Task.yield() }
+        while !instance.liveRemovableMedia.isEmpty { await Task.yield() }
 
         #expect(mock.detachCallCount == 1)
-        #expect(instance.attachedUSBDevices.isEmpty)
+        #expect(instance.configuration.removableMedia == nil)
     }
 
-    // MARK: - Live Disc Image Hot-Config
+    // MARK: - Live Removable Media Hot-Config
 
-    @Test("applyLivePolicy attaches new disc when path goes from nil to set")
-    func liveDiscAddAttaches() async throws {
+    /// Helper: build a config with a single removable media item.
+    private func configWithRemovable(
+        _ base: VMConfiguration,
+        path: String,
+        readOnly: Bool = true,
+        id: UUID = UUID()
+    ) -> VMConfiguration {
+        var c = base
+        c.removableMedia = [RemovableMediaItem(id: id, path: path, readOnly: readOnly)]
+        return c
+    }
+
+    @Test("applyLivePolicy attaches a new removable item when added to the list")
+    func liveRemovableAddAttaches() async throws {
         let mock = MockUSBDeviceService()
         let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
         let instance = makeInstance()
@@ -1672,128 +1646,123 @@ struct VMLibraryViewModelTests {
 
         let configuredUUID = UUID()
         let old = instance.configuration
-        var new = old
-        new.discImagePath = "/tmp/install.iso"
-        new.discImageReadOnly = true
-        new.discImageDeviceUUID = configuredUUID
+        let new = configWithRemovable(old, path: "/tmp/install.iso", readOnly: true, id: configuredUUID)
 
         viewModel.applyLivePolicy(for: instance, old: old, new: new)
 
-        while instance.liveDiscImageDevice == nil { await Task.yield() }
+        while instance.liveRemovableMedia.isEmpty { await Task.yield() }
 
         #expect(mock.attachCallCount == 1)
         #expect(mock.detachCallCount == 0)
         #expect(mock.lastAttachedPath == "/tmp/install.iso")
         #expect(mock.lastAttachedReadOnly == true)
-        // The configured UUID must be threaded through to the runtime device
-        // so saved-state restore can match it.
         #expect(mock.lastAttachedDesiredUUID == configuredUUID)
-        #expect(instance.liveDiscImageDevice?.id == configuredUUID)
-        #expect(instance.liveDiscImageDevice?.path == "/tmp/install.iso")
-        // The settings-driven disc must NOT pollute `attachedUSBDevices`
-        // (reserved for transient installer-style mounts). Otherwise an
-        // `unmountGuestAgentInstaller` path lookup could accidentally
-        // detach the user-selected disc.
-        #expect(instance.attachedUSBDevices.isEmpty)
+        #expect(instance.liveRemovableMedia.count == 1)
+        #expect(instance.liveRemovableMedia.first?.id == configuredUUID)
+        #expect(instance.liveRemovableMedia.first?.path == "/tmp/install.iso")
     }
 
-    @Test("applyLivePolicy detaches and clears tracking when disc removed")
-    func liveDiscRemoveDetaches() async throws {
+    @Test("applyLivePolicy detaches and clears tracking when the only item is removed")
+    func liveRemovableRemoveDetaches() async throws {
         let mock = MockUSBDeviceService()
         let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
         let instance = makeInstance()
         instance.status = .running
-        let existing = USBDeviceInfo(path: "/tmp/install.iso", readOnly: true)
-        instance.liveDiscImageDevice = existing
+        let id = UUID()
+        instance.liveRemovableMedia = [USBDeviceInfo(id: id, path: "/tmp/install.iso", readOnly: true)]
+        var old = instance.configuration
+        old.removableMedia = [RemovableMediaItem(id: id, path: "/tmp/install.iso", readOnly: true)]
+        instance.configuration = old
         viewModel.instances.append(instance)
 
-        var old = instance.configuration
-        old.discImagePath = "/tmp/install.iso"
         var new = old
-        new.discImagePath = nil
+        new.removableMedia = nil
 
         viewModel.applyLivePolicy(for: instance, old: old, new: new)
 
-        while instance.liveDiscImageDevice != nil { await Task.yield() }
+        while !instance.liveRemovableMedia.isEmpty { await Task.yield() }
 
         #expect(mock.detachCallCount == 1)
         #expect(mock.attachCallCount == 0)
-        #expect(instance.liveDiscImageDevice == nil)
+        #expect(instance.liveRemovableMedia.isEmpty)
     }
 
-    @Test("applyLivePolicy detaches old then attaches new on path swap")
-    func liveDiscSwapDetachesThenAttaches() async throws {
+    @Test("applyLivePolicy swaps the only item: detach old, attach new")
+    func liveRemovableSwapDetachesThenAttaches() async throws {
         let mock = MockUSBDeviceService()
         let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
         let instance = makeInstance()
         instance.status = .running
-        let originalID = UUID()
-        instance.liveDiscImageDevice = USBDeviceInfo(id: originalID, path: "/tmp/old.iso", readOnly: true)
+        let oldID = UUID()
+        instance.liveRemovableMedia = [USBDeviceInfo(id: oldID, path: "/tmp/old.iso", readOnly: true)]
+        var old = instance.configuration
+        old.removableMedia = [RemovableMediaItem(id: oldID, path: "/tmp/old.iso", readOnly: true)]
+        instance.configuration = old
         viewModel.instances.append(instance)
 
-        var old = instance.configuration
-        old.discImagePath = "/tmp/old.iso"
+        let newID = UUID()
         var new = old
-        new.discImagePath = "/tmp/new.iso"
+        new.removableMedia = [RemovableMediaItem(id: newID, path: "/tmp/new.iso", readOnly: true)]
 
         viewModel.applyLivePolicy(for: instance, old: old, new: new)
 
-        while instance.liveDiscImageDevice?.path != "/tmp/new.iso" { await Task.yield() }
+        while instance.liveRemovableMedia.first?.path != "/tmp/new.iso" { await Task.yield() }
 
         #expect(mock.detachCallCount == 1)
         #expect(mock.attachCallCount == 1)
         #expect(mock.lastAttachedPath == "/tmp/new.iso")
-        // The new tracked device must NOT be the original — proves we replaced it
-        #expect(instance.liveDiscImageDevice?.id != originalID)
+        #expect(instance.liveRemovableMedia.count == 1)
+        #expect(instance.liveRemovableMedia.first?.id == newID)
     }
 
-    @Test("applyLivePolicy detaches and reattaches on readOnly flip")
-    func liveDiscReadOnlyFlipReattaches() async throws {
+    @Test("applyLivePolicy detaches and reattaches on readOnly flip (same id)")
+    func liveRemovableReadOnlyFlipReattaches() async throws {
         let mock = MockUSBDeviceService()
         let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
         let instance = makeInstance()
         instance.status = .running
-        instance.liveDiscImageDevice = USBDeviceInfo(path: "/tmp/install.iso", readOnly: true)
+        let id = UUID()
+        instance.liveRemovableMedia = [USBDeviceInfo(id: id, path: "/tmp/install.iso", readOnly: true)]
+        var old = instance.configuration
+        old.removableMedia = [RemovableMediaItem(id: id, path: "/tmp/install.iso", readOnly: true)]
+        instance.configuration = old
         viewModel.instances.append(instance)
 
-        var old = instance.configuration
-        old.discImagePath = "/tmp/install.iso"
-        old.discImageReadOnly = true
         var new = old
-        new.discImageReadOnly = false
+        new.removableMedia = [RemovableMediaItem(id: id, path: "/tmp/install.iso", readOnly: false)]
 
         viewModel.applyLivePolicy(for: instance, old: old, new: new)
 
-        while instance.liveDiscImageDevice?.readOnly != false { await Task.yield() }
+        while instance.liveRemovableMedia.first?.readOnly != false { await Task.yield() }
 
         #expect(mock.detachCallCount == 1)
         #expect(mock.attachCallCount == 1)
         #expect(mock.lastAttachedReadOnly == false)
     }
 
-    @Test("applyLivePolicy is a no-op when only bootFromDiscImage flips")
-    func liveDiscBootFromDiscFlipIsNoop() async throws {
+    @Test("applyLivePolicy is a no-op when storageDisks change but removableMedia is unchanged")
+    func liveRemovableNoopWhenOnlyStorageDisksChange() async throws {
         let mock = MockUSBDeviceService()
         let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
         let instance = makeInstance()
         instance.status = .running
         viewModel.instances.append(instance)
 
-        var old = instance.configuration
-        old.discImagePath = "/tmp/install.iso"
+        let old = instance.configuration
         var new = old
-        new.bootFromDiscImage = true
+        new.storageDisks = [
+            StorageDisk(path: "Disk.asif", readOnly: false, label: "Main Disk", isInternal: true, kind: .virtio)
+        ]
 
         viewModel.applyLivePolicy(for: instance, old: old, new: new)
-        // Yield enough to let any spurious Task drain
         for _ in 0..<5 { await Task.yield() }
 
         #expect(mock.attachCallCount == 0)
         #expect(mock.detachCallCount == 0)
     }
 
-    @Test("applyLivePolicy is a no-op when VM is stopped, even with disc change")
-    func liveDiscNoopWhenStopped() async throws {
+    @Test("applyLivePolicy is a no-op when VM is stopped, even with media change")
+    func liveRemovableNoopWhenStopped() async throws {
         let mock = MockUSBDeviceService()
         let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
         let instance = makeInstance()
@@ -1801,19 +1770,18 @@ struct VMLibraryViewModelTests {
         viewModel.instances.append(instance)
 
         let old = instance.configuration
-        var new = old
-        new.discImagePath = "/tmp/install.iso"
+        let new = configWithRemovable(old, path: "/tmp/install.iso")
 
         viewModel.applyLivePolicy(for: instance, old: old, new: new)
         for _ in 0..<5 { await Task.yield() }
 
         #expect(mock.attachCallCount == 0)
         #expect(mock.detachCallCount == 0)
-        #expect(instance.liveDiscImageDevice == nil)
+        #expect(instance.liveRemovableMedia.isEmpty)
     }
 
-    @Test("Live disc attach failure surfaces error and clears tracking")
-    func liveDiscAttachFailureSurfacesError() async throws {
+    @Test("Live attach failure surfaces error")
+    func liveRemovableAttachFailureSurfacesError() async throws {
         let mock = MockUSBDeviceService()
         mock.attachError = USBDeviceError.diskImageNotFound("/tmp/missing.iso")
         let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
@@ -1822,69 +1790,65 @@ struct VMLibraryViewModelTests {
         viewModel.instances.append(instance)
 
         let old = instance.configuration
-        var new = old
-        new.discImagePath = "/tmp/missing.iso"
+        let new = configWithRemovable(old, path: "/tmp/missing.iso")
 
         viewModel.applyLivePolicy(for: instance, old: old, new: new)
 
         while !viewModel.showError { await Task.yield() }
 
         #expect(mock.attachCallCount == 1)
-        #expect(instance.liveDiscImageDevice == nil)
         #expect(viewModel.errorMessage != nil)
+        #expect(instance.liveRemovableMedia.isEmpty)
     }
 
-    @Test("deviceNotFound on detach is treated as confirmed-gone — tracking cleared then re-set by attach")
-    func liveDiscDetachDeviceNotFoundClearsTrackingThenAttachReSets() async throws {
-        // `deviceNotFound` means the guest (or framework) already removed
-        // the device. We're confirmed-gone, so clear tracking and proceed
-        // to attach. The new attach should populate tracking with the new
-        // device's info.
+    @Test("deviceNotFound on detach is treated as confirmed-gone — reconcile continues with attach")
+    func liveRemovableDetachDeviceNotFoundContinues() async throws {
+        // deviceNotFound means the guest (or framework) already removed the
+        // device — for example, the user ejected it from inside the guest.
+        // The reconcile must clear tracking and proceed with the next
+        // operation in the diff.
         let mock = MockUSBDeviceService()
         mock.detachError = USBDeviceError.deviceNotFound
         let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
         let instance = makeInstance()
         instance.status = .running
-        instance.liveDiscImageDevice = USBDeviceInfo(path: "/tmp/old.iso", readOnly: true)
+        let oldID = UUID()
+        instance.liveRemovableMedia = [USBDeviceInfo(id: oldID, path: "/tmp/old.iso", readOnly: true)]
+        var old = instance.configuration
+        old.removableMedia = [RemovableMediaItem(id: oldID, path: "/tmp/old.iso", readOnly: true)]
+        instance.configuration = old
         viewModel.instances.append(instance)
 
-        var old = instance.configuration
-        old.discImagePath = "/tmp/old.iso"
+        let newID = UUID()
         var new = old
-        new.discImagePath = "/tmp/new.iso"
+        new.removableMedia = [RemovableMediaItem(id: newID, path: "/tmp/new.iso", readOnly: true)]
 
         viewModel.applyLivePolicy(for: instance, old: old, new: new)
 
-        while instance.liveDiscImageDevice?.path != "/tmp/new.iso" { await Task.yield() }
+        while instance.liveRemovableMedia.first?.path != "/tmp/new.iso" { await Task.yield() }
 
         #expect(mock.detachCallCount == 1)
         #expect(mock.attachCallCount == 1)
-        #expect(instance.liveDiscImageDevice?.path == "/tmp/new.iso")
+        #expect(instance.liveRemovableMedia.first?.path == "/tmp/new.iso")
     }
 
-    @Test("Transient detach error fails fast — no attach, tracking preserved, error surfaced")
-    func liveDiscTransientDetachErrorFailsFast() async throws {
-        // A generic / framework error during detach doesn't tell us the
-        // device is gone. Proceeding to attach would overwrite the host's
-        // single-slot tracking with the new device's info while the old
-        // device remains physically attached to the guest — a leak per
-        // failure. So we fail fast: surface the error, keep tracking
-        // pointed at the original device, and let the user retry via
-        // another settings edit.
+    @Test("Transient detach error fails fast — reconcile aborts before attach")
+    func liveRemovableTransientDetachErrorFailsFast() async throws {
         struct TransientError: Error {}
         let mock = MockUSBDeviceService()
         mock.detachError = TransientError()
         let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
         let instance = makeInstance()
         instance.status = .running
-        let originalTracked = USBDeviceInfo(path: "/tmp/old.iso", readOnly: true)
-        instance.liveDiscImageDevice = originalTracked
+        let oldID = UUID()
+        instance.liveRemovableMedia = [USBDeviceInfo(id: oldID, path: "/tmp/old.iso", readOnly: true)]
+        var old = instance.configuration
+        old.removableMedia = [RemovableMediaItem(id: oldID, path: "/tmp/old.iso", readOnly: true)]
+        instance.configuration = old
         viewModel.instances.append(instance)
 
-        var old = instance.configuration
-        old.discImagePath = "/tmp/old.iso"
         var new = old
-        new.discImagePath = "/tmp/new.iso"
+        new.removableMedia = [RemovableMediaItem(path: "/tmp/new.iso", readOnly: true)]
 
         viewModel.applyLivePolicy(for: instance, old: old, new: new)
 
@@ -1892,51 +1856,37 @@ struct VMLibraryViewModelTests {
         for _ in 0..<5 { await Task.yield() }
 
         #expect(mock.detachCallCount == 1)
-        // CRITICAL: no attach attempted — preventing the device-leak.
+        // No attach attempted — preventing the device-leak.
         #expect(mock.attachCallCount == 0)
-        // Tracking still points at the original device so the next
-        // reconcile pass can retry the detach.
-        #expect(instance.liveDiscImageDevice?.id == originalTracked.id)
     }
 
-    @Test("Detach noVirtualMachine error bails the reconcile without firing attach")
-    func liveDiscDetachNoVMBailsWithoutAttachOrError() async throws {
-        // If the VM is torn down between the loop's status guard and the
-        // detach's `await`, `lifecycle.detachUSBDevice` throws
-        // `USBDeviceError.noVirtualMachine`. The reconcile must abandon
-        // immediately — proceeding to attach would also throw the same
-        // error and surface a spurious alert.
+    @Test("Detach noVirtualMachine error bails the reconcile silently")
+    func liveRemovableDetachNoVMBails() async throws {
         let mock = MockUSBDeviceService()
         mock.detachError = USBDeviceError.noVirtualMachine
         let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
         let instance = makeInstance()
         instance.status = .running
-        instance.liveDiscImageDevice = USBDeviceInfo(path: "/tmp/old.iso", readOnly: true)
+        let oldID = UUID()
+        instance.liveRemovableMedia = [USBDeviceInfo(id: oldID, path: "/tmp/old.iso", readOnly: true)]
+        var old = instance.configuration
+        old.removableMedia = [RemovableMediaItem(id: oldID, path: "/tmp/old.iso", readOnly: true)]
+        instance.configuration = old
         viewModel.instances.append(instance)
 
-        var old = instance.configuration
-        old.discImagePath = "/tmp/old.iso"
         var new = old
-        new.discImagePath = "/tmp/new.iso"
+        new.removableMedia = [RemovableMediaItem(path: "/tmp/new.iso", readOnly: true)]
 
         viewModel.applyLivePolicy(for: instance, old: old, new: new)
-
-        while instance.liveDiscImageDevice != nil { await Task.yield() }
-        for _ in 0..<5 { await Task.yield() }
+        for _ in 0..<10 { await Task.yield() }
 
         #expect(mock.detachCallCount == 1)
-        // No attach attempted — the bail short-circuits before reaching it.
         #expect(mock.attachCallCount == 0)
-        // No spurious error alert — bail is silent in the UI (only a
-        // .notice log line).
         #expect(!viewModel.showError)
     }
 
-    @Test("Attach noVirtualMachine error bails the reconcile without firing an alert")
-    func liveDiscAttachNoVMBailsWithoutError() async throws {
-        // Symmetric counterpart to `liveDiscDetachNoVMBailsWithoutAttachOrError`:
-        // VM torn down between the (successful) detach and the attach. The
-        // attach throws `noVirtualMachine`; the bail must be silent in the UI.
+    @Test("Attach noVirtualMachine error bails the reconcile silently")
+    func liveRemovableAttachNoVMBails() async throws {
         let mock = MockUSBDeviceService()
         mock.attachError = USBDeviceError.noVirtualMachine
         let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
@@ -1945,25 +1895,19 @@ struct VMLibraryViewModelTests {
         viewModel.instances.append(instance)
 
         let old = instance.configuration
-        var new = old
-        new.discImagePath = "/tmp/install.iso"
+        let new = configWithRemovable(old, path: "/tmp/install.iso")
 
         viewModel.applyLivePolicy(for: instance, old: old, new: new)
-
         for _ in 0..<10 { await Task.yield() }
 
         #expect(mock.attachCallCount == 1)
         #expect(mock.detachCallCount == 0)
         #expect(!viewModel.showError)
-        #expect(instance.liveDiscImageDevice == nil)
+        #expect(instance.liveRemovableMedia.isEmpty)
     }
 
     @Test("Reconcile loop bails out when VM stops mid-pass — no spurious error")
-    func liveDiscReconcileBailsOutOnVMStop() async throws {
-        // Drive the suspending mock so we can interleave a VM stop between
-        // passes of the drain loop. After the first attach completes, the
-        // loop should re-check `instance.status`, see `.stopped`, and break
-        // — no second attach attempt, no spurious noVirtualMachine alert.
+    func liveRemovableReconcileBailsOutOnVMStop() async throws {
         let mock = SuspendingMockUSBDeviceService()
         let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
         let instance = makeInstance()
@@ -1971,25 +1915,16 @@ struct VMLibraryViewModelTests {
         viewModel.instances.append(instance)
 
         let baseConfig = instance.configuration
-        var configA = baseConfig
-        configA.discImagePath = "/tmp/A.iso"
-        configA.discImageDeviceUUID = UUID()
-        var configB = baseConfig
-        configB.discImagePath = "/tmp/B.iso"
-        configB.discImageDeviceUUID = UUID()
+        let configA = configWithRemovable(baseConfig, path: "/tmp/A.iso")
+        let configB = configWithRemovable(baseConfig, path: "/tmp/B.iso")
 
-        // Pass 1 starts: attaches A and suspends inside the mock. Then we
-        // enqueue a second target (B) and stop the VM before resuming.
         viewModel.applyLivePolicy(for: instance, old: baseConfig, new: configA)
         await mock.waitUntilSuspended()
+        // Stop the VM before the suspended attach resolves.
         viewModel.applyLivePolicy(for: instance, old: configA, new: configB)
         instance.status = .stopped
 
-        // Resume the suspended attach; the loop's next iteration must see
-        // `.stopped` and break, leaving B untouched.
         mock.resumeSuspended()
-
-        // Yield generously to confirm no second attach happens.
         for _ in 0..<10 { await Task.yield() }
 
         #expect(mock.attachCallCount == 1)
@@ -1997,12 +1932,8 @@ struct VMLibraryViewModelTests {
         #expect(!viewModel.showError)
     }
 
-    @Test("Rapid-fire disc swaps coalesce — one Task drains to the latest target")
-    func liveDiscRapidFireCoalescesToLatest() async throws {
-        // SuspendingMockUSBDeviceService preconditions on a second
-        // suspended attach, so if the coalescing breaks and two Tasks run
-        // their attaches in parallel, the precondition trips and the test
-        // crashes loudly — which is exactly the regression signal we want.
+    @Test("Rapid-fire media swaps coalesce — one Task drains to the latest target")
+    func liveRemovableRapidFireCoalescesToLatest() async throws {
         let mock = SuspendingMockUSBDeviceService()
         let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
         let instance = makeInstance()
@@ -2010,21 +1941,11 @@ struct VMLibraryViewModelTests {
         viewModel.instances.append(instance)
 
         let baseConfig = instance.configuration
-        var configA = baseConfig
-        configA.discImagePath = "/tmp/A.iso"
-        configA.discImageDeviceUUID = UUID()
-        var configB = baseConfig
-        configB.discImagePath = "/tmp/B.iso"
-        configB.discImageDeviceUUID = UUID()
-        var configC = baseConfig
-        configC.discImagePath = "/tmp/C.iso"
-        configC.discImageDeviceUUID = UUID()
+        let configA = configWithRemovable(baseConfig, path: "/tmp/A.iso")
+        let configB = configWithRemovable(baseConfig, path: "/tmp/B.iso")
+        let configC = configWithRemovable(baseConfig, path: "/tmp/C.iso")
 
-        // Fire three rapid edits before the first attach can complete.
-        // After the first call, a Task is spawned and immediately suspends
-        // inside the mock's `attach` (no prior live device → no detach).
-        // The next two calls must NOT spawn additional Tasks; they should
-        // just overwrite the pending target.
+        // Three rapid edits before the first attach can complete.
         viewModel.applyLivePolicy(for: instance, old: baseConfig, new: configA)
         await mock.waitUntilSuspended()
         viewModel.applyLivePolicy(for: instance, old: configA, new: configB)
@@ -2036,14 +1957,13 @@ struct VMLibraryViewModelTests {
         await mock.waitUntilSuspended()
         mock.resumeSuspended()
 
-        while instance.liveDiscImageDevice?.path != "/tmp/C.iso" { await Task.yield() }
+        while instance.liveRemovableMedia.first?.path != "/tmp/C.iso" { await Task.yield() }
 
-        // Final state: A then C attached; A detached. B was skipped entirely
-        // — coalescing collapsed it into the latest pending target.
+        // Final state: A then C attached; A detached. B was skipped entirely.
         #expect(mock.attachCallCount == 2)
         #expect(mock.detachCallCount == 1)
         #expect(mock.lastAttachedPath == "/tmp/C.iso")
-        #expect(instance.liveDiscImageDevice?.path == "/tmp/C.iso")
-        #expect(instance.liveDiscImageDevice?.id == configC.discImageDeviceUUID)
+        #expect(instance.liveRemovableMedia.first?.path == "/tmp/C.iso")
+        #expect(instance.liveRemovableMedia.first?.id == configC.removableMedia?.first?.id)
     }
 }

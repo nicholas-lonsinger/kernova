@@ -28,8 +28,6 @@ struct VMConfigurationTests {
                 "networkEnabled": true,
                 "clipboardSharingEnabled": false,
                 "microphoneEnabled": false,
-                "discImageReadOnly": true,
-                "bootFromDiscImage": false,
                 "createdAt": "2025-01-01T00:00:00Z"\(extra)
             }
             """
@@ -232,13 +230,14 @@ struct VMConfigurationTests {
         #expect(decoded.sharedDirectories?[1].readOnly == true)
     }
 
-    @Test("Configuration preserves discImagePath for EFI boot")
-    func discImagePathRoundTrip() throws {
+    @Test("Configuration preserves removableMedia through JSON")
+    func removableMediaRoundTrip() throws {
+        let id = UUID()
         let config = VMConfiguration(
-            name: "EFI Linux VM",
+            name: "Linux VM",
             guestOS: .linux,
             bootMode: .efi,
-            discImagePath: "/Users/test/Downloads/ubuntu.iso"
+            removableMedia: [RemovableMediaItem(id: id, path: "/Users/test/Downloads/ubuntu.iso", readOnly: true)]
         )
 
         let encoder = JSONEncoder()
@@ -249,47 +248,20 @@ struct VMConfigurationTests {
         decoder.dateDecodingStrategy = .iso8601
         let decoded = try decoder.decode(VMConfiguration.self, from: data)
 
-        #expect(decoded.discImagePath == "/Users/test/Downloads/ubuntu.iso")
+        let items = try #require(decoded.removableMedia)
+        #expect(items.count == 1)
+        #expect(items[0].id == id)
+        #expect(items[0].path == "/Users/test/Downloads/ubuntu.iso")
+        #expect(items[0].readOnly == true)
     }
 
-    @Test("Missing optional discImagePath decodes as nil")
-    func missingOptionalDiscImagePath() throws {
+    @Test("Missing optional removableMedia decodes as nil")
+    func missingOptionalRemovableMedia() throws {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
 
-        #expect(config.discImagePath == nil)
-    }
-
-    @Test("Configuration preserves discImageDeviceUUID through JSON")
-    func discImageDeviceUUIDRoundTrip() throws {
-        let uuid = UUID()
-        let config = VMConfiguration(
-            name: "VM",
-            guestOS: .linux,
-            bootMode: .efi,
-            discImagePath: "/tmp/install.iso",
-            discImageDeviceUUID: uuid
-        )
-
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(config)
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let decoded = try decoder.decode(VMConfiguration.self, from: data)
-
-        #expect(decoded.discImageDeviceUUID == uuid)
-    }
-
-    @Test("Missing optional discImageDeviceUUID decodes as nil")
-    func missingOptionalDiscImageDeviceUUID() throws {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
-
-        #expect(config.discImageDeviceUUID == nil)
+        #expect(config.removableMedia == nil)
     }
 
     @Test("Missing optional sharedDirectories decodes as nil")
@@ -334,108 +306,50 @@ struct VMConfigurationTests {
         #expect(directory.readOnly == false)
     }
 
-    @Test("Configuration preserves bootFromDiscImage flag")
-    func bootFromDiscImageRoundTrip() throws {
-        let config = VMConfiguration(
-            name: "EFI Boot VM",
-            guestOS: .linux,
-            bootMode: .efi,
-            discImagePath: "/Users/test/Downloads/ubuntu.iso",
-            bootFromDiscImage: true
-        )
+    // MARK: - StorageDisk Tests
 
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(config)
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let decoded = try decoder.decode(VMConfiguration.self, from: data)
-
-        #expect(decoded.bootFromDiscImage == true)
-        #expect(decoded.discImagePath == "/Users/test/Downloads/ubuntu.iso")
-    }
-
-    @Test("Default bootFromDiscImage is false")
-    func defaultBootFromDiscImage() {
-        let config = VMConfiguration(
-            name: "Test VM",
-            guestOS: .linux,
-            bootMode: .efi
-        )
-        #expect(config.bootFromDiscImage == false)
-    }
-
-    // MARK: - discImageReadOnly Tests
-
-    @Test("Default discImageReadOnly is true")
-    func defaultDiscImageReadOnly() {
-        let config = VMConfiguration(
-            name: "Test VM",
-            guestOS: .linux,
-            bootMode: .efi
-        )
-        #expect(config.discImageReadOnly == true)
-    }
-
-    @Test("discImageReadOnly round-trips false")
-    func discImageReadOnlyRoundTrips() throws {
-        let config = VMConfiguration(
-            name: "Writable Disc VM",
-            guestOS: .linux,
-            bootMode: .efi,
-            discImagePath: "/tmp/data.dmg",
-            discImageReadOnly: false
-        )
-
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(config)
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let decoded = try decoder.decode(VMConfiguration.self, from: data)
-
-        #expect(decoded.discImageReadOnly == false)
-        #expect(decoded.discImagePath == "/tmp/data.dmg")
-    }
-
-    // MARK: - AdditionalDisk Tests
-
-    @Test("AdditionalDisk blockDeviceIdentifier fits within 20 characters")
-    func additionalDiskBlockDeviceIdentifierLength() {
-        let disk = AdditionalDisk(path: "/tmp/data.asif")
+    @Test("StorageDisk blockDeviceIdentifier fits within 20 characters")
+    func storageDiskBlockDeviceIdentifierLength() {
+        let disk = StorageDisk(path: "/tmp/data.asif")
         #expect(disk.blockDeviceIdentifier.count <= 20)
         #expect(!disk.blockDeviceIdentifier.isEmpty)
     }
 
-    @Test("AdditionalDisk auto-generates label from filename")
-    func additionalDiskAutoLabel() {
-        let disk = AdditionalDisk(path: "/Users/test/Downloads/my-data.asif")
+    @Test("StorageDisk auto-generates label from filename")
+    func storageDiskAutoLabel() {
+        let disk = StorageDisk(path: "/Users/test/Downloads/my-data.asif")
         #expect(disk.label == "my-data")
     }
 
-    @Test("AdditionalDisk default readOnly is false")
-    func additionalDiskDefaultReadOnly() {
-        let disk = AdditionalDisk(path: "/tmp/test.asif")
+    @Test("StorageDisk default readOnly is false")
+    func storageDiskDefaultReadOnly() {
+        let disk = StorageDisk(path: "/tmp/test.asif")
         #expect(disk.readOnly == false)
     }
 
-    @Test("AdditionalDisk default isInternal is false")
-    func additionalDiskDefaultIsInternal() {
-        let disk = AdditionalDisk(path: "/tmp/test.asif")
+    @Test("StorageDisk default isInternal is false")
+    func storageDiskDefaultIsInternal() {
+        let disk = StorageDisk(path: "/tmp/test.asif")
         #expect(disk.isInternal == false)
     }
 
-    @Test("Configuration round-trips additionalDisks")
-    func additionalDisksRoundTrip() throws {
+    @Test("StorageDisk default kind is inferred from extension")
+    func storageDiskDefaultKindFromExtension() {
+        #expect(StorageDisk(path: "/tmp/Disk.asif").kind == .virtio)
+        #expect(StorageDisk(path: "/tmp/installer.iso").kind == .usbMassStorage)
+        #expect(StorageDisk(path: "/tmp/installer.dmg").kind == .usbMassStorage)
+    }
+
+    @Test("Configuration round-trips storageDisks")
+    func storageDisksRoundTrip() throws {
         let config = VMConfiguration(
             name: "Multi-Disk VM",
             guestOS: .linux,
             bootMode: .efi,
-            additionalDisks: [
-                AdditionalDisk(path: "/tmp/data.asif", readOnly: false, label: "Data"),
-                AdditionalDisk(path: "/tmp/backup.img", readOnly: true, label: "Backup", isInternal: false),
+            storageDisks: [
+                StorageDisk(path: "Disk.asif", readOnly: false, label: "Main Disk", isInternal: true, kind: .virtio),
+                StorageDisk(path: "/tmp/data.asif", readOnly: false, label: "Data", isInternal: false, kind: .virtio),
+                StorageDisk(path: "/tmp/installer.iso", readOnly: true, label: "Installer", isInternal: false, kind: .usbMassStorage),
             ]
         )
 
@@ -447,50 +361,41 @@ struct VMConfigurationTests {
         decoder.dateDecodingStrategy = .iso8601
         let decoded = try decoder.decode(VMConfiguration.self, from: data)
 
-        #expect(decoded.additionalDisks?.count == 2)
-        #expect(decoded.additionalDisks?[0].label == "Data")
-        #expect(decoded.additionalDisks?[0].readOnly == false)
-        #expect(decoded.additionalDisks?[0].isInternal == false)
-        #expect(decoded.additionalDisks?[0].id == config.additionalDisks?[0].id)
-        #expect(decoded.additionalDisks?[0].blockDeviceIdentifier == config.additionalDisks?[0].blockDeviceIdentifier)
-        #expect(decoded.additionalDisks?[1].label == "Backup")
-        #expect(decoded.additionalDisks?[1].readOnly == true)
-        #expect(decoded.additionalDisks?[1].isInternal == false)
-        #expect(decoded.additionalDisks?[1].id == config.additionalDisks?[1].id)
-        #expect(decoded.additionalDisks?[1].blockDeviceIdentifier == config.additionalDisks?[1].blockDeviceIdentifier)
+        let disks = try #require(decoded.storageDisks)
+        #expect(disks.count == 3)
+        #expect(disks[0].label == "Main Disk")
+        #expect(disks[0].isInternal == true)
+        #expect(disks[0].kind == .virtio)
+        #expect(disks[2].label == "Installer")
+        #expect(disks[2].kind == .usbMassStorage)
+        #expect(disks[2].readOnly == true)
     }
 
-    @Test("AdditionalDisk displayName returns last path component")
-    func additionalDiskDisplayName() {
-        let disk = AdditionalDisk(path: "/Users/test/VMs/data.asif")
-        #expect(disk.displayName == "data.asif")
-    }
-
-    @Test("Missing optional additionalDisks decodes as nil")
-    func missingOptionalAdditionalDisks() throws {
+    @Test("Missing optional storageDisks decodes as nil")
+    func missingOptionalStorageDisks() throws {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
 
-        #expect(config.additionalDisks == nil)
+        #expect(config.storageDisks == nil)
     }
 
-    @Test("Clone regenerates additionalDisk IDs")
-    func cloneRegeneratesAdditionalDiskIDs() {
-        let originalDisk = AdditionalDisk(path: "/tmp/data.asif", label: "Data")
+    @Test("Clone regenerates storageDisk IDs")
+    func cloneRegeneratesStorageDiskIDs() {
+        let originalDisk = StorageDisk(path: "/tmp/data.asif", label: "Data")
         let config = VMConfiguration(
             name: "Test VM",
             guestOS: .linux,
             bootMode: .efi,
-            additionalDisks: [originalDisk]
+            storageDisks: [originalDisk]
         )
 
         let clone = config.clonedForNewInstance(existingNames: [])
 
-        #expect(clone.additionalDisks?.count == 1)
-        #expect(clone.additionalDisks?[0].id != originalDisk.id)
-        #expect(clone.additionalDisks?[0].path == originalDisk.path)
-        #expect(clone.additionalDisks?[0].label == originalDisk.label)
+        #expect(clone.storageDisks?.count == 1)
+        #expect(clone.storageDisks?[0].id != originalDisk.id)
+        #expect(clone.storageDisks?[0].path == originalDisk.path)
+        #expect(clone.storageDisks?[0].label == originalDisk.label)
     }
 
     // MARK: - displayPreference Tests
@@ -818,20 +723,33 @@ struct VMConfigurationTests {
             hardwareModelData: Data([0x01, 0x02, 0x03]),
             machineIdentifierData: Data([0x04, 0x05]),
             genericMachineIdentifierData: Data([0x06]),
-            discImagePath: "/path/to/disc.iso",
-            discImageReadOnly: false,
-            bootFromDiscImage: true,
-            discImageDeviceUUID: UUID(uuidString: "33333333-3333-3333-3333-333333333333")!,
             kernelPath: "/path/to/kernel",
             initrdPath: "/path/to/initrd",
             kernelCommandLine: "console=ttyS0",
-            additionalDisks: [
-                AdditionalDisk(
+            storageDisks: [
+                StorageDisk(
                     id: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!,
+                    path: "Disk.asif",
+                    readOnly: false,
+                    label: "Main Disk",
+                    isInternal: true,
+                    kind: .virtio
+                ),
+                StorageDisk(
+                    id: UUID(uuidString: "33333333-3333-3333-3333-333333333333")!,
                     path: "/disk2.img",
                     readOnly: true,
                     label: "data",
-                    isInternal: false
+                    isInternal: false,
+                    kind: .virtio
+                ),
+            ],
+            removableMedia: [
+                RemovableMediaItem(
+                    id: UUID(uuidString: "44444444-4444-4444-4444-444444444444")!,
+                    path: "/path/to/disc.iso",
+                    readOnly: false,
+                    label: "Installer"
                 )
             ],
             sharedDirectories: [
@@ -865,7 +783,7 @@ struct VMConfigurationTests {
     @Test("Decoding JSON missing a required field throws DecodingError")
     func missingRequiredFieldThrows() {
         // Intentionally omits: displayPreference, clipboardSharingEnabled,
-        // microphoneEnabled, discImageReadOnly, bootFromDiscImage
+        // microphoneEnabled
         let json = """
             {
                 "id": "12345678-1234-1234-1234-123456789012",
@@ -892,31 +810,34 @@ struct VMConfigurationTests {
 
     // MARK: - Live-Editable Fields
 
-    @Test("liveEditableFieldsChanged detects discImagePath transition")
-    func liveEditableDetectsDiscPathChange() {
+    @Test("liveEditableFieldsChanged detects added removable media item")
+    func liveEditableDetectsAddedRemovableMedia() {
         let base = VMConfiguration(name: "VM", guestOS: .linux, bootMode: .efi)
         var modified = base
-        modified.discImagePath = "/tmp/install.iso"
+        modified.removableMedia = [RemovableMediaItem(path: "/tmp/install.iso", readOnly: true)]
         #expect(VMConfiguration.liveEditableFieldsChanged(old: base, new: modified))
         #expect(VMConfiguration.liveEditableFieldsChanged(old: modified, new: base))
     }
 
-    @Test("liveEditableFieldsChanged detects discImageReadOnly flip")
-    func liveEditableDetectsReadOnlyFlip() {
+    @Test("liveEditableFieldsChanged detects readOnly flip on a removable media item")
+    func liveEditableDetectsRemovableMediaReadOnlyFlip() {
+        let id = UUID()
         var base = VMConfiguration(name: "VM", guestOS: .linux, bootMode: .efi)
-        base.discImagePath = "/tmp/install.iso"
-        base.discImageReadOnly = true
+        base.removableMedia = [RemovableMediaItem(id: id, path: "/tmp/install.iso", readOnly: true)]
         var modified = base
-        modified.discImageReadOnly = false
+        modified.removableMedia = [RemovableMediaItem(id: id, path: "/tmp/install.iso", readOnly: false)]
         #expect(VMConfiguration.liveEditableFieldsChanged(old: base, new: modified))
     }
 
-    @Test("liveEditableFieldsChanged ignores bootFromDiscImage flip")
-    func liveEditableIgnoresBootFromDiscFlip() {
-        var base = VMConfiguration(name: "VM", guestOS: .linux, bootMode: .efi)
-        base.discImagePath = "/tmp/install.iso"
+    @Test("liveEditableFieldsChanged ignores storageDisks changes")
+    func liveEditableIgnoresStorageDisksChanges() {
+        // Storage disks are restart-only on VZ (storageDevices is fixed at
+        // VM start). The live reconcile flow only acts on removableMedia.
+        let base = VMConfiguration(name: "VM", guestOS: .linux, bootMode: .efi)
         var modified = base
-        modified.bootFromDiscImage = true
+        modified.storageDisks = [
+            StorageDisk(path: "Disk.asif", readOnly: false, label: "Main Disk", isInternal: true, kind: .virtio)
+        ]
         #expect(!VMConfiguration.liveEditableFieldsChanged(old: base, new: modified))
     }
 
@@ -935,86 +856,14 @@ struct VMConfigurationTests {
         #expect(!VMConfiguration.liveEditableFieldsChanged(old: base, new: base))
     }
 
-    @Test("liveEditableFieldsChanged detects a UUID-only change")
-    func liveEditableDetectsUUIDOnlyChange() {
-        // Defends against a programmatic mutation that rotates the device UUID
-        // without touching the path or readOnly flag — the runtime device's
-        // identity must stay in sync with the persisted config so save-state
-        // restore continues to work.
-        var base = VMConfiguration(name: "VM", guestOS: .linux, bootMode: .efi)
-        base.discImagePath = "/tmp/install.iso"
-        base.discImageDeviceUUID = UUID()
-        var modified = base
-        modified.discImageDeviceUUID = UUID()
-
-        #expect(VMConfiguration.liveEditableFieldsChanged(old: base, new: modified))
-    }
-
-    @Test("Designated init auto-generates discImageDeviceUUID when path is set but UUID is nil")
-    func designatedInitAutoGeneratesDiscUUID() {
-        // Mirrors the decoder migration so programmatic call sites (creation
-        // wizard, future imports) never silently create a disc-attached config
-        // without a stable device identity.
-        let config = VMConfiguration(
-            name: "Auto UUID",
-            guestOS: .linux,
-            bootMode: .efi,
-            discImagePath: "/tmp/install.iso",
-            discImageDeviceUUID: nil
-        )
-        #expect(config.discImageDeviceUUID != nil)
-    }
-
-    @Test("Designated init leaves discImageDeviceUUID nil when no disc path is set")
-    func designatedInitLeavesUUIDNilWithoutDisc() {
-        let config = VMConfiguration(
-            name: "No Disc",
-            guestOS: .linux,
-            bootMode: .efi,
-            discImagePath: nil,
-            discImageDeviceUUID: nil
-        )
-        #expect(config.discImageDeviceUUID == nil)
-    }
-
-    @Test("Designated init honors an explicitly-supplied discImageDeviceUUID")
-    func designatedInitHonorsExplicitUUID() {
-        let explicit = UUID()
-        let config = VMConfiguration(
-            name: "Explicit",
-            guestOS: .linux,
-            bootMode: .efi,
-            discImagePath: "/tmp/install.iso",
-            discImageDeviceUUID: explicit
-        )
-        #expect(config.discImageDeviceUUID == explicit)
-    }
-
-    @Test("discFieldsChanged detects each disc field independently")
-    func discFieldsChangedDetectsEachField() {
-        var base = VMConfiguration(name: "VM", guestOS: .linux, bootMode: .efi)
-        base.discImagePath = "/tmp/install.iso"
-        base.discImageReadOnly = true
-        base.discImageDeviceUUID = UUID()
-
-        var pathChange = base
-        pathChange.discImagePath = "/tmp/other.iso"
-        #expect(VMConfiguration.discFieldsChanged(old: base, new: pathChange))
-
-        var readOnlyChange = base
-        readOnlyChange.discImageReadOnly = false
-        #expect(VMConfiguration.discFieldsChanged(old: base, new: readOnlyChange))
-
-        var uuidChange = base
-        uuidChange.discImageDeviceUUID = UUID()
-        #expect(VMConfiguration.discFieldsChanged(old: base, new: uuidChange))
-
-        // Non-disc fields (e.g. bootFromDiscImage, name) must not register.
-        var unrelated = base
-        unrelated.bootFromDiscImage = !base.bootFromDiscImage
-        unrelated.name = "renamed"
-        #expect(!VMConfiguration.discFieldsChanged(old: base, new: unrelated))
-
-        #expect(!VMConfiguration.discFieldsChanged(old: base, new: base))
+    @Test("removableMediaChanged detects list mutations")
+    func removableMediaChangedDetectsMutations() {
+        let base = VMConfiguration(name: "VM", guestOS: .linux, bootMode: .efi)
+        var added = base
+        added.removableMedia = [RemovableMediaItem(path: "/tmp/install.iso", readOnly: true)]
+        #expect(VMConfiguration.removableMediaChanged(old: base, new: added))
+        #expect(VMConfiguration.removableMediaChanged(old: added, new: base))
+        #expect(!VMConfiguration.removableMediaChanged(old: base, new: base))
+        #expect(!VMConfiguration.removableMediaChanged(old: added, new: added))
     }
 }

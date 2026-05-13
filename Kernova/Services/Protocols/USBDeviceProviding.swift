@@ -7,8 +7,8 @@ protocol USBDeviceProviding: Sendable {
     ///
     /// `desiredUUID` overrides the auto-generated `VZUSBDeviceConfiguration.uuid`
     /// so the runtime device's identity matches a persisted value (e.g.
-    /// `VMConfiguration.discImageDeviceUUID`). Pass `nil` for callers that
-    /// don't care (e.g. the guest agent installer).
+    /// `RemovableMediaItem.id`) for save-state restore matching. Pass
+    /// `nil` for ad-hoc attaches.
     func attach(
         diskImagePath: String,
         readOnly: Bool,
