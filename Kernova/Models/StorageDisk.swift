@@ -26,12 +26,15 @@ struct StorageDisk: Codable, Sendable, Equatable, Identifiable {
     var path: String
     var readOnly: Bool
     var label: String
-    /// When `true`, `path` is bundle-relative and the file is owned by the
-    /// bundle. Removing the entry can optionally trash the file.
+    /// When `true`, `path` is bundle-relative and the file is owned by the bundle.
+    ///
+    /// Removing the entry can optionally trash the file.
     var isInternal: Bool
-    /// Bus class. Set at add-time from the file extension via
-    /// ``defaultKind(forPath:)``; persisted so renaming the file on disk
-    /// doesn't silently change guest-side device naming.
+    /// Bus class for this disk.
+    ///
+    /// Set at add-time from the file extension via ``defaultKind(forPath:)``;
+    /// persisted so renaming the file on disk doesn't silently change
+    /// guest-side device naming.
     var kind: StorageDiskKind
 
     init(

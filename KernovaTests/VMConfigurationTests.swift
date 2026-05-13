@@ -349,7 +349,9 @@ struct VMConfigurationTests {
             storageDisks: [
                 StorageDisk(path: "Disk.asif", readOnly: false, label: "Main Disk", isInternal: true, kind: .virtio),
                 StorageDisk(path: "/tmp/data.asif", readOnly: false, label: "Data", isInternal: false, kind: .virtio),
-                StorageDisk(path: "/tmp/installer.iso", readOnly: true, label: "Installer", isInternal: false, kind: .usbMassStorage),
+                StorageDisk(
+                    path: "/tmp/installer.iso", readOnly: true, label: "Installer", isInternal: false,
+                    kind: .usbMassStorage),
             ]
         )
 

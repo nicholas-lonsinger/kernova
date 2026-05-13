@@ -153,7 +153,9 @@ struct VMSettingsView: View {
             }
         } message: { disk in
             if disk.isInternal {
-                Text("The disk image is stored inside the VM bundle. Move to Trash to delete it, or Remove from VM to delist the entry while keeping the file.")
+                Text(
+                    "The disk image is stored inside the VM bundle. Move to Trash to delete it, or Remove from VM to delist the entry while keeping the file."
+                )
             } else {
                 Text("This will delist the disk from the VM. The file at \(disk.path) is left alone.")
             }
@@ -381,8 +383,11 @@ struct VMSettingsView: View {
     @ViewBuilder
     private func storageDiskRow(disk: Binding<StorageDisk>) -> some View {
         HStack {
-            Image(systemName: disk.wrappedValue.kind == .usbMassStorage ? "opticaldisc" : (disk.wrappedValue.isInternal ? "internaldrive" : "externaldrive"))
-                .foregroundStyle(.secondary)
+            Image(
+                systemName: disk.wrappedValue.kind == .usbMassStorage
+                    ? "opticaldisc" : (disk.wrappedValue.isInternal ? "internaldrive" : "externaldrive")
+            )
+            .foregroundStyle(.secondary)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(disk.wrappedValue.label)
@@ -418,7 +423,8 @@ struct VMSettingsView: View {
     private func diskSubtitle(for disk: StorageDisk) -> String {
         if disk.isInternal && disk.path == instance.bundleLayout.diskImageURL.lastPathComponent {
             if let usage = instance.cachedDiskUsageBytes {
-                return "\(DataFormatters.formatBytes(usage)) (on disk) / \(DataFormatters.formatDiskSize(instance.configuration.diskSizeInGB)) (allocated)"
+                return
+                    "\(DataFormatters.formatBytes(usage)) (on disk) / \(DataFormatters.formatDiskSize(instance.configuration.diskSizeInGB)) (allocated)"
             }
             return "\(DataFormatters.formatDiskSize(instance.configuration.diskSizeInGB)) allocated"
         }

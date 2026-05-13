@@ -817,11 +817,14 @@ final class VMLibraryViewModel {
         }
         Self.logger.notice("Mounting guest agent installer on '\(instance.name, privacy: .public)'")
         updateConfiguration(of: instance) { config in
-            config.removableMedia = (config.removableMedia ?? []) + [RemovableMediaItem(
-                path: path,
-                readOnly: true,
-                label: "Kernova Guest Agent"
-            )]
+            config.removableMedia =
+                (config.removableMedia ?? []) + [
+                    RemovableMediaItem(
+                        path: path,
+                        readOnly: true,
+                        label: "Kernova Guest Agent"
+                    )
+                ]
         }
         installerMountedVMName = instance.name
         showInstallerMountedAlert = true

@@ -224,7 +224,9 @@ struct VMConfigurationCloneTests {
     func clonePreservesStorageDiskFields() {
         let disks = [
             StorageDisk(path: "Disk.asif", readOnly: false, label: "Main Disk", isInternal: true, kind: .virtio),
-            StorageDisk(path: "/ext/installer.iso", readOnly: true, label: "Installer", isInternal: false, kind: .usbMassStorage),
+            StorageDisk(
+                path: "/ext/installer.iso", readOnly: true, label: "Installer", isInternal: false, kind: .usbMassStorage
+            ),
         ]
         var config = makeConfig()
         config.storageDisks = disks

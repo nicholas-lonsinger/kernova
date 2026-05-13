@@ -384,4 +384,3 @@ struct SharedDirectory: Codable, Sendable, Equatable, Identifiable {
         URL(fileURLWithPath: path).lastPathComponent
     }
 }
-

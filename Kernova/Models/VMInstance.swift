@@ -173,10 +173,11 @@ final class VMInstance: Identifiable {
     /// created without the view model).
     @ObservationIgnored var onUpdateConfiguration: (@MainActor ((inout VMConfiguration) -> Void) -> Void)?
 
-    /// Applies a configuration mutation. If `onUpdateConfiguration` is
-    /// wired, the mutation flows through the view model's centralized
-    /// dispatcher (persist + applyLivePolicy). Otherwise, falls back to
-    /// a direct in-memory write — the test-only path.
+    /// Applies a configuration mutation.
+    ///
+    /// If `onUpdateConfiguration` is wired, the mutation flows through the
+    /// view model's centralized dispatcher (persist + applyLivePolicy).
+    /// Otherwise, falls back to a direct in-memory write — the test-only path.
     private func performConfigurationMutation(_ mutate: (inout VMConfiguration) -> Void) {
         if let onUpdateConfiguration {
             onUpdateConfiguration(mutate)
