@@ -172,13 +172,6 @@ struct VMSettingsView: View {
                 Text("This will delist the disk from the VM. The file at \(disk.path) is left alone.")
             }
         }
-        // VMSettingsView shares one identity across sibling VMs in the sidebar
-        // (same position in the hierarchy), so @State persists when the user
-        // switches VMs. Reset the picker default so the popover opens with the
-        // new VM's OS default, not the previous VM's.
-        .onChange(of: instance.id) {
-            newDiskSizeInGB = instance.configuration.guestOS.defaultDiskSizeInGB
-        }
     }
 
     @ViewBuilder

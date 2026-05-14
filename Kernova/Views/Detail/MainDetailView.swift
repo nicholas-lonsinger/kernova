@@ -9,6 +9,12 @@ struct MainDetailView: View {
         Group {
             if let selected = viewModel.selectedInstance {
                 VMDetailView(instance: selected, viewModel: viewModel)
+                    // Tie SwiftUI view identity to the selected VM so all per-VM transient
+                    // @State in the detail subtree (settings popovers, alerts, rename fields,
+                    // focus, picker defaults) resets on a sidebar switch. The AppKit
+                    // VMDisplayBackingView layer in DetailContainerViewController is keyed
+                    // separately and is not affected by this rebuild.
+                    .id(selected.id)
             } else {
                 ContentUnavailableView {
                     Label("No Virtual Machine Selected", systemImage: "desktopcomputer")
