@@ -16,7 +16,7 @@ struct VMSettingsView: View {
     @State private var showingMicPermissionInfo = false
     @State private var micPermission: AVAuthorizationStatus = AVCaptureDevice.authorizationStatus(for: .audio)
     @State private var showingCreateDisk = false
-    @State private var newDiskSizeInGB = 50
+    @State private var newDiskSizeInGB = VMGuestOS.defaultDiskSizeInGB
     @State private var diskToRemove: StorageDisk?
     @State private var showingRemoveDiskAlert = false
     @FocusState private var isNameFieldFocused: Bool
@@ -345,7 +345,6 @@ struct VMSettingsView: View {
                 }
 
                 Button("Create New Disk...") {
-                    newDiskSizeInGB = instance.configuration.guestOS == .macOS ? 100 : 50
                     showingCreateDisk = true
                 }
                 .popover(isPresented: $showingCreateDisk, arrowEdge: .bottom) {

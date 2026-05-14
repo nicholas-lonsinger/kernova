@@ -185,7 +185,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         self.bootMode = bootMode
         self.cpuCount = cpuCount ?? guestOS.defaultCPUCount
         self.memorySizeInGB = memorySizeInGB ?? guestOS.defaultMemoryInGB
-        self.diskSizeInGB = diskSizeInGB ?? guestOS.defaultDiskSizeInGB
+        self.diskSizeInGB = diskSizeInGB ?? VMGuestOS.defaultDiskSizeInGB
         self.displayWidth = displayWidth
         self.displayHeight = displayHeight
         self.displayPPI = displayPPI
