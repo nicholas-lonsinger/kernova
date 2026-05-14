@@ -16,22 +16,10 @@ struct VMSettingsView: View {
     @State private var showingMicPermissionInfo = false
     @State private var micPermission: AVAuthorizationStatus = AVCaptureDevice.authorizationStatus(for: .audio)
     @State private var showingCreateDisk = false
-    @State private var newDiskSizeInGB: Int
+    @State private var newDiskSizeInGB = VMGuestOS.defaultDiskSizeInGB
     @State private var diskToRemove: StorageDisk?
     @State private var showingRemoveDiskAlert = false
     @FocusState private var isNameFieldFocused: Bool
-
-    init(instance: VMInstance, viewModel: VMLibraryViewModel, isReadOnly: Bool) {
-        self.instance = instance
-        self.viewModel = viewModel
-        self.isReadOnly = isReadOnly
-        // Seed the picker selection from the disk-size default so the popover's
-        // MenuPickerStyle renders the checkmark on the same value its closed-state
-        // button displays. Mutating @State in the same tick as the popover toggle
-        // updates the button label but leaves the underlying NSPopupButton's
-        // selectedTag on the initial @State value.
-        _newDiskSizeInGB = State(initialValue: VMGuestOS.defaultDiskSizeInGB)
-    }
 
     private var currentMicPermission: AVAuthorizationStatus {
         AVCaptureDevice.authorizationStatus(for: .audio)
