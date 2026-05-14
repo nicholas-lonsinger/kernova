@@ -18,18 +18,21 @@ struct VMGuestOSTests {
 
     // MARK: - Default Resource Values
 
-    @Test("macOS defaults: 4 CPUs, 8 GB memory, 100 GB disk (clamped to hardware maximums)")
+    @Test("macOS defaults: 4 CPUs, 8 GB memory (clamped to hardware maximums)")
     func macOSDefaults() {
         #expect(VMGuestOS.macOS.defaultCPUCount == min(4, VMGuestOS.macOS.maxCPUCount))
         #expect(VMGuestOS.macOS.defaultMemoryInGB == min(8, VMGuestOS.macOS.maxMemoryInGB))
-        #expect(VMGuestOS.macOS.defaultDiskSizeInGB == 100)
     }
 
-    @Test("Linux defaults: 2 CPUs, 4 GB memory, 50 GB disk (clamped to hardware maximums)")
+    @Test("Linux defaults: 2 CPUs, 4 GB memory (clamped to hardware maximums)")
     func linuxDefaults() {
         #expect(VMGuestOS.linux.defaultCPUCount == min(2, VMGuestOS.linux.maxCPUCount))
         #expect(VMGuestOS.linux.defaultMemoryInGB == min(4, VMGuestOS.linux.maxMemoryInGB))
-        #expect(VMGuestOS.linux.defaultDiskSizeInGB == 50)
+    }
+
+    @Test("Default disk size is 100 GB, OS-independent")
+    func defaultDiskSize() {
+        #expect(VMGuestOS.defaultDiskSizeInGB == 100)
     }
 
     // MARK: - Min Resource Constraints
@@ -83,8 +86,8 @@ struct VMGuestOSTests {
         #expect(os.defaultCPUCount <= os.maxCPUCount)
         #expect(os.minMemoryInGB <= os.defaultMemoryInGB)
         #expect(os.defaultMemoryInGB <= os.maxMemoryInGB)
-        #expect(os.minDiskSizeInGB <= os.defaultDiskSizeInGB)
-        #expect(os.defaultDiskSizeInGB <= os.maxDiskSizeInGB)
+        #expect(os.minDiskSizeInGB <= VMGuestOS.defaultDiskSizeInGB)
+        #expect(VMGuestOS.defaultDiskSizeInGB <= os.maxDiskSizeInGB)
     }
 
     @Test("Linux constraints satisfy min <= default <= max")
@@ -94,8 +97,8 @@ struct VMGuestOSTests {
         #expect(os.defaultCPUCount <= os.maxCPUCount)
         #expect(os.minMemoryInGB <= os.defaultMemoryInGB)
         #expect(os.defaultMemoryInGB <= os.maxMemoryInGB)
-        #expect(os.minDiskSizeInGB <= os.defaultDiskSizeInGB)
-        #expect(os.defaultDiskSizeInGB <= os.maxDiskSizeInGB)
+        #expect(os.minDiskSizeInGB <= VMGuestOS.defaultDiskSizeInGB)
+        #expect(VMGuestOS.defaultDiskSizeInGB <= os.maxDiskSizeInGB)
     }
 
     // MARK: - Available Disk Sizes
@@ -120,7 +123,7 @@ struct VMGuestOSTests {
 
     @Test("Default disk size is contained in available disk sizes for both OS types")
     func defaultDiskSizeInAvailableSizes() {
-        #expect(VMGuestOS.macOS.availableDiskSizes.contains(VMGuestOS.macOS.defaultDiskSizeInGB))
-        #expect(VMGuestOS.linux.availableDiskSizes.contains(VMGuestOS.linux.defaultDiskSizeInGB))
+        #expect(VMGuestOS.macOS.availableDiskSizes.contains(VMGuestOS.defaultDiskSizeInGB))
+        #expect(VMGuestOS.linux.availableDiskSizes.contains(VMGuestOS.defaultDiskSizeInGB))
     }
 }

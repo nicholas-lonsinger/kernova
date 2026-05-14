@@ -46,7 +46,7 @@ struct VMConfigurationTests {
         #expect(config.bootMode == .macOS)
         #expect(config.cpuCount == VMGuestOS.macOS.defaultCPUCount)
         #expect(config.memorySizeInGB == VMGuestOS.macOS.defaultMemoryInGB)
-        #expect(config.diskSizeInGB == VMGuestOS.macOS.defaultDiskSizeInGB)
+        #expect(config.diskSizeInGB == VMGuestOS.defaultDiskSizeInGB)
         #expect(config.networkEnabled == true)
         #expect(config.displayWidth == 1920)
         #expect(config.displayHeight == 1200)
@@ -65,7 +65,7 @@ struct VMConfigurationTests {
         #expect(config.bootMode == .efi)
         #expect(config.cpuCount == VMGuestOS.linux.defaultCPUCount)
         #expect(config.memorySizeInGB == VMGuestOS.linux.defaultMemoryInGB)
-        #expect(config.diskSizeInGB == VMGuestOS.linux.defaultDiskSizeInGB)
+        #expect(config.diskSizeInGB == VMGuestOS.defaultDiskSizeInGB)
     }
 
     @Test("Configuration encodes and decodes via JSON")

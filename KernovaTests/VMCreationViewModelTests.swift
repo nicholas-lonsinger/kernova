@@ -229,7 +229,7 @@ struct VMCreationViewModelTests {
 
         #expect(vm.cpuCount == VMGuestOS.macOS.defaultCPUCount)
         #expect(vm.memoryInGB == VMGuestOS.macOS.defaultMemoryInGB)
-        #expect(vm.diskSizeInGB == VMGuestOS.macOS.defaultDiskSizeInGB)
+        #expect(vm.diskSizeInGB == VMGuestOS.defaultDiskSizeInGB)
     }
 
     @Test("applyOSDefaults sets correct values for Linux")
@@ -245,7 +245,7 @@ struct VMCreationViewModelTests {
 
         #expect(vm.cpuCount == VMGuestOS.linux.defaultCPUCount)
         #expect(vm.memoryInGB == VMGuestOS.linux.defaultMemoryInGB)
-        #expect(vm.diskSizeInGB == VMGuestOS.linux.defaultDiskSizeInGB)
+        #expect(vm.diskSizeInGB == VMGuestOS.defaultDiskSizeInGB)
     }
 
     // MARK: - buildConfiguration

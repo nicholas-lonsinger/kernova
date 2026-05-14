@@ -25,12 +25,12 @@ struct VMSettingsView: View {
         self.instance = instance
         self.viewModel = viewModel
         self.isReadOnly = isReadOnly
-        // Seed the picker selection from the guest OS default so the popover's
+        // Seed the picker selection from the disk-size default so the popover's
         // MenuPickerStyle renders the checkmark on the same value its closed-state
         // button displays. Mutating @State in the same tick as the popover toggle
         // updates the button label but leaves the underlying NSPopupButton's
         // selectedTag on the initial @State value.
-        _newDiskSizeInGB = State(initialValue: instance.configuration.guestOS.defaultDiskSizeInGB)
+        _newDiskSizeInGB = State(initialValue: VMGuestOS.defaultDiskSizeInGB)
     }
 
     private var currentMicPermission: AVAuthorizationStatus {

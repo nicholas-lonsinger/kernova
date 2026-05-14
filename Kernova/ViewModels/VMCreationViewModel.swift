@@ -174,7 +174,7 @@ final class VMCreationViewModel {
     func applyOSDefaults() {
         cpuCount = selectedOS.defaultCPUCount
         memoryInGB = selectedOS.defaultMemoryInGB
-        diskSizeInGB = selectedOS.defaultDiskSizeInGB
+        diskSizeInGB = VMGuestOS.defaultDiskSizeInGB
     }
 
     // MARK: - Overwrite Warning
