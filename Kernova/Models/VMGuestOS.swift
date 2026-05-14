@@ -37,9 +37,10 @@ enum VMGuestOS: String, Codable, CaseIterable, Sendable {
         return min(preferred, maxMemoryInGB)
     }
 
-    /// Default size used when creating a new disk image. OS-independent —
-    /// fits comfortably above both guest OSes' `minDiskSizeInGB` and is
-    /// present in `allDiskSizes`.
+    /// Default size used when creating a new disk image.
+    ///
+    /// OS-independent — fits comfortably above both guest OSes'
+    /// `minDiskSizeInGB` and is present in `allDiskSizes`.
     static let defaultDiskSizeInGB = 100
 
     /// All offered disk sizes in GB, matching bundled ASIF templates.
