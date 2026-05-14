@@ -354,7 +354,7 @@ struct VMSettingsView: View {
             }
 
             Text(
-                "Position 1 boots first on EFI guests. On macOS and Linux Kernel boot, position affects guest device enumeration. Installer images (.iso, .dmg) appear as USB drives in the guest; permanent disks appear as virtio block devices, so reordering an installer doesn't change your main disk's /dev/vda letter."
+                "Position 1 boots first on EFI guests. On macOS and Linux Kernel boot, position affects guest device enumeration. Installer images (.iso, .dmg) attach as USB Mass Storage entries on this list (still bootable, separate from hot-pluggable Removable Media); permanent disks attach as virtio block devices, so reordering an installer doesn't change your main disk's /dev/vda letter."
             )
             .font(.caption)
             .foregroundStyle(.secondary)

@@ -55,9 +55,17 @@ struct StorageDisk: Codable, Sendable, Equatable, Identifiable {
 
     /// Picks the bus class implied by the file extension.
     ///
-    /// `.iso` and `.dmg` default to USB mass storage so they appear as
-    /// removable drives in the guest; everything else defaults to virtio
-    /// block (the conventional permanent-disk bus).
+    /// `.iso` and `.dmg` default to `.usbMassStorage` — still attached on
+    /// `vzConfig.storageDevices` (and therefore bootable by EFI), but as
+    /// `VZUSBMassStorageDeviceConfiguration` rather than virtio. The
+    /// payoff is `/dev/vda` stability: inserting an installer ahead of
+    /// the main disk in the boot order doesn't shift the main disk's
+    /// Linux device letter. Everything else defaults to `.virtio`
+    /// (the conventional permanent-disk bus).
+    ///
+    /// This is the in-`storageDevices` USB path — distinct from
+    /// `RemovableMediaItem`, which lives on the XHCI controller's
+    /// `usbDevices` list and is not in the EFI boot path.
     static func defaultKind(forPath path: String) -> StorageDiskKind {
         let ext = (path as NSString).pathExtension.lowercased()
         return (ext == "iso" || ext == "dmg") ? .usbMassStorage : .virtio
@@ -80,9 +88,13 @@ struct StorageDisk: Codable, Sendable, Equatable, Identifiable {
 
 /// A USB mass storage device on the XHCI controller's `usbDevices` list.
 ///
-/// Hot-pluggable while the VM is running. Each item's `id` becomes the
-/// `VZUSBMassStorageDeviceConfiguration.uuid` so save-state restore can
-/// match the configured item against the saved-state device list.
+/// Hot-pluggable while the VM is running. **Not in the EFI boot path:**
+/// `VZEFIBootLoader` only walks `vzConfig.storageDevices`, so XHCI
+/// `usbDevices` are invisible to firmware boot selection. Use a
+/// `StorageDisk` with `kind == .usbMassStorage` for bootable removable
+/// media. Each item's `id` becomes the `VZUSBMassStorageDeviceConfiguration.uuid`
+/// so save-state restore can match the configured item against the
+/// saved-state device list.
 struct RemovableMediaItem: Codable, Sendable, Equatable, Identifiable {
     var id: UUID
     var path: String
