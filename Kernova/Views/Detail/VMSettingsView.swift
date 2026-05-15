@@ -111,26 +111,22 @@ struct VMSettingsView: View {
             }
             ScrollView {
                 Form {
-                    // RATIONALE: `.disabled(isReadOnly)` is applied per section (or
-                    // per-control inside the section body) rather than at the Form
-                    // level so that informational popover triggers — the header info
-                    // buttons on Storage Disks / Shared Directories, and the in-body
-                    // mic-permission popover in `audioSection` — remain interactive in
-                    // read-only mode; SwiftUI's disabled state propagates irreversibly
-                    // to descendants. `resourcesSection` and `audioSection` disable
-                    // per-control. `storageDiskSection` and `sharedDirectoriesSection`
-                    // wrap their body content in a `Group { ... }.disabled(...)` so
-                    // their header's info button stays interactive. `guestAgentSection`,
-                    // `clipboardSection`, and `removableMediaSection` carry live-editable
-                    // fields that remain interactive while the VM is running. Storage
+                    // RATIONALE: Each section that locks while the VM is running wraps
+                    // its locked controls in `Group { ... }.disabled(isReadOnly)` *inside*
+                    // the section body. SwiftUI's `.disabled` propagates irreversibly to
+                    // descendants, so this scoping keeps the section's header (lock + info
+                    // button) and any always-on body content (info popovers, conditional
+                    // warnings, listings) outside the disabled subtree and therefore
+                    // interactive. Sections that are fully hot-toggleable (Removable
+                    // Media, Guest Agent, Clipboard) carry no disable wrapper. Storage
                     // Disks is `storageDevices`-backed and therefore restart-only;
                     // Removable Media is XHCI-backed and hot-pluggable.
-                    generalSection.disabled(isReadOnly)
+                    generalSection
                     resourcesSection
                     storageDiskSection
                     removableMediaSection
                     sharedDirectoriesSection
-                    networkSection.disabled(isReadOnly)
+                    networkSection
                     audioSection
                     if instance.configuration.guestOS == .macOS {
                         guestAgentSection
@@ -220,7 +216,7 @@ struct VMSettingsView: View {
                 lockIcon
             }
             Text(title)
-            SectionInfoButton(content: info)
+            InfoButton(label: title, content: info)
         }
     }
 
@@ -237,30 +233,33 @@ struct VMSettingsView: View {
     @ViewBuilder
     private var generalSection: some View {
         Section(header: sectionHeader("General", lockable: true)) {
-            if isRenaming {
-                TextField("Name", text: $editingName)
-                    .focused($isNameFieldFocused)
-                    .onSubmit {
-                        viewModel.commitRename(for: instance, newName: editingName)
+            Group {
+                if isRenaming {
+                    TextField("Name", text: $editingName)
+                        .focused($isNameFieldFocused)
+                        .onSubmit {
+                            viewModel.commitRename(for: instance, newName: editingName)
+                        }
+                        .onExitCommand {
+                            viewModel.cancelRename()
+                        }
+                } else {
+                    Button {
+                        viewModel.renameVM(instance)
+                    } label: {
+                        LabeledContent("Name") {
+                            Text(instance.name)
+                        }
                     }
-                    .onExitCommand {
-                        viewModel.cancelRename()
-                    }
-            } else {
-                Button {
-                    viewModel.renameVM(instance)
-                } label: {
-                    LabeledContent("Name") {
-                        Text(instance.name)
-                    }
+                    .buttonStyle(.plain)
+                    .disabled(!instance.status.canRename)
                 }
-                .buttonStyle(.plain)
-                .disabled(!instance.status.canRename)
+                LabeledContent("Type", value: instance.configuration.guestOS.displayName)
+                LabeledContent("Boot Mode", value: instance.configuration.bootMode.displayName)
+                LabeledContent(
+                    "Created", value: instance.configuration.createdAt.formatted(date: .abbreviated, time: .shortened))
             }
-            LabeledContent("Type", value: instance.configuration.guestOS.displayName)
-            LabeledContent("Boot Mode", value: instance.configuration.bootMode.displayName)
-            LabeledContent(
-                "Created", value: instance.configuration.createdAt.formatted(date: .abbreviated, time: .shortened))
+            .disabled(isReadOnly)
         }
         .onChange(of: isRenaming) { _, renaming in
             if renaming {
@@ -400,10 +399,6 @@ struct VMSettingsView: View {
         ) {
             let disks = storageDiskBinding.wrappedValue
 
-            // RATIONALE: disable wraps the body in a Group so the info
-            // button in the section header stays interactive in
-            // read-only mode (SwiftUI's `.disabled` would otherwise
-            // propagate to the header).
             Group {
                 ForEach(storageDiskBinding) { $disk in
                     storageDiskRow(disk: $disk)
@@ -592,18 +587,19 @@ struct VMSettingsView: View {
         Section(header: sectionHeader("Resources", lockable: true)) {
             let os = instance.configuration.guestOS
 
-            Stepper(
-                "CPU Cores: \(instance.configuration.cpuCount)",
-                value: configBinding(\.cpuCount),
-                in: os.minCPUCount...os.maxCPUCount
-            )
-            .disabled(isReadOnly)
+            Group {
+                Stepper(
+                    "CPU Cores: \(instance.configuration.cpuCount)",
+                    value: configBinding(\.cpuCount),
+                    in: os.minCPUCount...os.maxCPUCount
+                )
 
-            Stepper(
-                "Memory: \(instance.configuration.memorySizeInGB) GB",
-                value: configBinding(\.memorySizeInGB),
-                in: os.minMemoryInGB...os.maxMemoryInGB
-            )
+                Stepper(
+                    "Memory: \(instance.configuration.memorySizeInGB) GB",
+                    value: configBinding(\.memorySizeInGB),
+                    in: os.minMemoryInGB...os.maxMemoryInGB
+                )
+            }
             .disabled(isReadOnly)
         }
         .task(id: instance.id) {
@@ -614,10 +610,13 @@ struct VMSettingsView: View {
     @ViewBuilder
     private var networkSection: some View {
         Section(header: sectionHeader("Network", lockable: true)) {
-            Toggle("Networking Enabled", isOn: configBinding(\.networkEnabled))
-            if let mac = instance.configuration.macAddress {
-                LabeledContent("MAC Address", value: mac)
+            Group {
+                Toggle("Networking Enabled", isOn: configBinding(\.networkEnabled))
+                if let mac = instance.configuration.macAddress {
+                    LabeledContent("MAC Address", value: mac)
+                }
             }
+            .disabled(isReadOnly)
         }
     }
 
@@ -628,12 +627,14 @@ struct VMSettingsView: View {
                 Text("Allows the guest to access the host microphone. Speaker output is always enabled.")
             }
         ) {
-            Toggle("Microphone", isOn: configBinding(\.microphoneEnabled))
-                .disabled(isReadOnly)
+            Group {
+                Toggle("Microphone", isOn: configBinding(\.microphoneEnabled))
+            }
+            .disabled(isReadOnly)
 
-            // Permission warning + info-popover button are left un-disabled so the
-            // explanation of how to re-enable the mic in System Settings remains
-            // reachable in read-only mode.
+            // Permission warning + info-popover button are left outside the
+            // disabled Group so the explanation of how to re-enable the mic
+            // in System Settings remains reachable in read-only mode.
             if instance.configuration.microphoneEnabled {
                 if micPermission == .notDetermined {
                     Text("macOS will ask for microphone permission the first time a VM uses it.")
@@ -684,25 +685,16 @@ struct VMSettingsView: View {
 
     @ViewBuilder
     private var guestAgentSection: some View {
-        Section(
-            header: sectionHeader("Guest Agent") {
-                VStack(alignment: .leading, spacing: 10) {
+        Section(header: sectionHeader("Guest Agent")) {
+            Toggle(isOn: configBinding(\.agentLogForwardingEnabled)) {
+                toggleLabel("Forward guest logs") {
                     Text(
-                        "**Forward guest logs** streams `os.Logger` records from the macOS guest agent to the host so they appear in Console.app under `com.kernova.guest`. Off by default; can be toggled while the VM is running."
-                    )
-                    Text(
-                        "**Show install reminder** surfaces the install icon in the sidebar when the guest agent has not yet connected. Turn off to suppress the nudge for this VM. The more urgent indicators (update available, didn't reconnect, unresponsive) are not affected."
+                        "Streams `os.Logger` records from the macOS guest agent to the host so they appear in Console.app under `com.kernova.guest`. Off by default; can be toggled while the VM is running."
                     )
                 }
             }
-        ) {
-            Toggle(
-                "Forward guest logs",
-                isOn: configBinding(\.agentLogForwardingEnabled)
-            )
 
             Toggle(
-                "Show install reminder",
                 isOn: Binding(
                     get: { !instance.configuration.agentInstallNudgeDismissed },
                     set: { newValue in
@@ -711,7 +703,27 @@ struct VMSettingsView: View {
                         }
                     }
                 )
-            )
+            ) {
+                toggleLabel("Show install reminder") {
+                    Text(
+                        "Surfaces the install icon in the sidebar when the guest agent has not yet connected. Turn off to suppress the nudge for this VM. The more urgent indicators (update available, didn't reconnect, unresponsive) are not affected."
+                    )
+                }
+            }
+        }
+    }
+
+    /// Toggle label that pairs a title with a trailing info button. Used
+    /// when the explanation is specific to that one control rather than to
+    /// the whole section.
+    @ViewBuilder
+    private func toggleLabel<Info: View>(
+        _ title: LocalizedStringKey,
+        @ViewBuilder info: @escaping () -> Info
+    ) -> some View {
+        HStack(spacing: 6) {
+            Text(title)
+            InfoButton(label: title, content: info)
         }
     }
 
@@ -742,9 +754,6 @@ struct VMSettingsView: View {
         ) {
             let directories = sharedDirectoriesBinding.wrappedValue
 
-            // RATIONALE: see storageDiskSection — wrap body controls in
-            // a Group so the header's info button stays interactive in
-            // read-only mode.
             Group {
                 if directories.isEmpty {
                     Text("No shared directories")
@@ -874,14 +883,19 @@ struct VMSettingsView: View {
     }
 }
 
-/// Trailing accessory used in section headers to reveal per-section help
-/// text in a popover.
+/// Trailing accessory that reveals per-section or per-control help text in
+/// a popover.
 ///
-/// Encapsulates the `@State isPresented` flag so each header gets its own
-/// independent popover anchor without leaking state into the surrounding
-/// view.
-private struct SectionInfoButton<Content: View>: View {
-    @ViewBuilder let content: () -> Content
+/// Used both next to section titles (when the explanation applies to the
+/// whole section) and next to individual controls (when the explanation is
+/// specific to that control). Owns its own `@State` so each call site gets
+/// an independent popover anchor.
+private struct InfoButton<Content: View>: View {
+    /// Title of the section or control this button explains. Used for the
+    /// hover tooltip and the VoiceOver label ("About Storage Disks",
+    /// "About Forward guest logs", etc.).
+    let label: LocalizedStringKey
+    let content: () -> Content
     @State private var isPresented = false
 
     var body: some View {
@@ -893,7 +907,8 @@ private struct SectionInfoButton<Content: View>: View {
                 .imageScale(.small)
         }
         .buttonStyle(.plain)
-        .help("About this section")
+        .help("About \(Text(label))")
+        .accessibilityLabel("About \(Text(label))")
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
             content()
                 .font(.callout)
