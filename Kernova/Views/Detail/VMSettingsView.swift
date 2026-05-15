@@ -111,22 +111,22 @@ struct VMSettingsView: View {
             }
             ScrollView {
                 Form {
-                    // RATIONALE: `.disabled(isReadOnly)` is applied per section rather
-                    // than at the Form level so that informational popover triggers in
-                    // `resourcesSection` and `audioSection` (which handle their own
-                    // disabling per-control) remain interactive in read-only mode —
-                    // SwiftUI's disabled state propagates irreversibly to descendants.
-                    // `guestAgentSection`, `clipboardSection`, and
-                    // `removableMediaSection` carry live-editable fields that
-                    // remain interactive while the VM is running. Storage Disks
-                    // is `storageDevices`-backed and therefore restart-only;
+                    // RATIONALE: Each section that locks while the VM is running wraps
+                    // its locked controls in `Group { ... }.disabled(isReadOnly)` *inside*
+                    // the section body. SwiftUI's `.disabled` propagates irreversibly to
+                    // descendants, so this scoping keeps the section's header (lock + info
+                    // button) and any always-on body content (info popovers, conditional
+                    // warnings, listings) outside the disabled subtree and therefore
+                    // interactive. Sections that are fully hot-toggleable (Removable
+                    // Media, Guest Agent, Clipboard) carry no disable wrapper. Storage
+                    // Disks is `storageDevices`-backed and therefore restart-only;
                     // Removable Media is XHCI-backed and hot-pluggable.
-                    generalSection.disabled(isReadOnly)
+                    generalSection
                     resourcesSection
-                    storageDiskSection.disabled(isReadOnly)
+                    storageDiskSection
                     removableMediaSection
-                    sharedDirectoriesSection.disabled(isReadOnly)
-                    networkSection.disabled(isReadOnly)
+                    sharedDirectoriesSection
+                    networkSection
                     audioSection
                     if instance.configuration.guestOS == .macOS {
                         guestAgentSection
@@ -184,59 +184,89 @@ struct VMSettingsView: View {
         }
     }
 
-    /// Section header that appends a lock SF Symbol when `isReadOnly` is
-    /// `true`, signaling that the section's controls are locked while the
-    /// VM is running.
+    /// Section header that prepends a lock SF Symbol when the section is
+    /// lockable and the VM is running.
     ///
-    /// Hot-toggleable sections (Guest Agent, Clipboard) keep
-    /// their plain headers so the absence of the lock is itself the signal
-    /// that those sections remain editable.
+    /// Hot-toggleable sections (Guest Agent, Clipboard, Removable Media)
+    /// pass `lockable: false` so the absence of the lock is itself the
+    /// signal that those sections remain editable.
     ///
     /// `LocalizedStringKey` matches SwiftUI's built-in `Section("...")`
     /// initializer behavior so passing a literal participates in the same
     /// localization lookup as the rest of the app's titles would.
+    ///
+    /// The HStack's children are intentionally **not** combined for
+    /// accessibility — `InfoButton` is interactive and must remain
+    /// independently focusable in VoiceOver, and `lockIcon` carries its
+    /// own accessibility label so the locked state is announced.
     @ViewBuilder
-    private func lockableHeader(_ title: LocalizedStringKey) -> some View {
+    private func sectionHeader(_ title: LocalizedStringKey, lockable: Bool = false) -> some View {
         HStack(spacing: 6) {
-            Text(title)
-            if isReadOnly {
-                Image(systemName: "lock.fill")
-                    .foregroundStyle(.orange)
-                    .imageScale(.small)
-                    .help("Locked while the VM is running")
+            if lockable && isReadOnly {
+                lockIcon
             }
+            Text(title)
         }
+    }
+
+    /// Section header variant that also surfaces an info button at the end,
+    /// revealing the per-section help text in a popover.
+    @ViewBuilder
+    private func sectionHeader<Info: View>(
+        _ title: LocalizedStringKey,
+        lockable: Bool = false,
+        @ViewBuilder info: @escaping () -> Info
+    ) -> some View {
+        HStack(spacing: 6) {
+            if lockable && isReadOnly {
+                lockIcon
+            }
+            Text(title)
+            InfoButton(label: title, content: info)
+        }
+    }
+
+    @ViewBuilder
+    private var lockIcon: some View {
+        Image(systemName: "lock.fill")
+            .foregroundStyle(.orange)
+            .imageScale(.small)
+            .help("Locked while the VM is running")
+            .accessibilityLabel("Locked while the VM is running")
     }
 
     // MARK: - Sections
 
     @ViewBuilder
     private var generalSection: some View {
-        Section(header: lockableHeader("General")) {
-            if isRenaming {
-                TextField("Name", text: $editingName)
-                    .focused($isNameFieldFocused)
-                    .onSubmit {
-                        viewModel.commitRename(for: instance, newName: editingName)
+        Section(header: sectionHeader("General", lockable: true)) {
+            Group {
+                if isRenaming {
+                    TextField("Name", text: $editingName)
+                        .focused($isNameFieldFocused)
+                        .onSubmit {
+                            viewModel.commitRename(for: instance, newName: editingName)
+                        }
+                        .onExitCommand {
+                            viewModel.cancelRename()
+                        }
+                } else {
+                    Button {
+                        viewModel.renameVM(instance)
+                    } label: {
+                        LabeledContent("Name") {
+                            Text(instance.name)
+                        }
                     }
-                    .onExitCommand {
-                        viewModel.cancelRename()
-                    }
-            } else {
-                Button {
-                    viewModel.renameVM(instance)
-                } label: {
-                    LabeledContent("Name") {
-                        Text(instance.name)
-                    }
+                    .buttonStyle(.plain)
+                    .disabled(!instance.status.canRename)
                 }
-                .buttonStyle(.plain)
-                .disabled(!instance.status.canRename)
+                LabeledContent("Type", value: instance.configuration.guestOS.displayName)
+                LabeledContent("Boot Mode", value: instance.configuration.bootMode.displayName)
+                LabeledContent(
+                    "Created", value: instance.configuration.createdAt.formatted(date: .abbreviated, time: .shortened))
             }
-            LabeledContent("Type", value: instance.configuration.guestOS.displayName)
-            LabeledContent("Boot Mode", value: instance.configuration.bootMode.displayName)
-            LabeledContent(
-                "Created", value: instance.configuration.createdAt.formatted(date: .abbreviated, time: .shortened))
+            .disabled(isReadOnly)
         }
         .onChange(of: isRenaming) { _, renaming in
             if renaming {
@@ -253,7 +283,13 @@ struct VMSettingsView: View {
 
     @ViewBuilder
     private var removableMediaSection: some View {
-        Section("Removable Media") {
+        Section(
+            header: sectionHeader("Removable Media") {
+                Text(
+                    "Appears as a USB drive in the guest. Hot-pluggable — changes take effect immediately while the VM is running. For boot media, use Storage Disks instead."
+                )
+            }
+        ) {
             let items = removableMediaBinding.wrappedValue
 
             if items.isEmpty {
@@ -306,12 +342,6 @@ struct VMSettingsView: View {
                     createRemovableMediaPopover
                 }
             }
-
-            Text(
-                "Appears as a USB drive in the guest. Hot-pluggable — changes take effect immediately while the VM is running. For boot media, use Storage Disks instead."
-            )
-            .font(.caption)
-            .foregroundStyle(.secondary)
         }
     }
 
@@ -367,36 +397,39 @@ struct VMSettingsView: View {
 
     @ViewBuilder
     private var storageDiskSection: some View {
-        Section(header: lockableHeader("Storage Disks")) {
+        Section(
+            header: sectionHeader("Storage Disks", lockable: true) {
+                Text(
+                    "Position 1 boots first on EFI guests. On macOS and Linux Kernel boot, position affects guest device enumeration. Installer images (.iso, .dmg) attach as USB Mass Storage entries on this list (still bootable, separate from hot-pluggable Removable Media); permanent disks attach as virtio block devices, so reordering an installer doesn't change your main disk's /dev/vda letter."
+                )
+            }
+        ) {
             let disks = storageDiskBinding.wrappedValue
 
-            ForEach(storageDiskBinding) { $disk in
-                storageDiskRow(disk: $disk)
-            }
-            .onMove { source, destination in
-                var current = storageDiskBinding.wrappedValue
-                current.move(fromOffsets: source, toOffset: destination)
-                storageDiskBinding.wrappedValue = current
-            }
-
-            HStack {
-                Button("Attach External Disk...") {
-                    addExternalDisk()
+            Group {
+                ForEach(storageDiskBinding) { $disk in
+                    storageDiskRow(disk: $disk)
+                }
+                .onMove { source, destination in
+                    var current = storageDiskBinding.wrappedValue
+                    current.move(fromOffsets: source, toOffset: destination)
+                    storageDiskBinding.wrappedValue = current
                 }
 
-                Button("Create New Disk...") {
-                    showingCreateDisk = true
-                }
-                .popover(isPresented: $showingCreateDisk, arrowEdge: .bottom) {
-                    createDiskPopover
+                HStack {
+                    Button("Attach External Disk...") {
+                        addExternalDisk()
+                    }
+
+                    Button("Create New Disk...") {
+                        showingCreateDisk = true
+                    }
+                    .popover(isPresented: $showingCreateDisk, arrowEdge: .bottom) {
+                        createDiskPopover
+                    }
                 }
             }
-
-            Text(
-                "Position 1 boots first on EFI guests. On macOS and Linux Kernel boot, position affects guest device enumeration. Installer images (.iso, .dmg) attach as USB Mass Storage entries on this list (still bootable, separate from hot-pluggable Removable Media); permanent disks attach as virtio block devices, so reordering an installer doesn't change your main disk's /dev/vda letter."
-            )
-            .font(.caption)
-            .foregroundStyle(.secondary)
+            .disabled(isReadOnly)
 
             if instance.configuration.guestOS == .linux {
                 let virtioDisks = disks.filter { $0.kind == .virtio }
@@ -558,21 +591,22 @@ struct VMSettingsView: View {
 
     @ViewBuilder
     private var resourcesSection: some View {
-        Section(header: lockableHeader("Resources")) {
+        Section(header: sectionHeader("Resources", lockable: true)) {
             let os = instance.configuration.guestOS
 
-            Stepper(
-                "CPU Cores: \(instance.configuration.cpuCount)",
-                value: configBinding(\.cpuCount),
-                in: os.minCPUCount...os.maxCPUCount
-            )
-            .disabled(isReadOnly)
+            Group {
+                Stepper(
+                    "CPU Cores: \(instance.configuration.cpuCount)",
+                    value: configBinding(\.cpuCount),
+                    in: os.minCPUCount...os.maxCPUCount
+                )
 
-            Stepper(
-                "Memory: \(instance.configuration.memorySizeInGB) GB",
-                value: configBinding(\.memorySizeInGB),
-                in: os.minMemoryInGB...os.maxMemoryInGB
-            )
+                Stepper(
+                    "Memory: \(instance.configuration.memorySizeInGB) GB",
+                    value: configBinding(\.memorySizeInGB),
+                    in: os.minMemoryInGB...os.maxMemoryInGB
+                )
+            }
             .disabled(isReadOnly)
         }
         .task(id: instance.id) {
@@ -582,26 +616,32 @@ struct VMSettingsView: View {
 
     @ViewBuilder
     private var networkSection: some View {
-        Section(header: lockableHeader("Network")) {
-            Toggle("Networking Enabled", isOn: configBinding(\.networkEnabled))
-            if let mac = instance.configuration.macAddress {
-                LabeledContent("MAC Address", value: mac)
+        Section(header: sectionHeader("Network", lockable: true)) {
+            Group {
+                Toggle("Networking Enabled", isOn: configBinding(\.networkEnabled))
+                if let mac = instance.configuration.macAddress {
+                    LabeledContent("MAC Address", value: mac)
+                }
             }
+            .disabled(isReadOnly)
         }
     }
 
     @ViewBuilder
     private var audioSection: some View {
-        Section(header: lockableHeader("Audio")) {
-            Toggle("Microphone", isOn: configBinding(\.microphoneEnabled))
-                .disabled(isReadOnly)
-            Text("Allows the guest to access the host microphone. Speaker output is always enabled.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        Section(
+            header: sectionHeader("Audio", lockable: true) {
+                Text("Allows the guest to access the host microphone. Speaker output is always enabled.")
+            }
+        ) {
+            Group {
+                Toggle("Microphone", isOn: configBinding(\.microphoneEnabled))
+            }
+            .disabled(isReadOnly)
 
-            // Permission warning + info-popover button are left un-disabled so the
-            // explanation of how to re-enable the mic in System Settings remains
-            // reachable in read-only mode.
+            // Permission warning + info-popover button are left outside the
+            // disabled Group so the explanation of how to re-enable the mic
+            // in System Settings remains reachable in read-only mode.
             if instance.configuration.microphoneEnabled {
                 if micPermission == .notDetermined {
                     Text("macOS will ask for microphone permission the first time a VM uses it.")
@@ -652,19 +692,16 @@ struct VMSettingsView: View {
 
     @ViewBuilder
     private var guestAgentSection: some View {
-        Section("Guest Agent") {
-            Toggle(
-                "Forward guest logs",
-                isOn: configBinding(\.agentLogForwardingEnabled)
-            )
-            Text(
-                "Streams `os.Logger` records from the macOS guest agent to the host so they appear in Console.app under `com.kernova.guest`. Off by default; can be toggled while the VM is running."
-            )
-            .font(.caption)
-            .foregroundStyle(.secondary)
+        Section(header: sectionHeader("Guest Agent")) {
+            Toggle(isOn: configBinding(\.agentLogForwardingEnabled)) {
+                toggleLabel("Forward guest logs") {
+                    Text(
+                        "Streams `os.Logger` records from the macOS guest agent to the host so they appear in Console.app under `com.kernova.guest`. Off by default; can be toggled while the VM is running."
+                    )
+                }
+            }
 
             Toggle(
-                "Show install reminder",
                 isOn: Binding(
                     get: { !instance.configuration.agentInstallNudgeDismissed },
                     set: { newValue in
@@ -673,24 +710,41 @@ struct VMSettingsView: View {
                         }
                     }
                 )
-            )
-            Text(
-                "Surfaces the install icon in the sidebar when the guest agent has not yet connected. Turn off to suppress the nudge for this VM. The more urgent indicators (update available, didn't reconnect, unresponsive) are not affected."
-            )
-            .font(.caption)
-            .foregroundStyle(.secondary)
+            ) {
+                toggleLabel("Show install reminder") {
+                    Text(
+                        "Surfaces the install icon in the sidebar when the guest agent has not yet connected. Turn off to suppress the nudge for this VM. The more urgent indicators (update available, didn't reconnect, unresponsive) are not affected."
+                    )
+                }
+            }
+        }
+    }
+
+    /// Toggle label that pairs a title with a trailing info button.
+    ///
+    /// Used when the explanation is specific to that one control rather
+    /// than to the whole section.
+    @ViewBuilder
+    private func toggleLabel<Info: View>(
+        _ title: LocalizedStringKey,
+        @ViewBuilder info: @escaping () -> Info
+    ) -> some View {
+        HStack(spacing: 6) {
+            Text(title)
+            InfoButton(label: title, content: info)
         }
     }
 
     @ViewBuilder
     private var clipboardSection: some View {
-        Section("Clipboard") {
+        Section(
+            header: sectionHeader("Clipboard") {
+                Text(
+                    "Exchanges clipboard text between host and guest. macOS guests use the bundled Kernova guest agent — Kernova will offer to install or update it from the clipboard window. Linux guests need spice-vdagent installed via the guest's package manager."
+                )
+            }
+        ) {
             Toggle("Clipboard Sharing", isOn: configBinding(\.clipboardSharingEnabled))
-            Text(
-                "Exchanges clipboard text between host and guest. macOS guests use the bundled Kernova guest agent — Kernova will offer to install or update it from the clipboard window. Linux guests need spice-vdagent installed via the guest's package manager."
-            )
-            .font(.caption)
-            .foregroundStyle(.secondary)
             if isReadOnly && instance.configuration.guestOS == .linux {
                 Text("Takes effect on next start — Linux guests configure SPICE at VM start time.")
                     .font(.caption)
@@ -701,83 +755,87 @@ struct VMSettingsView: View {
 
     @ViewBuilder
     private var sharedDirectoriesSection: some View {
-        Section(header: lockableHeader("Shared Directories")) {
+        Section(
+            header: sectionHeader("Shared Directories", lockable: true) {
+                sharedDirectoriesInfo
+            }
+        ) {
             let directories = sharedDirectoriesBinding.wrappedValue
 
-            if directories.isEmpty {
-                Text("No shared directories")
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(sharedDirectoriesBinding) { $directory in
-                    HStack {
-                        Image(systemName: "folder")
-                            .foregroundStyle(.secondary)
+            Group {
+                if directories.isEmpty {
+                    Text("No shared directories")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(sharedDirectoriesBinding) { $directory in
+                        HStack {
+                            Image(systemName: "folder")
+                                .foregroundStyle(.secondary)
 
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(directory.displayName)
-                            Text(directory.path)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(directory.displayName)
+                                Text(directory.path)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+
+                            Spacer()
+
+                            Toggle("Read Only", isOn: $directory.readOnly)
+                                .toggleStyle(.switch)
+                                .labelsHidden()
+                            Text("Read Only")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
+
+                            Button(role: .destructive) {
+                                sharedDirectoriesBinding.wrappedValue.removeAll { $0.id == directory.id }
+                            } label: {
+                                Image(systemName: "minus.circle.fill")
+                                    .foregroundStyle(.red)
+                            }
+                            .buttonStyle(.plain)
                         }
+                    }
+                }
 
-                        Spacer()
+                Button("Add Shared Directory...") {
+                    addSharedDirectory()
+                }
+            }
+            .disabled(isReadOnly)
 
-                        Toggle("Read Only", isOn: $directory.readOnly)
-                            .toggleStyle(.switch)
-                            .labelsHidden()
-                        Text("Read Only")
-                            .font(.caption)
+            if instance.configuration.guestOS == .linux, !directories.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Mount in guest:")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    ForEach(Array(directories.enumerated()), id: \.element.id) { index, directory in
+                        Text("mount -t virtiofs share\(index) /mnt/\(directory.displayName)")
+                            .font(.system(.caption, design: .monospaced))
                             .foregroundStyle(.secondary)
-
-                        Button(role: .destructive) {
-                            sharedDirectoriesBinding.wrappedValue.removeAll { $0.id == directory.id }
-                        } label: {
-                            Image(systemName: "minus.circle.fill")
-                                .foregroundStyle(.red)
-                        }
-                        .buttonStyle(.plain)
+                            .textSelection(.enabled)
                     }
                 }
             }
+        }
+    }
 
-            Button("Add Shared Directory...") {
-                addSharedDirectory()
-            }
-
+    @ViewBuilder
+    private var sharedDirectoriesInfo: some View {
+        VStack(alignment: .leading, spacing: 10) {
             if instance.configuration.guestOS == .linux {
                 Text(
                     "Shared directories are available as virtiofs mounts in the guest. Mount them with `mount -t virtiofs <tag> <mountpoint>`."
                 )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                if !directories.isEmpty {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Mount in guest:")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        ForEach(Array(directories.enumerated()), id: \.element.id) { index, directory in
-                            Text("mount -t virtiofs share\(index) /mnt/\(directory.displayName)")
-                                .font(.system(.caption, design: .monospaced))
-                                .foregroundStyle(.secondary)
-                                .textSelection(.enabled)
-                        }
-                    }
-                }
             } else {
                 Text("Shared directories auto-mount at /Volumes/My Shared Files/ in the guest.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
-
-            if !directories.isEmpty {
-                Text(
-                    "Note: File sharing uses VirtioFS which has known framework limitations — files may intermittently appear missing, and permission mapping between host and guest can differ."
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
+            Text(
+                "Note: File sharing uses VirtioFS which has known framework limitations — files may intermittently appear missing, and permission mapping between host and guest can differ."
+            )
         }
     }
 
@@ -830,5 +888,41 @@ struct VMSettingsView: View {
         }
         .padding()
         .frame(width: 340)
+    }
+}
+
+/// Trailing accessory that reveals per-section or per-control help text in
+/// a popover.
+///
+/// Used both next to section titles (when the explanation applies to the
+/// whole section) and next to individual controls (when the explanation is
+/// specific to that control). Owns its own `@State` so each call site gets
+/// an independent popover anchor.
+private struct InfoButton<Content: View>: View {
+    /// Title of the section or control this button explains.
+    ///
+    /// Used for the hover tooltip and the VoiceOver label ("About Storage
+    /// Disks", "About Forward guest logs", etc.).
+    let label: LocalizedStringKey
+    let content: () -> Content
+    @State private var isPresented = false
+
+    var body: some View {
+        Button {
+            isPresented.toggle()
+        } label: {
+            Image(systemName: "info.circle")
+                .foregroundStyle(.secondary)
+                .imageScale(.small)
+        }
+        .buttonStyle(.plain)
+        .help("About \(Text(label))")
+        .accessibilityLabel("About \(Text(label))")
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+            content()
+                .font(.callout)
+                .padding()
+                .frame(width: 340)
+        }
     }
 }
