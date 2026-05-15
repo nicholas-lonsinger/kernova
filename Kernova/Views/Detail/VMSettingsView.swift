@@ -1,5 +1,6 @@
 import AVFoundation
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Settings form for editing a stopped VM's configuration, or viewing a running VM's
 /// configuration in read-only mode.
@@ -16,6 +17,7 @@ struct VMSettingsView: View {
     @State private var showingMicPermissionInfo = false
     @State private var micPermission: AVAuthorizationStatus = AVCaptureDevice.authorizationStatus(for: .audio)
     @State private var showingCreateDisk = false
+    @State private var showingCreateRemovableMedia = false
     @State private var newDiskSizeInGB = VMGuestOS.defaultDiskSizeInGB
     @State private var diskToRemove: StorageDisk?
     @State private var showingRemoveDiskAlert = false
@@ -292,8 +294,17 @@ struct VMSettingsView: View {
                 }
             }
 
-            Button("Attach Disc Image...") {
-                browseRemovableMedia()
+            HStack {
+                Button("Attach Disc Image...") {
+                    browseRemovableMedia()
+                }
+
+                Button("Create New Disk...") {
+                    showingCreateRemovableMedia = true
+                }
+                .popover(isPresented: $showingCreateRemovableMedia, arrowEdge: .bottom) {
+                    createRemovableMediaPopover
+                }
             }
 
             Text(
@@ -321,6 +332,28 @@ struct VMSettingsView: View {
         }
 
         removableMediaBinding.wrappedValue = current
+    }
+
+    /// Presents a save panel for a new removable-media disk image.
+    ///
+    /// Returns the chosen URL, or `nil` if the user cancels. The file is not
+    /// created here — only the destination is chosen. Defaults to `~/Documents`
+    /// and suggests a filename derived from the VM name.
+    private func promptSaveRemovableMedia(for instance: VMInstance) -> URL? {
+        let panel = NSSavePanel()
+        panel.title = "Save Removable Disk"
+        panel.message = "Choose where to save the new removable disk image."
+        panel.prompt = "Create"
+        panel.nameFieldStringValue = "\(instance.name) Removable Disk.asif"
+        // Constrain to `.asif` — we only know how to allocate ASIF. NSSavePanel
+        // appends the extension if the user omits it, and rejects mismatched
+        // extensions since `allowsOtherFileTypes` defaults to false.
+        panel.allowedContentTypes = [.asif]
+        panel.canCreateDirectories = true
+        panel.directoryURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+
+        guard panel.runModal() == .OK else { return nil }
+        return panel.url
     }
 
     // MARK: - Storage Disks
@@ -474,6 +507,43 @@ struct VMSettingsView: View {
                 Button("Create") {
                     showingCreateDisk = false
                     viewModel.createStorageDisk(for: instance, sizeInGB: newDiskSizeInGB)
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding()
+        .frame(width: 280)
+    }
+
+    @ViewBuilder
+    private var createRemovableMediaPopover: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Create New Removable Disk")
+                .font(.headline)
+
+            Picker("Size", selection: $newDiskSizeInGB) {
+                ForEach(VMGuestOS.allDiskSizes, id: \.self) { size in
+                    Text(DataFormatters.formatDiskSize(size)).tag(size)
+                }
+            }
+
+            Text(
+                "Creates a writable ASIF sparse disk image at a location you choose, attached as a hot-pluggable USB drive. The file lives outside the VM bundle."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
+            HStack {
+                Button("Cancel") {
+                    showingCreateRemovableMedia = false
+                }
+                Spacer()
+                Button("Create") {
+                    showingCreateRemovableMedia = false
+                    if let url = promptSaveRemovableMedia(for: instance) {
+                        viewModel.createRemovableMedia(
+                            for: instance, sizeInGB: newDiskSizeInGB, destinationURL: url)
+                    }
                 }
                 .buttonStyle(.borderedProminent)
             }

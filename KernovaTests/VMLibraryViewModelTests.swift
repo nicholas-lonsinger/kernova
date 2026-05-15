@@ -2047,6 +2047,53 @@ struct VMLibraryViewModelTests {
         #expect(!viewModel.showError)
     }
 
+    @Test("createRemovableMedia appends an external item with the chosen path and read-write default")
+    func createRemovableMediaAppends() async throws {
+        let (viewModel, _, diskService, _, _) = makeViewModel()
+        let instance = makeInstance()
+        viewModel.instances.append(instance)
+
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString) Removable Disk.asif")
+
+        viewModel.createRemovableMedia(for: instance, sizeInGB: 16, destinationURL: destination)
+
+        while instance.configuration.removableMedia == nil { await Task.yield() }
+
+        let media = instance.configuration.removableMedia ?? []
+        #expect(media.count == 1)
+
+        let item = try #require(media.first)
+        // Removable media is always external — no `isInternal` flag exists on the
+        // model. The stored path is the absolute host path the user picked.
+        #expect(item.path == destination.path(percentEncoded: false))
+        #expect(item.readOnly == false)
+        #expect(item.label == destination.deletingPathExtension().lastPathComponent)
+
+        #expect(diskService.createDiskImageCallCount == 1)
+        #expect(diskService.lastCreatedSizeInGB == 16)
+        #expect(!viewModel.showError)
+    }
+
+    @Test("createRemovableMedia surfaces errors and leaves the list unchanged")
+    func createRemovableMediaErrorIsSurfaced() async throws {
+        let diskService = MockDiskImageService()
+        diskService.createDiskImageError = NSError(domain: "test", code: 1)
+        let (viewModel, _, _, _, _) = makeViewModel(diskImageService: diskService)
+        let instance = makeInstance()
+        viewModel.instances.append(instance)
+
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString).asif")
+
+        viewModel.createRemovableMedia(for: instance, sizeInGB: 16, destinationURL: destination)
+
+        while !viewModel.showError { await Task.yield() }
+
+        #expect(instance.configuration.removableMedia == nil)
+        #expect(diskService.createDiskImageCallCount == 1)
+    }
+
     // MARK: - Reconcile Rollback
 
     @Test("Reorder-only removableMedia change triggers no detach/attach")

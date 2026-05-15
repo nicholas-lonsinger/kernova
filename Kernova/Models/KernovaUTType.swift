@@ -20,6 +20,9 @@ extension UTType {
     /// `.ipsw` filename-extension type, falling back to `.data` if lookup fails.
     static let ipsw: UTType = resolvedFilenameExtension("ipsw")
 
+    /// `.asif` filename-extension type, falling back to `.data` if lookup fails.
+    static let asif: UTType = resolvedFilenameExtension("asif")
+
     private static func resolvedFilenameExtension(_ ext: String, fallback: UTType = .data) -> UTType {
         guard let type = UTType(filenameExtension: ext) else {
             let logger = Logger(subsystem: "com.kernova.app", category: "UTType")
