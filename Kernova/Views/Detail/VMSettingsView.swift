@@ -184,15 +184,20 @@ struct VMSettingsView: View {
         }
     }
 
-    /// Section header that prepends a lock SF Symbol when `lockable` is `true`
-    /// and the VM is running, signaling that the section's controls are
-    /// locked. Hot-toggleable sections (Guest Agent, Clipboard, Removable
-    /// Media) pass `lockable: false` so the absence of the lock is itself
-    /// the signal that those sections remain editable.
+    /// Section header that prepends a lock SF Symbol when the section is
+    /// lockable and the VM is running.
+    ///
+    /// Hot-toggleable sections (Guest Agent, Clipboard, Removable Media)
+    /// pass `lockable: false` so the absence of the lock is itself the
+    /// signal that those sections remain editable.
     ///
     /// `LocalizedStringKey` matches SwiftUI's built-in `Section("...")`
     /// initializer behavior so passing a literal participates in the same
     /// localization lookup as the rest of the app's titles would.
+    ///
+    /// `.accessibilityElement(children: .combine)` collapses the
+    /// lock / title / info-button trio into a single VoiceOver element so
+    /// the section reads as one item rather than three sequential stops.
     @ViewBuilder
     private func sectionHeader(_ title: LocalizedStringKey, lockable: Bool = false) -> some View {
         HStack(spacing: 6) {
@@ -201,6 +206,7 @@ struct VMSettingsView: View {
             }
             Text(title)
         }
+        .accessibilityElement(children: .combine)
     }
 
     /// Section header variant that also surfaces an info button at the end,
@@ -218,6 +224,7 @@ struct VMSettingsView: View {
             Text(title)
             InfoButton(label: title, content: info)
         }
+        .accessibilityElement(children: .combine)
     }
 
     @ViewBuilder
@@ -713,9 +720,10 @@ struct VMSettingsView: View {
         }
     }
 
-    /// Toggle label that pairs a title with a trailing info button. Used
-    /// when the explanation is specific to that one control rather than to
-    /// the whole section.
+    /// Toggle label that pairs a title with a trailing info button.
+    ///
+    /// Used when the explanation is specific to that one control rather
+    /// than to the whole section.
     @ViewBuilder
     private func toggleLabel<Info: View>(
         _ title: LocalizedStringKey,
@@ -891,9 +899,10 @@ struct VMSettingsView: View {
 /// specific to that control). Owns its own `@State` so each call site gets
 /// an independent popover anchor.
 private struct InfoButton<Content: View>: View {
-    /// Title of the section or control this button explains. Used for the
-    /// hover tooltip and the VoiceOver label ("About Storage Disks",
-    /// "About Forward guest logs", etc.).
+    /// Title of the section or control this button explains.
+    ///
+    /// Used for the hover tooltip and the VoiceOver label ("About Storage
+    /// Disks", "About Forward guest logs", etc.).
     let label: LocalizedStringKey
     let content: () -> Content
     @State private var isPresented = false
