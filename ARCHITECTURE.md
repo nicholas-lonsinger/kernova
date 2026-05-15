@@ -85,7 +85,7 @@ Kernova/
     ├── Assets.xcassets/                # App icons and image assets
     └── Kernova.entitlements            # com.apple.security.virtualization entitlement
 
-DiskTemplates/                             # Bundled ASIF disk image templates (22 lzfse-compressed files)
+DiskTemplates/                             # Bundled ASIF disk image templates (19 lzfse-compressed files)
                                            # Decompressed at VM creation time by DiskImageService
 
 KernovaRelaunchHelper/

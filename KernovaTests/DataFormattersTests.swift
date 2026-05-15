@@ -175,14 +175,14 @@ struct DataFormattersTests {
     func formatDiskSizeWholeTB() {
         #expect(DataFormatters.formatDiskSize(1000) == "1.0\u{2007}TB")
         #expect(DataFormatters.formatDiskSize(2000) == "2.0\u{2007}TB")
-        #expect(DataFormatters.formatDiskSize(4000) == "4.0\u{2007}TB")
+        #expect(DataFormatters.formatDiskSize(10000) == "10.0\u{2007}TB")
     }
 
     @Test("formatDiskSize formats fractional TB with one decimal")
     func formatDiskSizeFractionalTB() {
         #expect(DataFormatters.formatDiskSize(1500) == "1.5\u{2007}TB")
         #expect(DataFormatters.formatDiskSize(2500) == "2.5\u{2007}TB")
-        #expect(DataFormatters.formatDiskSize(3500) == "3.5\u{2007}TB")
+        #expect(DataFormatters.formatDiskSize(7500) == "7.5\u{2007}TB")
     }
 
     // MARK: - formatCPUCount
