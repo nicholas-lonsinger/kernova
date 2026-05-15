@@ -979,16 +979,64 @@ final class VMLibraryViewModel {
                     "Created in-bundle storage disk '\(disk.label, privacy: .public)' (\(sizeInGB, privacy: .public) GB) for VM '\(instance.name, privacy: .public)'"
                 )
             } catch {
-                // Clean up the disk file if it was created before the failure
-                do {
-                    try FileManager.default.trashItem(at: diskURL, resultingItemURL: nil)
-                } catch let cleanupError {
-                    Self.logger.warning(
-                        "Failed to clean up partial disk image at '\(diskURL.lastPathComponent, privacy: .public)': \(cleanupError.localizedDescription, privacy: .public)"
-                    )
+                // Only attempt cleanup when the write itself failed — earlier
+                // phases throw before the destination file is touched.
+                if case DiskImageError.writeFailed = error {
+                    do {
+                        try FileManager.default.trashItem(at: diskURL, resultingItemURL: nil)
+                    } catch let cleanupError {
+                        Self.logger.warning(
+                            "Failed to clean up partial disk image at '\(diskURL.lastPathComponent, privacy: .public)': \(cleanupError.localizedDescription, privacy: .public)"
+                        )
+                    }
                 }
                 Self.logger.error(
                     "Failed to create storage disk for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                )
+                presentError(error)
+            }
+        }
+    }
+
+    /// Creates a new ASIF disk image at a user-chosen external location and
+    /// attaches it to the VM as a hot-pluggable removable disk.
+    ///
+    /// The backing file is **not** bundle-owned — its lifecycle is the user's
+    /// responsibility. Removal from the list does not trash the file, and
+    /// cloning the VM references the same path rather than duplicating it.
+    func createRemovableMedia(for instance: VMInstance, sizeInGB: Int, destinationURL: URL) {
+        Task {
+            do {
+                try await diskImageService.createDiskImage(at: destinationURL, sizeInGB: sizeInGB)
+
+                let item = RemovableMediaItem(
+                    path: destinationURL.path(percentEncoded: false),
+                    readOnly: false,
+                    label: destinationURL.deletingPathExtension().lastPathComponent
+                )
+                updateConfiguration(of: instance) { config in
+                    config.removableMedia = (config.removableMedia ?? []) + [item]
+                }
+
+                Self.logger.notice(
+                    "Created removable disk '\(item.label, privacy: .public)' (\(sizeInGB, privacy: .public) GB) at '\(destinationURL.path, privacy: .public)' for VM '\(instance.name, privacy: .public)'"
+                )
+            } catch {
+                // Only attempt cleanup when the write itself failed — earlier
+                // phases throw before the destination file is touched, so trashing
+                // there would either be a no-op or, in the user-chosen-path case,
+                // remove an unrelated pre-existing file.
+                if case DiskImageError.writeFailed = error {
+                    do {
+                        try FileManager.default.trashItem(at: destinationURL, resultingItemURL: nil)
+                    } catch let cleanupError {
+                        Self.logger.warning(
+                            "Failed to clean up partial removable disk at '\(destinationURL.lastPathComponent, privacy: .public)': \(cleanupError.localizedDescription, privacy: .public)"
+                        )
+                    }
+                }
+                Self.logger.error(
+                    "Failed to create removable disk for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
                 presentError(error)
             }

@@ -2047,6 +2047,104 @@ struct VMLibraryViewModelTests {
         #expect(!viewModel.showError)
     }
 
+    @Test("createRemovableMedia appends an external item with the chosen path and read-write default")
+    func createRemovableMediaAppends() async throws {
+        let (viewModel, _, diskService, _, _) = makeViewModel()
+        let instance = makeInstance()
+        viewModel.instances.append(instance)
+
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString) Removable Disk.asif")
+
+        viewModel.createRemovableMedia(for: instance, sizeInGB: 16, destinationURL: destination)
+
+        while instance.configuration.removableMedia == nil { await Task.yield() }
+
+        let media = instance.configuration.removableMedia ?? []
+        #expect(media.count == 1)
+
+        let item = try #require(media.first)
+        // Removable media is always external — no `isInternal` flag exists on the
+        // model. The stored path is the absolute host path the user picked.
+        #expect(item.path == destination.path(percentEncoded: false))
+        #expect(item.readOnly == false)
+        #expect(item.label == destination.deletingPathExtension().lastPathComponent)
+
+        #expect(diskService.createDiskImageCallCount == 1)
+        #expect(diskService.lastCreatedSizeInGB == 16)
+        #expect(!viewModel.showError)
+    }
+
+    @Test("createRemovableMedia surfaces errors and leaves the list unchanged")
+    func createRemovableMediaErrorIsSurfaced() async throws {
+        let diskService = MockDiskImageService()
+        diskService.createDiskImageError = NSError(domain: "test", code: 1)
+        let (viewModel, _, _, _, _) = makeViewModel(diskImageService: diskService)
+        let instance = makeInstance()
+        viewModel.instances.append(instance)
+
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString).asif")
+
+        viewModel.createRemovableMedia(for: instance, sizeInGB: 16, destinationURL: destination)
+
+        while !viewModel.showError { await Task.yield() }
+
+        #expect(instance.configuration.removableMedia == nil)
+        #expect(diskService.createDiskImageCallCount == 1)
+    }
+
+    @Test("createRemovableMedia trashes the destination when DiskImageError.writeFailed is thrown")
+    func createRemovableMediaWriteFailedTrashesFile() async throws {
+        let diskService = MockDiskImageService()
+        // `.writeFailed` signals the write phase started — the destination file
+        // may exist as a partial write, so the catch path must attempt cleanup.
+        diskService.createDiskImageError = DiskImageError.writeFailed(
+            NSError(domain: "test", code: 1))
+        let (viewModel, _, _, _, _) = makeViewModel(diskImageService: diskService)
+        let instance = makeInstance()
+        viewModel.instances.append(instance)
+
+        // Stand in for the partial file `createDiskImage` would have left.
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString).asif")
+        try Data("partial".utf8).write(to: destination)
+        defer { try? FileManager.default.removeItem(at: destination) }
+
+        viewModel.createRemovableMedia(for: instance, sizeInGB: 16, destinationURL: destination)
+
+        while !viewModel.showError { await Task.yield() }
+
+        // `trashItem` moved the file out of its original location.
+        #expect(!FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)))
+        #expect(instance.configuration.removableMedia == nil)
+    }
+
+    @Test("createRemovableMedia leaves an unrelated pre-existing file alone on pre-write failure")
+    func createRemovableMediaPreWriteFailureLeavesFileAlone() async throws {
+        let diskService = MockDiskImageService()
+        // `.templateMissing` throws before any byte is written. The user may have
+        // pointed the save panel at a pre-existing file they confirmed "Replace"
+        // on — we must not trash it when the write never started.
+        diskService.createDiskImageError = DiskImageError.templateMissing(sizeInGB: 16)
+        let (viewModel, _, _, _, _) = makeViewModel(diskImageService: diskService)
+        let instance = makeInstance()
+        viewModel.instances.append(instance)
+
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString).asif")
+        try Data("user file".utf8).write(to: destination)
+        defer { try? FileManager.default.removeItem(at: destination) }
+
+        viewModel.createRemovableMedia(for: instance, sizeInGB: 16, destinationURL: destination)
+
+        while !viewModel.showError { await Task.yield() }
+
+        // Pre-existing file is intact.
+        #expect(FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)))
+        #expect(instance.configuration.removableMedia == nil)
+    }
+
     // MARK: - Reconcile Rollback
 
     @Test("Reorder-only removableMedia change triggers no detach/attach")
