@@ -334,12 +334,14 @@ struct VMSettingsView: View {
         removableMediaBinding.wrappedValue = current
     }
 
-    /// Presents a save panel for a new removable-media disk image.
+    /// Presents a save panel for a new removable-media disk image and dispatches
+    /// the create call when the user confirms.
     ///
-    /// Returns the chosen URL, or `nil` if the user cancels. The file is not
-    /// created here — only the destination is chosen. Defaults to `~/Documents`
-    /// and suggests a filename derived from the VM name.
-    private func promptSaveRemovableMedia(for instance: VMInstance) -> URL? {
+    /// Uses the asynchronous `begin(completionHandler:)` API so SwiftUI can
+    /// finish the popover-dismissal animation before the save panel takes the
+    /// foreground — `runModal()` would block the main thread and freeze the
+    /// transition.
+    private func presentSaveRemovableMedia(for instance: VMInstance, sizeInGB: Int) {
         let panel = NSSavePanel()
         panel.title = "Save Removable Disk"
         panel.message = "Choose where to save the new removable disk image."
@@ -350,10 +352,15 @@ struct VMSettingsView: View {
         // extensions since `allowsOtherFileTypes` defaults to false.
         panel.allowedContentTypes = [.asif]
         panel.canCreateDirectories = true
-        panel.directoryURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+        // Intentionally no `directoryURL` — NSSavePanel remembers the user's
+        // last-used location, which is a better default than forcing every
+        // invocation back to ~/Documents.
 
-        guard panel.runModal() == .OK else { return nil }
-        return panel.url
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            viewModel.createRemovableMedia(
+                for: instance, sizeInGB: sizeInGB, destinationURL: url)
+        }
     }
 
     // MARK: - Storage Disks
@@ -540,10 +547,7 @@ struct VMSettingsView: View {
                 Spacer()
                 Button("Create") {
                     showingCreateRemovableMedia = false
-                    if let url = promptSaveRemovableMedia(for: instance) {
-                        viewModel.createRemovableMedia(
-                            for: instance, sizeInGB: newDiskSizeInGB, destinationURL: url)
-                    }
+                    presentSaveRemovableMedia(for: instance, sizeInGB: newDiskSizeInGB)
                 }
                 .buttonStyle(.borderedProminent)
             }

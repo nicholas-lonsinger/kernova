@@ -979,13 +979,16 @@ final class VMLibraryViewModel {
                     "Created in-bundle storage disk '\(disk.label, privacy: .public)' (\(sizeInGB, privacy: .public) GB) for VM '\(instance.name, privacy: .public)'"
                 )
             } catch {
-                // Clean up the disk file if it was created before the failure
-                do {
-                    try FileManager.default.trashItem(at: diskURL, resultingItemURL: nil)
-                } catch let cleanupError {
-                    Self.logger.warning(
-                        "Failed to clean up partial disk image at '\(diskURL.lastPathComponent, privacy: .public)': \(cleanupError.localizedDescription, privacy: .public)"
-                    )
+                // Only attempt cleanup when the write itself failed — earlier
+                // phases throw before the destination file is touched.
+                if case DiskImageError.writeFailed = error {
+                    do {
+                        try FileManager.default.trashItem(at: diskURL, resultingItemURL: nil)
+                    } catch let cleanupError {
+                        Self.logger.warning(
+                            "Failed to clean up partial disk image at '\(diskURL.lastPathComponent, privacy: .public)': \(cleanupError.localizedDescription, privacy: .public)"
+                        )
+                    }
                 }
                 Self.logger.error(
                     "Failed to create storage disk for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
@@ -1019,13 +1022,18 @@ final class VMLibraryViewModel {
                     "Created removable disk '\(item.label, privacy: .public)' (\(sizeInGB, privacy: .public) GB) at '\(destinationURL.path, privacy: .public)' for VM '\(instance.name, privacy: .public)'"
                 )
             } catch {
-                // Clean up the disk file if it was created before the failure.
-                do {
-                    try FileManager.default.trashItem(at: destinationURL, resultingItemURL: nil)
-                } catch let cleanupError {
-                    Self.logger.warning(
-                        "Failed to clean up partial removable disk at '\(destinationURL.lastPathComponent, privacy: .public)': \(cleanupError.localizedDescription, privacy: .public)"
-                    )
+                // Only attempt cleanup when the write itself failed — earlier
+                // phases throw before the destination file is touched, so trashing
+                // there would either be a no-op or, in the user-chosen-path case,
+                // remove an unrelated pre-existing file.
+                if case DiskImageError.writeFailed = error {
+                    do {
+                        try FileManager.default.trashItem(at: destinationURL, resultingItemURL: nil)
+                    } catch let cleanupError {
+                        Self.logger.warning(
+                            "Failed to clean up partial removable disk at '\(destinationURL.lastPathComponent, privacy: .public)': \(cleanupError.localizedDescription, privacy: .public)"
+                        )
+                    }
                 }
                 Self.logger.error(
                     "Failed to create removable disk for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
