@@ -71,12 +71,6 @@ struct VMGuestOSTests {
         #expect(VMGuestOS.linux.maxMemoryInGB == hostMemoryGB)
     }
 
-    @Test("Max disk size is 10000 GB for both OS types")
-    func maxDiskSize() {
-        #expect(VMGuestOS.macOS.maxDiskSizeInGB == 10000)
-        #expect(VMGuestOS.linux.maxDiskSizeInGB == 10000)
-    }
-
     // MARK: - Constraint Relationships
 
     @Test("macOS constraints satisfy min <= default <= max")
@@ -87,7 +81,6 @@ struct VMGuestOSTests {
         #expect(os.minMemoryInGB <= os.defaultMemoryInGB)
         #expect(os.defaultMemoryInGB <= os.maxMemoryInGB)
         #expect(os.minDiskSizeInGB <= VMGuestOS.defaultDiskSizeInGB)
-        #expect(VMGuestOS.defaultDiskSizeInGB <= os.maxDiskSizeInGB)
     }
 
     @Test("Linux constraints satisfy min <= default <= max")
@@ -98,7 +91,6 @@ struct VMGuestOSTests {
         #expect(os.minMemoryInGB <= os.defaultMemoryInGB)
         #expect(os.defaultMemoryInGB <= os.maxMemoryInGB)
         #expect(os.minDiskSizeInGB <= VMGuestOS.defaultDiskSizeInGB)
-        #expect(VMGuestOS.defaultDiskSizeInGB <= os.maxDiskSizeInGB)
     }
 
     // MARK: - Available Disk Sizes

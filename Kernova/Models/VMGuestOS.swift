@@ -78,6 +78,4 @@ enum VMGuestOS: String, Codable, CaseIterable, Sendable {
         case .linux: 10
         }
     }
-
-    var maxDiskSizeInGB: Int { Self.allDiskSizes.last ?? 4000 }
 }
