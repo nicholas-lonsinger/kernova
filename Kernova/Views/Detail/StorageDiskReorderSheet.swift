@@ -73,5 +73,6 @@ struct StorageDiskReorderSheet: View {
 
             Spacer()
         }
+        .accessibilityElement(children: .combine)
     }
 }
