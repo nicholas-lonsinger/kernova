@@ -240,34 +240,34 @@ struct VMSettingsView: View {
 
     @ViewBuilder
     private var generalSection: some View {
-        Section(header: sectionHeader("General", lockable: true)) {
-            Group {
-                if isRenaming {
-                    TextField("Name", text: $editingName)
-                        .focused($isNameFieldFocused)
-                        .onSubmit {
-                            viewModel.commitRename(for: instance, newName: editingName)
-                        }
-                        .onExitCommand {
-                            viewModel.cancelRename()
-                        }
-                } else {
-                    Button {
-                        viewModel.renameVM(instance)
-                    } label: {
-                        LabeledContent("Name") {
-                            Text(instance.name)
-                        }
+        // Name is hot-editable (same as the sidebar's right-click rename), and Type /
+        // Boot Mode / Created are immutable metadata even when stopped — so the
+        // section as a whole carries no lock and no `.disabled(isReadOnly)` wrapper.
+        Section(header: sectionHeader("General")) {
+            if isRenaming {
+                TextField("Name", text: $editingName)
+                    .focused($isNameFieldFocused)
+                    .onSubmit {
+                        viewModel.commitRename(for: instance, newName: editingName)
                     }
-                    .buttonStyle(.plain)
-                    .disabled(!instance.status.canRename)
+                    .onExitCommand {
+                        viewModel.cancelRename()
+                    }
+            } else {
+                Button {
+                    viewModel.renameVM(instance)
+                } label: {
+                    LabeledContent("Name") {
+                        Text(instance.name)
+                    }
                 }
-                LabeledContent("Type", value: instance.configuration.guestOS.displayName)
-                LabeledContent("Boot Mode", value: instance.configuration.bootMode.displayName)
-                LabeledContent(
-                    "Created", value: instance.configuration.createdAt.formatted(date: .abbreviated, time: .shortened))
+                .buttonStyle(.plain)
+                .disabled(!instance.status.canRename)
             }
-            .disabled(isReadOnly)
+            LabeledContent("Type", value: instance.configuration.guestOS.displayName)
+            LabeledContent("Boot Mode", value: instance.configuration.bootMode.displayName)
+            LabeledContent(
+                "Created", value: instance.configuration.createdAt.formatted(date: .abbreviated, time: .shortened))
         }
         .onChange(of: isRenaming) { _, renaming in
             if renaming {
