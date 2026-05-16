@@ -286,9 +286,18 @@ struct VMSettingsView: View {
     private var removableMediaSection: some View {
         Section(
             header: sectionHeader("Removable Media") {
-                Text(
-                    "Appears as a USB drive in the guest. Hot-pluggable — changes take effect immediately while the VM is running. For boot media, use Storage Disks instead."
-                )
+                VStack(alignment: .leading, spacing: 10) {
+                    if instance.configuration.guestOS == .linux {
+                        Text(
+                            "Appears as a USB Mass Storage device (typically `/dev/sda` or similar). Most desktop distros auto-mount; headless installs need an explicit `mount`."
+                        )
+                    } else {
+                        Text("Appears as a removable USB drive in Finder; auto-mounts.")
+                    }
+                    Text(
+                        "Hot-pluggable — changes take effect immediately while the VM is running. For boot media, use Storage Disks instead."
+                    )
+                }
             }
         ) {
             let items = removableMediaBinding.wrappedValue
@@ -564,7 +573,13 @@ struct VMSettingsView: View {
 
     @ViewBuilder
     private var resourcesSection: some View {
-        Section(header: sectionHeader("Resources", lockable: true)) {
+        Section(
+            header: sectionHeader("Resources", lockable: true) {
+                Text(
+                    "Memory is committed to the VM up-front at start time — keep enough free on the host to avoid swap pressure. CPU cores are scheduled by the host; over-committing is fine but reduces per-core performance under load."
+                )
+            }
+        ) {
             let os = instance.configuration.guestOS
 
             Group {
@@ -589,7 +604,20 @@ struct VMSettingsView: View {
 
     @ViewBuilder
     private var networkSection: some View {
-        Section(header: sectionHeader("Network", lockable: true)) {
+        Section(
+            header: sectionHeader("Network", lockable: true) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(
+                        "NAT-mode networking. The host assigns the guest a DHCP address on a private subnet. Outbound connections work; there is no port forwarding from host to guest — incoming connections require knowing the guest's IP."
+                    )
+                    if instance.configuration.guestOS == .linux {
+                        Text(
+                            "The interface usually appears as `enp0s1`. If networking doesn't come up, make sure your distro's DHCP client or NetworkManager is running."
+                        )
+                    }
+                }
+            }
+        ) {
             Group {
                 Toggle("Networking Enabled", isOn: configBinding(\.networkEnabled))
                 if let mac = instance.configuration.macAddress {
@@ -604,7 +632,14 @@ struct VMSettingsView: View {
     private var audioSection: some View {
         Section(
             header: sectionHeader("Audio", lockable: true) {
-                Text("Allows the guest to access the host microphone. Speaker output is always enabled.")
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(
+                        "Exposes a VirtioSound device. Speaker output is always enabled; toggle the microphone to grant the guest access to your host mic."
+                    )
+                    if instance.configuration.guestOS == .linux {
+                        Text("Requires Linux kernel 5.14 or newer to detect the VirtioSound device.")
+                    }
+                }
             }
         ) {
             Group {
