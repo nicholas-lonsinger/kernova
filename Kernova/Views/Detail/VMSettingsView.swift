@@ -404,8 +404,6 @@ struct VMSettingsView: View {
                 )
             }
         ) {
-            let disks = storageDiskBinding.wrappedValue
-
             Group {
                 ForEach(storageDiskBinding) { $disk in
                     storageDiskRow(disk: $disk)
@@ -430,23 +428,6 @@ struct VMSettingsView: View {
                 }
             }
             .disabled(isReadOnly)
-
-            if instance.configuration.guestOS == .linux {
-                let virtioDisks = disks.filter { $0.kind == .virtio }
-                if !virtioDisks.isEmpty {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Find in guest:")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        ForEach(virtioDisks) { disk in
-                            Text("/dev/disk/by-id/virtio-\(disk.blockDeviceIdentifier)")
-                                .font(.system(.caption, design: .monospaced))
-                                .foregroundStyle(.secondary)
-                                .textSelection(.enabled)
-                        }
-                    }
-                }
-            }
         }
     }
 
