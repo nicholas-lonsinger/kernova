@@ -65,6 +65,8 @@ Kernova/
 │   │   ├── MainDetailView.swift        # Detail pane wrapper — selection switch, creation sheet, error alert
 │   │   ├── VMDetailView.swift          # VM detail — console/settings switch (honors detailPaneMode), confirmation alerts
 │   │   ├── VMSettingsView.swift        # VM configuration editor; mostly read-only when the VM is running, but live-editable fields (clipboard, guest agent, removable media) stay interactive
+│   │   ├── StorageDiskReorderSheet.swift # Modal sheet presenting a native List for reordering storage disks (used because `.onMove` only works in `List`, not in `Form`)
+│   │   ├── StorageDiskSubtitle.swift   # Shared `diskSubtitle(for:in:)` free function used by both VMSettingsView and StorageDiskReorderSheet
 │   │   └── MacOSInstallProgressView.swift # Two-phase install progress (download + install)
 │   ├── Console/
 │   │   ├── VMConsoleView.swift         # Placeholder for non-inline display states (popped out, fullscreen, suspended, no display)
