@@ -42,14 +42,45 @@ struct MacOSInstallProgressView: View {
         }
         .frame(maxWidth: 400)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .alert("Cancel Installation?", isPresented: $showCancelConfirmation) {
-            Button("Cancel Installation", role: .cancel) {
+        .alert(cancelAlertTitle, isPresented: $showCancelConfirmation) {
+            Button(cancelAlertConfirmLabel, role: .cancel) {
                 onCancel?()
             }
-            Button("Keep Installing", role: .cancel) {}
+            Button(cancelAlertDismissLabel, role: .cancel) {}
         } message: {
-            Text("Progress will be saved. You can resume the installation by starting the virtual machine again.")
+            Text(cancelAlertMessage)
         }
+    }
+
+    // MARK: - Cancel Alert Strings
+
+    private var isDownloadPhase: Bool {
+        if case .downloading = installState.currentPhase { return true }
+        return false
+    }
+
+    private var cancelAlertTitle: String {
+        isDownloadPhase ? "Cancel Download?" : "Cancel Installation?"
+    }
+
+    private var cancelAlertConfirmLabel: String {
+        isDownloadPhase ? "Cancel Download" : "Cancel Installation"
+    }
+
+    private var cancelAlertDismissLabel: String {
+        isDownloadPhase ? "Keep Downloading" : "Keep Installing"
+    }
+
+    private var cancelAlertMessage: String {
+        // Download phase: the URLSession resume sidecar genuinely lets the
+        // next Start pick up where the bytes left off.
+        // Install phase: VZMacOSInstaller is one-shot, so the install itself
+        // restarts. The downloaded IPSW is already cached so the user doesn't
+        // pay the download cost again.
+        if isDownloadPhase {
+            return "The download progress will be saved and resumed the next time you start the virtual machine."
+        }
+        return "The installation will restart from the beginning the next time you start the virtual machine. The downloaded macOS image is cached, so you won't need to download it again."
     }
 
     // MARK: - Two-Step Indicator
