@@ -122,6 +122,19 @@ final class VMLibraryViewModel {
         startSleepWatcher()
     }
 
+    // MARK: - Initial Status
+
+    /// Status to assign to a VM when it's first loaded from disk or imported.
+    /// `.initialBoot` takes priority over `.paused`/`.stopped` whenever an
+    /// install context is still on file — that's the canonical signal that the
+    /// VM has never completed its initial boot.
+    static func initialStatus(for config: VMConfiguration, layout: VMBundleLayout) -> VMStatus {
+        if config.installContext != nil {
+            return .initialBoot
+        }
+        return layout.hasSaveFile ? .paused : .stopped
+    }
+
     // MARK: - Load
 
     func loadVMs() {
@@ -133,7 +146,7 @@ final class VMLibraryViewModel {
                 do {
                     let config = try storageService.loadConfiguration(from: bundleURL)
                     let layout = VMBundleLayout(bundleURL: bundleURL)
-                    let initialStatus: VMStatus = layout.hasSaveFile ? .paused : .stopped
+                    let initialStatus = Self.initialStatus(for: config, layout: layout)
                     let instance = VMInstance(configuration: config, bundleURL: bundleURL, status: initialStatus)
                     wirePersistence(for: instance)
                     return instance
@@ -183,9 +196,20 @@ final class VMLibraryViewModel {
 
     func createVM(from wizard: VMCreationViewModel) async {
         do {
-            let config = wizard.buildConfiguration()
+            var config = wizard.buildConfiguration()
+
+            // For macOS guests, persist the install intent so the next Start
+            // can drive the install pipeline (and download resume) without
+            // the wizard. Linux guests have no Kernova-managed install step.
+            #if arch(arm64)
+            if config.guestOS == .macOS {
+                config.installContext = wizard.buildInstallContext()
+            }
+            #endif
+
             let bundleURL = try storageService.createVMBundle(for: config)
-            let instance = VMInstance(configuration: config, bundleURL: bundleURL)
+            let initialStatus: VMStatus = config.installContext != nil ? .initialBoot : .stopped
+            let instance = VMInstance(configuration: config, bundleURL: bundleURL, status: initialStatus)
             wirePersistence(for: instance)
 
             // Create disk image
@@ -198,40 +222,9 @@ final class VMLibraryViewModel {
             persistOrder()
             selectedID = instance.id
 
-            // For macOS guests, start installation (store task handle for cancellation support)
-            #if arch(arm64)
-            if config.guestOS == .macOS {
-                let context: MacOSInstallContext
-                switch wizard.ipswSource {
-                case .downloadLatest:
-                    context = MacOSInstallContext(
-                        source: .downloadLatest,
-                        downloadDestinationPath: wizard.ipswDownloadPath
-                    )
-                case .localFile:
-                    context = MacOSInstallContext(
-                        source: .localFile,
-                        localIPSWPath: wizard.ipswPath
-                    )
-                }
-                instance.installTask = Task {
-                    do {
-                        try await lifecycle.installMacOS(on: instance, context: context)
-                    } catch is CancellationError {
-                        // Expected when the user cancels — no presentation.
-                    } catch {
-                        if !Task.isCancelled {
-                            Self.logger.error(
-                                "Failed to install macOS on '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-                            )
-                            presentError(error)
-                        }
-                    }
-                }
-            }
-            #endif
-
-            Self.logger.notice("Created VM '\(config.name, privacy: .public)'")
+            Self.logger.notice(
+                "Created VM '\(config.name, privacy: .public)' (status: \(initialStatus.displayName, privacy: .public))"
+            )
         } catch {
             Self.logger.error("Failed to create VM: \(error.localizedDescription, privacy: .public)")
             presentError(error)
@@ -241,41 +234,70 @@ final class VMLibraryViewModel {
     // MARK: - macOS Installation
 
     #if arch(arm64)
-    /// Cancels an in-progress macOS installation, cleans up the VM bundle, and removes it from the library.
+    /// Drives the install pipeline for an `.initialBoot` (or `.error` with
+    /// `installContext`) VM and, on success, chains an auto-boot. Non-cancel
+    /// errors leave the VM in `.error` so the user sees the message; cancel
+    /// returns it to `.initialBoot` for a future retry that will resume the
+    /// download from the `.resumedata` sidecar if present.
+    private func installAndAutoBoot(_ instance: VMInstance) {
+        guard let context = instance.configuration.installContext else {
+            assertionFailure("installAndAutoBoot called without installContext")
+            return
+        }
+        if instance.installTask != nil { return }  // guard against rapid double-click
+        instance.installTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await self.lifecycle.installMacOS(on: instance, context: context)
+                // installMacOS cleared installContext on success; start(_:) now
+                // sees no installContext and goes down the normal boot path.
+                await self.start(instance)
+            } catch is CancellationError {
+                instance.installState = nil
+                instance.status = .initialBoot
+                Self.logger.notice(
+                    "Install cancelled for '\(instance.name, privacy: .public)' — VM remains in .initialBoot"
+                )
+            } catch {
+                instance.installState = nil
+                if !Task.isCancelled {
+                    Self.logger.error(
+                        "Install failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                    )
+                    self.presentError(error)
+                }
+            }
+            instance.installTask = nil
+        }
+    }
+
+    /// Cancels an in-progress macOS install. The VM returns to `.initialBoot`
+    /// so a subsequent Start can resume (downloads pick up from the
+    /// `.resumedata` sidecar at the chosen path). Bundle is preserved. For
+    /// destructive removal, use the existing delete flow ("Move to Trash").
     func cancelInstallation(_ instance: VMInstance) {
         Self.logger.info("Cancelling installation for '\(instance.name, privacy: .public)'")
-
-        // 1. Cancel the in-flight task (triggers cooperative cancellation in download/install)
         instance.installTask?.cancel()
-        instance.installTask = nil
-
-        // 2. Release VZ resources (tearDownSession clears VM, pipes, delegate adapter)
-        instance.tearDownSession()
-        instance.installState = nil
-
-        // 3. Remove bundle from disk (moves to Trash)
-        do {
-            try storageService.deleteVMBundle(at: instance.bundleURL)
-        } catch {
-            Self.logger.error(
-                "Failed to trash VM bundle during cancellation: \(error.localizedDescription, privacy: .public)")
-            presentError(error)
-        }
-
-        // 4. Remove from library and update selection
-        instances.removeAll { $0.id == instance.id }
-        persistOrder()
-        if selectedID == instance.id {
-            selectedID = instances.first?.id
-        }
-
-        Self.logger.notice("Installation cancelled and VM '\(instance.name, privacy: .public)' moved to Trash")
+        // installAndAutoBoot's CancellationError catch handles the status
+        // transition to .initialBoot and installState cleanup. Don't duplicate
+        // that work here, and don't trash the bundle — non-destructive cancel.
     }
     #endif
 
     // MARK: - Lifecycle
 
     func start(_ instance: VMInstance) async {
+        #if arch(arm64)
+        // VMs awaiting initial boot route through the install pipeline. The
+        // pipeline clears installContext on success and chains an auto-boot;
+        // failure leaves .error / .initialBoot, ready for the user to retry.
+        // Check by installContext (not status) so .error retries also dispatch.
+        if instance.configuration.installContext != nil {
+            installAndAutoBoot(instance)
+            return
+        }
+        #endif
+
         if instance.configuration.displayPreference != .inline {
             onOpenDisplayWindow?(instance)
         }
@@ -472,7 +494,7 @@ final class VMLibraryViewModel {
 
             // Check save file from source bundle (destination doesn't exist yet)
             let sourceLayout = VMBundleLayout(bundleURL: sourceURL)
-            let initialStatus: VMStatus = sourceLayout.hasSaveFile ? .paused : .stopped
+            let initialStatus = Self.initialStatus(for: config, layout: sourceLayout)
 
             // Determine destination, avoiding filename collisions
             let destinationURL: URL = {
@@ -1353,7 +1375,7 @@ final class VMLibraryViewModel {
             var didChange = false
             for (config, bundleURL) in diskConfigs where !memoryIDs.contains(config.id) {
                 let layout = VMBundleLayout(bundleURL: bundleURL)
-                let initialStatus: VMStatus = layout.hasSaveFile ? .paused : .stopped
+                let initialStatus = Self.initialStatus(for: config, layout: layout)
                 let instance = VMInstance(
                     configuration: config,
                     bundleURL: bundleURL,
@@ -1366,11 +1388,13 @@ final class VMLibraryViewModel {
             }
 
             // Removals: instances in memory whose bundles no longer exist on disk
-            // Only remove stopped or errored VMs — never touch running/paused/preparing ones
+            // Only remove resting-state VMs — never touch running/paused/preparing ones
             let instancesToRemove = instances.filter { instance in
                 !diskIDs.contains(instance.id)
                     && !instance.isPreparing
-                    && (instance.status == .stopped || instance.status == .error)
+                    && (instance.status == .stopped
+                        || instance.status == .error
+                        || instance.status == .initialBoot)
             }
             for instance in instancesToRemove {
                 instances.removeAll { $0.id == instance.id }

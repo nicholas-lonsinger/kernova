@@ -858,57 +858,127 @@ struct VMLibraryViewModelTests {
         #expect(viewModel.errorMessage?.contains("recoverable") == true)
     }
 
+    // MARK: - Initial Boot status assignment
+
+    #if arch(arm64)
+    @Test("loadVMs assigns .initialBoot when config has installContext")
+    func loadVMsAssignsInitialBoot() {
+        let storage = MockVMStorageService()
+        var config = VMConfiguration(name: "Pending VM", guestOS: .macOS, bootMode: .macOS)
+        config.installContext = MacOSInstallContext(
+            source: .downloadLatest,
+            downloadDestinationPath: "/tmp/restore.ipsw"
+        )
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
+        storage.bundles[url] = config
+
+        let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
+        viewModel.loadVMs()
+
+        #expect(viewModel.instances.count == 1)
+        #expect(viewModel.instances[0].status == .initialBoot)
+    }
+
+    @Test("loadVMs assigns .stopped when no installContext (back-compat)")
+    func loadVMsAssignsStoppedWithoutInstallContext() {
+        let storage = MockVMStorageService()
+        let config = VMConfiguration(name: "Installed VM", guestOS: .linux, bootMode: .efi)
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
+        storage.bundles[url] = config
+
+        let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
+        viewModel.loadVMs()
+
+        #expect(viewModel.instances.count == 1)
+        #expect(viewModel.instances[0].status == .stopped)
+    }
+
+    @Test("reconcileWithDisk removes .initialBoot VMs whose bundles vanish")
+    func reconcileRemovesInitialBootVMs() {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        var config = VMConfiguration(name: "Pending VM", guestOS: .macOS, bootMode: .macOS)
+        config.installContext = MacOSInstallContext(
+            source: .localFile, localIPSWPath: "/tmp/foo.ipsw"
+        )
+        let bundleURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
+        let instance = VMInstance(configuration: config, bundleURL: bundleURL, status: .initialBoot)
+        viewModel.instances.append(instance)
+        // Bundle is NOT in storage.bundles — simulating an on-disk deletion.
+
+        viewModel.reconcileWithDisk()
+
+        #expect(viewModel.instances.isEmpty)
+        // Note: deleteVMBundle is NOT called — reconcile only evicts the in-memory entry.
+        #expect(storage.deleteVMBundleCallCount == 0)
+    }
+    #endif
+
     // MARK: - Cancel Installation
 
     #if arch(arm64)
-    @Test("cancelInstallation removes instance and deletes bundle")
-    func cancelInstallationRemovesInstance() {
+    @Test("cancelInstallation preserves bundle and instance (non-destructive)")
+    func cancelInstallationPreservesBundle() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = makeInstance(name: "Installing VM")
+        instance.configuration.installContext = MacOSInstallContext(
+            source: .localFile, localIPSWPath: "/tmp/foo.ipsw"
+        )
         instance.status = .installing
         viewModel.instances.append(instance)
         storage.bundles[instance.bundleURL] = instance.configuration
 
-        viewModel.cancelInstallation(instance)
+        // Spawn a fake long-running install task we can observe being cancelled.
+        let cancelStream = AsyncStream<Void>.makeStream()
+        instance.installTask = Task {
+            await withTaskCancellationHandler {
+                try? await Task.sleep(for: .seconds(60))
+            } onCancel: {
+                cancelStream.continuation.yield(())
+                cancelStream.continuation.finish()
+            }
+        }
 
-        #expect(viewModel.instances.isEmpty)
-        #expect(storage.deleteVMBundleCallCount == 1)
+        viewModel.cancelInstallation(instance)
+        for await _ in cancelStream.stream { break }
+
+        // Bundle is preserved, instance stays in library, installContext intact.
+        #expect(viewModel.instances.count == 1)
+        #expect(storage.deleteVMBundleCallCount == 0)
+        #expect(instance.configuration.installContext != nil)
     }
 
-    @Test("cancelInstallation updates selection to first remaining instance")
-    func cancelInstallationUpdatesSelection() {
+    @Test("cancelInstallation does not change selection")
+    func cancelInstallationKeepsSelection() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let first = makeInstance(name: "First")
         let installing = makeInstance(name: "Installing")
+        installing.configuration.installContext = MacOSInstallContext(
+            source: .localFile, localIPSWPath: "/tmp/foo.ipsw"
+        )
         installing.status = .installing
         viewModel.instances = [first, installing]
         viewModel.selectedID = installing.id
         storage.bundles[installing.bundleURL] = installing.configuration
 
+        let cancelStream = AsyncStream<Void>.makeStream()
+        installing.installTask = Task {
+            await withTaskCancellationHandler {
+                try? await Task.sleep(for: .seconds(60))
+            } onCancel: {
+                cancelStream.continuation.yield(())
+                cancelStream.continuation.finish()
+            }
+        }
+
         viewModel.cancelInstallation(installing)
+        for await _ in cancelStream.stream { break }
 
-        #expect(viewModel.instances.count == 1)
-        #expect(viewModel.selectedID == first.id)
-    }
-
-    @Test("cancelInstallation surfaces error when trash fails")
-    func cancelInstallationSurfacesTrashError() {
-        let storage = MockVMStorageService()
-        storage.deleteVMBundleError = VMStorageError.bundleNotFound(
-            FileManager.default.temporaryDirectory
-        )
-        let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
-        let instance = makeInstance(name: "Installing VM")
-        instance.status = .installing
-        viewModel.instances.append(instance)
-
-        viewModel.cancelInstallation(instance)
-
-        // Error surfaced to user
-        #expect(viewModel.showError == true)
-        #expect(viewModel.errorMessage != nil)
-        // Instance still removed from library despite trash failure
-        #expect(viewModel.instances.isEmpty)
+        // Both instances remain; selection unchanged.
+        #expect(viewModel.instances.count == 2)
+        #expect(viewModel.selectedID == installing.id)
     }
     #endif
 

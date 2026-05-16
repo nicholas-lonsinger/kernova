@@ -606,4 +606,34 @@ struct VMCreationViewModelTests {
         vm.vmName = "   "
         #expect(vm.validationMessage == "Enter a name for your virtual machine.")
     }
+
+    // MARK: - buildInstallContext
+
+    #if arch(arm64)
+    @Test("buildInstallContext snapshots downloadLatest with chosen path")
+    func buildInstallContextDownloadLatest() {
+        let vm = VMCreationViewModel()
+        vm.ipswSource = .downloadLatest
+        vm.ipswDownloadPath = "/Users/me/Downloads/RestoreImage.ipsw"
+
+        let context = vm.buildInstallContext()
+
+        #expect(context.source == .downloadLatest)
+        #expect(context.downloadDestinationPath == "/Users/me/Downloads/RestoreImage.ipsw")
+        #expect(context.localIPSWPath == nil)
+    }
+
+    @Test("buildInstallContext snapshots localFile with chosen path")
+    func buildInstallContextLocalFile() {
+        let vm = VMCreationViewModel()
+        vm.ipswSource = .localFile
+        vm.ipswPath = "/tmp/macOS-26.ipsw"
+
+        let context = vm.buildInstallContext()
+
+        #expect(context.source == .localFile)
+        #expect(context.localIPSWPath == "/tmp/macOS-26.ipsw")
+        #expect(context.downloadDestinationPath == nil)
+    }
+    #endif
 }

@@ -190,6 +190,30 @@ final class VMCreationViewModel {
             && confirmedOverwritePath != ipswDownloadPath
     }
 
+    // MARK: - Install Context
+
+    #if arch(arm64)
+    /// Snapshots the wizard's macOS install choice into a persistable
+    /// `MacOSInstallContext`. Called by `VMLibraryViewModel.createVM` so the
+    /// VM's bundle records the install plan; the install pipeline then reads
+    /// from the bundle (not the wizard) on every Start until the install
+    /// completes and the context is cleared.
+    func buildInstallContext() -> MacOSInstallContext {
+        switch ipswSource {
+        case .downloadLatest:
+            return MacOSInstallContext(
+                source: .downloadLatest,
+                downloadDestinationPath: ipswDownloadPath
+            )
+        case .localFile:
+            return MacOSInstallContext(
+                source: .localFile,
+                localIPSWPath: ipswPath
+            )
+        }
+    }
+    #endif
+
     // MARK: - Resume Detection
 
     /// `true` when the chosen download destination has an associated `.resumedata`
