@@ -17,9 +17,28 @@ extension VMInstance {
     /// Tooltip explaining the VM state variant, or `nil` for standard states.
     var statusToolTip: String? {
         if let state = preparingState { return state.operation.displayLabel }
+        if status == .initialBoot { return "Click Start to install macOS" }
         guard status == .paused else { return nil }
         return isColdPaused
             ? "VM state is saved to disk"
             : "VM is paused in memory"
+    }
+
+    /// `true` when this VM has a `.downloadLatest` install context, a
+    /// `.resumedata` sidecar at the chosen path, and no completed IPSW yet
+    /// at the same path. Drives the "Resume Install" label variant.
+    var hasResumableInstallDownload: Bool {
+        #if arch(arm64)
+        guard let context = configuration.installContext,
+            context.source == .downloadLatest,
+            let destinationURL = context.downloadDestinationURL
+        else { return false }
+        let fm = FileManager.default
+        let sidecarURL = IPSWService.resumeDataSidecarURL(for: destinationURL)
+        return fm.fileExists(atPath: sidecarURL.path(percentEncoded: false))
+            && !fm.fileExists(atPath: destinationURL.path(percentEncoded: false))
+        #else
+        return false
+        #endif
     }
 }

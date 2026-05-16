@@ -42,14 +42,48 @@ struct MacOSInstallProgressView: View {
         }
         .frame(maxWidth: 400)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .alert("Cancel Installation?", isPresented: $showCancelConfirmation) {
-            Button("Cancel Installation", role: .destructive) {
+        .alert(cancelAlertTitle, isPresented: $showCancelConfirmation) {
+            // No role on the affirmative button: SwiftUI treats it as the default
+            // action so Return triggers it. The dismiss button gets .cancel so
+            // Esc closes the alert without acting.
+            Button(cancelAlertConfirmLabel) {
                 onCancel?()
             }
-            Button("Continue", role: .cancel) {}
+            Button(cancelAlertDismissLabel, role: .cancel) {}
         } message: {
-            Text("The virtual machine and all downloaded files will be moved to the Trash.")
+            Text(cancelAlertMessage)
         }
+    }
+
+    // MARK: - Cancel Alert Strings
+
+    private var isDownloadPhase: Bool {
+        if case .downloading = installState.currentPhase { return true }
+        return false
+    }
+
+    private var cancelAlertTitle: String {
+        isDownloadPhase ? "Cancel Download?" : "Cancel Installation?"
+    }
+
+    private var cancelAlertConfirmLabel: String {
+        isDownloadPhase ? "Cancel Download" : "Cancel Installation"
+    }
+
+    private var cancelAlertDismissLabel: String {
+        isDownloadPhase ? "Keep Downloading" : "Keep Installing"
+    }
+
+    private var cancelAlertMessage: String {
+        // Download phase: the URLSession resume sidecar genuinely lets the
+        // next Start pick up where the bytes left off.
+        // Install phase: VZMacOSInstaller is one-shot, so the install itself
+        // restarts. The downloaded IPSW is already cached so the user doesn't
+        // pay the download cost again.
+        if isDownloadPhase {
+            return "The download progress will be saved and resumed the next time you start the virtual machine."
+        }
+        return "The installation will restart from the beginning the next time you start the virtual machine. The downloaded macOS image is cached, so you won't need to download it again."
     }
 
     // MARK: - Two-Step Indicator

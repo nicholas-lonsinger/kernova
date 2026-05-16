@@ -6,10 +6,11 @@ import SwiftUI
 struct VMStatusTests {
     // MARK: - State Checks
 
-    @Test("canStart returns true for stopped and error states")
+    @Test("canStart returns true for stopped, error, and initialBoot states")
     func canStart() {
         #expect(VMStatus.stopped.canStart == true)
         #expect(VMStatus.error.canStart == true)
+        #expect(VMStatus.initialBoot.canStart == true)
         #expect(VMStatus.running.canStart == false)
         #expect(VMStatus.paused.canStart == false)
         #expect(VMStatus.starting.canStart == false)
@@ -27,6 +28,7 @@ struct VMStatusTests {
         #expect(VMStatus.saving.canStop == false)
         #expect(VMStatus.restoring.canStop == false)
         #expect(VMStatus.installing.canStop == false)
+        #expect(VMStatus.initialBoot.canStop == false)
         #expect(VMStatus.error.canStop == false)
     }
 
@@ -39,6 +41,7 @@ struct VMStatusTests {
         #expect(VMStatus.saving.canPause == false)
         #expect(VMStatus.restoring.canPause == false)
         #expect(VMStatus.installing.canPause == false)
+        #expect(VMStatus.initialBoot.canPause == false)
         #expect(VMStatus.error.canPause == false)
     }
 
@@ -51,6 +54,7 @@ struct VMStatusTests {
         #expect(VMStatus.saving.canResume == false)
         #expect(VMStatus.restoring.canResume == false)
         #expect(VMStatus.installing.canResume == false)
+        #expect(VMStatus.initialBoot.canResume == false)
         #expect(VMStatus.error.canResume == false)
     }
 
@@ -63,13 +67,15 @@ struct VMStatusTests {
         #expect(VMStatus.saving.canSave == false)
         #expect(VMStatus.restoring.canSave == false)
         #expect(VMStatus.installing.canSave == false)
+        #expect(VMStatus.initialBoot.canSave == false)
         #expect(VMStatus.error.canSave == false)
     }
 
-    @Test("canEditSettings returns true for stopped and error states")
+    @Test("canEditSettings returns true for stopped, error, and initialBoot states")
     func canEditSettings() {
         #expect(VMStatus.stopped.canEditSettings == true)
         #expect(VMStatus.error.canEditSettings == true)
+        #expect(VMStatus.initialBoot.canEditSettings == true)
         #expect(VMStatus.running.canEditSettings == false)
         #expect(VMStatus.paused.canEditSettings == false)
         #expect(VMStatus.starting.canEditSettings == false)
@@ -83,6 +89,7 @@ struct VMStatusTests {
         #expect(VMStatus.stopped.canRename == true)
         #expect(VMStatus.running.canRename == true)
         #expect(VMStatus.paused.canRename == true)
+        #expect(VMStatus.initialBoot.canRename == true)
         #expect(VMStatus.error.canRename == true)
         #expect(VMStatus.starting.canRename == false)
         #expect(VMStatus.saving.canRename == false)
@@ -99,6 +106,7 @@ struct VMStatusTests {
         #expect(VMStatus.restoring.canForceStop == true)
         #expect(VMStatus.stopped.canForceStop == false)
         #expect(VMStatus.installing.canForceStop == false)
+        #expect(VMStatus.initialBoot.canForceStop == false)
         #expect(VMStatus.error.canForceStop == false)
     }
 
@@ -113,6 +121,7 @@ struct VMStatusTests {
         #expect(VMStatus.installing.isActive == true)
         #expect(VMStatus.paused.isActive == false)
         #expect(VMStatus.stopped.isActive == false)
+        #expect(VMStatus.initialBoot.isActive == false)
         #expect(VMStatus.error.isActive == false)
     }
 
@@ -127,6 +136,7 @@ struct VMStatusTests {
         #expect(VMStatus.stopped.hasActiveDisplay == false)
         #expect(VMStatus.starting.hasActiveDisplay == false)
         #expect(VMStatus.installing.hasActiveDisplay == false)
+        #expect(VMStatus.initialBoot.hasActiveDisplay == false)
         #expect(VMStatus.error.hasActiveDisplay == false)
     }
 
@@ -141,6 +151,7 @@ struct VMStatusTests {
         #expect(VMStatus.stopped.isTransitioning == false)
         #expect(VMStatus.running.isTransitioning == false)
         #expect(VMStatus.paused.isTransitioning == false)
+        #expect(VMStatus.initialBoot.isTransitioning == false)
         #expect(VMStatus.error.isTransitioning == false)
     }
 
@@ -155,6 +166,7 @@ struct VMStatusTests {
         #expect(VMStatus.running.transitionLabel == nil)
         #expect(VMStatus.paused.transitionLabel == nil)
         #expect(VMStatus.installing.transitionLabel == nil)
+        #expect(VMStatus.initialBoot.transitionLabel == nil)
         #expect(VMStatus.error.transitionLabel == nil)
     }
 
@@ -169,6 +181,7 @@ struct VMStatusTests {
         #expect(VMStatus.saving.displayName == "Suspending")
         #expect(VMStatus.restoring.displayName == "Restoring")
         #expect(VMStatus.installing.displayName == "Installing")
+        #expect(VMStatus.initialBoot.displayName == "Initial Boot")
         #expect(VMStatus.error.displayName == "Error")
     }
 
@@ -183,6 +196,23 @@ struct VMStatusTests {
         #expect(VMStatus.saving.statusColor == .orange)
         #expect(VMStatus.restoring.statusColor == .orange)
         #expect(VMStatus.installing.statusColor == .orange)
+        #expect(VMStatus.initialBoot.statusColor == .orange)
         #expect(VMStatus.error.statusColor == .red)
+    }
+
+    // MARK: - Initial Boot
+
+    @Test("initialBoot has install-friendly properties")
+    func initialBootProperties() {
+        #expect(VMStatus.initialBoot.canStart == true)
+        #expect(VMStatus.initialBoot.canEditSettings == true)
+        #expect(VMStatus.initialBoot.canRename == true)
+        #expect(VMStatus.initialBoot.isActive == false)
+        #expect(VMStatus.initialBoot.isTransitioning == false)
+        #expect(VMStatus.initialBoot.hasActiveDisplay == false)
+        #expect(VMStatus.initialBoot.canStop == false)
+        #expect(VMStatus.initialBoot.canForceStop == false)
+        #expect(VMStatus.initialBoot.displayName == "Initial Boot")
+        #expect(VMStatus.initialBoot.statusColor == .orange)
     }
 }

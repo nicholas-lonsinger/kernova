@@ -142,6 +142,16 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
 
     var sharedDirectories: [SharedDirectory]?
 
+    // MARK: - Install Intent
+
+    /// Pending macOS install plan from the creation wizard. Non-nil ⇔ this VM
+    /// has never completed its initial boot. Cleared exactly once, after
+    /// `MacOSInstallService.install(...)` returns successfully. The presence
+    /// of this field is what drives `start(_:)` to route through the install
+    /// pipeline (and the `.initialBoot` status assignment in reconcile).
+    /// Always `nil` for Linux guests.
+    var installContext: MacOSInstallContext?
+
     // MARK: - Metadata
 
     var createdAt: Date
@@ -177,6 +187,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         storageDisks: [StorageDisk]? = nil,
         removableMedia: [RemovableMediaItem]? = nil,
         sharedDirectories: [SharedDirectory]? = nil,
+        installContext: MacOSInstallContext? = nil,
         createdAt: Date = Date()
     ) {
         self.id = id
@@ -207,6 +218,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         self.storageDisks = storageDisks
         self.removableMedia = removableMedia
         self.sharedDirectories = sharedDirectories
+        self.installContext = installContext
         self.createdAt = createdAt
     }
 
@@ -246,6 +258,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         self.storageDisks = try c.decodeIfPresent([StorageDisk].self, forKey: .storageDisks)
         self.removableMedia = try c.decodeIfPresent([RemovableMediaItem].self, forKey: .removableMedia)
         self.sharedDirectories = try c.decodeIfPresent([SharedDirectory].self, forKey: .sharedDirectories)
+        self.installContext = try c.decodeIfPresent(MacOSInstallContext.self, forKey: .installContext)
         self.createdAt = try c.decode(Date.self, forKey: .createdAt)
     }
 
@@ -296,6 +309,12 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
         clone.sharedDirectories = sharedDirectories?.map { dir in
             SharedDirectory(id: UUID(), path: dir.path, readOnly: dir.readOnly)
         }
+
+        // Clones copy the source bundle's post-install artifacts (HardwareModel,
+        // MachineIdentifier, Disk.asif contents) so they're already installed.
+        // Preserving installContext would falsely mark the clone as awaiting
+        // an initial boot.
+        clone.installContext = nil
 
         return clone
     }

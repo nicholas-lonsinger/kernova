@@ -67,6 +67,17 @@ struct SidebarView: View {
         }
     }
 
+    /// Label for the Start context-menu item. Mirrors the toolbar play button
+    /// so the user knows whether clicking will install vs. boot.
+    private func startButtonLabel(for instance: VMInstance) -> String {
+        #if arch(arm64)
+        guard instance.configuration.installContext != nil else { return "Start" }
+        return instance.hasResumableInstallDownload ? "Resume Install" : "Install"
+        #else
+        return "Start"
+        #endif
+    }
+
     @ViewBuilder
     private func contextMenu(for instance: VMInstance) -> some View {
         if let preparing = instance.preparingState {
@@ -79,7 +90,7 @@ struct SidebarView: View {
         } else {
             // Lifecycle
             if instance.status.canStart {
-                Button("Start") {
+                Button(startButtonLabel(for: instance)) {
                     Task { await viewModel.start(instance) }
                 }
             }

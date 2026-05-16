@@ -5,6 +5,8 @@ import Foundation
 final class MockIPSWService: IPSWProviding, @unchecked Sendable {
     var fetchCallCount = 0
     var downloadCallCount = 0
+    var discardResumeDataCallCount = 0
+    var lastDiscardResumeDataURL: URL?
 
     #if arch(arm64)
     private static let mockRestoreImageURL: URL = {
@@ -31,6 +33,11 @@ final class MockIPSWService: IPSWProviding, @unchecked Sendable {
     ) async throws {
         downloadCallCount += 1
         if let error = downloadError { throw error }
+    }
+
+    func discardResumeData(at destinationURL: URL) {
+        discardResumeDataCallCount += 1
+        lastDiscardResumeDataURL = destinationURL
     }
     #endif
 }
