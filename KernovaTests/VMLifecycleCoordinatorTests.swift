@@ -405,8 +405,8 @@ struct VMLifecycleCoordinatorTests {
         }
     }
 
-    @Test("installMacOS discards IPSW resume data when download is cancelled")
-    func installMacOSCancelDiscardsResumeData() async throws {
+    @Test("installMacOS preserves IPSW resume data when download is cancelled")
+    func installMacOSCancelPreservesResumeData() async throws {
         let (coordinator, _, _, ipswService, _) = makeCoordinator()
         ipswService.downloadError = CancellationError()
         let instance = makeInstance()
@@ -419,12 +419,13 @@ struct VMLifecycleCoordinatorTests {
 
         try await coordinator.installMacOS(on: instance, wizard: wizard)
 
-        #expect(ipswService.discardResumeDataCallCount == 1)
-        #expect(ipswService.lastDiscardResumeDataURL == URL(fileURLWithPath: downloadPath))
+        // User cancel must preserve resume data so a future Start can resume
+        // the download from where it stopped (non-destructive cancel UX).
+        #expect(ipswService.discardResumeDataCallCount == 0)
     }
 
-    @Test("installMacOS discards IPSW resume data on NSURLErrorCancelled")
-    func installMacOSURLCancelDiscardsResumeData() async throws {
+    @Test("installMacOS preserves IPSW resume data on NSURLErrorCancelled")
+    func installMacOSURLCancelPreservesResumeData() async throws {
         let (coordinator, _, _, ipswService, _) = makeCoordinator()
         ipswService.downloadError = NSError(
             domain: NSURLErrorDomain,
@@ -441,8 +442,7 @@ struct VMLifecycleCoordinatorTests {
 
         try await coordinator.installMacOS(on: instance, wizard: wizard)
 
-        #expect(ipswService.discardResumeDataCallCount == 1)
-        #expect(ipswService.lastDiscardResumeDataURL == URL(fileURLWithPath: downloadPath))
+        #expect(ipswService.discardResumeDataCallCount == 0)
     }
 
     @Test("installMacOS preserves IPSW resume data on non-cancel download failure")

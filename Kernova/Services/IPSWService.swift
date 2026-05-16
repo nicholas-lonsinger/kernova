@@ -74,7 +74,15 @@ struct IPSWService: Sendable {
                 task.resume()
             }
         } onCancel: {
-            downloadTask?.cancel()
+            // cancel(byProducingResumeData:) preserves the partial download
+            // as resume data we can write to the sidecar, so a future Start
+            // on the same VM resumes instead of restarting. Plain cancel()
+            // would discard the bytes.
+            downloadTask?.cancel { resumeData in
+                if let resumeData {
+                    try? resumeData.write(to: sidecarURL, options: .atomic)
+                }
+            }
         }
 
         Self.logger.info("Restore image downloaded to \(destinationURL.lastPathComponent, privacy: .public)")
@@ -226,11 +234,11 @@ private final class IPSWDownloadDelegate: NSObject, URLSessionDownloadDelegate, 
                 nsError.domain == NSURLErrorDomain,
                 nsError.code == NSURLErrorCancelled
             {
-                // User/parent-task cancellation — drop any resume data so the next
-                // attempt starts fresh. IPSWService.discardResumeData also runs on
-                // the cancel path; this is belt-and-suspenders for the URLSession
-                // side of the cancel race.
-                removeSidecar(reason: "cancellation")
+                // User/parent-task cancellation — preserve any resume data the
+                // cancel handler may have written so the next Start can resume.
+                // The onCancel handler in downloadRestoreImage (which uses
+                // cancel(byProducingResumeData:)) is what populates the sidecar
+                // for user-initiated cancels.
                 Self.logger.info("Restore image download cancelled")
                 continuation.resume(throwing: CancellationError())
             } else {

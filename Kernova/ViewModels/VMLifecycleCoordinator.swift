@@ -219,14 +219,11 @@ final class VMLifecycleCoordinator {
                 }
             } catch is CancellationError {
                 Self.logger.info("macOS installation cancelled for '\(instance.name, privacy: .public)'")
-                if let downloadDestination {
-                    ipswService.discardResumeData(at: downloadDestination)
-                }
+                // Resume data is preserved — IPSWService.downloadRestoreImage's
+                // onCancel handler writes the sidecar via cancel(byProducingResumeData:)
+                // so a future Start can resume the download from where it stopped.
             } catch let error as NSError where error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled {
                 Self.logger.info("IPSW download cancelled for '\(instance.name, privacy: .public)'")
-                if let downloadDestination {
-                    ipswService.discardResumeData(at: downloadDestination)
-                }
             } catch {
                 instance.status = .error
                 instance.errorMessage = error.localizedDescription
