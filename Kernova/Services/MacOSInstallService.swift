@@ -126,11 +126,14 @@ final class MacOSInstallService {
         let machineIdentifier = VZMacMachineIdentifier()
         try machineIdentifier.dataRepresentation.write(to: instance.machineIdentifierURL)
 
-        // Create auxiliary storage
+        // Create auxiliary storage. `.allowOverwrite` lets us re-create the file
+        // when a prior install attempt got past setup but didn't finish — without
+        // it, the second Start throws "File exists" before the installer even runs.
+        // The other two platform files use Data.write which overwrites by default.
         _ = try VZMacAuxiliaryStorage(
             creatingStorageAt: instance.auxiliaryStorageURL,
             hardwareModel: hardwareModel,
-            options: []
+            options: [.allowOverwrite]
         )
 
         Self.logger.info("Created platform files for '\(instance.name, privacy: .public)'")

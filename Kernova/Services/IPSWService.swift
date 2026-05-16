@@ -31,6 +31,21 @@ struct IPSWService: Sendable {
 
         let sidecarURL = Self.resumeDataSidecarURL(for: destinationURL)
         let priorResumeData = try? Data(contentsOf: sidecarURL)
+
+        // Skip-existing fast path: a completed IPSW at the destination with no
+        // in-progress resume sidecar means a prior attempt already downloaded
+        // the file. This happens when the user cancelled or hit an error during
+        // the install phase (post-download). Skipping saves a multi-GB redownload
+        // and avoids a "File exists" failure when moveItem hits a populated path.
+        if priorResumeData == nil,
+            FileManager.default.fileExists(atPath: destinationURL.path(percentEncoded: false))
+        {
+            Self.logger.notice(
+                "IPSW already present at '\(destinationURL.lastPathComponent, privacy: .public)' — skipping download"
+            )
+            return
+        }
+
         if priorResumeData != nil {
             Self.logger.notice(
                 "Resuming prior IPSW download from sidecar at '\(sidecarURL.lastPathComponent, privacy: .public)'"
@@ -208,6 +223,13 @@ private final class IPSWDownloadDelegate: NSObject, URLSessionDownloadDelegate, 
         // URLSession deletes the temporary file after this method returns,
         // so the move must happen synchronously here.
         do {
+            // Replace any existing file at the destination to defend against
+            // the moveItem "File exists" failure on retry paths where the
+            // skip-existing fast path didn't apply (e.g. a stale partial file
+            // from a torn-down prior attempt).
+            if FileManager.default.fileExists(atPath: destinationURL.path(percentEncoded: false)) {
+                try FileManager.default.removeItem(at: destinationURL)
+            }
             try FileManager.default.moveItem(at: location, to: destinationURL)
         } catch {
             Self.logger.error(
