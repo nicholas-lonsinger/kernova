@@ -43,12 +43,12 @@ struct MacOSInstallProgressView: View {
         .frame(maxWidth: 400)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .alert("Cancel Installation?", isPresented: $showCancelConfirmation) {
-            Button("Cancel Installation", role: .destructive) {
+            Button("Cancel Installation", role: .cancel) {
                 onCancel?()
             }
-            Button("Continue", role: .cancel) {}
+            Button("Keep Installing", role: .cancel) {}
         } message: {
-            Text("The virtual machine and all downloaded files will be moved to the Trash.")
+            Text("Progress will be saved. You can resume the installation by starting the virtual machine again.")
         }
     }
 

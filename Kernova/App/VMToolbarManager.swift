@@ -58,6 +58,8 @@ final class VMToolbarManager: NSObject {
 
     private static let startToolTip = "Start the virtual machine"
     private static let resumeToolTip = "Resume the virtual machine"
+    private static let installToolTip = "Download macOS and start the installation"
+    private static let resumeInstallToolTip = "Resume the interrupted download and install macOS"
     private static let pauseToolTip = "Pause the virtual machine"
     private static let stopToolTip = "Stop the virtual machine"
     private static let saveStateToolTip = "Suspend the virtual machine"
@@ -202,13 +204,37 @@ final class VMToolbarManager: NSObject {
         }
 
         let canResume = instance.status.canResume
-        let playLabel = canResume ? "Resume" : "Start"
+        // Trigger on installContext (not status) so .error retries — which
+        // happen when a previous install attempt failed — also get the
+        // install-flavored labels and reflect what Start will actually do.
+        let hasInstallIntent: Bool
+        let hasResumableDownload: Bool
+        #if arch(arm64)
+        hasInstallIntent = instance.configuration.installContext != nil
+        hasResumableDownload = hasInstallIntent && instance.hasResumableInstallDownload
+        #else
+        hasInstallIntent = false
+        hasResumableDownload = false
+        #endif
+
+        let playLabel: String
+        let playToolTip: String
+        if hasInstallIntent {
+            playLabel = hasResumableDownload ? "Resume Install" : "Install"
+            playToolTip = hasResumableDownload ? Self.resumeInstallToolTip : Self.installToolTip
+        } else if canResume {
+            playLabel = "Resume"
+            playToolTip = Self.resumeToolTip
+        } else {
+            playLabel = "Start"
+            playToolTip = Self.startToolTip
+        }
 
         let play = group.subitems[LifecycleSegment.play.rawValue]
         if play.label != playLabel {
             play.label = playLabel
             play.image = .systemSymbol("play.fill", accessibilityDescription: playLabel)
-            play.toolTip = canResume ? Self.resumeToolTip : Self.startToolTip
+            play.toolTip = playToolTip
         }
 
         play.isEnabled = instance.status.canStart || canResume
