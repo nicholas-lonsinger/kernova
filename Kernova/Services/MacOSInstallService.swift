@@ -115,21 +115,29 @@ final class MacOSInstallService {
     // MARK: - Platform Setup
 
     /// Creates the auxiliary storage, hardware model, and machine identifier files.
+    /// Idempotent across install retries: hardware model and machine identifier
+    /// files are written only when absent so the VM keeps a stable on-disk identity
+    /// across attempts (the guest install sees the same machine regardless of how
+    /// many tries it took). Auxiliary storage is always re-created — it carries
+    /// firmware/NVRAM state that must match a fresh install run.
     private func setupPlatformFiles(
         for instance: VMInstance,
         hardwareModel: VZMacHardwareModel
     ) throws {
-        // Write hardware model
-        try hardwareModel.dataRepresentation.write(to: instance.hardwareModelURL)
+        let fm = FileManager.default
 
-        // Create machine identifier
-        let machineIdentifier = VZMacMachineIdentifier()
-        try machineIdentifier.dataRepresentation.write(to: instance.machineIdentifierURL)
+        if !fm.fileExists(atPath: instance.hardwareModelURL.path(percentEncoded: false)) {
+            try hardwareModel.dataRepresentation.write(to: instance.hardwareModelURL)
+        }
 
-        // Create auxiliary storage. `.allowOverwrite` lets us re-create the file
-        // when a prior install attempt got past setup but didn't finish — without
-        // it, the second Start throws "File exists" before the installer even runs.
-        // The other two platform files use Data.write which overwrites by default.
+        if !fm.fileExists(atPath: instance.machineIdentifierURL.path(percentEncoded: false)) {
+            let machineIdentifier = VZMacMachineIdentifier()
+            try machineIdentifier.dataRepresentation.write(to: instance.machineIdentifierURL)
+        }
+
+        // `.allowOverwrite` lets us re-create the file when a prior install attempt
+        // got past setup but didn't finish — without it, the second Start throws
+        // "File exists" before the installer even runs.
         _ = try VZMacAuxiliaryStorage(
             creatingStorageAt: instance.auxiliaryStorageURL,
             hardwareModel: hardwareModel,

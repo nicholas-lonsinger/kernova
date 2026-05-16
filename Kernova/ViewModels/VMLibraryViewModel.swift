@@ -208,7 +208,8 @@ final class VMLibraryViewModel {
             #endif
 
             let bundleURL = try storageService.createVMBundle(for: config)
-            let initialStatus: VMStatus = config.installContext != nil ? .initialBoot : .stopped
+            let layout = VMBundleLayout(bundleURL: bundleURL)
+            let initialStatus = Self.initialStatus(for: config, layout: layout)
             let instance = VMInstance(configuration: config, bundleURL: bundleURL, status: initialStatus)
             wirePersistence(for: instance)
 
@@ -247,6 +248,9 @@ final class VMLibraryViewModel {
         if instance.installTask != nil { return }  // guard against rapid double-click
         instance.installTask = Task { [weak self] in
             guard let self else { return }
+            // Caller owns installTask cleanup; defer nils it out on every exit
+            // path (success, cancel, error) so the coordinator doesn't have to.
+            defer { instance.installTask = nil }
             do {
                 try await self.lifecycle.installMacOS(on: instance, context: context)
                 // installMacOS cleared installContext on success; start(_:) now
@@ -267,7 +271,6 @@ final class VMLibraryViewModel {
                     self.presentError(error)
                 }
             }
-            instance.installTask = nil
         }
     }
 

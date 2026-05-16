@@ -223,21 +223,18 @@ final class VMLifecycleCoordinator {
                 Self.logger.info("macOS installation cancelled for '\(instance.name, privacy: .public)'")
                 // Re-throw so the caller knows to flip the VM back to
                 // .initialBoot rather than auto-booting on a non-success.
-                instance.installTask = nil
                 throw CancellationError()
             } catch let error as NSError where error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled {
                 Self.logger.info("IPSW download cancelled for '\(instance.name, privacy: .public)'")
                 // Normalize to CancellationError for consistent caller-side handling.
-                instance.installTask = nil
                 throw CancellationError()
             } catch {
                 instance.status = .error
                 instance.errorMessage = error.localizedDescription
-                instance.installTask = nil
                 throw error
             }
-
-            instance.installTask = nil
+            // installTask lifecycle is owned by the caller (installAndAutoBoot);
+            // the coordinator just runs the install pipeline.
         }
     }
     #endif

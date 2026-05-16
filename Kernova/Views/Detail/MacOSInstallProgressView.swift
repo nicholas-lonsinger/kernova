@@ -43,7 +43,10 @@ struct MacOSInstallProgressView: View {
         .frame(maxWidth: 400)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .alert(cancelAlertTitle, isPresented: $showCancelConfirmation) {
-            Button(cancelAlertConfirmLabel, role: .cancel) {
+            // No role on the affirmative button: SwiftUI treats it as the default
+            // action so Return triggers it. The dismiss button gets .cancel so
+            // Esc closes the alert without acting.
+            Button(cancelAlertConfirmLabel) {
                 onCancel?()
             }
             Button(cancelAlertDismissLabel, role: .cancel) {}

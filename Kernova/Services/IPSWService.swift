@@ -21,7 +21,11 @@ struct IPSWService: Sendable {
     /// If a `<destinationURL>.resumedata` sidecar exists from a prior interrupted attempt,
     /// the download resumes from where it left off. On non-cancel failures (network drop,
     /// sleep timeout) the sidecar is written so a future attempt at the same path can resume.
-    /// User-initiated cancellation drops any resume data and surfaces as `CancellationError`.
+    /// User-initiated cancellation also preserves resume data via
+    /// `cancel(byProducingResumeData:)`, then surfaces as `CancellationError` so the
+    /// non-destructive cancel UX can stay on the same path and resume on the next Start.
+    /// If the destination already contains a completed IPSW (and no sidecar is present),
+    /// the download is skipped entirely.
     func downloadRestoreImage(
         from remoteURL: URL,
         to destinationURL: URL,
@@ -43,6 +47,15 @@ struct IPSWService: Sendable {
             Self.logger.notice(
                 "IPSW already present at '\(destinationURL.lastPathComponent, privacy: .public)' — skipping download"
             )
+            // Emit a final progress callback so the download UI shows 100% before
+            // the lifecycle transitions to the install phase.
+            let fileSize = (try? destinationURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            let completed = DownloadProgress(
+                bytesWritten: Int64(fileSize),
+                totalBytes: Int64(fileSize),
+                bytesPerSecond: 0
+            )
+            await MainActor.run { progressHandler(completed) }
             return
         }
 

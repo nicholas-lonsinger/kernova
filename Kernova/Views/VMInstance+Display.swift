@@ -31,10 +31,12 @@ extension VMInstance {
         #if arch(arm64)
         guard let context = configuration.installContext,
             context.source == .downloadLatest,
-            let path = context.downloadDestinationPath
+            let destinationURL = context.downloadDestinationURL
         else { return false }
         let fm = FileManager.default
-        return fm.fileExists(atPath: path + ".resumedata") && !fm.fileExists(atPath: path)
+        let sidecarURL = IPSWService.resumeDataSidecarURL(for: destinationURL)
+        return fm.fileExists(atPath: sidecarURL.path(percentEncoded: false))
+            && !fm.fileExists(atPath: destinationURL.path(percentEncoded: false))
         #else
         return false
         #endif
