@@ -409,14 +409,22 @@ struct VMSettingsView: View {
     private var storageDiskSection: some View {
         Section(
             header: sectionHeader("Storage Disks", lockable: true) {
-                if instance.configuration.guestOS == .linux {
-                    Text(
-                        "Position 1 boots first on EFI guests; on Linux Kernel boot, position affects device enumeration but not boot priority. Permanent disks attach as virtio block devices (`/dev/vda`, `/dev/vdb`, …). Installer images (.iso, .dmg) attach as USB Mass Storage entries on this list — still bootable, separate from hot-pluggable Removable Media — so reordering an installer doesn't change your main disk's `/dev/vda` letter."
-                    )
-                } else {
-                    Text(
-                        "Position 1 is the main system disk; subsequent positions follow in order. Permanent disks attach as virtio block devices. Installer images (.iso, .dmg) attach as USB Mass Storage entries on this list — still bootable, separate from hot-pluggable Removable Media."
-                    )
+                VStack(alignment: .leading, spacing: 10) {
+                    if instance.configuration.guestOS == .linux {
+                        Text(
+                            "Position 1 boots first on EFI guests; on Linux Kernel boot, position affects device enumeration but not boot priority."
+                        )
+                        Text("Permanent disks attach as virtio block devices (`/dev/vda`, `/dev/vdb`, …).")
+                        Text(
+                            "Installer images (.iso, .dmg) attach as USB Mass Storage entries on this list — still bootable, separate from hot-pluggable Removable Media — so reordering an installer doesn't change your main disk's `/dev/vda` letter."
+                        )
+                    } else {
+                        Text("Position 1 is the main system disk; subsequent positions follow in order.")
+                        Text("Permanent disks attach as virtio block devices.")
+                        Text(
+                            "Installer images (.iso, .dmg) attach as USB Mass Storage entries on this list — still bootable, separate from hot-pluggable Removable Media."
+                        )
+                    }
                 }
             }
         ) {
