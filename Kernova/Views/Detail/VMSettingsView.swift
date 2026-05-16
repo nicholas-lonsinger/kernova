@@ -332,11 +332,11 @@ struct VMSettingsView: View {
             }
 
             HStack {
-                Button("Attach Disc Image") {
+                Button("Attach Disc Image...") {
                     browseRemovableMedia()
                 }
 
-                Button("Create New Disk") {
+                Button("Create New Disk...") {
                     showingCreateRemovableMedia = true
                 }
                 .popover(isPresented: $showingCreateRemovableMedia, arrowEdge: .bottom) {
@@ -411,11 +411,11 @@ struct VMSettingsView: View {
                 }
 
                 HStack {
-                    Button("Attach External Disk") {
+                    Button("Attach External Disk...") {
                         addExternalDisk()
                     }
 
-                    Button("Create New Disk") {
+                    Button("Create New Disk...") {
                         showingCreateDisk = true
                     }
                     .popover(isPresented: $showingCreateDisk, arrowEdge: .bottom) {
@@ -423,7 +423,7 @@ struct VMSettingsView: View {
                     }
 
                     if storageDiskBinding.wrappedValue.count > 1 {
-                        Button("Edit Boot Order") {
+                        Button("Edit Boot Order...") {
                             showingReorderDisksSheet = true
                         }
                     }
@@ -768,7 +768,7 @@ struct VMSettingsView: View {
                     }
                 }
 
-                Button("Add Shared Directory") {
+                Button("Add Shared Directory...") {
                     addSharedDirectory()
                 }
             }
