@@ -341,7 +341,7 @@ struct VMSettingsView: View {
             }
 
             HStack {
-                Button("Attach Disc Image...") {
+                Button("Attach Disc...") {
                     browseRemovableMedia()
                 }
 
@@ -434,7 +434,7 @@ struct VMSettingsView: View {
                 }
 
                 HStack {
-                    Button("Attach External Disk...") {
+                    Button("Attach Disc...") {
                         addExternalDisk()
                     }
 
