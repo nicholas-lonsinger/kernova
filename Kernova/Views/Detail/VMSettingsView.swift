@@ -17,6 +17,7 @@ struct VMSettingsView: View {
     @State private var showingMicPermissionInfo = false
     @State private var micPermission: AVAuthorizationStatus = AVCaptureDevice.authorizationStatus(for: .audio)
     @State private var showingCreateDisk = false
+    @State private var showingReorderDisksSheet = false
     @State private var showingCreateRemovableMedia = false
     @State private var newDiskSizeInGB = VMGuestOS.defaultDiskSizeInGB
     @State private var diskToRemove: StorageDisk?
@@ -408,11 +409,6 @@ struct VMSettingsView: View {
                 ForEach(storageDiskBinding) { $disk in
                     storageDiskRow(disk: $disk)
                 }
-                .onMove { source, destination in
-                    var current = storageDiskBinding.wrappedValue
-                    current.move(fromOffsets: source, toOffset: destination)
-                    storageDiskBinding.wrappedValue = current
-                }
 
                 HStack {
                     Button("Attach External Disk...") {
@@ -425,24 +421,30 @@ struct VMSettingsView: View {
                     .popover(isPresented: $showingCreateDisk, arrowEdge: .bottom) {
                         createDiskPopover
                     }
+
+                    if storageDiskBinding.wrappedValue.count > 1 {
+                        Button("Edit Boot Order...") {
+                            showingReorderDisksSheet = true
+                        }
+                    }
                 }
             }
             .disabled(isReadOnly)
+            .sheet(isPresented: $showingReorderDisksSheet) {
+                StorageDiskReorderSheet(disks: storageDiskBinding, instance: instance)
+            }
         }
     }
 
     @ViewBuilder
     private func storageDiskRow(disk: Binding<StorageDisk>) -> some View {
         HStack {
-            Image(
-                systemName: disk.wrappedValue.kind == .usbMassStorage
-                    ? "opticaldisc" : (disk.wrappedValue.isInternal ? "internaldrive" : "externaldrive")
-            )
-            .foregroundStyle(.secondary)
+            Image(systemName: diskIconSystemName(for: disk.wrappedValue))
+                .foregroundStyle(.secondary)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(disk.wrappedValue.label)
-                Text(diskSubtitle(for: disk.wrappedValue))
+                Text(diskSubtitle(for: disk.wrappedValue, in: instance))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -467,22 +469,6 @@ struct VMSettingsView: View {
             }
             .buttonStyle(.plain)
         }
-    }
-
-    /// Subtitle string: disk usage stats for the main bundle disk, path or
-    /// label for everything else.
-    private func diskSubtitle(for disk: StorageDisk) -> String {
-        if disk.isInternal && disk.path == instance.bundleLayout.diskImageURL.lastPathComponent {
-            if let usage = instance.cachedDiskUsageBytes {
-                return
-                    "\(DataFormatters.formatBytes(usage)) (on disk) / \(DataFormatters.formatDiskSize(instance.configuration.diskSizeInGB)) (allocated)"
-            }
-            return "\(DataFormatters.formatDiskSize(instance.configuration.diskSizeInGB)) allocated"
-        }
-        if disk.isInternal {
-            return "In-bundle disk image"
-        }
-        return disk.path
     }
 
     private func addExternalDisk() {
@@ -879,7 +865,7 @@ struct VMSettingsView: View {
 /// whole section) and next to individual controls (when the explanation is
 /// specific to that control). Owns its own `@State` so each call site gets
 /// an independent popover anchor.
-private struct InfoButton<Content: View>: View {
+struct InfoButton<Content: View>: View {
     /// Title of the section or control this button explains.
     ///
     /// Used for the hover tooltip and the VoiceOver label ("About Storage
