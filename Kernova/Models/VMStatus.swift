@@ -10,6 +10,10 @@ enum VMStatus: String, Codable, Sendable {
     case saving
     case restoring
     case installing
+    /// VM exists in the library but has never completed its initial boot
+    /// (macOS install pipeline hasn't run). Clicking Start kicks off the
+    /// install (which may resume an interrupted download), then auto-boots.
+    case initialBoot
     case error
 
     var displayName: String {
@@ -21,6 +25,7 @@ enum VMStatus: String, Codable, Sendable {
         case .saving: "Suspending"
         case .restoring: "Restoring"
         case .installing: "Installing"
+        case .initialBoot: "Initial Boot"
         case .error: "Error"
         }
     }
@@ -28,7 +33,7 @@ enum VMStatus: String, Codable, Sendable {
     var statusColor: Color {
         switch self {
         case .stopped: .secondary
-        case .starting, .saving, .restoring, .installing: .orange
+        case .starting, .saving, .restoring, .installing, .initialBoot: .orange
         case .running: .green
         case .paused: .yellow
         case .error: .red
@@ -52,7 +57,7 @@ enum VMStatus: String, Codable, Sendable {
         }
     }
 
-    var canStart: Bool { self == .stopped || self == .error }
+    var canStart: Bool { self == .stopped || self == .error || self == .initialBoot }
     /// Status-level stop eligibility.
     ///
     /// Does not account for cold-paused state;
@@ -65,7 +70,7 @@ enum VMStatus: String, Codable, Sendable {
     /// Does not account for cold-paused state;
     /// prefer `VMInstance.canSave` for runtime checks.
     var canSave: Bool { self == .running || self == .paused }
-    var canEditSettings: Bool { self == .stopped || self == .error }
+    var canEditSettings: Bool { self == .stopped || self == .error || self == .initialBoot }
     var canRename: Bool { !isTransitioning }
 
     /// Whether the VM has a live display session that a backing view should present.
@@ -91,7 +96,7 @@ enum VMStatus: String, Codable, Sendable {
         switch self {
         case .running, .starting, .saving, .restoring, .installing:
             true
-        case .paused, .stopped, .error:
+        case .paused, .stopped, .error, .initialBoot:
             false
         }
     }

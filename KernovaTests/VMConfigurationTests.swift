@@ -402,6 +402,101 @@ struct VMConfigurationTests {
         #expect(clone.storageDisks?[0].label == originalDisk.label)
     }
 
+    // MARK: - installContext Tests
+
+    @Test("installContext round-trips through JSON (downloadLatest)")
+    func installContextDownloadLatestRoundTrip() throws {
+        let context = MacOSInstallContext(
+            source: .downloadLatest,
+            downloadDestinationPath: "/Users/me/Downloads/RestoreImage.ipsw"
+        )
+        let config = VMConfiguration(
+            name: "Pending macOS VM",
+            guestOS: .macOS,
+            bootMode: .macOS,
+            installContext: context
+        )
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(config)
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(VMConfiguration.self, from: data)
+
+        #expect(decoded.installContext == context)
+        #expect(decoded.installContext?.source == .downloadLatest)
+        #expect(decoded.installContext?.downloadDestinationPath == "/Users/me/Downloads/RestoreImage.ipsw")
+    }
+
+    @Test("installContext round-trips through JSON (localFile)")
+    func installContextLocalFileRoundTrip() throws {
+        let context = MacOSInstallContext(
+            source: .localFile,
+            localIPSWPath: "/tmp/macOS-26.ipsw"
+        )
+        let config = VMConfiguration(
+            name: "Local IPSW VM",
+            guestOS: .macOS,
+            bootMode: .macOS,
+            installContext: context
+        )
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(config)
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(VMConfiguration.self, from: data)
+
+        #expect(decoded.installContext == context)
+        #expect(decoded.installContext?.source == .localFile)
+        #expect(decoded.installContext?.localIPSWPath == "/tmp/macOS-26.ipsw")
+    }
+
+    @Test("Legacy config.json without installContext key decodes as nil")
+    func legacyConfigWithoutInstallContextDecodesAsNil() throws {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
+
+        #expect(config.installContext == nil)
+    }
+
+    @Test("VMConfiguration with nil installContext omits field from JSON")
+    func nilInstallContextOmittedFromJSON() throws {
+        let config = VMConfiguration(
+            name: "Plain VM",
+            guestOS: .linux,
+            bootMode: .efi
+        )
+
+        let data = try JSONEncoder().encode(config)
+        let jsonObject = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+
+        #expect(jsonObject["installContext"] == nil)
+    }
+
+    @Test("Clone clears installContext even when source has one set")
+    func cloneClearsInstallContext() {
+        let context = MacOSInstallContext(
+            source: .downloadLatest,
+            downloadDestinationPath: "/tmp/RestoreImage.ipsw"
+        )
+        let config = VMConfiguration(
+            name: "Pending macOS VM",
+            guestOS: .macOS,
+            bootMode: .macOS,
+            installContext: context
+        )
+
+        let clone = config.clonedForNewInstance(existingNames: [])
+
+        #expect(clone.installContext == nil)
+    }
+
     // MARK: - displayPreference Tests
 
     @Test("Default displayPreference is inline")
