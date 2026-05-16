@@ -355,31 +355,28 @@ struct VMLifecycleCoordinatorTests {
     // MARK: - macOS Installation
 
     #if arch(arm64)
-    @Test("installMacOS with localFile sets hasDownloadStep to false")
+    @Test("installMacOS with localFile context sets hasDownloadStep to false")
     func installMacOSLocalFile() async throws {
         let (coordinator, _, installService, _, _) = makeCoordinator()
         let instance = makeInstance()
-        let wizard = VMCreationViewModel()
-        wizard.selectedOS = .macOS
-        wizard.ipswSource = .localFile
-        wizard.ipswPath = "/tmp/restore.ipsw"
+        let context = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
 
-        try await coordinator.installMacOS(on: instance, wizard: wizard)
+        try await coordinator.installMacOS(on: instance, context: context)
 
         #expect(installService.installCallCount == 1)
     }
 
-    @Test("installMacOS with downloadLatest calls fetch and download")
+    @Test("installMacOS with downloadLatest context calls fetch and download")
     func installMacOSDownload() async throws {
         let (coordinator, _, installService, ipswService, _) = makeCoordinator()
         let instance = makeInstance()
-        let wizard = VMCreationViewModel()
-        wizard.selectedOS = .macOS
-        wizard.ipswSource = .downloadLatest
-        wizard.ipswDownloadPath = FileManager.default.temporaryDirectory
-            .appendingPathComponent("test-restore.ipsw").path(percentEncoded: false)
+        let context = MacOSInstallContext(
+            source: .downloadLatest,
+            downloadDestinationPath: FileManager.default.temporaryDirectory
+                .appendingPathComponent("test-restore.ipsw").path(percentEncoded: false)
+        )
 
-        try await coordinator.installMacOS(on: instance, wizard: wizard)
+        try await coordinator.installMacOS(on: instance, context: context)
 
         #expect(ipswService.fetchCallCount == 1)
         #expect(ipswService.downloadCallCount == 1)
@@ -391,13 +388,10 @@ struct VMLifecycleCoordinatorTests {
         let (coordinator, _, installService, _, _) = makeCoordinator()
         installService.installError = IPSWError.downloadFailed(URLError(.badServerResponse))
         let instance = makeInstance()
-        let wizard = VMCreationViewModel()
-        wizard.selectedOS = .macOS
-        wizard.ipswSource = .localFile
-        wizard.ipswPath = "/tmp/restore.ipsw"
+        let context = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
 
         do {
-            try await coordinator.installMacOS(on: instance, wizard: wizard)
+            try await coordinator.installMacOS(on: instance, context: context)
             Issue.record("Expected error to be thrown")
         } catch {
             #expect(instance.status == .error)
@@ -405,19 +399,57 @@ struct VMLifecycleCoordinatorTests {
         }
     }
 
-    @Test("installMacOS preserves IPSW resume data when download is cancelled")
-    func installMacOSCancelPreservesResumeData() async throws {
+    @Test("installMacOS clears installContext on successful completion")
+    func installMacOSClearsInstallContextOnSuccess() async throws {
+        let (coordinator, _, _, _, _) = makeCoordinator()
+        let instance = makeInstance()
+        instance.configuration.installContext = MacOSInstallContext(
+            source: .localFile, localIPSWPath: "/tmp/restore.ipsw"
+        )
+        // Wire the dispatcher so performConfigurationMutation actually mutates.
+        instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
+        let context = instance.configuration.installContext!
+
+        try await coordinator.installMacOS(on: instance, context: context)
+
+        #expect(instance.configuration.installContext == nil)
+        #expect(instance.installState == nil)
+    }
+
+    @Test("installMacOS throws CancellationError on cancel and preserves installContext")
+    func installMacOSCancelPreservesContext() async {
         let (coordinator, _, _, ipswService, _) = makeCoordinator()
         ipswService.downloadError = CancellationError()
         let instance = makeInstance()
-        let wizard = VMCreationViewModel()
-        wizard.selectedOS = .macOS
-        wizard.ipswSource = .downloadLatest
-        let downloadPath = FileManager.default.temporaryDirectory
-            .appendingPathComponent("cancel-test-restore.ipsw").path(percentEncoded: false)
-        wizard.ipswDownloadPath = downloadPath
+        let originalContext = MacOSInstallContext(
+            source: .downloadLatest,
+            downloadDestinationPath: FileManager.default.temporaryDirectory
+                .appendingPathComponent("cancel-preserves-context.ipsw").path(percentEncoded: false)
+        )
+        instance.configuration.installContext = originalContext
+        instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
 
-        try await coordinator.installMacOS(on: instance, wizard: wizard)
+        await #expect(throws: CancellationError.self) {
+            try await coordinator.installMacOS(on: instance, context: originalContext)
+        }
+
+        #expect(instance.configuration.installContext == originalContext)
+    }
+
+    @Test("installMacOS preserves IPSW resume data when download is cancelled")
+    func installMacOSCancelPreservesResumeData() async {
+        let (coordinator, _, _, ipswService, _) = makeCoordinator()
+        ipswService.downloadError = CancellationError()
+        let instance = makeInstance()
+        let context = MacOSInstallContext(
+            source: .downloadLatest,
+            downloadDestinationPath: FileManager.default.temporaryDirectory
+                .appendingPathComponent("cancel-test-restore.ipsw").path(percentEncoded: false)
+        )
+
+        await #expect(throws: CancellationError.self) {
+            try await coordinator.installMacOS(on: instance, context: context)
+        }
 
         // User cancel must preserve resume data so a future Start can resume
         // the download from where it stopped (non-destructive cancel UX).
@@ -425,7 +457,7 @@ struct VMLifecycleCoordinatorTests {
     }
 
     @Test("installMacOS preserves IPSW resume data on NSURLErrorCancelled")
-    func installMacOSURLCancelPreservesResumeData() async throws {
+    func installMacOSURLCancelPreservesResumeData() async {
         let (coordinator, _, _, ipswService, _) = makeCoordinator()
         ipswService.downloadError = NSError(
             domain: NSURLErrorDomain,
@@ -433,14 +465,15 @@ struct VMLifecycleCoordinatorTests {
             userInfo: nil
         )
         let instance = makeInstance()
-        let wizard = VMCreationViewModel()
-        wizard.selectedOS = .macOS
-        wizard.ipswSource = .downloadLatest
-        let downloadPath = FileManager.default.temporaryDirectory
-            .appendingPathComponent("url-cancel-test-restore.ipsw").path(percentEncoded: false)
-        wizard.ipswDownloadPath = downloadPath
+        let context = MacOSInstallContext(
+            source: .downloadLatest,
+            downloadDestinationPath: FileManager.default.temporaryDirectory
+                .appendingPathComponent("url-cancel-test-restore.ipsw").path(percentEncoded: false)
+        )
 
-        try await coordinator.installMacOS(on: instance, wizard: wizard)
+        await #expect(throws: CancellationError.self) {
+            try await coordinator.installMacOS(on: instance, context: context)
+        }
 
         #expect(ipswService.discardResumeDataCallCount == 0)
     }
@@ -450,18 +483,22 @@ struct VMLifecycleCoordinatorTests {
         let (coordinator, _, _, ipswService, _) = makeCoordinator()
         ipswService.downloadError = IPSWError.downloadFailed(URLError(.notConnectedToInternet))
         let instance = makeInstance()
-        let wizard = VMCreationViewModel()
-        wizard.selectedOS = .macOS
-        wizard.ipswSource = .downloadLatest
-        wizard.ipswDownloadPath = FileManager.default.temporaryDirectory
-            .appendingPathComponent("network-fail-restore.ipsw").path(percentEncoded: false)
+        let originalContext = MacOSInstallContext(
+            source: .downloadLatest,
+            downloadDestinationPath: FileManager.default.temporaryDirectory
+                .appendingPathComponent("network-fail-restore.ipsw").path(percentEncoded: false)
+        )
+        instance.configuration.installContext = originalContext
+        instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
 
         do {
-            try await coordinator.installMacOS(on: instance, wizard: wizard)
+            try await coordinator.installMacOS(on: instance, context: originalContext)
             Issue.record("Expected error to be thrown")
         } catch {
             #expect(ipswService.discardResumeDataCallCount == 0)
             #expect(instance.status == .error)
+            // installContext stays so the user can retry via Start.
+            #expect(instance.configuration.installContext == originalContext)
         }
     }
     #endif

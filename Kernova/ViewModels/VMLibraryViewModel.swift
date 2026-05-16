@@ -201,12 +201,24 @@ final class VMLibraryViewModel {
             // For macOS guests, start installation (store task handle for cancellation support)
             #if arch(arm64)
             if config.guestOS == .macOS {
+                let context: MacOSInstallContext
+                switch wizard.ipswSource {
+                case .downloadLatest:
+                    context = MacOSInstallContext(
+                        source: .downloadLatest,
+                        downloadDestinationPath: wizard.ipswDownloadPath
+                    )
+                case .localFile:
+                    context = MacOSInstallContext(
+                        source: .localFile,
+                        localIPSWPath: wizard.ipswPath
+                    )
+                }
                 instance.installTask = Task {
                     do {
-                        try await lifecycle.installMacOS(
-                            on: instance,
-                            wizard: wizard
-                        )
+                        try await lifecycle.installMacOS(on: instance, context: context)
+                    } catch is CancellationError {
+                        // Expected when the user cancels — no presentation.
                     } catch {
                         if !Task.isCancelled {
                             Self.logger.error(

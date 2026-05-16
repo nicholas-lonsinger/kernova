@@ -178,7 +178,10 @@ final class VMInstance: Identifiable {
     /// If `onUpdateConfiguration` is wired, the mutation flows through the
     /// view model's centralized dispatcher (persist + applyLivePolicy).
     /// Otherwise, falls back to a direct in-memory write — the test-only path.
-    private func performConfigurationMutation(_ mutate: (inout VMConfiguration) -> Void) {
+    ///
+    /// Internal so `VMLifecycleCoordinator` can clear `installContext` through
+    /// the persistence pipeline after a successful install.
+    func performConfigurationMutation(_ mutate: (inout VMConfiguration) -> Void) {
         if let onUpdateConfiguration {
             onUpdateConfiguration(mutate)
         } else {

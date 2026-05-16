@@ -153,25 +153,19 @@ final class VMLifecycleCoordinator {
     #if arch(arm64)
     func installMacOS(
         on instance: VMInstance,
-        wizard: VMCreationViewModel
+        context: MacOSInstallContext
     ) async throws {
         try await serialized(instance, action: "installMacOS") {
             Self.logger.debug(
-                "installMacOS: entering for '\(instance.name, privacy: .public)', source=\(String(describing: wizard.ipswSource), privacy: .public)"
+                "installMacOS: entering for '\(instance.name, privacy: .public)', source=\(context.source.rawValue, privacy: .public)"
             )
-            // Hoisted so the cancellation catch blocks can clear the resume-data sidecar
-            // at the chosen path. Nil when the user picked a local IPSW (no download step).
-            let downloadDestination: URL? =
-                wizard.ipswSource == .downloadLatest
-                ? wizard.ipswDownloadPath.map { URL(fileURLWithPath: $0) }
-                : nil
 
             do {
                 let ipswURL: URL
 
-                switch wizard.ipswSource {
+                switch context.source {
                 case .downloadLatest:
-                    guard let downloadDestination else {
+                    guard let downloadDestination = context.downloadDestinationURL else {
                         throw IPSWError.noDownloadURL
                     }
 
@@ -197,10 +191,10 @@ final class VMLifecycleCoordinator {
                     ipswURL = downloadDestination
 
                 case .localFile:
-                    guard let path = wizard.ipswPath else {
+                    guard let localURL = context.localIPSWURL else {
                         throw IPSWError.noDownloadURL
                     }
-                    ipswURL = URL(fileURLWithPath: path)
+                    ipswURL = localURL
 
                     // Local file: single-step install (no download)
                     instance.installState = MacOSInstallState(
@@ -217,16 +211,29 @@ final class VMLifecycleCoordinator {
                 ) { @MainActor progress in
                     instance.installState?.currentPhase = .installing(progress: progress)
                 }
+
+                // Success: clear the persisted install intent through the
+                // configuration dispatcher so config.json is written. Subsequent
+                // Starts will see installContext == nil and go down the normal
+                // boot path. Also clear installState so the install progress UI
+                // tears down before the caller chains an auto-boot.
+                instance.performConfigurationMutation { $0.installContext = nil }
+                instance.installState = nil
             } catch is CancellationError {
                 Self.logger.info("macOS installation cancelled for '\(instance.name, privacy: .public)'")
-                // Resume data is preserved — IPSWService.downloadRestoreImage's
-                // onCancel handler writes the sidecar via cancel(byProducingResumeData:)
-                // so a future Start can resume the download from where it stopped.
+                // Re-throw so the caller knows to flip the VM back to
+                // .initialBoot rather than auto-booting on a non-success.
+                instance.installTask = nil
+                throw CancellationError()
             } catch let error as NSError where error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled {
                 Self.logger.info("IPSW download cancelled for '\(instance.name, privacy: .public)'")
+                // Normalize to CancellationError for consistent caller-side handling.
+                instance.installTask = nil
+                throw CancellationError()
             } catch {
                 instance.status = .error
                 instance.errorMessage = error.localizedDescription
+                instance.installTask = nil
                 throw error
             }
 
