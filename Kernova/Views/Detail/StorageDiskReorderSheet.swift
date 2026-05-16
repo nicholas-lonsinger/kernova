@@ -57,13 +57,10 @@ struct StorageDiskReorderSheet: View {
         HStack(spacing: 12) {
             Image(systemName: "line.3.horizontal")
                 .foregroundStyle(.secondary)
-                .accessibilityLabel("Drag to reorder")
+                .accessibilityHidden(true)
 
-            Image(
-                systemName: disk.kind == .usbMassStorage
-                    ? "opticaldisc" : (disk.isInternal ? "internaldrive" : "externaldrive")
-            )
-            .foregroundStyle(.secondary)
+            Image(systemName: diskIconSystemName(for: disk))
+                .foregroundStyle(.secondary)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(disk.label)

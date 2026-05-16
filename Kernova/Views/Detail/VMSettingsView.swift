@@ -439,11 +439,8 @@ struct VMSettingsView: View {
     @ViewBuilder
     private func storageDiskRow(disk: Binding<StorageDisk>) -> some View {
         HStack {
-            Image(
-                systemName: disk.wrappedValue.kind == .usbMassStorage
-                    ? "opticaldisc" : (disk.wrappedValue.isInternal ? "internaldrive" : "externaldrive")
-            )
-            .foregroundStyle(.secondary)
+            Image(systemName: diskIconSystemName(for: disk.wrappedValue))
+                .foregroundStyle(.secondary)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(disk.wrappedValue.label)
