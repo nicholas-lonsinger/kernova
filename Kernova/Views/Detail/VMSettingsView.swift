@@ -332,11 +332,11 @@ struct VMSettingsView: View {
             }
 
             HStack {
-                Button("Attach Disc Image...") {
+                Button("Attach Disc Image") {
                     browseRemovableMedia()
                 }
 
-                Button("Create New Disk...") {
+                Button("Create New Disk") {
                     showingCreateRemovableMedia = true
                 }
                 .popover(isPresented: $showingCreateRemovableMedia, arrowEdge: .bottom) {
@@ -411,11 +411,11 @@ struct VMSettingsView: View {
                 }
 
                 HStack {
-                    Button("Attach External Disk...") {
+                    Button("Attach External Disk") {
                         addExternalDisk()
                     }
 
-                    Button("Create New Disk...") {
+                    Button("Create New Disk") {
                         showingCreateDisk = true
                     }
                     .popover(isPresented: $showingCreateDisk, arrowEdge: .bottom) {
@@ -423,7 +423,7 @@ struct VMSettingsView: View {
                     }
 
                     if storageDiskBinding.wrappedValue.count > 1 {
-                        Button("Edit Boot Order...") {
+                        Button("Edit Boot Order") {
                             showingReorderDisksSheet = true
                         }
                     }
@@ -771,7 +771,7 @@ struct VMSettingsView: View {
                     }
                 }
 
-                Button("Add Shared Directory...") {
+                Button("Add Shared Directory") {
                     addSharedDirectory()
                 }
             }
@@ -868,7 +868,7 @@ struct VMSettingsView: View {
 /// whole section) and next to individual controls (when the explanation is
 /// specific to that control). Owns its own `@State` so each call site gets
 /// an independent popover anchor.
-private struct InfoButton<Content: View>: View {
+struct InfoButton<Content: View>: View {
     /// Title of the section or control this button explains.
     ///
     /// Used for the hover tooltip and the VoiceOver label ("About Storage

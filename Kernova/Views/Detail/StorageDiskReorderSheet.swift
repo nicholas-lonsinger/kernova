@@ -17,9 +17,14 @@ struct StorageDiskReorderSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
+            HStack(spacing: 6) {
                 Text("Boot Order")
                     .font(.headline)
+                InfoButton(label: "Boot Order") {
+                    Text(
+                        "Drag rows to set the order in which the guest sees its storage. Position 1 boots first on EFI guests; on macOS and Linux Kernel boot, the order also determines guest device enumeration (for example, /dev/vda, /dev/vdb)."
+                    )
+                }
                 Spacer()
             }
             .padding()
