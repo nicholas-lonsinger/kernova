@@ -404,6 +404,66 @@ struct VMLifecycleCoordinatorTests {
             #expect(instance.errorMessage != nil)
         }
     }
+
+    @Test("installMacOS discards IPSW resume data when download is cancelled")
+    func installMacOSCancelDiscardsResumeData() async throws {
+        let (coordinator, _, _, ipswService, _) = makeCoordinator()
+        ipswService.downloadError = CancellationError()
+        let instance = makeInstance()
+        let wizard = VMCreationViewModel()
+        wizard.selectedOS = .macOS
+        wizard.ipswSource = .downloadLatest
+        let downloadPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cancel-test-restore.ipsw").path(percentEncoded: false)
+        wizard.ipswDownloadPath = downloadPath
+
+        try await coordinator.installMacOS(on: instance, wizard: wizard)
+
+        #expect(ipswService.discardResumeDataCallCount == 1)
+        #expect(ipswService.lastDiscardResumeDataURL == URL(fileURLWithPath: downloadPath))
+    }
+
+    @Test("installMacOS discards IPSW resume data on NSURLErrorCancelled")
+    func installMacOSURLCancelDiscardsResumeData() async throws {
+        let (coordinator, _, _, ipswService, _) = makeCoordinator()
+        ipswService.downloadError = NSError(
+            domain: NSURLErrorDomain,
+            code: NSURLErrorCancelled,
+            userInfo: nil
+        )
+        let instance = makeInstance()
+        let wizard = VMCreationViewModel()
+        wizard.selectedOS = .macOS
+        wizard.ipswSource = .downloadLatest
+        let downloadPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("url-cancel-test-restore.ipsw").path(percentEncoded: false)
+        wizard.ipswDownloadPath = downloadPath
+
+        try await coordinator.installMacOS(on: instance, wizard: wizard)
+
+        #expect(ipswService.discardResumeDataCallCount == 1)
+        #expect(ipswService.lastDiscardResumeDataURL == URL(fileURLWithPath: downloadPath))
+    }
+
+    @Test("installMacOS preserves IPSW resume data on non-cancel download failure")
+    func installMacOSFailurePreservesResumeData() async {
+        let (coordinator, _, _, ipswService, _) = makeCoordinator()
+        ipswService.downloadError = IPSWError.downloadFailed(URLError(.notConnectedToInternet))
+        let instance = makeInstance()
+        let wizard = VMCreationViewModel()
+        wizard.selectedOS = .macOS
+        wizard.ipswSource = .downloadLatest
+        wizard.ipswDownloadPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("network-fail-restore.ipsw").path(percentEncoded: false)
+
+        do {
+            try await coordinator.installMacOS(on: instance, wizard: wizard)
+            Issue.record("Expected error to be thrown")
+        } catch {
+            #expect(ipswService.discardResumeDataCallCount == 0)
+            #expect(instance.status == .error)
+        }
+    }
     #endif
 
     // MARK: - USB Device Pass-Through

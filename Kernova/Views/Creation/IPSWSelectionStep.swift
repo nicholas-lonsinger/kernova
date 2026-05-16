@@ -46,6 +46,8 @@ struct IPSWSelectionStep: View {
 
                 if creationVM.shouldShowOverwriteWarning {
                     overwriteWarningBanner
+                } else if creationVM.hasResumableDownload {
+                    resumeAvailableBanner
                 }
             }
 
@@ -101,6 +103,24 @@ struct IPSWSelectionStep: View {
             RoundedRectangle(cornerRadius: 8)
                 .fill(Color.yellow.opacity(0.1))
                 .strokeBorder(Color.yellow.opacity(0.3), lineWidth: 1)
+        }
+    }
+
+    private var resumeAvailableBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "arrow.clockwise.circle.fill")
+                .foregroundStyle(.blue)
+
+            Text("A previous download was interrupted at this location. It will resume when the install starts.")
+                .font(.callout)
+
+            Spacer()
+        }
+        .padding(10)
+        .background {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.blue.opacity(0.1))
+                .strokeBorder(Color.blue.opacity(0.3), lineWidth: 1)
         }
     }
 

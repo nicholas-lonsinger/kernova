@@ -17,6 +17,11 @@ struct IPSWService: Sendable {
     }
 
     /// Downloads a macOS restore image from a remote URL to the specified destination.
+    ///
+    /// If a `<destinationURL>.resumedata` sidecar exists from a prior interrupted attempt,
+    /// the download resumes from where it left off. On non-cancel failures (network drop,
+    /// sleep timeout) the sidecar is written so a future attempt at the same path can resume.
+    /// User-initiated cancellation drops any resume data and surfaces as `CancellationError`.
     func downloadRestoreImage(
         from remoteURL: URL,
         to destinationURL: URL,
@@ -24,13 +29,12 @@ struct IPSWService: Sendable {
     ) async throws {
         Self.logger.info("Downloading restore image from \(remoteURL, privacy: .public)")
 
-        // RATIONALE: removeItem (not trashItem) is used here because these are incomplete/partial
-        // IPSW files from a prior failed download — not user data worth preserving. Trashing
-        // multi-gigabyte partial files would waste disk space and may fail on volumes without Trash.
-        do {
-            try FileManager.default.removeItem(at: destinationURL)
-        } catch CocoaError.fileNoSuchFile {
-            // No existing file to clean up — expected on first download.
+        let sidecarURL = Self.resumeDataSidecarURL(for: destinationURL)
+        let priorResumeData = try? Data(contentsOf: sidecarURL)
+        if priorResumeData != nil {
+            Self.logger.notice(
+                "Resuming prior IPSW download from sidecar at '\(sidecarURL.lastPathComponent, privacy: .public)'"
+            )
         }
 
         // nonisolated(unsafe) is needed because URLSessionDownloadTask is not Sendable,
@@ -42,6 +46,7 @@ struct IPSWService: Sendable {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
                 let delegate = IPSWDownloadDelegate(
                     destinationURL: destinationURL,
+                    sidecarURL: sidecarURL,
                     progressHandler: progressHandler,
                     continuation: continuation
                 )
@@ -50,7 +55,12 @@ struct IPSWService: Sendable {
                     delegate: delegate,
                     delegateQueue: nil
                 )
-                let task = session.downloadTask(with: remoteURL)
+                let task: URLSessionDownloadTask
+                if let priorResumeData {
+                    task = session.downloadTask(withResumeData: priorResumeData)
+                } else {
+                    task = session.downloadTask(with: remoteURL)
+                }
                 downloadTask = task
 
                 // Close the race where the Task was cancelled before downloadTask
@@ -68,6 +78,30 @@ struct IPSWService: Sendable {
         }
 
         Self.logger.info("Restore image downloaded to \(destinationURL.lastPathComponent, privacy: .public)")
+    }
+
+    /// Deletes any persisted resume-data sidecar for the given destination path.
+    /// Safe to call when no sidecar exists.
+    func discardResumeData(at destinationURL: URL) {
+        let sidecarURL = Self.resumeDataSidecarURL(for: destinationURL)
+        do {
+            try FileManager.default.removeItem(at: sidecarURL)
+            Self.logger.info(
+                "Discarded resume-data sidecar at '\(sidecarURL.lastPathComponent, privacy: .public)'"
+            )
+        } catch CocoaError.fileNoSuchFile {
+            // Nothing to discard — common case.
+        } catch {
+            Self.logger.warning(
+                "Failed to discard resume-data sidecar at '\(sidecarURL.path(percentEncoded: false), privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+        }
+    }
+
+    /// Returns the on-disk location where URLSession resume data is persisted for a given
+    /// download destination. Lives next to the final file so cleanup tracks the user's chosen path.
+    static func resumeDataSidecarURL(for destinationURL: URL) -> URL {
+        destinationURL.appendingPathExtension("resumedata")
     }
     #endif
 }
@@ -88,6 +122,7 @@ private final class IPSWDownloadDelegate: NSObject, URLSessionDownloadDelegate, 
     private static let progressInterval: TimeInterval = 0.1  // 100 ms
 
     private let destinationURL: URL
+    private let sidecarURL: URL
     private let progressHandler: @MainActor @Sendable (DownloadProgress) -> Void
     // RATIONALE: URLSession guarantees exactly one didCompleteWithError call per task,
     // so this continuation is always resumed exactly once.
@@ -101,10 +136,12 @@ private final class IPSWDownloadDelegate: NSObject, URLSessionDownloadDelegate, 
 
     init(
         destinationURL: URL,
+        sidecarURL: URL,
         progressHandler: @MainActor @Sendable @escaping (DownloadProgress) -> Void,
         continuation: CheckedContinuation<Void, any Error>
     ) {
         self.destinationURL = destinationURL
+        self.sidecarURL = sidecarURL
         self.progressHandler = progressHandler
         self.continuation = continuation
     }
@@ -183,27 +220,48 @@ private final class IPSWDownloadDelegate: NSObject, URLSessionDownloadDelegate, 
         session.finishTasksAndInvalidate()
 
         if let error = error ?? moveError {
-            do {
-                try FileManager.default.removeItem(at: destinationURL)
-            } catch {
-                Self.logger.warning(
-                    "Failed to clean up partial download at '\(self.destinationURL.path(percentEncoded: false), privacy: .public)': \(error.localizedDescription, privacy: .public)"
-                )
-            }
-
             // Propagate cancellation as CancellationError so callers can distinguish
             // user-initiated cancellation from genuine download failures.
             if let nsError = error as NSError?,
                 nsError.domain == NSURLErrorDomain,
                 nsError.code == NSURLErrorCancelled
             {
+                // User/parent-task cancellation — drop any resume data so the next
+                // attempt starts fresh. IPSWService.discardResumeData also runs on
+                // the cancel path; this is belt-and-suspenders for the URLSession
+                // side of the cancel race.
+                removeSidecar(reason: "cancellation")
                 Self.logger.info("Restore image download cancelled")
                 continuation.resume(throwing: CancellationError())
             } else {
+                // Network failure / sleep timeout / etc. — persist resume data so a
+                // future attempt at the same destination can pick up where we left off.
+                if let resumeData = (error as NSError?)?
+                    .userInfo[NSURLSessionDownloadTaskResumeData] as? Data
+                {
+                    do {
+                        try resumeData.write(to: sidecarURL, options: .atomic)
+                        Self.logger.notice(
+                            "Persisted IPSW resume data (\(resumeData.count, privacy: .public) bytes) to '\(self.sidecarURL.lastPathComponent, privacy: .public)'"
+                        )
+                    } catch {
+                        Self.logger.warning(
+                            "Failed to persist IPSW resume data at '\(self.sidecarURL.path(percentEncoded: false), privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                        )
+                    }
+                } else {
+                    // Server returned a non-resumable error (404, 4xx, validator
+                    // mismatch). Drop any stale sidecar so the next attempt is fresh.
+                    removeSidecar(reason: "non-resumable error")
+                }
+
                 Self.logger.error("Restore image download failed: \(error.localizedDescription, privacy: .public)")
                 continuation.resume(throwing: IPSWError.downloadFailed(error))
             }
         } else {
+            // Successful completion — sidecar has served its purpose.
+            removeSidecar(reason: "successful completion")
+
             let handler = self.progressHandler
             let progress = DownloadProgress(
                 bytesWritten: max(0, task.countOfBytesReceived),
@@ -212,6 +270,18 @@ private final class IPSWDownloadDelegate: NSObject, URLSessionDownloadDelegate, 
             )
             Task { @MainActor in handler(progress) }
             continuation.resume()
+        }
+    }
+
+    private func removeSidecar(reason: String) {
+        do {
+            try FileManager.default.removeItem(at: sidecarURL)
+        } catch CocoaError.fileNoSuchFile {
+            // Common case — nothing to clean up.
+        } catch {
+            Self.logger.warning(
+                "Failed to remove resume-data sidecar at '\(self.sidecarURL.path(percentEncoded: false), privacy: .public)' after \(reason, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
         }
     }
 }

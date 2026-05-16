@@ -159,15 +159,21 @@ final class VMLifecycleCoordinator {
             Self.logger.debug(
                 "installMacOS: entering for '\(instance.name, privacy: .public)', source=\(String(describing: wizard.ipswSource), privacy: .public)"
             )
+            // Hoisted so the cancellation catch blocks can clear the resume-data sidecar
+            // at the chosen path. Nil when the user picked a local IPSW (no download step).
+            let downloadDestination: URL? =
+                wizard.ipswSource == .downloadLatest
+                ? wizard.ipswDownloadPath.map { URL(fileURLWithPath: $0) }
+                : nil
+
             do {
                 let ipswURL: URL
 
                 switch wizard.ipswSource {
                 case .downloadLatest:
-                    guard let downloadPath = wizard.ipswDownloadPath else {
+                    guard let downloadDestination else {
                         throw IPSWError.noDownloadURL
                     }
-                    let downloadDestination = URL(fileURLWithPath: downloadPath)
 
                     // Set up two-step install state before changing status
                     instance.installState = MacOSInstallState(
@@ -213,8 +219,14 @@ final class VMLifecycleCoordinator {
                 }
             } catch is CancellationError {
                 Self.logger.info("macOS installation cancelled for '\(instance.name, privacy: .public)'")
+                if let downloadDestination {
+                    ipswService.discardResumeData(at: downloadDestination)
+                }
             } catch let error as NSError where error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled {
                 Self.logger.info("IPSW download cancelled for '\(instance.name, privacy: .public)'")
+                if let downloadDestination {
+                    ipswService.discardResumeData(at: downloadDestination)
+                }
             } catch {
                 instance.status = .error
                 instance.errorMessage = error.localizedDescription

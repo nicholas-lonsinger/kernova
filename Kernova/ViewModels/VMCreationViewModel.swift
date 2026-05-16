@@ -190,6 +190,21 @@ final class VMCreationViewModel {
             && confirmedOverwritePath != ipswDownloadPath
     }
 
+    // MARK: - Resume Detection
+
+    /// `true` when the chosen download destination has an associated `.resumedata`
+    /// sidecar from a prior interrupted download, *and* no completed IPSW already
+    /// exists at the path. A completed file takes priority — the overwrite warning
+    /// flow handles that case instead.
+    var hasResumableDownload: Bool {
+        guard ipswSource == .downloadLatest,
+            let path = ipswDownloadPath,
+            !ipswDownloadPathFileExists
+        else { return false }
+        let sidecarPath = path + ".resumedata"
+        return FileManager.default.fileExists(atPath: sidecarPath)
+    }
+
     func confirmOverwrite() {
         confirmedOverwritePath = ipswDownloadPath
     }
