@@ -1400,6 +1400,10 @@ final class VMLibraryViewModel {
                         || instance.status == .initialBoot)
             }
             for instance in instancesToRemove {
+                // Cancel any in-flight install task before evicting — otherwise
+                // the task keeps mutating an orphan instance the view model no
+                // longer knows about, wasting work and potentially racing.
+                instance.installTask?.cancel()
                 instances.removeAll { $0.id == instance.id }
                 if selectedID == instance.id {
                     selectedID = instances.first?.id

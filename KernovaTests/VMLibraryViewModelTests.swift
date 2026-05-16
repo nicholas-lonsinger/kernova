@@ -914,6 +914,36 @@ struct VMLibraryViewModelTests {
         // Note: deleteVMBundle is NOT called — reconcile only evicts the in-memory entry.
         #expect(storage.deleteVMBundleCallCount == 0)
     }
+
+    @Test("reconcileWithDisk cancels installTask before evicting an orphaned VM")
+    func reconcileCancelsInstallTaskBeforeEviction() async {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        var config = VMConfiguration(name: "Pending VM", guestOS: .macOS, bootMode: .macOS)
+        config.installContext = MacOSInstallContext(
+            source: .localFile, localIPSWPath: "/tmp/foo.ipsw"
+        )
+        let bundleURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
+        let instance = VMInstance(configuration: config, bundleURL: bundleURL, status: .initialBoot)
+
+        // Spawn a long-running install task we can observe getting cancelled.
+        let cancelStream = AsyncStream<Void>.makeStream()
+        instance.installTask = Task {
+            await withTaskCancellationHandler {
+                try? await Task.sleep(for: .seconds(60))
+            } onCancel: {
+                cancelStream.continuation.yield(())
+                cancelStream.continuation.finish()
+            }
+        }
+        viewModel.instances.append(instance)
+        // Bundle absent from storage → eligible for eviction.
+
+        viewModel.reconcileWithDisk()
+        for await _ in cancelStream.stream { break }  // cancel propagated
+
+        #expect(viewModel.instances.isEmpty)
+    }
     #endif
 
     // MARK: - Cancel Installation
