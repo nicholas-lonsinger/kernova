@@ -400,9 +400,15 @@ struct VMSettingsView: View {
     private var storageDiskSection: some View {
         Section(
             header: sectionHeader("Storage Disks", lockable: true) {
-                Text(
-                    "Position 1 boots first on EFI guests. On macOS and Linux Kernel boot, position affects guest device enumeration. Installer images (.iso, .dmg) attach as USB Mass Storage entries on this list (still bootable, separate from hot-pluggable Removable Media); permanent disks attach as virtio block devices, so reordering an installer doesn't change your main disk's /dev/vda letter."
-                )
+                if instance.configuration.guestOS == .linux {
+                    Text(
+                        "Position 1 boots first on EFI guests; on Linux Kernel boot, position affects device enumeration but not boot priority. Permanent disks attach as virtio block devices (`/dev/vda`, `/dev/vdb`, …). Installer images (.iso, .dmg) attach as USB Mass Storage entries on this list — still bootable, separate from hot-pluggable Removable Media — so reordering an installer doesn't change your main disk's `/dev/vda` letter."
+                    )
+                } else {
+                    Text(
+                        "Position 1 is the main system disk; subsequent positions follow in order. Permanent disks attach as virtio block devices. Installer images (.iso, .dmg) attach as USB Mass Storage entries on this list — still bootable, separate from hot-pluggable Removable Media."
+                    )
+                }
             }
         ) {
             Group {
@@ -706,9 +712,15 @@ struct VMSettingsView: View {
     private var clipboardSection: some View {
         Section(
             header: sectionHeader("Clipboard") {
-                Text(
-                    "Exchanges clipboard text between host and guest. macOS guests use the bundled Kernova guest agent — Kernova will offer to install or update it from the clipboard window. Linux guests need spice-vdagent installed via the guest's package manager."
-                )
+                if instance.configuration.guestOS == .linux {
+                    Text(
+                        "Exchanges clipboard text between host and guest. Requires `spice-vdagent` installed in the guest via its package manager."
+                    )
+                } else {
+                    Text(
+                        "Exchanges clipboard text between host and guest. Uses the bundled Kernova guest agent — Kernova will offer to install or update it from the clipboard window."
+                    )
+                }
             }
         ) {
             Toggle("Clipboard Sharing", isOn: configBinding(\.clipboardSharingEnabled))
@@ -773,20 +785,6 @@ struct VMSettingsView: View {
                 }
             }
             .disabled(isReadOnly)
-
-            if instance.configuration.guestOS == .linux, !directories.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Mount in guest:")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    ForEach(Array(directories.enumerated()), id: \.element.id) { index, directory in
-                        Text("mount -t virtiofs share\(index) /mnt/\(directory.displayName)")
-                            .font(.system(.caption, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                    }
-                }
-            }
         }
     }
 
@@ -795,14 +793,18 @@ struct VMSettingsView: View {
         VStack(alignment: .leading, spacing: 10) {
             if instance.configuration.guestOS == .linux {
                 Text(
-                    "Shared directories are available as virtiofs mounts in the guest. Mount them with `mount -t virtiofs <tag> <mountpoint>`."
+                    "Exposed as virtiofs mounts. Each share gets a numbered tag (`share0`, `share1`, …) in list order. Mount with:"
                 )
+                Text("mount -t virtiofs share0 /mnt/myshare")
+                    .font(.system(.callout, design: .monospaced))
+                    .textSelection(.enabled)
             } else {
-                Text("Shared directories auto-mount at /Volumes/My Shared Files/ in the guest.")
+                Text("Auto-mounts at `/Volumes/My Shared Files/` in the guest.")
             }
             Text(
-                "Note: File sharing uses VirtioFS which has known framework limitations — files may intermittently appear missing, and permission mapping between host and guest can differ."
+                "VirtioFS has known framework limitations — files may intermittently appear missing, and host/guest permission mapping can differ."
             )
+            .foregroundStyle(.secondary)
         }
     }
 
