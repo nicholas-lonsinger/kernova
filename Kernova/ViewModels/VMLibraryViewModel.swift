@@ -966,7 +966,8 @@ final class VMLibraryViewModel {
         }
 
         guard trashFile else { return nil }
-        let diskURL: URL = disk.isInternal
+        let diskURL: URL =
+            disk.isInternal
             ? instance.bundleURL.appendingPathComponent(disk.path)
             : URL(fileURLWithPath: disk.path)
         let label = disk.label
