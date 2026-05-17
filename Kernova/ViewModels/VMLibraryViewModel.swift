@@ -987,7 +987,7 @@ final class VMLibraryViewModel {
                 Self.logger.warning(
                     "Failed to trash disk '\(label, privacy: .public)' (\(diskURL.lastPathComponent, privacy: .public)): \(message, privacy: .public)"
                 )
-                await MainActor.run {
+                await MainActor.run { [weak self] in
                     guard let self else { return }
                     self.errorMessage = message
                     self.showError = true
@@ -1044,7 +1044,7 @@ final class VMLibraryViewModel {
                 Self.logger.warning(
                     "Failed to trash removable media '\(label, privacy: .public)' (\(url.lastPathComponent, privacy: .public)): \(message, privacy: .public)"
                 )
-                await MainActor.run {
+                await MainActor.run { [weak self] in
                     guard let self else { return }
                     self.errorMessage = message
                     self.showError = true
