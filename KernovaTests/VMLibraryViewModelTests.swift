@@ -2094,7 +2094,7 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("removeStorageDisk on external disk with trashFile=true trashes the host file")
-    func removeStorageDiskExternalTrashesFile() throws {
+    func removeStorageDiskExternalTrashesFile() async throws {
         let (viewModel, _, _, _, _) = makeViewModel()
         let instance = makeInstance()
         let destination = FileManager.default.temporaryDirectory
@@ -2109,7 +2109,7 @@ struct VMLibraryViewModelTests {
         instance.configuration.storageDisks = [external]
         viewModel.instances.append(instance)
 
-        viewModel.removeStorageDisk(external, from: instance, trashFile: true)
+        await viewModel.removeStorageDisk(external, from: instance, trashFile: true)?.value
 
         #expect(instance.configuration.storageDisks == nil)
         // trashItem moved the file out of its original location.
@@ -2141,7 +2141,7 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("removeStorageDisk with trashFile=true swallows missing-file errors")
-    func removeStorageDiskMissingFileSwallows() {
+    func removeStorageDiskMissingFileSwallows() async {
         // A user can race delete-in-Finder against the confirmation alert,
         // or an external disk's source can be moved between sessions.
         // trashItem failing with `.fileNoSuchFile` should not raise an
@@ -2158,7 +2158,7 @@ struct VMLibraryViewModelTests {
         instance.configuration.storageDisks = [ghost]
         viewModel.instances.append(instance)
 
-        viewModel.removeStorageDisk(ghost, from: instance, trashFile: true)
+        await viewModel.removeStorageDisk(ghost, from: instance, trashFile: true)?.value
 
         #expect(instance.configuration.storageDisks == nil)
         #expect(!viewModel.showError)
@@ -2186,7 +2186,7 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("removeRemovableMedia with trashFile=true trashes the host file")
-    func removeRemovableMediaTrashesFile() throws {
+    func removeRemovableMediaTrashesFile() async throws {
         let (viewModel, _, _, _, _) = makeViewModel()
         let instance = makeInstance()
         let destination = FileManager.default.temporaryDirectory
@@ -2199,7 +2199,7 @@ struct VMLibraryViewModelTests {
         instance.configuration.removableMedia = [item]
         viewModel.instances.append(instance)
 
-        viewModel.removeRemovableMedia(item, from: instance, trashFile: true)
+        await viewModel.removeRemovableMedia(item, from: instance, trashFile: true)?.value
 
         #expect(instance.configuration.removableMedia == nil)
         #expect(!FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)))
@@ -2207,7 +2207,7 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("removeRemovableMedia with trashFile=true swallows missing-file errors")
-    func removeRemovableMediaMissingFileSwallows() {
+    func removeRemovableMediaMissingFileSwallows() async {
         let (viewModel, _, _, _, _) = makeViewModel()
         let instance = makeInstance()
         let ghostPath = FileManager.default.temporaryDirectory
@@ -2217,7 +2217,7 @@ struct VMLibraryViewModelTests {
         instance.configuration.removableMedia = [item]
         viewModel.instances.append(instance)
 
-        viewModel.removeRemovableMedia(item, from: instance, trashFile: true)
+        await viewModel.removeRemovableMedia(item, from: instance, trashFile: true)?.value
 
         #expect(instance.configuration.removableMedia == nil)
         #expect(!viewModel.showError)

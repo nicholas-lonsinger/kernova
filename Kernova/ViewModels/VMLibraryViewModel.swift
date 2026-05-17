@@ -6,7 +6,7 @@ import os
 @MainActor
 @Observable
 final class VMLibraryViewModel {
-    private static let logger = Logger(subsystem: "com.kernova.app", category: "VMLibraryViewModel")
+    nonisolated private static let logger = Logger(subsystem: "com.kernova.app", category: "VMLibraryViewModel")
     static let lastSelectedVMIDKey = "lastSelectedVMID"
     static let vmOrderKey = "vmOrder"
 
@@ -949,31 +949,49 @@ final class VMLibraryViewModel {
     /// external disks resolve against their absolute path. If the file is
     /// already gone, the missing-file error is logged and swallowed so the
     /// user doesn't see an alert for a no-op cleanup.
-    func removeStorageDisk(_ disk: StorageDisk, from instance: VMInstance, trashFile: Bool) {
+    ///
+    /// `FileManager.trashItem` is a synchronous call that can block for
+    /// seconds on slow or unresponsive volumes (network shares, sleeping
+    /// external drives), so the trash runs in `Task.detached` to keep the
+    /// MainActor responsive. The returned Task lets tests await completion;
+    /// production callers use `@discardableResult` and ignore it.
+    @discardableResult
+    func removeStorageDisk(
+        _ disk: StorageDisk, from instance: VMInstance, trashFile: Bool
+    ) -> Task<Void, Never>? {
         updateConfiguration(of: instance) { config in
             var disks = config.storageDisks ?? Self.defaultStorageDisks(for: instance)
             disks.removeAll { $0.id == disk.id }
             config.storageDisks = disks.isEmpty ? nil : disks
         }
 
-        guard trashFile else { return }
+        guard trashFile else { return nil }
         let diskURL: URL = disk.isInternal
             ? instance.bundleURL.appendingPathComponent(disk.path)
             : URL(fileURLWithPath: disk.path)
-        do {
-            try FileManager.default.trashItem(at: diskURL, resultingItemURL: nil)
-            Self.logger.notice(
-                "Trashed disk '\(disk.label, privacy: .public)' for VM '\(instance.name, privacy: .public)'"
-            )
-        } catch let error as CocoaError where error.code == .fileNoSuchFile || error.code == .fileReadNoSuchFile {
-            Self.logger.notice(
-                "Disk file already gone for '\(disk.label, privacy: .public)' (\(diskURL.lastPathComponent, privacy: .public)); skipping trash"
-            )
-        } catch {
-            Self.logger.warning(
-                "Failed to trash disk '\(disk.label, privacy: .public)' (\(diskURL.lastPathComponent, privacy: .public)): \(error.localizedDescription, privacy: .public)"
-            )
-            presentError(error)
+        let label = disk.label
+        let vmName = instance.name
+        return Task.detached(priority: .userInitiated) { [weak self] in
+            do {
+                try FileManager.default.trashItem(at: diskURL, resultingItemURL: nil)
+                Self.logger.notice(
+                    "Trashed disk '\(label, privacy: .public)' for VM '\(vmName, privacy: .public)'"
+                )
+            } catch let error as CocoaError where error.code == .fileNoSuchFile || error.code == .fileReadNoSuchFile {
+                Self.logger.notice(
+                    "Disk file already gone for '\(label, privacy: .public)' (\(diskURL.lastPathComponent, privacy: .public)); skipping trash"
+                )
+            } catch {
+                let message = error.localizedDescription
+                Self.logger.warning(
+                    "Failed to trash disk '\(label, privacy: .public)' (\(diskURL.lastPathComponent, privacy: .public)): \(message, privacy: .public)"
+                )
+                await MainActor.run {
+                    guard let self else { return }
+                    self.errorMessage = message
+                    self.showError = true
+                }
+            }
         }
     }
 
@@ -985,36 +1003,52 @@ final class VMLibraryViewModel {
     /// disambiguate. Missing files are swallowed (`.notice` log, no error
     /// alert) because removable media are often transient — a user may
     /// have already deleted or unmounted the source. Other failures are
-    /// surfaced via `presentError`.
+    /// surfaced via the error alert.
     ///
     /// Mutating `config.removableMedia` through `updateConfiguration`
     /// triggers `applyLivePolicy` → `applyLiveRemovableMediaChange`, so
     /// the hot-detach reconciliation runs automatically when the VM is
     /// running. `trashItem` succeeds even while the VM still holds the
     /// file open, so we don't need to wait for the detach to complete.
-    func removeRemovableMedia(_ item: RemovableMediaItem, from instance: VMInstance, trashFile: Bool) {
+    ///
+    /// The trash runs in `Task.detached` (see `removeStorageDisk` for the
+    /// reasoning). The returned Task lets tests await completion; the
+    /// SwiftUI caller uses `@discardableResult` and ignores it.
+    @discardableResult
+    func removeRemovableMedia(
+        _ item: RemovableMediaItem, from instance: VMInstance, trashFile: Bool
+    ) -> Task<Void, Never>? {
         updateConfiguration(of: instance) { config in
             var items = config.removableMedia ?? []
             items.removeAll { $0.id == item.id }
             config.removableMedia = items.isEmpty ? nil : items
         }
 
-        guard trashFile else { return }
+        guard trashFile else { return nil }
         let url = URL(fileURLWithPath: item.path)
-        do {
-            try FileManager.default.trashItem(at: url, resultingItemURL: nil)
-            Self.logger.notice(
-                "Trashed removable media '\(item.label, privacy: .public)' for VM '\(instance.name, privacy: .public)'"
-            )
-        } catch let error as CocoaError where error.code == .fileNoSuchFile || error.code == .fileReadNoSuchFile {
-            Self.logger.notice(
-                "Removable media file already gone for '\(item.label, privacy: .public)' (\(url.lastPathComponent, privacy: .public)) on VM '\(instance.name, privacy: .public)'; skipping trash"
-            )
-        } catch {
-            Self.logger.warning(
-                "Failed to trash removable media '\(item.label, privacy: .public)' (\(url.lastPathComponent, privacy: .public)): \(error.localizedDescription, privacy: .public)"
-            )
-            presentError(error)
+        let label = item.label
+        let vmName = instance.name
+        return Task.detached(priority: .userInitiated) { [weak self] in
+            do {
+                try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+                Self.logger.notice(
+                    "Trashed removable media '\(label, privacy: .public)' for VM '\(vmName, privacy: .public)'"
+                )
+            } catch let error as CocoaError where error.code == .fileNoSuchFile || error.code == .fileReadNoSuchFile {
+                Self.logger.notice(
+                    "Removable media file already gone for '\(label, privacy: .public)' (\(url.lastPathComponent, privacy: .public)) on VM '\(vmName, privacy: .public)'; skipping trash"
+                )
+            } catch {
+                let message = error.localizedDescription
+                Self.logger.warning(
+                    "Failed to trash removable media '\(label, privacy: .public)' (\(url.lastPathComponent, privacy: .public)): \(message, privacy: .public)"
+                )
+                await MainActor.run {
+                    guard let self else { return }
+                    self.errorMessage = message
+                    self.showError = true
+                }
+            }
         }
     }
 
