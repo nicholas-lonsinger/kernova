@@ -27,18 +27,19 @@ final class USBDeviceService: USBDeviceProviding {
             resolved = try PathValidation.resolveFile(at: diskImagePath, requireWritable: !readOnly)
             resolved.logResolution(logger: Self.logger, context: "USB disk image")
         } catch {
+            let basename = URL(fileURLWithPath: diskImagePath).lastPathComponent
             switch error {
             case .notFound:
-                Self.logger.error("USB disk image not found at '\(diskImagePath, privacy: .public)'")
+                Self.logger.error("USB disk image not found: '\(basename, privacy: .public)'")
                 throw USBDeviceError.diskImageNotFound(diskImagePath)
             case .unexpectedType:
-                Self.logger.error("USB disk image path is a directory: '\(diskImagePath, privacy: .public)'")
+                Self.logger.error("USB disk image path is a directory: '\(basename, privacy: .public)'")
                 throw USBDeviceError.diskImageIsDirectory(diskImagePath)
             case .notWritable:
-                Self.logger.error("USB disk image is not writable: '\(diskImagePath, privacy: .public)'")
+                Self.logger.error("USB disk image is not writable: '\(basename, privacy: .public)'")
                 throw USBDeviceError.diskImageNotWritable(diskImagePath)
             case .notReadable:
-                Self.logger.fault("Unexpected .notReadable from resolveFile for '\(diskImagePath, privacy: .public)'")
+                Self.logger.fault("Unexpected .notReadable from resolveFile for '\(basename, privacy: .public)'")
                 assertionFailure("resolveFile should never throw .notReadable")
                 throw USBDeviceError.diskImageNotFound(diskImagePath)
             }
@@ -49,7 +50,7 @@ final class USBDeviceService: USBDeviceProviding {
             attachment = try VZDiskImageStorageDeviceAttachment(url: resolved.url, readOnly: readOnly)
         } catch {
             Self.logger.error(
-                "Failed to create disk attachment for '\(diskImagePath, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                "Failed to create disk attachment for '\(resolved.url.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw error
         }

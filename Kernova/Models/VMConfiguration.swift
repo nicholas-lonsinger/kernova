@@ -144,11 +144,12 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
 
     // MARK: - Install Intent
 
-    /// Pending macOS install plan from the creation wizard. Non-nil ⇔ this VM
-    /// has never completed its initial boot. Cleared exactly once, after
-    /// `MacOSInstallService.install(...)` returns successfully. The presence
-    /// of this field is what drives `start(_:)` to route through the install
-    /// pipeline (and the `.initialBoot` status assignment in reconcile).
+    /// Pending macOS install plan from the creation wizard.
+    ///
+    /// Non-nil ⇔ this VM has never completed its initial boot. Cleared exactly
+    /// once, after `MacOSInstallService.install(...)` returns successfully. The
+    /// presence of this field is what drives `start(_:)` to route through the
+    /// install pipeline (and the `.initialBoot` status assignment in reconcile).
     /// Always `nil` for Linux guests.
     var installContext: MacOSInstallContext?
 

@@ -115,11 +115,14 @@ final class MacOSInstallService {
     // MARK: - Platform Setup
 
     /// Creates the auxiliary storage, hardware model, and machine identifier files.
+    ///
     /// Idempotent across install retries: hardware model and machine identifier
     /// files are written only when absent so the VM keeps a stable on-disk identity
     /// across attempts (the guest install sees the same machine regardless of how
-    /// many tries it took). Auxiliary storage is always re-created — it carries
-    /// firmware/NVRAM state that must match a fresh install run.
+    /// many tries it took).
+    ///
+    /// Auxiliary storage is always re-created — it carries firmware/NVRAM state
+    /// that must match a fresh install run.
     private func setupPlatformFiles(
         for instance: VMInstance,
         hardwareModel: VZMacHardwareModel

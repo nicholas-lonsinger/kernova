@@ -67,9 +67,11 @@ struct VMDetailView: View {
 }
 
 /// Banner shown above the settings panel for VMs whose initial boot hasn't
-/// happened yet. Adapts its subtitle to the persisted install context so the
-/// user knows what Start will do (download + install vs. install from local
-/// IPSW vs. resume an interrupted download).
+/// happened yet.
+///
+/// Adapts its subtitle to the persisted install context so the user knows what
+/// Start will do (download + install vs. install from local IPSW vs. resume an
+/// interrupted download).
 private struct InitialBootBanner: View {
     let instance: VMInstance
 

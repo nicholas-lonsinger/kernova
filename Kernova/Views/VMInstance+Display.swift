@@ -26,7 +26,9 @@ extension VMInstance {
 
     /// `true` when this VM has a `.downloadLatest` install context, a
     /// `.resumedata` sidecar at the chosen path, and no completed IPSW yet
-    /// at the same path. Drives the "Resume Install" label variant.
+    /// at the same path.
+    ///
+    /// Drives the "Resume Install" label variant.
     var hasResumableInstallDownload: Bool {
         #if arch(arm64)
         guard let context = configuration.installContext,

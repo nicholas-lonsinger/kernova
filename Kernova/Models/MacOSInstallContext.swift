@@ -1,7 +1,9 @@
 import Foundation
 
 /// Persisted intent to install macOS into a VM that has not yet completed
-/// its initial boot. Stored on `VMConfiguration` and consulted by
+/// its initial boot.
+///
+/// Stored on `VMConfiguration` and consulted by
 /// `VMLifecycleCoordinator.installMacOS(on:context:)` on every Start while
 /// non-nil. Cleared exactly once, after a successful install.
 ///
@@ -16,13 +18,15 @@ struct MacOSInstallContext: Codable, Sendable, Equatable {
 
     var source: Source
 
-    /// Where to write the downloaded IPSW (for `.downloadLatest`). The
-    /// `<path>.resumedata` sidecar at this location enables download resume
-    /// across app restarts. Ignored when `source == .localFile`.
+    /// Where to write the downloaded IPSW (for `.downloadLatest`).
+    ///
+    /// The `<path>.resumedata` sidecar at this location enables download
+    /// resume across app restarts. Ignored when `source == .localFile`.
     var downloadDestinationPath: String?
 
-    /// Path to an existing IPSW file on disk (for `.localFile`). Ignored
-    /// when `source == .downloadLatest`.
+    /// Path to an existing IPSW file on disk (for `.localFile`).
+    ///
+    /// Ignored when `source == .downloadLatest`.
     var localIPSWPath: String?
 
     var downloadDestinationURL: URL? {

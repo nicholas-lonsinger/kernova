@@ -2093,24 +2093,133 @@ struct VMLibraryViewModelTests {
         #expect(!viewModel.showError)
     }
 
-    @Test("removeStorageDisk on external disk ignores trashFile flag")
-    func removeStorageDiskExternalIgnoresTrashFlag() {
-        // External disks aren't bundle-owned — the trashFile branch only
-        // applies to `isInternal == true`. Passing `true` for an external
-        // disk should be a no-op for file handling.
+    @Test("removeStorageDisk on external disk with trashFile=true trashes the host file")
+    func removeStorageDiskExternalTrashesFile() async throws {
         let (viewModel, _, _, _, _) = makeViewModel()
         let instance = makeInstance()
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString)-external.img")
+        try Data("payload".utf8).write(to: destination)
+        defer { try? FileManager.default.removeItem(at: destination) }
+
         let external = StorageDisk(
-            path: "/some/host/path/data.img",
+            path: destination.path(percentEncoded: false),
             readOnly: false, label: "External", isInternal: false, kind: .virtio
         )
         instance.configuration.storageDisks = [external]
         viewModel.instances.append(instance)
 
-        viewModel.removeStorageDisk(external, from: instance, trashFile: true)
+        await viewModel.removeStorageDisk(external, from: instance, trashFile: true)?.value
 
         #expect(instance.configuration.storageDisks == nil)
-        // No error from a missing-file trash attempt — the branch was skipped.
+        // trashItem moved the file out of its original location.
+        #expect(!FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)))
+        #expect(!viewModel.showError)
+    }
+
+    @Test("removeStorageDisk on external disk with trashFile=false leaves the host file alone")
+    func removeStorageDiskExternalKeepsFile() throws {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString)-external.img")
+        try Data("payload".utf8).write(to: destination)
+        defer { try? FileManager.default.removeItem(at: destination) }
+
+        let external = StorageDisk(
+            path: destination.path(percentEncoded: false),
+            readOnly: false, label: "External", isInternal: false, kind: .virtio
+        )
+        instance.configuration.storageDisks = [external]
+        viewModel.instances.append(instance)
+
+        viewModel.removeStorageDisk(external, from: instance, trashFile: false)
+
+        #expect(instance.configuration.storageDisks == nil)
+        #expect(FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)))
+        #expect(!viewModel.showError)
+    }
+
+    @Test("removeStorageDisk with trashFile=true swallows missing-file errors")
+    func removeStorageDiskMissingFileSwallows() async {
+        // A user can race delete-in-Finder against the confirmation alert,
+        // or an external disk's source can be moved between sessions.
+        // trashItem failing with `.fileNoSuchFile` should not raise an
+        // error alert — there's nothing actionable for the user.
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        let ghostPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("kernova-ghost-\(UUID().uuidString).img")
+            .path(percentEncoded: false)
+        let ghost = StorageDisk(
+            path: ghostPath,
+            readOnly: false, label: "Ghost", isInternal: false, kind: .virtio
+        )
+        instance.configuration.storageDisks = [ghost]
+        viewModel.instances.append(instance)
+
+        await viewModel.removeStorageDisk(ghost, from: instance, trashFile: true)?.value
+
+        #expect(instance.configuration.storageDisks == nil)
+        #expect(!viewModel.showError)
+    }
+
+    @Test("removeRemovableMedia with trashFile=false removes the entry without touching the file")
+    func removeRemovableMediaKeepsFile() throws {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString)-media.iso")
+        try Data("payload".utf8).write(to: destination)
+        defer { try? FileManager.default.removeItem(at: destination) }
+
+        let item = RemovableMediaItem(
+            path: destination.path(percentEncoded: false), readOnly: true)
+        instance.configuration.removableMedia = [item]
+        viewModel.instances.append(instance)
+
+        viewModel.removeRemovableMedia(item, from: instance, trashFile: false)
+
+        #expect(instance.configuration.removableMedia == nil)
+        #expect(FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)))
+        #expect(!viewModel.showError)
+    }
+
+    @Test("removeRemovableMedia with trashFile=true trashes the host file")
+    func removeRemovableMediaTrashesFile() async throws {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString)-media.iso")
+        try Data("payload".utf8).write(to: destination)
+        defer { try? FileManager.default.removeItem(at: destination) }
+
+        let item = RemovableMediaItem(
+            path: destination.path(percentEncoded: false), readOnly: true)
+        instance.configuration.removableMedia = [item]
+        viewModel.instances.append(instance)
+
+        await viewModel.removeRemovableMedia(item, from: instance, trashFile: true)?.value
+
+        #expect(instance.configuration.removableMedia == nil)
+        #expect(!FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)))
+        #expect(!viewModel.showError)
+    }
+
+    @Test("removeRemovableMedia with trashFile=true swallows missing-file errors")
+    func removeRemovableMediaMissingFileSwallows() async {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        let ghostPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("kernova-ghost-\(UUID().uuidString).iso")
+            .path(percentEncoded: false)
+        let item = RemovableMediaItem(path: ghostPath, readOnly: true)
+        instance.configuration.removableMedia = [item]
+        viewModel.instances.append(instance)
+
+        await viewModel.removeRemovableMedia(item, from: instance, trashFile: true)?.value
+
+        #expect(instance.configuration.removableMedia == nil)
         #expect(!viewModel.showError)
     }
 

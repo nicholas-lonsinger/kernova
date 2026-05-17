@@ -22,6 +22,8 @@ struct VMSettingsView: View {
     @State private var newDiskSizeInGB = VMGuestOS.defaultDiskSizeInGB
     @State private var diskToRemove: StorageDisk?
     @State private var showingRemoveDiskAlert = false
+    @State private var removableMediaToRemove: RemovableMediaItem?
+    @State private var showingRemoveRemovableMediaAlert = false
     @FocusState private var isNameFieldFocused: Bool
 
     private var currentMicPermission: AVAuthorizationStatus {
@@ -157,11 +159,34 @@ struct VMSettingsView: View {
         } message: { disk in
             if disk.isInternal {
                 Text(
-                    "The disk image is stored inside the VM bundle. Move to Trash to delete it, or Remove from VM to delist the entry while keeping the file."
+                    "Move to Trash will send the bundle-owned disk image to the Trash. Remove from VM will delist the entry while keeping the file."
                 )
             } else {
-                Text("This will delist the disk from the VM. The file at \(disk.path) is left alone.")
+                Text(
+                    "Move to Trash will send \(disk.path) to the Trash. Remove from VM will delist the disk and leave the file alone."
+                )
             }
+        }
+        .alert(
+            "Remove \(removableMediaToRemove?.label ?? "Disc")?",
+            isPresented: $showingRemoveRemovableMediaAlert,
+            presenting: removableMediaToRemove
+        ) { item in
+            Button("Move to Trash", role: .destructive) {
+                viewModel.removeRemovableMedia(item, from: instance, trashFile: true)
+                removableMediaToRemove = nil
+            }
+            Button("Remove from VM") {
+                viewModel.removeRemovableMedia(item, from: instance, trashFile: false)
+                removableMediaToRemove = nil
+            }
+            Button("Cancel", role: .cancel) {
+                removableMediaToRemove = nil
+            }
+        } message: { item in
+            Text(
+                "Move to Trash will send \(item.path) to the Trash. Remove from VM will detach the disc and leave the file alone."
+            )
         }
     }
 
@@ -330,7 +355,8 @@ struct VMSettingsView: View {
                             .foregroundStyle(.secondary)
 
                         Button(role: .destructive) {
-                            removableMediaBinding.wrappedValue.removeAll { $0.id == item.id }
+                            removableMediaToRemove = item
+                            showingRemoveRemovableMediaAlert = true
                         } label: {
                             Image(systemName: "minus.circle.fill")
                                 .foregroundStyle(.red)
