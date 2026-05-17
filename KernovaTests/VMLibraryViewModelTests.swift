@@ -2148,8 +2148,11 @@ struct VMLibraryViewModelTests {
         // error alert — there's nothing actionable for the user.
         let (viewModel, _, _, _, _) = makeViewModel()
         let instance = makeInstance()
+        let ghostPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("kernova-ghost-\(UUID().uuidString).img")
+            .path(percentEncoded: false)
         let ghost = StorageDisk(
-            path: "/var/folders/__kernova_nonexistent/\(UUID().uuidString).img",
+            path: ghostPath,
             readOnly: false, label: "Ghost", isInternal: false, kind: .virtio
         )
         instance.configuration.storageDisks = [ghost]
@@ -2207,9 +2210,10 @@ struct VMLibraryViewModelTests {
     func removeRemovableMediaMissingFileSwallows() {
         let (viewModel, _, _, _, _) = makeViewModel()
         let instance = makeInstance()
-        let item = RemovableMediaItem(
-            path: "/var/folders/__kernova_nonexistent/\(UUID().uuidString).iso",
-            readOnly: true)
+        let ghostPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("kernova-ghost-\(UUID().uuidString).iso")
+            .path(percentEncoded: false)
+        let item = RemovableMediaItem(path: ghostPath, readOnly: true)
         instance.configuration.removableMedia = [item]
         viewModel.instances.append(instance)
 
