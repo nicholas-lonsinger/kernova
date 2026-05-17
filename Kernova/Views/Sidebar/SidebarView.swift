@@ -67,8 +67,10 @@ struct SidebarView: View {
         }
     }
 
-    /// Label for the Start context-menu item. Mirrors the toolbar play button
-    /// so the user knows whether clicking will install vs. boot.
+    /// Label for the Start context-menu item.
+    ///
+    /// Mirrors the toolbar play button so the user knows whether clicking will
+    /// install vs. boot.
     private func startButtonLabel(for instance: VMInstance) -> String {
         #if arch(arm64)
         guard instance.configuration.installContext != nil else { return "Start" }

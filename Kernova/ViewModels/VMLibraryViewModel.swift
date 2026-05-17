@@ -236,10 +236,11 @@ final class VMLibraryViewModel {
 
     #if arch(arm64)
     /// Drives the install pipeline for an `.initialBoot` (or `.error` with
-    /// `installContext`) VM and, on success, chains an auto-boot. Non-cancel
-    /// errors leave the VM in `.error` so the user sees the message; cancel
-    /// returns it to `.initialBoot` for a future retry that will resume the
-    /// download from the `.resumedata` sidecar if present.
+    /// `installContext`) VM and, on success, chains an auto-boot.
+    ///
+    /// Non-cancel errors leave the VM in `.error` so the user sees the message;
+    /// cancel returns it to `.initialBoot` for a future retry that will resume
+    /// the download from the `.resumedata` sidecar if present.
     private func installAndAutoBoot(_ instance: VMInstance) {
         guard let context = instance.configuration.installContext else {
             assertionFailure("installAndAutoBoot called without installContext")
@@ -274,10 +275,12 @@ final class VMLibraryViewModel {
         }
     }
 
-    /// Cancels an in-progress macOS install. The VM returns to `.initialBoot`
-    /// so a subsequent Start can resume (downloads pick up from the
-    /// `.resumedata` sidecar at the chosen path). Bundle is preserved. For
-    /// destructive removal, use the existing delete flow ("Move to Trash").
+    /// Cancels an in-progress macOS install.
+    ///
+    /// The VM returns to `.initialBoot` so a subsequent Start can resume
+    /// (downloads pick up from the `.resumedata` sidecar at the chosen path).
+    /// Bundle is preserved. For destructive removal, use the existing delete
+    /// flow ("Move to Trash").
     func cancelInstallation(_ instance: VMInstance) {
         Self.logger.info("Cancelling installation for '\(instance.name, privacy: .public)'")
         instance.installTask?.cancel()

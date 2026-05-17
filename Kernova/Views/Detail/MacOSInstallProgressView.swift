@@ -83,7 +83,8 @@ struct MacOSInstallProgressView: View {
         if isDownloadPhase {
             return "The download progress will be saved and resumed the next time you start the virtual machine."
         }
-        return "The installation will restart from the beginning the next time you start the virtual machine. The downloaded macOS image is cached, so you won't need to download it again."
+        return
+            "The installation will restart from the beginning the next time you start the virtual machine. The downloaded macOS image is cached, so you won't need to download it again."
     }
 
     // MARK: - Two-Step Indicator

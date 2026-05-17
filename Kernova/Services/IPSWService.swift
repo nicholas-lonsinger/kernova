@@ -117,6 +117,7 @@ struct IPSWService: Sendable {
     }
 
     /// Deletes any persisted resume-data sidecar for the given destination path.
+    ///
     /// Safe to call when no sidecar exists.
     func discardResumeData(at destinationURL: URL) {
         let sidecarURL = Self.resumeDataSidecarURL(for: destinationURL)
@@ -135,7 +136,9 @@ struct IPSWService: Sendable {
     }
 
     /// Returns the on-disk location where URLSession resume data is persisted for a given
-    /// download destination. Lives next to the final file so cleanup tracks the user's chosen path.
+    /// download destination.
+    ///
+    /// Lives next to the final file so cleanup tracks the user's chosen path.
     static func resumeDataSidecarURL(for destinationURL: URL) -> URL {
         destinationURL.appendingPathExtension("resumedata")
     }
