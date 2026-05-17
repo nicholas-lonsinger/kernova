@@ -24,7 +24,7 @@ let appPath = CommandLine.arguments[2]
 let appURL = URL(fileURLWithPath: appPath)
 
 guard FileManager.default.fileExists(atPath: appPath) else {
-    logger.error("App bundle not found: \(appPath, privacy: .public)")
+    logger.error("App bundle not found: \(appPath, privacy: .private)")
     exit(1)
 }
 
@@ -79,7 +79,7 @@ func relaunchApp() async {
 
 // MARK: - PID monitoring
 
-logger.notice("Watching PID \(pid, privacy: .public) for exit, will relaunch \(appPath, privacy: .public)")
+logger.notice("Watching PID \(pid, privacy: .public) for exit, will relaunch \(appPath, privacy: .private)")
 
 // Set up the watcher FIRST to close the TOCTOU race window. If the app dies
 // during setup, the source catches it. If it was already dead, the subsequent

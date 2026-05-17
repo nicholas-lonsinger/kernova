@@ -967,11 +967,11 @@ final class VMLibraryViewModel {
             )
         } catch let error as CocoaError where error.code == .fileNoSuchFile || error.code == .fileReadNoSuchFile {
             Self.logger.notice(
-                "Disk file already gone for '\(disk.label, privacy: .public)' at '\(diskURL.path, privacy: .public)'; skipping trash"
+                "Disk file already gone for '\(disk.label, privacy: .public)' (\(diskURL.lastPathComponent, privacy: .public)); skipping trash"
             )
         } catch {
             Self.logger.warning(
-                "Failed to trash disk '\(disk.label, privacy: .public)' at '\(diskURL.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                "Failed to trash disk '\(disk.label, privacy: .public)' (\(diskURL.lastPathComponent, privacy: .public)): \(error.localizedDescription, privacy: .public)"
             )
             presentError(error)
         }
@@ -1008,11 +1008,11 @@ final class VMLibraryViewModel {
             )
         } catch let error as CocoaError where error.code == .fileNoSuchFile || error.code == .fileReadNoSuchFile {
             Self.logger.notice(
-                "Removable media file already gone at '\(item.path, privacy: .public)' for VM '\(instance.name, privacy: .public)'; skipping trash"
+                "Removable media file already gone for '\(item.label, privacy: .public)' (\(url.lastPathComponent, privacy: .public)) on VM '\(instance.name, privacy: .public)'; skipping trash"
             )
         } catch {
             Self.logger.warning(
-                "Failed to trash removable media '\(item.label, privacy: .public)' at '\(item.path, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                "Failed to trash removable media '\(item.label, privacy: .public)' (\(url.lastPathComponent, privacy: .public)): \(error.localizedDescription, privacy: .public)"
             )
             presentError(error)
         }

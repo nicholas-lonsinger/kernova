@@ -692,23 +692,23 @@ struct ConfigurationBuilder: Sendable {
         } catch {
             switch error {
             case .notFound:
-                logger.error("\(context, privacy: .public) not found at '\(path, privacy: .public)'")
+                logger.error("\(context, privacy: .public) not found at '\(path, privacy: .private)'")
                 throw notFound
             case .unexpectedType:
-                logger.error("\(context, privacy: .public) path is a directory: '\(path, privacy: .public)'")
+                logger.error("\(context, privacy: .public) path is a directory: '\(path, privacy: .private)'")
                 throw isDirectory
             case .notWritable:
-                logger.error("\(context, privacy: .public) is not writable: '\(path, privacy: .public)'")
+                logger.error("\(context, privacy: .public) is not writable: '\(path, privacy: .private)'")
                 guard let notWritableError = notWritable else {
                     logger.fault(
-                        "resolveFile called with requireWritable but no notWritable error for '\(path, privacy: .public)'"
+                        "resolveFile called with requireWritable but no notWritable error for '\(path, privacy: .private)'"
                     )
                     assertionFailure("'notWritable' error must be provided when 'requireWritable' is true")
                     throw notFound
                 }
                 throw notWritableError
             case .notReadable:
-                logger.fault("Unexpected .notReadable from resolveFile for '\(path, privacy: .public)'")
+                logger.fault("Unexpected .notReadable from resolveFile for '\(path, privacy: .private)'")
                 assertionFailure("resolveFile should never throw .notReadable")
                 throw notFound
             }
@@ -734,26 +734,26 @@ struct ConfigurationBuilder: Sendable {
         } catch {
             switch error {
             case .notFound:
-                logger.error("\(context, privacy: .public) not found at '\(path, privacy: .public)'")
+                logger.error("\(context, privacy: .public) not found at '\(path, privacy: .private)'")
                 throw notFound
             case .unexpectedType:
-                logger.error("\(context, privacy: .public) path is not a directory: '\(path, privacy: .public)'")
+                logger.error("\(context, privacy: .public) path is not a directory: '\(path, privacy: .private)'")
                 throw notADirectory
             case .notReadable:
-                logger.error("\(context, privacy: .public) is not readable: '\(path, privacy: .public)'")
+                logger.error("\(context, privacy: .public) is not readable: '\(path, privacy: .private)'")
                 guard let notReadableError = notReadable else {
                     logger.fault(
-                        "resolveDirectory called with requireReadable but no notReadable error for '\(path, privacy: .public)'"
+                        "resolveDirectory called with requireReadable but no notReadable error for '\(path, privacy: .private)'"
                     )
                     assertionFailure("'notReadable' error must be provided when 'requireReadable' is true")
                     throw notFound
                 }
                 throw notReadableError
             case .notWritable:
-                logger.error("\(context, privacy: .public) is not writable: '\(path, privacy: .public)'")
+                logger.error("\(context, privacy: .public) is not writable: '\(path, privacy: .private)'")
                 guard let notWritableError = notWritable else {
                     logger.fault(
-                        "resolveDirectory called with requireWritable but no notWritable error for '\(path, privacy: .public)'"
+                        "resolveDirectory called with requireWritable but no notWritable error for '\(path, privacy: .private)'"
                     )
                     assertionFailure("'notWritable' error must be provided when 'requireWritable' is true")
                     throw notFound
