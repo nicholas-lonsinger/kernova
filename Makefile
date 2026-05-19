@@ -73,7 +73,7 @@ install-hooks:
 check-hooks:
 	@hp=$$(git config --get core.hooksPath 2>/dev/null || true); \
 	if [ "$$hp" != ".githooks" ]; then \
-		printf 'Note: pre-push lint hook is not installed. Run `make install-hooks` (one-time per clone) to catch swift-format issues locally.\n'; \
+		printf 'Note: pre-push lint hook is not installed. Run `make install-hooks` (one-time per clone) to catch swift-format issues locally.\n' >&2; \
 	fi
 
 clean:
