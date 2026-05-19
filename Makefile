@@ -20,7 +20,7 @@ SWIFT_FORMAT      := xcrun swift-format
 SWIFT_SOURCE_DIRS := Kernova KernovaTests KernovaGuestAgent KernovaGuestAgentTests KernovaProtocol KernovaRelaunchHelper
 
 .DEFAULT_GOAL := help
-.PHONY: help build test test-suite test-package clean format lint
+.PHONY: help build test test-suite test-package clean format lint install-hooks
 
 help:
 	@printf 'Kernova build targets:\n\n'
@@ -31,6 +31,7 @@ help:
 	@printf '  make test-package        Run only the KernovaProtocol SwiftPM package tests\n'
 	@printf '  make format              Rewrite Swift sources in place via swift-format\n'
 	@printf '  make lint                Check Swift sources with swift-format (--strict)\n'
+	@printf '  make install-hooks       Point git at .githooks/ (runs lint on pre-push)\n'
 	@printf '  make clean               Remove the DerivedData directory\n'
 
 build:
@@ -57,6 +58,13 @@ format:
 
 lint:
 	$(SWIFT_FORMAT) lint --strict --recursive $(SWIFT_SOURCE_DIRS)
+
+# One-time per clone: point this repo's git at the checked-in hooks so
+# `.githooks/pre-push` runs `make lint` before each push. Per-repo config
+# (no `--global`); bypass an individual push with `git push --no-verify`.
+install-hooks:
+	git config core.hooksPath .githooks
+	@echo 'Hooks installed. Pre-push will now run `make lint`.'
 
 clean:
 	rm -rf $(DERIVED_DATA)
