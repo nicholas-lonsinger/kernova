@@ -31,6 +31,19 @@ final class VMLibraryViewModel {
     }
     var showCreationWizard = false
     var showDeleteConfirmation = false
+    /// Drives the richer delete sheet for VMs with external attachments.
+    ///
+    /// Appears in place of `showDeleteConfirmation`'s alert when the
+    /// VM-to-delete references external files (storage disks or removable
+    /// media) that the user may also want to send to Trash. Mutually
+    /// exclusive with `showDeleteConfirmation`; `confirmDelete(_:)` picks
+    /// exactly one.
+    var showDeleteSheet = false
+
+    /// Bound to the "Also move these files to Trash" toggle on the delete sheet.
+    ///
+    /// Reset to `false` whenever the sheet is presented or dismissed.
+    var trashExternalsOnDelete = false
     var showError = false
     var errorMessage: String?
 
@@ -434,13 +447,38 @@ final class VMLibraryViewModel {
 
     // MARK: - Delete
 
+    /// Begins the delete-VM flow.
+    ///
+    /// Routes to the richer sheet when the VM references external storage
+    /// or removable media (so the user can opt to trash those files too);
+    /// falls back to the simple alert otherwise.
     func confirmDelete(_ instance: VMInstance) {
         instanceToDelete = instance
-        showDeleteConfirmation = true
+        trashExternalsOnDelete = false
+        if externalAttachments(for: instance).isEmpty {
+            showDeleteConfirmation = true
+        } else {
+            showDeleteSheet = true
+        }
     }
 
-    func deleteConfirmed(_ instance: VMInstance) {
+    /// Trashes the VM bundle and (optionally) any external files it
+    /// references.
+    ///
+    /// Bundle-internal disks ride along inside the trashed bundle. External
+    /// storage disks and removable media live outside the bundle, so when
+    /// `trashExternals` is `true` each one is moved to Trash via a
+    /// detached Task (mirroring `removeStorageDisk` / `removeRemovableMedia`
+    /// — see those for the rationale on `Task.detached`). Externals are
+    /// trashed *after* the bundle so the VM disappears from the library
+    /// even if a downstream trash op fails, and the returned Tasks let
+    /// tests await completion.
+    @discardableResult
+    func deleteConfirmed(_ instance: VMInstance, trashExternals: Bool = false) -> [Task<Void, Never>] {
         instance.tearDownSession()
+        let externals: [(label: String, url: URL)] =
+            trashExternals ? externalURLs(for: instance) : []
+        var tasks: [Task<Void, Never>] = []
         do {
             try storageService.deleteVMBundle(at: instance.bundleURL)
             lifecycle.clearActiveOperation(for: instance.id)
@@ -451,6 +489,10 @@ final class VMLibraryViewModel {
                 selectedID = instances.first?.id
             }
             Self.logger.notice("Moved VM '\(instance.name, privacy: .public)' to Trash")
+            let vmName = instance.name
+            for external in externals {
+                tasks.append(trashExternalAttachment(at: external.url, label: external.label, vmName: vmName))
+            }
         } catch {
             Self.logger.error(
                 "Failed to delete VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
@@ -459,6 +501,100 @@ final class VMLibraryViewModel {
         }
         instanceToDelete = nil
         showDeleteConfirmation = false
+        showDeleteSheet = false
+        trashExternalsOnDelete = false
+        return tasks
+    }
+
+    /// Returns the external (non-bundle) files referenced by `instance`.
+    ///
+    /// Each attachment is annotated with the names of any other VMs in
+    /// the library that reference the same path. The shared-with list
+    /// lets the delete confirmation warn before trashing a file that
+    /// another VM still depends on (e.g., a shared installer ISO).
+    func externalAttachments(for instance: VMInstance) -> [ExternalAttachment] {
+        let otherInstances = instances.filter { $0.id != instance.id }
+        func vmsSharing(path: String) -> [String] {
+            otherInstances.compactMap { other -> String? in
+                let externalDiskPaths = (other.configuration.storageDisks ?? [])
+                    .filter { !$0.isInternal }
+                    .map(\.path)
+                let mediaPaths = (other.configuration.removableMedia ?? []).map(\.path)
+                if externalDiskPaths.contains(path) || mediaPaths.contains(path) {
+                    return other.name
+                }
+                return nil
+            }
+        }
+
+        var attachments: [ExternalAttachment] = []
+        for disk in instance.configuration.storageDisks ?? [] where !disk.isInternal {
+            attachments.append(
+                ExternalAttachment(
+                    id: disk.id,
+                    kind: .storageDisk,
+                    label: disk.label,
+                    path: disk.path,
+                    sharedWithVMNames: vmsSharing(path: disk.path)
+                )
+            )
+        }
+        for item in instance.configuration.removableMedia ?? [] {
+            attachments.append(
+                ExternalAttachment(
+                    id: item.id,
+                    kind: .removableMedia,
+                    label: item.label,
+                    path: item.path,
+                    sharedWithVMNames: vmsSharing(path: item.path)
+                )
+            )
+        }
+        return attachments
+    }
+
+    /// Flat list of external (label, URL) pairs to feed the trash helper —
+    /// mirrors `externalAttachments(for:)` but drops the sharing metadata.
+    private func externalURLs(for instance: VMInstance) -> [(label: String, url: URL)] {
+        var result: [(label: String, url: URL)] = []
+        for disk in instance.configuration.storageDisks ?? [] where !disk.isInternal {
+            result.append((label: disk.label, url: URL(fileURLWithPath: disk.path)))
+        }
+        for item in instance.configuration.removableMedia ?? [] {
+            result.append((label: item.label, url: URL(fileURLWithPath: item.path)))
+        }
+        return result
+    }
+
+    /// Detached trash for a single external attachment.
+    ///
+    /// Mirrors the error policy of `removeStorageDisk` / `removeRemovableMedia`:
+    /// missing files are swallowed at `.notice` (the source may have been
+    /// moved or deleted out-of-band), other failures log `.warning` and
+    /// surface a single error alert on the MainActor.
+    private func trashExternalAttachment(at url: URL, label: String, vmName: String) -> Task<Void, Never> {
+        Task.detached(priority: .userInitiated) { [weak self] in
+            do {
+                try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+                Self.logger.notice(
+                    "Trashed external attachment '\(label, privacy: .public)' for deleted VM '\(vmName, privacy: .public)'"
+                )
+            } catch let error as CocoaError where error.code == .fileNoSuchFile || error.code == .fileReadNoSuchFile {
+                Self.logger.notice(
+                    "External attachment already gone for '\(label, privacy: .public)' (\(url.lastPathComponent, privacy: .public)) on deleted VM '\(vmName, privacy: .public)'; skipping trash"
+                )
+            } catch {
+                let message = error.localizedDescription
+                Self.logger.warning(
+                    "Failed to trash external attachment '\(label, privacy: .public)' (\(url.lastPathComponent, privacy: .public)) on deleted VM '\(vmName, privacy: .public)': \(message, privacy: .public)"
+                )
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    self.errorMessage = message
+                    self.showError = true
+                }
+            }
+        }
     }
 
     // MARK: - Import

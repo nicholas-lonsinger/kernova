@@ -138,6 +138,23 @@ private struct LifecycleAlerts: ViewModifier {
                     "\"\(vm.name)\" will be moved to the Trash. You can restore it using Finder's Put Back command. Empty the Trash to permanently delete the VM and reclaim disk space."
                 )
             }
+            .sheet(isPresented: $viewModel.showDeleteSheet) {
+                if let vm = viewModel.instanceToDelete {
+                    DeleteVMSheet(
+                        instance: vm,
+                        externals: viewModel.externalAttachments(for: vm),
+                        trashExternals: $viewModel.trashExternalsOnDelete,
+                        onCancel: {
+                            viewModel.showDeleteSheet = false
+                            viewModel.instanceToDelete = nil
+                            viewModel.trashExternalsOnDelete = false
+                        },
+                        onConfirm: {
+                            viewModel.deleteConfirmed(vm, trashExternals: viewModel.trashExternalsOnDelete)
+                        }
+                    )
+                }
+            }
             .alert(
                 viewModel.preparingInstanceToCancel?.preparingState?.operation.cancelAlertTitle ?? "",
                 isPresented: $viewModel.showCancelPreparingConfirmation,

@@ -113,3 +113,27 @@ struct RemovableMediaItem: Codable, Sendable, Equatable, Identifiable {
         self.label = label ?? URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
     }
 }
+
+/// A storage disk or removable media item that lives *outside* the VM
+/// bundle and is therefore not trashed automatically when the bundle is
+/// trashed.
+///
+/// Surfaces in the delete confirmation sheet so the user can opt to send
+/// these files to Trash alongside the VM. `sharedWithVMNames` is non-empty
+/// when one or more other VMs in the library reference the same path —
+/// the UI uses that to warn before the user opts in to trashing a shared
+/// file (e.g., a Windows installer ISO referenced by several VMs).
+struct ExternalAttachment: Identifiable, Sendable, Equatable {
+    enum Kind: Sendable, Equatable {
+        case storageDisk
+        case removableMedia
+    }
+
+    let id: UUID
+    let kind: Kind
+    let label: String
+    let path: String
+    let sharedWithVMNames: [String]
+
+    var isShared: Bool { !sharedWithVMNames.isEmpty }
+}
