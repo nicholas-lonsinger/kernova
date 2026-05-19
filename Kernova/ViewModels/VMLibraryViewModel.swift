@@ -481,6 +481,7 @@ final class VMLibraryViewModel {
         var tasks: [Task<Void, Never>] = []
         do {
             try storageService.deleteVMBundle(at: instance.bundleURL)
+            cleanupInstallResumeData(for: instance)
             lifecycle.clearActiveOperation(for: instance.id)
             sleepPausedInstanceIDs.remove(instance.id)
             instances.removeAll { $0.id == instance.id }
@@ -551,6 +552,28 @@ final class VMLibraryViewModel {
             )
         }
         return attachments
+    }
+
+    /// Discards any persisted IPSW resume-data sidecar for a VM that's being deleted.
+    ///
+    /// The `.resumedata` sidecar at `<downloadDestinationPath>.resumedata`
+    /// is purely app-internal state — meaningless once the VM is gone — so
+    /// it's cleaned up unconditionally on delete (not gated on the
+    /// "trash externals" toggle). The IPSW file itself, if present, lives
+    /// at a user-known path and is intentionally left alone. No-op for
+    /// VMs without a `.downloadLatest` install context, and a no-op on
+    /// non-arm64 builds where IPSW machinery is compiled out.
+    private func cleanupInstallResumeData(for instance: VMInstance) {
+        #if arch(arm64)
+        guard let context = instance.configuration.installContext,
+            context.source == .downloadLatest,
+            let destinationURL = context.downloadDestinationURL
+        else { return }
+        lifecycle.ipswService.discardResumeData(at: destinationURL)
+        Self.logger.notice(
+            "Discarded install resume-data sidecar for deleted VM '\(instance.name, privacy: .public)'"
+        )
+        #endif
     }
 
     /// Flat list of external (label, URL) pairs to feed the trash helper —

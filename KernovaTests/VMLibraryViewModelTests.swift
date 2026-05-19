@@ -387,6 +387,69 @@ struct VMLibraryViewModelTests {
         #expect(viewModel.trashExternalsOnDelete == false)
     }
 
+    #if arch(arm64)
+    /// Builds a `VMLibraryViewModel` wired to a caller-supplied `MockIPSWService`.
+    ///
+    /// The shared `makeViewModel` helper doesn't expose the IPSW service
+    /// in its return tuple, so this small builder avoids changing every
+    /// existing destructure just to observe resume-data cleanup.
+    private func makeViewModelWithIPSW(
+        ipswService: MockIPSWService,
+        storage: MockVMStorageService
+    ) -> VMLibraryViewModel {
+        UserDefaults.standard.removeObject(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
+        UserDefaults.standard.removeObject(forKey: VMLibraryViewModel.vmOrderKey)
+        return VMLibraryViewModel(
+            storageService: storage,
+            diskImageService: MockDiskImageService(),
+            virtualizationService: MockVirtualizationService(),
+            installService: MockMacOSInstallService(),
+            ipswService: ipswService,
+            usbDeviceService: MockUSBDeviceService()
+        )
+    }
+
+    @Test("deleteConfirmed discards the IPSW resume-data sidecar")
+    func deleteConfirmedDiscardsResumeData() {
+        let ipswService = MockIPSWService()
+        let storage = MockVMStorageService()
+        let viewModel = makeViewModelWithIPSW(ipswService: ipswService, storage: storage)
+
+        let instance = makeInstance()
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString)-RestoreImage.ipsw")
+        instance.configuration.installContext = MacOSInstallContext(
+            source: .downloadLatest,
+            downloadDestinationPath: destination.path(percentEncoded: false)
+        )
+        viewModel.instances.append(instance)
+        storage.bundles[instance.bundleURL] = instance.configuration
+
+        viewModel.deleteConfirmed(instance)
+
+        #expect(ipswService.discardResumeDataCallCount == 1)
+        #expect(
+            ipswService.lastDiscardResumeDataURL?.path(percentEncoded: false)
+                == destination.path(percentEncoded: false)
+        )
+        #expect(viewModel.instances.isEmpty)
+    }
+
+    @Test("deleteConfirmed leaves resume-data alone when VM has no install context")
+    func deleteConfirmedNoResumeDataForNonInstallVM() {
+        let ipswService = MockIPSWService()
+        let storage = MockVMStorageService()
+        let viewModel = makeViewModelWithIPSW(ipswService: ipswService, storage: storage)
+        let instance = makeInstance()
+        viewModel.instances.append(instance)
+        storage.bundles[instance.bundleURL] = instance.configuration
+
+        viewModel.deleteConfirmed(instance)
+
+        #expect(ipswService.discardResumeDataCallCount == 0)
+    }
+    #endif
+
     @Test("deleteConfirmed with trashExternals=true swallows missing-file errors")
     func deleteConfirmedSwallowsMissingExternals() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
