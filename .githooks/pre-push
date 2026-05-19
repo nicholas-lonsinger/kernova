@@ -7,11 +7,12 @@
 set -euo pipefail
 
 # Skip when nothing real is being pushed (e.g. branch deletion: local sha
-# is all zeros). Each stdin line is: <local-ref> <local-sha> <remote-ref> <remote-sha>
-zero="0000000000000000000000000000000000000000"
+# is all zeros). Each stdin line is: <local-ref> <local-sha> <remote-ref> <remote-sha>.
+# Glob match is hash-agnostic so this works for both SHA-1 (40 chars) and
+# SHA-256 (64 chars) repositories.
 has_work=0
 while read -r _local_ref local_sha _remote_ref _remote_sha; do
-    if [ "$local_sha" != "$zero" ]; then
+    if [[ "$local_sha" == *[!0]* ]]; then
         has_work=1
         break
     fi
@@ -29,6 +30,6 @@ echo "pre-push: running 'make lint' (bypass with git push --no-verify)"
 if ! make lint; then
     echo ""
     echo "pre-push: swift-format lint failed."
-    echo "          Run 'make format' to auto-fix, then re-stage and push again."
+    echo "          Run 'make format' to auto-fix, then commit the changes and push again."
     exit 1
 fi
