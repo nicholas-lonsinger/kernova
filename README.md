@@ -41,6 +41,18 @@ A macOS GUI application for creating and managing virtual machines using Apple's
 - Xcode 26 or later
 - Swift 6
 
+## Development setup
+
+After cloning, run:
+
+```bash
+make install-hooks
+```
+
+This points the repo at the checked-in `.githooks/` directory so a pre-push hook runs `make lint` locally and matches the swift-format check enforced on `main`. It's a one-time setup per clone (Git does not auto-activate checked-in hooks). Bypass an individual push with `git push --no-verify`.
+
+Other useful Makefile targets: `make build`, `make test`, `make format`, `make lint`. Run `make` with no arguments for the full list.
+
 ## Building
 
 1. Open `Kernova.xcodeproj` in Xcode 26

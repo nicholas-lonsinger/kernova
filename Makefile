@@ -20,7 +20,7 @@ SWIFT_FORMAT      := xcrun swift-format
 SWIFT_SOURCE_DIRS := Kernova KernovaTests KernovaGuestAgent KernovaGuestAgentTests KernovaProtocol KernovaRelaunchHelper
 
 .DEFAULT_GOAL := help
-.PHONY: help build test test-suite test-package clean format lint install-hooks
+.PHONY: help build test test-suite test-package clean format lint install-hooks check-hooks
 
 help:
 	@printf 'Kernova build targets:\n\n'
@@ -34,10 +34,10 @@ help:
 	@printf '  make install-hooks       Point git at .githooks/ (runs lint on pre-push)\n'
 	@printf '  make clean               Remove the DerivedData directory\n'
 
-build:
+build: check-hooks
 	xcodebuild $(XCODEBUILD_FLAGS) build
 
-test:
+test: check-hooks
 	xcodebuild $(XCODEBUILD_FLAGS) test
 
 # `xcrun` so the toolchain matches the one selected via `xcode-select`
@@ -65,6 +65,16 @@ lint:
 install-hooks:
 	git config core.hooksPath .githooks
 	@echo 'Hooks installed. Pre-push will now run `make lint`.'
+
+# Silent when the hook is wired up; otherwise a one-line nudge. Runs as a
+# prerequisite of `build` and `test` so contributors who skipped the
+# install step see the reminder on their first build instead of only when
+# CI fails on their PR.
+check-hooks:
+	@hp=$$(git config --get core.hooksPath 2>/dev/null || true); \
+	if [ "$$hp" != ".githooks" ]; then \
+		printf 'Note: pre-push lint hook is not installed. Run `make install-hooks` (one-time per clone) to catch swift-format issues locally.\n'; \
+	fi
 
 clean:
 	rm -rf $(DERIVED_DATA)
