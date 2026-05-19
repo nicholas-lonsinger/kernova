@@ -13,8 +13,13 @@ make build               # Build for macOS
 make test                # Run the full test suite (all three test targets via Kernova.xctestplan)
 make test-suite SUITE=KernovaTests/VMConfigurationTests   # Run a single suite
 make test-package        # Run only the KernovaProtocol SwiftPM package tests
+make format              # Rewrite Swift sources in place via swift-format
+make lint                # Check Swift sources with swift-format --strict
+make install-hooks       # One-time: enable .githooks/pre-push (runs `make lint` before push)
 make clean               # Remove DerivedData/
 ```
+
+After cloning, run `make install-hooks` once. This sets `core.hooksPath` to the checked-in `.githooks/` directory so a pre-push hook runs `make lint` locally and matches the swift-format check in `.github/workflows/lint.yml`. Bypass an individual push with `git push --no-verify`.
 
 `make test` is the canonical `xcodebuild` invocation:
 
