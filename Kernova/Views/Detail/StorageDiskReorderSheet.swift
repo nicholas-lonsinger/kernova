@@ -12,6 +12,7 @@ import SwiftUI
 struct StorageDiskReorderSheet: View {
     @Binding var disks: [StorageDisk]
     let instance: VMInstance
+    let fileMonitor: AttachmentFileMonitor
 
     @Environment(\.dismiss) private var dismiss
 
@@ -59,14 +60,17 @@ struct StorageDiskReorderSheet: View {
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
 
-            Image(systemName: diskIconSystemName(for: disk))
-                .foregroundStyle(.secondary)
+            let isMissing = !disk.isInternal && !fileMonitor.exists(disk.path)
+            AttachmentIcon(
+                systemName: diskIconSystemName(for: disk),
+                missingTooltip: isMissing ? "File not found at this path" : nil
+            )
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(disk.label)
                 Text(diskSubtitle(for: disk, in: instance))
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(isMissing ? .red : .secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }

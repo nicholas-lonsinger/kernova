@@ -44,6 +44,7 @@ Kernova/
 │   ├── VsockClipboardService.swift    # macOS clipboard: vsock-based offer/request/data state machine (@MainActor)
 │   ├── VsockControlService.swift      # macOS always-on control channel: Hello + bidirectional heartbeat, owns AgentStatus (@MainActor, @Observable)
 │   ├── KernovaGuestAgentInfo.swift    # Bundled guest agent version + installer DMG URL accessors
+│   ├── AttachmentFileMonitor.swift    # Reactive existence tracker for external attachments — DispatchSource on each parent dir + NSWorkspace mount notifications (@MainActor, @Observable)
 │   └── Protocols/                      # Service protocol abstractions for DI and testing
 │       ├── VirtualizationProviding.swift
 │       ├── VMStorageProviding.swift
@@ -67,6 +68,7 @@ Kernova/
 │   │   ├── VMSettingsView.swift        # VM configuration editor; mostly read-only when the VM is running, but live-editable fields (clipboard, guest agent, removable media) stay interactive
 │   │   ├── StorageDiskReorderSheet.swift # Modal sheet presenting a native List for reordering storage disks (used because `.onMove` only works in `List`, not in `Form`)
 │   │   ├── StorageDiskSubtitle.swift   # Shared `diskSubtitle(for:in:)` free function used by both VMSettingsView and StorageDiskReorderSheet
+│   │   ├── AttachmentIcon.swift        # Leading-icon helper that swaps SF Symbol for a red warning + tooltip when the attachment's file is missing
 │   │   ├── DeleteVMSheet.swift         # Confirmation sheet for deleting a VM that references external storage / removable media; lists each attachment with a "Shared with VM(s)" warning, exposes the "Also move these files to Trash" toggle
 │   │   └── MacOSInstallProgressView.swift # Two-phase install progress (download + install)
 │   ├── Console/

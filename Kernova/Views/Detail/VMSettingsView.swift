@@ -24,7 +24,27 @@ struct VMSettingsView: View {
     @State private var showingRemoveDiskAlert = false
     @State private var removableMediaToRemove: RemovableMediaItem?
     @State private var showingRemoveRemovableMediaAlert = false
+    @State private var fileMonitor = AttachmentFileMonitor()
     @FocusState private var isNameFieldFocused: Bool
+
+    /// Absolute paths of every user-supplied attachment (external storage disks + removable media).
+    ///
+    /// Bundle-relative internal disks are excluded — they live inside the
+    /// VM bundle and can't be moved out from under the app.
+    private var externalAttachmentPaths: Set<String> {
+        var paths: Set<String> = []
+        if let disks = instance.configuration.storageDisks {
+            for disk in disks where !disk.isInternal {
+                paths.insert(disk.path)
+            }
+        }
+        if let media = instance.configuration.removableMedia {
+            for item in media {
+                paths.insert(item.path)
+            }
+        }
+        return paths
+    }
 
     private var currentMicPermission: AVAuthorizationStatus {
         AVCaptureDevice.authorizationStatus(for: .audio)
@@ -188,7 +208,15 @@ struct VMSettingsView: View {
                 "Move to Trash will send \(item.path) to the Trash. Remove from VM will detach the disc and leave the file alone."
             )
         }
+        .onAppear {
+            fileMonitor.setPaths(externalAttachmentPaths)
+        }
+        .onChange(of: externalAttachmentPaths) { _, newValue in
+            fileMonitor.setPaths(newValue)
+        }
     }
+
+    private let missingFileTooltip = "File not found at this path"
 
     @ViewBuilder
     private var readOnlyBanner: some View {
@@ -332,15 +360,18 @@ struct VMSettingsView: View {
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(removableMediaBinding) { $item in
+                    let isMissing = !fileMonitor.exists(item.path)
                     HStack {
-                        Image(systemName: "opticaldisc")
-                            .foregroundStyle(.secondary)
+                        AttachmentIcon(
+                            systemName: "opticaldisc",
+                            missingTooltip: isMissing ? missingFileTooltip : nil
+                        )
 
                         VStack(alignment: .leading, spacing: 2) {
                             Text(item.label)
                             Text(item.path)
                                 .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(isMissing ? .red : .secondary)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                         }
@@ -480,22 +511,29 @@ struct VMSettingsView: View {
             }
             .disabled(isReadOnly)
             .sheet(isPresented: $showingReorderDisksSheet) {
-                StorageDiskReorderSheet(disks: storageDiskBinding, instance: instance)
+                StorageDiskReorderSheet(
+                    disks: storageDiskBinding,
+                    instance: instance,
+                    fileMonitor: fileMonitor
+                )
             }
         }
     }
 
     @ViewBuilder
     private func storageDiskRow(disk: Binding<StorageDisk>) -> some View {
+        let isMissing = !disk.wrappedValue.isInternal && !fileMonitor.exists(disk.wrappedValue.path)
         HStack {
-            Image(systemName: diskIconSystemName(for: disk.wrappedValue))
-                .foregroundStyle(.secondary)
+            AttachmentIcon(
+                systemName: diskIconSystemName(for: disk.wrappedValue),
+                missingTooltip: isMissing ? missingFileTooltip : nil
+            )
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(disk.wrappedValue.label)
                 Text(diskSubtitle(for: disk.wrappedValue, in: instance))
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(isMissing ? .red : .secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
