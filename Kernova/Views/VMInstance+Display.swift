@@ -35,14 +35,9 @@ extension VMInstance {
             context.source == .downloadLatest,
             let destinationURL = context.downloadDestinationURL
         else { return false }
-        let fm = FileManager.default
-        let bundleURL = IPSWService.resumeBundleURL(for: destinationURL)
-        var isDir: ObjCBool = false
-        let bundleIsDirectory =
-            fm.fileExists(atPath: bundleURL.path(percentEncoded: false), isDirectory: &isDir)
-            && isDir.boolValue
-        return bundleIsDirectory
-            && !fm.fileExists(atPath: destinationURL.path(percentEncoded: false))
+        let bundle = IPSWBundle(url: IPSWService.resumeBundleURL(for: destinationURL))
+        return bundle.exists
+            && !FileManager.default.fileExists(atPath: destinationURL.path(percentEncoded: false))
         #else
         return false
         #endif

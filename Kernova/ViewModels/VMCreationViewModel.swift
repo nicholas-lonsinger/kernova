@@ -231,10 +231,7 @@ final class VMCreationViewModel {
             !ipswDownloadPathFileExists
         else { return false }
         let bundleURL = IPSWService.resumeBundleURL(for: URL(fileURLWithPath: path))
-        var isDir: ObjCBool = false
-        return FileManager.default.fileExists(
-            atPath: bundleURL.path(percentEncoded: false), isDirectory: &isDir)
-            && isDir.boolValue
+        return IPSWBundle(url: bundleURL).exists
         #else
         return false
         #endif

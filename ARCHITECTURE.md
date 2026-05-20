@@ -35,7 +35,7 @@ Kernova/
 │   ├── VMStorageService.swift          # CRUD for VM bundles + cloning (Sendable struct)
 │   ├── DiskImageService.swift          # Creates ASIF disk images from bundled templates (Sendable struct)
 │   ├── MacOSInstallService.swift       # Drives macOS guest install via VZMacOSInstaller (@MainActor)
-│   ├── IPSWService.swift               # Fetches/downloads macOS restore images (Sendable struct)
+│   ├── IPSWService.swift               # Fetches/downloads macOS restore images via streamed Range/If-Range into a .kernovadownload bundle (Sendable final class)
 │   ├── SystemSleepWatcher.swift        # Observes system sleep/wake, triggers VM pause/resume
 │   ├── SpiceAgentProtocol.swift       # SPICE agent wire format: VDI chunks, message headers, clipboard types
 │   ├── AgentStatus.swift              # Sidebar/clipboard-window install/version/liveness enum (.waiting, .current, .outdated, .unresponsive, .expectedMissing)
@@ -217,7 +217,7 @@ Services are split by concurrency requirements:
 - **`Sendable` struct services** (no mutable state, safe to call from anywhere):
   - `VMStorageService` — creates/deletes/lists VM bundle directories at `~/Library/Application Support/Kernova/VMs/` and handles cloning (deep copy with new UUID)
   - `DiskImageService` — creates ASIF disk images by decompressing bundled lzfse-compressed templates (sandbox-safe, no subprocess)
-  - `IPSWService` — fetches available macOS restore images from Apple's catalog and downloads IPSW files
+  - `IPSWService` (`final class` for `URLSession` lifecycle) — fetches available macOS restore images from Apple's catalog and downloads IPSW files directly into a Finder-visible `.kernovadownload` bundle (`Info.plist` + `data` at the bundle root). Uses `URLSession.bytes(for:)` with manual HTTP `Range` / `If-Range` against the IPSW CDN for resume; the data file's on-disk size is the resume offset. On completion the `data` file is moved to the user-chosen `.ipsw` destination and the bundle is trashed. Stale bundles are auto-discarded when the stored `originalURL` differs from the caller's request, when the stored URL is non-https, or when `Info.plist` fails to decode. The `.kernovadownload` UTI conforms to `com.apple.package` so Finder shows the bundle as a single icon
 
 - **`SystemSleepWatcher`** — `@MainActor` observer class that monitors `NSWorkspace.willSleepNotification` and `NSWorkspace.didWakeNotification`. Follows the same pattern as `VMDirectoryWatcher`: callback-driven, `nonisolated(unsafe)` for observer tokens, `start()`/`deinit` lifecycle. Owned by `VMLibraryViewModel`, which uses it to auto-pause running VMs before sleep and resume them on wake.
 

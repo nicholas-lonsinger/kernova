@@ -3,7 +3,11 @@ import Virtualization
 import os
 
 /// Fetches and downloads macOS restore images (IPSWs) for macOS guest installation.
-struct IPSWService: Sendable {
+///
+/// `final class` (rather than `struct`) so the `URLSession` we allocate in `init`
+/// can be invalidated in `deinit`. Per Apple's docs, a session retains itself
+/// until `finishTasksAndInvalidate()` or `invalidateAndCancel()` is called.
+final class IPSWService: Sendable {
     private static let logger = Logger(subsystem: "com.kernova.app", category: "IPSWService")
 
     #if arch(arm64)
@@ -16,6 +20,10 @@ struct IPSWService: Sendable {
     init(sessionConfiguration: URLSessionConfiguration? = nil) {
         let configuration = sessionConfiguration ?? .default
         self.session = URLSession(configuration: configuration)
+    }
+
+    deinit {
+        session.finishTasksAndInvalidate()
     }
     #else
     init(sessionConfiguration: URLSessionConfiguration? = nil) {}
@@ -74,36 +82,26 @@ struct IPSWService: Sendable {
                 totalBytes: Int64(fileSize),
                 bytesPerSecond: 0
             )
+            // One-shot terminal callbacks use MainActor.run so the call is
+            // ordered before our return — callers (and tests) can observe the
+            // final progress synchronously after `await`. The streaming-loop
+            // version intentionally uses Task fire-and-forget to avoid
+            // back-pressuring the network read on every progress tick.
             await MainActor.run { progressHandler(completed) }
             return
         }
 
         // Resume metadata (if any) drives `Range` / `If-Range` header construction.
-        // A bundle that fails to load metadata is treated as corrupt — trashed so
-        // the request below falls through to the fresh-download branch.
-        let resumeMetadata: IPSWDownloadMetadata?
-        if bundle.exists {
-            do {
-                resumeMetadata = try bundle.loadMetadata()
-                Self.logger.notice(
-                    "Resuming prior IPSW download from bundle at '\(bundleURL.lastPathComponent, privacy: .public)' (\(bundle.partialByteCount, privacy: .public) bytes on disk)"
-                )
-            } catch {
-                Self.logger.warning(
-                    "Bundle at '\(bundleURL.lastPathComponent, privacy: .public)' is corrupt — restarting download: \(error.localizedDescription, privacy: .public)"
-                )
-                try? FileManager.default.removeItem(at: bundleURL)
-                resumeMetadata = nil
-            }
-        } else {
-            resumeMetadata = nil
-        }
+        // Helper handles three rejection cases (corrupt plist, URL mismatch,
+        // non-https stored URL) by discarding the bundle and falling through to
+        // a fresh download.
+        let resumeMetadata = Self.loadResumeMetadata(
+            bundleURL: bundleURL, bundle: bundle, remoteURL: remoteURL)
 
         let resumeOffset = resumeMetadata != nil ? bundle.partialByteCount : 0
-        let sourceURL = resumeMetadata?.originalURL ?? remoteURL
 
         let (responseBytes, response) = try await performGET(
-            url: sourceURL,
+            url: remoteURL,
             resumeOffset: resumeMetadata != nil ? resumeOffset : nil,
             ifRangeETag: resumeMetadata?.etag,
             ifRangeLastModified: resumeMetadata?.lastModified
@@ -114,8 +112,7 @@ struct IPSWService: Sendable {
             // Fresh start (either initial download, or remote file changed during resume
             // and the server ignored our If-Range and sent the whole file).
             let metadata = IPSWDownloadMetadata(
-                originalURL: sourceURL,
-                expectedBytes: response.expectedContentLength,
+                originalURL: remoteURL,
                 etag: response.value(forHTTPHeaderField: "ETag"),
                 lastModified: response.value(forHTTPHeaderField: "Last-Modified"),
                 createdAt: Date()
@@ -125,30 +122,32 @@ struct IPSWService: Sendable {
                 from: responseBytes,
                 into: bundle,
                 startingAt: 0,
-                expectedTotal: metadata.expectedBytes,
+                expectedTotal: response.expectedContentLength,
                 progressHandler: progressHandler
             )
 
         case 206:
-            // Partial Content — server honored our Range. Validate Content-Range.
-            guard let metadata = resumeMetadata else {
+            // Partial Content — server honored our Range. The response's
+            // Content-Range header is the authoritative source for the file's
+            // total size (we no longer cache it in metadata).
+            guard resumeMetadata != nil else {
                 // Server sent 206 without us asking; treat as a server error.
                 Self.logger.error("Server returned 206 Partial Content without a Range request")
                 throw IPSWError.downloadFailed(URLError(.badServerResponse))
             }
-            if let header = response.value(forHTTPHeaderField: "Content-Range"),
-                let parsed = Self.parseContentRange(header),
-                parsed.start != resumeOffset
-            {
+            let parsedRange = response.value(forHTTPHeaderField: "Content-Range")
+                .flatMap(Self.parseContentRange)
+            if let parsed = parsedRange, parsed.start != resumeOffset {
                 Self.logger.warning(
                     "Content-Range start \(parsed.start, privacy: .public) ≠ requested offset \(resumeOffset, privacy: .public); trusting server"
                 )
             }
+            let expectedTotal = parsedRange?.total ?? response.expectedContentLength
             try await streamBytes(
                 from: responseBytes,
                 into: bundle,
                 startingAt: resumeOffset,
-                expectedTotal: metadata.expectedBytes,
+                expectedTotal: expectedTotal,
                 progressHandler: progressHandler
             )
 
@@ -172,13 +171,12 @@ struct IPSWService: Sendable {
             Self.logger.warning("416 with no usable total or size mismatch — truncating and restarting")
             try bundle.truncateData()
             let (freshBytes, freshResponse) = try await performGET(
-                url: sourceURL, resumeOffset: nil, ifRangeETag: nil, ifRangeLastModified: nil)
+                url: remoteURL, resumeOffset: nil, ifRangeETag: nil, ifRangeLastModified: nil)
             guard freshResponse.statusCode == 200 else {
                 throw IPSWError.downloadFailed(URLError(.badServerResponse))
             }
             let metadata = IPSWDownloadMetadata(
-                originalURL: sourceURL,
-                expectedBytes: freshResponse.expectedContentLength,
+                originalURL: remoteURL,
                 etag: freshResponse.value(forHTTPHeaderField: "ETag"),
                 lastModified: freshResponse.value(forHTTPHeaderField: "Last-Modified"),
                 createdAt: Date()
@@ -188,7 +186,7 @@ struct IPSWService: Sendable {
                 from: freshBytes,
                 into: bundle,
                 startingAt: 0,
-                expectedTotal: metadata.expectedBytes,
+                expectedTotal: freshResponse.expectedContentLength,
                 progressHandler: progressHandler
             )
 
@@ -200,14 +198,63 @@ struct IPSWService: Sendable {
         // Successful completion — move bytes to the user's chosen path and trash the bundle.
         try bundle.finalize(to: destinationURL)
 
-        let metadata = (try? IPSWDownloadMetadata.from(response: response, fallbackURL: sourceURL))
-        let expected = metadata?.expectedBytes ?? response.expectedContentLength
+        let finalSize = response.expectedContentLength
         let finalProgress = DownloadProgress(
-            bytesWritten: expected, totalBytes: expected, bytesPerSecond: 0)
+            bytesWritten: finalSize, totalBytes: finalSize, bytesPerSecond: 0)
         await MainActor.run { progressHandler(finalProgress) }
         Self.logger.info(
             "Restore image downloaded to \(destinationURL.lastPathComponent, privacy: .public)"
         )
+    }
+
+    /// Loads bundle resume metadata and decides whether the bundle is usable.
+    ///
+    /// Discards (trashes via `removeItem` — the user has not implicitly
+    /// authorized trashing here, only on explicit VM-delete via
+    /// `discardResumeData`) and returns `nil` when:
+    /// - the bundle directory exists but `Info.plist` can't be decoded;
+    /// - the stored `originalURL` differs from the caller's `remoteURL`
+    ///   (e.g. Apple shipped a new macOS build between attempts);
+    /// - the stored `originalURL` has a non-https scheme (defends against a
+    ///   tampered plist redirecting resume to `file://` or similar).
+    private static func loadResumeMetadata(
+        bundleURL: URL,
+        bundle: IPSWBundle,
+        remoteURL: URL
+    ) -> IPSWDownloadMetadata? {
+        guard bundle.exists else { return nil }
+
+        let metadata: IPSWDownloadMetadata
+        do {
+            metadata = try bundle.loadMetadata()
+        } catch {
+            Self.logger.warning(
+                "Bundle at '\(bundleURL.lastPathComponent, privacy: .public)' is corrupt — restarting download: \(error.localizedDescription, privacy: .public)"
+            )
+            try? FileManager.default.removeItem(at: bundleURL)
+            return nil
+        }
+
+        if metadata.originalURL != remoteURL {
+            Self.logger.notice(
+                "Bundle URL '\(metadata.originalURL, privacy: .public)' ≠ requested '\(remoteURL, privacy: .public)' — discarding stale bundle"
+            )
+            try? FileManager.default.removeItem(at: bundleURL)
+            return nil
+        }
+
+        guard metadata.originalURL.scheme == "https" else {
+            Self.logger.warning(
+                "Stored bundle URL has non-https scheme '\(metadata.originalURL.scheme ?? "<nil>", privacy: .public)' — discarding"
+            )
+            try? FileManager.default.removeItem(at: bundleURL)
+            return nil
+        }
+
+        Self.logger.notice(
+            "Resuming prior IPSW download from bundle at '\(bundleURL.lastPathComponent, privacy: .public)' (\(bundle.partialByteCount, privacy: .public) bytes on disk)"
+        )
+        return metadata
     }
 
     /// Trashes the `.kernovadownload` bundle for the given destination, if present.
@@ -225,8 +272,15 @@ struct IPSWService: Sendable {
             )
         } catch CocoaError.fileNoSuchFile {
             // Nothing to discard — common case.
-        } catch let error as NSError where error.domain == NSCocoaErrorDomain && error.code == NSFileNoSuchFileError {
-            // trashItem reports the missing-file case via NSCocoaErrorDomain too.
+        } catch let error as NSError
+            where error.domain == NSCocoaErrorDomain && error.code == NSFileNoSuchFileError
+        {
+            // RATIONALE: Both catches are required. `CocoaError.fileNoSuchFile`
+            // matches when FileManager throws a typed `CocoaError`, but
+            // `trashItem(at:resultingItemURL:)` has been observed to surface
+            // the same condition as a raw NSError(NSCocoaErrorDomain, ...) that
+            // the first pattern doesn't catch. Removing either arm causes the
+            // common "no bundle to trash" case to log noise.
         } catch {
             Self.logger.warning(
                 "Failed to trash in-progress download bundle at '\(bundleURL.path(percentEncoded: false), privacy: .public)': \(error.localizedDescription, privacy: .public)"
@@ -290,6 +344,11 @@ struct IPSWService: Sendable {
         var buffer: [UInt8] = []
         buffer.reserveCapacity(Self.writeChunkSize)
 
+        // RATIONALE: On cancel/error we deliberately do NOT flush the in-memory
+        // buffer to disk. Any unflushed bytes (≤ 256 KB) were already received
+        // over the network but not committed; resume sends `Range: bytes=<filesize>-`
+        // so the server will resend them on the next attempt. Flushing them
+        // would be benign but unnecessary work.
         do {
             for try await byte in sequence {
                 buffer.append(byte)
@@ -306,21 +365,12 @@ struct IPSWService: Sendable {
                 }
             }
         } catch is CancellationError {
-            if !buffer.isEmpty {
-                try? handle.write(contentsOf: buffer)
-            }
             Self.logger.info("Restore image download cancelled")
             throw CancellationError()
         } catch let urlError as URLError where urlError.code == .cancelled {
-            if !buffer.isEmpty {
-                try? handle.write(contentsOf: buffer)
-            }
             Self.logger.info("Restore image download cancelled (URLError.cancelled)")
             throw CancellationError()
         } catch {
-            if !buffer.isEmpty {
-                try? handle.write(contentsOf: buffer)
-            }
             Self.logger.error(
                 "Restore image download failed mid-stream: \(error.localizedDescription, privacy: .public)"
             )
@@ -392,22 +442,15 @@ extension IPSWService: IPSWProviding {}
 
 #if arch(arm64)
 /// Metadata serialized as `Info.plist` at the root of a `.kernovadownload` bundle.
+///
+/// Only fields the server doesn't tell us each request are persisted. The total
+/// expected size is re-derived from `Content-Length` (200) or `Content-Range`
+/// (206 / 416) on every request, so it's not cached here.
 struct IPSWDownloadMetadata: Codable, Sendable, Equatable {
     var originalURL: URL
-    var expectedBytes: Int64
     var etag: String?
     var lastModified: String?
     var createdAt: Date
-
-    static func from(response: HTTPURLResponse, fallbackURL: URL) throws -> IPSWDownloadMetadata {
-        IPSWDownloadMetadata(
-            originalURL: response.url ?? fallbackURL,
-            expectedBytes: response.expectedContentLength,
-            etag: response.value(forHTTPHeaderField: "ETag"),
-            lastModified: response.value(forHTTPHeaderField: "Last-Modified"),
-            createdAt: Date()
-        )
-    }
 }
 
 /// File-system helper for an in-progress IPSW download bundle.
@@ -455,20 +498,28 @@ struct IPSWBundle: Sendable {
         try data.write(to: infoPlistURL, options: .atomic)
     }
 
-    /// Creates the bundle directory, writes `Info.plist`, and ensures an empty `data` file exists.
+    /// Creates the bundle directory, ensures an empty `data` file, and writes `Info.plist`.
     ///
     /// Called on the fresh-download path (response 200) — if the bundle already exists,
     /// the data file is truncated to zero.
+    ///
+    /// Order matters for crash-safety: truncate first, write metadata last. A crash
+    /// between truncate and metadata leaves stale metadata pointing at empty bytes
+    /// — harmless, because resume sends `Range: bytes=0-` and the server either
+    /// returns the matching old file (server-side ETag still valid) or 200 with the
+    /// new file (server-side ETag changed), and our 200 branch then refreshes
+    /// metadata to match. The reverse order would write new metadata pointing at
+    /// stale bytes, which the next resume could not detect.
     func prepareForFreshDownload(with metadata: IPSWDownloadMetadata) throws {
         try FileManager.default.createDirectory(
             at: url, withIntermediateDirectories: true)
-        try saveMetadata(metadata)
         if FileManager.default.fileExists(atPath: dataURL.path(percentEncoded: false)) {
             try truncateData()
         } else {
             FileManager.default.createFile(
                 atPath: dataURL.path(percentEncoded: false), contents: nil)
         }
+        try saveMetadata(metadata)
     }
 
     /// Truncates the `data` file to zero bytes (used when the remote file changed mid-resume).

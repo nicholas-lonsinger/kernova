@@ -26,13 +26,11 @@ struct IPSWBundleTests {
 
     private static func makeMetadata(
         url: URL = defaultMetadataURL,
-        bytes: Int64 = 1_000_000,
         etag: String? = "\"abc123\"",
         lastModified: String? = "Mon, 01 Jan 2026 00:00:00 GMT"
     ) -> IPSWDownloadMetadata {
         IPSWDownloadMetadata(
             originalURL: url,
-            expectedBytes: bytes,
             etag: etag,
             lastModified: lastModified,
             createdAt: Date(timeIntervalSince1970: 1_800_000_000)

@@ -33,13 +33,17 @@ struct IPSWServiceDownloadTests {
         return IPSWService(sessionConfiguration: configuration)
     }
 
-    private static let remoteURL: URL = {
-        guard let url = URL(string: "https://stub.kernova.test/RestoreImage.ipsw") else {
-            assertionFailure("IPSWServiceDownloadTests: failed to construct stub URL")
+    private static func mustParseURL(_ string: String) -> URL {
+        guard let url = URL(string: string) else {
+            assertionFailure("IPSWServiceDownloadTests: failed to construct URL from '\(string)'")
             return URL(filePath: "/")
         }
         return url
-    }()
+    }
+
+    private static let remoteURL = mustParseURL("https://stub.kernova.test/RestoreImage.ipsw")
+    private static let staleRemoteURL = mustParseURL("https://stub.kernova.test/OldBuild.ipsw")
+    private static let tamperedURL = mustParseURL("file:///etc/passwd")
 
     // MARK: - Tests
 
@@ -53,7 +57,7 @@ struct IPSWServiceDownloadTests {
         StubURLProtocol.handler = { request in
             #expect(request.value(forHTTPHeaderField: "Range") == nil)
             return .fullResponse(
-                url: request.url!,
+                url: (request.url ?? Self.remoteURL),
                 body: payload,
                 etag: "\"v1\"",
                 lastModified: "Mon, 01 Jan 2026 00:00:00 GMT"
@@ -97,7 +101,6 @@ struct IPSWServiceDownloadTests {
         try bundle.prepareForFreshDownload(
             with: IPSWDownloadMetadata(
                 originalURL: Self.remoteURL,
-                expectedBytes: Int64(fullPayload.count),
                 etag: "\"v1\"",
                 lastModified: "Mon, 01 Jan 2026 00:00:00 GMT",
                 createdAt: Date()
@@ -111,7 +114,7 @@ struct IPSWServiceDownloadTests {
             #expect(request.value(forHTTPHeaderField: "Range") == "bytes=\(prefix.count)-")
             #expect(request.value(forHTTPHeaderField: "If-Range") == "\"v1\"")
             return .partialResponse(
-                url: request.url!,
+                url: (request.url ?? Self.remoteURL),
                 body: suffix,
                 start: Int64(prefix.count),
                 end: Int64(fullPayload.count - 1),
@@ -144,7 +147,6 @@ struct IPSWServiceDownloadTests {
         try bundle.prepareForFreshDownload(
             with: IPSWDownloadMetadata(
                 originalURL: Self.remoteURL,
-                expectedBytes: 4096,
                 etag: "\"stale-v1\"",
                 lastModified: nil,
                 createdAt: Date()
@@ -156,7 +158,7 @@ struct IPSWServiceDownloadTests {
         StubURLProtocol.handler = { request in
             // Server ignores If-Range and sends a full 200 — file changed.
             #expect(request.value(forHTTPHeaderField: "Range") == "bytes=1024-")
-            return .fullResponse(url: request.url!, body: newPayload, etag: "\"v2\"")
+            return .fullResponse(url: (request.url ?? Self.remoteURL), body: newPayload, etag: "\"v2\"")
         }
         defer { StubURLProtocol.handler = nil }
 
@@ -183,7 +185,6 @@ struct IPSWServiceDownloadTests {
         try bundle.prepareForFreshDownload(
             with: IPSWDownloadMetadata(
                 originalURL: Self.remoteURL,
-                expectedBytes: Int64(complete.count),
                 etag: "\"v1\"",
                 lastModified: nil,
                 createdAt: Date()
@@ -193,7 +194,7 @@ struct IPSWServiceDownloadTests {
 
         StubURLProtocol.handler = { request in
             .response(
-                url: request.url!,
+                url: (request.url ?? Self.remoteURL),
                 statusCode: 416,
                 body: Data(),
                 headers: ["Content-Range": "bytes */\(complete.count)"]
@@ -219,7 +220,7 @@ struct IPSWServiceDownloadTests {
         let destination = temp.appendingPathComponent("RestoreImage.ipsw")
 
         StubURLProtocol.handler = { request in
-            .response(url: request.url!, statusCode: 404, body: Data(), headers: [:])
+            .response(url: (request.url ?? Self.remoteURL), statusCode: 404, body: Data(), headers: [:])
         }
         defer { StubURLProtocol.handler = nil }
 
@@ -269,46 +270,211 @@ struct IPSWServiceDownloadTests {
         #expect(samples.last == Int64(preExisting.count))
     }
 
-    @Test("Bundle is preserved on network failure mid-stream")
-    func bundlePreservedOnError() async throws {
+    @Test("Mid-stream network failure throws downloadFailed and preserves the bundle")
+    func midStreamErrorPreservesBundle() async throws {
         let temp = try Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: temp) }
         let destination = temp.appendingPathComponent("RestoreImage.ipsw")
 
+        // Deliver enough partial bytes (≥ writeChunkSize) so at least one
+        // chunked write commits to disk before the error fires.
+        let partial = Data(repeating: 0x55, count: 512 * 1024)
         StubURLProtocol.handler = { request in
-            // Return a 200 with a short payload then we simulate failure via
-            // truncated response — the stub signals EOF before declared size.
-            .truncatedResponse(
-                url: request.url!,
-                declaredLength: 8192,
-                actualBody: Data(repeating: 0x55, count: 1024)
+            .midStreamError(
+                url: request.url ?? Self.remoteURL,
+                declaredLength: 4 * 1024 * 1024,
+                partialBody: partial,
+                error: URLError(.networkConnectionLost)
             )
         }
         defer { StubURLProtocol.handler = nil }
 
         let service = Self.makeServiceWithStub()
-        // Either completes (if bytes API treats truncation as EOF) or throws —
-        // both outcomes preserve the bundle for the next attempt. The salient
-        // assertion is that the destination file does NOT exist (no finalize).
-        // We don't strictly care which branch we hit here.
-        _ = try? await service.downloadRestoreImage(
+        do {
+            try await service.downloadRestoreImage(
+                from: Self.remoteURL,
+                to: destination,
+                progressHandler: { _ in }
+            )
+            Issue.record("Expected downloadRestoreImage to throw on mid-stream failure")
+        } catch IPSWError.downloadFailed {
+            // Expected
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        // Destination was never finalized; bundle is preserved for next attempt.
+        // We don't assert on `partialByteCount` because URLSession may surface
+        // the error before yielding any of the buffered bytes — what matters is
+        // that the bundle survived for a future resume.
+        #expect(!FileManager.default.fileExists(atPath: destination.path))
+        let bundle = IPSWBundle(url: IPSWService.resumeBundleURL(for: destination))
+        #expect(bundle.exists)
+        #expect(bundle.partialByteCount <= Int64(partial.count))
+    }
+
+    @Test("Corrupt Info.plist causes the bundle to be discarded and download to restart fresh")
+    func corruptBundleIsDiscarded() async throws {
+        let temp = try Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+        let bundleURL = IPSWService.resumeBundleURL(for: destination)
+
+        // Hand-craft a bundle with garbage in Info.plist and bogus data.
+        try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+        let bundle = IPSWBundle(url: bundleURL)
+        try Data("not a plist".utf8).write(to: bundle.infoPlistURL)
+        try Data(repeating: 0xCC, count: 1024).write(to: bundle.dataURL)
+
+        let payload = Data(repeating: 0x42, count: 2048)
+        StubURLProtocol.handler = { request in
+            // The corrupt bundle must be discarded — request should be fresh
+            // (no Range header from stale state).
+            #expect(request.value(forHTTPHeaderField: "Range") == nil)
+            return .fullResponse(
+                url: request.url ?? Self.remoteURL, body: payload, etag: "\"v1\"")
+        }
+        defer { StubURLProtocol.handler = nil }
+
+        let service = Self.makeServiceWithStub()
+        try await service.downloadRestoreImage(
             from: Self.remoteURL,
             to: destination,
             progressHandler: { _ in }
         )
 
-        // If the stub's declared length matches what we actually fed, the
-        // download will complete and finalize. If not, we should still see
-        // the partial bytes in the bundle (or destination). For this test we
-        // just verify we didn't leave any orphan tmp files behind — i.e. either
-        // destination exists OR the bundle does, but the call shouldn't crash.
+        let written = try Data(contentsOf: destination)
+        #expect(written == payload)
+    }
+
+    @Test("Bundle with different originalURL is discarded; fresh download issued")
+    func urlMismatchDiscardsBundle() async throws {
+        let temp = try Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
         let bundleURL = IPSWService.resumeBundleURL(for: destination)
+        let bundle = IPSWBundle(url: bundleURL)
+
+        // Seed bundle with metadata pointing at a DIFFERENT URL than the
+        // caller will pass.
+        try bundle.prepareForFreshDownload(
+            with: IPSWDownloadMetadata(
+                originalURL: Self.staleRemoteURL,
+                etag: "\"old\"",
+                lastModified: nil,
+                createdAt: Date()
+            )
+        )
+        try Data(repeating: 0x99, count: 4096).write(to: bundle.dataURL)
+
+        let payload = Data(repeating: 0x77, count: 2048)
+        StubURLProtocol.handler = { request in
+            // Should target the NEW URL (caller's remoteURL), not the stale one.
+            #expect(request.url == Self.remoteURL)
+            // Should be a fresh request (no Range header from stale state).
+            #expect(request.value(forHTTPHeaderField: "Range") == nil)
+            return .fullResponse(
+                url: request.url ?? Self.remoteURL, body: payload, etag: "\"new\"")
+        }
+        defer { StubURLProtocol.handler = nil }
+
+        let service = Self.makeServiceWithStub()
+        try await service.downloadRestoreImage(
+            from: Self.remoteURL,
+            to: destination,
+            progressHandler: { _ in }
+        )
+
+        let written = try Data(contentsOf: destination)
+        #expect(written == payload)
+    }
+
+    @Test("Bundle with non-https stored URL is discarded")
+    func nonHTTPSBundleIsDiscarded() async throws {
+        let temp = try Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+        let bundleURL = IPSWService.resumeBundleURL(for: destination)
+        let bundle = IPSWBundle(url: bundleURL)
+
+        // Seed bundle with a non-https URL. URL mismatch will also catch this
+        // (caller's `remoteURL` is https, stored is file://), but the test
+        // makes the security intent explicit.
+        try bundle.prepareForFreshDownload(
+            with: IPSWDownloadMetadata(
+                originalURL: Self.tamperedURL,
+                etag: "\"x\"",
+                lastModified: nil,
+                createdAt: Date()
+            )
+        )
+
+        let payload = Data(repeating: 0x44, count: 1024)
+        StubURLProtocol.handler = { request in
+            #expect(request.url == Self.remoteURL)
+            #expect(request.value(forHTTPHeaderField: "Range") == nil)
+            return .fullResponse(
+                url: request.url ?? Self.remoteURL, body: payload, etag: "\"new\"")
+        }
+        defer { StubURLProtocol.handler = nil }
+
+        let service = Self.makeServiceWithStub()
+        try await service.downloadRestoreImage(
+            from: Self.remoteURL,
+            to: destination,
+            progressHandler: { _ in }
+        )
+
+        let written = try Data(contentsOf: destination)
+        #expect(written == payload)
+    }
+
+    @Test("Task cancellation throws CancellationError and preserves any flushed bytes")
+    func cancellationPreservesBundle() async throws {
+        let temp = try Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+
+        // Large payload so iterating byte-by-byte takes long enough to cancel.
+        let payload = Data(repeating: 0x33, count: 32 * 1024 * 1024)
+        StubURLProtocol.handler = { request in
+            .fullResponse(url: request.url ?? Self.remoteURL, body: payload, etag: "\"v1\"")
+        }
+        defer { StubURLProtocol.handler = nil }
+
+        let service = Self.makeServiceWithStub()
+        let task = Task {
+            try await service.downloadRestoreImage(
+                from: Self.remoteURL,
+                to: destination,
+                progressHandler: { _ in }
+            )
+        }
+
+        // Let the download get into the streaming loop, then cancel.
+        try await Task.sleep(for: .milliseconds(50))
+        task.cancel()
+
+        do {
+            try await task.value
+            // Cancellation may race with completion on very fast machines. If the
+            // download finished before our cancel landed, that's fine — the test
+            // assertions below tolerate both outcomes.
+        } catch is CancellationError {
+            // Expected on the cancelled-mid-stream path.
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        // Either: completed (destination exists, bundle gone) OR
+        //         cancelled (destination missing, bundle preserved with partial bytes).
+        let bundle = IPSWBundle(url: IPSWService.resumeBundleURL(for: destination))
         let destExists = FileManager.default.fileExists(atPath: destination.path)
-        var isDir: ObjCBool = false
-        let bundleExists =
-            FileManager.default.fileExists(
-                atPath: bundleURL.path, isDirectory: &isDir) && isDir.boolValue
-        #expect(destExists || bundleExists)
+        if destExists {
+            #expect(!bundle.exists, "On completion the bundle should be trashed")
+        } else {
+            #expect(bundle.exists, "On cancellation the bundle should be preserved")
+        }
     }
 
     @Test("Progress callbacks report monotonically non-decreasing bytesWritten")
@@ -321,7 +487,7 @@ struct IPSWServiceDownloadTests {
         // multiple progress reports fire.
         let payload = Data(repeating: 0x44, count: 1024 * 1024)
         StubURLProtocol.handler = { request in
-            .fullResponse(url: request.url!, body: payload, etag: "\"v1\"")
+            .fullResponse(url: (request.url ?? Self.remoteURL), body: payload, etag: "\"v1\"")
         }
         defer { StubURLProtocol.handler = nil }
 
@@ -370,6 +536,9 @@ final class StubURLProtocol: URLProtocol, @unchecked Sendable {
         /// When set, body is delivered fully but the response's
         /// Content-Length declares a larger size, mimicking a truncated transfer.
         let declaresLargerLength: Bool
+        /// When set, the stub delivers the response + (partial) body, then
+        /// signals `didFailWithError(_:)` to simulate a mid-stream network drop.
+        let failAfterBody: URLError?
 
         private static func makeResponse(
             url: URL, statusCode: Int, headers: [String: String]
@@ -397,7 +566,7 @@ final class StubURLProtocol: URLProtocol, @unchecked Sendable {
             if let lastModified { headers["Last-Modified"] = lastModified }
             return StubResponse(
                 response: makeResponse(url: url, statusCode: 200, headers: headers),
-                body: body, declaresLargerLength: false)
+                body: body, declaresLargerLength: false, failAfterBody: nil)
         }
 
         static func partialResponse(
@@ -413,7 +582,7 @@ final class StubURLProtocol: URLProtocol, @unchecked Sendable {
             ]
             return StubResponse(
                 response: makeResponse(url: url, statusCode: 206, headers: headers),
-                body: body, declaresLargerLength: false)
+                body: body, declaresLargerLength: false, failAfterBody: nil)
         }
 
         static func response(
@@ -428,7 +597,7 @@ final class StubURLProtocol: URLProtocol, @unchecked Sendable {
             }
             return StubResponse(
                 response: makeResponse(url: url, statusCode: statusCode, headers: allHeaders),
-                body: body, declaresLargerLength: false)
+                body: body, declaresLargerLength: false, failAfterBody: nil)
         }
 
         static func truncatedResponse(
@@ -439,7 +608,22 @@ final class StubURLProtocol: URLProtocol, @unchecked Sendable {
             let headers: [String: String] = ["Content-Length": "\(declaredLength)"]
             return StubResponse(
                 response: makeResponse(url: url, statusCode: 200, headers: headers),
-                body: actualBody, declaresLargerLength: true)
+                body: actualBody, declaresLargerLength: true, failAfterBody: nil)
+        }
+
+        /// Delivers `partialBody` then signals `didFailWithError:` to simulate a
+        /// mid-stream network drop. `declaredLength` should be larger than
+        /// `partialBody.count` so the receiver sees an incomplete transfer.
+        static func midStreamError(
+            url: URL,
+            declaredLength: Int,
+            partialBody: Data,
+            error: URLError
+        ) -> StubResponse {
+            let headers: [String: String] = ["Content-Length": "\(declaredLength)"]
+            return StubResponse(
+                response: makeResponse(url: url, statusCode: 200, headers: headers),
+                body: partialBody, declaresLargerLength: true, failAfterBody: error)
         }
     }
 
@@ -465,8 +649,14 @@ final class StubURLProtocol: URLProtocol, @unchecked Sendable {
         }
         let stub = handler(request)
         client?.urlProtocol(self, didReceive: stub.response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: stub.body)
-        client?.urlProtocolDidFinishLoading(self)
+        if !stub.body.isEmpty {
+            client?.urlProtocol(self, didLoad: stub.body)
+        }
+        if let error = stub.failAfterBody {
+            client?.urlProtocol(self, didFailWithError: error)
+        } else {
+            client?.urlProtocolDidFinishLoading(self)
+        }
     }
 
     override func stopLoading() {}
