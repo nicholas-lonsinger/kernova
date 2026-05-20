@@ -280,8 +280,14 @@ final class VMLibraryViewModel {
             defer { instance.installTask = nil }
             do {
                 try await self.lifecycle.installMacOS(on: instance, context: context)
-                // installMacOS cleared installContext on success; start(_:) now
-                // sees no installContext and goes down the normal boot path.
+                // `installMacOS` cleared both `installContext` and
+                // `installState` on its success path; this is a
+                // belt-and-braces redundant clear so a future refactor
+                // that relocates the coordinator-level cleanup doesn't
+                // silently leave install-progress UI armed. `start(_:)`
+                // now sees no installContext and goes down the normal
+                // boot path (via the post-install hand-off branch).
+                instance.installState = nil
                 await self.start(instance)
             } catch is CancellationError {
                 // Tear down the VM if `MacOSInstallService.install` attached
