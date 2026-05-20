@@ -34,9 +34,10 @@ struct IPSWService: Sendable {
     /// Downloads a macOS restore image from a remote URL to the specified destination.
     ///
     /// The partial download lives at `<destinationURL minus .ipsw>.kernovadownload/`,
-    /// a Finder-visible bundle directory. `Contents/data` holds the partial bytes (file
-    /// size IS the resume offset) and `Contents/Info.plist` holds the ETag /
-    /// Last-Modified / expected-size metadata used for `If-Range` resume.
+    /// a Finder-visible bundle directory. The bundle's `data` file holds the
+    /// partial bytes (file size IS the resume offset) and `Info.plist` holds
+    /// the ETag / Last-Modified / expected-size metadata used for `If-Range`
+    /// resume.
     ///
     /// On user cancellation the bytes are preserved as-is (the file handle closes,
     /// the bundle stays put) and `CancellationError` is thrown so the non-destructive
@@ -152,7 +153,7 @@ struct IPSWService: Sendable {
             )
 
         case 416:
-            // Range Not Satisfiable — usually means our `Contents/data` is already
+            // Range Not Satisfiable — usually means our `data` file is already
             // the full file, or the remote file shrank. The `Content-Range: bytes */N`
             // header tells us the actual total.
             let total = Self.parseUnsatisfiableTotal(
@@ -390,7 +391,7 @@ extension IPSWService: IPSWProviding {}
 // MARK: - Bundle Layout
 
 #if arch(arm64)
-/// Metadata serialized as `Contents/Info.plist` inside a `.kernovadownload` bundle.
+/// Metadata serialized as `Info.plist` at the root of a `.kernovadownload` bundle.
 struct IPSWDownloadMetadata: Codable, Sendable, Equatable {
     var originalURL: URL
     var expectedBytes: Int64
@@ -411,12 +412,12 @@ struct IPSWDownloadMetadata: Codable, Sendable, Equatable {
 
 /// File-system helper for an in-progress IPSW download bundle.
 ///
-/// Layout:
+/// Layout (mirrors Safari's `.download` package — files at the bundle root,
+/// no `Contents/` subdirectory):
 /// ```
 /// <url>.kernovadownload/
-///   Contents/
-///     Info.plist     ← IPSWDownloadMetadata
-///     data           ← partial bytes; file size IS the resume offset
+///   Info.plist     ← IPSWDownloadMetadata
+///   data           ← partial bytes; file size IS the resume offset
 /// ```
 ///
 /// The UTI registration in the app's `Info.plist` declares `.kernovadownload`
@@ -425,9 +426,8 @@ struct IPSWDownloadMetadata: Codable, Sendable, Equatable {
 struct IPSWBundle: Sendable {
     let url: URL
 
-    var contentsURL: URL { url.appendingPathComponent("Contents", isDirectory: true) }
-    var dataURL: URL { contentsURL.appendingPathComponent("data") }
-    var infoPlistURL: URL { contentsURL.appendingPathComponent("Info.plist") }
+    var dataURL: URL { url.appendingPathComponent("data") }
+    var infoPlistURL: URL { url.appendingPathComponent("Info.plist") }
 
     /// `true` when the bundle directory exists on disk (regardless of internal validity).
     var exists: Bool {
@@ -436,7 +436,7 @@ struct IPSWBundle: Sendable {
             atPath: url.path(percentEncoded: false), isDirectory: &isDir) && isDir.boolValue
     }
 
-    /// Current size of `Contents/data` on disk; the resume offset for the next request.
+    /// Current size of the `data` file on disk; the resume offset for the next request.
     var partialByteCount: Int64 {
         let attrs = try? FileManager.default.attributesOfItem(
             atPath: dataURL.path(percentEncoded: false))
@@ -455,13 +455,13 @@ struct IPSWBundle: Sendable {
         try data.write(to: infoPlistURL, options: .atomic)
     }
 
-    /// Creates `Contents/`, writes `Info.plist`, ensures an empty `data` file exists.
+    /// Creates the bundle directory, writes `Info.plist`, and ensures an empty `data` file exists.
     ///
     /// Called on the fresh-download path (response 200) — if the bundle already exists,
     /// the data file is truncated to zero.
     func prepareForFreshDownload(with metadata: IPSWDownloadMetadata) throws {
         try FileManager.default.createDirectory(
-            at: contentsURL, withIntermediateDirectories: true)
+            at: url, withIntermediateDirectories: true)
         try saveMetadata(metadata)
         if FileManager.default.fileExists(atPath: dataURL.path(percentEncoded: false)) {
             try truncateData()
@@ -471,14 +471,14 @@ struct IPSWBundle: Sendable {
         }
     }
 
-    /// Truncates `Contents/data` to zero bytes (used when the remote file changed mid-resume).
+    /// Truncates the `data` file to zero bytes (used when the remote file changed mid-resume).
     func truncateData() throws {
         let handle = try FileHandle(forWritingTo: dataURL)
         try handle.truncate(atOffset: 0)
         try handle.close()
     }
 
-    /// Moves `Contents/data` to the final IPSW destination and trashes the bundle.
+    /// Moves the `data` file to the final IPSW destination and trashes the bundle.
     func finalize(to destinationURL: URL) throws {
         let fm = FileManager.default
         if fm.fileExists(atPath: destinationURL.path(percentEncoded: false)) {

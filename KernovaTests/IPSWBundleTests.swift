@@ -47,7 +47,7 @@ struct IPSWBundleTests {
         #expect(bundle.deletingLastPathComponent().path == "/tmp/Foo")
     }
 
-    @Test("prepareForFreshDownload creates Contents/Info.plist and empty data file")
+    @Test("prepareForFreshDownload creates Info.plist and empty data file at bundle root")
     func prepareForFreshDownloadCreatesLayout() throws {
         let temp = try Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: temp) }
