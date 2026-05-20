@@ -603,12 +603,36 @@ struct IPSWServiceDownloadTests {
 
     @Test("streamBytes throws CancellationError when the surrounding Task is cancelled")
     func streamBytesCancellation() async throws {
-        // We bypass URLSession here — the prior URLProtocol-driven cancellation
-        // test was timing-dependent because URLProtocol cleanup races with
-        // session lifecycle across tests. Driving `streamBytes` directly with
-        // a hand-controlled `AsyncThrowingStream` lets us coordinate cancel +
-        // yield deterministically: the producer yields a chunk to unblock the
-        // for-await, then the next iteration's `Task.checkCancellation()` fires.
+        // We bypass URLSession here — driving `streamBytes` directly with a
+        // hand-controlled `AsyncThrowingStream` keeps URLProtocol cleanup out
+        // of the picture.
+        //
+        // No synchronization with the consumer's for-await suspension is
+        // attempted, on purpose. Earlier revisions tried to use a `SignalGate`
+        // + `AsyncStream` driven off the first `progressHandler` invocation
+        // as a "consumer is now parked on next()" proxy. That proxy was
+        // always a fiction: the initial-progress emission in `streamBytes`
+        // happens *before* the for-await loop is entered, so the signal
+        // raced with the actual suspension and the test flaked when the
+        // race went the wrong way. The synchronization is also unnecessary —
+        // Task cancellation is sticky, and the only legal outcomes of cancel
+        // + yield(non-empty chunk) + finish, regardless of interleaving, all
+        // route through the loop body's `try Task.checkCancellation()` (or
+        // the catch handler that re-throws `CancellationError`):
+        //
+        //   • Consumer hasn't entered the loop yet → it picks up the buffered
+        //     chunk on first `next()`, body runs `checkCancellation()`, throws.
+        //   • Consumer is parked on `next()` → `AsyncThrowingStream.next()`
+        //     doesn't auto-observe cancellation (see RATIONALE in production
+        //     code), so the buffered chunk is delivered, body throws.
+        //   • Consumer is mid-MainActor-hop from initial progress → same as
+        //     the first case after the hop completes.
+        //
+        // If a future refactor removes the in-loop `checkCancellation()`,
+        // none of those paths throw — the chunk gets written, the stream
+        // finishes cleanly, `streamBytes` returns success, and the
+        // `Issue.record("Expected CancellationError")` below fires. That's
+        // the regression this test guards against.
         let temp = try Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: temp) }
         let bundleURL = temp.appendingPathComponent("R.kernovadownload")
@@ -625,33 +649,16 @@ struct IPSWServiceDownloadTests {
         let (stream, continuation) = AsyncThrowingStream<Data, any Error>.makeStream()
         let service = IPSWService()
 
-        // Coordination signal: fires when streamBytes emits its initial-offset
-        // progress, proving it's now sitting inside the for-await waiting for
-        // the next yield.
-        let firstProgress = AsyncStream<Void>.makeStream()
-        let firstProgressContinuation = firstProgress.continuation
-        let signaled = SignalGate()
-
-        let streamTask = Task { [signaled] in
+        let streamTask = Task {
             try await service.streamBytes(
                 from: stream,
                 into: bundle,
                 startingAt: 0,
                 expectedTotal: 4096,
-                progressHandler: { @Sendable [signaled, firstProgressContinuation] _ in
-                    if signaled.fireOnce() {
-                        firstProgressContinuation.yield()
-                        firstProgressContinuation.finish()
-                    }
-                }
+                progressHandler: { _ in }
             )
         }
 
-        // Wait for streamBytes to reach the for-await.
-        for await _ in firstProgress.stream { break }
-
-        // Cancel, then yield one chunk so the loop body wakes and runs its
-        // `try Task.checkCancellation()`.
         streamTask.cancel()
         continuation.yield(Data(repeating: 0xBB, count: 128))
         continuation.finish()
@@ -712,21 +719,6 @@ final class ProgressRecorder {
     private var samples: [Int64] = []
     func record(_ bytes: Int64) { samples.append(bytes) }
     func snapshot() -> [Int64] { samples }
-}
-
-/// One-shot, thread-safe latch used by the cancellation test to fire its
-/// "first progress arrived" signal exactly once even if the handler is
-/// invoked more than once before the test observes the signal.
-final class SignalGate: @unchecked Sendable {
-    private let lock = NSLock()
-    private var fired = false
-    func fireOnce() -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !fired else { return false }
-        fired = true
-        return true
-    }
 }
 
 /// Stub URLProtocol that intercepts requests for tests.
