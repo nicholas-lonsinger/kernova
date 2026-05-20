@@ -239,6 +239,19 @@ final class VMLibraryViewModel {
             Self.logger.notice(
                 "Created VM '\(config.name, privacy: .public)' (status: \(initialStatus.displayName, privacy: .public))"
             )
+
+            if wizard.startAfterCreate {
+                // For macOS VMs with an installContext, `start(_:)` routes
+                // through `installAndAutoBoot` which kicks off an install
+                // Task and returns immediately. For other VMs, it awaits
+                // the VZ start. Errors are surfaced by `start(_:)` via
+                // `presentError`, so the wizard's caller can dismiss as
+                // soon as `createVM` returns.
+                Self.logger.notice(
+                    "Auto-starting VM '\(config.name, privacy: .public)' from wizard"
+                )
+                await start(instance)
+            }
         } catch {
             Self.logger.error("Failed to create VM: \(error.localizedDescription, privacy: .public)")
             presentError(error)

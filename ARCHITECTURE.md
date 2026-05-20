@@ -139,7 +139,7 @@ KernovaTests/
 ├── VMToolbarManagerTests.swift          # Toolbar manager item creation and state update tests
 ├── VMConfigurationCloneTests.swift     # Clone-specific configuration tests
 ├── VMLibraryViewModelTests.swift       # 39 tests for the central view model
-├── VMCreationViewModelTests.swift      # 44 tests for the creation wizard
+├── VMCreationViewModelTests.swift      # 49 tests for the creation wizard
 ├── VMLifecycleCoordinatorTests.swift   # Coordinator orchestration tests
 ├── VMInstanceTests.swift               # Runtime instance behavior tests
 ├── ConfigurationBuilderTests.swift     # VZ configuration translation tests
@@ -424,7 +424,7 @@ No third-party (non-Apple) package dependencies. No CocoaPods or Carthage.
 |-----------|-------|-------|
 | `VMConfiguration` | 49+ tests + clone suite | Encoding/decoding, defaults, validation, `lastSeenAgentVersion` migration, `storageDisks` / `removableMedia` round-trip + nil-decode, `liveEditableFieldsChanged` covering hot-toggle booleans + `removableMediaChanged` list-diff, clone regenerates all `StorageDisk.id` / `RemovableMediaItem.id` while preserving paths/labels |
 | `VMLibraryViewModel` | 90+ tests | Add/remove/rename/reorder VMs, selection, auto-select on load, selection preservation on reload, delegation to coordinator, sleep/wake, clone/import phantom rows, cancel preparing, force-stop confirmation, stop escalation timing, custom order persistence, guest agent installer mount/unmount (via the `removableMedia` config path), centralized `updateConfiguration` dispatcher, removable-media list-diff reconcile (add / remove / mutate / reorder-noop / rapid-fire coalesce / `deviceNotFound` continues / `noVirtualMachine` silent bail / transient-error fail-fast), rollback-to-live-state on unexpected detach / attach / swap failure, `removeStorageDisk` trash-vs-remove paths, `createStorageDisk` async append, synthetic main disk removal works against the stable derived UUID, delete-VM external-attachment enumeration (sharing detection across VMs) and the `deleteConfirmed(trashExternals:)` trash-fan-out path |
-| `VMCreationViewModel` | 44 tests | All wizard steps, validation, OS-specific paths |
+| `VMCreationViewModel` | 49 tests | All wizard steps, validation, OS-specific paths, post-creation auto-start preference |
 | `VMLifecycleCoordinator` | Yes | Multi-step orchestration, error handling, service delegation, token-based operation serialization, stop/forceStop bypass, stale-token race condition coverage |
 | `VMInstance` | Yes | Status transitions, configuration updates, bundle layout, preparing state display properties, post-start agent watchdog (firing/cancellation/no-op guards/idempotency), `recordObservedAgentVersion` persistence + dedup |
 | `ConfigurationBuilder` | Yes | All three boot paths, device configuration, path validation (symlinks resolved for external storage disks → VZ gets the followed URL, missing kernel/initrd/ISO/storage-disk, directory rejection, non-writable rejection, internal-path-traversal containment), storage-topology dispatch (`storageDisks` → ordered `storageDevices` with kind-based virtio/USB; `removableMedia` → XHCI; `coldRemovableMedia` `USBDeviceInfo`s match persisted UUIDs), synthesized main-disk UUID is stable across calls and distinct across bundles |

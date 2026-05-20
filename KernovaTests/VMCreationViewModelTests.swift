@@ -676,4 +676,12 @@ struct VMCreationViewModelTests {
         #expect(!context.requestedFreshDownload)
     }
     #endif
+
+    // MARK: - Start After Create
+
+    @Test("startAfterCreate defaults to true")
+    func startAfterCreateDefaultsTrue() {
+        let vm = VMCreationViewModel()
+        #expect(vm.startAfterCreate == true)
+    }
 }

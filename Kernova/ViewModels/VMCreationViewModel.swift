@@ -65,6 +65,16 @@ final class VMCreationViewModel {
     var diskSizeInGB: Int = 100
     var networkEnabled: Bool = true
 
+    // MARK: - Step 4: Review
+
+    /// Whether to auto-start the VM immediately after the wizard creates it.
+    ///
+    /// When `true` (the default), `VMLibraryViewModel.createVM` calls
+    /// `start(_:)` on the newly created instance so the user can jump
+    /// straight from the wizard into the VM. Backs the "Start this VM
+    /// after creation" toggle on the Review step.
+    var startAfterCreate: Bool = true
+
     // MARK: - Navigation
 
     var validationMessage: String? {
