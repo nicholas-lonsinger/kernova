@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Step 4: Review the VM configuration before creation.
 struct ReviewStep: View {
-    let creationVM: VMCreationViewModel
+    @Bindable var creationVM: VMCreationViewModel
 
     var body: some View {
         VStack(spacing: 24) {
@@ -55,6 +55,10 @@ struct ReviewStep: View {
                             LabeledContent("Kernel", value: URL(fileURLWithPath: path).lastPathComponent)
                         }
                     }
+                }
+
+                Section {
+                    Toggle("Start this VM after creation", isOn: $creationVM.startAfterCreate)
                 }
             }
             .formStyle(.grouped)

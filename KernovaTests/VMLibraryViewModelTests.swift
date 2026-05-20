@@ -846,6 +846,57 @@ struct VMLibraryViewModelTests {
         #expect(viewModel.errorMessage != nil)
     }
 
+    @Test("createVM auto-starts the new VM when startAfterCreate is true (default)")
+    func createVMAutoStartsByDefault() async {
+        let (viewModel, _, _, virtService, _) = makeViewModel()
+        let wizard = VMCreationViewModel()
+        wizard.selectedOS = .linux
+        wizard.selectedBootMode = .efi
+        wizard.vmName = "Auto Start VM"
+        // startAfterCreate defaults to true
+
+        await viewModel.createVM(from: wizard)
+
+        #expect(viewModel.instances.count == 1)
+        #expect(virtService.startCallCount == 1)
+        #expect(viewModel.instances.first?.status == .running)
+    }
+
+    @Test("createVM does not auto-start when startAfterCreate is false")
+    func createVMSkipsAutoStartWhenDisabled() async {
+        let (viewModel, _, _, virtService, _) = makeViewModel()
+        let wizard = VMCreationViewModel()
+        wizard.selectedOS = .linux
+        wizard.selectedBootMode = .efi
+        wizard.vmName = "Manual Start VM"
+        wizard.startAfterCreate = false
+
+        await viewModel.createVM(from: wizard)
+
+        #expect(viewModel.instances.count == 1)
+        #expect(virtService.startCallCount == 0)
+        // VM should be in its initial post-creation state, not running
+        #expect(viewModel.instances.first?.status != .running)
+    }
+
+    @Test("createVM does not auto-start when bundle creation fails")
+    func createVMNoAutoStartOnBundleError() async {
+        let storage = MockVMStorageService()
+        storage.createVMBundleError = VMStorageError.bundleAlreadyExists(UUID())
+        let (viewModel, _, _, virtService, _) = makeViewModel(storageService: storage)
+        let wizard = VMCreationViewModel()
+        wizard.selectedOS = .linux
+        wizard.selectedBootMode = .efi
+        wizard.vmName = "Fail Start VM"
+        // startAfterCreate is true by default — but creation fails, so start
+        // must not be called.
+
+        await viewModel.createVM(from: wizard)
+
+        #expect(viewModel.instances.isEmpty)
+        #expect(virtService.startCallCount == 0)
+    }
+
     #if arch(arm64)
     @Test("createVM forwards requestedFreshDownload from a wizard that confirmed overwrite")
     func createVMForwardsRequestedFreshDownload() async throws {
