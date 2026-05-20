@@ -479,6 +479,32 @@ struct VMConfigurationTests {
         #expect(jsonObject["installContext"] == nil)
     }
 
+    @Test("Pre-existing config.json with installContext missing requestedFreshDownload decodes cleanly")
+    func legacyInstallContextWithoutRequestedFreshDownloadDecodes() throws {
+        // Wire-shape from before `requestedFreshDownload` was added — Codable
+        // must tolerate the missing field and default it to `false` so users
+        // who created VMs on an older build don't have their install state
+        // become un-decodable.
+        let baseFields = """
+            "installContext": {
+                "source": "downloadLatest",
+                "downloadDestinationPath": "/Users/me/Downloads/RestoreImage.ipsw"
+            }
+            """
+        let json = Self.makeBaseJSON(extraFields: baseFields)
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let config = try decoder.decode(VMConfiguration.self, from: Data(json.utf8))
+
+        #expect(config.installContext?.source == .downloadLatest)
+        #expect(
+            config.installContext?.downloadDestinationPath
+                == "/Users/me/Downloads/RestoreImage.ipsw"
+        )
+        #expect(config.installContext?.requestedFreshDownload == false)
+    }
+
     @Test("Clone clears installContext even when source has one set")
     func cloneClearsInstallContext() {
         let context = MacOSInstallContext(

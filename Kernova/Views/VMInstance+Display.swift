@@ -25,8 +25,8 @@ extension VMInstance {
     }
 
     /// `true` when this VM has a `.downloadLatest` install context, a
-    /// `.resumedata` sidecar at the chosen path, and no completed IPSW yet
-    /// at the same path.
+    /// `.kernovadownload` in-progress bundle at the chosen path, and no
+    /// completed IPSW yet at the same path.
     ///
     /// Drives the "Resume Install" label variant.
     var hasResumableInstallDownload: Bool {
@@ -35,10 +35,9 @@ extension VMInstance {
             context.source == .downloadLatest,
             let destinationURL = context.downloadDestinationURL
         else { return false }
-        let fm = FileManager.default
-        let sidecarURL = IPSWService.resumeDataSidecarURL(for: destinationURL)
-        return fm.fileExists(atPath: sidecarURL.path(percentEncoded: false))
-            && !fm.fileExists(atPath: destinationURL.path(percentEncoded: false))
+        let bundle = IPSWBundle(url: IPSWService.resumeBundleURL(for: destinationURL))
+        return bundle.exists
+            && !FileManager.default.fileExists(atPath: destinationURL.path(percentEncoded: false))
         #else
         return false
         #endif

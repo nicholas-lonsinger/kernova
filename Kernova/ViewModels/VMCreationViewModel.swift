@@ -203,9 +203,15 @@ final class VMCreationViewModel {
     func buildInstallContext() -> MacOSInstallContext {
         switch ipswSource {
         case .downloadLatest:
+            // `confirmedOverwritePath` is set by `confirmOverwrite()` when the
+            // user clicks past the "this file already exists" warning. The
+            // `!= nil` guard prevents the meaningless `nil == nil` match (no
+            // path AND no confirmation) from accidentally setting the flag.
             return MacOSInstallContext(
                 source: .downloadLatest,
-                downloadDestinationPath: ipswDownloadPath
+                downloadDestinationPath: ipswDownloadPath,
+                requestedFreshDownload: confirmedOverwritePath != nil
+                    && confirmedOverwritePath == ipswDownloadPath
             )
         case .localFile:
             return MacOSInstallContext(
@@ -218,19 +224,23 @@ final class VMCreationViewModel {
 
     // MARK: - Resume Detection
 
-    /// `true` when the chosen download destination has an associated `.resumedata`
-    /// sidecar from a prior interrupted download, *and* no completed IPSW already
-    /// exists at the path.
+    /// `true` when the chosen download destination has an associated
+    /// `.kernovadownload` in-progress bundle from a prior interrupted download,
+    /// *and* no completed IPSW already exists at the path.
     ///
     /// A completed file takes priority — the overwrite warning flow handles that
     /// case instead.
     var hasResumableDownload: Bool {
+        #if arch(arm64)
         guard ipswSource == .downloadLatest,
             let path = ipswDownloadPath,
             !ipswDownloadPathFileExists
         else { return false }
-        let sidecarPath = path + ".resumedata"
-        return FileManager.default.fileExists(atPath: sidecarPath)
+        let bundleURL = IPSWService.resumeBundleURL(for: URL(fileURLWithPath: path))
+        return IPSWBundle(url: bundleURL).exists
+        #else
+        return false
+        #endif
     }
 
     func confirmOverwrite() {

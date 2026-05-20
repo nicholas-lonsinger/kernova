@@ -846,6 +846,65 @@ struct VMLibraryViewModelTests {
         #expect(viewModel.errorMessage != nil)
     }
 
+    #if arch(arm64)
+    @Test("createVM forwards requestedFreshDownload from a wizard that confirmed overwrite")
+    func createVMForwardsRequestedFreshDownload() async throws {
+        // End-to-end: wizard with macOS / downloadLatest / a destination that
+        // already has a file there / overwrite confirmed → the persisted
+        // install context on the new VM carries requestedFreshDownload=true,
+        // which is what tells the lifecycle coordinator to trash the stale
+        // file at first Start.
+        let temp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("createVMOverwrite-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+        try Data(repeating: 0x12, count: 256).write(to: destination)
+
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let wizard = VMCreationViewModel()
+        wizard.selectedOS = .macOS
+        wizard.selectedBootMode = .macOS
+        wizard.vmName = "Overwrite VM"
+        wizard.ipswSource = .downloadLatest
+        wizard.ipswDownloadPath = destination.path(percentEncoded: false)
+        wizard.confirmOverwrite()
+
+        await viewModel.createVM(from: wizard)
+
+        let instance = try #require(viewModel.instances.first)
+        let context = try #require(instance.configuration.installContext)
+        #expect(context.source == .downloadLatest)
+        #expect(context.requestedFreshDownload)
+    }
+
+    @Test("createVM leaves requestedFreshDownload false when wizard didn't confirm overwrite")
+    func createVMNoOverwriteLeavesFlagFalse() async throws {
+        // Same wizard shape but without `confirmOverwrite()` — the persisted
+        // context must have requestedFreshDownload=false so the coordinator
+        // doesn't trash an unrelated file at first Start.
+        let temp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("createVMNoOverwrite-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let wizard = VMCreationViewModel()
+        wizard.selectedOS = .macOS
+        wizard.selectedBootMode = .macOS
+        wizard.vmName = "No-overwrite VM"
+        wizard.ipswSource = .downloadLatest
+        wizard.ipswDownloadPath = destination.path(percentEncoded: false)
+
+        await viewModel.createVM(from: wizard)
+
+        let instance = try #require(viewModel.instances.first)
+        let context = try #require(instance.configuration.installContext)
+        #expect(!context.requestedFreshDownload)
+    }
+    #endif
+
     // MARK: - Reconcile With Disk
 
     @Test("reconcileWithDisk adds discovered bundles not in memory")
