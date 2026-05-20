@@ -25,46 +25,8 @@ final class VirtualizationService {
         instance.status = .starting
 
         do {
-            // Branch precedence: save file → restore from disk, otherwise
-            // post-install hand-off (attached VM), otherwise cold boot. A
-            // save file is incompatible with a freshly-installed VM today
-            // (install service doesn't write one), so the restore branch
-            // and the hand-off branch don't fire together. If a future
-            // refactor lets both states coexist, restore wins — `restore`'s
-            // own `attachVirtualMachine` call would clobber a stale
-            // hand-off VM and the lock race would return. Audit that
-            // path before relaxing this assumption.
             if instance.hasSaveFile {
                 try await restoreOrColdBoot(instance)
-            } else if let vm = instance.virtualMachine {
-                // Post-install hand-off: `MacOSInstallService` leaves the VM
-                // attached after a successful install so this path can boot
-                // it in-place without rebuilding the VZ configuration. A
-                // rebuild would construct a second `VZMacAuxiliaryStorage`
-                // on the same file while the install-side instance's lock
-                // is still draining, producing "Failed to lock auxiliary
-                // storage." Serial reading and clipboard service are
-                // already running from the install setup; vsock services
-                // are armed here for the first time (no guest agent during
-                // install).
-                instance.startVsockServices()
-                // `VZMacOSInstaller.install` resolves its completion
-                // handler while the VM is still booting the freshly-
-                // installed macOS for first-run configuration — i.e.
-                // `vm.state` is `.running` (or transitioning there),
-                // *not* `.stopped` as the docs suggest. Calling
-                // `vm.start()` on a running VM throws "Transition from
-                // state 'running' to state 'running' is invalid". Only
-                // start if VZ actually reports the VM stopped; otherwise
-                // observe the current run and let the `status = .running`
-                // assignment below reconcile our view of it.
-                if vm.state == .stopped {
-                    try await vm.start()
-                } else {
-                    Self.logger.notice(
-                        "Post-install hand-off found VM '\(instance.name, privacy: .public)' in state \(String(describing: vm.state), privacy: .public); skipping vm.start()"
-                    )
-                }
             } else {
                 let result = try await buildConfiguration(for: instance)
                 instance.serialInputPipe = result.serialInputPipe

@@ -106,21 +106,56 @@ final class MacOSInstallService {
             installerProgress.cancel()
         }
 
-        // RATIONALE: Don't tear down the VM here. The caller (typically
-        // `installAndAutoBoot`) immediately chains a `start(_:)` on the same
-        // actor turn, and rebuilding the VZ configuration races VZ's file
-        // lock on auxiliary storage — the framework doesn't release the lock
-        // synchronously when the install-side `VZMacAuxiliaryStorage` is
-        // deallocated, so a new `VZMacAuxiliaryStorage(contentsOf:)` opened
-        // milliseconds later fails with "Invalid virtual machine
-        // configuration. Failed to lock auxiliary storage." Keeping the
-        // attached VM lets `VirtualizationService.start` skip the rebuild
-        // and call `vm.start()` directly on the already-installed instance,
-        // matching Apple's canonical `VZMacOSInstaller` sample.
+        // `VZMacOSInstaller.install` resolves its completion handler before
+        // VZ has finished propagating the post-install guest shutdown
+        // through `vm.state`. Without waiting, the caller's auto-boot would
+        // run while the VM is still transitioning — historically that
+        // raced the auxiliary-storage file lock (cold-boot rebuilding a
+        // fresh `VZMacAuxiliaryStorage(contentsOf:)` while the install-
+        // side instance still held the lock) and produced the
+        // "Failed to lock auxiliary storage" error from the original repro.
+        //
+        // Waiting here also gives our `VZVirtualMachineDelegate.guestDidStop`
+        // a chance to fire as the VM reaches `.stopped`, which clears
+        // `instance.virtualMachine` and resets our status — so by the
+        // time the caller's cold-boot runs, refs and locks are released
+        // and the new start path has a clean slate.
+        await Self.waitForVMStopped(vm)
+
+        // Belt-and-braces: if the delegate didn't fire (timed out, or
+        // the adapter was deallocated before `guestDidStop` ran), tear
+        // down explicitly so a subsequent boot doesn't observe a stale
+        // attached VM.
+        if instance.virtualMachine != nil {
+            instance.resetToStopped()
+        }
+
         instance.installState?.currentPhase = .installing(progress: 1.0)
-        instance.status = .stopped
 
         Self.logger.info("macOS installation completed for '\(instance.name, privacy: .public)'")
+    }
+
+    /// Polls `vm.state` until it reports `.stopped` or the deadline elapses.
+    ///
+    /// VZ's state machine updates asynchronously; this is the cheapest
+    /// portable way to wait without standing up KVO observers for a single
+    /// transition. 50 ms cadence is well below human-perceptible UI lag
+    /// (`installState.currentPhase` is already pinned at "installing 100%"
+    /// during the wait).
+    private static func waitForVMStopped(
+        _ vm: VZVirtualMachine,
+        timeout: Duration = .seconds(30)
+    ) async {
+        let deadline = ContinuousClock.now + timeout
+        while vm.state != .stopped {
+            if ContinuousClock.now >= deadline {
+                logger.warning(
+                    "VM did not reach .stopped within timeout (state: \(String(describing: vm.state), privacy: .public))"
+                )
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
     }
 
     // MARK: - Platform Setup

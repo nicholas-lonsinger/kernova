@@ -16,13 +16,12 @@ final class MockMacOSInstallService: MacOSInstallProviding {
     ) async throws {
         installCallCount += 1
         if let error = installError { throw error }
-        // Mirror the real `MacOSInstallService` post-install state: install
-        // complete, ready to boot. The real service intentionally leaves
-        // `instance.virtualMachine` set so `VirtualizationService.start`
-        // can boot it in-place without re-locking auxiliary storage; the
-        // mock has no VZ instance to attach, so the field stays nil and
-        // callers that need the hand-off path must wire a VM separately.
-        instance.status = .stopped
+        // Mirror the real `MacOSInstallService` post-install state: VM
+        // released (via `guestDidStop` → `resetToStopped` in production
+        // after `waitForVMStopped`; simulated directly here) and status
+        // `.stopped` so the caller's auto-boot runs the normal cold-boot
+        // path with no stale refs.
+        instance.resetToStopped()
     }
     #endif
 }

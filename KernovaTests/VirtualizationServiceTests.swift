@@ -182,19 +182,4 @@ struct VirtualizationServiceTests {
         #expect(instance.status == .error)
         #expect(instance.errorMessage != nil)
     }
-
-    // MARK: - Post-install Hand-off
-    //
-    // The post-install hand-off branch in `start(_:)` (`else if let vm =
-    // instance.virtualMachine`) intentionally has no direct unit test.
-    // A reliable test would have to either attach a real `VZVirtualMachine`
-    // and call `service.start(instance)` (whose `vm.start()` hangs on
-    // GitHub's macos runners — they can't reliably host a nested VM) or
-    // refactor the service to inject `ConfigurationBuilder` so the rebuild
-    // path can be observed without a real VZ instance. The injection
-    // refactor is intentionally deferred — the branch's correctness is
-    // guarded by the rationale comment in `VirtualizationService.start`,
-    // by the manual test plan in this PR, and by the existing happy-path
-    // tests that exercise `MacOSInstallService` ↔ `VirtualizationService`
-    // hand-off through the auto-boot flow on real hardware.
 }
