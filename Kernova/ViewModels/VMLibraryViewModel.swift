@@ -280,18 +280,50 @@ final class VMLibraryViewModel {
             defer { instance.installTask = nil }
             do {
                 try await self.lifecycle.installMacOS(on: instance, context: context)
-                // installMacOS cleared installContext on success; start(_:) now
-                // sees no installContext and goes down the normal boot path.
+                // `installMacOS` cleared both `installContext` and
+                // `installState` on its success path; this is a
+                // belt-and-braces redundant clear so a future refactor
+                // that relocates the coordinator-level cleanup doesn't
+                // silently leave install-progress UI armed. `start(_:)`
+                // now sees no installContext and goes down the normal
+                // boot path (via the post-install hand-off branch).
+                instance.installState = nil
                 await self.start(instance)
             } catch is CancellationError {
+                // Tear down the VM if `MacOSInstallService.install` attached
+                // one before cancellation fired (i.e. cancel landed during
+                // `installer.install()` rather than the download phase).
+                // Without this, retry would build a fresh
+                // `VZMacAuxiliaryStorage(contentsOf:)` while the old one is
+                // still alive on `instance.virtualMachine` — same lock race
+                // this PR closes for the success path.
+                instance.tearDownSession()
                 instance.installState = nil
+                instance.errorMessage = nil
                 instance.status = .initialBoot
                 Self.logger.notice(
                     "Install cancelled for '\(instance.name, privacy: .public)' — VM remains in .initialBoot"
                 )
             } catch {
+                // Same teardown rationale as the cancel branch above:
+                // whether the user cancelled (race branch below) or the
+                // pipeline failed for real, an attached VM from a partial
+                // install must not bleed into the next retry.
+                instance.tearDownSession()
                 instance.installState = nil
-                if !Task.isCancelled {
+                if Task.isCancelled {
+                    // The user cancelled and a non-cancellation error arrived
+                    // before the cancel propagated (e.g. a network failure
+                    // raced the cancel). The coordinator's generic catch set
+                    // status to `.error`; user intent was cancel, so route
+                    // back to `.initialBoot` and drop the error message —
+                    // the VM stays ready for retry, no dialog.
+                    instance.errorMessage = nil
+                    instance.status = .initialBoot
+                    Self.logger.notice(
+                        "Install cancelled for '\(instance.name, privacy: .public)' — pipeline surfaced \(error.localizedDescription, privacy: .public)"
+                    )
+                } else {
                     Self.logger.error(
                         "Install failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                     )

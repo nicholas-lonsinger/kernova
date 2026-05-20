@@ -73,6 +73,15 @@ final class MacOSInstallService {
         instance.serialOutputPipe = result.serialOutputPipe
         instance.clipboardInputPipe = result.clipboardInputPipe
         instance.clipboardOutputPipe = result.clipboardOutputPipe
+        // RATIONALE: `attachVirtualMachine` runs *before* the cancellation
+        // check below on purpose. If a cancel lands in this window, the
+        // throw at step 5 unwinds with `instance.virtualMachine` already
+        // set; `VMLibraryViewModel.installAndAutoBoot`'s
+        // `catch is CancellationError` then calls `tearDownSession()` to
+        // release the VM. Moving the check above `attachVirtualMachine`
+        // would skip wiring the delegate and leave the configured pipes
+        // dangling on `instance` without a matching VM — harder to clean
+        // up than the current ordering.
         let vm = instance.attachVirtualMachine(from: result.configuration)
         instance.startSerialReading()
         instance.startClipboardService()
@@ -106,10 +115,125 @@ final class MacOSInstallService {
             installerProgress.cancel()
         }
 
-        instance.resetToStopped()
+        // `VZMacOSInstaller.install` resolves its completion handler before
+        // VZ has finished propagating the post-install guest shutdown
+        // through `vm.state`. Without waiting, the caller's auto-boot would
+        // run while the VM is still transitioning — historically that
+        // raced the auxiliary-storage file lock (cold-boot rebuilding a
+        // fresh `VZMacAuxiliaryStorage(contentsOf:)` while the install-
+        // side instance still held the lock) and produced the
+        // "Failed to lock auxiliary storage" error from the original repro.
+        //
+        // Waiting here also gives our `VZVirtualMachineDelegate.guestDidStop`
+        // a chance to fire as the VM reaches `.stopped`, which clears
+        // `instance.virtualMachine` and resets our status — so by the
+        // time the caller's cold-boot runs, refs and locks are released
+        // and the new start path has a clean slate.
+        await Self.waitForVMStopped(vm)
+
+        // `waitForVMStopped` honors `Task.isCancelled` internally (it
+        // suppresses the timeout warning when cancelled) but intentionally
+        // doesn't throw — so the cancel signal has to be re-raised here
+        // at the function's success/failure boundary. Without this, a
+        // cancel that lands during the wait would let the install return
+        // success and the caller (`installAndAutoBoot`) would auto-boot
+        // a cancelled install. The throw routes through the coordinator's
+        // `catch is CancellationError` → `installAndAutoBoot`'s same arm
+        // → `tearDownSession`, status `.initialBoot`, no auto-boot.
+        try Task.checkCancellation()
+
+        // Belt-and-braces: if the delegate didn't fire (timed out, or
+        // the adapter was deallocated before `guestDidStop` ran), tear
+        // down explicitly so a subsequent boot doesn't observe a stale
+        // attached VM.
+        if instance.virtualMachine != nil {
+            instance.resetToStopped()
+        }
+
         instance.installState?.currentPhase = .installing(progress: 1.0)
 
         Self.logger.info("macOS installation completed for '\(instance.name, privacy: .public)'")
+    }
+
+    /// Waits for `vm.state` to reach `.stopped`, the timeout to elapse, or
+    /// the surrounding `Task` to be cancelled — whichever comes first.
+    ///
+    /// Bridges `VZVirtualMachine.state`'s built-in KVO compliance into an
+    /// `AsyncStream<Void>` (the observer yields exactly once when state
+    /// becomes `.stopped`), raced against `Task.sleep` inside a
+    /// `TaskGroup`. Cancellation of the surrounding task propagates
+    /// structurally to both children: the observer task's `next()` returns
+    /// `nil` when the consumer's task is cancelled, and `Task.sleep` throws
+    /// — caught silently with `try?` so the group can complete. The
+    /// function then detects outer cancellation via `Task.isCancelled` and
+    /// skips the timeout warning (a user cancel is intentional behavior,
+    /// not an anomaly worth flagging).
+    ///
+    /// We use `NSObject.observe(_:options:)` directly instead of Combine's
+    /// `publisher(for:).values` because the latter's `AsyncPublisher` isn't
+    /// `Sendable` when its underlying `Subject` (here `VZVirtualMachine`)
+    /// isn't, and we need to pass the sequence into a task group child.
+    private static func waitForVMStopped(
+        _ vm: VZVirtualMachine,
+        timeout: Duration = .seconds(30)
+    ) async {
+        // Quick path: already stopped (avoids spinning up the bridge for
+        // the common case where VZ propagated synchronously).
+        if vm.state == .stopped { return }
+
+        let (stream, continuation) = AsyncStream<Void>.makeStream()
+
+        // The observer's changeHandler fires on whichever thread mutated
+        // `vm.state` — for `@MainActor`-bound VZ that's the main actor, so
+        // the `yield`/`finish` here are serialised with our own MainActor
+        // reads of `vm.state`. The `defer { invalidate() }` keeps the
+        // observer alive for the lifetime of this function — losing the
+        // reference earlier would silently stop observation.
+        let observation = vm.observe(\.state, options: [.new]) { observed, _ in
+            if observed.state == .stopped {
+                continuation.yield(())
+                continuation.finish()
+            }
+        }
+        defer { observation.invalidate() }
+
+        // Cover the race: state may have transitioned to `.stopped` between
+        // the initial guard and observer registration above.
+        if vm.state == .stopped {
+            continuation.finish()
+            return
+        }
+
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask {
+                // First yield (or stream finish) wins. `for await` over
+                // `AsyncStream` returns when the consumer's task is
+                // cancelled, so `group.cancelAll()` below unblocks this
+                // child without further plumbing.
+                for await _ in stream { return }
+            }
+            group.addTask {
+                // `try?` here is the right shape — when the group cancels
+                // this child (either because the observer finished first or
+                // because the surrounding task was cancelled), the sleep
+                // throws `CancellationError` and we want to silently exit
+                // so the group can complete. Outer cancellation is detected
+                // via `Task.isCancelled` after the group returns, not by
+                // re-throwing here (which would force a throwing group for
+                // no gain).
+                try? await Task.sleep(for: timeout)
+            }
+            _ = await group.next()
+            group.cancelAll()
+        }
+
+        // Distinguish timeout (genuine anomaly) from user cancel
+        // (intentional) when emitting diagnostics — log only the former.
+        if vm.state != .stopped && !Task.isCancelled {
+            logger.warning(
+                "VM did not reach .stopped within timeout (state: \(String(describing: vm.state), privacy: .public))"
+            )
+        }
     }
 
     // MARK: - Platform Setup

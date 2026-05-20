@@ -391,11 +391,16 @@ final class IPSWService: Sendable {
 
         do {
             for try await data in chunks {
-                // RATIONALE: `AsyncThrowingStream` from `makeStream()` doesn't
-                // observe `Task.isCancelled` automatically between yields —
-                // it just waits for the producer's next `yield`/`finish`. An
-                // explicit check here lets `Task.cancel()` from a caller (e.g.
-                // the user clicking Cancel) interrupt the stream promptly.
+                // Cancellation observed two ways. The in-loop check catches
+                // cancels that arrive between yields with a pending chunk —
+                // the iterator wakes, body runs, and we throw before writing.
+                // The post-loop check below catches the harder case:
+                // `AsyncThrowingStream`'s `next()` is wrapped in a
+                // `withTaskCancellationHandler` that, on cancel, terminates
+                // the storage and **resolves the pending `next()` with `nil`
+                // instead of throwing**. That makes the for-await loop exit
+                // *normally*, so without a check after the loop the function
+                // would proceed to `finalize` with a partial file.
                 try Task.checkCancellation()
                 guard !data.isEmpty else { continue }
                 try handle.write(contentsOf: data)
@@ -407,6 +412,22 @@ final class IPSWService: Sendable {
                 ) {
                     await MainActor.run { progressHandler(progress) }
                 }
+            }
+            // See the comment above: cancel while parked in `next()` returns
+            // nil rather than throwing, so the loop exits cleanly. Re-check
+            // here so the caller's catch can preserve the bundle for resume
+            // rather than finalize partial bytes onto the user's destination.
+            try Task.checkCancellation()
+            // Defensive completeness check for the non-cancel "stream ended
+            // before the body did" case — e.g. a server that closed the
+            // connection cleanly under Content-Length, which `URLSession`
+            // surfaces as `didCompleteWithError(nil)` rather than an error.
+            // Without this, an incomplete file would also slip past finalize.
+            // Throw a bare `URLError` so the generic `catch` below wraps it
+            // *once* as `IPSWError.downloadFailed(URLError(...))` — throwing
+            // a pre-wrapped IPSWError here would catch again and double-wrap.
+            if expectedTotal > 0 && totalWritten < expectedTotal {
+                throw URLError(.networkConnectionLost)
             }
         } catch is CancellationError {
             Self.logger.info("Restore image download cancelled")

@@ -16,6 +16,11 @@ final class MockMacOSInstallService: MacOSInstallProviding {
     ) async throws {
         installCallCount += 1
         if let error = installError { throw error }
+        // Mirror the real `MacOSInstallService` post-install state: VM
+        // released (via `guestDidStop` → `resetToStopped` in production
+        // after `waitForVMStopped`; simulated directly here) and status
+        // `.stopped` so the caller's auto-boot runs the normal cold-boot
+        // path with no stale refs.
         instance.resetToStopped()
     }
     #endif
