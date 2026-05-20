@@ -44,8 +44,9 @@ final class IPSWService: Sendable {
     /// The partial download lives at `<destinationURL minus .ipsw>.kernovadownload/`,
     /// a Finder-visible bundle directory. The bundle's `data` file holds the
     /// partial bytes (file size IS the resume offset) and `Info.plist` holds
-    /// the ETag / Last-Modified / expected-size metadata used for `If-Range`
-    /// resume.
+    /// the ETag / Last-Modified metadata used for `If-Range` resume. The
+    /// expected total size is re-derived from each response's `Content-Length`
+    /// or `Content-Range`, never cached.
     ///
     /// On user cancellation the bytes are preserved as-is (the file handle closes,
     /// the bundle stays put) and `CancellationError` is thrown so the non-destructive
@@ -129,25 +130,33 @@ final class IPSWService: Sendable {
         case 206:
             // Partial Content — server honored our Range. The response's
             // Content-Range header is the authoritative source for the file's
-            // total size (we no longer cache it in metadata).
+            // total size (we no longer cache it in metadata). `response
+            // .expectedContentLength` reports the partial-body length on 206,
+            // not the full file, so we must parse Content-Range — fail-fast
+            // when it's missing or malformed rather than substituting a wrong
+            // total into the progress UI.
             guard resumeMetadata != nil else {
                 // Server sent 206 without us asking; treat as a server error.
                 Self.logger.error("Server returned 206 Partial Content without a Range request")
                 throw IPSWError.downloadFailed(URLError(.badServerResponse))
             }
-            let parsedRange = response.value(forHTTPHeaderField: "Content-Range")
-                .flatMap(Self.parseContentRange)
-            if let parsed = parsedRange, parsed.start != resumeOffset {
+            guard
+                let rangeHeader = response.value(forHTTPHeaderField: "Content-Range"),
+                let parsedRange = Self.parseContentRange(rangeHeader)
+            else {
+                Self.logger.error("206 response missing or unparseable Content-Range header")
+                throw IPSWError.downloadFailed(URLError(.badServerResponse))
+            }
+            if parsedRange.start != resumeOffset {
                 Self.logger.warning(
-                    "Content-Range start \(parsed.start, privacy: .public) ≠ requested offset \(resumeOffset, privacy: .public); trusting server"
+                    "Content-Range start \(parsedRange.start, privacy: .public) ≠ requested offset \(resumeOffset, privacy: .public); trusting server"
                 )
             }
-            let expectedTotal = parsedRange?.total ?? response.expectedContentLength
             try await streamBytes(
                 from: responseBytes,
                 into: bundle,
                 startingAt: resumeOffset,
-                expectedTotal: expectedTotal,
+                expectedTotal: parsedRange.total,
                 progressHandler: progressHandler
             )
 
@@ -196,12 +205,12 @@ final class IPSWService: Sendable {
         }
 
         // Successful completion — move bytes to the user's chosen path and trash the bundle.
+        // `streamBytes` already emitted the unthrottled final-progress callback,
+        // so we don't need to do it here. (The previous version used
+        // `response.expectedContentLength`, which on 206 reports the partial-body
+        // length rather than the full file size — a bug now closed by relying on
+        // `streamBytes`'s totalWritten.)
         try bundle.finalize(to: destinationURL)
-
-        let finalSize = response.expectedContentLength
-        let finalProgress = DownloadProgress(
-            bytesWritten: finalSize, totalBytes: finalSize, bytesPerSecond: 0)
-        await MainActor.run { progressHandler(finalProgress) }
         Self.logger.info(
             "Restore image downloaded to \(destinationURL.lastPathComponent, privacy: .public)"
         )
@@ -243,7 +252,10 @@ final class IPSWService: Sendable {
             return nil
         }
 
-        guard metadata.originalURL.scheme == "https" else {
+        guard metadata.originalURL.scheme?.lowercased() == "https" else {
+            // Case-insensitive per RFC 3986 §3.1 ("the scheme component is
+            // case-insensitive"). Apple's CDN always uses lowercase `https`,
+            // but a tampered plist could try variants like `HTTPS://`.
             Self.logger.warning(
                 "Stored bundle URL has non-https scheme '\(metadata.originalURL.scheme ?? "<nil>", privacy: .public)' — discarding"
             )
@@ -299,12 +311,19 @@ final class IPSWService: Sendable {
 
     // MARK: - Helpers
 
+    /// Issues a GET (with optional `Range` / `If-Range` headers) and returns the
+    /// response plus a stream of `Data` chunks delivered by URLSession.
+    ///
+    /// Backed by a `URLSessionDataDelegate` rather than `URLSession.bytes(for:)`
+    /// because the latter yields one byte at a time — fine for small payloads,
+    /// catastrophic at the multi-GB scale of an IPSW (async overhead per byte
+    /// dominates throughput).
     private func performGET(
         url: URL,
         resumeOffset: Int64?,
         ifRangeETag: String?,
         ifRangeLastModified: String?
-    ) async throws -> (URLSession.AsyncBytes, HTTPURLResponse) {
+    ) async throws -> (AsyncThrowingStream<Data, any Error>, HTTPURLResponse) {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         if let resumeOffset, resumeOffset > 0 {
@@ -315,15 +334,31 @@ final class IPSWService: Sendable {
                 request.setValue(lastModified, forHTTPHeaderField: "If-Range")
             }
         }
-        let (bytes, response) = try await session.bytes(for: request)
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw IPSWError.downloadFailed(URLError(.badServerResponse))
+
+        let (stream, streamContinuation) = AsyncThrowingStream<Data, any Error>.makeStream()
+
+        let response = try await withCheckedThrowingContinuation {
+            (responseContinuation: CheckedContinuation<HTTPURLResponse, any Error>) in
+            let delegate = StreamingDataTaskDelegate(
+                responseContinuation: responseContinuation,
+                streamContinuation: streamContinuation
+            )
+            let task = session.dataTask(with: request)
+            // `URLSessionTask.delegate` is `weak`; the strong reference lives
+            // in the `onTermination` capture below so the delegate stays alive
+            // for the entire lifetime of the stream.
+            task.delegate = delegate
+            streamContinuation.onTermination = { _ in
+                withExtendedLifetime(delegate) {}
+                task.cancel()
+            }
+            task.resume()
         }
-        return (bytes, httpResponse)
+        return (stream, response)
     }
 
     private func streamBytes(
-        from sequence: URLSession.AsyncBytes,
+        from chunks: AsyncThrowingStream<Data, any Error>,
         into bundle: IPSWBundle,
         startingAt initialOffset: Int64,
         expectedTotal: Int64,
@@ -341,28 +376,37 @@ final class IPSWService: Sendable {
 
         var smoother = DownloadSpeedSmoother()
         var totalWritten = initialOffset
-        var buffer: [UInt8] = []
-        buffer.reserveCapacity(Self.writeChunkSize)
 
-        // RATIONALE: On cancel/error we deliberately do NOT flush the in-memory
-        // buffer to disk. Any unflushed bytes (≤ 256 KB) were already received
-        // over the network but not committed; resume sends `Range: bytes=<filesize>-`
-        // so the server will resend them on the next attempt. Flushing them
-        // would be benign but unnecessary work.
+        // Initial progress emission so resume UX shows the correct starting
+        // fraction immediately (e.g. 30% on a half-finished download), not a
+        // delayed jump after the first chunk lands.
+        await MainActor.run {
+            progressHandler(
+                DownloadProgress(
+                    bytesWritten: totalWritten,
+                    totalBytes: expectedTotal,
+                    bytesPerSecond: 0
+                )
+            )
+        }
+
         do {
-            for try await byte in sequence {
-                buffer.append(byte)
-                if buffer.count >= Self.writeChunkSize {
-                    try handle.write(contentsOf: buffer)
-                    totalWritten += Int64(buffer.count)
-                    buffer.removeAll(keepingCapacity: true)
-                    Self.report(
-                        bytesWritten: totalWritten,
-                        expectedTotal: expectedTotal,
-                        smoother: &smoother,
-                        progressHandler: progressHandler
-                    )
-                }
+            for try await data in chunks {
+                // RATIONALE: `AsyncThrowingStream` from `makeStream()` doesn't
+                // observe `Task.isCancelled` automatically between yields —
+                // it just waits for the producer's next `yield`/`finish`. An
+                // explicit check here lets `Task.cancel()` from a caller (e.g.
+                // the user clicking Cancel) interrupt the stream promptly.
+                try Task.checkCancellation()
+                guard !data.isEmpty else { continue }
+                try handle.write(contentsOf: data)
+                totalWritten += Int64(data.count)
+                Self.report(
+                    bytesWritten: totalWritten,
+                    expectedTotal: expectedTotal,
+                    smoother: &smoother,
+                    progressHandler: progressHandler
+                )
             }
         } catch is CancellationError {
             Self.logger.info("Restore image download cancelled")
@@ -377,12 +421,21 @@ final class IPSWService: Sendable {
             throw IPSWError.downloadFailed(error)
         }
 
-        if !buffer.isEmpty {
-            try handle.write(contentsOf: buffer)
-            totalWritten += Int64(buffer.count)
-        }
         try handle.close()
         handleClosed = true
+
+        // Unthrottled final progress so callers see 100% (and the correct
+        // total) even when the entire body arrives inside one throttle window
+        // — common on fast networks or with stubbed/cached responses.
+        await MainActor.run {
+            progressHandler(
+                DownloadProgress(
+                    bytesWritten: totalWritten,
+                    totalBytes: expectedTotal,
+                    bytesPerSecond: 0
+                )
+            )
+        }
     }
 
     private static func report(
@@ -400,10 +453,6 @@ final class IPSWService: Sendable {
         )
         Task { @MainActor in progressHandler(progress) }
     }
-
-    /// 256 KB — large enough to amortize syscall overhead, small enough that the
-    /// in-memory buffer stays modest for a multi-GB download.
-    private static let writeChunkSize = 256 * 1024
 
     /// Parses `Content-Range: bytes 0-499/1234` into `(0, 499, 1234)`.
     static func parseContentRange(_ header: String) -> (start: Int64, end: Int64, total: Int64)? {
@@ -537,6 +586,78 @@ struct IPSWBundle: Sendable {
         }
         try fm.moveItem(at: dataURL, to: destinationURL)
         try fm.trashItem(at: url, resultingItemURL: nil)
+    }
+}
+#endif
+
+// MARK: - URLSessionDataDelegate bridge
+
+#if arch(arm64)
+/// Bridges `URLSessionDataDelegate` callbacks to an `AsyncThrowingStream<Data, Error>`.
+///
+/// We don't use `URLSession.bytes(for:)` because its `AsyncBytes` yields one
+/// byte at a time, which carries async-iteration overhead per byte. For a
+/// multi-GB IPSW that's billions of iterations; the data-task delegate
+/// delivers `Data` chunks (typically 4 KB–64 KB) which we write straight to
+/// the bundle's data file with no intermediate buffering.
+private final class StreamingDataTaskDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    // RATIONALE: URLSession serialises delegate callbacks onto a private queue,
+    // so mutable state read/written only in those callbacks (and inside the
+    // single-shot continuation resume) is race-free; `@unchecked Sendable` is
+    // the standard idiom for this pattern.
+    private let responseContinuation: CheckedContinuation<HTTPURLResponse, any Error>
+    private let streamContinuation: AsyncThrowingStream<Data, any Error>.Continuation
+    private var responseDelivered = false
+
+    init(
+        responseContinuation: CheckedContinuation<HTTPURLResponse, any Error>,
+        streamContinuation: AsyncThrowingStream<Data, any Error>.Continuation
+    ) {
+        self.responseContinuation = responseContinuation
+        self.streamContinuation = streamContinuation
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        dataTask: URLSessionDataTask,
+        didReceive response: URLResponse,
+        completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+    ) {
+        guard !responseDelivered else {
+            completionHandler(.allow)
+            return
+        }
+        responseDelivered = true
+        guard let httpResponse = response as? HTTPURLResponse else {
+            responseContinuation.resume(throwing: URLError(.badServerResponse))
+            completionHandler(.cancel)
+            return
+        }
+        responseContinuation.resume(returning: httpResponse)
+        completionHandler(.allow)
+    }
+
+    func urlSession(
+        _ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data
+    ) {
+        streamContinuation.yield(data)
+    }
+
+    func urlSession(
+        _ session: URLSession, task: URLSessionTask, didCompleteWithError error: (any Error)?
+    ) {
+        if let error {
+            // If the failure landed before any response delivery, surface it
+            // through the response continuation so the awaiter sees the error
+            // instead of hanging.
+            if !responseDelivered {
+                responseDelivered = true
+                responseContinuation.resume(throwing: error)
+            }
+            streamContinuation.finish(throwing: error)
+        } else {
+            streamContinuation.finish()
+        }
     }
 }
 #endif
