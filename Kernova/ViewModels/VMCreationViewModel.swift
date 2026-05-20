@@ -206,9 +206,14 @@ final class VMCreationViewModel {
             // `confirmedOverwritePath` is set by `confirmOverwrite()` when the
             // user clicks past the "this file already exists" warning. Carry
             // the intent through to the install pipeline so it can replace
-            // the stale file rather than silently using it.
-            let didConfirmOverwrite =
-                confirmedOverwritePath != nil && confirmedOverwritePath == ipswDownloadPath
+            // the stale file rather than silently using it. Compare unwrapped
+            // strings rather than Optional==Optional so the meaningless
+            // nil==nil match (no path, no confirmation) can't accidentally
+            // set the flag.
+            let didConfirmOverwrite: Bool = {
+                guard let path = ipswDownloadPath else { return false }
+                return confirmedOverwritePath == path
+            }()
             return MacOSInstallContext(
                 source: .downloadLatest,
                 downloadDestinationPath: ipswDownloadPath,

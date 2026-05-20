@@ -217,6 +217,61 @@ struct IPSWServiceDownloadTests {
         #expect(written == complete)
     }
 
+    @Test("206 response without a parseable Content-Range fails fast")
+    func partialResponseMissingContentRangeFailsFast() async throws {
+        // We can't trust `response.expectedContentLength` on 206 — it reports
+        // the partial-body length, not the full file size — so a 206 with no
+        // (or unparseable) Content-Range must throw rather than feed a wrong
+        // total into the progress UI.
+        let temp = try Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+        let bundleURL = IPSWService.resumeBundleURL(for: destination)
+        let bundle = IPSWBundle(url: bundleURL)
+
+        // Seed a partial bundle so the resume Range header is sent and the
+        // 206 branch is selected.
+        try bundle.prepareForFreshDownload(
+            with: IPSWDownloadMetadata(
+                originalURL: Self.remoteURL,
+                etag: "\"v1\"",
+                lastModified: nil,
+                createdAt: Date()
+            )
+        )
+        try Data(repeating: 0x11, count: 1024).write(to: bundle.dataURL)
+
+        StubURLProtocol.handler = { request in
+            // Status 206 with NO Content-Range header — the failure case.
+            .response(
+                url: request.url ?? Self.remoteURL,
+                statusCode: 206,
+                body: Data(repeating: 0x22, count: 512),
+                headers: [:]
+            )
+        }
+        defer { StubURLProtocol.handler = nil }
+
+        let service = Self.makeServiceWithStub()
+        do {
+            try await service.downloadRestoreImage(
+                from: Self.remoteURL,
+                to: destination,
+                progressHandler: { _ in }
+            )
+            Issue.record("Expected fail-fast on 206 without Content-Range")
+        } catch IPSWError.downloadFailed {
+            // Expected
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        // Bundle preserved for a future retry — the failure is on the
+        // protocol side, the partial bytes on disk are still valid for resume.
+        #expect(bundle.exists)
+        #expect(!FileManager.default.fileExists(atPath: destination.path))
+    }
+
     @Test("4xx server error throws IPSWError.downloadFailed")
     func httpErrorThrows() async throws {
         let temp = try Self.makeTempDir()

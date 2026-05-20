@@ -177,13 +177,30 @@ final class VMLifecycleCoordinator {
                     // re-trashing and re-downloading. Trash (not unlink) so
                     // the user can recover from Trash, matching the policy
                     // already established for VM-delete cleanup.
+                    //
+                    // Trash failure is a hard error: if we can't remove the
+                    // stale file, the skip-existing fast path inside
+                    // `downloadRestoreImage` would silently use it — the very
+                    // bug the fresh-download flag was added to close. Surface
+                    // the failure to the user via `errorMessage` so they can
+                    // resolve the permission / volume issue.
                     if context.requestedFreshDownload {
                         Self.logger.notice(
                             "installMacOS: honoring requestedFreshDownload for '\(instance.name, privacy: .public)' — trashing existing IPSW + bundle"
                         )
                         let fm = FileManager.default
                         if fm.fileExists(atPath: downloadDestination.path(percentEncoded: false)) {
-                            try? fm.trashItem(at: downloadDestination, resultingItemURL: nil)
+                            do {
+                                try fm.trashItem(at: downloadDestination, resultingItemURL: nil)
+                            } catch {
+                                Self.logger.error(
+                                    "Failed to trash existing IPSW at '\(downloadDestination.path(percentEncoded: false), privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                                )
+                                throw IPSWError.freshDownloadCleanupFailed(
+                                    path: downloadDestination.path(percentEncoded: false),
+                                    underlying: error
+                                )
+                            }
                         }
                         ipswService.discardResumeData(at: downloadDestination)
                         instance.performConfigurationMutation {

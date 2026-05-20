@@ -706,6 +706,11 @@ struct DownloadSpeedSmoother {
 enum IPSWError: LocalizedError {
     case noDownloadURL
     case downloadFailed(any Error)
+    /// Surfaced when the "Download & Replace" intent could not be honored
+    /// because the existing IPSW (or its in-progress bundle) could not be
+    /// trashed — typically a permissions / read-only-volume problem the user
+    /// needs to resolve before the new download can run.
+    case freshDownloadCleanupFailed(path: String, underlying: any Error)
 
     var errorDescription: String? {
         switch self {
@@ -713,6 +718,8 @@ enum IPSWError: LocalizedError {
             "The restore image does not have a download URL."
         case .downloadFailed(let underlyingError):
             "Failed to download restore image: \(underlyingError.localizedDescription)"
+        case .freshDownloadCleanupFailed(let path, let underlying):
+            "Could not remove the existing file at \(path) before downloading the replacement: \(underlying.localizedDescription)"
         }
     }
 }
