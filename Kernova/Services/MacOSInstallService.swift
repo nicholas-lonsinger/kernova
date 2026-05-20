@@ -73,6 +73,15 @@ final class MacOSInstallService {
         instance.serialOutputPipe = result.serialOutputPipe
         instance.clipboardInputPipe = result.clipboardInputPipe
         instance.clipboardOutputPipe = result.clipboardOutputPipe
+        // RATIONALE: `attachVirtualMachine` runs *before* the cancellation
+        // check below on purpose. If a cancel lands in this window, the
+        // throw at step 5 unwinds with `instance.virtualMachine` already
+        // set; `VMLibraryViewModel.installAndAutoBoot`'s
+        // `catch is CancellationError` then calls `tearDownSession()` to
+        // release the VM. Moving the check above `attachVirtualMachine`
+        // would skip wiring the delegate and leave the configured pipes
+        // dangling on `instance` without a matching VM — harder to clean
+        // up than the current ordering.
         let vm = instance.attachVirtualMachine(from: result.configuration)
         instance.startSerialReading()
         instance.startClipboardService()
@@ -135,26 +144,84 @@ final class MacOSInstallService {
         Self.logger.info("macOS installation completed for '\(instance.name, privacy: .public)'")
     }
 
-    /// Polls `vm.state` until it reports `.stopped` or the deadline elapses.
+    /// Waits for `vm.state` to reach `.stopped`, the timeout to elapse, or
+    /// the surrounding `Task` to be cancelled — whichever comes first.
     ///
-    /// VZ's state machine updates asynchronously; this is the cheapest
-    /// portable way to wait without standing up KVO observers for a single
-    /// transition. 50 ms cadence is well below human-perceptible UI lag
-    /// (`installState.currentPhase` is already pinned at "installing 100%"
-    /// during the wait).
+    /// Bridges `VZVirtualMachine.state`'s built-in KVO compliance into an
+    /// `AsyncStream<Void>` (the observer yields exactly once when state
+    /// becomes `.stopped`), raced against `Task.sleep` inside a
+    /// `TaskGroup`. Cancellation of the surrounding task propagates
+    /// structurally to both children: the observer task's `next()` returns
+    /// `nil` when the consumer's task is cancelled, and `Task.sleep` throws
+    /// — caught silently with `try?` so the group can complete. The
+    /// function then detects outer cancellation via `Task.isCancelled` and
+    /// skips the timeout warning (a user cancel is intentional behavior,
+    /// not an anomaly worth flagging).
+    ///
+    /// We use `NSObject.observe(_:options:)` directly instead of Combine's
+    /// `publisher(for:).values` because the latter's `AsyncPublisher` isn't
+    /// `Sendable` when its underlying `Subject` (here `VZVirtualMachine`)
+    /// isn't, and we need to pass the sequence into a task group child.
     private static func waitForVMStopped(
         _ vm: VZVirtualMachine,
         timeout: Duration = .seconds(30)
     ) async {
-        let deadline = ContinuousClock.now + timeout
-        while vm.state != .stopped {
-            if ContinuousClock.now >= deadline {
-                logger.warning(
-                    "VM did not reach .stopped within timeout (state: \(String(describing: vm.state), privacy: .public))"
-                )
-                return
+        // Quick path: already stopped (avoids spinning up the bridge for
+        // the common case where VZ propagated synchronously).
+        if vm.state == .stopped { return }
+
+        let (stream, continuation) = AsyncStream<Void>.makeStream()
+
+        // The observer's changeHandler fires on whichever thread mutated
+        // `vm.state` — for `@MainActor`-bound VZ that's the main actor, so
+        // the `yield`/`finish` here are serialised with our own MainActor
+        // reads of `vm.state`. The `defer { invalidate() }` keeps the
+        // observer alive for the lifetime of this function — losing the
+        // reference earlier would silently stop observation.
+        let observation = vm.observe(\.state, options: [.new]) { observed, _ in
+            if observed.state == .stopped {
+                continuation.yield(())
+                continuation.finish()
             }
-            try? await Task.sleep(for: .milliseconds(50))
+        }
+        defer { observation.invalidate() }
+
+        // Cover the race: state may have transitioned to `.stopped` between
+        // the initial guard and observer registration above.
+        if vm.state == .stopped {
+            continuation.finish()
+            return
+        }
+
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask {
+                // First yield (or stream finish) wins. `for await` over
+                // `AsyncStream` returns when the consumer's task is
+                // cancelled, so `group.cancelAll()` below unblocks this
+                // child without further plumbing.
+                for await _ in stream { return }
+            }
+            group.addTask {
+                // `try?` here is the right shape — when the group cancels
+                // this child (either because the observer finished first or
+                // because the surrounding task was cancelled), the sleep
+                // throws `CancellationError` and we want to silently exit
+                // so the group can complete. Outer cancellation is detected
+                // via `Task.isCancelled` after the group returns, not by
+                // re-throwing here (which would force a throwing group for
+                // no gain).
+                try? await Task.sleep(for: timeout)
+            }
+            _ = await group.next()
+            group.cancelAll()
+        }
+
+        // Distinguish timeout (genuine anomaly) from user cancel
+        // (intentional) when emitting diagnostics — log only the former.
+        if vm.state != .stopped && !Task.isCancelled {
+            logger.warning(
+                "VM did not reach .stopped within timeout (state: \(String(describing: vm.state), privacy: .public))"
+            )
         }
     }
 
