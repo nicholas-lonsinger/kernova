@@ -241,6 +241,235 @@ struct VMLibraryViewModelTests {
         #expect(viewModel.selectedID == first.id)
     }
 
+    @Test("confirmDelete routes to sheet when the VM references external attachments")
+    func confirmDeleteRoutesToSheetWithExternals() {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        instance.configuration.removableMedia = [
+            RemovableMediaItem(path: "/tmp/installer.iso", readOnly: true)
+        ]
+        viewModel.instances.append(instance)
+
+        viewModel.confirmDelete(instance)
+
+        #expect(viewModel.instanceToDelete?.id == instance.id)
+        #expect(viewModel.showDeleteSheet == true)
+        #expect(viewModel.showDeleteConfirmation == false)
+        #expect(viewModel.trashExternalsOnDelete == false)
+    }
+
+    @Test("externalAttachments returns external disks and removable media with sharing info")
+    func externalAttachmentsLists() {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let sharedISO = "/tmp/shared-installer.iso"
+        let target = makeInstance(name: "Target")
+        target.configuration.storageDisks = [
+            StorageDisk(
+                path: "Disk.asif", readOnly: false, label: "Main",
+                isInternal: true, kind: .virtio
+            ),
+            StorageDisk(
+                path: "/Volumes/External/data.img", readOnly: false, label: "Scratch",
+                isInternal: false, kind: .virtio
+            ),
+        ]
+        target.configuration.removableMedia = [
+            RemovableMediaItem(path: sharedISO, readOnly: true, label: "Shared ISO")
+        ]
+
+        let sharer = makeInstance(name: "Sharer")
+        sharer.configuration.removableMedia = [
+            RemovableMediaItem(path: sharedISO, readOnly: true, label: "Shared ISO")
+        ]
+        let unrelated = makeInstance(name: "Unrelated")
+        viewModel.instances = [target, sharer, unrelated]
+
+        let attachments = viewModel.externalAttachments(for: target)
+
+        // Internal disks are excluded; the two externals appear in
+        // disks-then-media order.
+        #expect(attachments.count == 2)
+        #expect(attachments[0].kind == .storageDisk)
+        #expect(attachments[0].path == "/Volumes/External/data.img")
+        #expect(attachments[0].isShared == false)
+        #expect(attachments[1].kind == .removableMedia)
+        #expect(attachments[1].path == sharedISO)
+        #expect(attachments[1].sharedWithVMNames == ["Sharer"])
+    }
+
+    @Test("externalAttachments is empty when the VM only has internal disks")
+    func externalAttachmentsEmptyForInternalOnly() {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        instance.configuration.storageDisks = [
+            StorageDisk(
+                path: "Disk.asif", readOnly: false, label: "Main",
+                isInternal: true, kind: .virtio
+            )
+        ]
+        viewModel.instances.append(instance)
+
+        #expect(viewModel.externalAttachments(for: instance).isEmpty)
+    }
+
+    @Test("deleteConfirmed with trashExternals=false leaves external files untouched")
+    func deleteConfirmedKeepsExternalsByDefault() throws {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        let externalDisk = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString)-external.img")
+        let externalISO = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString)-installer.iso")
+        try Data("disk".utf8).write(to: externalDisk)
+        try Data("iso".utf8).write(to: externalISO)
+        defer {
+            try? FileManager.default.removeItem(at: externalDisk)
+            try? FileManager.default.removeItem(at: externalISO)
+        }
+
+        instance.configuration.storageDisks = [
+            StorageDisk(
+                path: externalDisk.path(percentEncoded: false),
+                readOnly: false, label: "External", isInternal: false, kind: .virtio
+            )
+        ]
+        instance.configuration.removableMedia = [
+            RemovableMediaItem(path: externalISO.path(percentEncoded: false), readOnly: true)
+        ]
+        viewModel.instances.append(instance)
+        storage.bundles[instance.bundleURL] = instance.configuration
+
+        let tasks = viewModel.deleteConfirmed(instance)
+
+        #expect(tasks.isEmpty)
+        #expect(viewModel.instances.isEmpty)
+        #expect(FileManager.default.fileExists(atPath: externalDisk.path(percentEncoded: false)))
+        #expect(FileManager.default.fileExists(atPath: externalISO.path(percentEncoded: false)))
+        #expect(!viewModel.showError)
+    }
+
+    @Test("deleteConfirmed with trashExternals=true trashes external disks and removable media")
+    func deleteConfirmedTrashesExternals() async throws {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        let externalDisk = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString)-external.img")
+        let externalISO = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString)-installer.iso")
+        try Data("disk".utf8).write(to: externalDisk)
+        try Data("iso".utf8).write(to: externalISO)
+        defer {
+            try? FileManager.default.removeItem(at: externalDisk)
+            try? FileManager.default.removeItem(at: externalISO)
+        }
+
+        instance.configuration.storageDisks = [
+            StorageDisk(
+                path: externalDisk.path(percentEncoded: false),
+                readOnly: false, label: "External", isInternal: false, kind: .virtio
+            )
+        ]
+        instance.configuration.removableMedia = [
+            RemovableMediaItem(path: externalISO.path(percentEncoded: false), readOnly: true)
+        ]
+        viewModel.instances.append(instance)
+        storage.bundles[instance.bundleURL] = instance.configuration
+
+        let tasks = viewModel.deleteConfirmed(instance, trashExternals: true)
+        for task in tasks { await task.value }
+
+        #expect(tasks.count == 2)
+        #expect(viewModel.instances.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: externalDisk.path(percentEncoded: false)))
+        #expect(!FileManager.default.fileExists(atPath: externalISO.path(percentEncoded: false)))
+        #expect(!viewModel.showError)
+        #expect(viewModel.showDeleteSheet == false)
+        #expect(viewModel.trashExternalsOnDelete == false)
+    }
+
+    #if arch(arm64)
+    /// Builds a `VMLibraryViewModel` wired to a caller-supplied `MockIPSWService`.
+    ///
+    /// The shared `makeViewModel` helper doesn't expose the IPSW service
+    /// in its return tuple, so this small builder avoids changing every
+    /// existing destructure just to observe resume-data cleanup.
+    private func makeViewModelWithIPSW(
+        ipswService: MockIPSWService,
+        storage: MockVMStorageService
+    ) -> VMLibraryViewModel {
+        UserDefaults.standard.removeObject(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
+        UserDefaults.standard.removeObject(forKey: VMLibraryViewModel.vmOrderKey)
+        return VMLibraryViewModel(
+            storageService: storage,
+            diskImageService: MockDiskImageService(),
+            virtualizationService: MockVirtualizationService(),
+            installService: MockMacOSInstallService(),
+            ipswService: ipswService,
+            usbDeviceService: MockUSBDeviceService()
+        )
+    }
+
+    @Test("deleteConfirmed discards the IPSW resume-data sidecar")
+    func deleteConfirmedDiscardsResumeData() {
+        let ipswService = MockIPSWService()
+        let storage = MockVMStorageService()
+        let viewModel = makeViewModelWithIPSW(ipswService: ipswService, storage: storage)
+
+        let instance = makeInstance()
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString)-RestoreImage.ipsw")
+        instance.configuration.installContext = MacOSInstallContext(
+            source: .downloadLatest,
+            downloadDestinationPath: destination.path(percentEncoded: false)
+        )
+        viewModel.instances.append(instance)
+        storage.bundles[instance.bundleURL] = instance.configuration
+
+        viewModel.deleteConfirmed(instance)
+
+        #expect(ipswService.discardResumeDataCallCount == 1)
+        #expect(
+            ipswService.lastDiscardResumeDataURL?.path(percentEncoded: false)
+                == destination.path(percentEncoded: false)
+        )
+        #expect(viewModel.instances.isEmpty)
+    }
+
+    @Test("deleteConfirmed leaves resume-data alone when VM has no install context")
+    func deleteConfirmedNoResumeDataForNonInstallVM() {
+        let ipswService = MockIPSWService()
+        let storage = MockVMStorageService()
+        let viewModel = makeViewModelWithIPSW(ipswService: ipswService, storage: storage)
+        let instance = makeInstance()
+        viewModel.instances.append(instance)
+        storage.bundles[instance.bundleURL] = instance.configuration
+
+        viewModel.deleteConfirmed(instance)
+
+        #expect(ipswService.discardResumeDataCallCount == 0)
+    }
+    #endif
+
+    @Test("deleteConfirmed with trashExternals=true swallows missing-file errors")
+    func deleteConfirmedSwallowsMissingExternals() async {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        let ghostPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("kernova-ghost-\(UUID().uuidString).iso")
+            .path(percentEncoded: false)
+        instance.configuration.removableMedia = [
+            RemovableMediaItem(path: ghostPath, readOnly: true)
+        ]
+        viewModel.instances.append(instance)
+        storage.bundles[instance.bundleURL] = instance.configuration
+
+        let tasks = viewModel.deleteConfirmed(instance, trashExternals: true)
+        for task in tasks { await task.value }
+
+        #expect(viewModel.instances.isEmpty)
+        #expect(!viewModel.showError)
+    }
+
     // MARK: - Lifecycle Delegation
 
     @Test("start delegates to lifecycle coordinator")
