@@ -319,22 +319,34 @@ final class IPSWService: Sendable {
 
         let (stream, streamContinuation) = AsyncThrowingStream<Data, any Error>.makeStream()
 
-        let response = try await withCheckedThrowingContinuation {
-            (responseContinuation: CheckedContinuation<HTTPURLResponse, any Error>) in
-            let delegate = StreamingDataTaskDelegate(
-                responseContinuation: responseContinuation,
-                streamContinuation: streamContinuation
-            )
-            let task = session.dataTask(with: request)
-            // `URLSessionTask.delegate` is `weak`; the strong reference lives
-            // in the `onTermination` capture below so the delegate stays alive
-            // for the entire lifetime of the stream.
-            task.delegate = delegate
-            streamContinuation.onTermination = { _ in
-                withExtendedLifetime(delegate) {}
-                task.cancel()
+        // Hoist the task out of the continuation closure so the cancellation
+        // handler below can reach it. Otherwise a Task.cancel() landing while
+        // we're awaiting the response would only stop the surrounding Swift
+        // task — the URLSessionDataTask would keep waiting for headers until
+        // the server replied or timed out, delaying user-visible cancellation.
+        let task = session.dataTask(with: request)
+        let response = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation {
+                (responseContinuation: CheckedContinuation<HTTPURLResponse, any Error>) in
+                let delegate = StreamingDataTaskDelegate(
+                    responseContinuation: responseContinuation,
+                    streamContinuation: streamContinuation
+                )
+                // `URLSessionTask.delegate` is `weak`; the strong reference lives
+                // in the `onTermination` capture below so the delegate stays alive
+                // for the entire lifetime of the stream.
+                task.delegate = delegate
+                streamContinuation.onTermination = { _ in
+                    withExtendedLifetime(delegate) {}
+                    task.cancel()
+                }
+                task.resume()
             }
-            task.resume()
+        } onCancel: {
+            // Triggers the delegate's didCompleteWithError with URLError.cancelled,
+            // which resumes the response continuation with a throw — so we don't
+            // leak the continuation on cancellation.
+            task.cancel()
         }
         return (stream, response)
     }
@@ -445,20 +457,17 @@ final class IPSWService: Sendable {
     }
 
     /// Parses `Content-Range: bytes 0-499/1234` into `(0, 499, 1234)`.
+    ///
+    /// Permissive on whitespace (`bytes 0 - 499 / 1234` works) since real-world
+    /// proxies sometimes insert it; the `(?:bytes\s+)?` unit prefix is also
+    /// optional. `\d+` rejects signed totals like `*/-5`, which the old
+    /// `Int64()`-parse would have accepted.
     static func parseContentRange(_ header: String) -> (start: Int64, end: Int64, total: Int64)? {
-        let trimmed = header.trimmingCharacters(in: .whitespaces)
-        let withoutPrefix: String
-        if trimmed.hasPrefix("bytes ") {
-            withoutPrefix = String(trimmed.dropFirst("bytes ".count))
-        } else {
-            withoutPrefix = trimmed
-        }
-        let parts = withoutPrefix.components(separatedBy: "/")
-        guard parts.count == 2, let total = Int64(parts[1]) else { return nil }
-        let rangeParts = parts[0].components(separatedBy: "-")
-        guard rangeParts.count == 2,
-            let start = Int64(rangeParts[0]),
-            let end = Int64(rangeParts[1])
+        let pattern = #/^\s*(?:bytes\s+)?(\d+)\s*-\s*(\d+)\s*/\s*(\d+)\s*$/#
+        guard let match = try? pattern.wholeMatch(in: header),
+            let start = Int64(match.output.1),
+            let end = Int64(match.output.2),
+            let total = Int64(match.output.3)
         else { return nil }
         return (start, end, total)
     }
@@ -466,9 +475,11 @@ final class IPSWService: Sendable {
     /// Parses the total-size field from a 416 `Content-Range: bytes */1234`.
     static func parseUnsatisfiableTotal(_ header: String?) -> Int64? {
         guard let header else { return nil }
-        let parts = header.components(separatedBy: "/")
-        guard parts.count == 2 else { return nil }
-        return Int64(parts[1].trimmingCharacters(in: .whitespaces))
+        let pattern = #/^\s*(?:bytes\s+)?\*\s*/\s*(\d+)\s*$/#
+        guard let match = try? pattern.wholeMatch(in: header),
+            let total = Int64(match.output.1)
+        else { return nil }
+        return total
     }
     #endif
 }

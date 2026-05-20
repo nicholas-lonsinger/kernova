@@ -194,6 +194,30 @@ struct IPSWBundleTests {
         #expect(result?.total == 1234)
     }
 
+    @Test("Content-Range tolerates whitespace inside the value")
+    func contentRangeToleratesInternalWhitespace() {
+        // Real-world proxies occasionally insert spaces around `-` or `/`.
+        // The canonical form is still `bytes 0-499/1234`; accepting the
+        // spaced variant is defensive parsing.
+        let spaced = IPSWService.parseContentRange("bytes 0 - 499 / 1234")
+        #expect(spaced?.start == 0)
+        #expect(spaced?.end == 499)
+        #expect(spaced?.total == 1234)
+
+        let leading = IPSWService.parseContentRange("  bytes 100-200/300  ")
+        #expect(leading?.start == 100)
+        #expect(leading?.end == 200)
+        #expect(leading?.total == 300)
+    }
+
+    @Test("parseUnsatisfiableTotal rejects negative totals")
+    func parseUnsatisfiableTotalRejectsNegative() {
+        // The previous `Int64()` parser would have happily returned -5,
+        // which the caller would then compare against `partialByteCount`
+        // (never < 0) and silently move on — wrong. `\d+` rejects.
+        #expect(IPSWService.parseUnsatisfiableTotal("bytes */-5") == nil)
+    }
+
     @Test("parseUnsatisfiableTotal extracts total from 416 header")
     func parseUnsatisfiableTotalExtractsTotal() {
         #expect(IPSWService.parseUnsatisfiableTotal("bytes */1234") == 1234)
