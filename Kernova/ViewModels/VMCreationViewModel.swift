@@ -218,19 +218,26 @@ final class VMCreationViewModel {
 
     // MARK: - Resume Detection
 
-    /// `true` when the chosen download destination has an associated `.resumedata`
-    /// sidecar from a prior interrupted download, *and* no completed IPSW already
-    /// exists at the path.
+    /// `true` when the chosen download destination has an associated
+    /// `.kernovadownload` in-progress bundle from a prior interrupted download,
+    /// *and* no completed IPSW already exists at the path.
     ///
     /// A completed file takes priority — the overwrite warning flow handles that
     /// case instead.
     var hasResumableDownload: Bool {
+        #if arch(arm64)
         guard ipswSource == .downloadLatest,
             let path = ipswDownloadPath,
             !ipswDownloadPathFileExists
         else { return false }
-        let sidecarPath = path + ".resumedata"
-        return FileManager.default.fileExists(atPath: sidecarPath)
+        let bundleURL = IPSWService.resumeBundleURL(for: URL(fileURLWithPath: path))
+        var isDir: ObjCBool = false
+        return FileManager.default.fileExists(
+            atPath: bundleURL.path(percentEncoded: false), isDirectory: &isDir)
+            && isDir.boolValue
+        #else
+        return false
+        #endif
     }
 
     func confirmOverwrite() {

@@ -43,6 +43,23 @@
 				</array>
 			</dict>
 		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.kernova.app.in-progress-download</string>
+			<key>UTTypeDescription</key>
+			<string>Kernova In-Progress Download</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>com.apple.package</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>kernovadownload</string>
+				</array>
+			</dict>
+		</dict>
 	</array>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Kernova passes your microphone to virtual machines when enabled in VM settings.</string>

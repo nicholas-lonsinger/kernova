@@ -554,15 +554,16 @@ final class VMLibraryViewModel {
         return attachments
     }
 
-    /// Discards any persisted IPSW resume-data sidecar for a VM that's being deleted.
+    /// Trashes any in-progress IPSW download bundle for a VM that's being deleted.
     ///
-    /// The `.resumedata` sidecar at `<downloadDestinationPath>.resumedata`
-    /// is purely app-internal state — meaningless once the VM is gone — so
-    /// it's cleaned up unconditionally on delete (not gated on the
-    /// "trash externals" toggle). The IPSW file itself, if present, lives
-    /// at a user-known path and is intentionally left alone. No-op for
-    /// VMs without a `.downloadLatest` install context, and a no-op on
-    /// non-arm64 builds where IPSW machinery is compiled out.
+    /// The `.kernovadownload` bundle sitting next to the chosen destination
+    /// holds the partial download bytes plus resume metadata. Once the VM is
+    /// gone the bundle is meaningless, so it's trashed unconditionally on
+    /// delete (not gated on the "trash externals" toggle). The completed IPSW
+    /// file at `downloadDestinationPath`, if present, lives at a user-known
+    /// path and is intentionally left alone. No-op for VMs without a
+    /// `.downloadLatest` install context, and a no-op on non-arm64 builds
+    /// where IPSW machinery is compiled out.
     private func cleanupInstallResumeData(for instance: VMInstance) {
         #if arch(arm64)
         guard let context = instance.configuration.installContext,
@@ -571,7 +572,7 @@ final class VMLibraryViewModel {
         else { return }
         lifecycle.ipswService.discardResumeData(at: destinationURL)
         Self.logger.notice(
-            "Discarded install resume-data sidecar for deleted VM '\(instance.name, privacy: .public)'"
+            "Trashed in-progress download bundle for deleted VM '\(instance.name, privacy: .public)'"
         )
         #endif
     }
