@@ -131,6 +131,17 @@ final class MacOSInstallService {
         // and the new start path has a clean slate.
         await Self.waitForVMStopped(vm)
 
+        // `waitForVMStopped` honors `Task.isCancelled` internally (it
+        // suppresses the timeout warning when cancelled) but intentionally
+        // doesn't throw — so the cancel signal has to be re-raised here
+        // at the function's success/failure boundary. Without this, a
+        // cancel that lands during the wait would let the install return
+        // success and the caller (`installAndAutoBoot`) would auto-boot
+        // a cancelled install. The throw routes through the coordinator's
+        // `catch is CancellationError` → `installAndAutoBoot`'s same arm
+        // → `tearDownSession`, status `.initialBoot`, no auto-boot.
+        try Task.checkCancellation()
+
         // Belt-and-braces: if the delegate didn't fire (timed out, or
         // the adapter was deallocated before `guestDidStop` ran), tear
         // down explicitly so a subsequent boot doesn't observe a stale
