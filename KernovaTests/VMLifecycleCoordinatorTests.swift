@@ -436,6 +436,71 @@ struct VMLifecycleCoordinatorTests {
         #expect(instance.configuration.installContext == originalContext)
     }
 
+    @Test("installMacOS with requestedFreshDownload trashes existing file and clears the flag")
+    func installMacOSFreshDownloadTrashesAndClears() async throws {
+        let (coordinator, _, _, ipswService, _) = makeCoordinator()
+        let instance = makeInstance()
+
+        // Create a real file at the destination so the trash path has something
+        // to act on. Persist it in a unique per-test temp directory to keep
+        // the assertion deterministic.
+        let temp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("freshDownloadTrash-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
+        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+        try Data(repeating: 0xFF, count: 1024).write(to: destination)
+
+        let context = MacOSInstallContext(
+            source: .downloadLatest,
+            downloadDestinationPath: destination.path(percentEncoded: false),
+            requestedFreshDownload: true
+        )
+        instance.configuration.installContext = context
+        instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
+
+        try await coordinator.installMacOS(on: instance, context: context)
+
+        // The existing IPSW must have been trashed (no longer at its path),
+        // the bundle cleanup must have been invoked exactly once, and on
+        // success the installContext is cleared by the post-install path —
+        // so we can't observe the cleared `requestedFreshDownload` directly,
+        // but the discardResumeData call count is the proxy that proves the
+        // honor-and-clear branch ran.
+        #expect(!FileManager.default.fileExists(atPath: destination.path))
+        #expect(ipswService.discardResumeDataCallCount == 1)
+        #expect(ipswService.lastDiscardResumeDataURL == destination)
+
+        // Clean up the temp dir (the file itself is in Trash).
+        try? FileManager.default.removeItem(at: temp)
+    }
+
+    @Test("installMacOS without requestedFreshDownload leaves existing file alone")
+    func installMacOSWithoutFreshDownloadDoesNotTrash() async throws {
+        let (coordinator, _, _, ipswService, _) = makeCoordinator()
+        let instance = makeInstance()
+
+        let temp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("noFreshDownload-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
+        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+        try Data(repeating: 0xAB, count: 512).write(to: destination)
+
+        let context = MacOSInstallContext(
+            source: .downloadLatest,
+            downloadDestinationPath: destination.path(percentEncoded: false)
+        )
+        instance.configuration.installContext = context
+        instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
+
+        try await coordinator.installMacOS(on: instance, context: context)
+
+        // No requestedFreshDownload, so no trash, no discardResumeData call.
+        #expect(FileManager.default.fileExists(atPath: destination.path))
+        #expect(ipswService.discardResumeDataCallCount == 0)
+
+        try? FileManager.default.removeItem(at: temp)
+    }
+
     @Test("installMacOS preserves IPSW resume data when download is cancelled")
     func installMacOSCancelPreservesResumeData() async {
         let (coordinator, _, _, ipswService, _) = makeCoordinator()

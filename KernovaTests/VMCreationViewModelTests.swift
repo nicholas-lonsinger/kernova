@@ -634,6 +634,46 @@ struct VMCreationViewModelTests {
         #expect(context.source == .localFile)
         #expect(context.localIPSWPath == "/tmp/macOS-26.ipsw")
         #expect(context.downloadDestinationPath == nil)
+        #expect(!context.requestedFreshDownload)
+    }
+
+    @Test("buildInstallContext defaults requestedFreshDownload to false")
+    func buildInstallContextDefaultsFreshFalse() {
+        let vm = VMCreationViewModel()
+        vm.ipswSource = .downloadLatest
+        vm.ipswDownloadPath = "/Users/me/Downloads/RestoreImage.ipsw"
+
+        let context = vm.buildInstallContext()
+
+        #expect(!context.requestedFreshDownload)
+    }
+
+    @Test("buildInstallContext sets requestedFreshDownload when overwrite confirmed")
+    func buildInstallContextSetsFreshOnConfirmedOverwrite() {
+        let vm = VMCreationViewModel()
+        vm.ipswSource = .downloadLatest
+        vm.ipswDownloadPath = "/Users/me/Downloads/RestoreImage.ipsw"
+        vm.confirmOverwrite()
+
+        let context = vm.buildInstallContext()
+
+        #expect(context.requestedFreshDownload)
+    }
+
+    @Test("buildInstallContext clears requestedFreshDownload when path changes after confirm")
+    func buildInstallContextClearsFreshWhenPathChangedAfterConfirm() {
+        // `confirmOverwrite` records the path that was confirmed; if the user
+        // then picks a different destination, the confirmation no longer
+        // applies and the wizard should treat the new path as not-yet-confirmed.
+        let vm = VMCreationViewModel()
+        vm.ipswSource = .downloadLatest
+        vm.ipswDownloadPath = "/Users/me/Downloads/A.ipsw"
+        vm.confirmOverwrite()
+        vm.ipswDownloadPath = "/Users/me/Downloads/B.ipsw"
+
+        let context = vm.buildInstallContext()
+
+        #expect(!context.requestedFreshDownload)
     }
     #endif
 }

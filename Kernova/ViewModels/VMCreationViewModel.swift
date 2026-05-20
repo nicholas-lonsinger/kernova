@@ -203,9 +203,16 @@ final class VMCreationViewModel {
     func buildInstallContext() -> MacOSInstallContext {
         switch ipswSource {
         case .downloadLatest:
+            // `confirmedOverwritePath` is set by `confirmOverwrite()` when the
+            // user clicks past the "this file already exists" warning. Carry
+            // the intent through to the install pipeline so it can replace
+            // the stale file rather than silently using it.
+            let didConfirmOverwrite =
+                confirmedOverwritePath != nil && confirmedOverwritePath == ipswDownloadPath
             return MacOSInstallContext(
                 source: .downloadLatest,
-                downloadDestinationPath: ipswDownloadPath
+                downloadDestinationPath: ipswDownloadPath,
+                requestedFreshDownload: didConfirmOverwrite
             )
         case .localFile:
             return MacOSInstallContext(

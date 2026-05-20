@@ -169,6 +169,28 @@ final class VMLifecycleCoordinator {
                         throw IPSWError.noDownloadURL
                     }
 
+                    // Honor "Download & Replace" intent ONCE: trash the
+                    // existing IPSW file plus any in-progress download bundle
+                    // sitting next to it, then clear the flag through the
+                    // persistence pipeline so retries after a partial-install
+                    // failure reuse the freshly-downloaded file instead of
+                    // re-trashing and re-downloading. Trash (not unlink) so
+                    // the user can recover from Trash, matching the policy
+                    // already established for VM-delete cleanup.
+                    if context.requestedFreshDownload {
+                        Self.logger.notice(
+                            "installMacOS: honoring requestedFreshDownload for '\(instance.name, privacy: .public)' — trashing existing IPSW + bundle"
+                        )
+                        let fm = FileManager.default
+                        if fm.fileExists(atPath: downloadDestination.path(percentEncoded: false)) {
+                            try? fm.trashItem(at: downloadDestination, resultingItemURL: nil)
+                        }
+                        ipswService.discardResumeData(at: downloadDestination)
+                        instance.performConfigurationMutation {
+                            $0.installContext?.requestedFreshDownload = false
+                        }
+                    }
+
                     // Set up two-step install state before changing status
                     instance.installState = MacOSInstallState(
                         hasDownloadStep: true,
