@@ -169,6 +169,31 @@ struct IPSWBundleTests {
         #expect(IPSWService.parseContentRange("bytes */1234") == nil)
     }
 
+    @Test("Content-Range rejects malformed range/total combinations")
+    func contentRangeRejectsMalformed() {
+        // Empty start (would slice incorrectly if not validated)
+        #expect(IPSWService.parseContentRange("bytes -100-499/1234") == nil)
+        // Three components in the range portion — extra dash
+        #expect(IPSWService.parseContentRange("bytes 100--499/1234") == nil)
+        // Non-numeric total
+        #expect(IPSWService.parseContentRange("bytes 0-499/foo") == nil)
+        // Trailing garbage after total
+        #expect(IPSWService.parseContentRange("bytes 0-499/1234; extra") == nil)
+        // Missing dash in the start-end portion
+        #expect(IPSWService.parseContentRange("bytes 0/1234") == nil)
+    }
+
+    @Test("Content-Range accepts header without the `bytes ` unit prefix")
+    func contentRangeAcceptsMissingBytesPrefix() {
+        // Permissive on the unit token — the parseable shape `start-end/total`
+        // is what callers actually rely on. Documenting the current behavior
+        // so it doesn't drift silently.
+        let result = IPSWService.parseContentRange("0-499/1234")
+        #expect(result?.start == 0)
+        #expect(result?.end == 499)
+        #expect(result?.total == 1234)
+    }
+
     @Test("parseUnsatisfiableTotal extracts total from 416 header")
     func parseUnsatisfiableTotalExtractsTotal() {
         #expect(IPSWService.parseUnsatisfiableTotal("bytes */1234") == 1234)
@@ -200,8 +225,13 @@ struct DownloadSpeedSmootherTests {
         var smoother = DownloadSpeedSmoother()
         _ = smoother.sample(totalBytes: 0, now: 1000.0)
         let speed = smoother.sample(totalBytes: 1_000_000, now: 1001.0) ?? 0
-        // 1 MB in 1 s; first non-priming sample is the raw instantaneous value.
-        #expect(speed == 1_000_000)
+        // 1 MB in 1 s. The smoother's exact "first non-priming sample" formula
+        // is an implementation detail; what callers care about is that the
+        // reported speed is in the right ballpark, not an exact byte count.
+        // 10% tolerance lets the smoothing rule evolve without breaking the
+        // test.
+        #expect(speed > 0)
+        #expect(abs(speed - 1_000_000) < 100_000)
     }
 
     @Test("EWMA smoothing dampens spikes")

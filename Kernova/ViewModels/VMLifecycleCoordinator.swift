@@ -25,6 +25,7 @@ final class VMLifecycleCoordinator {
     let installService: any MacOSInstallProviding
     let ipswService: any IPSWProviding
     let usbDeviceService: any USBDeviceProviding
+    let fileSystem: any FileSystemOperating
 
     /// Maps VM ID → operation token for VMs that currently have a lifecycle operation in flight.
     ///
@@ -35,12 +36,14 @@ final class VMLifecycleCoordinator {
         virtualizationService: any VirtualizationProviding,
         installService: any MacOSInstallProviding,
         ipswService: any IPSWProviding,
-        usbDeviceService: any USBDeviceProviding = USBDeviceService()
+        usbDeviceService: any USBDeviceProviding = USBDeviceService(),
+        fileSystem: any FileSystemOperating = FileManager.default
     ) {
         self.virtualizationService = virtualizationService
         self.installService = installService
         self.ipswService = ipswService
         self.usbDeviceService = usbDeviceService
+        self.fileSystem = fileSystem
     }
 
     // MARK: - Errors
@@ -185,13 +188,26 @@ final class VMLifecycleCoordinator {
                     // the failure to the user via `errorMessage` so they can
                     // resolve the permission / volume issue.
                     if context.requestedFreshDownload {
+                        // Guard against pointing the trash at something that
+                        // isn't an IPSW — `downloadDestinationPath` survives
+                        // through `config.json` on disk, so a bug or stray
+                        // edit could otherwise have us trashing an arbitrary
+                        // file. We only ever expect `.ipsw` here.
+                        guard downloadDestination.pathExtension.lowercased() == "ipsw" else {
+                            Self.logger.error(
+                                "installMacOS: refusing to honor requestedFreshDownload for non-IPSW destination '\(downloadDestination.path(percentEncoded: false), privacy: .public)'"
+                            )
+                            throw IPSWError.invalidDownloadDestination(
+                                path: downloadDestination.path(percentEncoded: false)
+                            )
+                        }
+
                         Self.logger.notice(
                             "installMacOS: honoring requestedFreshDownload for '\(instance.name, privacy: .public)' — trashing existing IPSW + bundle"
                         )
-                        let fm = FileManager.default
-                        if fm.fileExists(atPath: downloadDestination.path(percentEncoded: false)) {
+                        if fileSystem.fileExists(atPath: downloadDestination.path(percentEncoded: false)) {
                             do {
-                                try fm.trashItem(at: downloadDestination, resultingItemURL: nil)
+                                try fileSystem.trashItem(at: downloadDestination)
                             } catch {
                                 Self.logger.error(
                                     "Failed to trash existing IPSW at '\(downloadDestination.path(percentEncoded: false), privacy: .public)': \(error.localizedDescription, privacy: .public)"
@@ -311,5 +327,23 @@ final class VMLifecycleCoordinator {
     func detachUSBDevice(_ deviceInfo: USBDeviceInfo, from instance: VMInstance) async throws {
         try await usbDeviceService.detach(deviceInfo: deviceInfo, from: instance)
         instance.liveRemovableMedia.removeAll { $0.id == deviceInfo.id }
+    }
+}
+
+// MARK: - FileSystem Seam
+
+/// Minimal `FileManager` surface for the fresh-download cleanup branch.
+///
+/// Lets tests inject a failing trash to cover the
+/// `IPSWError.freshDownloadCleanupFailed` path without resorting to
+/// disk-level hacks.
+protocol FileSystemOperating {
+    func fileExists(atPath path: String) -> Bool
+    func trashItem(at url: URL) throws
+}
+
+extension FileManager: FileSystemOperating {
+    func trashItem(at url: URL) throws {
+        try trashItem(at: url, resultingItemURL: nil)
     }
 }

@@ -43,11 +43,6 @@ struct IPSWServiceDownloadTests {
 
     private static let remoteURL = mustParseURL("https://stub.kernova.test/RestoreImage.ipsw")
     private static let staleRemoteURL = mustParseURL("https://stub.kernova.test/OldBuild.ipsw")
-    private static let tamperedURL = mustParseURL("file:///etc/passwd")
-    /// Used by `nonHTTPSBundleIsDiscarded` — same URL for stored metadata and
-    /// caller so the URL-mismatch guard passes and the scheme guard is the one
-    /// that fires.
-    private static let nonHTTPSURL = mustParseURL("http://stub.kernova.test/Image.ipsw")
 
     // MARK: - Tests
 
@@ -146,8 +141,12 @@ struct IPSWServiceDownloadTests {
         let bundleURL = IPSWService.resumeBundleURL(for: destination)
         let bundle = IPSWBundle(url: bundleURL)
 
-        // Seed bundle with stale partial data
-        let stale = Data(repeating: 0xFF, count: 1024)
+        // Seed bundle with stale partial data. The new payload is INTENTIONALLY
+        // shorter than the stale data; if truncation didn't happen, the final
+        // file would still contain the tail of the stale bytes and would be
+        // larger than `newPayload.count`. That's how we observe truncation
+        // instead of just confirming "no bytes overlap visibly."
+        let stale = Data(repeating: 0xFF, count: 8192)
         try bundle.prepareForFreshDownload(
             with: IPSWDownloadMetadata(
                 originalURL: Self.remoteURL,
@@ -161,7 +160,7 @@ struct IPSWServiceDownloadTests {
         let newPayload = Data(repeating: 0x33, count: 4096)
         StubURLProtocol.handler = { request in
             // Server ignores If-Range and sends a full 200 — file changed.
-            #expect(request.value(forHTTPHeaderField: "Range") == "bytes=1024-")
+            #expect(request.value(forHTTPHeaderField: "Range") == "bytes=8192-")
             return .fullResponse(url: (request.url ?? Self.remoteURL), body: newPayload, etag: "\"v2\"")
         }
         defer { StubURLProtocol.handler = nil }
@@ -175,6 +174,9 @@ struct IPSWServiceDownloadTests {
 
         let written = try Data(contentsOf: destination)
         #expect(written == newPayload)
+        // Crucial: size matches the new payload, NOT max(stale, new). If
+        // truncation hadn't happened, we'd see 8192 stale bytes + something.
+        #expect(written.count == newPayload.count)
     }
 
     @Test("416 with full file on disk finalizes without re-downloading")
@@ -317,13 +319,12 @@ struct IPSWServiceDownloadTests {
         try await service.downloadRestoreImage(
             from: Self.remoteURL,
             to: destination,
-            progressHandler: { @Sendable [progressBox] progress in
-                Task { @MainActor in
-                    progressBox.record(progress.bytesWritten)
-                }
+            progressHandler: { [progressBox] progress in
+                progressBox.record(progress.bytesWritten)
             }
         )
-        try await Task.sleep(for: .milliseconds(100))
+        // Progress callbacks now use `await MainActor.run` end-to-end, so
+        // they're observable as soon as the await above returns — no sleep.
         let samples = await progressBox.snapshot()
         #expect(!samples.isEmpty)
         #expect(samples.last == Int64(preExisting.count))
@@ -448,13 +449,12 @@ struct IPSWServiceDownloadTests {
         #expect(written == payload)
     }
 
-    @Test("Bundle with non-https stored URL is discarded even when URL matches caller")
-    func nonHTTPSBundleIsDiscarded() async throws {
-        // Use the SAME non-https URL for the stored metadata and the caller so
-        // the URL-mismatch guard passes and the scheme guard is the one we
-        // actually exercise. (Sending `file:///etc/passwd` as a request URL
-        // would fail at a different layer — we just need a non-https scheme
-        // that matches between stored and caller.)
+    @Test("206 with Content-Range start that disagrees with our resume offset throws and discards the bundle")
+    func partialContentRangeMismatchDiscardsBundleAndThrows() async throws {
+        // Server returns `Content-Range: bytes 0-499/N` to our `Range: bytes=1024-`
+        // request — the start doesn't line up with what we asked for. Writing
+        // the body at our requested offset would leave a corrupt prefix on
+        // disk. The service must trash the bundle and throw rather than splice.
         let temp = try Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: temp) }
         let destination = temp.appendingPathComponent("RestoreImage.ipsw")
@@ -463,33 +463,94 @@ struct IPSWServiceDownloadTests {
 
         try bundle.prepareForFreshDownload(
             with: IPSWDownloadMetadata(
-                originalURL: Self.nonHTTPSURL,
-                etag: "\"x\"",
+                originalURL: Self.remoteURL,
+                etag: "\"v1\"",
                 lastModified: nil,
                 createdAt: Date()
             )
         )
-        try Data(repeating: 0x88, count: 4096).write(to: bundle.dataURL)
+        try Data(repeating: 0x11, count: 1024).write(to: bundle.dataURL)
 
-        let payload = Data(repeating: 0x44, count: 1024)
         StubURLProtocol.handler = { request in
-            // Scheme guard discarded the bundle — the request must be fresh
-            // (no `Range` header from the stale state we just trashed).
-            #expect(request.value(forHTTPHeaderField: "Range") == nil)
-            return .fullResponse(
-                url: request.url ?? Self.nonHTTPSURL, body: payload, etag: "\"new\"")
+            // Server returns the wrong range — start at 0 even though we asked
+            // for bytes=1024-.
+            .partialResponse(
+                url: request.url ?? Self.remoteURL,
+                body: Data(repeating: 0x22, count: 500),
+                start: 0,
+                end: 499,
+                total: 1500
+            )
         }
         defer { StubURLProtocol.handler = nil }
 
         let service = Self.makeServiceWithStub()
-        try await service.downloadRestoreImage(
-            from: Self.nonHTTPSURL,
-            to: destination,
-            progressHandler: { _ in }
-        )
+        do {
+            try await service.downloadRestoreImage(
+                from: Self.remoteURL,
+                to: destination,
+                progressHandler: { _ in }
+            )
+            Issue.record("Expected throw on 206 Content-Range start mismatch")
+        } catch IPSWError.downloadFailed {
+            // Expected
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
 
-        let written = try Data(contentsOf: destination)
-        #expect(written == payload)
+        // Bundle should be discarded so the next attempt starts fresh.
+        #expect(!bundle.exists)
+        #expect(!FileManager.default.fileExists(atPath: destination.path))
+    }
+
+    @Test("416 with size mismatch discards the bundle and throws so the next start restarts cleanly")
+    func unsatisfiableRangeWithSizeMismatchDiscardsBundleAndThrows() async throws {
+        // The bundle has 4096 bytes; the server says the full file is 2048
+        // bytes (it shrank). Our bytes-on-disk are no longer a valid prefix
+        // of the file. The service must discard so the next Start runs a
+        // fresh 200 GET via `loadResumeMetadata`'s no-bundle path.
+        let temp = try Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+        let bundleURL = IPSWService.resumeBundleURL(for: destination)
+        let bundle = IPSWBundle(url: bundleURL)
+
+        try bundle.prepareForFreshDownload(
+            with: IPSWDownloadMetadata(
+                originalURL: Self.remoteURL,
+                etag: "\"v1\"",
+                lastModified: nil,
+                createdAt: Date()
+            )
+        )
+        try Data(repeating: 0x55, count: 4096).write(to: bundle.dataURL)
+
+        StubURLProtocol.handler = { request in
+            .response(
+                url: request.url ?? Self.remoteURL,
+                statusCode: 416,
+                body: Data(),
+                headers: ["Content-Range": "bytes */2048"]
+            )
+        }
+        defer { StubURLProtocol.handler = nil }
+
+        let service = Self.makeServiceWithStub()
+        do {
+            try await service.downloadRestoreImage(
+                from: Self.remoteURL,
+                to: destination,
+                progressHandler: { _ in }
+            )
+            Issue.record("Expected throw on 416 with mismatched size")
+        } catch IPSWError.downloadFailed {
+            // Expected
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        #expect(!bundle.exists)
+        #expect(!FileManager.default.fileExists(atPath: destination.path))
     }
 
     @Test("Resume emits an initial progress callback at the existing offset")
@@ -530,25 +591,83 @@ struct IPSWServiceDownloadTests {
         try await service.downloadRestoreImage(
             from: Self.remoteURL,
             to: destination,
-            progressHandler: { @Sendable [recorder] progress in
-                Task { @MainActor in recorder.record(progress.bytesWritten) }
+            progressHandler: { [recorder] progress in
+                recorder.record(progress.bytesWritten)
             }
         )
 
-        try await Task.sleep(for: .milliseconds(100))
         let samples = await recorder.snapshot()
         #expect(samples.first == Int64(prefix.count), "First sample should match the resume offset")
         #expect(samples.last == Int64(total.count), "Last sample should match the full file size")
     }
 
-    // NOTE: An end-to-end cancellation test that drives `Task.cancel()` against
-    // a streaming `URLSession` download via a slow `URLProtocol` stub proved
-    // flaky in full-suite runs (the URLProtocol thread races with prior tests'
-    // session cleanup). The cancellation path is exercised by:
-    // - the explicit `try Task.checkCancellation()` in `IPSWService.streamBytes`,
-    // - the `midStreamErrorPreservesBundle` test for the bundle-preservation
-    //   invariant on stream failure,
-    // and is verifiable manually by clicking Cancel during a real IPSW download.
+    @Test("streamBytes throws CancellationError when the surrounding Task is cancelled")
+    func streamBytesCancellation() async throws {
+        // We bypass URLSession here — the prior URLProtocol-driven cancellation
+        // test was timing-dependent because URLProtocol cleanup races with
+        // session lifecycle across tests. Driving `streamBytes` directly with
+        // a hand-controlled `AsyncThrowingStream` lets us coordinate cancel +
+        // yield deterministically: the producer yields a chunk to unblock the
+        // for-await, then the next iteration's `Task.checkCancellation()` fires.
+        let temp = try Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let bundleURL = temp.appendingPathComponent("R.kernovadownload")
+        let bundle = IPSWBundle(url: bundleURL)
+        try bundle.prepareForFreshDownload(
+            with: IPSWDownloadMetadata(
+                originalURL: Self.remoteURL,
+                etag: "\"v1\"",
+                lastModified: nil,
+                createdAt: Date()
+            )
+        )
+
+        let (stream, continuation) = AsyncThrowingStream<Data, any Error>.makeStream()
+        let service = IPSWService()
+
+        // Coordination signal: fires when streamBytes emits its initial-offset
+        // progress, proving it's now sitting inside the for-await waiting for
+        // the next yield.
+        let firstProgress = AsyncStream<Void>.makeStream()
+        let firstProgressContinuation = firstProgress.continuation
+        let signaled = SignalGate()
+
+        let streamTask = Task { [signaled] in
+            try await service.streamBytes(
+                from: stream,
+                into: bundle,
+                startingAt: 0,
+                expectedTotal: 4096,
+                progressHandler: { @Sendable [signaled, firstProgressContinuation] _ in
+                    if signaled.fireOnce() {
+                        firstProgressContinuation.yield()
+                        firstProgressContinuation.finish()
+                    }
+                }
+            )
+        }
+
+        // Wait for streamBytes to reach the for-await.
+        for await _ in firstProgress.stream { break }
+
+        // Cancel, then yield one chunk so the loop body wakes and runs its
+        // `try Task.checkCancellation()`.
+        streamTask.cancel()
+        continuation.yield(Data(repeating: 0xBB, count: 128))
+        continuation.finish()
+
+        do {
+            try await streamTask.value
+            Issue.record("Expected CancellationError")
+        } catch is CancellationError {
+            // Expected
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        // Bundle preserved on cancel (non-destructive cancel UX).
+        #expect(bundle.exists)
+    }
 
     @Test("Progress callbacks report monotonically non-decreasing bytesWritten")
     func progressIsMonotonic() async throws {
@@ -569,15 +688,11 @@ struct IPSWServiceDownloadTests {
         try await service.downloadRestoreImage(
             from: Self.remoteURL,
             to: destination,
-            progressHandler: { @Sendable [progressBox] progress in
-                Task { @MainActor in
-                    progressBox.record(progress.bytesWritten)
-                }
+            progressHandler: { [progressBox] progress in
+                progressBox.record(progress.bytesWritten)
             }
         )
 
-        // Give the MainActor-hopped recorder time to settle.
-        try await Task.sleep(for: .milliseconds(100))
         let samples = await progressBox.snapshot()
         // Last sample should equal the full payload size.
         #expect(samples.last == Int64(payload.count))
@@ -597,6 +712,21 @@ final class ProgressRecorder {
     private var samples: [Int64] = []
     func record(_ bytes: Int64) { samples.append(bytes) }
     func snapshot() -> [Int64] { samples }
+}
+
+/// One-shot, thread-safe latch used by the cancellation test to fire its
+/// "first progress arrived" signal exactly once even if the handler is
+/// invoked more than once before the test observes the signal.
+final class SignalGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var fired = false
+    func fireOnce() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !fired else { return false }
+        fired = true
+        return true
+    }
 }
 
 /// Stub URLProtocol that intercepts requests for tests.

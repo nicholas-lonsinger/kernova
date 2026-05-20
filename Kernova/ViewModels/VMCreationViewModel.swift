@@ -204,20 +204,14 @@ final class VMCreationViewModel {
         switch ipswSource {
         case .downloadLatest:
             // `confirmedOverwritePath` is set by `confirmOverwrite()` when the
-            // user clicks past the "this file already exists" warning. Carry
-            // the intent through to the install pipeline so it can replace
-            // the stale file rather than silently using it. Compare unwrapped
-            // strings rather than Optional==Optional so the meaningless
-            // nil==nil match (no path, no confirmation) can't accidentally
-            // set the flag.
-            let didConfirmOverwrite: Bool = {
-                guard let path = ipswDownloadPath else { return false }
-                return confirmedOverwritePath == path
-            }()
+            // user clicks past the "this file already exists" warning. The
+            // `!= nil` guard prevents the meaningless `nil == nil` match (no
+            // path AND no confirmation) from accidentally setting the flag.
             return MacOSInstallContext(
                 source: .downloadLatest,
                 downloadDestinationPath: ipswDownloadPath,
-                requestedFreshDownload: didConfirmOverwrite
+                requestedFreshDownload: confirmedOverwritePath != nil
+                    && confirmedOverwritePath == ipswDownloadPath
             )
         case .localFile:
             return MacOSInstallContext(

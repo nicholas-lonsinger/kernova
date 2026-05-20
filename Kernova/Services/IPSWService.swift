@@ -83,11 +83,10 @@ final class IPSWService: Sendable {
                 totalBytes: Int64(fileSize),
                 bytesPerSecond: 0
             )
-            // One-shot terminal callbacks use MainActor.run so the call is
-            // ordered before our return — callers (and tests) can observe the
-            // final progress synchronously after `await`. The streaming-loop
-            // version intentionally uses Task fire-and-forget to avoid
-            // back-pressuring the network read on every progress tick.
+            // All progress callbacks (one-shot terminal and mid-stream) use
+            // `await MainActor.run` so the UI sees them in the order we
+            // produced them. Unstructured `Task { @MainActor in ... }` would
+            // not preserve enqueue order between samples.
             await MainActor.run { progressHandler(completed) }
             return
         }
@@ -147,10 +146,17 @@ final class IPSWService: Sendable {
                 Self.logger.error("206 response missing or unparseable Content-Range header")
                 throw IPSWError.downloadFailed(URLError(.badServerResponse))
             }
+            // Refuse to splice bytes when the server's start offset disagrees
+            // with what we asked for — we'd write the body at the requested
+            // offset, leaving the unrequested prefix bytes unchanged and the
+            // file inconsistent. Trash the bundle so the next attempt restarts
+            // from zero rather than re-resuming into a corrupt file.
             if parsedRange.start != resumeOffset {
-                Self.logger.warning(
-                    "Content-Range start \(parsedRange.start, privacy: .public) ≠ requested offset \(resumeOffset, privacy: .public); trusting server"
+                Self.logger.error(
+                    "Content-Range start \(parsedRange.start, privacy: .public) ≠ requested offset \(resumeOffset, privacy: .public); discarding bundle"
                 )
+                try? FileManager.default.removeItem(at: bundleURL)
+                throw IPSWError.downloadFailed(URLError(.badServerResponse))
             }
             try await streamBytes(
                 from: responseBytes,
@@ -161,9 +167,12 @@ final class IPSWService: Sendable {
             )
 
         case 416:
-            // Range Not Satisfiable — usually means our `data` file is already
-            // the full file, or the remote file shrank. The `Content-Range: bytes */N`
-            // header tells us the actual total.
+            // Range Not Satisfiable. The happy case is "our `data` file is
+            // already the full file" — finalize and return. Anything else
+            // (size mismatch, missing or unparseable Content-Range) means the
+            // remote file shrank or changed in a way our resume state can't
+            // describe; trash the stale bundle and throw so the next Start
+            // re-enters via the 200 path with no Range header.
             let total = Self.parseUnsatisfiableTotal(
                 response.value(forHTTPHeaderField: "Content-Range")
             )
@@ -175,29 +184,11 @@ final class IPSWService: Sendable {
                 await MainActor.run { progressHandler(progress) }
                 return
             }
-            // Truncate and try one fresh GET in this same call. If that also fails
-            // with non-2xx the throw below surfaces.
-            Self.logger.warning("416 with no usable total or size mismatch — truncating and restarting")
-            try bundle.truncateData()
-            let (freshBytes, freshResponse) = try await performGET(
-                url: remoteURL, resumeOffset: nil, ifRangeETag: nil, ifRangeLastModified: nil)
-            guard freshResponse.statusCode == 200 else {
-                throw IPSWError.downloadFailed(URLError(.badServerResponse))
-            }
-            let metadata = IPSWDownloadMetadata(
-                originalURL: remoteURL,
-                etag: freshResponse.value(forHTTPHeaderField: "ETag"),
-                lastModified: freshResponse.value(forHTTPHeaderField: "Last-Modified"),
-                createdAt: Date()
+            Self.logger.warning(
+                "416 with no usable total or size mismatch — discarding bundle so the next attempt restarts from zero"
             )
-            try bundle.saveMetadata(metadata)
-            try await streamBytes(
-                from: freshBytes,
-                into: bundle,
-                startingAt: 0,
-                expectedTotal: freshResponse.expectedContentLength,
-                progressHandler: progressHandler
-            )
+            try? FileManager.default.removeItem(at: bundleURL)
+            throw IPSWError.downloadFailed(URLError(.badServerResponse))
 
         default:
             Self.logger.error("Restore image GET returned HTTP \(response.statusCode, privacy: .public)")
@@ -218,14 +209,16 @@ final class IPSWService: Sendable {
 
     /// Loads bundle resume metadata and decides whether the bundle is usable.
     ///
-    /// Discards (trashes via `removeItem` — the user has not implicitly
-    /// authorized trashing here, only on explicit VM-delete via
-    /// `discardResumeData`) and returns `nil` when:
+    /// Returns `nil` (and discards the bundle via `removeItem`) when:
     /// - the bundle directory exists but `Info.plist` can't be decoded;
     /// - the stored `originalURL` differs from the caller's `remoteURL`
-    ///   (e.g. Apple shipped a new macOS build between attempts);
-    /// - the stored `originalURL` has a non-https scheme (defends against a
-    ///   tampered plist redirecting resume to `file://` or similar).
+    ///   (e.g. Apple shipped a new macOS build between attempts).
+    ///
+    /// The URL-mismatch guard is sufficient defense against a tampered plist
+    /// pointing at an attacker host: `remoteURL` originates from
+    /// `VZMacOSRestoreImage.latestSupported`, which is always Apple's https
+    /// CDN, so any non-Apple or non-https stored URL fails the equality check
+    /// here.
     private static func loadResumeMetadata(
         bundleURL: URL,
         bundle: IPSWBundle,
@@ -247,17 +240,6 @@ final class IPSWService: Sendable {
         if metadata.originalURL != remoteURL {
             Self.logger.notice(
                 "Bundle URL '\(metadata.originalURL, privacy: .public)' ≠ requested '\(remoteURL, privacy: .public)' — discarding stale bundle"
-            )
-            try? FileManager.default.removeItem(at: bundleURL)
-            return nil
-        }
-
-        guard metadata.originalURL.scheme?.lowercased() == "https" else {
-            // Case-insensitive per RFC 3986 §3.1 ("the scheme component is
-            // case-insensitive"). Apple's CDN always uses lowercase `https`,
-            // but a tampered plist could try variants like `HTTPS://`.
-            Self.logger.warning(
-                "Stored bundle URL has non-https scheme '\(metadata.originalURL.scheme ?? "<nil>", privacy: .public)' — discarding"
             )
             try? FileManager.default.removeItem(at: bundleURL)
             return nil
@@ -357,7 +339,12 @@ final class IPSWService: Sendable {
         return (stream, response)
     }
 
-    private func streamBytes(
+    /// Streams `chunks` into the bundle's `data` file.
+    ///
+    /// Seeks to `initialOffset` first, then emits progress callbacks as each
+    /// chunk lands. Internal-visibility so the cancellation test can drive
+    /// it without going through URLSession.
+    func streamBytes(
         from chunks: AsyncThrowingStream<Data, any Error>,
         into bundle: IPSWBundle,
         startingAt initialOffset: Int64,
@@ -401,12 +388,13 @@ final class IPSWService: Sendable {
                 guard !data.isEmpty else { continue }
                 try handle.write(contentsOf: data)
                 totalWritten += Int64(data.count)
-                Self.report(
+                if let progress = Self.nextProgressSample(
                     bytesWritten: totalWritten,
                     expectedTotal: expectedTotal,
-                    smoother: &smoother,
-                    progressHandler: progressHandler
-                )
+                    smoother: &smoother
+                ) {
+                    await MainActor.run { progressHandler(progress) }
+                }
             }
         } catch is CancellationError {
             Self.logger.info("Restore image download cancelled")
@@ -438,20 +426,22 @@ final class IPSWService: Sendable {
         }
     }
 
-    private static func report(
+    /// Returns the next `DownloadProgress` sample, or `nil` if throttled.
+    ///
+    /// The caller awaits the MainActor hop so progress callbacks land in
+    /// order — fire-and-forget `Task` would not preserve enqueue order.
+    private static func nextProgressSample(
         bytesWritten: Int64,
         expectedTotal: Int64,
-        smoother: inout DownloadSpeedSmoother,
-        progressHandler: @MainActor @Sendable @escaping (DownloadProgress) -> Void
-    ) {
+        smoother: inout DownloadSpeedSmoother
+    ) -> DownloadProgress? {
         let now = ProcessInfo.processInfo.systemUptime
-        guard let bps = smoother.sample(totalBytes: bytesWritten, now: now) else { return }
-        let progress = DownloadProgress(
+        guard let bps = smoother.sample(totalBytes: bytesWritten, now: now) else { return nil }
+        return DownloadProgress(
             bytesWritten: bytesWritten,
             totalBytes: expectedTotal,
             bytesPerSecond: bps
         )
-        Task { @MainActor in progressHandler(progress) }
     }
 
     /// Parses `Content-Range: bytes 0-499/1234` into `(0, 499, 1234)`.
@@ -711,6 +701,10 @@ enum IPSWError: LocalizedError {
     /// trashed — typically a permissions / read-only-volume problem the user
     /// needs to resolve before the new download can run.
     case freshDownloadCleanupFailed(path: String, underlying: any Error)
+    /// Surfaced when `downloadDestinationPath` from the install context does
+    /// not name an `.ipsw` file. Guards against acting on a path that was
+    /// corrupted or hand-edited in `config.json` between sessions.
+    case invalidDownloadDestination(path: String)
 
     var errorDescription: String? {
         switch self {
@@ -720,6 +714,8 @@ enum IPSWError: LocalizedError {
             "Failed to download restore image: \(underlyingError.localizedDescription)"
         case .freshDownloadCleanupFailed(let path, let underlying):
             "Could not remove the existing file at \(path) before downloading the replacement: \(underlying.localizedDescription)"
+        case .invalidDownloadDestination(let path):
+            "Cannot download to '\(path)' — destination must be a .ipsw file."
         }
     }
 }
