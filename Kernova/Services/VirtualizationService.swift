@@ -48,7 +48,23 @@ final class VirtualizationService {
                 // are armed here for the first time (no guest agent during
                 // install).
                 instance.startVsockServices()
-                try await vm.start()
+                // `VZMacOSInstaller.install` resolves its completion
+                // handler while the VM is still booting the freshly-
+                // installed macOS for first-run configuration — i.e.
+                // `vm.state` is `.running` (or transitioning there),
+                // *not* `.stopped` as the docs suggest. Calling
+                // `vm.start()` on a running VM throws "Transition from
+                // state 'running' to state 'running' is invalid". Only
+                // start if VZ actually reports the VM stopped; otherwise
+                // observe the current run and let the `status = .running`
+                // assignment below reconcile our view of it.
+                if vm.state == .stopped {
+                    try await vm.start()
+                } else {
+                    Self.logger.notice(
+                        "Post-install hand-off found VM '\(instance.name, privacy: .public)' in state \(String(describing: vm.state), privacy: .public); skipping vm.start()"
+                    )
+                }
             } else {
                 let result = try await buildConfiguration(for: instance)
                 instance.serialInputPipe = result.serialInputPipe
