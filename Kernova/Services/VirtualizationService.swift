@@ -25,6 +25,15 @@ final class VirtualizationService {
         instance.status = .starting
 
         do {
+            // Branch precedence: save file → restore from disk, otherwise
+            // post-install hand-off (attached VM), otherwise cold boot. A
+            // save file is incompatible with a freshly-installed VM today
+            // (install service doesn't write one), so the restore branch
+            // and the hand-off branch don't fire together. If a future
+            // refactor lets both states coexist, restore wins — `restore`'s
+            // own `attachVirtualMachine` call would clobber a stale
+            // hand-off VM and the lock race would return. Audit that
+            // path before relaxing this assumption.
             if instance.hasSaveFile {
                 try await restoreOrColdBoot(instance)
             } else if let vm = instance.virtualMachine {

@@ -423,8 +423,11 @@ final class IPSWService: Sendable {
             // connection cleanly under Content-Length, which `URLSession`
             // surfaces as `didCompleteWithError(nil)` rather than an error.
             // Without this, an incomplete file would also slip past finalize.
+            // Throw a bare `URLError` so the generic `catch` below wraps it
+            // *once* as `IPSWError.downloadFailed(URLError(...))` — throwing
+            // a pre-wrapped IPSWError here would catch again and double-wrap.
             if expectedTotal > 0 && totalWritten < expectedTotal {
-                throw IPSWError.downloadFailed(URLError(.networkConnectionLost))
+                throw URLError(.networkConnectionLost)
             }
         } catch is CancellationError {
             Self.logger.info("Restore image download cancelled")

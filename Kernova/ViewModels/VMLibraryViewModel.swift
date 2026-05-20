@@ -284,6 +284,14 @@ final class VMLibraryViewModel {
                 // sees no installContext and goes down the normal boot path.
                 await self.start(instance)
             } catch is CancellationError {
+                // Tear down the VM if `MacOSInstallService.install` attached
+                // one before cancellation fired (i.e. cancel landed during
+                // `installer.install()` rather than the download phase).
+                // Without this, retry would build a fresh
+                // `VZMacAuxiliaryStorage(contentsOf:)` while the old one is
+                // still alive on `instance.virtualMachine` — same lock race
+                // this PR closes for the success path.
+                instance.tearDownSession()
                 instance.installState = nil
                 instance.errorMessage = nil
                 instance.status = .initialBoot
@@ -291,6 +299,11 @@ final class VMLibraryViewModel {
                     "Install cancelled for '\(instance.name, privacy: .public)' — VM remains in .initialBoot"
                 )
             } catch {
+                // Same teardown rationale as the cancel branch above:
+                // whether the user cancelled (race branch below) or the
+                // pipeline failed for real, an attached VM from a partial
+                // install must not bleed into the next retry.
+                instance.tearDownSession()
                 instance.installState = nil
                 if Task.isCancelled {
                     // The user cancelled and a non-cancellation error arrived
