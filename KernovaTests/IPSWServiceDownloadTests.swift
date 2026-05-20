@@ -676,6 +676,114 @@ struct IPSWServiceDownloadTests {
         #expect(bundle.exists)
     }
 
+    @Test("streamBytes throws CancellationError when parked in next() at cancel time")
+    func streamBytesCancellationWhileParked() async throws {
+        // Companion to `streamBytesCancellation`. That test covers the
+        // "cancel + buffered yield + finish" race where the iterator wakes
+        // on the yielded chunk and the in-loop `Task.checkCancellation()`
+        // fires. This test covers the case the production bug hit: the
+        // consumer is parked on `next()` and the task is cancelled with
+        // NO subsequent yield — only `finish()`. `AsyncThrowingStream`'s
+        // `next()` is wrapped in `withTaskCancellationHandler`; on cancel
+        // it terminates the storage and the iterator returns nil rather
+        // than throwing, so the for-await exits cleanly. Without the
+        // post-loop `try Task.checkCancellation()` in production code,
+        // `streamBytes` would proceed past the loop and the caller would
+        // happily finalize a partial file. The added check rescues us.
+        let temp = try Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let bundleURL = temp.appendingPathComponent("R.kernovadownload")
+        let bundle = IPSWBundle(url: bundleURL)
+        try bundle.prepareForFreshDownload(
+            with: IPSWDownloadMetadata(
+                originalURL: Self.remoteURL,
+                etag: "\"v1\"",
+                lastModified: nil,
+                createdAt: Date()
+            )
+        )
+
+        let (stream, continuation) = AsyncThrowingStream<Data, any Error>.makeStream()
+        let service = IPSWService()
+
+        let streamTask = Task {
+            try await service.streamBytes(
+                from: stream,
+                into: bundle,
+                startingAt: 0,
+                expectedTotal: 4096,
+                progressHandler: { _ in }
+            )
+        }
+
+        // No yield — go directly to cancel + finish. If `next()` were to
+        // throw `CancellationError` on cancel, the in-loop catch would
+        // handle it. Because it returns nil, the loop exits and the
+        // post-loop `checkCancellation` is what must fire.
+        streamTask.cancel()
+        continuation.finish()
+
+        do {
+            try await streamTask.value
+            Issue.record("Expected CancellationError")
+        } catch is CancellationError {
+            // Expected
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        // Bundle preserved — partial bytes (zero in this case) stay put.
+        #expect(bundle.exists)
+    }
+
+    @Test("streamBytes throws when stream ends with fewer bytes than expected")
+    func streamBytesShortDownloadThrows() async throws {
+        // A server that closes the connection cleanly under Content-Length
+        // produces `URLSession.didCompleteWithError(nil)` even though the
+        // body is truncated. Without the size-check after the loop, the
+        // caller would finalize partial bytes onto the user's destination.
+        let temp = try Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let bundleURL = temp.appendingPathComponent("R.kernovadownload")
+        let bundle = IPSWBundle(url: bundleURL)
+        try bundle.prepareForFreshDownload(
+            with: IPSWDownloadMetadata(
+                originalURL: Self.remoteURL,
+                etag: "\"v1\"",
+                lastModified: nil,
+                createdAt: Date()
+            )
+        )
+
+        let (stream, continuation) = AsyncThrowingStream<Data, any Error>.makeStream()
+        let service = IPSWService()
+
+        // Yield 1024 bytes then finish, but tell streamBytes the expected
+        // total is 4096. The loop exits normally and the size check should
+        // throw IPSWError.downloadFailed.
+        continuation.yield(Data(repeating: 0xCC, count: 1024))
+        continuation.finish()
+
+        do {
+            try await service.streamBytes(
+                from: stream,
+                into: bundle,
+                startingAt: 0,
+                expectedTotal: 4096,
+                progressHandler: { _ in }
+            )
+            Issue.record("Expected IPSWError.downloadFailed for short stream")
+        } catch IPSWError.downloadFailed {
+            // Expected
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        // Bundle preserved — the partial bytes can be resumed against on a
+        // future attempt.
+        #expect(bundle.exists)
+    }
+
     @Test("Progress callbacks report monotonically non-decreasing bytesWritten")
     func progressIsMonotonic() async throws {
         let temp = try Self.makeTempDir()

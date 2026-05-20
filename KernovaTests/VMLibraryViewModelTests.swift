@@ -1319,6 +1319,58 @@ struct VMLibraryViewModelTests {
         #expect(instance.configuration.installContext != nil)
     }
 
+    @Test(
+        "Install cancel that races a non-CancellationError still returns VM to .initialBoot"
+    )
+    func cancelRaceWithNonCancelErrorReturnsToInitialBoot() async throws {
+        // Production scenario from the same PR as the IPSW size-check fix:
+        // the user clicks Cancel during download, but a non-cancel error
+        // (e.g. network failure or `.downloadFailed`) reaches the catch
+        // before the cancellation propagates. Before this fix, the generic
+        // `catch {}` branch saw `Task.isCancelled == true` and silently
+        // suppressed the error — leaving the VM in `.error` with no dialog
+        // and no path back to `.initialBoot`. The fix normalizes that case
+        // to the cancel outcome.
+        let raceInstaller = CancelRaceInstallService()
+        let storage = MockVMStorageService()
+        let viewModel = VMLibraryViewModel(
+            storageService: storage,
+            diskImageService: MockDiskImageService(),
+            virtualizationService: MockVirtualizationService(),
+            installService: raceInstaller,
+            ipswService: MockIPSWService(),
+            usbDeviceService: MockUSBDeviceService()
+        )
+        let instance = makeInstance(name: "Race VM")
+        instance.configuration.installContext = MacOSInstallContext(
+            source: .localFile, localIPSWPath: "/tmp/foo.ipsw"
+        )
+        instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
+        instance.status = .initialBoot
+        viewModel.instances.append(instance)
+        storage.bundles[instance.bundleURL] = instance.configuration
+
+        // Spawn the install + auto-boot pipeline; returns immediately after
+        // arming `instance.installTask`.
+        await viewModel.start(instance)
+
+        // Wait until the mock install has parked, so the cancel below
+        // actually races a running install rather than a not-yet-started one.
+        for await _ in raceInstaller.installStartedStream { break }
+
+        viewModel.cancelInstallation(instance)
+
+        // Drain the install task to completion so post-conditions are
+        // observable (the catch block runs synchronously after await).
+        await instance.installTask?.value
+
+        // The fix routes this case through the cancel outcome: VM is back
+        // to .initialBoot, no error dialog, error message cleared.
+        #expect(instance.status == .initialBoot)
+        #expect(instance.errorMessage == nil)
+        #expect(viewModel.showError == false)
+    }
+
     @Test("cancelInstallation does not change selection")
     func cancelInstallationKeepsSelection() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
@@ -2859,3 +2911,44 @@ struct VMLibraryViewModelTests {
         #expect(surviving.isEmpty)
     }
 }
+
+// MARK: - Test helpers
+
+#if arch(arm64)
+/// Drives the "cancel raced a non-cancellation error" path in
+/// `VMLibraryViewModel.installAndAutoBoot`.
+///
+/// The mock signals via `installStartedStream` once `install` has parked, so
+/// the test can `cancelInstallation` against a known-running install rather
+/// than a race-prone "did the task even start yet?" guess. After
+/// `Task.isCancelled` flips, the mock throws a non-CancellationError to
+/// mimic the production case where a network error reaches the catch before
+/// the cancellation propagates (e.g. an IPSW download that errors out at
+/// roughly the same instant the user clicked Cancel).
+@MainActor
+private final class CancelRaceInstallService: MacOSInstallProviding {
+    let installStartedStream: AsyncStream<Void>
+    private let installStartedContinuation: AsyncStream<Void>.Continuation
+
+    init() {
+        let stream = AsyncStream<Void>.makeStream()
+        self.installStartedStream = stream.stream
+        self.installStartedContinuation = stream.continuation
+    }
+
+    func install(
+        into instance: VMInstance,
+        restoreImageURL: URL,
+        progressHandler: @MainActor @Sendable @escaping (Double) -> Void
+    ) async throws {
+        installStartedContinuation.yield(())
+        installStartedContinuation.finish()
+        // Park until the surrounding Task is cancelled. `try? await
+        // Task.sleep` returns immediately on cancel without propagating
+        // the CancellationError, which is what we want — we WANT to throw
+        // a *different* error to exercise the race-recovery branch.
+        try? await Task.sleep(for: .seconds(60))
+        throw IPSWError.downloadFailed(URLError(.badServerResponse))
+    }
+}
+#endif

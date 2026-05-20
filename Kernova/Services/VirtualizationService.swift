@@ -27,6 +27,19 @@ final class VirtualizationService {
         do {
             if instance.hasSaveFile {
                 try await restoreOrColdBoot(instance)
+            } else if let vm = instance.virtualMachine {
+                // Post-install hand-off: `MacOSInstallService` leaves the VM
+                // attached after a successful install so this path can boot
+                // it in-place without rebuilding the VZ configuration. A
+                // rebuild would construct a second `VZMacAuxiliaryStorage`
+                // on the same file while the install-side instance's lock
+                // is still draining, producing "Failed to lock auxiliary
+                // storage." Serial reading and clipboard service are
+                // already running from the install setup; vsock services
+                // are armed here for the first time (no guest agent during
+                // install).
+                instance.startVsockServices()
+                try await vm.start()
             } else {
                 let result = try await buildConfiguration(for: instance)
                 instance.serialInputPipe = result.serialInputPipe

@@ -106,8 +106,19 @@ final class MacOSInstallService {
             installerProgress.cancel()
         }
 
-        instance.resetToStopped()
+        // RATIONALE: Don't tear down the VM here. The caller (typically
+        // `installAndAutoBoot`) immediately chains a `start(_:)` on the same
+        // actor turn, and rebuilding the VZ configuration races VZ's file
+        // lock on auxiliary storage — the framework doesn't release the lock
+        // synchronously when the install-side `VZMacAuxiliaryStorage` is
+        // deallocated, so a new `VZMacAuxiliaryStorage(contentsOf:)` opened
+        // milliseconds later fails with "Invalid virtual machine
+        // configuration. Failed to lock auxiliary storage." Keeping the
+        // attached VM lets `VirtualizationService.start` skip the rebuild
+        // and call `vm.start()` directly on the already-installed instance,
+        // matching Apple's canonical `VZMacOSInstaller` sample.
         instance.installState?.currentPhase = .installing(progress: 1.0)
+        instance.status = .stopped
 
         Self.logger.info("macOS installation completed for '\(instance.name, privacy: .public)'")
     }
