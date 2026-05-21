@@ -28,9 +28,6 @@ struct MainDetailView: View {
                 }
             }
         }
-        .sheet(isPresented: $viewModel.showCreationWizard) {
-            VMCreationWizardView(viewModel: viewModel)
-        }
         .alert(
             "Error",
             isPresented: $viewModel.showError,

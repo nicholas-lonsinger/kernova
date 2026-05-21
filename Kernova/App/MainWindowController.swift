@@ -14,6 +14,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     private let sidebarItem: NSSplitViewItem
     private var sidebarCollapseObservation: NSKeyValueObservation?
     private var toolbarObservation: ObservationLoop?
+    private var creationWizardObservation: ObservationLoop?
+    private var activeCreationWizard: VMCreationWizardWindowController?
 
     private static let logger = Logger(subsystem: "com.kernova.app", category: "MainWindowController")
     private static let toolbarNewVM = NSToolbarItem.Identifier("newVM")
@@ -74,6 +76,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         updateToolbarItems()
         observeToolbarState()
         observeSidebarCollapse()
+        observeCreationWizardRequests()
         Self.logger.notice("Main window controller initialized")
     }
 
@@ -84,6 +87,41 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     /// Makes the window visible behind other windows without stealing focus.
     func showWindowInBackground() {
         window?.orderBack(nil)
+    }
+
+    // MARK: - VM Creation Wizard
+
+    /// Observes `viewModel.showCreationWizard` and presents the AppKit
+    /// wizard as a sheet on `false → true` transitions.
+    ///
+    /// The wizard window controller resets the flag when it dismisses, so
+    /// the next request fires cleanly.
+    private func observeCreationWizardRequests() {
+        creationWizardObservation = observeModalFlag(
+            { [weak viewModel] in viewModel?.showCreationWizard ?? false },
+            present: { [weak self] in self?.presentCreationWizard() }
+        )
+        // If the flag is already true at startup (very unlikely), pick it up.
+        if viewModel.showCreationWizard {
+            presentCreationWizard()
+        }
+    }
+
+    private func presentCreationWizard() {
+        guard let window else {
+            Self.logger.warning("presentCreationWizard called but window is nil")
+            return
+        }
+        if activeCreationWizard != nil {
+            Self.logger.debug("Creation wizard already active — ignoring duplicate request")
+            return
+        }
+        let wizard = VMCreationWizardWindowController(library: viewModel)
+        activeCreationWizard = wizard
+        Task { [weak self] in
+            await wizard.runSheet(on: window)
+            self?.activeCreationWizard = nil
+        }
     }
 
     // MARK: - Sidebar Collapse Observation
