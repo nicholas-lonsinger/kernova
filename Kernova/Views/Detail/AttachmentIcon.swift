@@ -83,47 +83,37 @@ private struct MissingAttachmentPopover: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("Kernova can't find:")
-                WrappingPathLabel(path: path)
+                Text(Self.wrappingPath(path))
+                    .font(.callout.monospaced())
+                    .textSelection(.enabled)
+                    .foregroundStyle(.secondary)
             }
 
             Text("It may have been moved, renamed, or its volume unmounted.")
         }
         .font(.callout)
         .padding()
-        .frame(width: 380)
+        .frame(width: 340)
     }
-}
 
-/// Selectable, monospaced path label that wraps long path-like tokens at
-/// any character.
-///
-/// SwiftUI's `Text` truncates rather than character-wraps when a single
-/// token (an unbroken path component) is wider than its container, so a
-/// path like `/Users/.../some-long-filename.iso` ends with an ellipsis
-/// instead of breaking across lines. `NSTextField` with the
-/// `byCharWrapping` line-break mode does the right thing, so we wrap
-/// one and feed it back to SwiftUI.
-private struct WrappingPathLabel: NSViewRepresentable {
-    let path: String
-
-    func makeNSView(context: Context) -> NSTextField {
-        let field = NSTextField(wrappingLabelWithString: path)
-        field.font = .monospacedSystemFont(
-            ofSize: NSFont.systemFontSize - 1,
-            weight: .regular
+    /// Wraps a filesystem path so SwiftUI's `Text` will break it across
+    /// multiple lines instead of truncating with an ellipsis.
+    ///
+    /// SwiftUI's default `byWordWrapping` only allows breaks at whitespace
+    /// and a few punctuation characters, which leaves a deep path like
+    /// `/Users/.../ubuntu-...-arm64 2.iso` as a single overlong line that
+    /// gets cut. Attaching an `NSParagraphStyle` with `byCharWrapping`
+    /// switches the layout engine to break at any glyph boundary, so the
+    /// full path is always visible inside the popover's fixed-width frame.
+    private static func wrappingPath(_ path: String) -> AttributedString {
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineBreakMode = .byCharWrapping
+        let ns = NSMutableAttributedString(string: path)
+        ns.addAttribute(
+            .paragraphStyle,
+            value: paragraphStyle,
+            range: NSRange(location: 0, length: ns.length)
         )
-        field.textColor = .secondaryLabelColor
-        field.cell?.lineBreakMode = .byCharWrapping
-        // Hug the available width; let SwiftUI's frame drive horizontal size,
-        // and grow vertically as the text wraps.
-        field.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        return field
-    }
-
-    func updateNSView(_ field: NSTextField, context: Context) {
-        if field.stringValue != path {
-            field.stringValue = path
-        }
+        return AttributedString(ns)
     }
 }
