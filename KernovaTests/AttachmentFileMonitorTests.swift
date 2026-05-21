@@ -23,8 +23,8 @@ struct AttachmentFileMonitorTests {
 
     // MARK: - setPaths
 
-    @Test("setPaths populates existsByPath synchronously for present and missing files")
-    func setPathsPopulatesSynchronously() throws {
+    @Test("setPaths populates existsByPath once it returns for present and missing files")
+    func setPathsPopulatesAfterAwait() async throws {
         let tmp = try makeTempDir()
         defer { tmp.cleanup() }
 
@@ -33,9 +33,25 @@ struct AttachmentFileMonitorTests {
         let missing = path(in: tmp.url, "missing.iso")
 
         let monitor = AttachmentFileMonitor()
-        monitor.setPaths([present, missing])
+        await monitor.setPaths([present, missing])
 
         #expect(monitor.exists(present) == true)
+        #expect(monitor.exists(missing) == false)
+    }
+
+    @Test("exists defaults to true between calling setPaths and the await returning")
+    func existsIsOptimisticDuringProbe() async throws {
+        let tmp = try makeTempDir()
+        defer { tmp.cleanup() }
+        let missing = path(in: tmp.url, "missing.iso")
+
+        let monitor = AttachmentFileMonitor()
+        // Read exists() before setPaths has had a chance to populate.
+        #expect(monitor.exists(missing) == true)
+
+        await monitor.setPaths([missing])
+        // After the await, the probe has settled and the missing file
+        // reads as missing.
         #expect(monitor.exists(missing) == false)
     }
 
@@ -46,21 +62,21 @@ struct AttachmentFileMonitorTests {
     }
 
     @Test("Empty path strings are ignored")
-    func emptyPathsAreIgnored() throws {
+    func emptyPathsAreIgnored() async throws {
         let tmp = try makeTempDir()
         defer { tmp.cleanup() }
         let present = path(in: tmp.url, "present.iso")
         FileManager.default.createFile(atPath: present, contents: Data([0]))
 
         let monitor = AttachmentFileMonitor()
-        monitor.setPaths([present, ""])
+        await monitor.setPaths([present, ""])
 
         #expect(monitor.existsByPath.keys.contains("") == false)
         #expect(monitor.exists(present) == true)
     }
 
     @Test("setPaths diff removes dropped paths from the map")
-    func setPathsRemovesDroppedPaths() throws {
+    func setPathsRemovesDroppedPaths() async throws {
         let tmp = try makeTempDir()
         defer { tmp.cleanup() }
         let a = path(in: tmp.url, "a.iso")
@@ -69,10 +85,10 @@ struct AttachmentFileMonitorTests {
         FileManager.default.createFile(atPath: b, contents: Data([0]))
 
         let monitor = AttachmentFileMonitor()
-        monitor.setPaths([a, b])
+        await monitor.setPaths([a, b])
         #expect(Set(monitor.existsByPath.keys) == [a, b])
 
-        monitor.setPaths([a])
+        await monitor.setPaths([a])
         #expect(Set(monitor.existsByPath.keys) == [a])
         #expect(monitor.exists(b) == true, "Dropped path falls back to the unwatched default")
     }
@@ -86,7 +102,7 @@ struct AttachmentFileMonitorTests {
         let target = path(in: tmp.url, "appears.iso")
 
         let monitor = AttachmentFileMonitor()
-        monitor.setPaths([target])
+        await monitor.setPaths([target])
         #expect(monitor.exists(target) == false)
 
         FileManager.default.createFile(atPath: target, contents: Data([0]))
@@ -104,7 +120,7 @@ struct AttachmentFileMonitorTests {
         FileManager.default.createFile(atPath: target, contents: Data([0]))
 
         let monitor = AttachmentFileMonitor()
-        monitor.setPaths([target])
+        await monitor.setPaths([target])
         #expect(monitor.exists(target) == true)
 
         try FileManager.default.removeItem(atPath: target)

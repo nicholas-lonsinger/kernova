@@ -27,6 +27,8 @@ struct VMSettingsView: View {
     @State private var fileMonitor = AttachmentFileMonitor()
     @FocusState private var isNameFieldFocused: Bool
 
+    private static let missingFileTooltip = "File not found at this path"
+
     /// Absolute paths of every user-supplied attachment (external storage disks + removable media).
     ///
     /// Bundle-relative internal disks are excluded — they live inside the
@@ -209,14 +211,12 @@ struct VMSettingsView: View {
             )
         }
         .onAppear {
-            fileMonitor.setPaths(externalAttachmentPaths)
+            Task { await fileMonitor.setPaths(externalAttachmentPaths) }
         }
         .onChange(of: externalAttachmentPaths) { _, newValue in
-            fileMonitor.setPaths(newValue)
+            Task { await fileMonitor.setPaths(newValue) }
         }
     }
-
-    private let missingFileTooltip = "File not found at this path"
 
     @ViewBuilder
     private var readOnlyBanner: some View {
@@ -364,7 +364,7 @@ struct VMSettingsView: View {
                     HStack {
                         AttachmentIcon(
                             systemName: "opticaldisc",
-                            missingTooltip: isMissing ? missingFileTooltip : nil
+                            missingTooltip: isMissing ? Self.missingFileTooltip : nil
                         )
 
                         VStack(alignment: .leading, spacing: 2) {
@@ -526,7 +526,7 @@ struct VMSettingsView: View {
         HStack {
             AttachmentIcon(
                 systemName: diskIconSystemName(for: disk.wrappedValue),
-                missingTooltip: isMissing ? missingFileTooltip : nil
+                missingTooltip: isMissing ? Self.missingFileTooltip : nil
             )
 
             VStack(alignment: .leading, spacing: 2) {

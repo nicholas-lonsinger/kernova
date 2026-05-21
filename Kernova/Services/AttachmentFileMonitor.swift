@@ -40,7 +40,9 @@ final class AttachmentFileMonitor {
     /// Parent directory -> tracked paths whose direct parent is that directory.
     ///
     /// Enables a targeted re-check on an FS event instead of rescanning every
-    /// tracked path.
+    /// tracked path. `@ObservationIgnored` because nothing outside this class
+    /// reads it — wrapping it in observation accessors would only waste cycles.
+    @ObservationIgnored
     private var pathsByParent: [String: Set<String>] = [:]
 
     /// Per-parent debounce so a burst of FS events coalesces into one
@@ -54,6 +56,16 @@ final class AttachmentFileMonitor {
     /// tokens back to `NSNotificationCenter`; only mutated on the main actor.
     @ObservationIgnored
     nonisolated(unsafe) private var volumeObservers: [NSObjectProtocol] = []
+
+    /// Most recent path set requested via `setPaths(_:)`.
+    ///
+    /// Recorded synchronously at the start of each call so that, after an
+    /// `await` for the off-main existence probe, we can drop work whose
+    /// path the caller has since un-requested. This is the single source of
+    /// truth for "what the UI currently wants tracked" during the window
+    /// when a stale-mount syscall is in flight.
+    @ObservationIgnored
+    private var desiredPaths: Set<String> = []
 
     init() {
         let center = NSWorkspace.shared.notificationCenter
@@ -82,63 +94,119 @@ final class AttachmentFileMonitor {
 
     /// Latest known existence flag for `path`.
     ///
-    /// Returns `true` for paths that aren't being watched so the UI does
-    /// not flash a missing-file indicator during the brief window between
-    /// the view appearing and the first `setPaths(_:)` call.
+    /// Returns `true` for paths whose existence has not yet been determined
+    /// (either never requested via `setPaths(_:)`, or requested but still
+    /// in flight on the off-main probe). The optimistic default means the
+    /// UI does not flash a missing-file indicator while the first probe
+    /// settles.
     func exists(_ path: String) -> Bool {
         existsByPath[path] ?? true
     }
 
     /// Replaces the set of paths being watched.
     ///
-    /// Idempotent: only diff churn (added / removed paths) triggers FS
-    /// work. Existence flags for newly added paths are populated
-    /// synchronously here so the first row render shows the correct
-    /// state.
-    func setPaths(_ paths: Set<String>) {
-        let nextPaths = paths.filter { !$0.isEmpty }
-        let currentPaths = Set(existsByPath.keys)
-        let added = nextPaths.subtracting(currentPaths)
-        let removed = currentPaths.subtracting(nextPaths)
+    /// Idempotent: only diff churn (added / removed paths) triggers FS work.
+    /// The synchronous portion (computing the diff, dropping removed paths,
+    /// cancelling their watchers) runs immediately on the main actor; the
+    /// blocking syscalls (`FileManager.fileExists`, `open(O_EVTONLY)` on
+    /// each new parent directory) run on a detached utility-priority Task
+    /// so a stale network mount cannot freeze the UI.
+    ///
+    /// Concurrent calls coalesce safely: the last call wins for *desired
+    /// state*, and any in-flight probe whose paths have been un-desired by
+    /// a later call has its results discarded on resume.
+    func setPaths(_ paths: Set<String>) async {
+        let next = paths.filter { !$0.isEmpty }
+        desiredPaths = next
 
+        // Drop entries no longer wanted. All in-memory, runs immediately.
+        let removed = Set(existsByPath.keys).subtracting(next)
         for path in removed {
-            existsByPath.removeValue(forKey: path)
-            let parent = (path as NSString).deletingLastPathComponent
-            guard var siblings = pathsByParent[parent] else { continue }
-            siblings.remove(path)
-            if siblings.isEmpty {
-                pathsByParent.removeValue(forKey: parent)
-                parentSources[parent]?.cancel()
-                parentSources.removeValue(forKey: parent)
-                debounceTasks[parent]?.cancel()
-                debounceTasks.removeValue(forKey: parent)
-            } else {
-                pathsByParent[parent] = siblings
-            }
+            detach(path: path)
         }
 
-        for path in added {
-            existsByPath[path] = FileManager.default.fileExists(atPath: path)
-            let parent = (path as NSString).deletingLastPathComponent
-            pathsByParent[parent, default: []].insert(path)
-            if parentSources[parent] == nil {
-                startWatching(parent: parent)
+        // Identify the off-main work needed: any path whose existence we
+        // don't yet know, and any parent directory we don't yet watch.
+        let added = next.subtracting(Set(existsByPath.keys))
+        let newParents = Set(added.map { Self.parent(of: $0) })
+            .subtracting(Set(parentSources.keys))
+        guard !added.isEmpty || !newParents.isEmpty else { return }
+
+        let probe = await Task.detached(priority: .utility) { [added, newParents] in
+            ProbeResult(
+                existence: Dictionary(
+                    uniqueKeysWithValues: added.map {
+                        ($0, FileManager.default.fileExists(atPath: $0))
+                    }
+                ),
+                parentFDs: Dictionary(
+                    uniqueKeysWithValues: newParents.compactMap { parent -> (String, Int32)? in
+                        let fd = open(parent, O_EVTONLY)
+                        return fd >= 0 ? (parent, fd) : nil
+                    }
+                )
+            )
+        }.value
+
+        // Apply results — filtered through the *current* desire so that any
+        // path un-requested during the await is silently dropped.
+        for (path, exists) in probe.existence
+        where desiredPaths.contains(path) && existsByPath[path] == nil {
+            existsByPath[path] = exists
+            pathsByParent[Self.parent(of: path), default: []].insert(path)
+        }
+        for (parent, fd) in probe.parentFDs {
+            // Close the fd if the parent is no longer wanted, or if a
+            // concurrent setPaths already installed a watcher for it.
+            guard pathsByParent[parent] != nil, parentSources[parent] == nil else {
+                close(fd)
+                continue
             }
+            installWatcher(fd: fd, parent: parent)
         }
     }
 
+    /// Tear-down for a single path.
+    ///
+    /// Used by the `setPaths` removal branch (and reserved for future
+    /// targeted removals).
+    private func detach(path: String) {
+        existsByPath.removeValue(forKey: path)
+        let parent = Self.parent(of: path)
+        guard var siblings = pathsByParent[parent] else { return }
+        siblings.remove(path)
+        if siblings.isEmpty {
+            pathsByParent.removeValue(forKey: parent)
+            parentSources[parent]?.cancel()
+            parentSources.removeValue(forKey: parent)
+            debounceTasks[parent]?.cancel()
+            debounceTasks.removeValue(forKey: parent)
+        } else {
+            pathsByParent[parent] = siblings
+        }
+    }
+
+    /// Synchronous watcher attachment.
+    ///
+    /// Used by `refreshAll` after a volume mount notification — the
+    /// directory just became reachable, so `open()` is hot-cache fast.
+    /// `setPaths` instead opens the fd inside its detached probe.
     private func startWatching(parent: String) {
         let fd = open(parent, O_EVTONLY)
         guard fd >= 0 else {
             // Parent directory unreachable (e.g. unmounted volume). Tracked
-            // existence stays `false`; a volume-mount notification will
-            // retry this path's parent.
+            // existence stays `false`; the next mount notification retries.
             Self.logger.debug(
                 "Could not open parent for monitoring (errno=\(errno, privacy: .public)): \(parent, privacy: .public)"
             )
             return
         }
+        installWatcher(fd: fd, parent: parent)
+    }
 
+    /// No-syscall step: takes an already-open `O_EVTONLY` fd and wires it
+    /// into a `DispatchSource` registered against the main queue.
+    private func installWatcher(fd: Int32, parent: String) {
         let source = DispatchSource.makeFileSystemObjectSource(
             fileDescriptor: fd,
             eventMask: [.write, .delete, .rename],
@@ -154,6 +222,20 @@ final class AttachmentFileMonitor {
         parentSources[parent] = source
 
         Self.logger.debug("Started attachment watcher on \(parent, privacy: .public)")
+    }
+
+    /// Parent directory of `path` as a string.
+    ///
+    /// Wrapping the `NSString` idiom in one place keeps call sites compact.
+    private static func parent(of path: String) -> String {
+        (path as NSString).deletingLastPathComponent
+    }
+
+    /// Result of one off-main probe batch. `Sendable` because the detached
+    /// Task hands it back across actor boundaries.
+    private struct ProbeResult: Sendable {
+        let existence: [String: Bool]
+        let parentFDs: [String: Int32]
     }
 
     private func scheduleRefresh(for parent: String) {
