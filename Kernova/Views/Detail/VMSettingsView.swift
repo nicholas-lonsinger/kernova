@@ -27,8 +27,6 @@ struct VMSettingsView: View {
     @State private var fileMonitor = AttachmentFileMonitor()
     @FocusState private var isNameFieldFocused: Bool
 
-    private static let missingFileTooltip = "File not found at this path"
-
     /// Absolute paths of every user-supplied attachment (external storage disks + removable media).
     ///
     /// Bundle-relative internal disks are excluded — they live inside the
@@ -364,16 +362,12 @@ struct VMSettingsView: View {
                     HStack {
                         AttachmentIcon(
                             systemName: "opticaldisc",
-                            missingTooltip: isMissing ? Self.missingFileTooltip : nil
+                            missingTooltip: isMissing ? missingAttachmentTooltip : nil
                         )
 
                         VStack(alignment: .leading, spacing: 2) {
                             Text(item.label)
-                            Text(item.path)
-                                .font(.caption)
-                                .foregroundStyle(isMissing ? .red : .secondary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
+                            attachmentSubtitle(path: item.path, isMissing: isMissing)
                         }
 
                         Spacer()
@@ -526,16 +520,15 @@ struct VMSettingsView: View {
         HStack {
             AttachmentIcon(
                 systemName: diskIconSystemName(for: disk.wrappedValue),
-                missingTooltip: isMissing ? Self.missingFileTooltip : nil
+                missingTooltip: isMissing ? missingAttachmentTooltip : nil
             )
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(disk.wrappedValue.label)
-                Text(diskSubtitle(for: disk.wrappedValue, in: instance))
-                    .font(.caption)
-                    .foregroundStyle(isMissing ? .red : .secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                attachmentSubtitle(
+                    path: diskSubtitle(for: disk.wrappedValue, in: instance),
+                    isMissing: isMissing
+                )
             }
 
             Spacer()
