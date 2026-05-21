@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Caption-sized subtitle for an attachment row.
@@ -82,16 +83,47 @@ private struct MissingAttachmentPopover: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("Kernova can't find:")
-                Text(path)
-                    .font(.callout.monospaced())
-                    .textSelection(.enabled)
-                    .foregroundStyle(.secondary)
+                WrappingPathLabel(path: path)
             }
 
             Text("It may have been moved, renamed, or its volume unmounted.")
         }
         .font(.callout)
         .padding()
-        .frame(width: 340)
+        .frame(width: 380)
+    }
+}
+
+/// Selectable, monospaced path label that wraps long path-like tokens at
+/// any character.
+///
+/// SwiftUI's `Text` truncates rather than character-wraps when a single
+/// token (an unbroken path component) is wider than its container, so a
+/// path like `/Users/.../some-long-filename.iso` ends with an ellipsis
+/// instead of breaking across lines. `NSTextField` with the
+/// `byCharWrapping` line-break mode does the right thing, so we wrap
+/// one and feed it back to SwiftUI.
+private struct WrappingPathLabel: NSViewRepresentable {
+    let path: String
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField(wrappingLabelWithString: path)
+        field.font = .monospacedSystemFont(
+            ofSize: NSFont.systemFontSize - 1,
+            weight: .regular
+        )
+        field.textColor = .secondaryLabelColor
+        field.cell?.lineBreakMode = .byCharWrapping
+        // Hug the available width; let SwiftUI's frame drive horizontal size,
+        // and grow vertically as the text wraps.
+        field.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return field
+    }
+
+    func updateNSView(_ field: NSTextField, context: Context) {
+        if field.stringValue != path {
+            field.stringValue = path
+        }
     }
 }
