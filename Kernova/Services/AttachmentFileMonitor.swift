@@ -71,11 +71,11 @@ final class AttachmentFileMonitor {
     ///
     /// Default implementation hops to a detached utility-priority task and
     /// performs the blocking syscalls (`FileManager.fileExists` and
-    /// `open(O_EVTONLY)` on each new parent) there. Exposed as a mutable
-    /// property so tests can substitute a stub that signals/awaits a
-    /// continuation, making race-coalescing assertions deterministic.
+    /// `open(O_EVTONLY)` on each new parent) there. Tests inject a stub
+    /// via the initializer so race-coalescing assertions can be made
+    /// deterministic.
     @ObservationIgnored
-    var probe: Probe = AttachmentFileMonitor.defaultProbe
+    private let probe: Probe
 
     /// Type of the off-main probe step.
     ///
@@ -83,16 +83,29 @@ final class AttachmentFileMonitor {
     /// a detached task without violating strict concurrency.
     typealias Probe = @Sendable (_ paths: Set<String>, _ parents: Set<String>) async -> ProbeResult
 
-    init() {
+    /// Single-flight coordination for volume mount/unmount refreshes.
+    ///
+    /// `inFlight` is set while a `refreshAll` is running; `pending` is set
+    /// when a new notification arrives during that window. The draining
+    /// loop in `drainRefreshAll` keeps running until no new notifications
+    /// landed during the previous pass, collapsing a burst of mount
+    /// events (one per volume) into a single refresh sweep.
+    @ObservationIgnored
+    private var refreshAllInFlight: Bool = false
+    @ObservationIgnored
+    private var refreshAllPending: Bool = false
+
+    init(probe: @escaping Probe = AttachmentFileMonitor.defaultProbe) {
+        self.probe = probe
         let center = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.didMountNotification, NSWorkspace.didUnmountNotification] {
             let token = center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 // RATIONALE: `queue: .main` runs the block on the main
                 // thread; spawning an explicitly `@MainActor`-isolated
-                // Task starts the async refresh on the same actor without
-                // an extra hop.
+                // Task lets us call `requestRefreshAll` (sync, MainActor)
+                // without an extra hop.
                 Task { @MainActor [weak self] in
-                    await self?.refreshAll()
+                    self?.requestRefreshAll()
                 }
             }
             volumeObservers.append(token)
@@ -158,21 +171,46 @@ final class AttachmentFileMonitor {
             existsByPath[path] = exists
             pathsByParent[Self.parent(of: path), default: []].insert(path)
         }
+
+        var newlyWatched: [String] = []
         for (parent, fd) in result.parentFDs {
             // Close the fd if the parent is no longer wanted, or if a
             // concurrent setPaths already installed a watcher for it.
+            // `close` can briefly block on a network mount, so hop off
+            // main to release the descriptor.
             guard pathsByParent[parent] != nil, parentSources[parent] == nil else {
-                close(fd)
+                Self.closeOffMain(fd)
                 continue
             }
             installWatcher(fd: fd, parent: parent)
+            newlyWatched.append(parent)
+        }
+
+        // Close the staleness window between the probe's `fileExists` and
+        // the watcher's `source.resume()`: any change that happened in that
+        // gap would be invisible to the freshly-installed source, so do
+        // one more off-main check now that the watcher is live.
+        for parent in newlyWatched {
+            await refreshPaths(in: parent)
+        }
+    }
+
+    /// Releases a file descriptor on a detached utility-priority task.
+    ///
+    /// `close()` can block briefly on a network mount even for an
+    /// `O_EVTONLY` descriptor (the kernel may need to release locks or
+    /// flush state), so every `close` call site hops off the main actor.
+    private static func closeOffMain(_ fd: Int32) {
+        Task.detached(priority: .utility) {
+            close(fd)
         }
     }
 
     /// Default `probe` implementation: runs the blocking syscalls on a
     /// detached utility-priority task so a stale network mount cannot
-    /// freeze the main actor.
-    private static let defaultProbe: Probe = { added, newParents in
+    /// freeze the main actor. `nonisolated` so it can be used as a
+    /// default value for the `init` parameter.
+    nonisolated private static let defaultProbe: Probe = { added, newParents in
         await Task.detached(priority: .utility) { [added, newParents] in
             ProbeResult(
                 existence: Dictionary(
@@ -234,7 +272,7 @@ final class AttachmentFileMonitor {
         // Recheck after the await: the parent could have been dropped
         // or a concurrent caller could have already installed a watcher.
         guard pathsByParent[parent] != nil, parentSources[parent] == nil else {
-            close(fd)
+            Self.closeOffMain(fd)
             return
         }
         installWatcher(fd: fd, parent: parent)
@@ -265,7 +303,12 @@ final class AttachmentFileMonitor {
             self?.scheduleRefresh(for: parent)
         }
         source.setCancelHandler {
-            close(fd)
+            // `setCancelHandler` runs on the source's main queue; spawn
+            // a detached task so the close can't stall the UI if the
+            // underlying mount is slow to respond.
+            Task.detached(priority: .utility) {
+                close(fd)
+            }
         }
         source.resume()
         parentSources[parent] = source
@@ -338,13 +381,37 @@ final class AttachmentFileMonitor {
         }
     }
 
+    /// Entry point from the volume mount/unmount observers.
+    ///
+    /// Coalesces a burst of notifications (one per mounted volume when a
+    /// USB hub or disk image arrives all at once, say) into a single
+    /// refresh sweep. If a refresh is already in flight, sets a "pending"
+    /// flag so the drain loop runs one more pass when the current one
+    /// finishes; otherwise kicks off the drain.
+    private func requestRefreshAll() {
+        refreshAllPending = true
+        guard !refreshAllInFlight else { return }
+        refreshAllInFlight = true
+        Task { @MainActor [weak self] in
+            await self?.drainRefreshAll()
+        }
+    }
+
+    private func drainRefreshAll() async {
+        while refreshAllPending {
+            refreshAllPending = false
+            await runRefreshAllPass()
+        }
+        refreshAllInFlight = false
+    }
+
     /// After a volume mount/unmount, retry parents we couldn't open
     /// earlier and re-check every tracked path.
     ///
     /// Snapshots `pathsByParent.keys` up front so concurrent mutations
     /// during the awaits (a `setPaths` call landing between mount events,
     /// say) can't dereference a missing entry.
-    private func refreshAll() async {
+    private func runRefreshAllPass() async {
         let parents = Array(pathsByParent.keys)
         for parent in parents where pathsByParent[parent] != nil {
             if parentSources[parent] == nil {
@@ -357,4 +424,14 @@ final class AttachmentFileMonitor {
             await refreshPaths(in: parent)
         }
     }
+
+    #if DEBUG
+    /// Snapshot of currently-watched parent directories.
+    ///
+    /// DEBUG-only so tests can verify watcher lifecycle (install / cancel)
+    /// without promoting `parentSources` to internal access.
+    var watchedParentsForTesting: Set<String> {
+        Set(parentSources.keys)
+    }
+    #endif
 }

@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 
 @testable import Kernova
@@ -132,6 +133,52 @@ struct AttachmentFileMonitorTests {
 
     // MARK: - Race coalescing
 
+    /// Stateful probe stub for the race-coalescing test.
+    ///
+    /// The first call blocks on `release`; every subsequent call returns
+    /// immediately. Sharing one probe across the monitor's lifetime lets
+    /// `AttachmentFileMonitor` accept it via init injection (as the only
+    /// way to install a probe) while still letting the test interleave
+    /// two `setPaths` calls deterministically.
+    private final class RaceStubProbe: Sendable {
+        let started: AsyncStream<Void>
+        private let startedContinuation: AsyncStream<Void>.Continuation
+        let release: AsyncStream<Void>
+        private let releaseContinuation: AsyncStream<Void>.Continuation
+        /// `true` until the first call consumes it.
+        ///
+        /// Subsequent calls see `false` and skip the blocking branch.
+        private let isFirstCallPending: Mutex<Bool> = Mutex(true)
+
+        init() {
+            (self.started, self.startedContinuation) = AsyncStream<Void>.makeStream()
+            (self.release, self.releaseContinuation) = AsyncStream<Void>.makeStream()
+        }
+
+        var probe: AttachmentFileMonitor.Probe {
+            { [self] added, _ in
+                let isFirst = self.isFirstCallPending.withLock { pending in
+                    let wasFirst = pending
+                    pending = false
+                    return wasFirst
+                }
+                if isFirst {
+                    self.startedContinuation.yield()
+                    for await _ in self.release { break }
+                }
+                return AttachmentFileMonitor.ProbeResult(
+                    existence: Dictionary(uniqueKeysWithValues: added.map { ($0, true) }),
+                    parentFDs: [:]
+                )
+            }
+        }
+
+        func releaseFirstProbe() {
+            releaseContinuation.yield()
+            releaseContinuation.finish()
+        }
+    }
+
     @Test("In-flight probe results are discarded when a later setPaths un-requests their paths")
     func inFlightProbeDiscardedOnSupersedingCall() async throws {
         let tmp = try makeTempDir()
@@ -141,45 +188,22 @@ struct AttachmentFileMonitorTests {
         FileManager.default.createFile(atPath: a, contents: Data([0]))
         FileManager.default.createFile(atPath: b, contents: Data([0]))
 
-        let monitor = AttachmentFileMonitor()
-
-        // Channels that drive deterministic interleaving: the test waits
-        // for `probeStarted` after kicking off the first setPaths, then
-        // sends on `release` to let the first probe finish.
-        let probeStarted = AsyncStream<Void>.makeStream()
-        let release = AsyncStream<Void>.makeStream()
-
-        // Stub probe used only by the first call. Skips fd allocation
-        // (parentFDs is empty) so we don't have to manage real fds in
-        // the test.
-        monitor.probe = { added, _ in
-            probeStarted.continuation.yield()
-            for await _ in release.stream { break }
-            return AttachmentFileMonitor.ProbeResult(
-                existence: Dictionary(uniqueKeysWithValues: added.map { ($0, true) }),
-                parentFDs: [:]
-            )
-        }
+        let stub = RaceStubProbe()
+        let monitor = AttachmentFileMonitor(probe: stub.probe)
 
         // Kick off the first call in the background; it suspends inside
         // the probe waiting on `release`.
         let firstCall = Task { await monitor.setPaths([a]) }
-        for await _ in probeStarted.stream { break }
+        for await _ in stub.started { break }
 
-        // Swap to a non-blocking probe and make the superseding call.
-        monitor.probe = { added, _ in
-            AttachmentFileMonitor.ProbeResult(
-                existence: Dictionary(uniqueKeysWithValues: added.map { ($0, true) }),
-                parentFDs: [:]
-            )
-        }
+        // While the first call is parked in its probe, make a superseding
+        // call. The stub returns immediately for every non-first call.
         await monitor.setPaths([b])
         #expect(monitor.exists(b) == true, "Superseding call applies its own probe")
 
         // Let the first probe complete. Its apply step should drop the
         // result for `a` because `desiredPaths` is now `[b]`.
-        release.continuation.yield()
-        release.continuation.finish()
+        stub.releaseFirstProbe()
         await firstCall.value
 
         #expect(monitor.exists(a) == true, "Un-desired path returns the unwatched default")
@@ -191,37 +215,34 @@ struct AttachmentFileMonitorTests {
 
     // MARK: - Watcher / fd lifecycle
 
-    @Test("Dropping a path cancels its parent watcher so no further FS events fire")
+    @Test("Dropping a path cancels its parent watcher and removes it from the watch set")
     func droppingPathTearsDownWatcher() async throws {
         let tmp = try makeTempDir()
         defer { tmp.cleanup() }
         let target = path(in: tmp.url, "target.iso")
         FileManager.default.createFile(atPath: target, contents: Data([0]))
 
+        // Compute the parent the same way the monitor does internally
+        // (NSString.deletingLastPathComponent) so the string comparison
+        // is exact regardless of URL trailing-slash quirks.
+        let expectedParent = (target as NSString).deletingLastPathComponent
+
         let monitor = AttachmentFileMonitor()
         await monitor.setPaths([target])
         #expect(monitor.exists(target) == true)
+        #expect(
+            monitor.watchedParentsForTesting.contains(expectedParent),
+            "Watcher should be installed for the parent directory while the path is tracked"
+        )
 
-        // Drop the path. detach() cancels the DispatchSource, which
-        // fires its setCancelHandler { close(fd) } and removes the
-        // entry from parentSources.
+        // Drop the path. detach() cancels the DispatchSource (which fires
+        // setCancelHandler { close(fd) }) and removes the entry from
+        // parentSources.
         await monitor.setPaths([])
         #expect(monitor.existsByPath.isEmpty)
-
-        // Mutate the previously-watched directory and wait well past
-        // the debounce window. If the watcher had leaked, its handler
-        // would re-fire and write back into existsByPath; with the
-        // watcher torn down, no such write happens.
-        try FileManager.default.removeItem(atPath: target)
-        try await Task.sleep(for: .milliseconds(500))
-
         #expect(
-            monitor.existsByPath.isEmpty,
-            "No state changes should occur after the path is dropped — the watcher is gone"
-        )
-        #expect(
-            monitor.exists(target) == true,
-            "Untracked path falls back to the optimistic default"
+            monitor.watchedParentsForTesting.isEmpty,
+            "Watcher should be removed from the watch set when its last path is dropped"
         )
     }
 }
