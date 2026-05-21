@@ -362,7 +362,7 @@ struct VMSettingsView: View {
                     HStack {
                         AttachmentIcon(
                             systemName: "opticaldisc",
-                            missingTooltip: isMissing ? missingAttachmentTooltip : nil
+                            missingPath: isMissing ? item.path : nil
                         )
 
                         VStack(alignment: .leading, spacing: 2) {
@@ -520,7 +520,7 @@ struct VMSettingsView: View {
         HStack {
             AttachmentIcon(
                 systemName: diskIconSystemName(for: disk.wrappedValue),
-                missingTooltip: isMissing ? missingAttachmentTooltip : nil
+                missingPath: isMissing ? disk.wrappedValue.path : nil
             )
 
             VStack(alignment: .leading, spacing: 2) {

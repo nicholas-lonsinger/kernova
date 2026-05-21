@@ -63,7 +63,7 @@ struct StorageDiskReorderSheet: View {
             let isMissing = !disk.isInternal && !fileMonitor.exists(disk.path)
             AttachmentIcon(
                 systemName: diskIconSystemName(for: disk),
-                missingTooltip: isMissing ? missingAttachmentTooltip : nil
+                missingPath: isMissing ? disk.path : nil
             )
 
             VStack(alignment: .leading, spacing: 2) {
