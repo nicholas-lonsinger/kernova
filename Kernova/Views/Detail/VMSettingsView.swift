@@ -24,7 +24,27 @@ struct VMSettingsView: View {
     @State private var showingRemoveDiskAlert = false
     @State private var removableMediaToRemove: RemovableMediaItem?
     @State private var showingRemoveRemovableMediaAlert = false
+    @State private var fileMonitor = AttachmentFileMonitor()
     @FocusState private var isNameFieldFocused: Bool
+
+    /// Absolute paths of every user-supplied attachment (external storage disks + removable media).
+    ///
+    /// Bundle-relative internal disks are excluded — they live inside the
+    /// VM bundle and can't be moved out from under the app.
+    private var externalAttachmentPaths: Set<String> {
+        var paths: Set<String> = []
+        if let disks = instance.configuration.storageDisks {
+            for disk in disks where !disk.isInternal {
+                paths.insert(disk.path)
+            }
+        }
+        if let media = instance.configuration.removableMedia {
+            for item in media {
+                paths.insert(item.path)
+            }
+        }
+        return paths
+    }
 
     private var currentMicPermission: AVAuthorizationStatus {
         AVCaptureDevice.authorizationStatus(for: .audio)
@@ -188,6 +208,12 @@ struct VMSettingsView: View {
                 "Move to Trash will send \(item.path) to the Trash. Remove from VM will detach the disc and leave the file alone."
             )
         }
+        .onAppear {
+            Task { await fileMonitor.setPaths(externalAttachmentPaths) }
+        }
+        .onChange(of: externalAttachmentPaths) { _, newValue in
+            Task { await fileMonitor.setPaths(newValue) }
+        }
     }
 
     @ViewBuilder
@@ -332,17 +358,16 @@ struct VMSettingsView: View {
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(removableMediaBinding) { $item in
+                    let isMissing = !fileMonitor.exists(item.path)
                     HStack {
-                        Image(systemName: "opticaldisc")
-                            .foregroundStyle(.secondary)
+                        AttachmentIcon(
+                            systemName: "opticaldisc",
+                            missingPath: isMissing ? item.path : nil
+                        )
 
                         VStack(alignment: .leading, spacing: 2) {
                             Text(item.label)
-                            Text(item.path)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
+                            attachmentSubtitle(path: item.path, isMissing: isMissing)
                         }
 
                         Spacer()
@@ -480,24 +505,30 @@ struct VMSettingsView: View {
             }
             .disabled(isReadOnly)
             .sheet(isPresented: $showingReorderDisksSheet) {
-                StorageDiskReorderSheet(disks: storageDiskBinding, instance: instance)
+                StorageDiskReorderSheet(
+                    disks: storageDiskBinding,
+                    instance: instance,
+                    fileMonitor: fileMonitor
+                )
             }
         }
     }
 
     @ViewBuilder
     private func storageDiskRow(disk: Binding<StorageDisk>) -> some View {
+        let isMissing = !disk.wrappedValue.isInternal && !fileMonitor.exists(disk.wrappedValue.path)
         HStack {
-            Image(systemName: diskIconSystemName(for: disk.wrappedValue))
-                .foregroundStyle(.secondary)
+            AttachmentIcon(
+                systemName: diskIconSystemName(for: disk.wrappedValue),
+                missingPath: isMissing ? disk.wrappedValue.path : nil
+            )
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(disk.wrappedValue.label)
-                Text(diskSubtitle(for: disk.wrappedValue, in: instance))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                attachmentSubtitle(
+                    path: diskSubtitle(for: disk.wrappedValue, in: instance),
+                    isMissing: isMissing
+                )
             }
 
             Spacer()
@@ -901,7 +932,7 @@ struct VMSettingsView: View {
 
     @ViewBuilder
     private var micPermissionInfoPopover: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        CalloutBody {
             Text("Microphone Permission")
                 .font(.headline)
 
@@ -918,14 +949,10 @@ struct VMSettingsView: View {
                 Text("2. Go to **Privacy & Security → Microphone**")
                 Text("3. Enable the toggle for **Kernova**")
             }
-            .font(.callout)
 
             Text("You will need to restart Kernova after granting permission.")
-                .font(.callout)
                 .foregroundStyle(.secondary)
         }
-        .padding()
-        .frame(width: 340)
     }
 }
 
@@ -957,10 +984,9 @@ struct InfoButton<Content: View>: View {
         .help("About \(Text(label))")
         .accessibilityLabel("About \(Text(label))")
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
-            content()
-                .font(.callout)
-                .padding()
-                .frame(width: 340)
+            CalloutBody {
+                content()
+            }
         }
     }
 }
