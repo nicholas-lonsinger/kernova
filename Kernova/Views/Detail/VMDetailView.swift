@@ -42,11 +42,10 @@ struct VMDetailView: View {
                 }
 
             case _ where instance.status.hasActiveDisplay:
-                if instance.detailPaneMode == .settings {
-                    VMSettingsView(instance: instance, viewModel: viewModel, isReadOnly: true)
-                } else {
-                    VMConsoleView(instance: instance)
-                }
+                // The AppKit `DetailRouterViewController` only routes here when
+                // `detailPaneMode == .settings`; non-settings modes are served
+                // by `ConsolePlaceholderViewController` directly.
+                VMSettingsView(instance: instance, viewModel: viewModel, isReadOnly: true)
 
             default:
                 transitionView
