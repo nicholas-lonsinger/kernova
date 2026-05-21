@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 
 /// Caption-sized subtitle for an attachment row.
@@ -73,7 +72,7 @@ private struct MissingAttachmentPopover: View {
     let path: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        CalloutBody {
             HStack(spacing: 6) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(.red)
@@ -81,39 +80,28 @@ private struct MissingAttachmentPopover: View {
                     .font(.headline)
             }
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Kernova can't find:")
-                Text(Self.wrappingPath(path))
-                    .font(.callout.monospaced())
-                    .textSelection(.enabled)
-                    .foregroundStyle(.secondary)
-            }
+            Text("Kernova can't find:")
+
+            Text(Self.wrappingPath(path))
+                .font(.callout.monospaced())
+                .textSelection(.enabled)
+                .foregroundStyle(.secondary)
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
 
             Text("It may have been moved, renamed, or its volume unmounted.")
         }
-        .font(.callout)
-        .padding()
-        .frame(width: 340)
     }
 
     /// Wraps a filesystem path so SwiftUI's `Text` will break it across
     /// multiple lines instead of truncating with an ellipsis.
     ///
-    /// SwiftUI's default `byWordWrapping` only allows breaks at whitespace
-    /// and a few punctuation characters, which leaves a deep path like
-    /// `/Users/.../ubuntu-...-arm64 2.iso` as a single overlong line that
-    /// gets cut. Attaching an `NSParagraphStyle` with `byCharWrapping`
-    /// switches the layout engine to break at any glyph boundary, so the
-    /// full path is always visible inside the popover's fixed-width frame.
-    private static func wrappingPath(_ path: String) -> AttributedString {
-        let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.lineBreakMode = .byCharWrapping
-        let ns = NSMutableAttributedString(string: path)
-        ns.addAttribute(
-            .paragraphStyle,
-            value: paragraphStyle,
-            range: NSRange(location: 0, length: ns.length)
-        )
-        return AttributedString(ns)
+    /// Since SwiftUI's `Text` view ignores `NSParagraphStyle` attributes like
+    /// `lineBreakMode` (it uses its own internal layout engine), we force
+    /// wrapping by inserting zero-width spaces after slashes. This allows the
+    /// path to break at any directory boundary when it hits the edge of the
+    /// popover's fixed-width frame.
+    private static func wrappingPath(_ path: String) -> String {
+        path.replacingOccurrences(of: "/", with: "/\u{200B}")
     }
 }

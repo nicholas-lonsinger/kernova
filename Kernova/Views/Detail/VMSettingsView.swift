@@ -932,7 +932,7 @@ struct VMSettingsView: View {
 
     @ViewBuilder
     private var micPermissionInfoPopover: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        CalloutBody {
             Text("Microphone Permission")
                 .font(.headline)
 
@@ -949,14 +949,10 @@ struct VMSettingsView: View {
                 Text("2. Go to **Privacy & Security → Microphone**")
                 Text("3. Enable the toggle for **Kernova**")
             }
-            .font(.callout)
 
             Text("You will need to restart Kernova after granting permission.")
-                .font(.callout)
                 .foregroundStyle(.secondary)
         }
-        .padding()
-        .frame(width: 340)
     }
 }
 
@@ -988,10 +984,9 @@ struct InfoButton<Content: View>: View {
         .help("About \(Text(label))")
         .accessibilityLabel("About \(Text(label))")
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
-            content()
-                .font(.callout)
-                .padding()
-                .frame(width: 340)
+            CalloutBody {
+                content()
+            }
         }
     }
 }
