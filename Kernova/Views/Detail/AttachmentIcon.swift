@@ -29,7 +29,7 @@ func attachmentSubtitle(path: String, isMissing: Bool) -> some View {
 /// Renders the normal SF Symbol when the backing file is present;
 /// swaps in a red warning button with a hover tooltip and click-to-open
 /// popover when the file is missing. The popover mirrors the affordance
-/// pattern of [[InfoButton]]: brief hover label, full detail on click.
+/// pattern of `InfoButton`: brief hover label, full detail on click.
 struct AttachmentIcon: View {
     let systemName: String
     /// Absolute path of the missing file, or `nil` when the file is

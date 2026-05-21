@@ -67,15 +67,32 @@ final class AttachmentFileMonitor {
     @ObservationIgnored
     private var desiredPaths: Set<String> = []
 
+    /// Off-main probe step invoked by `setPaths(_:)`.
+    ///
+    /// Default implementation hops to a detached utility-priority task and
+    /// performs the blocking syscalls (`FileManager.fileExists` and
+    /// `open(O_EVTONLY)` on each new parent) there. Exposed as a mutable
+    /// property so tests can substitute a stub that signals/awaits a
+    /// continuation, making race-coalescing assertions deterministic.
+    @ObservationIgnored
+    var probe: Probe = AttachmentFileMonitor.defaultProbe
+
+    /// Type of the off-main probe step.
+    ///
+    /// `@Sendable` so the default implementation can dispatch its body to
+    /// a detached task without violating strict concurrency.
+    typealias Probe = @Sendable (_ paths: Set<String>, _ parents: Set<String>) async -> ProbeResult
+
     init() {
         let center = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.didMountNotification, NSWorkspace.didUnmountNotification] {
             let token = center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                // RATIONALE: `queue: .main` guarantees this fires on the
-                // main thread; `assumeIsolated` lets a `@Sendable` block
-                // call MainActor-isolated state under strict concurrency.
-                MainActor.assumeIsolated {
-                    self?.refreshAll()
+                // RATIONALE: `queue: .main` runs the block on the main
+                // thread; spawning an explicitly `@MainActor`-isolated
+                // Task starts the async refresh on the same actor without
+                // an extra hop.
+                Task { @MainActor [weak self] in
+                    await self?.refreshAll()
                 }
             }
             volumeObservers.append(token)
@@ -132,7 +149,31 @@ final class AttachmentFileMonitor {
             .subtracting(Set(parentSources.keys))
         guard !added.isEmpty || !newParents.isEmpty else { return }
 
-        let probe = await Task.detached(priority: .utility) { [added, newParents] in
+        let result = await probe(added, newParents)
+
+        // Apply results — filtered through the *current* desire so that any
+        // path un-requested during the await is silently dropped.
+        for (path, exists) in result.existence
+        where desiredPaths.contains(path) && existsByPath[path] == nil {
+            existsByPath[path] = exists
+            pathsByParent[Self.parent(of: path), default: []].insert(path)
+        }
+        for (parent, fd) in result.parentFDs {
+            // Close the fd if the parent is no longer wanted, or if a
+            // concurrent setPaths already installed a watcher for it.
+            guard pathsByParent[parent] != nil, parentSources[parent] == nil else {
+                close(fd)
+                continue
+            }
+            installWatcher(fd: fd, parent: parent)
+        }
+    }
+
+    /// Default `probe` implementation: runs the blocking syscalls on a
+    /// detached utility-priority task so a stale network mount cannot
+    /// freeze the main actor.
+    private static let defaultProbe: Probe = { added, newParents in
+        await Task.detached(priority: .utility) { [added, newParents] in
             ProbeResult(
                 existence: Dictionary(
                     uniqueKeysWithValues: added.map {
@@ -147,23 +188,6 @@ final class AttachmentFileMonitor {
                 )
             )
         }.value
-
-        // Apply results — filtered through the *current* desire so that any
-        // path un-requested during the await is silently dropped.
-        for (path, exists) in probe.existence
-        where desiredPaths.contains(path) && existsByPath[path] == nil {
-            existsByPath[path] = exists
-            pathsByParent[Self.parent(of: path), default: []].insert(path)
-        }
-        for (parent, fd) in probe.parentFDs {
-            // Close the fd if the parent is no longer wanted, or if a
-            // concurrent setPaths already installed a watcher for it.
-            guard pathsByParent[parent] != nil, parentSources[parent] == nil else {
-                close(fd)
-                continue
-            }
-            installWatcher(fd: fd, parent: parent)
-        }
     }
 
     /// Tear-down for a single path.
@@ -186,19 +210,31 @@ final class AttachmentFileMonitor {
         }
     }
 
-    /// Synchronous watcher attachment.
+    /// Async watcher attachment.
     ///
-    /// Used by `refreshAll` after a volume mount notification — the
-    /// directory just became reachable, so `open()` is hot-cache fast.
-    /// `setPaths` instead opens the fd inside its detached probe.
-    private func startWatching(parent: String) {
-        let fd = open(parent, O_EVTONLY)
+    /// Opens the parent directory's `O_EVTONLY` fd on a detached
+    /// utility-priority task — `open()` on a stale network mount can
+    /// block, and we never want that on the main actor. Callers must
+    /// already hold the main actor; this method `await`s the open then
+    /// re-checks invariants before installing the watcher.
+    private func startWatching(parent: String) async {
+        let (fd, openErrno) = await Task.detached(priority: .utility) {
+            let result = open(parent, O_EVTONLY)
+            return (result, errno)
+        }.value
+
         guard fd >= 0 else {
             // Parent directory unreachable (e.g. unmounted volume). Tracked
             // existence stays `false`; the next mount notification retries.
             Self.logger.debug(
-                "Could not open parent for monitoring (errno=\(errno, privacy: .public)): \(parent, privacy: .public)"
+                "Could not open parent for monitoring (errno=\(openErrno, privacy: .public)): \(parent, privacy: .public)"
             )
+            return
+        }
+        // Recheck after the await: the parent could have been dropped
+        // or a concurrent caller could have already installed a watcher.
+        guard pathsByParent[parent] != nil, parentSources[parent] == nil else {
+            close(fd)
             return
         }
         installWatcher(fd: fd, parent: parent)
@@ -206,7 +242,20 @@ final class AttachmentFileMonitor {
 
     /// No-syscall step: takes an already-open `O_EVTONLY` fd and wires it
     /// into a `DispatchSource` registered against the main queue.
+    ///
+    /// Callers must verify `parentSources[parent] == nil` first — if an
+    /// existing source is found we cancel it (closing its fd via the
+    /// cancel handler) to avoid a silent leak, and trap in debug builds
+    /// so the misuse is caught at the call site.
     private func installWatcher(fd: Int32, parent: String) {
+        if let existing = parentSources[parent] {
+            Self.logger.fault(
+                "installWatcher called with an existing source for parent \(parent, privacy: .public)"
+            )
+            assertionFailure("installWatcher: parent already watched: \(parent)")
+            existing.cancel()
+        }
+
         let source = DispatchSource.makeFileSystemObjectSource(
             fileDescriptor: fd,
             eventMask: [.write, .delete, .rename],
@@ -231,11 +280,24 @@ final class AttachmentFileMonitor {
         (path as NSString).deletingLastPathComponent
     }
 
-    /// Result of one off-main probe batch. `Sendable` because the detached
-    /// Task hands it back across actor boundaries.
-    private struct ProbeResult: Sendable {
+    /// Result of one off-main probe batch.
+    ///
+    /// `Sendable` because the detached probe hands it back across actor
+    /// boundaries. `internal` because the test target injects a custom
+    /// `probe` closure and needs to construct this directly.
+    struct ProbeResult: Sendable {
+        /// Existence flag for each path passed in `paths`.
         let existence: [String: Bool]
+        /// Open `O_EVTONLY` fd for each parent in `parents` that was reachable.
+        ///
+        /// Caller takes ownership and is responsible for closing fds that
+        /// don't get adopted by a watcher.
         let parentFDs: [String: Int32]
+
+        init(existence: [String: Bool], parentFDs: [String: Int32]) {
+            self.existence = existence
+            self.parentFDs = parentFDs
+        }
     }
 
     private func scheduleRefresh(for parent: String) {
@@ -243,14 +305,30 @@ final class AttachmentFileMonitor {
         debounceTasks[parent] = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(250))
             guard !Task.isCancelled else { return }
-            self?.refreshPaths(in: parent)
+            await self?.refreshPaths(in: parent)
         }
     }
 
-    private func refreshPaths(in parent: String) {
-        guard let paths = pathsByParent[parent] else { return }
-        for path in paths {
-            let exists = FileManager.default.fileExists(atPath: path)
+    /// Re-checks every tracked path under `parent` after an FS event.
+    ///
+    /// The `fileExists` syscalls run on a detached utility-priority task
+    /// so an unmount-in-flight (where the path's stat may briefly block)
+    /// cannot stall the main actor. After the probe completes we re-read
+    /// `pathsByParent` to drop any path the caller un-requested mid-await.
+    private func refreshPaths(in parent: String) async {
+        guard let snapshot = pathsByParent[parent] else { return }
+
+        let existence = await Task.detached(priority: .utility) { [snapshot] in
+            Dictionary(
+                uniqueKeysWithValues: snapshot.map {
+                    ($0, FileManager.default.fileExists(atPath: $0))
+                }
+            )
+        }.value
+
+        // Re-check the parent — it may have been emptied during the await.
+        guard let currentPaths = pathsByParent[parent] else { return }
+        for (path, exists) in existence where currentPaths.contains(path) {
             if existsByPath[path] != exists {
                 Self.logger.notice(
                     "Attachment existence changed: \(path, privacy: .public) -> \(exists, privacy: .public)"
@@ -260,14 +338,23 @@ final class AttachmentFileMonitor {
         }
     }
 
-    private func refreshAll() {
-        // After a volume mount/unmount, retry parents we couldn't open
-        // earlier and re-check every tracked path.
-        for parent in pathsByParent.keys {
+    /// After a volume mount/unmount, retry parents we couldn't open
+    /// earlier and re-check every tracked path.
+    ///
+    /// Snapshots `pathsByParent.keys` up front so concurrent mutations
+    /// during the awaits (a `setPaths` call landing between mount events,
+    /// say) can't dereference a missing entry.
+    private func refreshAll() async {
+        let parents = Array(pathsByParent.keys)
+        for parent in parents where pathsByParent[parent] != nil {
             if parentSources[parent] == nil {
-                startWatching(parent: parent)
+                await startWatching(parent: parent)
             }
-            refreshPaths(in: parent)
+            // Re-check after the await: `startWatching` may have hopped
+            // through a detached task during which the parent's last
+            // tracked path could have been dropped.
+            guard pathsByParent[parent] != nil else { continue }
+            await refreshPaths(in: parent)
         }
     }
 }

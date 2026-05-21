@@ -3,7 +3,7 @@ import SwiftUI
 /// Standard container for informational popover content.
 ///
 /// Encapsulates the consistent typography, padding, and width used for callouts
-/// across the app (e.g., [[InfoButton]], [[AttachmentIcon]]).
+/// across the app (e.g., `InfoButton`, `AttachmentIcon`).
 struct CalloutBody<Content: View>: View {
     let content: Content
 
