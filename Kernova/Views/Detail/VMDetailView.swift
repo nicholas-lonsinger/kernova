@@ -31,15 +31,6 @@ struct VMDetailView: View {
                     VMSettingsView(instance: instance, viewModel: viewModel, isReadOnly: false)
                 }
 
-            case .installing:
-                if let installState = instance.installState {
-                    MacOSInstallProgressView(installState: installState) {
-                        viewModel.cancelInstallation(instance)
-                    }
-                } else {
-                    transitionView
-                }
-
             case _ where instance.status.hasActiveDisplay:
                 // The AppKit `DetailRouterViewController` only routes here when
                 // `detailPaneMode == .settings`; non-settings modes are served

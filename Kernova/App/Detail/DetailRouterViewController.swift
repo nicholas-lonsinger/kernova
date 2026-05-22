@@ -168,8 +168,14 @@ final class DetailRouterViewController: NSViewController {
                 instanceID: instance.id
             )
         case .installing:
+            if instance.installState != nil {
+                return Target(
+                    vc: MacOSInstallProgressViewController(instance: instance, viewModel: viewModel),
+                    instanceID: instance.id
+                )
+            }
             return Target(
-                vc: SettingsHostViewController(instance: instance, viewModel: viewModel),
+                vc: TransitionProgressViewController(instance: instance),
                 instanceID: instance.id
             )
         default:
