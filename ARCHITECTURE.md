@@ -36,7 +36,7 @@ Kernova/
 │   ├── VMBootMode.swift                # Enum: macOS, efi, linuxKernel
 │   ├── VMGuestOS.swift                 # Enum: macOS, linux
 │   ├── MacOSInstallState.swift         # Tracks two-phase macOS installation progress (download + install)
-│   ├── VMInstance+Display.swift        # Display-layer extension on VMInstance: cold-paused vs live-paused distinction, statusDisplayColor, visibleSidebarAgentStatus
+│   ├── VMInstance+Display.swift        # Display-layer extension on VMInstance: SidebarRowSnapshot struct, cold-paused vs live-paused distinction, statusDisplayColor, visibleSidebarAgentStatus
 │   └── KernovaUTType.swift             # UTType declaration for .kernova bundle
 ├── Services/                           # Business logic — stateless or @MainActor
 │   ├── ConfigurationBuilder.swift      # VMConfiguration → VZVirtualMachineConfiguration (3 boot paths)
@@ -73,13 +73,11 @@ Kernova/
 │       └── VMDisplayBackingView.swift  # Pure AppKit VM display with pause/transition overlays
 ├── Utilities/
 │   ├── AlertPresenter.swift            # Sheet-modal NSAlert helper with role-aware (.default/.cancel/.destructive/.plain) button styling
-│   ├── BindableControls.swift          # NSControl subclasses (BindableTextField/Switch/Checkbox/PopUpButton/Stepper/Slider) bridging @Observable state to AppKit
 │   ├── DataFormatters.swift            # Human-readable formatting for bytes, CPU counts, etc.
 │   ├── ModalFlagObserver.swift         # observeModalFlag(:present:) wraps observeRecurring with false→true rising-edge detection for modal triggers
 │   ├── NSImageExtensions.swift         # Nil-safe SF Symbol image loading
 │   ├── NSOpenPanelExtensions.swift     # Shared disk-image NSOpenPanel preset
 │   ├── NSViewExtensions.swift          # Full-size subview constraint helper
-│   ├── Observed.swift                  # Observed<Value> get/set pair for AppKit controls bound to @Observable view-model state
 │   ├── ObservationLoop.swift           # observeRecurring(track:apply:) helper wrapping withObservationTracking
 │   ├── PathValidation.swift            # Path validation utilities
 │   ├── PopoverPresenter.swift          # NSPopover lifecycle manager (show/update-in-place/close + onClose callback)
@@ -291,8 +289,10 @@ NSSplitViewController (MainWindowController)
         ├── ConsolePlaceholderViewController          (fullscreen / popped out / suspended / no display)
         ├── MacOSInstallProgressViewController        (installing, installState != nil)
         └── VMSettingsViewController                  (stopped/error/initialBoot/running-with-settings)
-            ├── SettingsSection × 9                   (General, Resources, Storage, Removable, Shared, Network, Audio, Guest Agent, Clipboard)
+            ├── *SettingsSection × 9                  (General, Resources, Storage, RemovableMedia, SharedDirectories, Network, Audio, GuestAgent, Clipboard — each its own NSObject coordinator owning a SettingsSection view + its own ObservationLoop)
+            ├── AttachmentRowView                     (shared row layout used by Storage/Removable/Shared)
             ├── AttachmentIconButton                  (missing-file warning popover)
+            ├── CreateDiskPopoverController           (shared between Storage and Removable)
             └── StorageDiskReorderWindowController    (modal sheet, NSTableView drag-reorder)
 VMCreationWizardWindowController (modal sheet attached to main window)
 ├── OSSelectionStepViewController

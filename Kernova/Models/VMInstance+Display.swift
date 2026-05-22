@@ -1,6 +1,24 @@
 import AppKit
 import Foundation
 
+/// Aggregated read-only view of the fields that ``SidebarRowView`` renders.
+///
+/// Held intentionally non-`Equatable` because `NSColor` doesn't bridge to
+/// Swift `Equatable` cleanly; the row's `applyState` runs on every
+/// observation fire and the assignments are cheap and idempotent.
+struct SidebarRowSnapshot {
+    let name: String
+    let iconName: String
+    let subtitle: String
+    let toolTip: String?
+    let statusColor: NSColor
+    /// `true` when the row should show the spinner instead of the static
+    /// status circle (preparing, or transitioning lifecycle state).
+    let isSpinning: Bool
+    /// Status to show in the agent badge slot, or `nil` to hide the badge.
+    let agentStatus: AgentStatus?
+}
+
 /// Display-layer properties that distinguish preparing, cold-paused ("Suspended"), and live-paused ("Paused") states.
 extension VMInstance {
     /// Display name that distinguishes preparing, cold-paused ("Suspended"), and live-paused ("Paused").
@@ -78,6 +96,25 @@ extension VMInstance {
             return nil
         }
         return agentStatus
+    }
+
+    /// Snapshot of every field that drives ``SidebarRowView`` rendering.
+    ///
+    /// Centralizing these reads here means the row's observation loop
+    /// tracks a single property (which transitively reads every dependency
+    /// via `@Observable`), instead of listing each one explicitly. Adding
+    /// a new sidebar-visible property only requires editing this snapshot
+    /// and the row's `applyState`; the tracking list never gets stale.
+    var sidebarRowSnapshot: SidebarRowSnapshot {
+        SidebarRowSnapshot(
+            name: name,
+            iconName: configuration.guestOS.iconName,
+            subtitle: configuration.guestOS.displayName,
+            toolTip: statusToolTip,
+            statusColor: statusDisplayColor,
+            isSpinning: isPreparing || status.isTransitioning,
+            agentStatus: visibleSidebarAgentStatus
+        )
     }
 
     /// `true` when this VM has a `.downloadLatest` install context, a

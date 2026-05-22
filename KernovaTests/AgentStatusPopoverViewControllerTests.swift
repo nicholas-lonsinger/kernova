@@ -55,8 +55,8 @@ struct AgentStatusPopoverViewControllerTests {
         let body = findField(in: vc.view, identifier: "AgentPopover.Body")
         #expect(body?.stringValue.contains("Sequoia Dev") == true)
         #expect(body?.maximumNumberOfLines == 0)
-        // preferredMaxLayoutWidth is pinned (matches the body's width
-        // constraint) so multi-line wrapping works.
+        // preferredMaxLayoutWidth seeds word wrapping; the popover's
+        // actual width comes from fittingSize at layout time.
         #expect((body?.preferredMaxLayoutWidth ?? 0) > 0)
     }
 

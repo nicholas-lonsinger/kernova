@@ -25,8 +25,9 @@ final class SidebarRowView: NSView, NSTextFieldDelegate {
     // MARK: - Subviews
 
     private let iconView = NSImageView()
-    private let nameLabel = NSTextField(labelWithString: "")
-    private let renameField = NSTextField()
+    /// Single field that renders as a plain label by default and switches
+    /// to an editable bezeled field when ``enterRenameMode()`` is called.
+    private let nameField = NSTextField(labelWithString: "")
     private let subtitleLabel = NSTextField(labelWithString: "")
     private let agentBadge = SidebarAgentStatusButton()
     private let statusSpinner = NSProgressIndicator()
@@ -55,36 +56,14 @@ final class SidebarRowView: NSView, NSTextFieldDelegate {
             iconView.heightAnchor.constraint(equalToConstant: 20),
         ])
 
-        // Name slot — overlapping label (display) and editable field (rename)
-        nameLabel.translatesAutoresizingMaskIntoConstraints = false
-        nameLabel.font = .preferredFont(forTextStyle: .body)
-        nameLabel.lineBreakMode = .byTruncatingTail
-        nameLabel.maximumNumberOfLines = 1
-        nameLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
-        renameField.translatesAutoresizingMaskIntoConstraints = false
-        renameField.isEditable = true
-        renameField.isSelectable = true
-        renameField.isBordered = true
-        renameField.bezelStyle = .roundedBezel
-        renameField.font = .preferredFont(forTextStyle: .body)
-        renameField.delegate = self
-        renameField.isHidden = true
-
-        let nameSlot = NSView()
-        nameSlot.translatesAutoresizingMaskIntoConstraints = false
-        nameSlot.addSubview(nameLabel)
-        nameSlot.addSubview(renameField)
-        NSLayoutConstraint.activate([
-            nameLabel.leadingAnchor.constraint(equalTo: nameSlot.leadingAnchor),
-            nameLabel.trailingAnchor.constraint(equalTo: nameSlot.trailingAnchor),
-            nameLabel.centerYAnchor.constraint(equalTo: nameSlot.centerYAnchor),
-            renameField.leadingAnchor.constraint(equalTo: nameSlot.leadingAnchor),
-            renameField.trailingAnchor.constraint(equalTo: nameSlot.trailingAnchor),
-            renameField.centerYAnchor.constraint(equalTo: nameSlot.centerYAnchor),
-            nameSlot.heightAnchor.constraint(greaterThanOrEqualToConstant: 18),
-        ])
+        nameField.translatesAutoresizingMaskIntoConstraints = false
+        nameField.font = .preferredFont(forTextStyle: .body)
+        nameField.lineBreakMode = .byTruncatingTail
+        nameField.maximumNumberOfLines = 1
+        nameField.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        nameField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        nameField.delegate = self
+        applyLabelAppearance()
 
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
         subtitleLabel.font = .preferredFont(forTextStyle: .caption1)
@@ -92,7 +71,7 @@ final class SidebarRowView: NSView, NSTextFieldDelegate {
         subtitleLabel.lineBreakMode = .byTruncatingTail
         subtitleLabel.maximumNumberOfLines = 1
 
-        let textStack = NSStackView(views: [nameSlot, subtitleLabel])
+        let textStack = NSStackView(views: [nameField, subtitleLabel])
         textStack.orientation = .vertical
         textStack.alignment = .leading
         textStack.spacing = 1
@@ -127,7 +106,8 @@ final class SidebarRowView: NSView, NSTextFieldDelegate {
             statusCircle.centerYAnchor.constraint(equalTo: indicatorContainer.centerYAnchor),
         ])
 
-        let outerStack = NSStackView(views: [iconView, textStack, agentBadge, indicatorContainer])
+        let outerStack = NSStackView(
+            views: [iconView, textStack, agentBadge, indicatorContainer])
         outerStack.translatesAutoresizingMaskIntoConstraints = false
         outerStack.orientation = .horizontal
         outerStack.alignment = .centerY
@@ -150,27 +130,17 @@ final class SidebarRowView: NSView, NSTextFieldDelegate {
         // instance: stale local edits would otherwise commit to the new VM.
         if inRenameMode, self.instance !== instance {
             inRenameMode = false
-            nameLabel.isHidden = false
-            renameField.isHidden = true
+            applyLabelAppearance()
         }
         self.instance = instance
         applyState()
         observation = observeRecurring(
-            track: { [weak self, weak instance] in
-                guard let instance else { return }
-                _ = self?.viewModel
-                _ = instance.name
-                _ = instance.status
-                _ = instance.isPreparing
-                _ = instance.preparingState
-                _ = instance.configuration.guestOS
-                _ = instance.statusToolTip
-                _ = instance.statusDisplayColor
-                _ = instance.visibleSidebarAgentStatus
-                _ = instance.installState
-                _ = instance.virtualMachine
-                _ = instance.configuration.agentInstallNudgeDismissed
-                _ = instance.configuration.lastSeenAgentVersion
+            track: { [weak instance] in
+                // Reading the snapshot transitively reads every underlying
+                // @Observable property the row cares about — adding a new
+                // dependency means editing `SidebarRowSnapshot`, not this
+                // tracking list.
+                _ = instance?.sidebarRowSnapshot
             },
             apply: { [weak self] in
                 self?.applyState()
@@ -180,17 +150,16 @@ final class SidebarRowView: NSView, NSTextFieldDelegate {
 
     private func applyState() {
         guard let instance else { return }
+        let snapshot = instance.sidebarRowSnapshot
 
-        iconView.image = .systemSymbol(
-            instance.configuration.guestOS.iconName, accessibilityDescription: "")
+        iconView.image = .systemSymbol(snapshot.iconName, accessibilityDescription: "")
 
         if !inRenameMode {
-            nameLabel.stringValue = instance.name
+            nameField.stringValue = snapshot.name
         }
-        subtitleLabel.stringValue = instance.configuration.guestOS.displayName
+        subtitleLabel.stringValue = snapshot.subtitle
 
-        let isSpinning = instance.isPreparing || instance.status.isTransitioning
-        if isSpinning {
+        if snapshot.isSpinning {
             statusCircle.isHidden = true
             statusSpinner.isHidden = false
             statusSpinner.startAnimation(nil)
@@ -198,15 +167,15 @@ final class SidebarRowView: NSView, NSTextFieldDelegate {
             statusSpinner.stopAnimation(nil)
             statusSpinner.isHidden = true
             statusCircle.isHidden = false
-            statusCircle.contentTintColor = instance.statusDisplayColor
+            statusCircle.contentTintColor = snapshot.statusColor
         }
-        toolTip = instance.statusToolTip
+        toolTip = snapshot.toolTip
 
-        if let agentStatus = instance.visibleSidebarAgentStatus {
+        if let agentStatus = snapshot.agentStatus {
             agentBadge.isHidden = false
             agentBadge.configure(
                 status: agentStatus,
-                vmName: instance.name,
+                vmName: snapshot.name,
                 onMount: { [weak viewModel, weak instance] in
                     guard let viewModel, let instance else { return }
                     viewModel.mountGuestAgentInstaller(on: instance)
@@ -227,32 +196,52 @@ final class SidebarRowView: NSView, NSTextFieldDelegate {
     func enterRenameMode() {
         guard let instance else { return }
         inRenameMode = true
-        renameField.stringValue = instance.name
-        nameLabel.isHidden = true
-        renameField.isHidden = false
+        nameField.stringValue = instance.name
+        applyEditableAppearance()
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            self.window?.makeFirstResponder(self.renameField)
-            self.renameField.currentEditor()?.selectAll(nil)
+            self.window?.makeFirstResponder(self.nameField)
+            self.nameField.currentEditor()?.selectAll(nil)
         }
     }
 
     func exitRenameMode() {
         guard inRenameMode else { return }
         inRenameMode = false
-        nameLabel.isHidden = false
-        renameField.isHidden = true
-        // Restore the label text from the (possibly mutated) instance.
+        applyLabelAppearance()
+        // Restore from the (possibly mutated) instance.
         if let instance {
-            nameLabel.stringValue = instance.name
+            nameField.stringValue = instance.name
         }
+    }
+
+    /// Configure ``nameField`` to render as a plain label (default state).
+    private func applyLabelAppearance() {
+        nameField.isEditable = false
+        nameField.isSelectable = false
+        nameField.isBordered = false
+        nameField.isBezeled = false
+        nameField.drawsBackground = false
+        nameField.focusRingType = .none
+    }
+
+    /// Configure ``nameField`` to render as an editable bezeled field
+    /// while the row is in rename mode.
+    private func applyEditableAppearance() {
+        nameField.isEditable = true
+        nameField.isSelectable = true
+        nameField.isBordered = true
+        nameField.isBezeled = true
+        nameField.bezelStyle = .roundedBezel
+        nameField.drawsBackground = true
+        nameField.focusRingType = .default
     }
 
     // MARK: - NSTextFieldDelegate
 
     func controlTextDidEndEditing(_ obj: Notification) {
         guard inRenameMode, let instance, let viewModel else { return }
-        viewModel.commitRename(for: instance, newName: renameField.stringValue)
+        viewModel.commitRename(for: instance, newName: nameField.stringValue)
     }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {

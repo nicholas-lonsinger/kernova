@@ -16,6 +16,9 @@ final class StorageDiskReorderWindowController: NSWindowController {
     private var disks: [StorageDisk]
     private let tableView = NSTableView()
     private var continuation: CheckedContinuation<Void, Never>?
+    /// Captured at drag-session start so accept-drop never has to parse a
+    /// row index back out of a string pasteboard.
+    private var draggedSourceRow: Int?
 
     init(
         instance: VMInstance,
@@ -224,9 +227,29 @@ extension StorageDiskReorderWindowController: NSTableViewDataSource, NSTableView
     // MARK: - Drag
 
     func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> (any NSPasteboardWriting)? {
+        // The pasteboard item just marks this row draggable; the actual
+        // source row is captured in `draggingSession:willBeginAt:` below.
         let item = NSPasteboardItem()
-        item.setString("\(row)", forType: Self.pasteboardType)
+        item.setString("", forType: Self.pasteboardType)
         return item
+    }
+
+    func tableView(
+        _ tableView: NSTableView,
+        draggingSession session: NSDraggingSession,
+        willBeginAt screenPoint: NSPoint,
+        forRowIndexes rowIndexes: IndexSet
+    ) {
+        draggedSourceRow = rowIndexes.first
+    }
+
+    func tableView(
+        _ tableView: NSTableView,
+        draggingSession session: NSDraggingSession,
+        endedAt screenPoint: NSPoint,
+        operation: NSDragOperation
+    ) {
+        draggedSourceRow = nil
     }
 
     func tableView(
@@ -236,6 +259,7 @@ extension StorageDiskReorderWindowController: NSTableViewDataSource, NSTableView
         proposedDropOperation dropOperation: NSTableView.DropOperation
     ) -> NSDragOperation {
         guard dropOperation == .above else { return [] }
+        guard (info.draggingSource as AnyObject?) === tableView else { return [] }
         return .move
     }
 
@@ -245,12 +269,9 @@ extension StorageDiskReorderWindowController: NSTableViewDataSource, NSTableView
         row destination: Int,
         dropOperation: NSTableView.DropOperation
     ) -> Bool {
-        guard
-            let item = info.draggingPasteboard.pasteboardItems?.first,
-            let sourceString = item.string(forType: Self.pasteboardType),
-            let source = Int(sourceString),
-            source >= 0, source < disks.count
-        else { return false }
+        guard let source = draggedSourceRow, source >= 0, source < disks.count else {
+            return false
+        }
 
         let target = destination > source ? destination - 1 : destination
         let moved = disks.remove(at: source)

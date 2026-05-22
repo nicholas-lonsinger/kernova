@@ -101,12 +101,39 @@ func makeLabeledRow(_ label: String, control: NSView) -> NSStackView {
     labelView.font = .systemFont(ofSize: NSFont.systemFontSize)
     labelView.setContentHuggingPriority(.defaultHigh, for: .horizontal)
 
-    let spacer = NSView()
-    spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-
-    let row = NSStackView(views: [labelView, spacer, control])
+    let row = NSStackView(views: [labelView, settingsSpacer(), control])
     row.orientation = .horizontal
     row.alignment = .centerY
     row.spacing = 8
     return row
+}
+
+/// Vertical stack used for grouping the rows of a settings-section body.
+@MainActor
+func settingsStackRows(_ views: [NSView]) -> NSStackView {
+    let stack = NSStackView(views: views)
+    stack.orientation = .vertical
+    stack.alignment = .leading
+    stack.spacing = 6
+    return stack
+}
+
+/// Horizontal stack with `.centerY` alignment — for button rows, label +
+/// stepper pairs, and other inline groupings.
+@MainActor
+func settingsHorizontalStack(_ views: [NSView], spacing: CGFloat = 8) -> NSStackView {
+    let stack = NSStackView(views: views)
+    stack.orientation = .horizontal
+    stack.alignment = .centerY
+    stack.spacing = spacing
+    return stack
+}
+
+/// Flexible-width spacer for pushing trailing content rightwards inside a
+/// horizontal stack.
+@MainActor
+func settingsSpacer() -> NSView {
+    let v = NSView()
+    v.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    return v
 }

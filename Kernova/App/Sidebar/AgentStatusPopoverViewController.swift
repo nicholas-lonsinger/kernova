@@ -11,12 +11,17 @@ import AppKit
 /// "Don't show again" link button on the leading edge and the action
 /// button on the trailing edge (default-action / Return).
 ///
-/// Sizing: after layout, the view publishes `view.fittingSize` as
-/// `preferredContentSize` so `NSPopover` sizes correctly via
-/// `NSTextField`'s `preferredMaxLayoutWidth`-driven wrapping.
+/// Sizing: the body uses `preferredMaxLayoutWidth` as a wrap hint, and
+/// `viewDidLayout` publishes `view.fittingSize` as `preferredContentSize`
+/// so `NSPopover` sizes to content — short statuses get a small popover,
+/// long ones wrap at the hint width.
 @MainActor
 final class AgentStatusPopoverViewController: NSViewController {
-    private static let bodyWidth: CGFloat = 328
+    /// Wrap hint for the body label.
+    ///
+    /// Drives word wrapping; the popover's actual width is the fittingSize
+    /// of its contents.
+    private static let bodyWrapWidth: CGFloat = 328
 
     private let status: AgentStatus
     private let vmName: String
@@ -52,7 +57,7 @@ final class AgentStatusPopoverViewController: NSViewController {
         )
         body.font = .preferredFont(forTextStyle: .callout)
         body.textColor = .secondaryLabelColor
-        body.preferredMaxLayoutWidth = Self.bodyWidth
+        body.preferredMaxLayoutWidth = Self.bodyWrapWidth
         body.maximumNumberOfLines = 0
         body.lineBreakMode = .byWordWrapping
         body.isSelectable = true
@@ -100,7 +105,6 @@ final class AgentStatusPopoverViewController: NSViewController {
             stack.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             stack.topAnchor.constraint(equalTo: container.topAnchor),
             stack.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            body.widthAnchor.constraint(equalToConstant: Self.bodyWidth),
         ])
 
         // Identifiers for unit-test introspection.

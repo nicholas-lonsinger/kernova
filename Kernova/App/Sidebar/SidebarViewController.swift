@@ -43,6 +43,10 @@ final class SidebarViewController: NSViewController {
     /// existing row, which a row-level observer handles).
     private var cachedInstanceIDs: [UUID] = []
 
+    /// Captured at drag-session start; consulted in `acceptDrop` so we never
+    /// have to encode row indices into pasteboard strings.
+    private var draggedInstance: VMInstance?
+
     // MARK: - Init
 
     init(viewModel: VMLibraryViewModel) {
@@ -340,13 +344,31 @@ extension SidebarViewController: NSOutlineViewDataSource {
     // MARK: Drag source
 
     func outlineView(_ outlineView: NSOutlineView, pasteboardWriterForItem item: Any) -> (any NSPasteboardWriting)? {
-        guard let instance = item as? VMInstance else { return nil }
-        guard !instance.isPreparing else { return nil }
-        let row = outlineView.row(forItem: instance)
-        guard row >= 0 else { return nil }
+        guard let instance = item as? VMInstance, !instance.isPreparing else { return nil }
+        // The pasteboard item just marks this row as draggable; the actual
+        // identity of the dragged VM is captured in `draggingSession:willBeginAt:`
+        // and recovered from `draggedInstance` at drop time.
         let pbItem = NSPasteboardItem()
-        pbItem.setString("\(row)", forType: Self.reorderPasteboardType)
+        pbItem.setString("", forType: Self.reorderPasteboardType)
         return pbItem
+    }
+
+    func outlineView(
+        _ outlineView: NSOutlineView,
+        draggingSession session: NSDraggingSession,
+        willBeginAt screenPoint: NSPoint,
+        forItems draggedItems: [Any]
+    ) {
+        draggedInstance = draggedItems.compactMap { $0 as? VMInstance }.first
+    }
+
+    func outlineView(
+        _ outlineView: NSOutlineView,
+        draggingSession session: NSDraggingSession,
+        endedAt screenPoint: NSPoint,
+        operation: NSDragOperation
+    ) {
+        draggedInstance = nil
     }
 
     func outlineView(
@@ -362,15 +384,13 @@ extension SidebarViewController: NSOutlineViewDataSource {
         }
         guard index >= 0 else { return [] }
 
-        let pasteboard = info.draggingPasteboard
-
-        // Internal reorder
-        if pasteboard.types?.contains(Self.reorderPasteboardType) == true {
+        // Internal reorder: the drag started inside this outline view.
+        if (info.draggingSource as AnyObject?) === outlineView, draggedInstance != nil {
             return .move
         }
 
         // External bundle import (Finder drop)
-        if hasImportableBundleURL(on: pasteboard) {
+        if hasImportableBundleURL(on: info.draggingPasteboard) {
             return .copy
         }
 
@@ -383,15 +403,7 @@ extension SidebarViewController: NSOutlineViewDataSource {
         item: Any?,
         childIndex index: Int
     ) -> Bool {
-        let pasteboard = info.draggingPasteboard
-
-        if let raw = pasteboard.string(forType: Self.reorderPasteboardType),
-            let source = Int(raw)
-        {
-            // child indices include the group row at 0; the instance row
-            // indices in the outline are 1...count. `outlineView.row(forItem:)`
-            // already returns table-row indexes, so we use those directly.
-            guard let sourceItem = outlineView.item(atRow: source) as? VMInstance else { return false }
+        if (info.draggingSource as AnyObject?) === outlineView, let sourceItem = draggedInstance {
             guard let sourceOffset = viewModel.instances.firstIndex(where: { $0 === sourceItem }) else {
                 return false
             }
@@ -400,7 +412,7 @@ extension SidebarViewController: NSOutlineViewDataSource {
             return true
         }
 
-        let urls = importableBundleURLs(on: pasteboard)
+        let urls = importableBundleURLs(on: info.draggingPasteboard)
         guard !urls.isEmpty else { return false }
         for url in urls {
             viewModel.importVM(from: url)
