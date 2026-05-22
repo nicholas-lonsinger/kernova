@@ -344,8 +344,8 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
     /// Fields the user may edit while the VM is running.
     ///
     /// Changes to these
-    /// bypass the `VMSettingsView` read-only settings lock so the user can
-    /// flip them mid-session.
+    /// bypass `VMSettingsViewController`'s read-only settings lock so the
+    /// user can flip them mid-session.
     ///
     /// Most also affect runtime guest behavior and are pushed to the live
     /// guest agent via `PolicyUpdate` on the vsock control channel — but the

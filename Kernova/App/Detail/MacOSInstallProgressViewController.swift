@@ -2,11 +2,10 @@ import AppKit
 
 /// Two-step progress UI for macOS installation (download → install).
 ///
-/// Replaces the SwiftUI `MacOSInstallProgressView`. Observes the install
-/// state on the VM instance and rerenders the active step indicator,
-/// progress bar, and detail text. The cancel button presents a confirmation
-/// alert via ``AlertPresenter`` and dispatches to the library view model on
-/// confirm.
+/// Observes the install state on the VM instance and re-renders the active
+/// step indicator, progress bar, and detail text. The cancel button
+/// presents a confirmation alert via ``AlertPresenter`` and dispatches to
+/// the library view model on confirm.
 @MainActor
 final class MacOSInstallProgressViewController: NSViewController {
     private let instance: VMInstance

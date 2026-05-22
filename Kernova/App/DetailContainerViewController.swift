@@ -9,7 +9,7 @@ import os
 /// correctly.
 ///
 /// The detail router is kept in the view hierarchy at all times so that AppKit-presented
-/// alerts (delete, force-stop, cancel) and the SwiftUI settings host remain functional
+/// alerts (delete, force-stop, cancel) and the settings view controller remain functional
 /// even while the VM display is showing.
 @MainActor
 final class DetailContainerViewController: NSViewController {

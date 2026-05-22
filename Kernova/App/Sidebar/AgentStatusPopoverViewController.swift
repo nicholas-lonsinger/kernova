@@ -2,8 +2,7 @@ import AppKit
 
 /// Popover content for the sidebar's agent-status badge.
 ///
-/// Replaces SwiftUI's ``AgentStatusPopoverContent`` view. The popover
-/// itself is owned by ``PopoverPresenter`` on the parent
+/// The popover itself is owned by ``PopoverPresenter`` on the parent
 /// ``SidebarAgentStatusButton``.
 ///
 /// Layout: a vertical NSStackView (16 pt edge insets, 10 pt spacing)
@@ -13,9 +12,8 @@ import AppKit
 /// button on the trailing edge (default-action / Return).
 ///
 /// Sizing: after layout, the view publishes `view.fittingSize` as
-/// `preferredContentSize` so `NSPopover` sizes correctly. No
-/// `NSAttributedString.boundingRect` pre-measurement is needed because
-/// AppKit `NSTextField` wraps reliably given `preferredMaxLayoutWidth`.
+/// `preferredContentSize` so `NSPopover` sizes correctly via
+/// `NSTextField`'s `preferredMaxLayoutWidth`-driven wrapping.
 @MainActor
 final class AgentStatusPopoverViewController: NSViewController {
     private static let bodyWidth: CGFloat = 328

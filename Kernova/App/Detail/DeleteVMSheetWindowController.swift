@@ -3,8 +3,7 @@ import AppKit
 /// Confirmation sheet shown when deleting a VM that references external
 /// files (storage disks or removable media outside the bundle).
 ///
-/// Replaces the SwiftUI `DeleteVMSheet` for the rich delete-with-externals
-/// case. The simple delete confirmation (no externals) is handled by
+/// The simple delete confirmation (no externals) is handled by
 /// ``LifecycleAlertCoordinator`` via ``AlertPresenter``.
 @MainActor
 final class DeleteVMSheetWindowController: NSWindowController {

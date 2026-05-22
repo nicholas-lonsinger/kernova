@@ -1082,9 +1082,9 @@ final class VMLibraryViewModel {
     /// agent-status popover, and the menubar item.
     ///
     /// On successful mount, sets `installerMountedVMName` to drive an
-    /// SwiftUI `.alert()` that explains the next step (open the disk in the
-    /// guest's Finder, run install.command). The alert unifies the
-    /// post-click experience across all three entry points.
+    /// alert that explains the next step (open the disk in the guest's
+    /// Finder, run install.command). The alert unifies the post-click
+    /// experience across all three entry points.
     ///
     /// No-op if the bundled DMG is already present in this VM's
     /// `removableMedia` list — duplicate mounts don't help the user.
@@ -1222,7 +1222,7 @@ final class VMLibraryViewModel {
     ///
     /// The trash runs in `Task.detached` (see `removeStorageDisk` for the
     /// reasoning). The returned Task lets tests await completion; the
-    /// SwiftUI caller uses `@discardableResult` and ignores it.
+    /// settings view controller's @objc handler discards it.
     @discardableResult
     func removeRemovableMedia(
         _ item: RemovableMediaItem, from instance: VMInstance, trashFile: Bool
@@ -1768,7 +1768,7 @@ final class VMLibraryViewModel {
 
     /// Moves VMs in the sidebar list and persists the new order.
     ///
-    /// Called by SwiftUI's onMove handler.
+    /// Called by `SidebarViewController`'s drag-drop accept handler.
     func moveVM(fromOffsets source: IndexSet, toOffset destination: Int) {
         instances.move(fromOffsets: source, toOffset: destination)
         persistOrder()

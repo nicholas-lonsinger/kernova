@@ -4,13 +4,9 @@ import Foundation
 ///
 /// Split out from ``AgentStatusPopoverViewController`` so the per-status
 /// title / body / action-button-title strings are pure-data, testable
-/// without instantiating any view.
-///
-/// Sizing is handled by AppKit auto layout (the popover view controller
-/// publishes `view.fittingSize` as `preferredContentSize` in
-/// `viewDidLayout`), so this enum no longer needs the
-/// `NSAttributedString.boundingRect` math the SwiftUI version used to
-/// pre-measure body text.
+/// without instantiating any view. Sizing is handled by AppKit auto
+/// layout — the popover view controller publishes `view.fittingSize` as
+/// `preferredContentSize` in `viewDidLayout`.
 enum AgentStatusPopoverMetrics {
     static func title(for status: AgentStatus) -> String {
         switch status {

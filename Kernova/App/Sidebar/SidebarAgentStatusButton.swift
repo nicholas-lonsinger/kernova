@@ -3,9 +3,8 @@ import AppKit
 /// Trailing accessory shown in a sidebar row when the guest agent needs
 /// attention.
 ///
-/// Replaces SwiftUI's ``SidebarAgentStatusButton`` view. Click opens an
-/// `NSPopover` (managed by ``PopoverPresenter``) with the install / update
-/// affordance, mirroring the SwiftUI version's UX.
+/// Click opens an `NSPopover` (managed by ``PopoverPresenter``) with the
+/// install / update affordance.
 ///
 /// State mapping (per ``AgentStatus`` case):
 ///   - `.waiting`         → `exclamationmark.circle.fill`, secondary tint

@@ -57,7 +57,6 @@ struct AlertButton: Sendable {
 
 /// Sheet-modal `NSAlert` helper.
 ///
-/// Replaces SwiftUI's `.alert()` modifier in pure-AppKit view controllers.
 /// Always presents as a sheet (`beginSheetModal(for:completionHandler:)`),
 /// never `runModal()` — `runModal` blocks the main run loop, which interferes
 /// with `withObservationTracking`-based observation loops the rest of the UI

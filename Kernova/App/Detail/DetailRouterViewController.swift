@@ -13,14 +13,12 @@ import os
 ///   (starting, stopping, pausing, resuming, installing without progress).
 /// * ``ConsolePlaceholderViewController`` — running VMs in non-settings
 ///   `detailPaneMode` (display, popped-out, fullscreen, suspended).
-/// * ``SettingsHostViewController`` — anything else (settings form, install
-///   progress, lifecycle alerts) — currently still SwiftUI-hosted; Phases
-///   3–5 of the conversion shrink this further.
+/// * ``MacOSInstallProgressViewController`` — installing with progress.
+/// * ``VMSettingsViewController`` — stopped, initial-boot, or running with
+///   the settings toggle on (read-only when running).
 ///
-/// Replaces the SwiftUI `MainDetailView` previously hosted by
-/// `DetailContainerViewController`. The two global modal alerts that
-/// `MainDetailView` owned (error + installer-mounted) are presented here
-/// via ``AlertPresenter``.
+/// The two global modal alerts (error + installer-mounted) are presented
+/// here via ``AlertPresenter``.
 @MainActor
 final class DetailRouterViewController: NSViewController {
     private static let logger = Logger(subsystem: "com.kernova.app", category: "DetailRouterVC")
@@ -33,8 +31,8 @@ final class DetailRouterViewController: NSViewController {
     private var currentChild: NSViewController?
 
     /// The ID of the instance the current child was built for, so a sidebar
-    /// switch on the same VM state still produces a fresh child VC (matching
-    /// the SwiftUI `.id(...)` identity-reset behavior of `MainDetailView`).
+    /// switch on the same VM state still produces a fresh child VC and
+    /// per-VM transient UI state is discarded on selection change.
     private var currentChildInstanceID: UUID?
 
     init(viewModel: VMLibraryViewModel) {
@@ -212,9 +210,8 @@ final class DetailRouterViewController: NSViewController {
     }
 
     private func swap(to next: NSViewController, for instanceID: UUID?) {
-        // Re-create the child VC when the selected instance changes — mirrors
-        // SwiftUI `.id(...)` identity reset so per-VM transient UI state is
-        // discarded on a sidebar switch.
+        // Re-create the child VC when the selected instance changes so
+        // per-VM transient UI state is discarded on a sidebar switch.
         let needsSwap: Bool = {
             guard let current = currentChild else { return true }
             if currentChildInstanceID != instanceID { return true }

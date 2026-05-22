@@ -2,10 +2,9 @@ import AppKit
 
 /// Modal sheet for reordering a VM's storage disks via drag-and-drop.
 ///
-/// Replaces the SwiftUI `StorageDiskReorderSheet`. Uses `NSTableView` with
-/// internal drag-reorder via a custom pasteboard type so the row order
-/// translates back to the configuration through the same write closure as
-/// the original.
+/// Uses `NSTableView` with internal drag-reorder via a custom pasteboard
+/// type; the row order is translated back to the configuration through
+/// the supplied write closure.
 @MainActor
 final class StorageDiskReorderWindowController: NSWindowController {
     private static let pasteboardType = NSPasteboard.PasteboardType("com.kernova.storagedisk.reorder")

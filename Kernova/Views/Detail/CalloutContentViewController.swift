@@ -2,10 +2,9 @@ import AppKit
 
 /// Shared container for `NSPopover` content rendered in callout style.
 ///
-/// Replaces the SwiftUI `CalloutView` (340-pt-wide popover container with
-/// `.callout` font + 16pt insets). Use directly as an ``NSPopover``'s
-/// `contentViewController`, populated with one or more views via
-/// ``addArrangedContent(_:)``.
+/// 340-pt-wide popover container with `.callout` body font and 16-pt
+/// insets. Use directly as an ``NSPopover``'s `contentViewController`,
+/// populated with one or more views via ``addArrangedContent(_:)``.
 ///
 /// Sizing strategy: AppKit ``NSPopover`` honors `preferredContentSize` on
 /// its content view controller. ``CalloutContentViewController`` measures its

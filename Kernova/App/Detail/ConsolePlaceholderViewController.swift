@@ -5,9 +5,9 @@ import AppKit
 /// isn't visible: popped out, fullscreen, suspended/cold-paused, or no
 /// virtual machine assigned.
 ///
-/// Replaces the SwiftUI `VMConsoleView`. The inline branch draws an inert
-/// black background — the AppKit `VMDisplayBackingView` in
-/// `DetailContainerViewController` is what the user actually sees there.
+/// The inline branch draws an inert black background — the
+/// `VMDisplayBackingView` layered on top by `DetailContainerViewController`
+/// is what the user actually sees there.
 @MainActor
 final class ConsolePlaceholderViewController: NSViewController {
     private let instance: VMInstance

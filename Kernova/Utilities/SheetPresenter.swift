@@ -4,10 +4,9 @@ import UniformTypeIdentifiers
 /// Async wrappers around `NSWindow.beginSheet(_:completionHandler:)` and
 /// `NSOpen/SavePanel.beginSheetModal(for:completionHandler:)`.
 ///
-/// Replaces SwiftUI's `.sheet`, `.fileImporter`, and `.fileExporter`
-/// modifiers in pure-AppKit view controllers. The presenter does not own
-/// state — each call returns control via `async` so call sites can wait on
-/// the sheet's result inline without juggling completion handlers.
+/// The presenter does not own state — each call returns control via
+/// `async` so call sites can wait on the sheet's result inline without
+/// juggling completion handlers.
 @MainActor
 enum SheetPresenter {
     // MARK: - View controller sheets

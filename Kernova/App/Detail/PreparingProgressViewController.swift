@@ -2,8 +2,6 @@ import AppKit
 
 /// Centered spinner + label shown while a VM is in a preparing state (cloning
 /// or importing a bundle).
-///
-/// Replaces the SwiftUI `preparingState` branch of `VMDetailView`.
 @MainActor
 final class PreparingProgressViewController: NSViewController {
     private let instance: VMInstance

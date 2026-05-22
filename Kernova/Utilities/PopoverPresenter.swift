@@ -2,11 +2,6 @@ import AppKit
 
 /// Manages a single `NSPopover` lifecycle for one anchor view.
 ///
-/// Replaces SwiftUI's `.popover(isPresented:)` modifier in pure-AppKit view
-/// controllers. Lifted from the private `NSPopoverAnchor.Coordinator` pattern
-/// in ``SidebarAgentStatusButton`` and reshaped for direct use without a
-/// SwiftUI binding.
-///
 /// One ``PopoverPresenter`` instance corresponds to one popover slot — typical
 /// usage is a stored property on the view controller hosting the anchor. When
 /// ``show(content:from:preferredEdge:behavior:)`` is called a second time

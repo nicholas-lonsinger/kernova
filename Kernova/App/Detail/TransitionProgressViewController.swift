@@ -3,8 +3,6 @@ import AppKit
 /// Centered spinner + label shown during VM lifecycle transitions where no
 /// other surface fits (starting/stopping/pausing/resuming/installing without
 /// progress yet).
-///
-/// Replaces `VMDetailView.transitionView`.
 @MainActor
 final class TransitionProgressViewController: NSViewController {
     private let instance: VMInstance

@@ -2,12 +2,11 @@ import AppKit
 import os
 
 /// Drives the lifecycle confirmation alerts (delete, cancel preparing,
-/// force stop, stop paused) from a pure-AppKit detail pane.
+/// force stop, stop paused) from the detail pane.
 ///
 /// Observes the view model's per-alert booleans. On `false → true`
 /// transitions, builds the right alert via ``AlertPresenter`` and dispatches
-/// the chosen button index back through the view model. Replaces the SwiftUI
-/// `LifecycleAlerts` view modifier previously declared in `VMDetailView`.
+/// the chosen button index back through the view model.
 @MainActor
 final class LifecycleAlertCoordinator {
     private static let logger = Logger(subsystem: "com.kernova.app", category: "LifecycleAlertCoordinator")

@@ -276,7 +276,7 @@ feat: Add VM snapshot support
 
 ## Changes
 - Add SnapshotService with create/restore/delete operations
-- Add snapshot UI to VMDetailView toolbar
+- Add snapshot UI to VMSettingsViewController toolbar
 - Persist snapshot metadata in VMConfiguration
 
 ## Test plan

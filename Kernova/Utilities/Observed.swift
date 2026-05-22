@@ -2,11 +2,11 @@ import Foundation
 
 /// Get/set pair that bridges an `@Observable` view model into AppKit controls.
 ///
-/// Replaces SwiftUI's `Binding<Value>` for pure-AppKit views. The read closure
-/// is invoked inside an ``ObservationLoop``'s `track` block to register the
-/// value as a tracked dependency; the write closure routes through whatever
-/// dispatcher the view model exposes (e.g. ``VMLibraryViewModel/updateConfiguration(of:mutate:)``)
-/// so live-policy / reconciliation side effects still fire.
+/// The read closure is invoked inside an ``ObservationLoop``'s `track`
+/// block to register the value as a tracked dependency; the write closure
+/// routes through whatever dispatcher the view model exposes (e.g.
+/// ``VMLibraryViewModel/updateConfiguration(of:mutate:)``) so live-policy /
+/// reconciliation side effects still fire.
 ///
 /// Two-way binding semantics:
 /// 1. The owning AppKit control reads `get()` inside its observation `track`

@@ -6,12 +6,12 @@ import os
 /// Settings form for editing a stopped VM's configuration, or viewing a
 /// running VM's configuration in read-only mode.
 ///
-/// Replaces the SwiftUI `VMSettingsView`. Composed of one ``SettingsSection``
-/// per group (General, Resources, Storage Disks, Removable Media, Shared
-/// Directories, Network, Audio, Guest Agent, Clipboard). Each section
-/// registers its own ``ObservationLoop`` tracking only the configuration
-/// slice it renders, matching the per-section observer strategy from the
-/// migration plan.
+/// Composed of one ``SettingsSection`` per group (General, Resources,
+/// Storage Disks, Removable Media, Shared Directories, Network, Audio,
+/// Guest Agent, Clipboard). Each section registers its own
+/// ``ObservationLoop`` tracking only the configuration slice it renders,
+/// so a keystroke in one field doesn't re-fire observers across the whole
+/// form.
 @MainActor
 final class VMSettingsViewController: NSViewController {
     private static let logger = Logger(subsystem: "com.kernova.app", category: "VMSettingsViewController")

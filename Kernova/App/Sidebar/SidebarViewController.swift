@@ -4,11 +4,9 @@ import os
 
 /// AppKit sidebar source-list controller.
 ///
-/// Replaces the SwiftUI `SidebarView` previously hosted via
-/// `NSHostingController` inside `MainWindowController`. Manages an
-/// `NSOutlineView` configured as a source list with one always-expanded
-/// group ("Virtual Machines") whose children are the library's
-/// `VMInstance`s.
+/// Manages an `NSOutlineView` configured as a source list with one
+/// always-expanded group ("Virtual Machines") whose children are the
+/// library's `VMInstance`s. Row content lives in ``SidebarRowView``.
 ///
 /// Responsibilities:
 ///   - Mirror `viewModel.instances` into the outline view; preserve the
@@ -19,10 +17,6 @@ import os
 ///     for import.
 ///   - Build the per-row, status-conditional context menu via
 ///     ``SidebarContextMenuProvider``.
-///
-/// Row content (icon + name + subtitle + status indicator + agent badge)
-/// lives in ``SidebarRowView`` and is added in phase 7c. The shell built
-/// here renders a placeholder row (icon + name) until then.
 @MainActor
 final class SidebarViewController: NSViewController {
     private static let logger = Logger(subsystem: "com.kernova.app", category: "SidebarVC")

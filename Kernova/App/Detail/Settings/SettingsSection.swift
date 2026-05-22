@@ -2,9 +2,9 @@ import AppKit
 
 /// Grouped section frame for the VM settings form.
 ///
-/// Renders the inset rounded background that SwiftUI's
-/// `.formStyle(.grouped)` provides, with a header row that supports an
-/// optional lock icon for sections that disable while the VM is running.
+/// Renders an inset rounded background with a header row that supports
+/// an optional lock icon for sections that disable while the VM is
+/// running.
 @MainActor
 final class SettingsSection: NSStackView {
     private let titleLabel = NSTextField(labelWithString: "")
@@ -94,8 +94,7 @@ final class SettingsSection: NSStackView {
     }
 }
 
-/// Builds a horizontal row with a leading label and trailing control,
-/// matching SwiftUI's `LabeledContent` layout.
+/// Builds a horizontal row with a leading label and trailing control.
 @MainActor
 func makeLabeledRow(_ label: String, control: NSView) -> NSStackView {
     let labelView = NSTextField(labelWithString: label)

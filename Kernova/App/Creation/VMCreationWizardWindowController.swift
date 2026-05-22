@@ -7,9 +7,6 @@ import os
 /// ``runSheet(on:)``. The wizard owns its own ``VMCreationViewModel`` and
 /// drives the library view model only when the user clicks **Create** on
 /// the final step.
-///
-/// Replaces the SwiftUI `VMCreationWizardView` previously hosted via
-/// `MainDetailView.sheet(isPresented:)`.
 @MainActor
 final class VMCreationWizardWindowController: NSWindowController {
     private static let logger = Logger(subsystem: "com.kernova.app", category: "VMCreationWizardWindowController")

@@ -2,9 +2,6 @@ import AppKit
 
 /// "No virtual machine selected" placeholder shown when the sidebar has no
 /// active selection.
-///
-/// Replaces SwiftUI `ContentUnavailableView` previously used in
-/// `MainDetailView`.
 @MainActor
 final class EmptyStateViewController: NSViewController {
     private let viewModel: VMLibraryViewModel

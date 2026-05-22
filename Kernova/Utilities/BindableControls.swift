@@ -6,17 +6,14 @@ import AppKit
 /// **Focus-during-edit semantics.** The observation loop never overwrites the
 /// field's `stringValue` while it holds first responder. AppKit's
 /// `currentEditor()` returns the field editor only when the field is
-/// actively editing, which is the AppKit analogue of SwiftUI's `@FocusState`
-/// "is focused" predicate. Without this guard, an unrelated configuration
-/// change re-fires the observation loop and clobbers the user's in-progress
-/// text — the SwiftUI `configBinding(...)` form gets this for free; AppKit
-/// has to enforce it explicitly.
+/// actively editing — used as the focus predicate. Without this guard, an
+/// unrelated configuration change re-fires the observation loop and
+/// clobbers the user's in-progress text.
 ///
 /// **Write semantics.** Writes back to the view model are deferred to end of
-/// editing (`controlTextDidEndEditing`), matching the SwiftUI `.onSubmit`
-/// + lost-focus pattern. Live updates per keystroke would round-trip through
-/// `updateConfiguration` on every character — fine for performance, but
-/// surprising for users (e.g. partial names persisted to disk mid-typing).
+/// editing (`controlTextDidEndEditing`) — Enter or focus loss commits. Live
+/// updates per keystroke would round-trip through `updateConfiguration` on
+/// every character, persisting partial names to disk mid-typing.
 @MainActor
 final class BindableTextField: NSTextField, NSTextFieldDelegate {
     private let observed: Observed<String>

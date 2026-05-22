@@ -6,9 +6,6 @@ import AppKit
 /// triangle button that opens an ``NSPopover`` containing the full
 /// untruncated path. Otherwise the icon renders the supplied SF Symbol
 /// in secondary label color.
-///
-/// Replaces the SwiftUI `AttachmentIcon` from
-/// `Kernova/Views/Detail/AttachmentIcon.swift`.
 @MainActor
 final class AttachmentIconButton: NSView {
     private let warningButton = NSButton()
@@ -154,7 +151,8 @@ func makeAttachmentSubtitleLabel(path: String, isMissing: Bool) -> NSTextField {
 }
 
 extension NSFont {
-    /// Convenience to mirror SwiftUI's `NSFont.systemFontSize` callsite when
-    /// computing slightly-smaller monospaced fonts.
+    /// Convenience for callsites that pass `NSFont.systemFontSize` into a
+    /// `(ofSize:)` initializer — usually a slightly-smaller monospaced
+    /// derivative of the system body font.
     nonisolated static var systemSize: CGFloat { NSFont.systemFontSize }
 }
