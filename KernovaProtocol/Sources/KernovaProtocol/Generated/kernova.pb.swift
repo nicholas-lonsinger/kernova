@@ -27,7 +27,7 @@ import SwiftProtobuf
 // incompatible with the version of SwiftProtobuf to which you are linking.
 // Please ensure that you are building against the same version of the API
 // that was used to generate this file.
-fileprivate struct _GeneratedWithProtocGenSwiftVersion: SwiftProtobuf.ProtobufAPIVersionCheck {
+fileprivate nonisolated struct _GeneratedWithProtocGenSwiftVersion: SwiftProtobuf.ProtobufAPIVersionCheck {
   struct _2: SwiftProtobuf.ProtobufAPIVersion_2 {}
   typealias Version = _2
 }
@@ -35,7 +35,7 @@ fileprivate struct _GeneratedWithProtocGenSwiftVersion: SwiftProtobuf.ProtobufAP
 /// Clipboard data formats the channel can carry. Only TEXT_UTF8 is wired up
 /// for the initial release; the enum scaffold is reserved so adding richer
 /// formats later (image, RTF, file lists) doesn't reshape the messages.
-public enum Kernova_V1_ClipboardFormat: SwiftProtobuf.Enum, Swift.CaseIterable {
+public nonisolated enum Kernova_V1_ClipboardFormat: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
   case textUtf8 // = 1
@@ -73,7 +73,7 @@ public enum Kernova_V1_ClipboardFormat: SwiftProtobuf.Enum, Swift.CaseIterable {
 ///
 /// Wire layout: a 4-byte big-endian uint32 length prefix (NOT included in the
 /// length count itself) followed by `length` bytes of the encoded Frame.
-public struct Kernova_V1_Frame: Sendable {
+public nonisolated struct Kernova_V1_Frame: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -164,7 +164,7 @@ public struct Kernova_V1_Frame: Sendable {
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
-  public enum OneOf_Payload: Equatable, Sendable {
+  public nonisolated enum OneOf_Payload: Equatable, Sendable {
     case hello(Kernova_V1_Hello)
     case error(Kernova_V1_Error)
     case heartbeat(Kernova_V1_Heartbeat)
@@ -191,7 +191,7 @@ public struct Kernova_V1_Frame: Sendable {
 /// Each side advertises its protocol version, the capabilities it supports,
 /// and identifying information for diagnostics. Capability strings use a dotted
 /// namespace (e.g. "clipboard.text", "clipboard.image.png", "log.records.v1").
-public struct Kernova_V1_Hello: Sendable {
+public nonisolated struct Kernova_V1_Hello: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -222,7 +222,7 @@ public struct Kernova_V1_Hello: Sendable {
 
 /// Identifying info about the peer. All fields are optional — populate what's
 /// useful, leave the rest empty.
-public struct Kernova_V1_AgentInfo: Sendable {
+public nonisolated struct Kernova_V1_AgentInfo: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -247,7 +247,7 @@ public struct Kernova_V1_AgentInfo: Sendable {
 /// the guest side; the host treats `message` as opaque and republishes it via
 /// its own logger. Levels map directly onto Apple's `os.Logger` log levels so
 /// the host can pass them through with the same severity semantics.
-public struct Kernova_V1_LogRecord: Sendable {
+public nonisolated struct Kernova_V1_LogRecord: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -271,7 +271,7 @@ public struct Kernova_V1_LogRecord: Sendable {
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
-  public enum Level: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public nonisolated enum Level: SwiftProtobuf.Enum, Swift.CaseIterable {
     public typealias RawValue = Int
     case unspecified // = 0
     case debug // = 1
@@ -335,7 +335,7 @@ public struct Kernova_V1_LogRecord: Sendable {
 /// The `generation` field is a monotonically increasing counter scoped to the
 /// sender. Each new offer bumps it; receivers use it to discard requests that
 /// race a newer offer.
-public struct Kernova_V1_ClipboardOffer: Sendable {
+public nonisolated struct Kernova_V1_ClipboardOffer: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -351,7 +351,7 @@ public struct Kernova_V1_ClipboardOffer: Sendable {
 
 /// Sent in response to a `ClipboardOffer` to pull the actual clipboard bytes.
 /// `generation` must echo the offer being requested.
-public struct Kernova_V1_ClipboardRequest: Sendable {
+public nonisolated struct Kernova_V1_ClipboardRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -367,7 +367,7 @@ public struct Kernova_V1_ClipboardRequest: Sendable {
 
 /// Carries the bytes of the clipboard content named by an earlier offer.
 /// The `format` and `generation` fields must echo the matching request.
-public struct Kernova_V1_ClipboardData: Sendable {
+public nonisolated struct Kernova_V1_ClipboardData: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -386,7 +386,7 @@ public struct Kernova_V1_ClipboardData: Sendable {
 /// Sent by the offerer when an offer is no longer valid (e.g. the user copied
 /// new content before the receiver requested the old). Receivers should drop
 /// any pending state for the named generation.
-public struct Kernova_V1_ClipboardRelease: Sendable {
+public nonisolated struct Kernova_V1_ClipboardRelease: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -406,7 +406,7 @@ public struct Kernova_V1_ClipboardRelease: Sendable {
 /// `nonce` is opaque. Receivers do not echo it; both sides emit independent
 /// streams of heartbeats. The field is reserved for future use (e.g. RTT
 /// sampling) without bumping `Frame.protocol_version`.
-public struct Kernova_V1_Heartbeat: Sendable {
+public nonisolated struct Kernova_V1_Heartbeat: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -428,7 +428,7 @@ public struct Kernova_V1_Heartbeat: Sendable {
 /// `Hello` exchange and one each time the user toggles a capability while
 /// the VM is running. Each message carries the full current policy snapshot;
 /// receivers compare against their last applied state and act on diffs.
-public struct Kernova_V1_PolicyUpdate: Sendable {
+public nonisolated struct Kernova_V1_PolicyUpdate: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -451,7 +451,7 @@ public struct Kernova_V1_PolicyUpdate: Sendable {
 /// asynchronous notification of a problem (e.g. malformed request, capability
 /// mismatch). The receiver may log and continue; it should not assume the
 /// peer is gone.
-public struct Kernova_V1_Error: Sendable {
+public nonisolated struct Kernova_V1_Error: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -484,13 +484,13 @@ public struct Kernova_V1_Error: Sendable {
 
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
 
-fileprivate let _protobuf_package = "kernova.v1"
+fileprivate nonisolated let _protobuf_package = "kernova.v1"
 
-extension Kernova_V1_ClipboardFormat: SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Kernova_V1_ClipboardFormat: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0CLIPBOARD_FORMAT_UNSPECIFIED\0\u{1}CLIPBOARD_FORMAT_TEXT_UTF8\0")
 }
 
-extension Kernova_V1_Frame: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Kernova_V1_Frame: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Frame"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}protocol_version\0\u{2}\u{9}hello\0\u{1}error\0\u{1}heartbeat\0\u{3}policy_update\0\u{4}\u{7}clipboard_offer\0\u{3}clipboard_request\0\u{3}clipboard_data\0\u{3}clipboard_release\0\u{4}\u{7}log_record\0")
 
@@ -681,7 +681,7 @@ extension Kernova_V1_Frame: SwiftProtobuf.Message, SwiftProtobuf._MessageImpleme
   }
 }
 
-extension Kernova_V1_Hello: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Kernova_V1_Hello: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Hello"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}service_version\0\u{1}capabilities\0\u{3}agent_info\0")
 
@@ -725,7 +725,7 @@ extension Kernova_V1_Hello: SwiftProtobuf.Message, SwiftProtobuf._MessageImpleme
   }
 }
 
-extension Kernova_V1_AgentInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Kernova_V1_AgentInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".AgentInfo"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}os\0\u{3}os_version\0\u{3}agent_version\0")
 
@@ -765,7 +765,7 @@ extension Kernova_V1_AgentInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageImp
   }
 }
 
-extension Kernova_V1_LogRecord: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Kernova_V1_LogRecord: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".LogRecord"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}timestamp_ms\0\u{1}level\0\u{1}subsystem\0\u{1}category\0\u{1}message\0")
 
@@ -815,11 +815,11 @@ extension Kernova_V1_LogRecord: SwiftProtobuf.Message, SwiftProtobuf._MessageImp
   }
 }
 
-extension Kernova_V1_LogRecord.Level: SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Kernova_V1_LogRecord.Level: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0LEVEL_UNSPECIFIED\0\u{1}LEVEL_DEBUG\0\u{1}LEVEL_INFO\0\u{1}LEVEL_NOTICE\0\u{1}LEVEL_WARNING\0\u{1}LEVEL_ERROR\0\u{1}LEVEL_FAULT\0")
 }
 
-extension Kernova_V1_ClipboardOffer: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Kernova_V1_ClipboardOffer: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ClipboardOffer"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}generation\0\u{1}formats\0")
 
@@ -854,7 +854,7 @@ extension Kernova_V1_ClipboardOffer: SwiftProtobuf.Message, SwiftProtobuf._Messa
   }
 }
 
-extension Kernova_V1_ClipboardRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Kernova_V1_ClipboardRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ClipboardRequest"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}generation\0\u{1}format\0")
 
@@ -889,7 +889,7 @@ extension Kernova_V1_ClipboardRequest: SwiftProtobuf.Message, SwiftProtobuf._Mes
   }
 }
 
-extension Kernova_V1_ClipboardData: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Kernova_V1_ClipboardData: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ClipboardData"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}generation\0\u{1}format\0\u{1}data\0")
 
@@ -929,7 +929,7 @@ extension Kernova_V1_ClipboardData: SwiftProtobuf.Message, SwiftProtobuf._Messag
   }
 }
 
-extension Kernova_V1_ClipboardRelease: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Kernova_V1_ClipboardRelease: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ClipboardRelease"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}generation\0")
 
@@ -959,7 +959,7 @@ extension Kernova_V1_ClipboardRelease: SwiftProtobuf.Message, SwiftProtobuf._Mes
   }
 }
 
-extension Kernova_V1_Heartbeat: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Kernova_V1_Heartbeat: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Heartbeat"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}nonce\0")
 
@@ -989,7 +989,7 @@ extension Kernova_V1_Heartbeat: SwiftProtobuf.Message, SwiftProtobuf._MessageImp
   }
 }
 
-extension Kernova_V1_PolicyUpdate: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Kernova_V1_PolicyUpdate: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".PolicyUpdate"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}log_forwarding_enabled\0\u{3}clipboard_sharing_enabled\0")
 
@@ -1024,7 +1024,7 @@ extension Kernova_V1_PolicyUpdate: SwiftProtobuf.Message, SwiftProtobuf._Message
   }
 }
 
-extension Kernova_V1_Error: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Kernova_V1_Error: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Error"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}code\0\u{1}message\0\u{3}in_reply_to\0")
 

@@ -1,0 +1,89 @@
+name: Proto Drift
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'KernovaProtocol/Proto/**'
+      - 'KernovaProtocol/Sources/KernovaProtocol/Generated/**'
+      - 'KernovaProtocol/Package.swift'
+      - 'Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved'
+      - 'Tools/regen-proto.sh'
+      - '.github/workflows/proto-drift.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'KernovaProtocol/Proto/**'
+      - 'KernovaProtocol/Sources/KernovaProtocol/Generated/**'
+      - 'KernovaProtocol/Package.swift'
+      - 'Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved'
+      - 'Tools/regen-proto.sh'
+      - '.github/workflows/proto-drift.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  proto-drift:
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
+          swift --version
+
+      - name: Install protoc
+        run: |
+          brew install protobuf
+          protoc --version
+
+      - name: Cache SwiftPM build for protoc-gen-swift
+        uses: actions/cache@v5
+        with:
+          path: KernovaProtocol/.build
+          key: ${{ runner.os }}-proto-drift-${{ hashFiles('KernovaProtocol/Package.swift') }}
+
+      - name: Build protoc-gen-swift from resolved swift-protobuf
+        run: |
+          set -euo pipefail
+          # Mirror the xcworkspace's Package.resolved into the SwiftPM
+          # package so `swift package resolve` honors the exact revision
+          # Kernova.app links against, rather than recomputing against
+          # the `from:` constraint in Package.swift (which could pick a
+          # newer minor). This is what makes the drift check stable: the
+          # generator is built from the same source tree as the runtime.
+          cp \
+            Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved \
+            KernovaProtocol/Package.resolved
+          swift package --package-path KernovaProtocol resolve
+          CHECKOUT="KernovaProtocol/.build/checkouts/swift-protobuf"
+          swift build \
+            --package-path "$CHECKOUT" \
+            -c release \
+            --product protoc-gen-swift
+          BIN_DIR="$GITHUB_WORKSPACE/$CHECKOUT/.build/release"
+          echo "$BIN_DIR" >> "$GITHUB_PATH"
+          "$BIN_DIR/protoc-gen-swift" --version || true
+
+      - name: Regenerate Swift bindings
+        run: Tools/regen-proto.sh
+
+      - name: Check for drift
+        run: |
+          set -euo pipefail
+          if ! git diff --quiet KernovaProtocol/Sources/KernovaProtocol/Generated; then
+            echo "::error::Generated Swift bindings are out of sync with kernova.proto and/or the pinned swift-protobuf version. Run 'Tools/regen-proto.sh' locally with swift-protobuf installed at the version pinned in Package.resolved, then commit the result."
+            echo
+            echo "--- Diff ---"
+            git diff KernovaProtocol/Sources/KernovaProtocol/Generated
+            exit 1
+          fi
+          echo "Generated bindings match what protoc-gen-swift would emit."
