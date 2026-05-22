@@ -1,17 +1,22 @@
 import AppKit
 import SwiftUI
 
-/// SwiftUI↔AppKit bridge that anchors the AppKit Create Disk popover to a
-/// SwiftUI trigger button.
+/// SwiftUI↔AppKit bridge that anchors the AppKit Create Storage Disk popover
+/// to a SwiftUI trigger button.
 ///
-/// Place via `.background(CreateDiskPopoverAnchor(...))` on the trigger
-/// button — the representable inserts a zero-size anchor view behind the
-/// button that ``PopoverPresenter`` uses as the popover's `relativeTo`
-/// reference. The popover *content* is fully AppKit
-/// (``CreateDiskPopoverContentViewController``); only this bridge is
+/// Place via `.background(CreateStorageDiskPopoverAnchor(...))` on the
+/// trigger button — the representable inserts a zero-size anchor view
+/// behind the button that ``PopoverPresenter`` uses as the popover's
+/// `relativeTo` reference. The popover *content* is fully AppKit
+/// (``DiskSizePopoverContentViewController``); only this bridge is
 /// SwiftUI-shaped, and that's expected: it's the SwiftUI side of the
 /// migration boundary.
-struct CreateDiskPopoverAnchor: NSViewRepresentable {
+///
+/// The Create action forwards to `viewModel.createStorageDisk(for:sizeInGB:)`
+/// which allocates an ASIF sparse disk image *inside* the VM bundle. For
+/// the user-chosen-location case (Removable Media), use
+/// ``CreateRemovableMediaPopoverAnchor`` instead.
+struct CreateStorageDiskPopoverAnchor: NSViewRepresentable {
     /// Drives popover presentation.
     ///
     /// Set to `true` to show the popover; the coordinator flips it back to
@@ -27,8 +32,6 @@ struct CreateDiskPopoverAnchor: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSView {
         let anchor = NSView()
-        // Zero intrinsic size; we're just a positioning anchor for the
-        // surrounding SwiftUI button.
         anchor.translatesAutoresizingMaskIntoConstraints = false
         return anchor
     }
@@ -50,40 +53,62 @@ struct CreateDiskPopoverAnchor: NSViewRepresentable {
     /// protocol, owns the ``PopoverPresenter``, and forwards Create actions
     /// to `viewModel.createStorageDisk(for:sizeInGB:)`.
     @MainActor
-    final class Coordinator: CreateDiskPopoverContentViewControllerDelegate {
+    final class Coordinator: DiskSizePopoverContentViewControllerDelegate {
         let presenter = PopoverPresenter()
         var instance: VMInstance?
         var viewModel: VMLibraryViewModel?
         var bindingResetter: (() -> Void)?
 
         init() {
+            // User-driven dismissals (click-outside, Escape) arrive here.
+            // Delegate-driven dismissals (Confirm / Cancel buttons) reset
+            // the binding directly in `dismiss()` before initiating close,
+            // so this callback is a no-op for those — bindingResetter is
+            // idempotent.
             presenter.onClose = { [weak self] in
                 self?.bindingResetter?()
             }
         }
 
         func show(from anchor: NSView) {
-            let vc = CreateDiskPopoverContentViewController(
+            let vc = DiskSizePopoverContentViewController(
+                headline: "Create New Disk",
+                caption:
+                    "Creates an ASIF sparse disk image inside the VM bundle. Physical size grows as data is written.",
                 availableSizes: VMGuestOS.allDiskSizes,
                 defaultSizeInGB: VMGuestOS.defaultDiskSizeInGB
             )
             vc.delegate = self
-            presenter.show(content: vc, from: anchor, preferredEdge: .maxY)
+            presenter.show(content: vc, from: anchor, preferredEdge: .minY)
         }
 
-        // MARK: - CreateDiskPopoverContentViewControllerDelegate
+        // MARK: - DiskSizePopoverContentViewControllerDelegate
 
-        func createDiskPopover(
-            _ vc: CreateDiskPopoverContentViewController,
+        func diskSizePopover(
+            _ vc: DiskSizePopoverContentViewController,
             didConfirmSizeInGB sizeInGB: Int
         ) {
             if let instance, let viewModel {
                 viewModel.createStorageDisk(for: instance, sizeInGB: sizeInGB)
             }
-            presenter.close()
+            dismiss()
         }
 
-        func createDiskPopoverDidCancel(_ vc: CreateDiskPopoverContentViewController) {
+        func diskSizePopoverDidCancel(_ vc: DiskSizePopoverContentViewController) {
+            dismiss()
+        }
+
+        /// Programmatic dismissal triggered by a delegate action (Confirm /
+        /// Cancel).
+        ///
+        /// Resets the SwiftUI binding **before** starting the close
+        /// animation so any SwiftUI re-render triggered by the action's
+        /// side effects (e.g. `createStorageDisk` mutating the VM config)
+        /// doesn't see `isPresented == true` while the popover is
+        /// mid-close and bounce it back open. User-driven dismissals
+        /// (click-outside, Escape) reset via `presenter.onClose` instead.
+        private func dismiss() {
+            bindingResetter?()
             presenter.close()
         }
     }

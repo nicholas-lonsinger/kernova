@@ -63,6 +63,11 @@ struct CreateRemovableMediaPopoverAnchor: NSViewRepresentable {
         var bindingResetter: (() -> Void)?
 
         init() {
+            // User-driven dismissals (click-outside, Escape) arrive here.
+            // Delegate-driven dismissals (Confirm / Cancel buttons) reset
+            // the binding directly in `dismiss()` before initiating close,
+            // so this callback is a no-op for those — bindingResetter is
+            // idempotent.
             presenter.onClose = { [weak self] in
                 self?.bindingResetter?()
             }
@@ -77,7 +82,7 @@ struct CreateRemovableMediaPopoverAnchor: NSViewRepresentable {
                 defaultSizeInGB: VMGuestOS.defaultDiskSizeInGB
             )
             vc.delegate = self
-            presenter.show(content: vc, from: anchor, preferredEdge: .maxY)
+            presenter.show(content: vc, from: anchor, preferredEdge: .minY)
         }
 
         // MARK: - DiskSizePopoverContentViewControllerDelegate
@@ -87,18 +92,32 @@ struct CreateRemovableMediaPopoverAnchor: NSViewRepresentable {
             didConfirmSizeInGB sizeInGB: Int
         ) {
             guard let instance, let viewModel else {
-                presenter.close()
+                dismiss()
                 return
             }
             // Dismiss the popover first; the save panel is scheduled
             // asynchronously via `begin(completionHandler:)`, so AppKit can
             // finish the popover's close animation before the save panel
             // appears in the foreground.
-            presenter.close()
+            dismiss()
             presentSavePanel(for: instance, viewModel: viewModel, sizeInGB: sizeInGB)
         }
 
         func diskSizePopoverDidCancel(_ vc: DiskSizePopoverContentViewController) {
+            dismiss()
+        }
+
+        /// Programmatic dismissal triggered by a delegate action (Confirm /
+        /// Cancel).
+        ///
+        /// Resets the SwiftUI binding **before** starting the close
+        /// animation so any SwiftUI re-render triggered by the action's
+        /// side effects (e.g. `createRemovableMedia` mutating the VM
+        /// config) doesn't see `isPresented == true` while the popover is
+        /// mid-close and bounce it back open. User-driven dismissals
+        /// (click-outside, Escape) reset via `presenter.onClose` instead.
+        private func dismiss() {
+            bindingResetter?()
             presenter.close()
         }
 

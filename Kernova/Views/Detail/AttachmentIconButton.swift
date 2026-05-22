@@ -77,6 +77,6 @@ final class AttachmentIconButton: NSView {
     @objc private func showMissingPopover(_ sender: Any?) {
         guard let path = currentPath else { return }
         let content = MissingAttachmentPopoverContentViewController(path: path)
-        popoverPresenter.show(content: content, from: warningButton, preferredEdge: .maxY)
+        popoverPresenter.show(content: content, from: warningButton, preferredEdge: .minY)
     }
 }
