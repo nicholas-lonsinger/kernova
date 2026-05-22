@@ -28,7 +28,7 @@ final class SidebarRowView: NSView, NSTextFieldDelegate {
     private let nameLabel = NSTextField(labelWithString: "")
     private let renameField = NSTextField()
     private let subtitleLabel = NSTextField(labelWithString: "")
-    private let agentBadgeSlot = NSView()
+    private let agentBadge = SidebarAgentStatusButton()
     private let statusSpinner = NSProgressIndicator()
     private let statusCircle = NSImageView()
 
@@ -98,9 +98,8 @@ final class SidebarRowView: NSView, NSTextFieldDelegate {
         textStack.spacing = 1
         textStack.setHuggingPriority(.defaultLow, for: .horizontal)
 
-        agentBadgeSlot.translatesAutoresizingMaskIntoConstraints = false
-        // The slot is sized by its contents (phase 7d adds the actual button)
-        agentBadgeSlot.setContentHuggingPriority(.required, for: .horizontal)
+        agentBadge.setContentHuggingPriority(.required, for: .horizontal)
+        agentBadge.isHidden = true
 
         statusSpinner.translatesAutoresizingMaskIntoConstraints = false
         statusSpinner.style = .spinning
@@ -128,7 +127,7 @@ final class SidebarRowView: NSView, NSTextFieldDelegate {
             statusCircle.centerYAnchor.constraint(equalTo: indicatorContainer.centerYAnchor),
         ])
 
-        let outerStack = NSStackView(views: [iconView, textStack, agentBadgeSlot, indicatorContainer])
+        let outerStack = NSStackView(views: [iconView, textStack, agentBadge, indicatorContainer])
         outerStack.translatesAutoresizingMaskIntoConstraints = false
         outerStack.orientation = .horizontal
         outerStack.alignment = .centerY
@@ -167,6 +166,11 @@ final class SidebarRowView: NSView, NSTextFieldDelegate {
                 _ = instance.configuration.guestOS
                 _ = instance.statusToolTip
                 _ = instance.statusDisplayColor
+                _ = instance.visibleSidebarAgentStatus
+                _ = instance.installState
+                _ = instance.virtualMachine
+                _ = instance.configuration.agentInstallNudgeDismissed
+                _ = instance.configuration.lastSeenAgentVersion
             },
             apply: { [weak self] in
                 self?.applyState()
@@ -197,6 +201,25 @@ final class SidebarRowView: NSView, NSTextFieldDelegate {
             statusCircle.contentTintColor = instance.statusDisplayColor
         }
         toolTip = instance.statusToolTip
+
+        if let agentStatus = instance.visibleSidebarAgentStatus {
+            agentBadge.isHidden = false
+            agentBadge.configure(
+                status: agentStatus,
+                vmName: instance.name,
+                onMount: { [weak viewModel, weak instance] in
+                    guard let viewModel, let instance else { return }
+                    viewModel.mountGuestAgentInstaller(on: instance)
+                },
+                onDismiss: agentStatus == .waiting
+                    ? { [weak viewModel, weak instance] in
+                        guard let viewModel, let instance else { return }
+                        viewModel.dismissAgentInstallNudge(for: instance)
+                    } : nil
+            )
+        } else {
+            agentBadge.isHidden = true
+        }
     }
 
     // MARK: - Rename
