@@ -77,6 +77,13 @@ final class AttachmentIconButton: NSView {
     @objc private func showMissingPopover(_ sender: Any?) {
         guard let path = currentPath else { return }
         let content = MissingAttachmentPopoverContentViewController(path: path)
-        popoverPresenter.show(content: content, from: warningButton, preferredEdge: .minY)
+        // Anchor to `self` (the wrapper `NSView`) rather than the inner
+        // `warningButton` so `NSPopover.preferredEdge` is interpreted in an
+        // unflipped coordinate system — AppKit controls like `NSButton` can
+        // return `isFlipped == true`, which inverts `.minY` to mean the top
+        // edge and places the popover above instead of below. Mirrors the
+        // wrapper-anchor pattern used by `InfoButton` and the
+        // `Create*PopoverAnchor` types.
+        popoverPresenter.show(content: content, from: self, preferredEdge: .minY)
     }
 }
