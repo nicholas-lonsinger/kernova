@@ -63,30 +63,23 @@ Kernova/
 │   │   ├── VMRowView.swift             # Individual VM row (name, status, inline rename, agent indicator)
 │   │   └── SidebarAgentStatusButton.swift # Per-VM agent install/update affordance with anchored popover
 │   ├── Detail/
-│   │   ├── MainDetailView.swift        # Detail pane wrapper — selection switch, creation sheet, error alert
-│   │   ├── VMDetailView.swift          # VM detail — console/settings switch (honors detailPaneMode), confirmation alerts
-│   │   ├── VMSettingsView.swift        # VM configuration editor; mostly read-only when the VM is running, but live-editable fields (clipboard, guest agent, removable media) stay interactive
-│   │   ├── StorageDiskReorderSheet.swift # Modal sheet presenting a native List for reordering storage disks (used because `.onMove` only works in `List`, not in `Form`)
-│   │   ├── StorageDiskSubtitle.swift   # Shared `diskSubtitle(for:in:)` free function used by both VMSettingsView and StorageDiskReorderSheet
-│   │   ├── AttachmentIcon.swift        # Missing-attachment UI primitives: red-triangle Button with click-to-popover (full path + explanation), the bold "Missing —" subtitle helper shared with the reorder sheet, and the popover body
-│   │   ├── CalloutView.swift           # `CalloutBody` shared container for informational popovers (340pt width, top-leading alignment, .callout font) — used by InfoButton, AttachmentIcon's popover, and the mic-permission popover
-│   │   ├── DeleteVMSheet.swift         # Confirmation sheet for deleting a VM that references external storage / removable media; lists each attachment with a "Shared with VM(s)" warning, exposes the "Also move these files to Trash" toggle
-│   │   └── MacOSInstallProgressView.swift # Two-phase install progress (download + install)
-│   ├── Console/
-│   │   ├── VMConsoleView.swift         # Placeholder for non-inline display states (popped out, fullscreen, suspended, no display)
-│   │   └── VMDisplayBackingView.swift  # Pure AppKit VM display with pause/transition overlays
-│   └── Creation/
-│       ├── VMCreationWizardView.swift  # Multi-step wizard container
-│       ├── OSSelectionStep.swift       # Step 1: Choose macOS or Linux
-│       ├── IPSWSelectionStep.swift     # Step 2 (macOS): Choose restore image
-│       ├── BootConfigStep.swift        # Step 2 (Linux): Configure boot method
-│       ├── ResourceConfigStep.swift    # Step 3: CPU, memory, disk size
-│       └── ReviewStep.swift            # Step 4: Review and create
+│   │   ├── CalloutContentViewController.swift # 340pt-wide NSPopover content container (replaces SwiftUI CalloutView); used by AttachmentIconButton and other AppKit popovers
+│   │   └── StorageDiskSubtitle.swift   # Shared `diskSubtitle(for:in:)` free function used by VMSettingsViewController and StorageDiskReorderWindowController
+│   └── Console/
+│       └── VMDisplayBackingView.swift  # Pure AppKit VM display with pause/transition overlays
 ├── Utilities/
+│   ├── AlertPresenter.swift            # Sheet-modal NSAlert helper with role-aware (.default/.cancel/.destructive/.plain) button styling
+│   ├── BindableControls.swift          # NSControl subclasses (BindableTextField/Switch/Checkbox/PopUpButton/Stepper/Slider) bridging @Observable state to AppKit
 │   ├── DataFormatters.swift            # Human-readable formatting for bytes, CPU counts, etc.
+│   ├── ModalFlagObserver.swift         # observeModalFlag(:present:) wraps observeRecurring with false→true rising-edge detection for modal triggers
 │   ├── NSImageExtensions.swift         # Nil-safe SF Symbol image loading
+│   ├── NSOpenPanelExtensions.swift     # Shared disk-image NSOpenPanel preset
 │   ├── NSViewExtensions.swift          # Full-size subview constraint helper
-│   └── ObservationLoop.swift           # observeRecurring(track:apply:) helper wrapping withObservationTracking
+│   ├── Observed.swift                  # Observed<Value> get/set pair (AppKit equivalent of SwiftUI Binding<T>)
+│   ├── ObservationLoop.swift           # observeRecurring(track:apply:) helper wrapping withObservationTracking
+│   ├── PathValidation.swift            # Path validation utilities
+│   ├── PopoverPresenter.swift          # NSPopover lifecycle manager (show/update-in-place/close + onClose callback)
+│   └── SheetPresenter.swift            # Async wrappers around NSWindow.beginSheet, NSOpenPanel, NSSavePanel
 └── Resources/
     ├── Assets.xcassets/                # App icons and image assets
     └── Kernova.entitlements            # com.apple.security.virtualization entitlement
@@ -173,7 +166,7 @@ KernovaGuestAgentTests/                 # Unit tests for the guest agent (standa
 
 **Total: 58 source files + 2 helpers, 32 test files (24 suites + 8 mocks + 1 test-helpers).**
 
-*Note: `ContentView.swift` was removed when `NavigationSplitView` was replaced by `NSSplitViewController` in `MainWindowController`. Its responsibilities were split between `MainWindowController` (toolbar, split view) and `MainDetailView` (detail switching, sheets, alerts).*
+*Note: `ContentView.swift` was removed when `NavigationSplitView` was replaced by `NSSplitViewController` in `MainWindowController`. The detail pane was subsequently converted from SwiftUI to pure AppKit — the routing, settings, alerts, sheets, and creation wizard all live in `Kernova/App/Detail/` and `Kernova/App/Creation/` as `NSViewController`/`NSWindowController` subclasses driven by `observeRecurring`.*
 
 ## Component Map
 
@@ -250,7 +243,7 @@ Services are split by concurrency requirements:
 
 **Storage topology mirrors VZ.** `VMConfiguration` carries two ordered lists that map directly onto VZ's two storage surfaces. `storageDisks: [StorageDisk]?` maps onto `vzConfig.storageDevices`; position [0] boots first on EFI guests. Each entry's `kind` (`.virtio` or `.usbMassStorage`) is inferred from the file extension at add-time via `StorageDisk.defaultKind(forPath:)` — `.iso`/`.dmg` default to USB mass storage so installer media doesn't shift the main disk's `/dev/vda` letter when reordered for boot, everything else defaults to virtio. `removableMedia: [RemovableMediaItem]?` maps onto `usbControllers[0].usbDevices` — hot-pluggable, no boot semantics. The same bundled-disk entry (`Disk.asif`, internal, virtio) appears in `storageDisks` as a regular row; nothing in the data model singles it out as "the main disk."
 
-**Live-editable fields and their dispatch.** `VMConfiguration.liveEditableFieldsChanged(old:new:)` is the single source of truth for "did anything change that should take effect while the VM is running?" It combines `hotToggleFields` (a typed `[KeyPath<VMConfiguration, Bool>]`) with `removableMediaChanged(old:new:)`, which array-compares the `removableMedia` lists. `storageDisks` changes are deliberately NOT live-editable — they go to `vzConfig.storageDevices`, which VZ requires fixed at start time, so the settings UI keeps that section locked while the VM is running. `VMSettingsView` mutates via the centralized `VMLibraryViewModel.updateConfiguration(of:mutate:)` dispatcher (persist + `applyLivePolicy`). The view's `Binding`s (`configBinding(\.x)`, `storageDiskBinding`, `removableMediaBinding`) all route writes through this dispatcher; no settings control writes to `instance.configuration` directly.
+**Live-editable fields and their dispatch.** `VMConfiguration.liveEditableFieldsChanged(old:new:)` is the single source of truth for "did anything change that should take effect while the VM is running?" It combines `hotToggleFields` (a typed `[KeyPath<VMConfiguration, Bool>]`) with `removableMediaChanged(old:new:)`, which array-compares the `removableMedia` lists. `storageDisks` changes are deliberately NOT live-editable — they go to `vzConfig.storageDevices`, which VZ requires fixed at start time, so the settings UI keeps that section locked while the VM is running. `VMSettingsViewController` mutates via the centralized `VMLibraryViewModel.updateConfiguration(of:mutate:)` dispatcher (persist + `applyLivePolicy`); every section's `@objc` write handler calls into this dispatcher, so no settings control writes to `instance.configuration` directly.
 
 **Removable-media reconcile.** `VMLibraryViewModel.applyLivePolicy(for:old:new:)` forks: vsock listener changes go through `VMInstance.applyLivePolicy`; `removableMedia` changes are dropped into `pendingRemovableMediaTarget` and a coalesce-and-drain task (`runRemovableMediaReconciliation`) calls `applyLiveRemovableMediaChange(for:target:)` until the pending dictionary empties. The reconciler computes a per-id diff against `instance.liveRemovableMedia` (add / remove / mutate-in-place / reorder-noop), detaches first to avoid duplicate-UUID conflicts on swaps, then attaches. `deviceNotFound` (guest-side ejection) and `noVirtualMachine` (VM torn down) are handled distinctly; on any other framework error the reconciler calls `reconcileConfigToLiveState(for:lookup:)` to rebuild `config.removableMedia` from `instance.liveRemovableMedia` — so the UI snaps to what's actually attached instead of describing a state VZ refused. The rollback bypasses `updateConfiguration` (direct write + `saveConfiguration`) to avoid re-entering the reconcile pipeline.
 
@@ -284,16 +277,26 @@ NSSplitViewController (MainWindowController)
 └── Detail pane: DetailContainerViewController
     ├── VMDisplayBackingView (AppKit, layered on top — shown when VM running inline)
     │   └── VZVirtualMachineView + pause/transition overlays
-    └── NSHostingController (SwiftUI, always present behind)
-        └── MainDetailView → VMDetailView
-            ├── VMConsoleView (placeholder when display is external, suspended, or unavailable)
-            ├── VMSettingsView
-            └── MacOSInstallProgressView
-VMCreationWizardView (modal sheet on detail pane)
-├── OSSelectionStep
-├── IPSWSelectionStep / BootConfigStep
-├── ResourceConfigStep
-└── ReviewStep
+    └── DetailRouterViewController (AppKit; swaps child VC based on selection/status)
+        ├── EmptyStateViewController                  (no selection)
+        ├── PreparingProgressViewController           (preparingState != nil)
+        ├── TransitionProgressViewController          (starting/stopping/pausing/resuming)
+        ├── ConsolePlaceholderViewController          (fullscreen / popped out / suspended / no display)
+        ├── MacOSInstallProgressViewController        (installing, installState != nil)
+        └── VMSettingsViewController                  (stopped/error/initialBoot/running-with-settings)
+            ├── SettingsSection × 9                   (General, Resources, Storage, Removable, Shared, Network, Audio, Guest Agent, Clipboard)
+            ├── AttachmentIconButton                  (missing-file warning popover)
+            └── StorageDiskReorderWindowController    (modal sheet, NSTableView drag-reorder)
+VMCreationWizardWindowController (modal sheet attached to main window)
+├── OSSelectionStepViewController
+├── IPSWSelectionStepViewController / BootConfigStepViewController
+├── ResourceConfigStepViewController
+└── ReviewStepViewController
+LifecycleAlertCoordinator (owned by DetailRouterViewController)
+├── delete confirmation / DeleteVMSheetWindowController
+├── cancel-preparing confirmation
+├── force-stop confirmation
+└── stop-paused confirmation
 SerialConsoleContentViewController → SerialTextView (in separate window)
 ```
 
@@ -311,17 +314,17 @@ AppDelegate
     │                 └── DiskImageService
     │
     ├── creates → MainWindowController (NSSplitViewController + NSToolbar)
-    │                 ├── Sidebar: NSHostingController(SidebarView)
+    │                 ├── Sidebar: NSHostingController(SidebarView)            (SwiftUI — out of scope for the detail-pane AppKit conversion)
     │                 └── Detail:  DetailContainerViewController
     │                              ├── VMDisplayBackingView (AppKit VM display, layered on top)
-    │                              └── NSHostingController(MainDetailView → VMDetailView)
+    │                              └── DetailRouterViewController              (AppKit detail tree)
     │
     ├── manages → VMDisplayWindowController (per VM)
     ├── manages → SerialConsoleWindowController (per VM)
     └── manages → ClipboardWindowController (per VM)
 
-SwiftUI views ──observe──→ VMLibraryViewModel ──delegates──→ VMLifecycleCoordinator ──calls──→ Services
-                           VMInstance (per VM)
+AppKit views ──observe (observeRecurring / observeModalFlag)──→ VMLibraryViewModel ──delegates──→ VMLifecycleCoordinator ──calls──→ Services
+                                                                VMInstance (per VM)
 
 SystemSleepWatcher ──sleep/wake──→ VMLibraryViewModel ──pause/resume──→ VMLifecycleCoordinator
 ```
