@@ -95,13 +95,17 @@ final class ResourceConfigStepViewController: CreationStepViewController {
         outer.spacing = 18
         outer.translatesAutoresizingMaskIntoConstraints = false
 
+        // RATIONALE: 3-edge pin (no bottom) so the stack stays at its
+        // intrinsic content height at the top. See same rationale in
+        // OSSelectionStepViewController.
+        outer.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(outer)
         NSLayoutConstraint.activate([
             outer.topAnchor.constraint(equalTo: container.topAnchor),
             outer.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             outer.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            nameField.widthAnchor.constraint(equalToConstant: 280),
         ])
+        nameField.widthAnchor.constraint(equalToConstant: 280).isActive = true
 
         view = container
 

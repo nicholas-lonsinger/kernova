@@ -40,11 +40,19 @@ final class OSSelectionStepViewController: CreationStepViewController {
         outer.spacing = 24
         outer.translatesAutoresizingMaskIntoConstraints = false
 
+        // RATIONALE: Pin top + leading + trailing only (NOT bottom). The
+        // wizard's `contentContainer` enforces a minimum height; without a
+        // bottom pin, the outer stack sits at its intrinsic content height
+        // at the top of the container, with empty space below — rather
+        // than stretching to container height and letting NSStackView
+        // center items in the extra space. IPSW step is the exception (it
+        // uses addFullSizeSubview to fill with an NSScrollView).
+        outer.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(outer)
         NSLayoutConstraint.activate([
+            outer.topAnchor.constraint(equalTo: container.topAnchor),
             outer.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             outer.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            outer.topAnchor.constraint(equalTo: container.topAnchor),
             buttonRow.leadingAnchor.constraint(equalTo: outer.leadingAnchor),
             buttonRow.trailingAnchor.constraint(equalTo: outer.trailingAnchor),
         ])

@@ -71,13 +71,17 @@ final class BootConfigStepViewController: CreationStepViewController {
         stack.spacing = 18
         stack.translatesAutoresizingMaskIntoConstraints = false
 
+        // RATIONALE: 3-edge pin (no bottom) so the stack stays at its
+        // intrinsic content height at the top. See same rationale in
+        // OSSelectionStepViewController.
+        stack.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(stack)
         NSLayoutConstraint.activate([
             stack.topAnchor.constraint(equalTo: container.topAnchor),
             stack.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            cmdLineField.widthAnchor.constraint(equalToConstant: 380),
         ])
+        cmdLineField.widthAnchor.constraint(equalToConstant: 380).isActive = true
 
         view = container
 

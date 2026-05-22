@@ -39,12 +39,17 @@ final class VMCreationWizardWindowController: NSWindowController {
         self.library = library
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 550, height: 480),
+            contentRect: NSRect(x: 0, y: 0, width: 700, height: 580),
             styleMask: [.titled],
             backing: .buffered,
             defer: false
         )
         window.title = "New Virtual Machine"
+        // RATIONALE: Use window.minSize instead of a contentView
+        // heightAnchor constraint so a step that's intrinsically taller
+        // (e.g. IPSWSelection with both banners + a long path) can grow
+        // the sheet rather than fighting a required min constraint.
+        window.minSize = NSSize(width: 700, height: 540)
 
         super.init(window: window)
 
@@ -151,6 +156,14 @@ final class VMCreationWizardWindowController: NSWindowController {
             buttonRow.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             buttonRow.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             buttonRow.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+
+            // RATIONALE: `beginSheet` sizes the sheet to its
+            // contentViewController's fitting size. Without an explicit
+            // minimum, steps with no intrinsic height (IPSW, wrapped in
+            // NSScrollView) collapse the contentContainer to 0 and the
+            // sheet shrinks to fit only the chrome. `>=` constraint —
+            // taller steps still grow past it.
+            contentContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: 380),
         ])
 
         return root

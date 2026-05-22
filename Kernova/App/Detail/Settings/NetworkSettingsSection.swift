@@ -11,7 +11,7 @@ final class NetworkSettingsSection: NSObject {
 
     private let networkToggle = NSSwitch()
     private let macAddressLabel = NSTextField(labelWithString: "")
-    private let macAddressRow = NSStackView()
+    private var macAddressGridRow: NSGridRow?
 
     private var observation: ObservationLoop?
 
@@ -46,20 +46,17 @@ final class NetworkSettingsSection: NSObject {
         networkToggle.target = self
         networkToggle.action = #selector(networkToggleChanged(_:))
         networkToggle.isEnabled = !isReadOnly
-        let toggleRow = makeLabeledRow("Networking Enabled", control: networkToggle)
 
         macAddressLabel.font = .monospacedSystemFont(
             ofSize: NSFont.systemFontSize, weight: .regular)
         macAddressLabel.isSelectable = true
-        macAddressRow.setViews(
-            [
-                NSTextField(labelWithString: "MAC Address"),
-                settingsSpacer(), macAddressLabel,
-            ], in: .leading)
-        macAddressRow.orientation = .horizontal
-        macAddressRow.spacing = 8
 
-        section.setBody(settingsStackRows([toggleRow, macAddressRow]))
+        let formGrid = makeFormGrid([
+            FormRow("Networking Enabled", control: networkToggle),
+            FormRow("MAC Address", control: macAddressLabel),
+        ])
+        macAddressGridRow = formGrid.grid.row(at: 1)
+        section.setBody(formGrid)
         section.setLocked(isReadOnly)
         let isLinux = instance.configuration.guestOS == .linux
         section.setInfoHelp(title: "Network") {
@@ -82,9 +79,9 @@ final class NetworkSettingsSection: NSObject {
         networkToggle.state = instance.configuration.networkEnabled ? .on : .off
         if let mac = instance.configuration.macAddress {
             macAddressLabel.stringValue = mac
-            macAddressRow.isHidden = false
+            macAddressGridRow?.isHidden = false
         } else {
-            macAddressRow.isHidden = true
+            macAddressGridRow?.isHidden = true
         }
     }
 

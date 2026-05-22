@@ -52,57 +52,36 @@ final class GeneralSettingsSection: NSObject, NSTextFieldDelegate {
     // MARK: - Internals
 
     private func configure() {
-        nameField.alignment = .right
+        nameField.alignment = .left
         nameField.placeholderString = "Name"
         nameField.target = self
         nameField.action = #selector(nameSubmitted(_:))
         nameField.delegate = self
         nameField.translatesAutoresizingMaskIntoConstraints = false
+        // RATIONALE: Lock the field width to a constant so toggling
+        // bezeled/editable (rename mode) doesn't change its intrinsic
+        // content size and re-measure the grid's control column. Mirrors
+        // `ResourceConfigStepViewController.swift:103` (nameField=280).
+        nameField.widthAnchor.constraint(equalToConstant: 240).isActive = true
         applyNameFieldLabelAppearance()
 
         let click = NSClickGestureRecognizer(target: self, action: #selector(beginRename(_:)))
         nameField.addGestureRecognizer(click)
 
-        let nameContainer = NSStackView()
-        nameContainer.orientation = .horizontal
-        nameContainer.alignment = .centerY
-        nameContainer.spacing = 8
-        nameContainer.setViews(
-            [NSTextField(labelWithString: "Name"), settingsSpacer(), nameField], in: .leading)
+        let typeValue = NSTextField(labelWithString: instance.configuration.guestOS.displayName)
+        let bootModeValue = NSTextField(labelWithString: instance.configuration.bootMode.displayName)
+        let createdValue = NSTextField(
+            labelWithString:
+                instance.configuration.createdAt.formatted(date: .abbreviated, time: .shortened))
 
-        let typeRow = NSStackView()
-        typeRow.setViews(
-            [
-                NSTextField(labelWithString: "Type"),
-                settingsSpacer(),
-                NSTextField(labelWithString: instance.configuration.guestOS.displayName),
-            ], in: .leading)
-        typeRow.orientation = .horizontal
-        typeRow.spacing = 8
-
-        let bootModeRow = NSStackView()
-        bootModeRow.setViews(
-            [
-                NSTextField(labelWithString: "Boot Mode"),
-                settingsSpacer(),
-                NSTextField(labelWithString: instance.configuration.bootMode.displayName),
-            ], in: .leading)
-        bootModeRow.orientation = .horizontal
-        bootModeRow.spacing = 8
-
-        let createdRow = NSStackView()
-        createdRow.setViews(
-            [
-                NSTextField(labelWithString: "Created"),
-                settingsSpacer(),
-                NSTextField(
-                    labelWithString:
-                        instance.configuration.createdAt.formatted(date: .abbreviated, time: .shortened)),
-            ], in: .leading)
-        createdRow.orientation = .horizontal
-        createdRow.spacing = 8
-
-        section.setBody(settingsStackRows([nameContainer, typeRow, bootModeRow, createdRow]))
+        section.setBody(
+            makeFormGrid([
+                FormRow("Name", control: nameField),
+                FormRow("Type", control: typeValue),
+                FormRow("Boot Mode", control: bootModeValue),
+                FormRow("Created", control: createdValue),
+            ])
+        )
     }
 
     private var inRenameMode: Bool {

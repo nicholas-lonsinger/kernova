@@ -78,33 +78,3 @@ func calloutParagraphs(_ paragraphs: [String]) -> NSStackView {
     stack.spacing = 10
     return stack
 }
-
-/// Variant of ``makeLabeledRow`` that places an info button next to the
-/// leading label.
-///
-/// Used when the help text is specific to one control rather than the
-/// whole section (e.g. `Guest Agent → "Forward guest logs"`). Mirrors the
-/// old SwiftUI `toggleLabel(_:info:)` helper in `VMSettingsView.swift`.
-@MainActor
-func makeLabeledRowWithInfo(
-    _ label: String,
-    control: NSView,
-    helpBuilder: @escaping () -> NSView
-) -> NSStackView {
-    let labelView = NSTextField(labelWithString: label)
-    labelView.font = .systemFont(ofSize: NSFont.systemFontSize)
-
-    let info = InfoButton(label: label, contentBuilder: helpBuilder)
-
-    let labelStack = NSStackView(views: [labelView, info])
-    labelStack.orientation = .horizontal
-    labelStack.alignment = .centerY
-    labelStack.spacing = 4
-    labelStack.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-
-    let row = NSStackView(views: [labelStack, settingsSpacer(), control])
-    row.orientation = .horizontal
-    row.alignment = .centerY
-    row.spacing = 8
-    return row
-}

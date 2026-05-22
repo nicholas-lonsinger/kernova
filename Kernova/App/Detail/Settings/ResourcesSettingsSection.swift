@@ -61,15 +61,16 @@ final class ResourcesSettingsSection: NSObject {
         cpuLabel.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
         memoryLabel.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
 
-        let cpuRow = makeLabeledRow(
-            "CPU Cores",
-            control: settingsHorizontalStack([cpuLabel, cpuStepper], spacing: 6)
+        section.setBody(
+            makeFormGrid([
+                FormRow(
+                    "CPU Cores",
+                    control: settingsHorizontalStack([cpuLabel, cpuStepper], spacing: 6)),
+                FormRow(
+                    "Memory",
+                    control: settingsHorizontalStack([memoryLabel, memoryStepper], spacing: 6)),
+            ])
         )
-        let memRow = makeLabeledRow(
-            "Memory",
-            control: settingsHorizontalStack([memoryLabel, memoryStepper], spacing: 6)
-        )
-        section.setBody(settingsStackRows([cpuRow, memRow]))
         section.setLocked(isReadOnly)
         section.setInfoHelp(title: "Resources") {
             calloutText(

@@ -138,29 +138,33 @@ final class VMSettingsViewController: NSViewController {
         container.addFullSizeSubview(scroll)
         view = container
 
-        // RATIONALE: NSScrollView sizes its documentView to intrinsic content
-        // size by default. Without pinning the document's width to the clip
-        // view, the width-pin chain below has nothing fixed to terminate
-        // against and resolves to whatever minimum width the sections happen
-        // to need, leaving them squashed against the leading edge. Pinning
-        // the document to `contentView.widthAnchor` (the clip view) makes it
-        // exactly as wide as the visible scroll area and propagates that
-        // width through the section pins.
+        // RATIONALE: NSScrollView sizes its documentView to intrinsic
+        // content size by default. Without pinning the document's width to
+        // the clip view, the cap+fill+centerX constraints below have
+        // nothing fixed to terminate against. Pinning the document to
+        // `contentView.widthAnchor` (the clip view) makes it exactly as
+        // wide as the visible scroll area, then sections cap at 640pt and
+        // center within the document.
         documentView.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor).isActive = true
 
-        // Pin each section's width to the document so sections take full available width.
+        // Cap each section's card at ~640pt centered in the document, and
+        // let it shrink toward the document width on narrow panes. Two
+        // constraints per section: hard cap, fill-up-to-cap (defaultHigh
+        // so the cap wins), centerX.
         var widthPinned: [NSView] = sectionViews
         if let guestAgentSection { widthPinned.append(guestAgentSection.section) }
         widthPinned.append(clipboardSection.section)
-        for section in widthPinned {
-            section.widthAnchor.constraint(equalTo: documentView.widthAnchor, constant: -32).isActive = true
-        }
-        if isReadOnly {
-            readOnlyBanner.widthAnchor.constraint(equalTo: documentView.widthAnchor, constant: -32).isActive = true
-        }
-        if showInitialBootBanner {
-            initialBootBanner.widthAnchor.constraint(equalTo: documentView.widthAnchor, constant: -32)
-                .isActive = true
+        if isReadOnly { widthPinned.append(readOnlyBanner) }
+        if showInitialBootBanner { widthPinned.append(initialBootBanner) }
+        for sectionView in widthPinned {
+            let fill = sectionView.widthAnchor.constraint(
+                equalTo: documentView.widthAnchor, constant: -32)
+            fill.priority = .defaultHigh
+            NSLayoutConstraint.activate([
+                sectionView.widthAnchor.constraint(lessThanOrEqualToConstant: 640),
+                fill,
+                sectionView.centerXAnchor.constraint(equalTo: documentView.centerXAnchor),
+            ])
         }
     }
 

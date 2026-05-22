@@ -33,6 +33,10 @@ final class ReviewStepViewController: CreationStepViewController {
         outer.spacing = 20
         outer.translatesAutoresizingMaskIntoConstraints = false
 
+        // RATIONALE: 3-edge pin (no bottom) so the stack stays at its
+        // intrinsic content height at the top. See same rationale in
+        // OSSelectionStepViewController.
+        outer.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(outer)
         NSLayoutConstraint.activate([
             outer.topAnchor.constraint(equalTo: container.topAnchor),

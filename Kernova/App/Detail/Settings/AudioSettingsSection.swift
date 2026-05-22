@@ -53,7 +53,6 @@ final class AudioSettingsSection: NSObject {
         micToggle.target = self
         micToggle.action = #selector(micToggleChanged(_:))
         micToggle.isEnabled = !isReadOnly
-        let toggleRow = makeLabeledRow("Microphone", control: micToggle)
 
         micNotDeterminedLabel.stringValue =
             "macOS will ask for microphone permission the first time a VM uses it."
@@ -62,7 +61,9 @@ final class AudioSettingsSection: NSObject {
         micNotDeterminedLabel.isHidden = true
         micNotDeterminedLabel.maximumNumberOfLines = 0
         micNotDeterminedLabel.lineBreakMode = .byWordWrapping
-        micNotDeterminedLabel.preferredMaxLayoutWidth = 400
+        micNotDeterminedLabel.translatesAutoresizingMaskIntoConstraints = false
+        micNotDeterminedLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        micNotDeterminedLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         let denyIcon = NSImageView(
             image: .systemSymbol("exclamationmark.triangle.fill", accessibilityDescription: ""))
@@ -73,7 +74,6 @@ final class AudioSettingsSection: NSObject {
         )
         denyLabel.font = .preferredFont(forTextStyle: .caption1)
         denyLabel.maximumNumberOfLines = 0
-        denyLabel.preferredMaxLayoutWidth = 380
         denyLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
         denyLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         let openSettings = NSButton(
@@ -91,9 +91,31 @@ final class AudioSettingsSection: NSObject {
         micDeniedBanner.layer?.borderWidth = 1
         micDeniedBanner.layer?.cornerRadius = 8
         micDeniedBanner.isHidden = true
+        micDeniedBanner.translatesAutoresizingMaskIntoConstraints = false
 
-        section.setBody(
-            settingsStackRows([toggleRow, micNotDeterminedLabel, micDeniedBanner]))
+        let grid = makeFormGrid([
+            FormRow("Microphone", control: micToggle)
+        ])
+        let wrapper = NSStackView(views: [grid, micNotDeterminedLabel, micDeniedBanner])
+        wrapper.orientation = .vertical
+        wrapper.alignment = .leading
+        wrapper.spacing = 8
+        wrapper.translatesAutoresizingMaskIntoConstraints = false
+        // RATIONALE: NSStackView `.leading` alignment doesn't stretch
+        // arranged subviews. All three children need wrapper width:
+        // - The grid container needs wrapper-width to center its grid
+        //   horizontally (see makeFormGrid).
+        // - The two aux views need wrapper-width so wrap-by-word and
+        //   banner-background math compute against the section-card width.
+        NSLayoutConstraint.activate([
+            grid.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor),
+            grid.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
+            micNotDeterminedLabel.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor),
+            micNotDeterminedLabel.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
+            micDeniedBanner.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor),
+            micDeniedBanner.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
+        ])
+        section.setBody(wrapper)
         section.setLocked(isReadOnly)
         let isLinux = instance.configuration.guestOS == .linux
         section.setInfoHelp(title: "Audio") {

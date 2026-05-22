@@ -65,16 +65,47 @@ final class IPSWSelectionStepViewController: CreationStepViewController {
         stack.spacing = 14
         stack.translatesAutoresizingMaskIntoConstraints = false
 
-        container.addSubview(stack)
+        // RATIONALE: When both banners (overwrite warning, resume) plus a
+        // long download path show simultaneously, the natural content
+        // height can exceed the wizard frame. Wrap in NSScrollView so the
+        // step scrolls internally rather than expanding the sheet. Mirrors
+        // the documentView width-pin pattern from
+        // VMSettingsViewController.swift.
+        let documentView = NSView()
+        documentView.translatesAutoresizingMaskIntoConstraints = false
+        documentView.addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: container.topAnchor),
-            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: documentView.topAnchor),
+            stack.leadingAnchor.constraint(equalTo: documentView.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: documentView.trailingAnchor),
+            // documentView grows past the stack when scrolled content
+            // exceeds the clipView; stack stays top-anchored in either
+            // case. Required `<=` so the documentView never collapses
+            // shorter than the stack itself.
+            stack.bottomAnchor.constraint(lessThanOrEqualTo: documentView.bottomAnchor),
             downloadButton.leadingAnchor.constraint(equalTo: stack.leadingAnchor),
             downloadButton.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
             localButton.leadingAnchor.constraint(equalTo: stack.leadingAnchor),
             localButton.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
         ])
+
+        let scroll = NSScrollView()
+        scroll.documentView = documentView
+        scroll.hasVerticalScroller = true
+        scroll.hasHorizontalScroller = false
+        scroll.autohidesScrollers = true
+        scroll.drawsBackground = false
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        // Width pin terminates the scroll-view width chain so wrapping
+        // labels compute against the visible area. Height pin keeps the
+        // documentView at least as tall as the clipView so short content
+        // sits at the top rather than the bottom (NSClipView's flipped
+        // coordinate default).
+        documentView.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor).isActive = true
+        documentView.heightAnchor.constraint(greaterThanOrEqualTo: scroll.contentView.heightAnchor)
+            .isActive = true
+
+        container.addFullSizeSubview(scroll)
 
         view = container
 

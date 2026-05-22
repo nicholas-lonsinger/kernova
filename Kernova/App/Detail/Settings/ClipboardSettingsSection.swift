@@ -47,10 +47,32 @@ final class ClipboardSettingsSection: NSObject {
         clipboardLinuxHint.isHidden = true
         clipboardLinuxHint.maximumNumberOfLines = 0
         clipboardLinuxHint.lineBreakMode = .byWordWrapping
-        clipboardLinuxHint.preferredMaxLayoutWidth = 400
+        clipboardLinuxHint.translatesAutoresizingMaskIntoConstraints = false
+        clipboardLinuxHint.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        clipboardLinuxHint.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let row = makeLabeledRow("Clipboard Sharing", control: clipboardToggle)
-        section.setBody(settingsStackRows([row, clipboardLinuxHint]))
+        let grid = makeFormGrid([
+            FormRow("Clipboard Sharing", control: clipboardToggle)
+        ])
+        let wrapper = NSStackView(views: [grid, clipboardLinuxHint])
+        wrapper.orientation = .vertical
+        wrapper.alignment = .leading
+        wrapper.spacing = 8
+        wrapper.translatesAutoresizingMaskIntoConstraints = false
+        // RATIONALE: NSStackView `.leading` alignment doesn't stretch
+        // arranged subviews to the stack's width. Pin the grid container's
+        // and the hint's horizontal edges to the wrapper explicitly:
+        // - The grid container needs wrapper-width to center its grid
+        //   horizontally (see makeFormGrid).
+        // - The hint label needs wrapper-width so wrap-by-word computes
+        //   against the section-card width rather than intrinsic content.
+        NSLayoutConstraint.activate([
+            grid.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor),
+            grid.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
+            clipboardLinuxHint.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor),
+            clipboardLinuxHint.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
+        ])
+        section.setBody(wrapper)
         let isLinux = instance.configuration.guestOS == .linux
         section.setInfoHelp(title: "Clipboard") {
             calloutText(
