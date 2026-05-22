@@ -162,9 +162,17 @@ final class DetailRouterViewController: NSViewController {
         }
 
         switch instance.status {
-        case .stopped, .error, .initialBoot:
+        case .stopped, .error:
             return Target(
-                vc: SettingsHostViewController(instance: instance, viewModel: viewModel),
+                vc: VMSettingsViewController(
+                    instance: instance, viewModel: viewModel, isReadOnly: false),
+                instanceID: instance.id
+            )
+        case .initialBoot:
+            return Target(
+                vc: VMSettingsViewController(
+                    instance: instance, viewModel: viewModel, isReadOnly: false,
+                    showInitialBootBanner: true),
                 instanceID: instance.id
             )
         case .installing:
@@ -185,7 +193,8 @@ final class DetailRouterViewController: NSViewController {
         if instance.status.hasActiveDisplay {
             if instance.detailPaneMode == .settings {
                 return Target(
-                    vc: SettingsHostViewController(instance: instance, viewModel: viewModel),
+                    vc: VMSettingsViewController(
+                        instance: instance, viewModel: viewModel, isReadOnly: true),
                     instanceID: instance.id
                 )
             }
