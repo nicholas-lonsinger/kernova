@@ -70,3 +70,24 @@ func makeCalloutBody(_ text: String, color: NSColor = CalloutStyle.bodyColor) ->
     label.maximumNumberOfLines = 0
     return label
 }
+
+/// Builds a monospaced, selectable `NSTextField` for code snippets (shell
+/// commands, paths, identifiers the user is expected to copy).
+///
+/// Matches the SwiftUI predecessor's `.font(.system(.callout, design: .monospaced))`
+/// plus `.textSelection(.enabled)` for the same intent — the snippet
+/// remains legible and copy-able inside the popover.
+@MainActor
+func makeCalloutCode(_ text: String) -> NSTextField {
+    let label = NSTextField(wrappingLabelWithString: text)
+    label.font = .monospacedSystemFont(
+        ofSize: NSFont.preferredFont(forTextStyle: .callout).pointSize,
+        weight: .regular
+    )
+    label.textColor = .labelColor
+    label.preferredMaxLayoutWidth = CalloutStyle.bodyWidth
+    label.lineBreakMode = .byCharWrapping
+    label.maximumNumberOfLines = 0
+    label.isSelectable = true
+    return label
+}

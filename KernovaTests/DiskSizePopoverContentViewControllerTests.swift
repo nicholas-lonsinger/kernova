@@ -2,13 +2,12 @@ import Testing
 import AppKit
 @testable import Kernova
 
-@Suite("CreateDiskPopoverContentViewController Tests")
+@Suite("DiskSizePopoverContentViewController Tests")
 @MainActor
-struct CreateDiskPopoverContentViewControllerTests {
+struct DiskSizePopoverContentViewControllerTests {
     @Test("loadView fits the CalloutStyle width")
     func fittingWidthMatchesStyle() {
-        let vc = CreateDiskPopoverContentViewController(
-            availableSizes: [10, 50, 100], defaultSizeInGB: 50)
+        let vc = make(headline: "X", caption: "Y", sizes: [10, 50, 100], defaultGB: 50)
         vc.loadViewIfNeeded()
         vc.view.layoutSubtreeIfNeeded()
         #expect(vc.view.fittingSize.width == CalloutStyle.width)
@@ -17,8 +16,7 @@ struct CreateDiskPopoverContentViewControllerTests {
     @Test("popup is populated from availableSizes with size-as-tag")
     func popupPopulation() {
         let sizes = [10, 25, 50, 100]
-        let vc = CreateDiskPopoverContentViewController(
-            availableSizes: sizes, defaultSizeInGB: 50)
+        let vc = make(headline: "X", caption: "Y", sizes: sizes, defaultGB: 50)
         vc.loadViewIfNeeded()
 
         let popup = findPopUpButton(in: vc.view)
@@ -33,18 +31,37 @@ struct CreateDiskPopoverContentViewControllerTests {
 
     @Test("default selection matches defaultSizeInGB when present in availableSizes")
     func defaultSelectionApplied() {
-        let vc = CreateDiskPopoverContentViewController(
-            availableSizes: [10, 25, 50, 100], defaultSizeInGB: 50)
+        let vc = make(headline: "X", caption: "Y", sizes: [10, 25, 50, 100], defaultGB: 50)
+        vc.loadViewIfNeeded()
+        #expect(vc.selectedSizeInGB == 50)
+    }
+
+    @Test("headline and caption render the supplied strings")
+    func headlineAndCaptionRender() {
+        let vc = make(
+            headline: "Create New Removable Disk",
+            caption: "A wordy explanation about what will be created and where.",
+            sizes: [10, 50], defaultGB: 50
+        )
         vc.loadViewIfNeeded()
 
-        #expect(vc.selectedSizeInGB == 50)
+        guard let stack = vc.view.subviews.first as? NSStackView else {
+            Issue.record("Expected NSStackView as the first container subview")
+            return
+        }
+        let labels = stack.arrangedSubviews.compactMap { $0 as? NSTextField }
+        #expect(labels.contains { $0.stringValue == "Create New Removable Disk" })
+        #expect(
+            labels.contains {
+                $0.stringValue == "A wordy explanation about what will be created and where."
+            }
+        )
     }
 
     @Test("Cancel button invokes delegate's cancel method")
     func cancelInvokesDelegate() {
-        let vc = CreateDiskPopoverContentViewController(
-            availableSizes: [10, 50], defaultSizeInGB: 50)
-        let delegate = MockCreateDiskDelegate()
+        let vc = make(headline: "X", caption: "Y", sizes: [10, 50], defaultGB: 50)
+        let delegate = MockDelegate()
         vc.delegate = delegate
         vc.loadViewIfNeeded()
 
@@ -60,13 +77,11 @@ struct CreateDiskPopoverContentViewControllerTests {
 
     @Test("Create button invokes delegate with the popup-selected size")
     func createInvokesDelegateWithSelectedSize() {
-        let vc = CreateDiskPopoverContentViewController(
-            availableSizes: [10, 50, 100], defaultSizeInGB: 50)
-        let delegate = MockCreateDiskDelegate()
+        let vc = make(headline: "X", caption: "Y", sizes: [10, 50, 100], defaultGB: 50)
+        let delegate = MockDelegate()
         vc.delegate = delegate
         vc.loadViewIfNeeded()
 
-        // Simulate the user picking a different size.
         let popup = findPopUpButton(in: vc.view)
         popup?.selectItem(withTag: 100)
 
@@ -83,18 +98,30 @@ struct CreateDiskPopoverContentViewControllerTests {
     // MARK: - Helpers
 
     @MainActor
-    private final class MockCreateDiskDelegate: CreateDiskPopoverContentViewControllerDelegate {
+    private func make(
+        headline: String, caption: String, sizes: [Int], defaultGB: Int
+    ) -> DiskSizePopoverContentViewController {
+        DiskSizePopoverContentViewController(
+            headline: headline,
+            caption: caption,
+            availableSizes: sizes,
+            defaultSizeInGB: defaultGB
+        )
+    }
+
+    @MainActor
+    private final class MockDelegate: DiskSizePopoverContentViewControllerDelegate {
         var confirmedSizes: [Int] = []
         var cancelCount = 0
 
-        func createDiskPopover(
-            _ vc: CreateDiskPopoverContentViewController,
+        func diskSizePopover(
+            _ vc: DiskSizePopoverContentViewController,
             didConfirmSizeInGB sizeInGB: Int
         ) {
             confirmedSizes.append(sizeInGB)
         }
 
-        func createDiskPopoverDidCancel(_ vc: CreateDiskPopoverContentViewController) {
+        func diskSizePopoverDidCancel(_ vc: DiskSizePopoverContentViewController) {
             cancelCount += 1
         }
     }
@@ -110,8 +137,6 @@ struct CreateDiskPopoverContentViewControllerTests {
 
     @MainActor
     private func findButton(titled title: String, in view: NSView) -> NSButton? {
-        // Skip NSPopUpButton instances; they're NSButton subclasses but
-        // their `title` is the popup item, not a button label.
         if let button = view as? NSButton, !(view is NSPopUpButton), button.title == title {
             return button
         }
