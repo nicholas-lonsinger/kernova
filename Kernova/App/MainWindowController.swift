@@ -37,9 +37,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             instanceProvider: { [weak viewModel] in viewModel?.selectedInstance }
         )
 
-        let sidebarHost = NSHostingController(rootView: SidebarView(viewModel: viewModel))
-        sidebarHost.sizingOptions = []
-        self.sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebarHost)
+        let sidebarController = SidebarViewController(viewModel: viewModel)
+        self.sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebarController)
         sidebarItem.minimumThickness = 200
         sidebarItem.maximumThickness = 350
         splitViewController.addSplitViewItem(sidebarItem)
