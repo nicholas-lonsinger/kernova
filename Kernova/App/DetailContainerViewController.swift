@@ -1,22 +1,22 @@
 import Cocoa
 import os
-import SwiftUI
 
-/// AppKit container that layers pure-AppKit VM displays on top of an always-present SwiftUI hosting controller.
+/// AppKit container that layers pure-AppKit VM displays on top of an always-present detail router.
 ///
 /// Each running VM that displays inline gets its own `VMDisplayBackingView`
 /// (and thus its own `VZVirtualMachineView`). Switching VMs swaps visibility rather than
 /// reassigning the `virtualMachine` property, which `VZVirtualMachineView` does not handle
 /// correctly.
 ///
-/// The SwiftUI layer is kept in the view hierarchy at all times so that SwiftUI-hosted alerts
-/// (delete, force-stop, cancel) remain functional even while the VM display is showing.
+/// The detail router is kept in the view hierarchy at all times so that AppKit-presented
+/// alerts (delete, force-stop, cancel) and the settings view controller remain functional
+/// even while the VM display is showing.
 @MainActor
 final class DetailContainerViewController: NSViewController {
     private let viewModel: VMLibraryViewModel
     private var backingViews: [UUID: VMDisplayBackingView] = [:]
     private var activeBackingViewID: UUID?
-    private let swiftUIHost: NSHostingController<MainDetailView>
+    private let detailRouter: DetailRouterViewController
     private var stateObservation: ObservationLoop?
 
     private static let logger = Logger(subsystem: "com.kernova.app", category: "DetailContainerVC")
@@ -25,12 +25,11 @@ final class DetailContainerViewController: NSViewController {
 
     init(viewModel: VMLibraryViewModel) {
         self.viewModel = viewModel
-        self.swiftUIHost = NSHostingController(rootView: MainDetailView(viewModel: viewModel))
-        swiftUIHost.sizingOptions = []
+        self.detailRouter = DetailRouterViewController(viewModel: viewModel)
 
         super.init(nibName: nil, bundle: nil)
 
-        addChild(swiftUIHost)
+        addChild(detailRouter)
     }
 
     required init?(coder: NSCoder) {
@@ -43,7 +42,7 @@ final class DetailContainerViewController: NSViewController {
         let container = NSView()
         container.wantsLayer = true
 
-        container.addFullSizeSubview(swiftUIHost.view)
+        container.addFullSizeSubview(detailRouter.view)
 
         self.view = container
     }
@@ -153,7 +152,7 @@ final class DetailContainerViewController: NSViewController {
         else {
             if let currentID = activeBackingViewID, let current = backingViews[currentID] {
                 current.isHidden = true
-                Self.logger.debug("VM display hidden — SwiftUI content visible")
+                Self.logger.debug("VM display hidden — router content visible")
             }
             activeBackingViewID = nil
             return

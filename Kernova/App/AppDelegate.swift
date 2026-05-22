@@ -1,6 +1,5 @@
 import Cocoa
 import os
-import SwiftUI
 
 @main
 @MainActor

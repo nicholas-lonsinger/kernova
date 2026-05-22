@@ -1,5 +1,5 @@
+import AppKit
 import Foundation
-import SwiftUI
 
 /// The runtime status of a virtual machine.
 enum VMStatus: String, Codable, Sendable {
@@ -30,13 +30,13 @@ enum VMStatus: String, Codable, Sendable {
         }
     }
 
-    var statusColor: Color {
+    var statusColor: NSColor {
         switch self {
-        case .stopped: .secondary
-        case .starting, .saving, .restoring, .installing, .initialBoot: .orange
-        case .running: .green
-        case .paused: .yellow
-        case .error: .red
+        case .stopped: .secondaryLabelColor
+        case .starting, .saving, .restoring, .installing, .initialBoot: .systemOrange
+        case .running: .systemGreen
+        case .paused: .systemYellow
+        case .error: .systemRed
         }
     }
 

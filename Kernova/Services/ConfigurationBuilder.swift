@@ -461,13 +461,11 @@ struct ConfigurationBuilder: Sendable {
     /// the bundle path.
     ///
     /// The synthesizer fires whenever `storageDisks` is nil/empty.
-    /// Without stable identity, SwiftUI's `ForEach` would tear down the
-    /// main-disk row on every re-render, and `removeStorageDisk`'s
-    /// entry-lookup-by-id would miss the row the user just clicked —
-    /// silently no-op'ing the entry removal while still trashing the
-    /// underlying file. Once the user makes any edit, the list is
-    /// persisted with this id and the synthesizer is no longer
-    /// consulted.
+    /// Without stable identity, `removeStorageDisk`'s entry-lookup-by-id
+    /// would miss the row the user just clicked — silently no-op'ing the
+    /// entry removal while still trashing the underlying file. Once the
+    /// user makes any edit, the list is persisted with this id and the
+    /// synthesizer is no longer consulted.
     private static func stableMainDiskID(forBundleAt bundleURL: URL) -> UUID {
         let digest = SHA256.hash(data: Data(bundleURL.path.utf8))
         let bytes = Array(digest.prefix(16))

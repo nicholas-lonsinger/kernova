@@ -15,8 +15,9 @@ func diskIconSystemName(for disk: StorageDisk) -> String {
 ///
 /// Returns disk usage stats for the in-bundle main disk, "In-bundle disk image"
 /// for other internal disks, and the absolute file path for external disks.
-/// Shared by `VMSettingsView` and `StorageDiskReorderSheet` so both surfaces
-/// render identical row subtitles.
+/// Shared by ``VMSettingsViewController`` and
+/// ``StorageDiskReorderWindowController`` so both surfaces render identical
+/// row subtitles.
 @MainActor
 func diskSubtitle(for disk: StorageDisk, in instance: VMInstance) -> String {
     if disk.isInternal && disk.path == instance.bundleLayout.diskImageURL.lastPathComponent {
