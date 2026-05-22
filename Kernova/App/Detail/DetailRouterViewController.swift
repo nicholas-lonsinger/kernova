@@ -29,6 +29,7 @@ final class DetailRouterViewController: NSViewController {
     private var routerObservation: ObservationLoop?
     private var errorObserver: ObservationLoop?
     private var installerMountedObserver: ObservationLoop?
+    private let lifecycleAlerts: LifecycleAlertCoordinator
     private var currentChild: NSViewController?
 
     /// The ID of the instance the current child was built for, so a sidebar
@@ -38,6 +39,7 @@ final class DetailRouterViewController: NSViewController {
 
     init(viewModel: VMLibraryViewModel) {
         self.viewModel = viewModel
+        self.lifecycleAlerts = LifecycleAlertCoordinator(viewModel: viewModel)
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -56,6 +58,9 @@ final class DetailRouterViewController: NSViewController {
         if routerObservation == nil { observeRoutingState() }
         if errorObserver == nil { observeErrorAlert() }
         if installerMountedObserver == nil { observeInstallerMountedAlert() }
+        if let window = view.window {
+            lifecycleAlerts.startObserving(in: window)
+        }
         refresh()
     }
 
@@ -67,6 +72,7 @@ final class DetailRouterViewController: NSViewController {
         errorObserver = nil
         installerMountedObserver?.cancel()
         installerMountedObserver = nil
+        lifecycleAlerts.stopObserving()
     }
 
     // MARK: - Routing observation
