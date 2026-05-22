@@ -36,6 +36,7 @@ final class SidebarViewController: NSViewController {
 
     private var instancesObservation: ObservationLoop?
     private var selectionObservation: ObservationLoop?
+    private var renameObservation: ObservationLoop?
 
     /// Guards against feedback loops: when the view model's selection
     /// changes drive the outline view's selection, the resulting
@@ -123,6 +124,9 @@ final class SidebarViewController: NSViewController {
         if selectionObservation == nil {
             observeSelection()
         }
+        if renameObservation == nil {
+            observeRename()
+        }
     }
 
     override func viewWillDisappear() {
@@ -131,6 +135,8 @@ final class SidebarViewController: NSViewController {
         instancesObservation = nil
         selectionObservation?.cancel()
         selectionObservation = nil
+        renameObservation?.cancel()
+        renameObservation = nil
     }
 
     // MARK: - Observation
@@ -156,6 +162,53 @@ final class SidebarViewController: NSViewController {
                 self?.applySelection()
             }
         )
+    }
+
+    private func observeRename() {
+        renameObservation = observeRecurring(
+            track: { [weak self] in
+                _ = self?.viewModel.activeRename
+            },
+            apply: { [weak self] in
+                self?.applyActiveRename()
+            }
+        )
+    }
+
+    private func applyActiveRename() {
+        guard case let .sidebar(id) = viewModel.activeRename else {
+            // Tell every visible row to exit rename mode. The cheap way
+            // is to walk visible rows; we keep it tight by only touching
+            // those reporting in-rename via `isInRenameMode`.
+            for row in visibleSidebarRowViews() {
+                row.exitRenameMode()
+            }
+            return
+        }
+        guard let instance = viewModel.instances.first(where: { $0.id == id }) else {
+            // Renaming target disappeared (race with delete) — clear the flag.
+            viewModel.cancelRename()
+            return
+        }
+        let row = outlineView.row(forItem: instance)
+        guard row >= 0,
+            let rowView = outlineView.view(atColumn: 0, row: row, makeIfNecessary: true)
+                as? SidebarRowView
+        else { return }
+        rowView.enterRenameMode()
+    }
+
+    private func visibleSidebarRowViews() -> [SidebarRowView] {
+        var result: [SidebarRowView] = []
+        let rowRange = outlineView.rows(in: outlineView.visibleRect)
+        for row in rowRange.lowerBound..<rowRange.upperBound {
+            if let view = outlineView.view(atColumn: 0, row: row, makeIfNecessary: false)
+                as? SidebarRowView
+            {
+                result.append(view)
+            }
+        }
+        return result
     }
 
     // MARK: - Reload + selection
@@ -410,24 +463,18 @@ extension SidebarViewController: NSOutlineViewDelegate {
         return label
     }
 
-    /// Placeholder instance row used by phase 7b.
-    ///
-    /// Phase 7c replaces this with a full `SidebarRowView` (icon + name +
-    /// subtitle + status indicator + agent badge).
     private func makeInstanceRow(for instance: VMInstance) -> NSView {
-        let icon = NSImageView(
-            image: .systemSymbol(instance.configuration.guestOS.iconName, accessibilityDescription: "")
-        )
-        icon.contentTintColor = .secondaryLabelColor
-        let label = NSTextField(labelWithString: instance.name)
-        label.font = .preferredFont(forTextStyle: .body)
-        label.lineBreakMode = .byTruncatingTail
-        let stack = NSStackView(views: [icon, label])
-        stack.orientation = .horizontal
-        stack.spacing = 8
-        stack.alignment = .centerY
-        stack.identifier = Self.rowViewIdentifier
-        return stack
+        let view: SidebarRowView
+        if let dequeued = outlineView.makeView(withIdentifier: Self.rowViewIdentifier, owner: self)
+            as? SidebarRowView
+        {
+            view = dequeued
+        } else {
+            view = SidebarRowView(viewModel: viewModel)
+            view.identifier = Self.rowViewIdentifier
+        }
+        view.configure(instance)
+        return view
     }
 
     func outlineViewSelectionDidChange(_ notification: Notification) {

@@ -25,6 +25,61 @@ extension VMInstance {
             : "VM is paused in memory"
     }
 
+    /// Agent status to surface in the sidebar accessory, or `nil` to hide
+    /// the badge entirely.
+    ///
+    /// Hidden when:
+    /// - The guest can't use the Kernova-bundled agent (Linux installs
+    ///   `spice-vdagent` itself).
+    /// - macOS install is in progress (no agent yet, by design).
+    /// - Status is `.current` — no news is good news.
+    /// - Status is `.waiting` and the user has dismissed the install nudge.
+    /// - The VM is stopped / cold-paused AND the agent has previously
+    ///   connected (`lastSeenAgentVersion != nil`). The watchdog only
+    ///   fires while running, so `.expectedMissing` only reaches here for
+    ///   live sessions and is always surfaced; suppressing `.waiting` for
+    ///   already-installed VMs avoids nagging the user when the agent
+    ///   simply isn't connected yet.
+    ///
+    /// `.waiting` (when not suppressed), `.outdated`, `.unresponsive`,
+    /// `.expectedMissing`, and `.connecting` are all surfaced.
+    var visibleSidebarAgentStatus: AgentStatus? {
+        Self.computeVisibleSidebarAgentStatus(
+            guestOS: configuration.guestOS,
+            installState: installState,
+            agentStatus: agentStatus,
+            agentInstallNudgeDismissed: configuration.agentInstallNudgeDismissed,
+            lastSeenAgentVersion: configuration.lastSeenAgentVersion,
+            isLiveSession: virtualMachine != nil
+        )
+    }
+
+    /// Pure decision function backing ``visibleSidebarAgentStatus``,
+    /// exposed for unit tests so the suppression branches can be exercised
+    /// without standing up a VsockControlService and faking its agentStatus.
+    static func computeVisibleSidebarAgentStatus(
+        guestOS: VMGuestOS,
+        installState: MacOSInstallState?,
+        agentStatus: AgentStatus,
+        agentInstallNudgeDismissed: Bool,
+        lastSeenAgentVersion: String?,
+        isLiveSession: Bool
+    ) -> AgentStatus? {
+        guard guestOS == .macOS else { return nil }
+        guard installState == nil else { return nil }
+        if case .current = agentStatus { return nil }
+        if case .waiting = agentStatus, agentInstallNudgeDismissed {
+            return nil
+        }
+        if !isLiveSession,
+            case .waiting = agentStatus,
+            lastSeenAgentVersion != nil
+        {
+            return nil
+        }
+        return agentStatus
+    }
+
     /// `true` when this VM has a `.downloadLatest` install context, a
     /// `.kernovadownload` in-progress bundle at the chosen path, and no
     /// completed IPSW yet at the same path.
