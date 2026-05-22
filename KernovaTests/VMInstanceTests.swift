@@ -1,6 +1,6 @@
-import Testing
+import AppKit
 import Foundation
-import SwiftUI
+import Testing
 @testable import Kernova
 
 @Suite("VMInstance Tests")
@@ -348,7 +348,7 @@ struct VMInstanceTests {
     func statusDisplayColorColdPaused() {
         let instance = makeInstance(status: .paused)
         #expect(instance.isColdPaused == true)
-        #expect(instance.statusDisplayColor == .orange)
+        #expect(instance.statusDisplayColor == .systemOrange)
     }
 
     @Test("statusDisplayColor delegates to status.statusColor for non-paused states")
@@ -416,7 +416,7 @@ struct VMInstanceTests {
         let task = Task {}
         defer { task.cancel() }
         instance.preparingState = VMInstance.PreparingState(operation: .cloning, task: task)
-        #expect(instance.statusDisplayColor == .orange)
+        #expect(instance.statusDisplayColor == .systemOrange)
     }
 
     @Test("statusToolTip returns preparing label when isPreparing")

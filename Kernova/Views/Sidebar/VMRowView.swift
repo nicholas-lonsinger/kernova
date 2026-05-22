@@ -58,7 +58,7 @@ struct VMRowView: View {
                     .frame(width: 8, height: 8)
             } else {
                 Circle()
-                    .fill(instance.statusDisplayColor)
+                    .fill(Color(nsColor: instance.statusDisplayColor))
                     .frame(width: 8, height: 8)
                     .drawingGroup()
                     .help(instance.statusToolTip ?? "")

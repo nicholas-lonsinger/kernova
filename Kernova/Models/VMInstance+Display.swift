@@ -1,4 +1,5 @@
-import SwiftUI
+import AppKit
+import Foundation
 
 /// Display-layer properties that distinguish preparing, cold-paused ("Suspended"), and live-paused ("Paused") states.
 extension VMInstance {
@@ -9,9 +10,9 @@ extension VMInstance {
     }
 
     /// Display color that distinguishes preparing (orange), cold-paused (orange), and live-paused (yellow).
-    var statusDisplayColor: Color {
-        if isPreparing { return .orange }
-        return isColdPaused ? .orange : status.statusColor
+    var statusDisplayColor: NSColor {
+        if isPreparing { return .systemOrange }
+        return isColdPaused ? .systemOrange : status.statusColor
     }
 
     /// Tooltip explaining the VM state variant, or `nil` for standard states.

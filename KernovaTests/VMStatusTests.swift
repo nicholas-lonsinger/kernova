@@ -1,5 +1,5 @@
+import AppKit
 import Testing
-import SwiftUI
 @testable import Kernova
 
 @Suite("VMStatus Tests")
@@ -187,17 +187,17 @@ struct VMStatusTests {
 
     // MARK: - Status Color
 
-    @Test("statusColor maps each status to the expected color")
+    @Test("statusColor maps each status to the expected NSColor")
     func statusColor() {
-        #expect(VMStatus.stopped.statusColor == .secondary)
-        #expect(VMStatus.starting.statusColor == .orange)
-        #expect(VMStatus.running.statusColor == .green)
-        #expect(VMStatus.paused.statusColor == .yellow)
-        #expect(VMStatus.saving.statusColor == .orange)
-        #expect(VMStatus.restoring.statusColor == .orange)
-        #expect(VMStatus.installing.statusColor == .orange)
-        #expect(VMStatus.initialBoot.statusColor == .orange)
-        #expect(VMStatus.error.statusColor == .red)
+        #expect(VMStatus.stopped.statusColor == .secondaryLabelColor)
+        #expect(VMStatus.starting.statusColor == .systemOrange)
+        #expect(VMStatus.running.statusColor == .systemGreen)
+        #expect(VMStatus.paused.statusColor == .systemYellow)
+        #expect(VMStatus.saving.statusColor == .systemOrange)
+        #expect(VMStatus.restoring.statusColor == .systemOrange)
+        #expect(VMStatus.installing.statusColor == .systemOrange)
+        #expect(VMStatus.initialBoot.statusColor == .systemOrange)
+        #expect(VMStatus.error.statusColor == .systemRed)
     }
 
     // MARK: - Initial Boot
@@ -213,6 +213,6 @@ struct VMStatusTests {
         #expect(VMStatus.initialBoot.canStop == false)
         #expect(VMStatus.initialBoot.canForceStop == false)
         #expect(VMStatus.initialBoot.displayName == "Initial Boot")
-        #expect(VMStatus.initialBoot.statusColor == .orange)
+        #expect(VMStatus.initialBoot.statusColor == .systemOrange)
     }
 }
