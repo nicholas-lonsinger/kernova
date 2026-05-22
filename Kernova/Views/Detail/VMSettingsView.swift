@@ -492,9 +492,13 @@ struct VMSettingsView: View {
                     Button("Create New Disk...") {
                         showingCreateDisk = true
                     }
-                    .popover(isPresented: $showingCreateDisk, arrowEdge: .bottom) {
-                        createDiskPopover
-                    }
+                    .background(
+                        CreateDiskPopoverAnchor(
+                            isPresented: $showingCreateDisk,
+                            instance: instance,
+                            viewModel: viewModel
+                        )
+                    )
 
                     if storageDiskBinding.wrappedValue.count > 1 {
                         Button("Edit Boot Order...") {
@@ -568,38 +572,6 @@ struct VMSettingsView: View {
         }
 
         storageDiskBinding.wrappedValue = current
-    }
-
-    @ViewBuilder
-    private var createDiskPopover: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Create New Disk")
-                .font(.headline)
-
-            Picker("Size", selection: $newDiskSizeInGB) {
-                ForEach(VMGuestOS.allDiskSizes, id: \.self) { size in
-                    Text(DataFormatters.formatDiskSize(size)).tag(size)
-                }
-            }
-
-            Text("Creates an ASIF sparse disk image inside the VM bundle. Physical size grows as data is written.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            HStack {
-                Button("Cancel") {
-                    showingCreateDisk = false
-                }
-                Spacer()
-                Button("Create") {
-                    showingCreateDisk = false
-                    viewModel.createStorageDisk(for: instance, sizeInGB: newDiskSizeInGB)
-                }
-                .buttonStyle(.borderedProminent)
-            }
-        }
-        .padding()
-        .frame(width: 280)
     }
 
     @ViewBuilder
