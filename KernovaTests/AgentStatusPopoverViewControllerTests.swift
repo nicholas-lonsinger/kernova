@@ -60,6 +60,23 @@ struct AgentStatusPopoverViewControllerTests {
         #expect((body?.preferredMaxLayoutWidth ?? 0) > 0)
     }
 
+    @Test("Popover sizes to content via fittingSize after layout")
+    func popoverSizesNaturally() {
+        let vc = AgentStatusPopoverViewController(
+            status: .waiting,
+            vmName: "Sequoia Dev",
+            onAction: {},
+            onDismiss: nil
+        )
+        _ = vc.view
+        vc.view.layoutSubtreeIfNeeded()
+        vc.viewDidLayout()
+        // Width and height are picked up from fittingSize; both must be
+        // positive or the popover would render as a zero-sized rect.
+        #expect(vc.preferredContentSize.width > 0)
+        #expect(vc.preferredContentSize.height > 0)
+    }
+
     @Test("Action button title reflects status")
     func actionButtonTitleMatchesStatus() {
         let vc = AgentStatusPopoverViewController(

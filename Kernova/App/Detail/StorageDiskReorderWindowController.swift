@@ -259,7 +259,7 @@ extension StorageDiskReorderWindowController: NSTableViewDataSource, NSTableView
         proposedDropOperation dropOperation: NSTableView.DropOperation
     ) -> NSDragOperation {
         guard dropOperation == .above else { return [] }
-        guard (info.draggingSource as AnyObject?) === tableView else { return [] }
+        guard info.draggingSource as? NSTableView === tableView else { return [] }
         return .move
     }
 

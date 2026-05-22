@@ -385,7 +385,7 @@ extension SidebarViewController: NSOutlineViewDataSource {
         guard index >= 0 else { return [] }
 
         // Internal reorder: the drag started inside this outline view.
-        if (info.draggingSource as AnyObject?) === outlineView, draggedInstance != nil {
+        if info.draggingSource as? NSOutlineView === outlineView, draggedInstance != nil {
             return .move
         }
 
@@ -403,7 +403,7 @@ extension SidebarViewController: NSOutlineViewDataSource {
         item: Any?,
         childIndex index: Int
     ) -> Bool {
-        if (info.draggingSource as AnyObject?) === outlineView, let sourceItem = draggedInstance {
+        if info.draggingSource as? NSOutlineView === outlineView, let sourceItem = draggedInstance {
             guard let sourceOffset = viewModel.instances.firstIndex(where: { $0 === sourceItem }) else {
                 return false
             }

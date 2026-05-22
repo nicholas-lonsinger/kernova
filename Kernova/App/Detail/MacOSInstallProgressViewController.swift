@@ -1,4 +1,5 @@
 import AppKit
+import os
 
 /// Two-step progress UI for macOS installation (download → install).
 ///
@@ -8,6 +9,9 @@ import AppKit
 /// the library view model on confirm.
 @MainActor
 final class MacOSInstallProgressViewController: NSViewController {
+    private static let logger = Logger(
+        subsystem: "com.kernova.app", category: "MacOSInstallProgressViewController")
+
     private let instance: VMInstance
     private let viewModel: VMLibraryViewModel
 
@@ -34,10 +38,26 @@ final class MacOSInstallProgressViewController: NSViewController {
         fatalError("MacOSInstallProgressViewController does not support NSCoder")
     }
 
+    /// System "computer" icon, or an empty fallback if the lookup fails.
+    ///
+    /// `NSImage.computerName` is system-provided and the lookup should
+    /// never fail at runtime; in debug builds we crash so a deployment-
+    /// target regression is caught on first launch, and in release we
+    /// return a blank image and log at `.fault` so the rest of the view
+    /// still renders.
+    private static var computerImage: NSImage {
+        guard let image = NSImage(named: NSImage.computerName) else {
+            logger.fault("NSImage.computerName lookup returned nil")
+            assertionFailure("NSImage.computerName lookup returned nil")
+            return NSImage()
+        }
+        return image
+    }
+
     override func loadView() {
         let container = NSView()
 
-        let icon = NSImageView(image: NSImage(named: NSImage.computerName) ?? NSImage())
+        let icon = NSImageView(image: Self.computerImage)
         icon.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             icon.widthAnchor.constraint(equalToConstant: 48),
