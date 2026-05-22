@@ -55,7 +55,6 @@ final class StorageDiskReorderWindowController: NSWindowController {
         fatalError("StorageDiskReorderWindowController does not support NSCoder")
     }
 
-    @discardableResult
     func runSheet(on parent: NSWindow) async {
         await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
             self.continuation = cont

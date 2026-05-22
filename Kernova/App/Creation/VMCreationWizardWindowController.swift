@@ -62,7 +62,6 @@ final class VMCreationWizardWindowController: NSWindowController {
 
     /// Present the wizard as a sheet on `parent` and resume when the user
     /// either cancels or creates the VM.
-    @discardableResult
     func runSheet(on parent: NSWindow) async {
         await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
             self.continuation = cont

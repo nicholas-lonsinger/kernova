@@ -54,7 +54,6 @@ final class DeleteVMSheetWindowController: NSWindowController {
         fatalError("DeleteVMSheetWindowController does not support NSCoder")
     }
 
-    @discardableResult
     func runSheet(on parent: NSWindow) async {
         await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
             self.continuation = cont
