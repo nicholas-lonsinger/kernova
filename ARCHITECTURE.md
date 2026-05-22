@@ -73,8 +73,9 @@ Kernova/
 │   │   ├── CalloutView.swift           # SwiftUI `CalloutBody` container — still used by InfoButton and the mic-permission popover (340pt width, top-leading alignment, .callout font)
 │   │   ├── CalloutStyle.swift          # AppKit callout-popover design tokens (width, padding, spacing, fonts, body color) + `makeCalloutHeadline` / `makeCalloutBody` atom factories; visual consistency without a shared container class
 │   │   ├── MissingAttachmentPopoverContentViewController.swift # Concrete `NSViewController` for the missing-file popover — builds header + body labels + monospaced byCharWrapping path label in `loadView()` using `CalloutStyle`
-│   │   ├── CreateDiskPopoverContentViewController.swift # Concrete `NSViewController` for the "Create New Disk" popover — headline + size `NSPopUpButton` + caption body + Cancel/Create buttons; delegation protocol decouples from `VMLibraryViewModel`
-│   │   ├── CreateDiskPopoverAnchor.swift # SwiftUI `NSViewRepresentable` bridge: anchors the AppKit popover to the SwiftUI trigger button via `PopoverPresenter`; coordinator implements the controller's delegate and forwards Create to `viewModel.createStorageDisk(for:sizeInGB:)`
+│   │   ├── DiskSizePopoverContentViewController.swift # Generic concrete `NSViewController` for "pick a disk size and confirm/cancel" popovers — headline + size `NSPopUpButton` + caption body + Cancel/Create buttons; `headline`/`caption` strings supplied via init so both Storage Disk and Removable Media reuse this controller; delegation protocol decouples from `VMLibraryViewModel`
+│   │   ├── CreateStorageDiskPopoverAnchor.swift # SwiftUI bridge for the Storage Disk popover; coordinator implements `DiskSizePopoverContentViewControllerDelegate` and forwards Create to `viewModel.createStorageDisk(for:sizeInGB:)` (in-bundle allocation)
+│   │   ├── CreateRemovableMediaPopoverAnchor.swift # SwiftUI bridge for the Removable Media popover; coordinator forwards Create to an `NSSavePanel.begin` whose handler calls `viewModel.createRemovableMedia(for:sizeInGB:destinationURL:)` (user-chosen external location)
 │   │   ├── DeleteVMSheet.swift         # Confirmation sheet for deleting a VM that references external storage / removable media; lists each attachment with a "Shared with VM(s)" warning, exposes the "Also move these files to Trash" toggle
 │   │   └── MacOSInstallProgressView.swift # Two-phase install progress (download + install)
 │   ├── Console/
@@ -166,7 +167,7 @@ KernovaTests/
 ├── PopoverPresenterTests.swift         # Lifecycle (initial state, idempotent close, onClose-on-delegate)
 ├── CalloutStyleTests.swift             # Token math + headline/body factory configuration
 ├── MissingAttachmentPopoverContentViewControllerTests.swift # Layout loads, fitting size, header + path label configuration
-└── CreateDiskPopoverContentViewControllerTests.swift # Popup population, default selection, Cancel/Create delegate firing
+└── DiskSizePopoverContentViewControllerTests.swift # Popup population, default selection, headline/caption injection, Cancel/Create delegate firing
 
 KernovaGuestAgentTests/                 # Unit tests for the guest agent (standalone xctest bundle — no TEST_HOST)
 │                                       # Compiles KernovaGuestAgent source files directly (except main.swift)
@@ -181,7 +182,7 @@ KernovaGuestAgentTests/                 # Unit tests for the guest agent (standa
 └── VsockGuestControlAgentTests.swift   # Hello on connect, heartbeat cadence, reconnect after host close
 ```
 
-**Total: 64 source files + 2 helpers, 36 test files (28 suites + 8 mocks + 1 test-helpers).**
+**Total: 65 source files + 2 helpers, 36 test files (28 suites + 8 mocks + 1 test-helpers).**
 
 *Note: `ContentView.swift` was removed when `NavigationSplitView` was replaced by `NSSplitViewController` in `MainWindowController`. Its responsibilities were split between `MainWindowController` (toolbar, split view) and `MainDetailView` (detail switching, sheets, alerts).*
 
@@ -284,7 +285,7 @@ All service implementations conform to protocols defined in `Services/Protocols/
 
 ### Views
 
-**Files:** 16 SwiftUI views + 4 AppKit views/controllers + 1 AppKit style/atom-factory file + 1 SwiftUI↔AppKit anchor bridge across 4 subdirectories. The missing-attachment popover (anchored by `AttachmentIcon` shim) and the Create Disk popover (anchored by `CreateDiskPopoverAnchor`) are both end-to-end AppKit: a real `NSPopover` via `PopoverPresenter` displays a concrete `*PopoverContentViewController` whose `loadView()` builds its full layout using shared `CalloutStyle` tokens + `makeCalloutHeadline`/`makeCalloutBody` factory functions. **No shared callout container or base class** — every popover is its own concrete `NSViewController` subclass that references `CalloutStyle` directly, so visual consistency comes from shared tokens, not inheritance. AppKit controllers decouple from `VMLibraryViewModel` via delegate protocols; the SwiftUI/AppKit bridge representable (e.g. `CreateDiskPopoverAnchor`) implements the delegate and forwards the user's choice to the view model. Other popovers in the Detail subdirectory (`InfoButton` in `VMSettingsView`, the mic-permission popover) are still SwiftUI and use `CalloutBody` from `CalloutView.swift`; they'll move to per-popover AppKit `NSViewController` subclasses in follow-up PRs.
+**Files:** 16 SwiftUI views + 4 AppKit views/controllers + 1 AppKit style/atom-factory file + 2 SwiftUI↔AppKit anchor bridges across 4 subdirectories. Three popovers are now end-to-end AppKit: the missing-attachment popover (anchored by `AttachmentIcon` shim → `MissingAttachmentPopoverContentViewController`), the Storage Disk Create popover (`CreateStorageDiskPopoverAnchor` → `DiskSizePopoverContentViewController`), and the Removable Media Create popover (`CreateRemovableMediaPopoverAnchor` → `DiskSizePopoverContentViewController`). Each uses a real `NSPopover` via `PopoverPresenter` and the popover-content controllers build their full layouts in `loadView()` using shared `CalloutStyle` tokens + `makeCalloutHeadline`/`makeCalloutBody` factory functions. **No shared callout container or base class** — visual consistency comes from shared tokens, not inheritance. **Genuinely shareable controllers are reused via init parameterization** — Storage Disk and Removable Media share `DiskSizePopoverContentViewController` because their surfaces (size popup + Cancel/Create) are identical; only the headline and caption strings differ (passed via init, AppKit-canonical configuration). AppKit controllers decouple from `VMLibraryViewModel` via delegate protocols; the SwiftUI/AppKit bridge representables (`Create*PopoverAnchor`) implement the delegate and forward the user's choice to the view model. Other popovers in the Detail subdirectory (`InfoButton` in `VMSettingsView`, the mic-permission popover) are still SwiftUI and use `CalloutBody` from `CalloutView.swift`; they'll move to per-popover AppKit `NSViewController` subclasses in follow-up PRs.
 
 Views observe `VMLibraryViewModel` and individual `VMInstance`s via the Observation framework. The view hierarchy (AppKit owns the structural layout, SwiftUI renders content):
 

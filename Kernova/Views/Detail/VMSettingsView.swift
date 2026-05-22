@@ -19,7 +19,6 @@ struct VMSettingsView: View {
     @State private var showingCreateDisk = false
     @State private var showingReorderDisksSheet = false
     @State private var showingCreateRemovableMedia = false
-    @State private var newDiskSizeInGB = VMGuestOS.defaultDiskSizeInGB
     @State private var diskToRemove: StorageDisk?
     @State private var showingRemoveDiskAlert = false
     @State private var removableMediaToRemove: RemovableMediaItem?
@@ -399,9 +398,13 @@ struct VMSettingsView: View {
                 Button("Create New Disk...") {
                     showingCreateRemovableMedia = true
                 }
-                .popover(isPresented: $showingCreateRemovableMedia, arrowEdge: .bottom) {
-                    createRemovableMediaPopover
-                }
+                .background(
+                    CreateRemovableMediaPopoverAnchor(
+                        isPresented: $showingCreateRemovableMedia,
+                        instance: instance,
+                        viewModel: viewModel
+                    )
+                )
             }
         }
     }
@@ -423,35 +426,6 @@ struct VMSettingsView: View {
         }
 
         removableMediaBinding.wrappedValue = current
-    }
-
-    /// Presents a save panel for a new removable-media disk image and dispatches
-    /// the create call when the user confirms.
-    ///
-    /// Uses the asynchronous `begin(completionHandler:)` API so SwiftUI can
-    /// finish the popover-dismissal animation before the save panel takes the
-    /// foreground — `runModal()` would block the main thread and freeze the
-    /// transition.
-    private func presentSaveRemovableMedia(for instance: VMInstance, sizeInGB: Int) {
-        let panel = NSSavePanel()
-        panel.title = "Save Removable Disk"
-        panel.message = "Choose where to save the new removable disk image."
-        panel.prompt = "Create"
-        panel.nameFieldStringValue = "\(instance.name) Removable Disk.asif"
-        // Constrain to `.asif` — we only know how to allocate ASIF. NSSavePanel
-        // appends the extension if the user omits it, and rejects mismatched
-        // extensions since `allowsOtherFileTypes` defaults to false.
-        panel.allowedContentTypes = [.asif]
-        panel.canCreateDirectories = true
-        // Intentionally no `directoryURL` — NSSavePanel remembers the user's
-        // last-used location, which is a better default than forcing every
-        // invocation back to ~/Documents.
-
-        panel.begin { response in
-            guard response == .OK, let url = panel.url else { return }
-            viewModel.createRemovableMedia(
-                for: instance, sizeInGB: sizeInGB, destinationURL: url)
-        }
     }
 
     // MARK: - Storage Disks
@@ -493,7 +467,7 @@ struct VMSettingsView: View {
                         showingCreateDisk = true
                     }
                     .background(
-                        CreateDiskPopoverAnchor(
+                        CreateStorageDiskPopoverAnchor(
                             isPresented: $showingCreateDisk,
                             instance: instance,
                             viewModel: viewModel
@@ -572,40 +546,6 @@ struct VMSettingsView: View {
         }
 
         storageDiskBinding.wrappedValue = current
-    }
-
-    @ViewBuilder
-    private var createRemovableMediaPopover: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Create New Removable Disk")
-                .font(.headline)
-
-            Picker("Size", selection: $newDiskSizeInGB) {
-                ForEach(VMGuestOS.allDiskSizes, id: \.self) { size in
-                    Text(DataFormatters.formatDiskSize(size)).tag(size)
-                }
-            }
-
-            Text(
-                "Creates a writable ASIF sparse disk image at a location you choose, attached as a hot-pluggable USB drive. The file lives outside the VM bundle."
-            )
-            .font(.caption)
-            .foregroundStyle(.secondary)
-
-            HStack {
-                Button("Cancel") {
-                    showingCreateRemovableMedia = false
-                }
-                Spacer()
-                Button("Create") {
-                    showingCreateRemovableMedia = false
-                    presentSaveRemovableMedia(for: instance, sizeInGB: newDiskSizeInGB)
-                }
-                .buttonStyle(.borderedProminent)
-            }
-        }
-        .padding()
-        .frame(width: 280)
     }
 
     @ViewBuilder
