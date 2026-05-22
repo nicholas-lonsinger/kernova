@@ -32,12 +32,14 @@ struct InfoButton: NSViewRepresentable {
         let view = InfoButtonView()
         view.button.target = context.coordinator
         view.button.action = #selector(Coordinator.buttonClicked(_:))
+        context.coordinator.anchor = view
         context.coordinator.paragraphs = paragraphs
         configure(button: view.button)
         return view
     }
 
     func updateNSView(_ view: InfoButtonView, context: Context) {
+        context.coordinator.anchor = view
         context.coordinator.paragraphs = paragraphs
         configure(button: view.button)
     }
@@ -60,11 +62,24 @@ struct InfoButton: NSViewRepresentable {
     @MainActor
     final class Coordinator {
         let presenter = PopoverPresenter()
+        /// Wrapper `NSView` used as the popover's positioning view.
+        ///
+        /// We anchor to the wrapper rather than the inner `NSButton` because
+        /// `NSPopover.preferredEdge` is interpreted in the positioning
+        /// view's local coordinate system, and AppKit controls (including
+        /// `NSButton`) can return `isFlipped == true` while a plain `NSView`
+        /// keeps the AppKit default of `false`. Anchoring to the wrapper
+        /// keeps the edge math consistent with the other AppKit popover
+        /// anchors in this codebase (see
+        /// ``CreateStorageDiskPopoverAnchor``), where `.minY` reliably
+        /// places the popover below the anchor.
+        weak var anchor: NSView?
         var paragraphs: [InfoPopoverParagraph] = []
 
         @objc func buttonClicked(_ sender: NSButton) {
+            guard let anchor else { return }
             let vc = InfoPopoverContentViewController(paragraphs: paragraphs)
-            presenter.show(content: vc, from: sender, preferredEdge: .minY)
+            presenter.show(content: vc, from: anchor, preferredEdge: .minY)
         }
     }
 }
