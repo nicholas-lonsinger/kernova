@@ -189,8 +189,13 @@ final class SidebarViewController: NSViewController {
             return
         }
         let row = outlineView.row(forItem: instance)
+        // `makeIfNecessary: false` avoids instantiating off-screen rows
+        // just to enter rename mode (which couldn't focus a non-windowed
+        // view anyway). If the user scrolls the renaming row back into
+        // view, `SidebarRowView.configure(_:)` consults
+        // `viewModel.activeRename` and restores rename mode on dequeue.
         guard row >= 0,
-            let rowView = outlineView.view(atColumn: 0, row: row, makeIfNecessary: true)
+            let rowView = outlineView.view(atColumn: 0, row: row, makeIfNecessary: false)
                 as? SidebarRowView
         else { return }
         rowView.enterRenameMode()

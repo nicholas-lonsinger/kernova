@@ -139,8 +139,15 @@ final class BootConfigStepViewController: CreationStepViewController {
         initrdPathLabel.stringValue = creationVM.initrdPath.map(Self.fileName) ?? "No file selected"
     }
 
-    private static func fileName(_ path: String) -> String {
-        URL(fileURLWithPath: path).lastPathComponent
+    /// Internal so unit tests can verify empty/normal path handling
+    /// without standing up the whole view controller.
+    static func fileName(_ path: String) -> String {
+        // `URL(fileURLWithPath: "")` resolves to the current working
+        // directory; if a path optional somehow lands as `""` instead of
+        // nil, the empty-string display fallback is more useful than the
+        // CWD's last path component.
+        guard !path.isEmpty else { return "No file selected" }
+        return URL(fileURLWithPath: path).lastPathComponent
     }
 
     // MARK: - Actions

@@ -22,6 +22,13 @@ final class SidebarRowView: NSView, NSTextFieldDelegate {
     private var observation: ObservationLoop?
     private var inRenameMode = false
 
+    /// Exposed for tests to verify the row's rename state across the
+    /// configure / dequeue lifecycle.
+    ///
+    /// Not part of the public API; do not read from production code (use
+    /// `applyState`-driven rendering).
+    var isInRenameModeForTesting: Bool { inRenameMode }
+
     // MARK: - Subviews
 
     private let iconView = NSImageView()
@@ -126,14 +133,28 @@ final class SidebarRowView: NSView, NSTextFieldDelegate {
 
     func configure(_ instance: VMInstance) {
         observation?.cancel()
+
+        // If `viewModel.activeRename` still points at this instance, the
+        // dequeued view should restore rename mode — otherwise scrolling a
+        // renaming row off-screen and back leaves the inline editor gone.
+        let shouldBeRenaming = viewModel?.activeRename == .sidebar(instance.id)
+
         // Leaving rename mode if the row gets re-bound to a different
-        // instance: stale local edits would otherwise commit to the new VM.
-        if inRenameMode, self.instance !== instance {
+        // instance (stale local edits would commit to the new VM) or the
+        // active rename target has moved away from this instance.
+        if inRenameMode, !shouldBeRenaming || self.instance !== instance {
             inRenameMode = false
             applyLabelAppearance()
         }
         self.instance = instance
         applyState()
+
+        // Pick up an active rename that landed on this instance while the
+        // row was dequeued.
+        if shouldBeRenaming, !inRenameMode {
+            enterRenameMode()
+        }
+
         observation = observeRecurring(
             track: { [weak instance] in
                 // Reading the snapshot transitively reads every underlying
