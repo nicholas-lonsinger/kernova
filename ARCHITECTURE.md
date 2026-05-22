@@ -2,7 +2,7 @@
 
 ## Overview
 
-Kernova is a macOS application for creating and managing virtual machines via Apple's Virtualization.framework, supporting both macOS and Linux guests. It is built as an AppKit app hosting SwiftUI views, targeting macOS 26 (Tahoe) with Swift 6 strict concurrency. There are no external package dependencies — the app uses only Apple system frameworks.
+Kernova is a macOS application for creating and managing virtual machines via Apple's Virtualization.framework, supporting both macOS and Linux guests. It is built as a pure AppKit app targeting macOS 26 (Tahoe) with Swift 6 strict concurrency — there is no SwiftUI anywhere in the app. There are no external package dependencies — the app uses only Apple system frameworks.
 
 ## Directory Structure
 
@@ -12,7 +12,15 @@ Kernova/
 │   ├── AppDelegate.swift               # NSApplicationDelegate — startup, window tracking, menu, suspend-on-quit
 │   ├── MainWindowController.swift      # NSSplitViewController + NSToolbar with native items
 │   ├── VMDisplayWindowController.swift  # Per-VM display window (pop-out or fullscreen), auto-closes on VM stop
-│   ├── DetailContainerViewController.swift # Layers AppKit VM display over SwiftUI detail content; respects per-instance detailPaneMode
+│   ├── DetailContainerViewController.swift # Layers AppKit VM display over the AppKit detail router; respects per-instance detailPaneMode
+│   ├── Sidebar/                          # AppKit source-list sidebar
+│   │   ├── SidebarViewController.swift   # NSOutlineView source-list controller with selection, drag-reorder, drop import, and context menu
+│   │   ├── SidebarOutlineView.swift      # NSOutlineView subclass; routes menu(for event:) back to SidebarViewController
+│   │   ├── SidebarItem.swift             # SidebarGroupItem singleton for the always-expanded group row
+│   │   ├── SidebarRowView.swift          # Per-row NSView: icon + name (with inline rename via field delegate) + subtitle + agent badge + status indicator
+│   │   ├── SidebarAgentStatusButton.swift # Per-VM AppKit agent install/update affordance backed by PopoverPresenter
+│   │   ├── AgentStatusPopoverViewController.swift # Popover content (headline + wrapping body + action + optional "Don't show again")
+│   │   └── AgentStatusPopoverMetrics.swift # Pure-data title/body/actionButtonTitle helpers
 │   ├── VMToolbarManager.swift          # Shared toolbar logic for lifecycle, suspend, display, and settings-toggle items
 │   ├── SerialConsoleWindowController.swift # Per-VM serial console window, auto-closes on VM stop
 │   ├── SerialConsoleContentViewController.swift # Pure AppKit serial terminal + status bar (contains SerialTextView)
@@ -28,6 +36,7 @@ Kernova/
 │   ├── VMBootMode.swift                # Enum: macOS, efi, linuxKernel
 │   ├── VMGuestOS.swift                 # Enum: macOS, linux
 │   ├── MacOSInstallState.swift         # Tracks two-phase macOS installation progress (download + install)
+│   ├── VMInstance+Display.swift        # Display-layer extension on VMInstance: cold-paused vs live-paused distinction, statusDisplayColor, visibleSidebarAgentStatus
 │   └── KernovaUTType.swift             # UTType declaration for .kernova bundle
 ├── Services/                           # Business logic — stateless or @MainActor
 │   ├── ConfigurationBuilder.swift      # VMConfiguration → VZVirtualMachineConfiguration (3 boot paths)
@@ -56,14 +65,9 @@ Kernova/
 │   ├── VMLifecycleCoordinator.swift    # Owns services, orchestrates multi-step operations (@MainActor)
 │   ├── VMCreationViewModel.swift       # Drives the multi-step VM creation wizard
 │   └── VMDirectoryWatcher.swift        # DispatchSource monitor for external filesystem changes
-├── Views/                              # SwiftUI views
-│   ├── VMInstance+Display.swift        # Display-layer extension: cold-paused vs live-paused distinction
-│   ├── Sidebar/
-│   │   ├── SidebarView.swift           # VM list with selection, double-click-to-start, and context menus
-│   │   ├── VMRowView.swift             # Individual VM row (name, status, inline rename, agent indicator)
-│   │   └── SidebarAgentStatusButton.swift # Per-VM agent install/update affordance with anchored popover
+├── Views/                              # Remaining AppKit view bits (sidebar and detail panes are organized under App/)
 │   ├── Detail/
-│   │   ├── CalloutContentViewController.swift # 340pt-wide NSPopover content container (replaces SwiftUI CalloutView); used by AttachmentIconButton and other AppKit popovers
+│   │   ├── CalloutContentViewController.swift # 340pt-wide NSPopover content container; used by AttachmentIconButton and other AppKit popovers
 │   │   └── StorageDiskSubtitle.swift   # Shared `diskSubtitle(for:in:)` free function used by VMSettingsViewController and StorageDiskReorderWindowController
 │   └── Console/
 │       └── VMDisplayBackingView.swift  # Pure AppKit VM display with pause/transition overlays
@@ -166,7 +170,7 @@ KernovaGuestAgentTests/                 # Unit tests for the guest agent (standa
 
 **Total: 58 source files + 2 helpers, 32 test files (24 suites + 8 mocks + 1 test-helpers).**
 
-*Note: `ContentView.swift` was removed when `NavigationSplitView` was replaced by `NSSplitViewController` in `MainWindowController`. The detail pane was subsequently converted from SwiftUI to pure AppKit — the routing, settings, alerts, sheets, and creation wizard all live in `Kernova/App/Detail/` and `Kernova/App/Creation/` as `NSViewController`/`NSWindowController` subclasses driven by `observeRecurring`.*
+*Note: `ContentView.swift` was removed when `NavigationSplitView` was replaced by `NSSplitViewController` in `MainWindowController`. The detail pane was subsequently converted from SwiftUI to pure AppKit — the routing, settings, alerts, sheets, and creation wizard all live in `Kernova/App/Detail/` and `Kernova/App/Creation/` as `NSViewController`/`NSWindowController` subclasses driven by `observeRecurring`. The sidebar followed the same conversion: `Kernova/App/Sidebar/` now contains `SidebarViewController` (NSOutlineView source list), `SidebarRowView`, and the `SidebarAgentStatusButton` + popover content. No SwiftUI remains anywhere in the app.*
 
 ## Component Map
 
@@ -182,7 +186,7 @@ KernovaGuestAgentTests/                 # Unit tests for the guest agent (standa
 - Fullscreen exit recovery: closing a fullscreen window automatically re-shows the main library window via `showLibrary(_:)`
 - TCC relaunch: when macOS force-quits the app for a TCC permission change while VMs are running, `applicationShouldTerminate` launches `KernovaRelaunchHelper` (a CLI embedded in `Contents/MacOS/`) before beginning the async VM save. The helper monitors the app's PID via `DispatchSource` and relaunches the app via `NSWorkspace` after it exits, working around macOS's TCC relaunch timeout. TCC is positively identified by intercepting the `kAEQuitApplication` Apple Event and checking if the sender is the Privacy & Security settings extension (`com.apple.settings.PrivacySecurity.extension`).
 
-`MainWindowController` creates an `NSWindow` with an `NSSplitViewController` as the content view controller. The split view has two panes: a sidebar (`NSSplitViewItem(sidebarWithViewController:)` wrapping `SidebarView`) and a detail pane (wrapping `MainDetailView`). Both panes use `NSHostingController` to embed SwiftUI content. An `NSToolbar` with native `NSToolbarItem`s provides lifecycle controls (Start/Resume, Pause, Stop), Suspend, Fullscreen, New VM, and a Show/Hide Settings toggle that lets the user view the (read-only) settings form while a VM is running. Shared toolbar items (lifecycle, suspend, display, settings toggle) are managed by `VMToolbarManager`; the New VM button and sidebar items remain controller-specific. The settings toggle only appears in the main window — the pop-out display window passes `settingsToggleID: nil`. Toolbar state is observed via `withObservationTracking` and items are validated through `NSToolbarItemValidation`. The `.fullSizeContentView` style mask and `.sidebarTrackingSeparator` preserve the full-height sidebar appearance matching Mail/Finder.
+`MainWindowController` creates an `NSWindow` with an `NSSplitViewController` as the content view controller. The split view has two panes: a sidebar (`NSSplitViewItem(sidebarWithViewController:)` wrapping `SidebarViewController`, an `NSOutlineView`-based source list) and a detail pane (`DetailContainerViewController` hosting `DetailRouterViewController`). Both panes are pure AppKit; no `NSHostingController` remains in the main window. An `NSToolbar` with native `NSToolbarItem`s provides lifecycle controls (Start/Resume, Pause, Stop), Suspend, Fullscreen, New VM, and a Show/Hide Settings toggle that lets the user view the (read-only) settings form while a VM is running. Shared toolbar items (lifecycle, suspend, display, settings toggle) are managed by `VMToolbarManager`; the New VM button and sidebar items remain controller-specific. The settings toggle only appears in the main window — the pop-out display window passes `settingsToggleID: nil`. Toolbar state is observed via `withObservationTracking` and items are validated through `NSToolbarItemValidation`. The `.fullSizeContentView` style mask and `.sidebarTrackingSeparator` preserve the full-height sidebar appearance matching Mail/Finder.
 
 ### Models
 
@@ -267,13 +271,16 @@ All service implementations conform to protocols defined in `Services/Protocols/
 
 ### Views
 
-**Files:** 16 SwiftUI views + 1 AppKit view across 4 subdirectories
+**Files:** Pure-AppKit hierarchy across `Kernova/App/Sidebar/`, `Kernova/App/Detail/`, `Kernova/App/Creation/`, and `Kernova/Views/{Detail,Console}/`.
 
-Views observe `VMLibraryViewModel` and individual `VMInstance`s via the Observation framework. The view hierarchy (AppKit owns the structural layout, SwiftUI renders content):
+Views observe `VMLibraryViewModel` and individual `VMInstance`s via the Observation framework through the `observeRecurring(track:apply:)` helper. The view hierarchy:
 
 ```
 NSSplitViewController (MainWindowController)
-├── Sidebar pane: SidebarView → VMRowView (per VM)
+├── Sidebar pane: SidebarViewController (NSOutlineView source list)
+│   ├── SidebarOutlineView (subclass; provides menu(for event:))
+│   └── SidebarRowView × N
+│       └── SidebarAgentStatusButton (NSPopover content: AgentStatusPopoverViewController)
 └── Detail pane: DetailContainerViewController
     ├── VMDisplayBackingView (AppKit, layered on top — shown when VM running inline)
     │   └── VZVirtualMachineView + pause/transition overlays
@@ -314,7 +321,7 @@ AppDelegate
     │                 └── DiskImageService
     │
     ├── creates → MainWindowController (NSSplitViewController + NSToolbar)
-    │                 ├── Sidebar: NSHostingController(SidebarView)            (SwiftUI — out of scope for the detail-pane AppKit conversion)
+    │                 ├── Sidebar: SidebarViewController                       (AppKit NSOutlineView source list)
     │                 └── Detail:  DetailContainerViewController
     │                              ├── VMDisplayBackingView (AppKit VM display, layered on top)
     │                              └── DetailRouterViewController              (AppKit detail tree)
@@ -341,11 +348,11 @@ SystemSleepWatcher ──sleep/wake──→ VMLibraryViewModel ──pause/resu
 
 ### 1. AppKit-owned structural layout
 
-**What:** AppKit owns all structural elements: `NSSplitViewController` for sidebar/detail layout, `NSToolbar` with native `NSToolbarItem`s for the toolbar, and `NSWindow` for window management. SwiftUI renders content inside each pane via `NSHostingController`. The VM display (`VZVirtualMachineView`) is always managed by pure AppKit — in the detail pane, `DetailContainerViewController` layers the AppKit display on top of the SwiftUI content, and in pop-out/fullscreen windows, `VMDisplayWindowController` uses `VMDisplayBackingView` directly as the window's content view. All AppKit↔SwiftUI bridges are unidirectional (AppKit→SwiftUI only).
+**What:** All UI is AppKit. `NSSplitViewController` drives the sidebar/detail layout, `NSToolbar` with native `NSToolbarItem`s provides toolbars, `NSWindow` manages windows, and content is rendered through `NSViewController` / `NSView` subclasses bound to `@Observable` state via the `observeRecurring(track:apply:)` helper. The VM display (`VZVirtualMachineView`) is wrapped by `VMDisplayBackingView`: in the detail pane, `DetailContainerViewController` layers it on top of the `DetailRouterViewController` content; in pop-out/fullscreen windows, `VMDisplayWindowController` uses it directly as the window's content view.
 
-**Why:** The app needs precise control over native macOS chrome — toolbar items, split view behavior, sidebar collapsibility. SwiftUI's `NavigationSplitView` and `.toolbar` modifiers add an abstraction layer that creates fragile boundaries and toolbar layout limitations. With AppKit owning the structure, toolbar state is validated via `NSToolbarItemValidation`, sidebar appearance matches Mail/Finder, and there are no SwiftUI-toolbar quirks.
+**Why:** The app needs precise control over native macOS chrome — toolbar items, split view behavior, sidebar collapsibility, popover and sheet routing. SwiftUI's `NavigationSplitView` and `.toolbar` modifiers added an abstraction layer that created fragile boundaries (toolbar layout limitations, popover and sheet routing through SwiftUI state) and the conversion to AppKit removed that whole class of issue. Standardizing on one UI framework also shrank the framework surface and eliminated SwiftUI ↔ AppKit interop bugs.
 
-**Alternatives:** SwiftUI `NavigationSplitView` with `.toolbar` modifiers — simpler but encountered persistent toolbar layout issues. Pure SwiftUI with `WindowGroup`/`Window` — loses multi-window management needed for VM display windows.
+**Alternatives:** SwiftUI `NavigationSplitView` with `.toolbar` modifiers — the original design; replaced wholesale due to persistent toolbar layout issues and SwiftUI/AppKit interop pain. Hybrid AppKit + SwiftUI (the previous intermediate state) — solved the structural issues but kept the interop boundary; the final conversion removes that boundary entirely.
 
 ### 2. VM bundle as `.kernova` package directory
 
@@ -412,9 +419,8 @@ Three standalone targets are built alongside the main app — two CLI tools and 
 | Framework | Role |
 |-----------|------|
 | **Virtualization** | Core VM lifecycle — create, configure, start, stop, pause, resume VMs. Requires `com.apple.security.virtualization` entitlement. |
-| **AppKit** | Window management (`NSWindowController`, `NSSplitViewController`), toolbar (`NSToolbar`), menus, app delegate. |
-| **SwiftUI** | UI views (settings, sidebar, wizards), hosted in `NSHostingController` children within AppKit window controllers. VM display is pure AppKit via `VMDisplayBackingView`. |
-| **Observation** | `@Observable` macro for `VMInstance`, `VMLibraryViewModel`, `VMCreationViewModel`. |
+| **AppKit** | All UI: window management (`NSWindowController`, `NSSplitViewController`), toolbar (`NSToolbar`), source-list sidebar (`NSOutlineView`), detail panes (`NSViewController` + per-row `NSView` subclasses), menus, alerts (`NSAlert`), popovers (`NSPopover`), and the VM display (`VZVirtualMachineView` via `VMDisplayBackingView`). |
+| **Observation** | `@Observable` macro for `VMInstance`, `VMLibraryViewModel`, `VMCreationViewModel`. Bridged to AppKit via `observeRecurring(track:apply:)`. |
 | **UniformTypeIdentifiers** | `UTType` declaration for `.kernova` VM bundles. |
 | **os** | Unified logging via `os.Logger`. |
 | **CryptoKit** | SHA-256 digest of the bundle path → deterministic UUID for the synthesized main disk (see `ConfigurationBuilder.stableMainDiskID(forBundleAt:)`). Apple system framework. |
@@ -442,6 +448,10 @@ No third-party (non-Apple) package dependencies. No CocoaPods or Carthage.
 | `VMGuestOS` | Yes | Enum cases and properties |
 | `MacOSInstallState` | Yes | Phase tracking, progress calculation |
 | `VMToolbarManager` | 22 tests | Item creation, state updates, configuration flags, label toggling |
+| `SidebarViewController` | 15 tests | Data source counts (group + instances), drag pasteboard guards (group sentinel, preparing instance), drop-URL filter, and per-status context-menu construction (stopped, running, cold-paused, preparing, error) |
+| `VMInstance.visibleSidebarAgentStatus` | 11 tests | Pure-data branches: Linux always nil, install in progress nil, .current always hidden, .waiting suppressed by nudge-dismissed and by non-live + lastSeen, .waiting + live always surfaces, .outdated / .expectedMissing / .unresponsive / .connecting all surface |
+| `AgentStatusPopoverMetrics` | 8 tests | Per-status title, body interpolation (vmName + versions), action-button title |
+| `AgentStatusPopoverViewController` | 6 tests | View-tree wiring (title/body/action by identifier), default action keyEquivalent, optional dismiss link gated by callback presence, callback invocation |
 | `DataFormatters` | Yes | Byte formatting, CPU count formatting |
 | `NSImageExtensions` | Yes | SF Symbol loading with known symbol validation |
 | `SpiceAgentProtocol` | Yes | VDI chunk/message serialization round-trips, parser with multi-message feeds, partial data, unknown types, clientPort constant, port-parameterized builders |
@@ -469,7 +479,7 @@ These services interact with system processes, the network, or VZ installer inte
 - `KernovaUTType` — static UTType declaration
 - All window controllers (`MainWindowController`, `VMDisplayWindowController`, `SerialConsoleWindowController`, `ClipboardWindowController`)
 - `AppDelegate` — app lifecycle and window management
-- All SwiftUI views
+- `SidebarRowView` rename + status indicator (data-source + drag/drop + context menu are covered)
 
 ### Test Patterns
 

@@ -1,6 +1,5 @@
 import Cocoa
 import os
-import SwiftUI
 
 /// Manages the main library window using an `NSSplitViewController` for sidebar/detail layout
 /// and an `NSToolbar` with native toolbar items.
