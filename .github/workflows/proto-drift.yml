@@ -19,6 +19,7 @@ on:
       - 'Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved'
       - 'Tools/regen-proto.sh'
       - '.github/workflows/proto-drift.yml'
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
@@ -39,6 +40,7 @@ jobs:
           sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
           xcodebuild -version
           swift --version
+          echo "XCODE_BUILD=$(xcodebuild -version | awk '/Build version/ {print $3}')" >> "$GITHUB_ENV"
 
       - name: Install protoc
         run: |
@@ -49,7 +51,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: KernovaProtocol/.build
-          key: ${{ runner.os }}-proto-drift-${{ hashFiles('KernovaProtocol/Package.swift') }}
+          key: ${{ runner.os }}-proto-drift-${{ env.XCODE_BUILD }}-${{ hashFiles('Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
 
       - name: Build protoc-gen-swift from resolved swift-protobuf
         run: |
