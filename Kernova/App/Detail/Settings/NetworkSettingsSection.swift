@@ -61,6 +61,21 @@ final class NetworkSettingsSection: NSObject {
 
         section.setBody(settingsStackRows([toggleRow, macAddressRow]))
         section.setLocked(isReadOnly)
+        let isLinux = instance.configuration.guestOS == .linux
+        section.setInfoHelp(title: "Network") {
+            var paragraphs = [
+                "NAT-mode networking. The host assigns the guest a DHCP address on a private subnet."
+                    + " Outbound connections work; there is no port forwarding from host to guest —"
+                    + " incoming connections require knowing the guest's IP."
+            ]
+            if isLinux {
+                paragraphs.append(
+                    "The interface usually appears as enp0s1. If networking doesn't come up, make"
+                        + " sure your distro's DHCP client or NetworkManager is running."
+                )
+            }
+            return calloutParagraphs(paragraphs)
+        }
     }
 
     private func apply() {

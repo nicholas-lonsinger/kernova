@@ -45,8 +45,21 @@ final class GuestAgentSettingsSection: NSObject {
         agentNudgeToggle.target = self
         agentNudgeToggle.action = #selector(agentNudgeChanged(_:))
 
-        let row1 = makeLabeledRow("Forward guest logs", control: agentLogToggle)
-        let row2 = makeLabeledRow("Show install reminder", control: agentNudgeToggle)
+        let row1 = makeLabeledRowWithInfo("Forward guest logs", control: agentLogToggle) {
+            calloutText(
+                "Streams os.Logger records from the macOS guest agent to the host so they appear in"
+                    + " Console.app under com.kernova.guest. Off by default; can be toggled while"
+                    + " the VM is running."
+            )
+        }
+        let row2 = makeLabeledRowWithInfo("Show install reminder", control: agentNudgeToggle) {
+            calloutText(
+                "Surfaces the install icon in the sidebar when the guest agent has not yet"
+                    + " connected. Turn off to suppress the nudge for this VM. The more urgent"
+                    + " indicators (update available, didn't reconnect, unresponsive) are not"
+                    + " affected."
+            )
+        }
         section.setBody(settingsStackRows([row1, row2]))
     }
 

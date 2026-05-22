@@ -62,6 +62,17 @@ final class RemovableMediaSettingsSection: NSObject {
 
         let buttonRow = settingsHorizontalStack([attachButton, createButton], spacing: 8)
         section.setBody(settingsStackRows([rowsContainer, buttonRow]))
+        let isLinux = instance.configuration.guestOS == .linux
+        section.setInfoHelp(title: "Removable Media") {
+            calloutParagraphs([
+                isLinux
+                    ? "Appears as a USB Mass Storage device (typically /dev/sda or similar). Most"
+                        + " desktop distros auto-mount; headless installs need an explicit mount."
+                    : "Appears as a removable USB drive in Finder; auto-mounts.",
+                "Hot-pluggable — changes take effect immediately while the VM is running. For boot"
+                    + " media, use Storage Disks instead.",
+            ])
+        }
     }
 
     private func apply() {

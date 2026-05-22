@@ -4,13 +4,16 @@ import AppKit
 ///
 /// Renders an inset rounded background with a header row that supports
 /// an optional lock icon for sections that disable while the VM is
-/// running.
+/// running, plus an optional trailing info button that reveals
+/// per-section help text in a popover.
 @MainActor
 final class SettingsSection: NSStackView {
     private let titleLabel = NSTextField(labelWithString: "")
     private let lockIcon = NSImageView()
     private let bodyContainer = NSStackView()
     private let backgroundView = NSView()
+    private let header = NSStackView()
+    private var infoButton: InfoButton?
 
     init(title: String, lockable: Bool = false) {
         super.init(frame: .zero)
@@ -37,16 +40,16 @@ final class SettingsSection: NSStackView {
             lockIcon.removeFromSuperview()
         }
 
-        let header = NSStackView(views: lockable ? [lockIcon, titleLabel] : [titleLabel])
         header.orientation = .horizontal
         header.alignment = .centerY
         header.spacing = 6
         header.edgeInsets = NSEdgeInsets(top: 0, left: 4, bottom: 0, right: 0)
+        let initial: [NSView] = lockable ? [lockIcon, titleLabel] : [titleLabel]
+        header.setViews(initial, in: .leading)
 
         bodyContainer.orientation = .vertical
         bodyContainer.alignment = .leading
         bodyContainer.spacing = 8
-        bodyContainer.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
         bodyContainer.translatesAutoresizingMaskIntoConstraints = false
 
         backgroundView.wantsLayer = true
@@ -55,9 +58,25 @@ final class SettingsSection: NSStackView {
         backgroundView.layer?.borderWidth = 1
         backgroundView.layer?.cornerRadius = 8
         backgroundView.translatesAutoresizingMaskIntoConstraints = false
-        backgroundView.addFullSizeSubview(bodyContainer)
+        backgroundView.addSubview(bodyContainer)
+        NSLayoutConstraint.activate([
+            bodyContainer.topAnchor.constraint(equalTo: backgroundView.topAnchor, constant: 12),
+            bodyContainer.leadingAnchor.constraint(equalTo: backgroundView.leadingAnchor, constant: 12),
+            bodyContainer.trailingAnchor.constraint(equalTo: backgroundView.trailingAnchor, constant: -12),
+            bodyContainer.bottomAnchor.constraint(equalTo: backgroundView.bottomAnchor, constant: -12),
+        ])
 
         setViews([header, backgroundView], in: .leading)
+        // RATIONALE: NSStackView's `.leading` alignment only pins cross-axis
+        // edges; it does not stretch arranged subviews to fill the stack's
+        // width like SwiftUI's VStack does. Without these explicit width
+        // pins the header and rounded background collapse to their intrinsic
+        // content widths and the section appears squashed against the
+        // leading edge of the detail pane.
+        NSLayoutConstraint.activate([
+            header.widthAnchor.constraint(equalTo: widthAnchor),
+            backgroundView.widthAnchor.constraint(equalTo: widthAnchor),
+        ])
     }
 
     @available(*, unavailable)
@@ -70,6 +89,21 @@ final class SettingsSection: NSStackView {
         lockIcon.isHidden = !locked
     }
 
+    /// Attach an info button after the title that presents `build()` in a
+    /// popover when clicked.
+    ///
+    /// Re-calling replaces the existing button so callers can swap help
+    /// content per guest OS without leaking views.
+    func setInfoHelp(title: String, build: @escaping () -> NSView) {
+        if let existing = infoButton {
+            header.removeArrangedSubview(existing)
+            existing.removeFromSuperview()
+        }
+        let button = InfoButton(label: title, contentBuilder: build)
+        header.addArrangedSubview(button)
+        infoButton = button
+    }
+
     /// Replace the section body with the given view.
     ///
     /// Convenience for sections that own a single composite body view; the
@@ -79,11 +113,13 @@ final class SettingsSection: NSStackView {
             sub.removeFromSuperview()
         }
         bodyContainer.addArrangedSubview(view)
+        pinRowWidth(view)
     }
 
     /// Append a row to the section body.
     func addRow(_ view: NSView) {
         bodyContainer.addArrangedSubview(view)
+        pinRowWidth(view)
     }
 
     /// Remove all rows from the section body.
@@ -91,6 +127,16 @@ final class SettingsSection: NSStackView {
         for sub in bodyContainer.arrangedSubviews {
             sub.removeFromSuperview()
         }
+    }
+
+    /// Force the row to fill the body container's full cross-axis width.
+    ///
+    /// Same NSStackView caveat as in `init` — `.leading` alignment does not
+    /// stretch arranged subviews. Without this pin, the trailing
+    /// `settingsSpacer()` in label/value rows has no surplus width to
+    /// consume and the value collapses next to its label.
+    private func pinRowWidth(_ view: NSView) {
+        view.widthAnchor.constraint(equalTo: bodyContainer.widthAnchor).isActive = true
     }
 }
 

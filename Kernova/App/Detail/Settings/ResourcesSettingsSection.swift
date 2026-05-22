@@ -71,6 +71,13 @@ final class ResourcesSettingsSection: NSObject {
         )
         section.setBody(settingsStackRows([cpuRow, memRow]))
         section.setLocked(isReadOnly)
+        section.setInfoHelp(title: "Resources") {
+            calloutText(
+                "Memory is committed to the VM up-front at start time — keep enough free on the host"
+                    + " to avoid swap pressure. CPU cores are scheduled by the host; over-committing"
+                    + " is fine but reduces per-core performance under load."
+            )
+        }
     }
 
     private func apply() {

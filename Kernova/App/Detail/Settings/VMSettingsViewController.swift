@@ -138,6 +138,16 @@ final class VMSettingsViewController: NSViewController {
         container.addFullSizeSubview(scroll)
         view = container
 
+        // RATIONALE: NSScrollView sizes its documentView to intrinsic content
+        // size by default. Without pinning the document's width to the clip
+        // view, the width-pin chain below has nothing fixed to terminate
+        // against and resolves to whatever minimum width the sections happen
+        // to need, leaving them squashed against the leading edge. Pinning
+        // the document to `contentView.widthAnchor` (the clip view) makes it
+        // exactly as wide as the visible scroll area and propagates that
+        // width through the section pins.
+        documentView.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor).isActive = true
+
         // Pin each section's width to the document so sections take full available width.
         var widthPinned: [NSView] = sectionViews
         if let guestAgentSection { widthPinned.append(guestAgentSection.section) }

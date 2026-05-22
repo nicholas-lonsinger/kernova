@@ -75,6 +75,27 @@ final class StorageSettingsSection: NSObject {
             [attachButton, createButton, editBootOrderButton], spacing: 8)
         section.setBody(settingsStackRows([rowsContainer, buttonRow]))
         section.setLocked(isReadOnly)
+        let isLinux = instance.configuration.guestOS == .linux
+        section.setInfoHelp(title: "Storage Disks") {
+            calloutParagraphs(
+                isLinux
+                    ? [
+                        "Position 1 boots first on EFI guests; on Linux Kernel boot, position affects"
+                            + " device enumeration but not boot priority.",
+                        "Permanent disks attach as virtio block devices (/dev/vda, /dev/vdb, …).",
+                        "Installer images (.iso, .dmg) attach as USB Mass Storage entries on this"
+                            + " list — still bootable, separate from hot-pluggable Removable Media —"
+                            + " so reordering an installer doesn't change your main disk's /dev/vda"
+                            + " letter.",
+                    ]
+                    : [
+                        "Position 1 is the main system disk; subsequent positions follow in order.",
+                        "Permanent disks attach as virtio block devices.",
+                        "Installer images (.iso, .dmg) attach as USB Mass Storage entries on this"
+                            + " list — still bootable, separate from hot-pluggable Removable Media.",
+                    ]
+            )
+        }
     }
 
     private func apply() {

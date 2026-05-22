@@ -51,6 +51,17 @@ final class ClipboardSettingsSection: NSObject {
 
         let row = makeLabeledRow("Clipboard Sharing", control: clipboardToggle)
         section.setBody(settingsStackRows([row, clipboardLinuxHint]))
+        let isLinux = instance.configuration.guestOS == .linux
+        section.setInfoHelp(title: "Clipboard") {
+            calloutText(
+                isLinux
+                    ? "Exchanges clipboard text between host and guest. Requires spice-vdagent"
+                        + " installed in the guest via its package manager."
+                    : "Exchanges clipboard text between host and guest. Uses the bundled Kernova"
+                        + " guest agent — Kernova will offer to install or update it from the"
+                        + " clipboard window."
+            )
+        }
     }
 
     private func apply() {

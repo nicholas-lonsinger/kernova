@@ -46,6 +46,36 @@ final class SharedDirectoriesSettingsSection: NSObject {
         addButton.isEnabled = !isReadOnly
         section.setBody(settingsStackRows([rowsContainer, addButton]))
         section.setLocked(isReadOnly)
+        let isLinux = instance.configuration.guestOS == .linux
+        section.setInfoHelp(title: "Shared Directories") {
+            let stack = NSStackView()
+            stack.orientation = .vertical
+            stack.alignment = .leading
+            stack.spacing = 10
+            if isLinux {
+                stack.addArrangedSubview(
+                    calloutText(
+                        "Exposed as virtiofs mounts. Each share gets a numbered tag (share0,"
+                            + " share1, …) in list order. Mount with:"
+                    )
+                )
+                let mountCommand = NSTextField(labelWithString: "mount -t virtiofs share0 /mnt/myshare")
+                mountCommand.font = .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+                mountCommand.isSelectable = true
+                stack.addArrangedSubview(mountCommand)
+            } else {
+                stack.addArrangedSubview(
+                    calloutText("Auto-mounts at /Volumes/My Shared Files/ in the guest.")
+                )
+            }
+            let caveat = calloutText(
+                "VirtioFS has known framework limitations — files may intermittently appear missing,"
+                    + " and host/guest permission mapping can differ."
+            )
+            caveat.textColor = .secondaryLabelColor
+            stack.addArrangedSubview(caveat)
+            return stack
+        }
     }
 
     private func apply() {

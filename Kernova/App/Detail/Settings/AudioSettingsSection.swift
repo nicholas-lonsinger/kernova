@@ -95,6 +95,19 @@ final class AudioSettingsSection: NSObject {
         section.setBody(
             settingsStackRows([toggleRow, micNotDeterminedLabel, micDeniedBanner]))
         section.setLocked(isReadOnly)
+        let isLinux = instance.configuration.guestOS == .linux
+        section.setInfoHelp(title: "Audio") {
+            var paragraphs = [
+                "Exposes a VirtioSound device. Speaker output is always enabled; toggle the"
+                    + " microphone to grant the guest access to your host mic."
+            ]
+            if isLinux {
+                paragraphs.append(
+                    "Requires Linux kernel 5.14 or newer to detect the VirtioSound device."
+                )
+            }
+            return calloutParagraphs(paragraphs)
+        }
     }
 
     private func apply() {
