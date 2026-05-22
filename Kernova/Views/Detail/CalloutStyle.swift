@@ -49,6 +49,7 @@ func makeCalloutHeadline(_ text: String) -> NSTextField {
     label.lineBreakMode = .byWordWrapping
     label.maximumNumberOfLines = 0
     label.preferredMaxLayoutWidth = CalloutStyle.bodyWidth
+    label.isSelectable = false
     return label
 }
 
@@ -68,6 +69,10 @@ func makeCalloutBody(_ text: String, color: NSColor = CalloutStyle.bodyColor) ->
     label.preferredMaxLayoutWidth = CalloutStyle.bodyWidth
     label.lineBreakMode = .byWordWrapping
     label.maximumNumberOfLines = 0
+    // `NSTextField(wrappingLabelWithString:)` returns a label that is
+    // selectable by default — surprising for prose-style body text. Only
+    // `.code` paragraphs (via `makeCalloutCode`) want selection.
+    label.isSelectable = false
     return label
 }
 

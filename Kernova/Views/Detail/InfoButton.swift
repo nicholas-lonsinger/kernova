@@ -28,23 +28,18 @@ struct InfoButton: NSViewRepresentable {
         Coordinator()
     }
 
-    func makeNSView(context: Context) -> NSButton {
-        let button = NSButton()
-        button.translatesAutoresizingMaskIntoConstraints = false
-        button.bezelStyle = .accessoryBarAction
-        button.isBordered = false
-        button.imageScaling = .scaleProportionallyDown
-        button.contentTintColor = .secondaryLabelColor
-        button.target = context.coordinator
-        button.action = #selector(Coordinator.buttonClicked(_:))
-        configure(button: button)
+    func makeNSView(context: Context) -> InfoButtonView {
+        let view = InfoButtonView()
+        view.button.target = context.coordinator
+        view.button.action = #selector(Coordinator.buttonClicked(_:))
         context.coordinator.paragraphs = paragraphs
-        return button
+        configure(button: view.button)
+        return view
     }
 
-    func updateNSView(_ button: NSButton, context: Context) {
+    func updateNSView(_ view: InfoButtonView, context: Context) {
         context.coordinator.paragraphs = paragraphs
-        configure(button: button)
+        configure(button: view.button)
     }
 
     /// Sets the info-circle icon (scaled `.small` to match the SwiftUI
@@ -71,5 +66,53 @@ struct InfoButton: NSViewRepresentable {
             let vc = InfoPopoverContentViewController(paragraphs: paragraphs)
             presenter.show(content: vc, from: sender, preferredEdge: .minY)
         }
+    }
+}
+
+/// Wrapper `NSView` housing the info-circle `NSButton`.
+///
+/// Two reasons the button is wrapped instead of exposed directly to SwiftUI:
+///
+/// 1. **Stable coordinate system for popover anchoring.** When an `NSView`
+///    is hosted directly by SwiftUI via `NSViewRepresentable`, SwiftUI sets
+///    `isFlipped = true` on the outermost hosted view to match its
+///    top-left-origin layout system. `NSPopover.preferredEdge` is
+///    geometric, so `.minY` on a flipped view picks the top edge and the
+///    popover anchors *above* the button. Anchoring to an inner subview
+///    (this view's `button`) keeps it in standard AppKit coordinates so
+///    `.minY` correctly means "below."
+/// 2. **Tight intrinsic size.** A bare `NSButton` exposed to SwiftUI has no
+///    fixed size and is expanded by `HStack` to fill remaining row width,
+///    floating the info-circle image into the middle of the row. The
+///    explicit 16×16 size below keeps the icon adjacent to the trailing
+///    edge of the section or control label.
+@MainActor
+final class InfoButtonView: NSView {
+    let button = NSButton()
+
+    init() {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.bezelStyle = .accessoryBarAction
+        button.isBordered = false
+        button.imageScaling = .scaleProportionallyDown
+        button.contentTintColor = .secondaryLabelColor
+        addSubview(button)
+
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: 16),
+            heightAnchor.constraint(equalToConstant: 16),
+            button.leadingAnchor.constraint(equalTo: leadingAnchor),
+            button.trailingAnchor.constraint(equalTo: trailingAnchor),
+            button.topAnchor.constraint(equalTo: topAnchor),
+            button.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("InfoButtonView does not support NSCoder")
     }
 }
