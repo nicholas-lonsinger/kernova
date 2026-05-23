@@ -159,52 +159,51 @@ struct VMSettingsView: View {
                 .padding()
             }
         }
-        .alert(
-            "Remove \(diskToRemove?.label ?? "Disk")?",
+        .sheetAlert(
             isPresented: $showingRemoveDiskAlert,
             presenting: diskToRemove
         ) { disk in
-            Button("Move to Trash", role: .destructive) {
-                viewModel.removeStorageDisk(disk, from: instance, trashFile: true)
-                diskToRemove = nil
-            }
-            Button("Remove from VM") {
-                viewModel.removeStorageDisk(disk, from: instance, trashFile: false)
-                diskToRemove = nil
-            }
-            Button("Cancel", role: .cancel) {
-                diskToRemove = nil
-            }
-        } message: { disk in
-            if disk.isInternal {
-                Text(
-                    "Move to Trash will send the bundle-owned disk image to the Trash. Remove from VM will delist the entry while keeping the file."
-                )
-            } else {
-                Text(
-                    "Move to Trash will send \(disk.path) to the Trash. Remove from VM will delist the disk and leave the file alone."
-                )
-            }
+            AlertConfiguration(
+                title: "Remove \(disk.label)?",
+                message: disk.isInternal
+                    ? "Move to Trash will send the bundle-owned disk image to the Trash. Remove from VM will delist the entry while keeping the file."
+                    : "Move to Trash will send \(disk.path) to the Trash. Remove from VM will delist the disk and leave the file alone.",
+                buttons: [
+                    AlertButton("Move to Trash", role: .destructive) {
+                        viewModel.removeStorageDisk(disk, from: instance, trashFile: true)
+                        diskToRemove = nil
+                    },
+                    AlertButton("Remove from VM", role: .default) {
+                        viewModel.removeStorageDisk(disk, from: instance, trashFile: false)
+                        diskToRemove = nil
+                    },
+                    AlertButton("Cancel", role: .cancel) {
+                        diskToRemove = nil
+                    },
+                ]
+            )
         }
-        .alert(
-            "Remove \(removableMediaToRemove?.label ?? "Disc")?",
+        .sheetAlert(
             isPresented: $showingRemoveRemovableMediaAlert,
             presenting: removableMediaToRemove
         ) { item in
-            Button("Move to Trash", role: .destructive) {
-                viewModel.removeRemovableMedia(item, from: instance, trashFile: true)
-                removableMediaToRemove = nil
-            }
-            Button("Remove from VM") {
-                viewModel.removeRemovableMedia(item, from: instance, trashFile: false)
-                removableMediaToRemove = nil
-            }
-            Button("Cancel", role: .cancel) {
-                removableMediaToRemove = nil
-            }
-        } message: { item in
-            Text(
-                "Move to Trash will send \(item.path) to the Trash. Remove from VM will detach the disc and leave the file alone."
+            AlertConfiguration(
+                title: "Remove \(item.label)?",
+                message:
+                    "Move to Trash will send \(item.path) to the Trash. Remove from VM will detach the disc and leave the file alone.",
+                buttons: [
+                    AlertButton("Move to Trash", role: .destructive) {
+                        viewModel.removeRemovableMedia(item, from: instance, trashFile: true)
+                        removableMediaToRemove = nil
+                    },
+                    AlertButton("Remove from VM", role: .default) {
+                        viewModel.removeRemovableMedia(item, from: instance, trashFile: false)
+                        removableMediaToRemove = nil
+                    },
+                    AlertButton("Cancel", role: .cancel) {
+                        removableMediaToRemove = nil
+                    },
+                ]
             )
         }
         .onAppear {

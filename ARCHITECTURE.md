@@ -98,7 +98,9 @@ Kernova/
 │   ├── NSImageExtensions.swift         # Nil-safe SF Symbol image loading
 │   ├── NSViewExtensions.swift          # Full-size subview constraint helper
 │   ├── ObservationLoop.swift           # observeRecurring(track:apply:) helper wrapping withObservationTracking
-│   └── PopoverPresenter.swift          # `NSPopover` lifecycle wrapper — one instance per anchor, refreshes content in place if shown again, fires `onClose` after dismissal
+│   ├── PopoverPresenter.swift          # `NSPopover` lifecycle wrapper — one instance per anchor, refreshes content in place if shown again, fires `onClose` after dismissal
+│   ├── SheetAlert.swift                # AppKit `NSAlert` presenter — `AlertConfiguration` (title + message + ordered `[AlertButton]`) + role enum (`.default` / `.cancel` / `.destructive` / `.standard`) maps to key-equivalents and `hasDestructiveAction`. `presentSheetAlert(_:in:completion:)` shows the alert as a window-modal sheet on the supplied `NSWindow`.
+│   └── SheetAlertModifier.swift        # SwiftUI bridge — `.sheetAlert(isPresented:, [presenting:,] configuration:)` modifier matching SwiftUI `.alert()` shape; a `WindowAccessor` representable captures the host `NSWindow`; `onChange(of: isPresented)` triggers `presentSheetAlert` and the completion handler resets the binding
 └── Resources/
     ├── Assets.xcassets/                # App icons and image assets
     └── Kernova.entitlements            # com.apple.security.virtualization entitlement
@@ -175,7 +177,8 @@ KernovaTests/
 ├── DiskSizePopoverContentViewControllerTests.swift # Popup population, default selection, headline/caption injection, Cancel/Create delegate firing
 ├── InfoPopoverContentViewControllerTests.swift # Paragraph rendering, fitting size, monospaced+selectable code paragraphs
 ├── MicrophonePermissionPopoverContentViewControllerTests.swift # Layout loads, headline+sub-headline present, divider present, bold step font runs, non-selectable bodies
-└── AgentStatusPopoverContentViewControllerTests.swift # update() swaps title/body/action-button per status, dismiss-button visibility, delegate firing for action and dismiss, `requiresMountAction(for:)` classifier
+├── AgentStatusPopoverContentViewControllerTests.swift # update() swaps title/body/action-button per status, dismiss-button visibility, delegate firing for action and dismiss, `requiresMountAction(for:)` classifier
+└── SheetAlertTests.swift                # Role-to-NSButton-config mapping (keyEquivalent + hasDestructiveAction per role), response-index → button-action dispatch, AlertConfiguration shape
 
 KernovaGuestAgentTests/                 # Unit tests for the guest agent (standalone xctest bundle — no TEST_HOST)
 │                                       # Compiles KernovaGuestAgent source files directly (except main.swift)
@@ -190,7 +193,7 @@ KernovaGuestAgentTests/                 # Unit tests for the guest agent (standa
 └── VsockGuestControlAgentTests.swift   # Hello on connect, heartbeat cadence, reconnect after host close
 ```
 
-**Total: 70 source files + 2 helpers, 39 test files (31 suites + 8 mocks + 1 test-helpers).**
+**Total: 72 source files + 2 helpers, 40 test files (32 suites + 8 mocks + 1 test-helpers).**
 
 *Note: `ContentView.swift` was removed when `NavigationSplitView` was replaced by `NSSplitViewController` in `MainWindowController`. Its responsibilities were split between `MainWindowController` (toolbar, split view) and `MainDetailView` (detail switching, sheets, alerts).*
 

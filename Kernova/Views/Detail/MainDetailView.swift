@@ -31,24 +31,25 @@ struct MainDetailView: View {
         .sheet(isPresented: $viewModel.showCreationWizard) {
             VMCreationWizardView(viewModel: viewModel)
         }
-        .alert(
-            "Error",
+        .sheetAlert(
             isPresented: $viewModel.showError,
             presenting: viewModel.errorMessage
-        ) { _ in
-            Button("OK", role: .cancel) {}
-        } message: { message in
-            Text(message)
+        ) { message in
+            AlertConfiguration(
+                title: "Error",
+                message: message,
+                buttons: [AlertButton("OK", role: .cancel)]
+            )
         }
-        .alert(
-            "Installer Mounted",
+        .sheetAlert(
             isPresented: $viewModel.showInstallerMountedAlert,
             presenting: viewModel.installerMountedVMName
-        ) { _ in
-            Button("OK", role: .cancel) {}
-        } message: { vmName in
-            Text(
-                "The Kernova guest agent installer has been attached to \(vmName) as a USB disk. Inside the VM, open the “Kernova Guest Agent” disk in Finder and run install.command to complete setup."
+        ) { vmName in
+            AlertConfiguration(
+                title: "Installer Mounted",
+                message:
+                    "The Kernova guest agent installer has been attached to \(vmName) as a USB disk. Inside the VM, open the “Kernova Guest Agent” disk in Finder and run install.command to complete setup.",
+                buttons: [AlertButton("OK", role: .cancel)]
             )
         }
     }
