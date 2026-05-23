@@ -193,15 +193,14 @@ final class DeleteVMSheetContentViewController: NSViewController {
         listStack.orientation = .vertical
         listStack.alignment = .leading
         listStack.spacing = 12
-        // No top/bottom inset: the dividers above and below already
-        // provide visual closure, and the row's own implicit padding
-        // (label/path font ascender + box padding) gives ~6pt of natural
-        // breathing room. Left/right keep the 16pt margin so list content
-        // column-aligns with the header and footer.
+        // 16pt all around inside the scroll view — matches the SwiftUI
+        // behavioral spec (`.padding(16)` on the inner VStack) and gives
+        // the rows the same breathing room from the dividers that the
+        // header and footer have from their own container edges.
         listStack.edgeInsets = NSEdgeInsets(
-            top: 0,
+            top: Self.padding,
             left: Self.padding,
-            bottom: 0,
+            bottom: Self.padding,
             right: Self.padding
         )
         listStack.translatesAutoresizingMaskIntoConstraints = false
@@ -226,15 +225,18 @@ final class DeleteVMSheetContentViewController: NSViewController {
         // small attachment lists (avoids a fixed 240pt of empty space when
         // there are only one or two externals). Shared rows get an extra
         // line for the "Also used by…" warning. The 240pt cap then bounds
-        // the scroll view for longer lists.
+        // the scroll view for longer lists. Add the listStack's 16pt
+        // top+bottom edge insets (32pt total) to the natural height so the
+        // dividers don't crop into the padded region.
         let perRowHeight: CGFloat = 36
         let perSharedRowExtra: CGFloat = 18
         let estimatedRows = externals.reduce(into: CGFloat(0)) { sum, external in
             sum += perRowHeight + (external.isShared ? perSharedRowExtra : 0)
         }
         let spacing = CGFloat(max(0, externals.count - 1)) * 12
-        let estimatedHeight = estimatedRows + spacing
-        let clampedHeight = max(40, min(estimatedHeight, Self.scrollMaxHeight))
+        let verticalInset = Self.padding * 2
+        let estimatedHeight = estimatedRows + spacing + verticalInset
+        let clampedHeight = max(40 + verticalInset, min(estimatedHeight, Self.scrollMaxHeight))
         scrollView.heightAnchor.constraint(equalToConstant: clampedHeight).isActive = true
 
         return scrollView
@@ -245,8 +247,16 @@ final class DeleteVMSheetContentViewController: NSViewController {
             image: .systemSymbol(external.symbolName, accessibilityDescription: "")
         )
         icon.contentTintColor = .secondaryLabelColor
+        icon.translatesAutoresizingMaskIntoConstraints = false
         icon.setContentHuggingPriority(.required, for: .horizontal)
         icon.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // Explicit 18pt-wide column for the row icon. SF Symbols have
+        // slightly different intrinsic widths per glyph (`externaldrive`
+        // vs `opticaldisc`); pinning the column keeps the label column
+        // perfectly aligned across rows in a multi-row list.
+        let iconColumnWidth: CGFloat = 18
+        icon.widthAnchor.constraint(equalToConstant: iconColumnWidth).isActive = true
+        icon.imageAlignment = .alignCenter
 
         let label = NSTextField(labelWithString: external.label)
         label.font = .preferredFont(forTextStyle: .body)
@@ -278,15 +288,15 @@ final class DeleteVMSheetContentViewController: NSViewController {
         textStack.alignment = .leading
         textStack.spacing = 2
 
-        // Horizontal NSStackView for the row — `.centerY` aligns the icon
-        // vertically with the label center (canonical AppKit list-row
-        // look, matches Finder/Mail row layouts). `.firstBaseline` would
-        // float the icon's top above the label's top by a few points
-        // because NSImageView baseline = image bottom, adding asymmetric
-        // vertical space above each row.
+        // `.firstBaseline` anchors the icon to the label's first-line
+        // baseline — the canonical AppKit pattern for an icon row with a
+        // primary label plus a metadata caption (Finder Get Info
+        // attachments panel, Mail attachment cells). `.centerY` would
+        // float the icon into the middle of the label+path stack
+        // (visually drifting it away from the label it's labeling).
         let row = NSStackView(views: [icon, textStack])
         row.orientation = .horizontal
-        row.alignment = .centerY
+        row.alignment = .firstBaseline
         row.spacing = 12
         return row
     }
