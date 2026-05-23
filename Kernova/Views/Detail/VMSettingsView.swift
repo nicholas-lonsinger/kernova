@@ -660,9 +660,9 @@ struct VMSettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
                         .buttonStyle(.plain)
-                        .popover(isPresented: $showingMicPermissionInfo, arrowEdge: .trailing) {
-                            micPermissionInfoPopover
-                        }
+                        .background(
+                            MicPermissionPopoverAnchor(isPresented: $showingMicPermissionInfo)
+                        )
                     }
                     .padding(10)
                     .background {
@@ -851,30 +851,5 @@ struct VMSettingsView: View {
         }
 
         sharedDirectoriesBinding.wrappedValue = current
-    }
-
-    @ViewBuilder
-    private var micPermissionInfoPopover: some View {
-        CalloutBody {
-            Text("Microphone Permission")
-                .font(.headline)
-
-            Text("Kernova needs microphone permission to pass your mic input to virtual machines.")
-
-            Divider()
-
-            Text("How to enable")
-                .font(.subheadline)
-                .fontWeight(.medium)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("1. Open **System Settings**")
-                Text("2. Go to **Privacy & Security → Microphone**")
-                Text("3. Enable the toggle for **Kernova**")
-            }
-
-            Text("You will need to restart Kernova after granting permission.")
-                .foregroundStyle(.secondary)
-        }
     }
 }
