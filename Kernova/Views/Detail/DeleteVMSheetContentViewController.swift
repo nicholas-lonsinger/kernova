@@ -178,16 +178,25 @@ final class DeleteVMSheetContentViewController: NSViewController {
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = false
         scrollView.autohidesScrollers = true
+        // Disable safe-area-like auto-adjustment so the documentView's top
+        // sits flush against the scroll view top, with only our explicit
+        // listStack.edgeInsets contributing to vertical breathing room.
+        scrollView.automaticallyAdjustsContentInsets = false
+        scrollView.contentInsets = NSEdgeInsetsZero
         scrollView.translatesAutoresizingMaskIntoConstraints = false
 
         let listStack = NSStackView()
         listStack.orientation = .vertical
         listStack.alignment = .leading
         listStack.spacing = 12
+        // Smaller top/bottom inset than left/right: the dividers above and
+        // below the list already provide visual closure, so tight vertical
+        // padding here keeps the list compact while preserving the 16pt
+        // side inset used by header and footer.
         listStack.edgeInsets = NSEdgeInsets(
-            top: Self.padding,
+            top: 8,
             left: Self.padding,
-            bottom: Self.padding,
+            bottom: 8,
             right: Self.padding
         )
         listStack.translatesAutoresizingMaskIntoConstraints = false
@@ -213,14 +222,15 @@ final class DeleteVMSheetContentViewController: NSViewController {
         // there are only one or two externals). Shared rows get an extra
         // line for the "Also used by…" warning. The 240pt cap then bounds
         // the scroll view for longer lists.
-        let perRowHeight: CGFloat = 42
+        let perRowHeight: CGFloat = 36
         let perSharedRowExtra: CGFloat = 18
         let estimatedRows = externals.reduce(into: CGFloat(0)) { sum, external in
             sum += perRowHeight + (external.isShared ? perSharedRowExtra : 0)
         }
         let spacing = CGFloat(max(0, externals.count - 1)) * 12
-        let estimatedHeight = estimatedRows + spacing + Self.padding * 2
-        let clampedHeight = max(60, min(estimatedHeight, Self.scrollMaxHeight))
+        let listInsets: CGFloat = 8 * 2  // matches listStack.edgeInsets top + bottom
+        let estimatedHeight = estimatedRows + spacing + listInsets
+        let clampedHeight = max(52, min(estimatedHeight, Self.scrollMaxHeight))
         scrollView.heightAnchor.constraint(equalToConstant: clampedHeight).isActive = true
 
         return scrollView
