@@ -1,24 +1,18 @@
 name: Proto Drift
 
+# Triggers are intentionally NOT path-filtered at the workflow level — when
+# `proto-drift` is a required status check, a workflow-level `paths:` filter
+# would skip the run entirely on PRs that don't touch proto files, leaving
+# GitHub waiting forever for a status that's never reported. Instead the
+# first job step diffs the changed paths against this workflow's relevance
+# pattern and short-circuits the remaining steps when nothing relevant
+# changed; the job still reports a green status so the required check is
+# satisfied. The early-exit path adds <30s of macOS runner time per PR.
 on:
   pull_request:
     types: [opened, synchronize, reopened]
-    paths:
-      - 'KernovaProtocol/Proto/**'
-      - 'KernovaProtocol/Sources/KernovaProtocol/Generated/**'
-      - 'KernovaProtocol/Package.swift'
-      - 'Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved'
-      - 'Tools/regen-proto.sh'
-      - '.github/workflows/proto-drift.yml'
   push:
     branches: [main]
-    paths:
-      - 'KernovaProtocol/Proto/**'
-      - 'KernovaProtocol/Sources/KernovaProtocol/Generated/**'
-      - 'KernovaProtocol/Package.swift'
-      - 'Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved'
-      - 'Tools/regen-proto.sh'
-      - '.github/workflows/proto-drift.yml'
   workflow_dispatch:
 
 concurrency:
@@ -33,9 +27,54 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
-          fetch-depth: 1
+          # Full history needed so the relevance-filter step below can
+          # `git diff` against the PR base (or the push parent).
+          fetch-depth: 0
+
+      - name: Check for proto-relevant changes
+        id: filter
+        run: |
+          set -euo pipefail
+          # Files whose changes warrant a real drift check. Mirrors what
+          # the workflow-level `paths:` filter used to enumerate.
+          pattern='^(KernovaProtocol/(Proto/|Sources/KernovaProtocol/Generated/|Package\.swift)|Kernova\.xcodeproj/project\.xcworkspace/xcshareddata/swiftpm/Package\.resolved|Tools/regen-proto\.sh|\.github/workflows/proto-drift\.yml)'
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "workflow_dispatch — always running the full check"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+            head="${{ github.event.pull_request.head.sha }}"
+          else
+            base="${{ github.event.before }}"
+            head="${{ github.event.after }}"
+          fi
+
+          # First push to a new branch (or rewritten history) has no
+          # usable base — default to running the full check rather than
+          # silently skipping.
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
+            echo "No base SHA available — running the full check"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          changed_files=$(git diff --name-only "$base" "$head")
+          echo "Changed files:"
+          echo "$changed_files"
+          if echo "$changed_files" | grep -qE "$pattern"; then
+            echo "Proto-relevant files changed — running the full drift check"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No proto-relevant files changed — reporting success without running the drift check"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Select Xcode
+        if: steps.filter.outputs.changed == 'true'
         run: |
           sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
           xcodebuild -version
@@ -43,17 +82,20 @@ jobs:
           echo "XCODE_BUILD=$(xcodebuild -version | awk '/Build version/ {print $3}')" >> "$GITHUB_ENV"
 
       - name: Install protoc
+        if: steps.filter.outputs.changed == 'true'
         run: |
           brew install protobuf
           protoc --version
 
       - name: Cache SwiftPM build for protoc-gen-swift
+        if: steps.filter.outputs.changed == 'true'
         uses: actions/cache@v5
         with:
           path: KernovaProtocol/.build
           key: ${{ runner.os }}-proto-drift-${{ env.XCODE_BUILD }}-${{ hashFiles('Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
 
       - name: Build protoc-gen-swift from resolved swift-protobuf
+        if: steps.filter.outputs.changed == 'true'
         run: |
           set -euo pipefail
           # Mirror the xcworkspace's Package.resolved into the SwiftPM
@@ -76,9 +118,11 @@ jobs:
           "$BIN_DIR/protoc-gen-swift" --version || true
 
       - name: Regenerate Swift bindings
+        if: steps.filter.outputs.changed == 'true'
         run: Tools/regen-proto.sh
 
       - name: Check for drift
+        if: steps.filter.outputs.changed == 'true'
         run: |
           set -euo pipefail
           if ! git diff --quiet KernovaProtocol/Sources/KernovaProtocol/Generated; then
