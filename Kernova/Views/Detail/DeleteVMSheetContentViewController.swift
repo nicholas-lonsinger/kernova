@@ -418,14 +418,13 @@ final class DeleteVMSheetContentViewController: NSViewController {
     // MARK: - Helpers
 
     private func formatSharedVMs(_ names: [String]) -> String {
-        switch names.count {
-        case 0: return ""
-        case 1: return "\u{201C}\(names[0])\u{201D}"
-        case 2: return "\u{201C}\(names[0])\u{201D} and \u{201C}\(names[1])\u{201D}"
-        default:
-            let head = names.dropLast().map { "\u{201C}\($0)\u{201D}" }.joined(separator: ", ")
-            return "\(head), and \u{201C}\(names.last ?? "")\u{201D}"
-        }
+        // Quote each name first, then let Foundation's `ListFormatter`
+        // join them with the locale-correct conjunction and punctuation
+        // (in English: "A", "A and B", "A, B, and C" with the Oxford
+        // comma). Replaces a hand-rolled switch over `names.count`.
+        ListFormatter.localizedString(
+            byJoining: names.map { "\u{201C}\($0)\u{201D}" }
+        )
     }
 
     private func makeHorizontalSeparator() -> NSBox {
