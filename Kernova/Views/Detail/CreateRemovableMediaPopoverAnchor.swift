@@ -63,11 +63,13 @@ struct CreateRemovableMediaPopoverAnchor: NSViewRepresentable {
         var bindingResetter: (() -> Void)?
 
         init() {
-            // User-driven dismissals (click-outside, Escape) arrive here.
-            // Delegate-driven dismissals (Confirm / Cancel buttons) reset
-            // the binding directly in `dismiss()` before initiating close,
-            // so this callback is a no-op for those — bindingResetter is
-            // idempotent.
+            // Fires on every popover dismissal — user-driven
+            // (click-outside, Escape) and programmatic
+            // (`presenter.close()` from `dismiss()`). For delegate-driven
+            // paths `dismiss()` also resets the binding *before* closing
+            // to defend against a SwiftUI re-render bouncing the popover
+            // back open; this onClose re-runs the resetter, but the
+            // boolean write is idempotent so the second call is harmless.
             presenter.onClose = { [weak self] in
                 self?.bindingResetter?()
             }

@@ -86,6 +86,61 @@ struct StorageDiskReorderSheetContentViewControllerTests {
         #expect(vc.performReorder(sourceRow: 99, proposedRow: 0) == false)
     }
 
+    @Test("pasteboard round-trip via tableView(_:acceptDrop:row:dropOperation:)")
+    func acceptDropRoundTrip() {
+        let vc = make(disks: [disk("A"), disk("B"), disk("C")])
+        let delegate = MockDelegate()
+        vc.delegate = delegate
+        vc.loadViewIfNeeded()
+        guard let table = findFirst(NSTableView.self, in: vc.view) else {
+            Issue.record("Expected an NSTableView")
+            return
+        }
+
+        // Drive the pasteboardWriterForRow → acceptDrop round-trip the
+        // way AppKit would: serialize row 0 onto an NSPasteboardItem,
+        // hand it back via a stub NSDraggingInfo, and call acceptDrop
+        // with the same proposed-row that AppKit would supply for a
+        // "drop after row 2" gesture.
+        guard
+            let writer = vc.tableView(table, pasteboardWriterForRow: 0)
+                as? NSPasteboardItem
+        else {
+            Issue.record("Expected an NSPasteboardItem from pasteboardWriterForRow")
+            return
+        }
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("test-drag"))
+        pasteboard.clearContents()
+        pasteboard.writeObjects([writer])
+
+        let dragInfo = StubDraggingInfo(pasteboard: pasteboard)
+        let accepted = vc.tableView(
+            table, acceptDrop: dragInfo, row: 3, dropOperation: .above
+        )
+        #expect(accepted)
+        #expect(vc.currentOrdering.map(\.label) == ["B", "C", "A"])
+        #expect(delegate.reorderedOrderings.last?.map(\.label) == ["B", "C", "A"])
+    }
+
+    @Test("validateDrop returns .move only for .above")
+    func validateDropOperation() {
+        let vc = make(disks: [disk("A"), disk("B")])
+        vc.loadViewIfNeeded()
+        guard let table = findFirst(NSTableView.self, in: vc.view) else {
+            Issue.record("Expected an NSTableView")
+            return
+        }
+        let dragInfo = StubDraggingInfo(pasteboard: NSPasteboard(name: NSPasteboard.Name("test-validate")))
+        #expect(
+            vc.tableView(table, validateDrop: dragInfo, proposedRow: 1, proposedDropOperation: .above)
+                == .move
+        )
+        #expect(
+            vc.tableView(table, validateDrop: dragInfo, proposedRow: 1, proposedDropOperation: .on)
+                == []
+        )
+    }
+
     @Test("Done button fires delegate's didDismiss")
     func doneFiresDelegate() {
         let vc = make(disks: [disk("A"), disk("B")])
@@ -185,4 +240,52 @@ struct StorageDiskReorderSheetContentViewControllerTests {
         }
         return nil
     }
+}
+
+/// Minimum-viable `NSDraggingInfo` stub for the pasteboard round-trip test.
+///
+/// AppKit's protocol surface is large, but `acceptDrop` /
+/// `validateDrop` in our data source only touch `draggingPasteboard`;
+/// every other member returns a neutral default. `@preconcurrency`
+/// silences the actor-isolation mismatch between this main-actor-safe
+/// stub (constructed and used from `@MainActor` test methods) and
+/// `NSDraggingInfo`'s nonisolated protocol requirements.
+private final class StubDraggingInfo: NSObject, @preconcurrency NSDraggingInfo {
+    let pasteboard: NSPasteboard
+    init(pasteboard: NSPasteboard) {
+        self.pasteboard = pasteboard
+        super.init()
+    }
+    var draggingPasteboard: NSPasteboard { pasteboard }
+
+    // Unused — trap so a future change that starts depending on these
+    // surfaces as a test failure rather than silent-default behavior.
+    var draggingDestinationWindow: NSWindow? { nil }
+    var draggingSourceOperationMask: NSDragOperation { .move }
+    var draggingLocation: NSPoint { .zero }
+    var draggedImageLocation: NSPoint { .zero }
+    var draggedImage: NSImage? { nil }
+    var draggingSource: Any? { nil }
+    var draggingSequenceNumber: Int { 0 }
+    var draggingFormation: NSDraggingFormation {
+        get { .default }
+        set { _ = newValue }
+    }
+    var animatesToDestination: Bool {
+        get { false }
+        set { _ = newValue }
+    }
+    var numberOfValidItemsForDrop: Int {
+        get { 0 }
+        set { _ = newValue }
+    }
+    var springLoadingHighlight: NSSpringLoadingHighlight { .none }
+    func slideDraggedImage(to: NSPoint) {}
+    func resetSpringLoading() {}
+    func enumerateDraggingItems(
+        options: NSDraggingItemEnumerationOptions,
+        for: NSView?, classes: [AnyClass],
+        searchOptions: [NSPasteboard.ReadingOptionKey: Any],
+        using: (NSDraggingItem, Int, UnsafeMutablePointer<ObjCBool>) -> Void
+    ) {}
 }

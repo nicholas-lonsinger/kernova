@@ -48,6 +48,14 @@ final class StorageDiskReorderSheetContentViewController: NSViewController {
     private let tableView = NSTableView()
     private let scrollView = NSScrollView()
 
+    /// `true` once `viewWillDisappear` has fired.
+    ///
+    /// Checked by the re-arming `withObservationTracking` closure below
+    /// to break the recursion the moment the sheet starts dismissing —
+    /// without this, the closure keeps re-registering for the lifetime
+    /// of `self`.
+    private var hasDisappeared = false
+
     // MARK: - Layout constants
 
     private static let sheetWidth: CGFloat = 480
@@ -130,6 +138,11 @@ final class StorageDiskReorderSheetContentViewController: NSViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         observeFileMonitor()
+    }
+
+    override func viewWillDisappear() {
+        super.viewWillDisappear()
+        hasDisappeared = true
     }
 
     // MARK: - Header
@@ -257,13 +270,17 @@ final class StorageDiskReorderSheetContentViewController: NSViewController {
     ///
     /// When a file's existence flag flips, the table reloads so the
     /// missing-file affordance updates without the user having to close
-    /// and re-open the sheet.
+    /// and re-open the sheet. The re-arming chain terminates when
+    /// `hasDisappeared` flips in `viewWillDisappear` — without that
+    /// guard the closure keeps registering for the lifetime of `self`,
+    /// even after the sheet has been dismissed.
     private func observeFileMonitor() {
+        if hasDisappeared { return }
         withObservationTracking { [fileMonitor] in
             _ = fileMonitor.existsByPath
         } onChange: { [weak self] in
             Task { @MainActor in
-                guard let self else { return }
+                guard let self, !self.hasDisappeared else { return }
                 self.tableView.reloadData()
                 self.observeFileMonitor()
             }

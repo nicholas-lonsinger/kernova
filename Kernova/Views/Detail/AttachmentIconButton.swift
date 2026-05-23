@@ -24,6 +24,11 @@ final class AttachmentIconButton: NSView {
         plainIcon.translatesAutoresizingMaskIntoConstraints = false
         plainIcon.contentTintColor = .secondaryLabelColor
         plainIcon.imageScaling = .scaleProportionallyUpOrDown
+        // Hidden until `configure(systemName:missingPath:)` reveals the
+        // correct state. Without this, the unconfigured cell briefly
+        // shows an empty 20×20 icon slot between `init()` and the first
+        // configure call.
+        plainIcon.isHidden = true
         addSubview(plainIcon)
         NSLayoutConstraint.activate([
             plainIcon.leadingAnchor.constraint(equalTo: leadingAnchor),

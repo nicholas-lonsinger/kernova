@@ -96,6 +96,12 @@ final class PopoverPresenter: NSObject, NSPopoverDelegate {
 
     // MARK: - NSPopoverDelegate
 
+    // RATIONALE: `NSPopoverDelegate` is not declared `@MainActor` by the
+    // framework, so this callback enters from any actor context. The
+    // `MainActor.assumeIsolated` bridges back to the main-actor-only
+    // properties this presenter owns (`popover`, `onClose`). AppKit only
+    // ever delivers `NSPopoverDelegate` callbacks on the main thread,
+    // making the assertion safe in practice.
     nonisolated func popoverDidClose(_ notification: Notification) {
         MainActor.assumeIsolated {
             popover = nil
