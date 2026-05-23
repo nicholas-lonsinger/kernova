@@ -115,20 +115,21 @@ final class DeleteVMSheetContentViewController: NSViewController {
     // MARK: - Header
 
     private func makeHeader() -> NSView {
-        let container = NSView()
-
         let icon = NSImageView(
             image: .systemSymbol("trash", accessibilityDescription: "")
         )
         icon.contentTintColor = .systemRed
-        icon.translatesAutoresizingMaskIntoConstraints = false
-        icon.symbolConfiguration = NSImage.SymbolConfiguration(textStyle: .title1)
+        icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 22, weight: .regular)
+        icon.setContentHuggingPriority(.required, for: .horizontal)
+        icon.setContentHuggingPriority(.required, for: .vertical)
+        icon.setContentCompressionResistancePriority(.required, for: .horizontal)
+        icon.setContentCompressionResistancePriority(.required, for: .vertical)
 
         let title = NSTextField(labelWithString: "Move \u{201C}\(vmName)\u{201D} to Trash?")
         title.font = .preferredFont(forTextStyle: .headline)
-        title.translatesAutoresizingMaskIntoConstraints = false
         title.lineBreakMode = .byWordWrapping
         title.maximumNumberOfLines = 0
+        title.isSelectable = false
 
         let body = NSTextField(
             wrappingLabelWithString:
@@ -136,7 +137,6 @@ final class DeleteVMSheetContentViewController: NSViewController {
         )
         body.font = .preferredFont(forTextStyle: .callout)
         body.textColor = .secondaryLabelColor
-        body.translatesAutoresizingMaskIntoConstraints = false
         body.lineBreakMode = .byWordWrapping
         body.maximumNumberOfLines = 0
         body.isSelectable = false
@@ -145,18 +145,26 @@ final class DeleteVMSheetContentViewController: NSViewController {
         textStack.orientation = .vertical
         textStack.alignment = .leading
         textStack.spacing = 4
-        textStack.translatesAutoresizingMaskIntoConstraints = false
 
-        container.addSubview(icon)
-        container.addSubview(textStack)
+        // `.firstBaseline` alignment matches the icon's effective baseline
+        // to the title's first-line baseline — looks right regardless of
+        // each subview's internal padding/baseline math. Top-anchor
+        // alignment produces a visual offset because NSImageView and
+        // NSTextField interpret their bounds differently.
+        let headerStack = NSStackView(views: [icon, textStack])
+        headerStack.orientation = .horizontal
+        headerStack.alignment = .firstBaseline
+        headerStack.spacing = 12
+        headerStack.translatesAutoresizingMaskIntoConstraints = false
+
+        let container = NSView()
+        container.addSubview(headerStack)
         let padding = Self.padding
         NSLayoutConstraint.activate([
-            icon.topAnchor.constraint(equalTo: container.topAnchor, constant: padding),
-            icon.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: padding),
-            textStack.topAnchor.constraint(equalTo: container.topAnchor, constant: padding),
-            textStack.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 12),
-            textStack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -padding),
-            textStack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -padding),
+            headerStack.topAnchor.constraint(equalTo: container.topAnchor, constant: padding),
+            headerStack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: padding),
+            headerStack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -padding),
+            headerStack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -padding),
         ])
         return container
     }
@@ -166,42 +174,54 @@ final class DeleteVMSheetContentViewController: NSViewController {
     private func makeAttachmentList() -> NSScrollView {
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = false
+        scrollView.autohidesScrollers = true
         scrollView.translatesAutoresizingMaskIntoConstraints = false
 
         let listStack = NSStackView()
         listStack.orientation = .vertical
         listStack.alignment = .leading
         listStack.spacing = 12
+        listStack.edgeInsets = NSEdgeInsets(
+            top: Self.padding,
+            left: Self.padding,
+            bottom: Self.padding,
+            right: Self.padding
+        )
         listStack.translatesAutoresizingMaskIntoConstraints = false
 
         for external in externals {
             listStack.addArrangedSubview(makeAttachmentRow(external))
         }
 
-        let documentView = NSView()
-        documentView.addSubview(listStack)
-        let padding = Self.padding
+        scrollView.documentView = listStack
+
+        // Canonical NSScrollView + NSStackView pattern: pin the stack to
+        // the scroll view's clip view (contentView) on top/leading/trailing
+        // so it fills the visible width; let height be driven by the
+        // stack's intrinsic content (so it scrolls when content overflows).
         NSLayoutConstraint.activate([
-            listStack.topAnchor.constraint(equalTo: documentView.topAnchor, constant: padding),
-            listStack.leadingAnchor.constraint(equalTo: documentView.leadingAnchor, constant: padding),
-            listStack.trailingAnchor.constraint(equalTo: documentView.trailingAnchor, constant: -padding),
-            listStack.bottomAnchor.constraint(equalTo: documentView.bottomAnchor, constant: -padding),
+            listStack.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
+            listStack.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
+            listStack.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
         ])
 
-        scrollView.documentView = documentView
-        // Cap the scroll view at 240pt high, matching the SwiftUI predecessor.
-        scrollView.heightAnchor.constraint(
-            lessThanOrEqualToConstant: Self.scrollMaxHeight
-        ).isActive = true
-        // Ensure the scroll view also gets at least the content height up
-        // to the cap — otherwise NSScrollView defaults to a small fitting
-        // size and clips the list.
-        let contentHeight = listStack.fittingSize.height + padding * 2
-        scrollView.heightAnchor.constraint(
-            equalToConstant: min(contentHeight, Self.scrollMaxHeight)
-        ).isActive = true
+        // Estimate per-row height so the scroll view sizes naturally for
+        // small attachment lists (avoids a fixed 240pt of empty space when
+        // there are only one or two externals). Shared rows get an extra
+        // line for the "Also used by…" warning. The 240pt cap then bounds
+        // the scroll view for longer lists.
+        let perRowHeight: CGFloat = 42
+        let perSharedRowExtra: CGFloat = 18
+        let estimatedRows = externals.reduce(into: CGFloat(0)) { sum, external in
+            sum += perRowHeight + (external.isShared ? perSharedRowExtra : 0)
+        }
+        let spacing = CGFloat(max(0, externals.count - 1)) * 12
+        let estimatedHeight = estimatedRows + spacing + Self.padding * 2
+        let clampedHeight = max(60, min(estimatedHeight, Self.scrollMaxHeight))
+        scrollView.heightAnchor.constraint(equalToConstant: clampedHeight).isActive = true
 
         return scrollView
     }
@@ -211,50 +231,47 @@ final class DeleteVMSheetContentViewController: NSViewController {
             image: .systemSymbol(external.symbolName, accessibilityDescription: "")
         )
         icon.contentTintColor = .secondaryLabelColor
-        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.setContentHuggingPriority(.required, for: .horizontal)
+        icon.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         let label = NSTextField(labelWithString: external.label)
         label.font = .preferredFont(forTextStyle: .body)
-        label.translatesAutoresizingMaskIntoConstraints = false
         label.lineBreakMode = .byWordWrapping
         label.maximumNumberOfLines = 0
         label.isSelectable = false
+        label.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         let path = NSTextField(labelWithString: external.path)
         path.font = .preferredFont(forTextStyle: .caption1)
         path.textColor = .secondaryLabelColor
         path.lineBreakMode = .byTruncatingMiddle
         path.maximumNumberOfLines = 1
-        path.translatesAutoresizingMaskIntoConstraints = false
         path.isSelectable = false
         path.setContentHuggingPriority(.defaultLow, for: .horizontal)
         path.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let textStack = NSStackView(views: [label, path])
+        var textViews: [NSView] = [label, path]
+        if external.isShared {
+            textViews.append(
+                makeSharedWarningRow(
+                    "Also used by \(formatSharedVMs(external.sharedWithVMNames))"
+                )
+            )
+        }
+
+        let textStack = NSStackView(views: textViews)
         textStack.orientation = .vertical
         textStack.alignment = .leading
         textStack.spacing = 2
-        textStack.translatesAutoresizingMaskIntoConstraints = false
 
-        if external.isShared {
-            let warning = makeSharedWarningRow(
-                "Also used by \(formatSharedVMs(external.sharedWithVMNames))"
-            )
-            textStack.addArrangedSubview(warning)
-        }
-
-        let row = NSView()
-        row.addSubview(icon)
-        row.addSubview(textStack)
-        NSLayoutConstraint.activate([
-            icon.topAnchor.constraint(equalTo: row.topAnchor, constant: 2),
-            icon.leadingAnchor.constraint(equalTo: row.leadingAnchor),
-            icon.widthAnchor.constraint(equalToConstant: 18),
-            textStack.topAnchor.constraint(equalTo: row.topAnchor),
-            textStack.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 12),
-            textStack.trailingAnchor.constraint(equalTo: row.trailingAnchor),
-            textStack.bottomAnchor.constraint(equalTo: row.bottomAnchor),
-        ])
+        // Horizontal NSStackView for the row — `.firstBaseline` aligns the
+        // icon next to the label's baseline (matches the visual rhythm of
+        // the SwiftUI predecessor's `HStack(alignment: .top)` with the
+        // image rendered at body-text size).
+        let row = NSStackView(views: [icon, textStack])
+        row.orientation = .horizontal
+        row.alignment = .firstBaseline
+        row.spacing = 12
         return row
     }
 
