@@ -48,6 +48,15 @@ final class DeleteVMSheetContentViewController: NSViewController {
     private static let padding: CGFloat = 16
     private static let scrollMaxHeight: CGFloat = 240
 
+    /// Shared leading-icon column width for the header trash icon and the per-row attachment icon.
+    ///
+    /// Sized to fit the largest expected leading glyph (the 22pt trash
+    /// symbol in the header); smaller symbols center within it. Pinning
+    /// both icons to the same column makes the header title and the row
+    /// label start at the same X coordinate (`padding + iconColumnWidth +
+    /// 12pt spacing` from the sheet's leading edge).
+    private static let iconColumnWidth: CGFloat = 22
+
     // MARK: - Subviews (held for state updates)
 
     private let trashIconExternalsCheckbox = NSButton()
@@ -120,10 +129,15 @@ final class DeleteVMSheetContentViewController: NSViewController {
         )
         icon.contentTintColor = .systemRed
         icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 22, weight: .regular)
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.imageAlignment = .alignCenter
         icon.setContentHuggingPriority(.required, for: .horizontal)
         icon.setContentHuggingPriority(.required, for: .vertical)
         icon.setContentCompressionResistancePriority(.required, for: .horizontal)
         icon.setContentCompressionResistancePriority(.required, for: .vertical)
+        // Pin to the shared icon column so the title text starts at the
+        // same X as the row label below the first divider.
+        icon.widthAnchor.constraint(equalToConstant: Self.iconColumnWidth).isActive = true
 
         let title = NSTextField(labelWithString: "Move \u{201C}\(vmName)\u{201D} to Trash?")
         title.font = .preferredFont(forTextStyle: .headline)
@@ -242,15 +256,15 @@ final class DeleteVMSheetContentViewController: NSViewController {
         )
         icon.contentTintColor = .secondaryLabelColor
         icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.imageAlignment = .alignCenter
         icon.setContentHuggingPriority(.required, for: .horizontal)
         icon.setContentCompressionResistancePriority(.required, for: .horizontal)
-        // Explicit 18pt-wide column for the row icon. SF Symbols have
-        // slightly different intrinsic widths per glyph (`externaldrive`
-        // vs `opticaldisc`); pinning the column keeps the label column
-        // perfectly aligned across rows in a multi-row list.
-        let iconColumnWidth: CGFloat = 18
-        icon.widthAnchor.constraint(equalToConstant: iconColumnWidth).isActive = true
-        icon.imageAlignment = .alignCenter
+        // Shared icon column — keeps every row's label leading-aligned
+        // with every other row and with the header title above the first
+        // divider. (SF Symbols also have per-glyph intrinsic widths —
+        // `externaldrive` vs `opticaldisc` — and an explicit column
+        // defends against that drift across rows in a multi-row list.)
+        icon.widthAnchor.constraint(equalToConstant: Self.iconColumnWidth).isActive = true
 
         let label = NSTextField(labelWithString: external.label)
         label.font = .preferredFont(forTextStyle: .body)
