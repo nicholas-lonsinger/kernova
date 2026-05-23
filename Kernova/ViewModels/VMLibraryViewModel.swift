@@ -40,10 +40,6 @@ final class VMLibraryViewModel {
     /// exactly one.
     var showDeleteSheet = false
 
-    /// Bound to the "Also move these files to Trash" toggle on the delete sheet.
-    ///
-    /// Reset to `false` whenever the sheet is presented or dismissed.
-    var trashExternalsOnDelete = false
     var showError = false
     var errorMessage: String?
 
@@ -499,7 +495,6 @@ final class VMLibraryViewModel {
     /// falls back to the simple alert otherwise.
     func confirmDelete(_ instance: VMInstance) {
         instanceToDelete = instance
-        trashExternalsOnDelete = false
         if externalAttachments(for: instance).isEmpty {
             showDeleteConfirmation = true
         } else {
@@ -548,7 +543,6 @@ final class VMLibraryViewModel {
         instanceToDelete = nil
         showDeleteConfirmation = false
         showDeleteSheet = false
-        trashExternalsOnDelete = false
         return tasks
     }
 

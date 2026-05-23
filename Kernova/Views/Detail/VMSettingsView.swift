@@ -19,7 +19,6 @@ struct VMSettingsView: View {
     @State private var showingCreateDisk = false
     @State private var showingReorderDisksSheet = false
     @State private var showingCreateRemovableMedia = false
-    @State private var newDiskSizeInGB = VMGuestOS.defaultDiskSizeInGB
     @State private var diskToRemove: StorageDisk?
     @State private var showingRemoveDiskAlert = false
     @State private var removableMediaToRemove: RemovableMediaItem?
@@ -160,52 +159,51 @@ struct VMSettingsView: View {
                 .padding()
             }
         }
-        .alert(
-            "Remove \(diskToRemove?.label ?? "Disk")?",
+        .sheetAlert(
             isPresented: $showingRemoveDiskAlert,
             presenting: diskToRemove
         ) { disk in
-            Button("Move to Trash", role: .destructive) {
-                viewModel.removeStorageDisk(disk, from: instance, trashFile: true)
-                diskToRemove = nil
-            }
-            Button("Remove from VM") {
-                viewModel.removeStorageDisk(disk, from: instance, trashFile: false)
-                diskToRemove = nil
-            }
-            Button("Cancel", role: .cancel) {
-                diskToRemove = nil
-            }
-        } message: { disk in
-            if disk.isInternal {
-                Text(
-                    "Move to Trash will send the bundle-owned disk image to the Trash. Remove from VM will delist the entry while keeping the file."
-                )
-            } else {
-                Text(
-                    "Move to Trash will send \(disk.path) to the Trash. Remove from VM will delist the disk and leave the file alone."
-                )
-            }
+            AlertConfiguration(
+                title: "Remove \(disk.label)?",
+                message: disk.isInternal
+                    ? "Move to Trash will send the bundle-owned disk image to the Trash. Remove from VM will delist the entry while keeping the file."
+                    : "Move to Trash will send \(disk.path) to the Trash. Remove from VM will delist the disk and leave the file alone.",
+                buttons: [
+                    AlertButton("Move to Trash", role: .destructive) {
+                        viewModel.removeStorageDisk(disk, from: instance, trashFile: true)
+                        diskToRemove = nil
+                    },
+                    AlertButton("Remove from VM", role: .default) {
+                        viewModel.removeStorageDisk(disk, from: instance, trashFile: false)
+                        diskToRemove = nil
+                    },
+                    AlertButton("Cancel", role: .cancel) {
+                        diskToRemove = nil
+                    },
+                ]
+            )
         }
-        .alert(
-            "Remove \(removableMediaToRemove?.label ?? "Disc")?",
+        .sheetAlert(
             isPresented: $showingRemoveRemovableMediaAlert,
             presenting: removableMediaToRemove
         ) { item in
-            Button("Move to Trash", role: .destructive) {
-                viewModel.removeRemovableMedia(item, from: instance, trashFile: true)
-                removableMediaToRemove = nil
-            }
-            Button("Remove from VM") {
-                viewModel.removeRemovableMedia(item, from: instance, trashFile: false)
-                removableMediaToRemove = nil
-            }
-            Button("Cancel", role: .cancel) {
-                removableMediaToRemove = nil
-            }
-        } message: { item in
-            Text(
-                "Move to Trash will send \(item.path) to the Trash. Remove from VM will detach the disc and leave the file alone."
+            AlertConfiguration(
+                title: "Remove \(item.label)?",
+                message:
+                    "Move to Trash will send \(item.path) to the Trash. Remove from VM will detach the disc and leave the file alone.",
+                buttons: [
+                    AlertButton("Move to Trash", role: .destructive) {
+                        viewModel.removeRemovableMedia(item, from: instance, trashFile: true)
+                        removableMediaToRemove = nil
+                    },
+                    AlertButton("Remove from VM", role: .default) {
+                        viewModel.removeRemovableMedia(item, from: instance, trashFile: false)
+                        removableMediaToRemove = nil
+                    },
+                    AlertButton("Cancel", role: .cancel) {
+                        removableMediaToRemove = nil
+                    },
+                ]
             )
         }
         .onAppear {
@@ -252,7 +250,7 @@ struct VMSettingsView: View {
     /// independently focusable in VoiceOver, and `lockIcon` carries its
     /// own accessibility label so the locked state is announced.
     @ViewBuilder
-    private func sectionHeader(_ title: LocalizedStringKey, lockable: Bool = false) -> some View {
+    private func sectionHeader(_ title: String, lockable: Bool = false) -> some View {
         HStack(spacing: 6) {
             if lockable && isReadOnly {
                 lockIcon
@@ -264,17 +262,17 @@ struct VMSettingsView: View {
     /// Section header variant that also surfaces an info button at the end,
     /// revealing the per-section help text in a popover.
     @ViewBuilder
-    private func sectionHeader<Info: View>(
-        _ title: LocalizedStringKey,
+    private func sectionHeader(
+        _ title: String,
         lockable: Bool = false,
-        @ViewBuilder info: @escaping () -> Info
+        paragraphs: [InfoPopoverParagraph]
     ) -> some View {
         HStack(spacing: 6) {
             if lockable && isReadOnly {
                 lockIcon
             }
             Text(title)
-            InfoButton(label: title, content: info)
+            InfoButton(label: title, paragraphs: paragraphs)
         }
     }
 
@@ -336,20 +334,19 @@ struct VMSettingsView: View {
     @ViewBuilder
     private var removableMediaSection: some View {
         Section(
-            header: sectionHeader("Removable Media") {
-                VStack(alignment: .leading, spacing: 10) {
-                    if instance.configuration.guestOS == .linux {
-                        Text(
-                            "Appears as a USB Mass Storage device (typically `/dev/sda` or similar). Most desktop distros auto-mount; headless installs need an explicit `mount`."
-                        )
-                    } else {
-                        Text("Appears as a removable USB drive in Finder; auto-mounts.")
-                    }
-                    Text(
+            header: sectionHeader(
+                "Removable Media",
+                paragraphs: [
+                    .body(
+                        instance.configuration.guestOS == .linux
+                            ? "Appears as a USB Mass Storage device (typically `/dev/sda` or similar). Most desktop distros auto-mount; headless installs need an explicit `mount`."
+                            : "Appears as a removable USB drive in Finder; auto-mounts."
+                    ),
+                    .body(
                         "Hot-pluggable — changes take effect immediately while the VM is running. For boot media, use Storage Disks instead."
-                    )
-                }
-            }
+                    ),
+                ]
+            )
         ) {
             let items = removableMediaBinding.wrappedValue
 
@@ -399,9 +396,13 @@ struct VMSettingsView: View {
                 Button("Create New Disk...") {
                     showingCreateRemovableMedia = true
                 }
-                .popover(isPresented: $showingCreateRemovableMedia, arrowEdge: .bottom) {
-                    createRemovableMediaPopover
-                }
+                .background(
+                    CreateRemovableMediaPopoverAnchor(
+                        isPresented: $showingCreateRemovableMedia,
+                        instance: instance,
+                        viewModel: viewModel
+                    )
+                )
             }
         }
     }
@@ -425,59 +426,32 @@ struct VMSettingsView: View {
         removableMediaBinding.wrappedValue = current
     }
 
-    /// Presents a save panel for a new removable-media disk image and dispatches
-    /// the create call when the user confirms.
-    ///
-    /// Uses the asynchronous `begin(completionHandler:)` API so SwiftUI can
-    /// finish the popover-dismissal animation before the save panel takes the
-    /// foreground — `runModal()` would block the main thread and freeze the
-    /// transition.
-    private func presentSaveRemovableMedia(for instance: VMInstance, sizeInGB: Int) {
-        let panel = NSSavePanel()
-        panel.title = "Save Removable Disk"
-        panel.message = "Choose where to save the new removable disk image."
-        panel.prompt = "Create"
-        panel.nameFieldStringValue = "\(instance.name) Removable Disk.asif"
-        // Constrain to `.asif` — we only know how to allocate ASIF. NSSavePanel
-        // appends the extension if the user omits it, and rejects mismatched
-        // extensions since `allowsOtherFileTypes` defaults to false.
-        panel.allowedContentTypes = [.asif]
-        panel.canCreateDirectories = true
-        // Intentionally no `directoryURL` — NSSavePanel remembers the user's
-        // last-used location, which is a better default than forcing every
-        // invocation back to ~/Documents.
-
-        panel.begin { response in
-            guard response == .OK, let url = panel.url else { return }
-            viewModel.createRemovableMedia(
-                for: instance, sizeInGB: sizeInGB, destinationURL: url)
-        }
-    }
-
     // MARK: - Storage Disks
 
     @ViewBuilder
     private var storageDiskSection: some View {
         Section(
-            header: sectionHeader("Storage Disks", lockable: true) {
-                VStack(alignment: .leading, spacing: 10) {
-                    if instance.configuration.guestOS == .linux {
-                        Text(
+            header: sectionHeader(
+                "Storage Disks",
+                lockable: true,
+                paragraphs: instance.configuration.guestOS == .linux
+                    ? [
+                        .body(
                             "Position 1 boots first on EFI guests; on Linux Kernel boot, position affects device enumeration but not boot priority."
-                        )
-                        Text("Permanent disks attach as virtio block devices (`/dev/vda`, `/dev/vdb`, …).")
-                        Text(
+                        ),
+                        .body("Permanent disks attach as virtio block devices (`/dev/vda`, `/dev/vdb`, …)."),
+                        .body(
                             "Installer images (.iso, .dmg) attach as USB Mass Storage entries on this list — still bootable, separate from hot-pluggable Removable Media — so reordering an installer doesn't change your main disk's `/dev/vda` letter."
-                        )
-                    } else {
-                        Text("Position 1 is the main system disk; subsequent positions follow in order.")
-                        Text("Permanent disks attach as virtio block devices.")
-                        Text(
+                        ),
+                    ]
+                    : [
+                        .body("Position 1 is the main system disk; subsequent positions follow in order."),
+                        .body("Permanent disks attach as virtio block devices."),
+                        .body(
                             "Installer images (.iso, .dmg) attach as USB Mass Storage entries on this list — still bootable, separate from hot-pluggable Removable Media."
-                        )
-                    }
-                }
-            }
+                        ),
+                    ]
+            )
         ) {
             Group {
                 ForEach(storageDiskBinding) { $disk in
@@ -492,9 +466,13 @@ struct VMSettingsView: View {
                     Button("Create New Disk...") {
                         showingCreateDisk = true
                     }
-                    .popover(isPresented: $showingCreateDisk, arrowEdge: .bottom) {
-                        createDiskPopover
-                    }
+                    .background(
+                        CreateStorageDiskPopoverAnchor(
+                            isPresented: $showingCreateDisk,
+                            instance: instance,
+                            viewModel: viewModel
+                        )
+                    )
 
                     if storageDiskBinding.wrappedValue.count > 1 {
                         Button("Edit Boot Order...") {
@@ -504,13 +482,15 @@ struct VMSettingsView: View {
                 }
             }
             .disabled(isReadOnly)
-            .sheet(isPresented: $showingReorderDisksSheet) {
-                StorageDiskReorderSheet(
-                    disks: storageDiskBinding,
-                    instance: instance,
-                    fileMonitor: fileMonitor
-                )
-            }
+            .storageDiskReorderSheet(
+                isPresented: $showingReorderDisksSheet,
+                disks: storageDiskBinding.wrappedValue,
+                instance: instance,
+                fileMonitor: fileMonitor,
+                onReorder: { newOrdering in
+                    storageDiskBinding.wrappedValue = newOrdering
+                }
+            )
         }
     }
 
@@ -571,79 +551,17 @@ struct VMSettingsView: View {
     }
 
     @ViewBuilder
-    private var createDiskPopover: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Create New Disk")
-                .font(.headline)
-
-            Picker("Size", selection: $newDiskSizeInGB) {
-                ForEach(VMGuestOS.allDiskSizes, id: \.self) { size in
-                    Text(DataFormatters.formatDiskSize(size)).tag(size)
-                }
-            }
-
-            Text("Creates an ASIF sparse disk image inside the VM bundle. Physical size grows as data is written.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            HStack {
-                Button("Cancel") {
-                    showingCreateDisk = false
-                }
-                Spacer()
-                Button("Create") {
-                    showingCreateDisk = false
-                    viewModel.createStorageDisk(for: instance, sizeInGB: newDiskSizeInGB)
-                }
-                .buttonStyle(.borderedProminent)
-            }
-        }
-        .padding()
-        .frame(width: 280)
-    }
-
-    @ViewBuilder
-    private var createRemovableMediaPopover: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Create New Removable Disk")
-                .font(.headline)
-
-            Picker("Size", selection: $newDiskSizeInGB) {
-                ForEach(VMGuestOS.allDiskSizes, id: \.self) { size in
-                    Text(DataFormatters.formatDiskSize(size)).tag(size)
-                }
-            }
-
-            Text(
-                "Creates a writable ASIF sparse disk image at a location you choose, attached as a hot-pluggable USB drive. The file lives outside the VM bundle."
-            )
-            .font(.caption)
-            .foregroundStyle(.secondary)
-
-            HStack {
-                Button("Cancel") {
-                    showingCreateRemovableMedia = false
-                }
-                Spacer()
-                Button("Create") {
-                    showingCreateRemovableMedia = false
-                    presentSaveRemovableMedia(for: instance, sizeInGB: newDiskSizeInGB)
-                }
-                .buttonStyle(.borderedProminent)
-            }
-        }
-        .padding()
-        .frame(width: 280)
-    }
-
-    @ViewBuilder
     private var resourcesSection: some View {
         Section(
-            header: sectionHeader("Resources", lockable: true) {
-                Text(
-                    "Memory is committed to the VM up-front at start time — keep enough free on the host to avoid swap pressure. CPU cores are scheduled by the host; over-committing is fine but reduces per-core performance under load."
-                )
-            }
+            header: sectionHeader(
+                "Resources",
+                lockable: true,
+                paragraphs: [
+                    .body(
+                        "Memory is committed to the VM up-front at start time — keep enough free on the host to avoid swap pressure. CPU cores are scheduled by the host; over-committing is fine but reduces per-core performance under load."
+                    )
+                ]
+            )
         ) {
             let os = instance.configuration.guestOS
 
@@ -670,18 +588,20 @@ struct VMSettingsView: View {
     @ViewBuilder
     private var networkSection: some View {
         Section(
-            header: sectionHeader("Network", lockable: true) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(
+            header: sectionHeader(
+                "Network",
+                lockable: true,
+                paragraphs: [
+                    .body(
                         "NAT-mode networking. The host assigns the guest a DHCP address on a private subnet. Outbound connections work; there is no port forwarding from host to guest — incoming connections require knowing the guest's IP."
-                    )
-                    if instance.configuration.guestOS == .linux {
-                        Text(
+                    ),
+                    instance.configuration.guestOS == .linux
+                        ? .body(
                             "The interface usually appears as `enp0s1`. If networking doesn't come up, make sure your distro's DHCP client or NetworkManager is running."
                         )
-                    }
-                }
-            }
+                        : nil,
+                ].compactMap { $0 }
+            )
         ) {
             Group {
                 Toggle("Networking Enabled", isOn: configBinding(\.networkEnabled))
@@ -696,16 +616,18 @@ struct VMSettingsView: View {
     @ViewBuilder
     private var audioSection: some View {
         Section(
-            header: sectionHeader("Audio", lockable: true) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(
+            header: sectionHeader(
+                "Audio",
+                lockable: true,
+                paragraphs: [
+                    .body(
                         "Exposes a VirtioSound device. Speaker output is always enabled; toggle the microphone to grant the guest access to your host mic."
-                    )
-                    if instance.configuration.guestOS == .linux {
-                        Text("Requires Linux kernel 5.14 or newer to detect the VirtioSound device.")
-                    }
-                }
-            }
+                    ),
+                    instance.configuration.guestOS == .linux
+                        ? .body("Requires Linux kernel 5.14 or newer to detect the VirtioSound device.")
+                        : nil,
+                ].compactMap { $0 }
+            )
         ) {
             Group {
                 Toggle("Microphone", isOn: configBinding(\.microphoneEnabled))
@@ -739,9 +661,9 @@ struct VMSettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
                         .buttonStyle(.plain)
-                        .popover(isPresented: $showingMicPermissionInfo, arrowEdge: .trailing) {
-                            micPermissionInfoPopover
-                        }
+                        .background(
+                            MicPermissionPopoverAnchor(isPresented: $showingMicPermissionInfo)
+                        )
                     }
                     .padding(10)
                     .background {
@@ -767,11 +689,14 @@ struct VMSettingsView: View {
     private var guestAgentSection: some View {
         Section(header: sectionHeader("Guest Agent")) {
             Toggle(isOn: configBinding(\.agentLogForwardingEnabled)) {
-                toggleLabel("Forward guest logs") {
-                    Text(
-                        "Streams `os.Logger` records from the macOS guest agent to the host so they appear in Console.app under `com.kernova.guest`. Off by default; can be toggled while the VM is running."
-                    )
-                }
+                toggleLabel(
+                    "Forward guest logs",
+                    paragraphs: [
+                        .body(
+                            "Streams `os.Logger` records from the macOS guest agent to the host so they appear in Console.app under `com.kernova.guest`. Off by default; can be toggled while the VM is running."
+                        )
+                    ]
+                )
             }
 
             Toggle(
@@ -784,11 +709,14 @@ struct VMSettingsView: View {
                     }
                 )
             ) {
-                toggleLabel("Show install reminder") {
-                    Text(
-                        "Surfaces the install icon in the sidebar when the guest agent has not yet connected. Turn off to suppress the nudge for this VM. The more urgent indicators (update available, didn't reconnect, unresponsive) are not affected."
-                    )
-                }
+                toggleLabel(
+                    "Show install reminder",
+                    paragraphs: [
+                        .body(
+                            "Surfaces the install icon in the sidebar when the guest agent has not yet connected. Turn off to suppress the nudge for this VM. The more urgent indicators (update available, didn't reconnect, unresponsive) are not affected."
+                        )
+                    ]
+                )
             }
         }
     }
@@ -798,30 +726,29 @@ struct VMSettingsView: View {
     /// Used when the explanation is specific to that one control rather
     /// than to the whole section.
     @ViewBuilder
-    private func toggleLabel<Info: View>(
-        _ title: LocalizedStringKey,
-        @ViewBuilder info: @escaping () -> Info
+    private func toggleLabel(
+        _ title: String,
+        paragraphs: [InfoPopoverParagraph]
     ) -> some View {
         HStack(spacing: 6) {
             Text(title)
-            InfoButton(label: title, content: info)
+            InfoButton(label: title, paragraphs: paragraphs)
         }
     }
 
     @ViewBuilder
     private var clipboardSection: some View {
         Section(
-            header: sectionHeader("Clipboard") {
-                if instance.configuration.guestOS == .linux {
-                    Text(
-                        "Exchanges clipboard text between host and guest. Requires `spice-vdagent` installed in the guest via its package manager."
+            header: sectionHeader(
+                "Clipboard",
+                paragraphs: [
+                    .body(
+                        instance.configuration.guestOS == .linux
+                            ? "Exchanges clipboard text between host and guest. Requires `spice-vdagent` installed in the guest via its package manager."
+                            : "Exchanges clipboard text between host and guest. Uses the bundled Kernova guest agent — Kernova will offer to install or update it from the clipboard window."
                     )
-                } else {
-                    Text(
-                        "Exchanges clipboard text between host and guest. Uses the bundled Kernova guest agent — Kernova will offer to install or update it from the clipboard window."
-                    )
-                }
-            }
+                ]
+            )
         ) {
             Toggle("Clipboard Sharing", isOn: configBinding(\.clipboardSharingEnabled))
             if isReadOnly && instance.configuration.guestOS == .linux {
@@ -835,9 +762,26 @@ struct VMSettingsView: View {
     @ViewBuilder
     private var sharedDirectoriesSection: some View {
         Section(
-            header: sectionHeader("Shared Directories", lockable: true) {
-                sharedDirectoriesInfo
-            }
+            header: sectionHeader(
+                "Shared Directories",
+                lockable: true,
+                paragraphs: instance.configuration.guestOS == .linux
+                    ? [
+                        .body(
+                            "Exposed as virtiofs mounts. Each share gets a numbered tag (`share0`, `share1`, …) in list order. Mount with:"
+                        ),
+                        .code("mount -t virtiofs share0 /mnt/myshare"),
+                        .body(
+                            "VirtioFS has known framework limitations — files may intermittently appear missing, and host/guest permission mapping can differ."
+                        ),
+                    ]
+                    : [
+                        .body("Auto-mounts at `/Volumes/My Shared Files/` in the guest."),
+                        .body(
+                            "VirtioFS has known framework limitations — files may intermittently appear missing, and host/guest permission mapping can differ."
+                        ),
+                    ]
+            )
         ) {
             let directories = sharedDirectoriesBinding.wrappedValue
 
@@ -888,26 +832,6 @@ struct VMSettingsView: View {
         }
     }
 
-    @ViewBuilder
-    private var sharedDirectoriesInfo: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if instance.configuration.guestOS == .linux {
-                Text(
-                    "Exposed as virtiofs mounts. Each share gets a numbered tag (`share0`, `share1`, …) in list order. Mount with:"
-                )
-                Text("mount -t virtiofs share0 /mnt/myshare")
-                    .font(.system(.callout, design: .monospaced))
-                    .textSelection(.enabled)
-            } else {
-                Text("Auto-mounts at `/Volumes/My Shared Files/` in the guest.")
-            }
-            Text(
-                "VirtioFS has known framework limitations — files may intermittently appear missing, and host/guest permission mapping can differ."
-            )
-            .foregroundStyle(.secondary)
-        }
-    }
-
     private func addSharedDirectory() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
@@ -928,65 +852,5 @@ struct VMSettingsView: View {
         }
 
         sharedDirectoriesBinding.wrappedValue = current
-    }
-
-    @ViewBuilder
-    private var micPermissionInfoPopover: some View {
-        CalloutBody {
-            Text("Microphone Permission")
-                .font(.headline)
-
-            Text("Kernova needs microphone permission to pass your mic input to virtual machines.")
-
-            Divider()
-
-            Text("How to enable")
-                .font(.subheadline)
-                .fontWeight(.medium)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("1. Open **System Settings**")
-                Text("2. Go to **Privacy & Security → Microphone**")
-                Text("3. Enable the toggle for **Kernova**")
-            }
-
-            Text("You will need to restart Kernova after granting permission.")
-                .foregroundStyle(.secondary)
-        }
-    }
-}
-
-/// Trailing accessory that reveals per-section or per-control help text in
-/// a popover.
-///
-/// Used both next to section titles (when the explanation applies to the
-/// whole section) and next to individual controls (when the explanation is
-/// specific to that control). Owns its own `@State` so each call site gets
-/// an independent popover anchor.
-struct InfoButton<Content: View>: View {
-    /// Title of the section or control this button explains.
-    ///
-    /// Used for the hover tooltip and the VoiceOver label ("About Storage
-    /// Disks", "About Forward guest logs", etc.).
-    let label: LocalizedStringKey
-    let content: () -> Content
-    @State private var isPresented = false
-
-    var body: some View {
-        Button {
-            isPresented.toggle()
-        } label: {
-            Image(systemName: "info.circle")
-                .foregroundStyle(.secondary)
-                .imageScale(.small)
-        }
-        .buttonStyle(.plain)
-        .help("About \(Text(label))")
-        .accessibilityLabel("About \(Text(label))")
-        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
-            CalloutBody {
-                content()
-            }
-        }
     }
 }

@@ -1,0 +1,456 @@
+import AppKit
+
+/// Delegate for ``DeleteVMSheetContentViewController``.
+///
+/// The view controller is intentionally decoupled from `VMLibraryViewModel`.
+/// The host (the SwiftUI bridge modifier) implements these methods and
+/// forwards the user's choice to the view model.
+@MainActor
+protocol DeleteVMSheetContentViewControllerDelegate: AnyObject {
+    /// Invoked when the user clicks Cancel (or presses Escape).
+    func deleteVMSheetDidCancel(_ vc: DeleteVMSheetContentViewController)
+
+    /// Invoked when the user clicks Move to Trash (or presses Return).
+    ///
+    /// - Parameters:
+    ///   - vc: The sheet view controller firing the event.
+    ///   - trashExternals: The current state of the "Also move these
+    ///     files to Trash" checkbox at the moment of confirmation.
+    func deleteVMSheet(
+        _ vc: DeleteVMSheetContentViewController,
+        didConfirmTrashExternals trashExternals: Bool
+    )
+}
+
+/// Confirmation sheet shown when deleting a VM that references external
+/// files (storage disks or removable media outside the bundle).
+///
+/// Unique structure (header with red trash icon + body + scrolling
+/// attachment list + footer with checkbox toggle + conditional warning +
+/// Cancel/Move-to-Trash buttons) lives in its own concrete subclass per
+/// the established per-sheet-subclass pattern.
+@MainActor
+final class DeleteVMSheetContentViewController: NSViewController {
+    weak var delegate: DeleteVMSheetContentViewControllerDelegate?
+
+    private let vmName: String
+    private let externals: [ExternalAttachment]
+
+    /// `true` when at least one external in `externals` is shared with another VM in the library.
+    ///
+    /// Drives the conditional footer warning row's visibility (along with
+    /// the checkbox state).
+    private var anyShared: Bool { externals.contains(where: \.isShared) }
+
+    // MARK: - Layout constants
+
+    private static let sheetWidth: CGFloat = 520
+    private static let padding: CGFloat = 16
+    private static let scrollMaxHeight: CGFloat = 240
+
+    /// Shared leading-icon column width for the header trash icon and the per-row attachment icon.
+    ///
+    /// Sized to fit the largest expected leading glyph (the 22pt trash
+    /// symbol in the header); smaller symbols center within it. Pinning
+    /// both icons to the same column makes the header title and the row
+    /// label start at the same X coordinate (`padding + iconColumnWidth +
+    /// 12pt spacing` from the sheet's leading edge).
+    private static let iconColumnWidth: CGFloat = 22
+
+    // MARK: - Subviews (held for state updates)
+
+    private let trashIconExternalsCheckbox = NSButton()
+    private let trashExternalsWarningRow = NSStackView()
+
+    init(vmName: String, externals: [ExternalAttachment]) {
+        self.vmName = vmName
+        self.externals = externals
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("DeleteVMSheetContentViewController does not support NSCoder")
+    }
+
+    /// Current "Also move these files to Trash" checkbox state.
+    var trashExternalsChecked: Bool {
+        trashIconExternalsCheckbox.state == .on
+    }
+
+    override func loadView() {
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+
+        let header = makeHeader()
+        let divider1 = makeHorizontalSeparator()
+        let listScrollView = makeAttachmentList()
+        let divider2 = makeHorizontalSeparator()
+        let footer = makeFooter()
+
+        [header, divider1, listScrollView, divider2, footer].forEach { view in
+            view.translatesAutoresizingMaskIntoConstraints = false
+            container.addSubview(view)
+        }
+
+        NSLayoutConstraint.activate([
+            container.widthAnchor.constraint(equalToConstant: Self.sheetWidth),
+
+            header.topAnchor.constraint(equalTo: container.topAnchor),
+            header.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            header.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+
+            divider1.topAnchor.constraint(equalTo: header.bottomAnchor),
+            divider1.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            divider1.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+
+            listScrollView.topAnchor.constraint(equalTo: divider1.bottomAnchor),
+            listScrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            listScrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+
+            divider2.topAnchor.constraint(equalTo: listScrollView.bottomAnchor),
+            divider2.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            divider2.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+
+            footer.topAnchor.constraint(equalTo: divider2.bottomAnchor),
+            footer.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            footer.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            footer.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+
+        view = container
+    }
+
+    // MARK: - Header
+
+    private func makeHeader() -> NSView {
+        let icon = NSImageView(
+            image: .systemSymbol("trash", accessibilityDescription: "")
+        )
+        icon.contentTintColor = .systemRed
+        icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 22, weight: .regular)
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.imageAlignment = .alignCenter
+        icon.setContentHuggingPriority(.required, for: .horizontal)
+        icon.setContentHuggingPriority(.required, for: .vertical)
+        icon.setContentCompressionResistancePriority(.required, for: .horizontal)
+        icon.setContentCompressionResistancePriority(.required, for: .vertical)
+        // Pin to the shared icon column so the title text starts at the
+        // same X as the row label below the first divider.
+        icon.widthAnchor.constraint(equalToConstant: Self.iconColumnWidth).isActive = true
+
+        let title = NSTextField(labelWithString: "Move \u{201C}\(vmName)\u{201D} to Trash?")
+        title.font = .preferredFont(forTextStyle: .headline)
+        title.lineBreakMode = .byWordWrapping
+        title.maximumNumberOfLines = 0
+        title.isSelectable = false
+
+        let body = NSTextField(
+            wrappingLabelWithString:
+                "The VM bundle will be moved to the Trash. You can restore it using Finder's Put Back command. Empty the Trash to permanently delete the VM and reclaim disk space."
+        )
+        body.font = .preferredFont(forTextStyle: .callout)
+        body.textColor = .secondaryLabelColor
+        body.lineBreakMode = .byWordWrapping
+        body.maximumNumberOfLines = 0
+        body.isSelectable = false
+
+        let textStack = NSStackView(views: [title, body])
+        textStack.orientation = .vertical
+        textStack.alignment = .leading
+        textStack.spacing = 4
+
+        // `.firstBaseline` alignment matches the icon's effective baseline
+        // to the title's first-line baseline — looks right regardless of
+        // each subview's internal padding/baseline math. Top-anchor
+        // alignment produces a visual offset because NSImageView and
+        // NSTextField interpret their bounds differently.
+        let headerStack = NSStackView(views: [icon, textStack])
+        headerStack.orientation = .horizontal
+        headerStack.alignment = .firstBaseline
+        headerStack.spacing = 12
+        headerStack.translatesAutoresizingMaskIntoConstraints = false
+
+        let container = NSView()
+        container.addSubview(headerStack)
+        let padding = Self.padding
+        NSLayoutConstraint.activate([
+            headerStack.topAnchor.constraint(equalTo: container.topAnchor, constant: padding),
+            headerStack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: padding),
+            headerStack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -padding),
+            headerStack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -padding),
+        ])
+        return container
+    }
+
+    // MARK: - Attachment list
+
+    private func makeAttachmentList() -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.borderType = .noBorder
+        scrollView.drawsBackground = false
+        scrollView.autohidesScrollers = true
+        // Disable safe-area-like auto-adjustment AND zero the clip view's
+        // own contentInsets — NSClipView (the actual frame around the
+        // documentView) carries its own contentInsets separate from
+        // NSScrollView's, and on macOS Tahoe that default contributes a
+        // visible ~10pt of padding above the document.
+        scrollView.automaticallyAdjustsContentInsets = false
+        scrollView.contentInsets = NSEdgeInsetsZero
+        scrollView.contentView.automaticallyAdjustsContentInsets = false
+        scrollView.contentView.contentInsets = NSEdgeInsetsZero
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+
+        let listStack = NSStackView()
+        listStack.orientation = .vertical
+        listStack.alignment = .leading
+        listStack.spacing = 12
+        // 16pt all around inside the scroll view — matches the SwiftUI
+        // behavioral spec (`.padding(16)` on the inner VStack) and gives
+        // the rows the same breathing room from the dividers that the
+        // header and footer have from their own container edges.
+        listStack.edgeInsets = NSEdgeInsets(
+            top: Self.padding,
+            left: Self.padding,
+            bottom: Self.padding,
+            right: Self.padding
+        )
+        listStack.translatesAutoresizingMaskIntoConstraints = false
+
+        for external in externals {
+            listStack.addArrangedSubview(makeAttachmentRow(external))
+        }
+
+        scrollView.documentView = listStack
+
+        // Pin the stack to all four edges of the scroll view's clip view.
+        // The bottom anchor is held at `.defaultHigh` so the scroll view's
+        // height naturally collapses to the stack's intrinsic content
+        // height when that's smaller than `scrollMaxHeight`, but yields
+        // to the `lessThanOrEqualToConstant` cap below when the content
+        // would otherwise overflow (the stack then extends past the
+        // visible region and scrolls).
+        let bottomPin = listStack.bottomAnchor.constraint(
+            equalTo: scrollView.contentView.bottomAnchor
+        )
+        bottomPin.priority = .defaultHigh
+        NSLayoutConstraint.activate([
+            listStack.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
+            listStack.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
+            listStack.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
+            listStack.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
+            bottomPin,
+            scrollView.heightAnchor.constraint(
+                lessThanOrEqualToConstant: Self.scrollMaxHeight
+            ),
+        ])
+
+        return scrollView
+    }
+
+    private func makeAttachmentRow(_ external: ExternalAttachment) -> NSView {
+        let icon = NSImageView(
+            image: .systemSymbol(external.symbolName, accessibilityDescription: "")
+        )
+        icon.contentTintColor = .secondaryLabelColor
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.imageAlignment = .alignCenter
+        icon.setContentHuggingPriority(.required, for: .horizontal)
+        icon.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // Shared icon column — keeps every row's label leading-aligned
+        // with every other row and with the header title above the first
+        // divider. (SF Symbols also have per-glyph intrinsic widths —
+        // `externaldrive` vs `opticaldisc` — and an explicit column
+        // defends against that drift across rows in a multi-row list.)
+        icon.widthAnchor.constraint(equalToConstant: Self.iconColumnWidth).isActive = true
+
+        let label = NSTextField(labelWithString: external.label)
+        label.font = .preferredFont(forTextStyle: .body)
+        label.lineBreakMode = .byWordWrapping
+        label.maximumNumberOfLines = 0
+        label.isSelectable = false
+        label.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        let path = NSTextField(labelWithString: external.path)
+        path.font = .preferredFont(forTextStyle: .caption1)
+        path.textColor = .secondaryLabelColor
+        path.lineBreakMode = .byTruncatingMiddle
+        path.maximumNumberOfLines = 1
+        path.isSelectable = false
+        path.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        path.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        var textViews: [NSView] = [label, path]
+        if external.isShared {
+            textViews.append(
+                makeSharedWarningRow(
+                    "Also used by \(formatSharedVMs(external.sharedWithVMNames))"
+                )
+            )
+        }
+
+        let textStack = NSStackView(views: textViews)
+        textStack.orientation = .vertical
+        textStack.alignment = .leading
+        textStack.spacing = 2
+
+        // `.firstBaseline` anchors the icon to the label's first-line
+        // baseline — the canonical AppKit pattern for an icon row with a
+        // primary label plus a metadata caption (Finder Get Info
+        // attachments panel, Mail attachment cells). `.centerY` would
+        // float the icon into the middle of the label+path stack
+        // (visually drifting it away from the label it's labeling).
+        let row = NSStackView(views: [icon, textStack])
+        row.orientation = .horizontal
+        row.alignment = .firstBaseline
+        row.spacing = 12
+        return row
+    }
+
+    private func makeSharedWarningRow(_ text: String) -> NSView {
+        let icon = NSImageView(
+            image: .systemSymbol("exclamationmark.triangle.fill", accessibilityDescription: "")
+        )
+        icon.contentTintColor = .systemOrange
+        icon.translatesAutoresizingMaskIntoConstraints = false
+
+        let label = NSTextField(labelWithString: text)
+        label.font = .preferredFont(forTextStyle: .caption1)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.lineBreakMode = .byWordWrapping
+        label.maximumNumberOfLines = 0
+        label.isSelectable = false
+
+        let stack = NSStackView(views: [icon, label])
+        stack.orientation = .horizontal
+        stack.alignment = .centerY
+        stack.spacing = 6
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        return stack
+    }
+
+    // MARK: - Footer
+
+    private func makeFooter() -> NSView {
+        let container = NSView()
+
+        trashIconExternalsCheckbox.setButtonType(.switch)
+        trashIconExternalsCheckbox.title = "Also move these files to Trash"
+        trashIconExternalsCheckbox.translatesAutoresizingMaskIntoConstraints = false
+        trashIconExternalsCheckbox.target = self
+        trashIconExternalsCheckbox.action = #selector(trashExternalsToggled(_:))
+
+        // The "files will become unavailable" warning row is built once and
+        // shown/hidden based on (checkbox checked) AND (any external is
+        // shared with another VM).
+        trashExternalsWarningRow.removeArrangedSubviews()
+        let warning = makeSharedWarningRow(
+            "Files marked as shared will become unavailable to the VMs listed above."
+        )
+        trashExternalsWarningRow.orientation = .horizontal
+        trashExternalsWarningRow.spacing = 0
+        trashExternalsWarningRow.alignment = .top
+        trashExternalsWarningRow.addArrangedSubview(warning)
+        trashExternalsWarningRow.isHidden = true
+        trashExternalsWarningRow.translatesAutoresizingMaskIntoConstraints = false
+
+        let cancelButton = NSButton(
+            title: "Cancel", target: self, action: #selector(cancelTapped(_:))
+        )
+        cancelButton.bezelStyle = .rounded
+        cancelButton.keyEquivalent = "\u{1B}"  // Escape
+
+        let confirmButton = NSButton(
+            title: "Move to Trash", target: self, action: #selector(confirmTapped(_:))
+        )
+        confirmButton.bezelStyle = .rounded
+        confirmButton.keyEquivalent = "\r"  // Return — intentional Return-on-destructive
+        confirmButton.hasDestructiveAction = true
+
+        let spacer = NSView()
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        let buttonRow = NSStackView(views: [spacer, cancelButton, confirmButton])
+        buttonRow.orientation = .horizontal
+        buttonRow.spacing = 8
+        buttonRow.alignment = .centerY
+        buttonRow.translatesAutoresizingMaskIntoConstraints = false
+
+        let stack = NSStackView(views: [
+            trashIconExternalsCheckbox, trashExternalsWarningRow, buttonRow,
+        ])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 8
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        container.addSubview(stack)
+        let padding = Self.padding
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: padding),
+            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: padding),
+            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -padding),
+            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -padding),
+            buttonRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
+        ])
+        return container
+    }
+
+    // MARK: - Actions
+
+    @objc private func cancelTapped(_ sender: NSButton) {
+        delegate?.deleteVMSheetDidCancel(self)
+    }
+
+    @objc private func confirmTapped(_ sender: NSButton) {
+        delegate?.deleteVMSheet(self, didConfirmTrashExternals: trashExternalsChecked)
+    }
+
+    @objc private func trashExternalsToggled(_ sender: NSButton) {
+        // Conditional warning: visible only when checkbox is on AND at
+        // least one external is shared with another VM.
+        trashExternalsWarningRow.isHidden = !(trashExternalsChecked && anyShared)
+    }
+
+    // MARK: - Helpers
+
+    private func formatSharedVMs(_ names: [String]) -> String {
+        // Quote each name first, then let Foundation's `ListFormatter`
+        // join them with the locale-correct conjunction and punctuation
+        // (in English: "A", "A and B", "A, B, and C" with the Oxford
+        // comma). Replaces a hand-rolled switch over `names.count`.
+        ListFormatter.localizedString(
+            byJoining: names.map { "\u{201C}\($0)\u{201D}" }
+        )
+    }
+
+    private func makeHorizontalSeparator() -> NSBox {
+        let box = NSBox()
+        box.boxType = .separator
+        return box
+    }
+}
+
+extension NSStackView {
+    fileprivate func removeArrangedSubviews() {
+        for view in arrangedSubviews {
+            removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+    }
+}
+
+extension ExternalAttachment {
+    /// SF Symbol for the row icon, matching the iconography elsewhere in
+    /// the storage settings UI (`externaldrive` for disks, `opticaldisc`
+    /// for removable media on the XHCI controller).
+    fileprivate var symbolName: String {
+        switch kind {
+        case .storageDisk: return "externaldrive"
+        case .removableMedia: return "opticaldisc"
+        }
+    }
+}

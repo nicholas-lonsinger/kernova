@@ -255,7 +255,6 @@ struct VMLibraryViewModelTests {
         #expect(viewModel.instanceToDelete?.id == instance.id)
         #expect(viewModel.showDeleteSheet == true)
         #expect(viewModel.showDeleteConfirmation == false)
-        #expect(viewModel.trashExternalsOnDelete == false)
     }
 
     @Test("externalAttachments returns external disks and removable media with sharing info")
@@ -384,7 +383,6 @@ struct VMLibraryViewModelTests {
         #expect(!FileManager.default.fileExists(atPath: externalISO.path(percentEncoded: false)))
         #expect(!viewModel.showError)
         #expect(viewModel.showDeleteSheet == false)
-        #expect(viewModel.trashExternalsOnDelete == false)
     }
 
     #if arch(arm64)

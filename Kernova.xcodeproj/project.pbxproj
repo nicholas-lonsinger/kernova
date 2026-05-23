@@ -651,10 +651,12 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Kernova/Resources/Kernova.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 8MT4P4GZL2;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Kernova/App/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright 2025 Kernova. All rights reserved.";
@@ -678,10 +680,12 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Kernova/Resources/Kernova.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 8MT4P4GZL2;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Kernova/App/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright 2025 Kernova. All rights reserved.";
