@@ -178,25 +178,30 @@ final class DeleteVMSheetContentViewController: NSViewController {
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = false
         scrollView.autohidesScrollers = true
-        // Disable safe-area-like auto-adjustment so the documentView's top
-        // sits flush against the scroll view top, with only our explicit
-        // listStack.edgeInsets contributing to vertical breathing room.
+        // Disable safe-area-like auto-adjustment AND zero the clip view's
+        // own contentInsets — NSClipView (the actual frame around the
+        // documentView) carries its own contentInsets separate from
+        // NSScrollView's, and on macOS Tahoe that default contributes a
+        // visible ~10pt of padding above the document.
         scrollView.automaticallyAdjustsContentInsets = false
         scrollView.contentInsets = NSEdgeInsetsZero
+        scrollView.contentView.automaticallyAdjustsContentInsets = false
+        scrollView.contentView.contentInsets = NSEdgeInsetsZero
         scrollView.translatesAutoresizingMaskIntoConstraints = false
 
         let listStack = NSStackView()
         listStack.orientation = .vertical
         listStack.alignment = .leading
         listStack.spacing = 12
-        // Smaller top/bottom inset than left/right: the dividers above and
-        // below the list already provide visual closure, so tight vertical
-        // padding here keeps the list compact while preserving the 16pt
-        // side inset used by header and footer.
+        // No top/bottom inset: the dividers above and below already
+        // provide visual closure, and the row's own implicit padding
+        // (label/path font ascender + box padding) gives ~6pt of natural
+        // breathing room. Left/right keep the 16pt margin so list content
+        // column-aligns with the header and footer.
         listStack.edgeInsets = NSEdgeInsets(
-            top: 8,
+            top: 0,
             left: Self.padding,
-            bottom: 8,
+            bottom: 0,
             right: Self.padding
         )
         listStack.translatesAutoresizingMaskIntoConstraints = false
@@ -228,9 +233,8 @@ final class DeleteVMSheetContentViewController: NSViewController {
             sum += perRowHeight + (external.isShared ? perSharedRowExtra : 0)
         }
         let spacing = CGFloat(max(0, externals.count - 1)) * 12
-        let listInsets: CGFloat = 8 * 2  // matches listStack.edgeInsets top + bottom
-        let estimatedHeight = estimatedRows + spacing + listInsets
-        let clampedHeight = max(52, min(estimatedHeight, Self.scrollMaxHeight))
+        let estimatedHeight = estimatedRows + spacing
+        let clampedHeight = max(40, min(estimatedHeight, Self.scrollMaxHeight))
         scrollView.heightAnchor.constraint(equalToConstant: clampedHeight).isActive = true
 
         return scrollView
@@ -274,13 +278,15 @@ final class DeleteVMSheetContentViewController: NSViewController {
         textStack.alignment = .leading
         textStack.spacing = 2
 
-        // Horizontal NSStackView for the row — `.firstBaseline` aligns the
-        // icon next to the label's baseline (matches the visual rhythm of
-        // the SwiftUI predecessor's `HStack(alignment: .top)` with the
-        // image rendered at body-text size).
+        // Horizontal NSStackView for the row — `.centerY` aligns the icon
+        // vertically with the label center (canonical AppKit list-row
+        // look, matches Finder/Mail row layouts). `.firstBaseline` would
+        // float the icon's top above the label's top by a few points
+        // because NSImageView baseline = image bottom, adding asymmetric
+        // vertical space above each row.
         let row = NSStackView(views: [icon, textStack])
         row.orientation = .horizontal
-        row.alignment = .firstBaseline
+        row.alignment = .centerY
         row.spacing = 12
         return row
     }
