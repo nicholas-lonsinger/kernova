@@ -482,13 +482,15 @@ struct VMSettingsView: View {
                 }
             }
             .disabled(isReadOnly)
-            .sheet(isPresented: $showingReorderDisksSheet) {
-                StorageDiskReorderSheet(
-                    disks: storageDiskBinding,
-                    instance: instance,
-                    fileMonitor: fileMonitor
-                )
-            }
+            .storageDiskReorderSheet(
+                isPresented: $showingReorderDisksSheet,
+                disks: storageDiskBinding.wrappedValue,
+                instance: instance,
+                fileMonitor: fileMonitor,
+                onReorder: { newOrdering in
+                    storageDiskBinding.wrappedValue = newOrdering
+                }
+            )
         }
     }
 

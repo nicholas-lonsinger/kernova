@@ -10,8 +10,10 @@ import SwiftUI
 /// SwiftUI inside an AppKit popover would defeat the AppKit-first
 /// migration — the call surface is `(label:, paragraphs:)` instead.
 ///
-/// Each call site builds an `InfoButton` per occurrence — its `Coordinator`
-/// owns the per-instance ``PopoverPresenter`` and popover state.
+/// AppKit call sites instantiate ``InfoButtonView`` directly and call
+/// ``InfoButtonView/configure(label:paragraphs:)``; this shim exists so
+/// SwiftUI parents keep the same `InfoButton(label:paragraphs:)` surface
+/// during the incremental SwiftUI→AppKit transition.
 struct InfoButton: NSViewRepresentable {
     /// Section or control name.
     ///
@@ -24,69 +26,20 @@ struct InfoButton: NSViewRepresentable {
     /// selectable snippets (shell commands, paths, etc.).
     let paragraphs: [InfoPopoverParagraph]
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
-    }
-
     func makeNSView(context: Context) -> InfoButtonView {
         let view = InfoButtonView()
-        view.button.target = context.coordinator
-        view.button.action = #selector(Coordinator.buttonClicked(_:))
-        context.coordinator.anchor = view
-        context.coordinator.paragraphs = paragraphs
-        configure(button: view.button)
+        view.configure(label: label, paragraphs: paragraphs)
         return view
     }
 
     func updateNSView(_ view: InfoButtonView, context: Context) {
-        context.coordinator.anchor = view
-        context.coordinator.paragraphs = paragraphs
-        configure(button: view.button)
-    }
-
-    /// Sets the info-circle icon (scaled `.small` to match the SwiftUI
-    /// predecessor) plus hover tooltip and VoiceOver label.
-    private func configure(button: NSButton) {
-        let about = "About \(label)"
-        let config = NSImage.SymbolConfiguration(scale: .small)
-        button.image = NSImage.systemSymbol(
-            "info.circle", accessibilityDescription: about
-        )
-        .withSymbolConfiguration(config)
-        button.toolTip = about
-        button.setAccessibilityLabel(about)
-    }
-
-    /// Owns the per-button ``PopoverPresenter`` and the latest paragraph
-    /// snapshot to render when the button is clicked.
-    @MainActor
-    final class Coordinator {
-        let presenter = PopoverPresenter()
-        /// Wrapper `NSView` used as the popover's positioning view.
-        ///
-        /// We anchor to the wrapper rather than the inner `NSButton` because
-        /// `NSPopover.preferredEdge` is interpreted in the positioning
-        /// view's local coordinate system, and AppKit controls (including
-        /// `NSButton`) can return `isFlipped == true` while a plain `NSView`
-        /// keeps the AppKit default of `false`. Anchoring to the wrapper
-        /// keeps the edge math consistent with the other AppKit popover
-        /// anchors in this codebase (see
-        /// ``CreateStorageDiskPopoverAnchor``), where `.minY` reliably
-        /// places the popover below the anchor.
-        weak var anchor: NSView?
-        var paragraphs: [InfoPopoverParagraph] = []
-
-        @objc func buttonClicked(_ sender: NSButton) {
-            guard let anchor else { return }
-            let vc = InfoPopoverContentViewController(paragraphs: paragraphs)
-            presenter.show(content: vc, from: anchor, preferredEdge: .minY)
-        }
+        view.configure(label: label, paragraphs: paragraphs)
     }
 }
 
-/// Wrapper `NSView` housing the info-circle `NSButton`.
+/// Wrapper `NSView` housing the info-circle `NSButton` and the popover state.
 ///
-/// Two reasons the button is wrapped instead of exposed directly to SwiftUI:
+/// Two reasons the button is wrapped instead of exposed directly:
 ///
 /// 1. **Stable coordinate system for popover anchoring.** When an `NSView`
 ///    is hosted directly by SwiftUI via `NSViewRepresentable`, SwiftUI sets
@@ -105,6 +58,13 @@ struct InfoButton: NSViewRepresentable {
 final class InfoButtonView: NSView {
     let button = NSButton()
 
+    /// Owns the per-button popover lifecycle.
+    ///
+    /// Private so AppKit callers don't accidentally couple to the
+    /// internal state — go through ``configure(label:paragraphs:)``
+    /// instead.
+    private let coordinator = Coordinator()
+
     init() {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
@@ -114,6 +74,9 @@ final class InfoButtonView: NSView {
         button.isBordered = false
         button.imageScaling = .scaleProportionallyDown
         button.contentTintColor = .secondaryLabelColor
+        button.target = coordinator
+        button.action = #selector(Coordinator.buttonClicked(_:))
+        coordinator.anchor = self
         addSubview(button)
 
         NSLayoutConstraint.activate([
@@ -129,5 +92,47 @@ final class InfoButtonView: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("InfoButtonView does not support NSCoder")
+    }
+
+    /// Set the info-circle icon, hover tooltip, VoiceOver label, and the
+    /// popover paragraph payload that fires on click.
+    ///
+    /// Safe to call repeatedly — used both by the SwiftUI shim
+    /// (re-invoked on every `updateNSView`) and by pure-AppKit callers
+    /// during view-controller setup.
+    ///
+    /// - Parameters:
+    ///   - label: Section or control name; rendered as "About \(label)"
+    ///     in the tooltip and VoiceOver label.
+    ///   - paragraphs: Popover body content.
+    func configure(label: String, paragraphs: [InfoPopoverParagraph]) {
+        let about = "About \(label)"
+        let config = NSImage.SymbolConfiguration(scale: .small)
+        button.image = NSImage.systemSymbol(
+            "info.circle", accessibilityDescription: about
+        )
+        .withSymbolConfiguration(config)
+        button.toolTip = about
+        button.setAccessibilityLabel(about)
+        coordinator.paragraphs = paragraphs
+    }
+
+    /// Owns the per-button ``PopoverPresenter`` and the latest paragraph
+    /// snapshot to render when the button is clicked.
+    @MainActor
+    private final class Coordinator {
+        let presenter = PopoverPresenter()
+        /// Wrapper `NSView` used as the popover's positioning view.
+        ///
+        /// See the type-level note on ``InfoButtonView`` for why
+        /// anchoring on the wrapper (not the inner `NSButton`) matters.
+        weak var anchor: NSView?
+        var paragraphs: [InfoPopoverParagraph] = []
+
+        @objc func buttonClicked(_ sender: NSButton) {
+            guard let anchor else { return }
+            let vc = InfoPopoverContentViewController(paragraphs: paragraphs)
+            presenter.show(content: vc, from: anchor, preferredEdge: .minY)
+        }
     }
 }
