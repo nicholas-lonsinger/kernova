@@ -211,33 +211,27 @@ final class DeleteVMSheetContentViewController: NSViewController {
 
         scrollView.documentView = listStack
 
-        // Canonical NSScrollView + NSStackView pattern: pin the stack to
-        // the scroll view's clip view (contentView) on top/leading/trailing
-        // so it fills the visible width; let height be driven by the
-        // stack's intrinsic content (so it scrolls when content overflows).
+        // Pin the stack to all four edges of the scroll view's clip view.
+        // The bottom anchor is held at `.defaultHigh` so the scroll view's
+        // height naturally collapses to the stack's intrinsic content
+        // height when that's smaller than `scrollMaxHeight`, but yields
+        // to the `lessThanOrEqualToConstant` cap below when the content
+        // would otherwise overflow (the stack then extends past the
+        // visible region and scrolls).
+        let bottomPin = listStack.bottomAnchor.constraint(
+            equalTo: scrollView.contentView.bottomAnchor
+        )
+        bottomPin.priority = .defaultHigh
         NSLayoutConstraint.activate([
             listStack.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
             listStack.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
             listStack.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
+            listStack.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
+            bottomPin,
+            scrollView.heightAnchor.constraint(
+                lessThanOrEqualToConstant: Self.scrollMaxHeight
+            ),
         ])
-
-        // Estimate per-row height so the scroll view sizes naturally for
-        // small attachment lists (avoids a fixed 240pt of empty space when
-        // there are only one or two externals). Shared rows get an extra
-        // line for the "Also used by…" warning. The 240pt cap then bounds
-        // the scroll view for longer lists. Add the listStack's 16pt
-        // top+bottom edge insets (32pt total) to the natural height so the
-        // dividers don't crop into the padded region.
-        let perRowHeight: CGFloat = 36
-        let perSharedRowExtra: CGFloat = 18
-        let estimatedRows = externals.reduce(into: CGFloat(0)) { sum, external in
-            sum += perRowHeight + (external.isShared ? perSharedRowExtra : 0)
-        }
-        let spacing = CGFloat(max(0, externals.count - 1)) * 12
-        let verticalInset = Self.padding * 2
-        let estimatedHeight = estimatedRows + spacing + verticalInset
-        let clampedHeight = max(40 + verticalInset, min(estimatedHeight, Self.scrollMaxHeight))
-        scrollView.heightAnchor.constraint(equalToConstant: clampedHeight).isActive = true
 
         return scrollView
     }
