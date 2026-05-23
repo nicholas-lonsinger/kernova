@@ -81,7 +81,8 @@ Kernova/
 │   │   ├── InfoButton.swift            # SwiftUI `NSViewRepresentable` wrapping an AppKit `NSButton` (`info.circle`, `.small` symbol scale, secondary tint) + a coordinator that owns a `PopoverPresenter` and shows `InfoPopoverContentViewController` on click; `init(label:, paragraphs:)` replaces the prior SwiftUI generic over arbitrary `Content: View`
 │   │   ├── MicrophonePermissionPopoverContentViewController.swift # Concrete `NSViewController` for the mic-permission warning bar's info popover: headline + body + `NSBox` separator + `.subheadline`-weight sub-headline + 3 numbered steps as `NSAttributedString` with bold runs for the app/setting names + secondary-color tail caption. Unique structure (divider + sub-headline + bold step phrases) lives in its own concrete subclass rather than bloating `InfoPopoverParagraph`.
 │   │   ├── MicPermissionPopoverAnchor.swift # SwiftUI bridge: anchors the popover via `PopoverPresenter`; no delegate (informational only — `presenter.onClose → bindingResetter` handles click-outside/Escape dismissal)
-│   │   ├── DeleteVMSheet.swift         # Confirmation sheet for deleting a VM that references external storage / removable media; lists each attachment with a "Shared with VM(s)" warning, exposes the "Also move these files to Trash" toggle
+│   │   ├── DeleteVMSheetContentViewController.swift # AppKit `NSViewController` for the rich Delete-VM confirmation sheet (red trash icon header + body paragraph + scrollable attachment list + checkbox + conditional warning + Cancel / Move-to-Trash buttons). Delegate protocol fires `didCancel` and `didConfirm(trashExternals:)`. Move-to-Trash is intentionally the default action (Return) AND destructive (red tint) per the SwiftUI predecessor's UX.
+│   │   ├── DeleteVMSheetModifier.swift # SwiftUI bridge — `.deleteVMSheet(isPresented:instance:externals:onCancel:onConfirm:)` modifier matching the prior SwiftUI sheet's call surface; uses `SheetPresenter` + `WindowAccessor` to present as a window-modal sheet on the host `NSWindow`
 │   │   └── MacOSInstallProgressView.swift # Two-phase install progress (download + install)
 │   ├── Console/
 │   │   ├── VMConsoleView.swift         # Placeholder for non-inline display states (popped out, fullscreen, suspended, no display)
@@ -99,8 +100,10 @@ Kernova/
 │   ├── NSViewExtensions.swift          # Full-size subview constraint helper
 │   ├── ObservationLoop.swift           # observeRecurring(track:apply:) helper wrapping withObservationTracking
 │   ├── PopoverPresenter.swift          # `NSPopover` lifecycle wrapper — one instance per anchor, refreshes content in place if shown again, fires `onClose` after dismissal
+│   ├── SheetPresenter.swift            # Custom-content sheet lifecycle wrapper — wraps an `NSViewController` in an `NSWindow` and attaches it as a sheet via `parent.beginSheet(_:completionHandler:)`. Use for richer sheets than `NSAlert` can express (e.g. `DeleteVMSheetContentViewController`). Pair with `WindowAccessor` to find the parent window from a SwiftUI bridge.
 │   ├── SheetAlert.swift                # AppKit `NSAlert` presenter — `AlertConfiguration` (title + message + ordered `[AlertButton]`) + role enum (`.default` / `.cancel` / `.destructive` / `.standard`) maps to key-equivalents and `hasDestructiveAction`. `presentSheetAlert(_:in:completion:)` shows the alert as a window-modal sheet on the supplied `NSWindow`.
-│   └── SheetAlertModifier.swift        # SwiftUI bridge — `.sheetAlert(isPresented:, [presenting:,] configuration:)` modifier matching SwiftUI `.alert()` shape; a `WindowAccessor` representable captures the host `NSWindow`; `onChange(of: isPresented)` triggers `presentSheetAlert` and the completion handler resets the binding
+│   ├── SheetAlertModifier.swift        # SwiftUI bridge — `.sheetAlert(isPresented:, [presenting:,] configuration:)` modifier matching SwiftUI `.alert()` shape; `onChange(of: isPresented)` triggers `presentSheetAlert` and the completion handler resets the binding
+│   └── WindowAccessor.swift            # SwiftUI bridge representable that surfaces the host `NSWindow` to a parent SwiftUI view via `.background(WindowAccessor { window in ... })`. Used by `SheetAlertModifier` and `DeleteVMSheetModifier` to capture the parent window for sheet attachment.
 └── Resources/
     ├── Assets.xcassets/                # App icons and image assets
     └── Kernova.entitlements            # com.apple.security.virtualization entitlement
@@ -178,7 +181,9 @@ KernovaTests/
 ├── InfoPopoverContentViewControllerTests.swift # Paragraph rendering, fitting size, monospaced+selectable code paragraphs
 ├── MicrophonePermissionPopoverContentViewControllerTests.swift # Layout loads, headline+sub-headline present, divider present, bold step font runs, non-selectable bodies
 ├── AgentStatusPopoverContentViewControllerTests.swift # update() swaps title/body/action-button per status, dismiss-button visibility, delegate firing for action and dismiss, `requiresMountAction(for:)` classifier
-└── SheetAlertTests.swift                # Role-to-NSButton-config mapping (keyEquivalent + hasDestructiveAction per role), response-index → button-action dispatch, AlertConfiguration shape
+├── SheetAlertTests.swift                # Role-to-NSButton-config mapping (keyEquivalent + hasDestructiveAction per role), response-index → button-action dispatch, AlertConfiguration shape
+├── SheetPresenterTests.swift            # Lifecycle (initial state, idempotent close, onClose-on-delegate); show() is not unit-tested (needs key window + run loop)
+└── DeleteVMSheetContentViewControllerTests.swift # Header shows VM name; one row per attachment; checkbox starts unchecked; Cancel/Move-to-Trash fire delegate; Move-to-Trash is the default+destructive button; Cancel is keyed to Escape
 
 KernovaGuestAgentTests/                 # Unit tests for the guest agent (standalone xctest bundle — no TEST_HOST)
 │                                       # Compiles KernovaGuestAgent source files directly (except main.swift)
@@ -193,7 +198,7 @@ KernovaGuestAgentTests/                 # Unit tests for the guest agent (standa
 └── VsockGuestControlAgentTests.swift   # Hello on connect, heartbeat cadence, reconnect after host close
 ```
 
-**Total: 72 source files + 2 helpers, 40 test files (32 suites + 8 mocks + 1 test-helpers).**
+**Total: 75 source files + 2 helpers, 42 test files (34 suites + 8 mocks + 1 test-helpers).**
 
 *Note: `ContentView.swift` was removed when `NavigationSplitView` was replaced by `NSSplitViewController` in `MainWindowController`. Its responsibilities were split between `MainWindowController` (toolbar, split view) and `MainDetailView` (detail switching, sheets, alerts).*
 

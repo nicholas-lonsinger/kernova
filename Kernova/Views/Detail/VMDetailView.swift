@@ -140,23 +140,20 @@ private struct LifecycleAlerts: ViewModifier {
                     ]
                 )
             }
-            .sheet(isPresented: $viewModel.showDeleteSheet) {
-                if let vm = viewModel.instanceToDelete {
-                    DeleteVMSheet(
-                        instance: vm,
-                        externals: viewModel.externalAttachments(for: vm),
-                        trashExternals: $viewModel.trashExternalsOnDelete,
-                        onCancel: {
-                            viewModel.showDeleteSheet = false
-                            viewModel.instanceToDelete = nil
-                            viewModel.trashExternalsOnDelete = false
-                        },
-                        onConfirm: {
-                            viewModel.deleteConfirmed(vm, trashExternals: viewModel.trashExternalsOnDelete)
-                        }
-                    )
+            .deleteVMSheet(
+                isPresented: $viewModel.showDeleteSheet,
+                instance: viewModel.instanceToDelete,
+                externals: viewModel.instanceToDelete.map { viewModel.externalAttachments(for: $0) } ?? [],
+                onCancel: {
+                    viewModel.showDeleteSheet = false
+                    viewModel.instanceToDelete = nil
+                },
+                onConfirm: { trashExternals in
+                    if let vm = viewModel.instanceToDelete {
+                        viewModel.deleteConfirmed(vm, trashExternals: trashExternals)
+                    }
                 }
-            }
+            )
             .sheetAlert(
                 isPresented: $viewModel.showCancelPreparingConfirmation,
                 presenting: viewModel.preparingInstanceToCancel
