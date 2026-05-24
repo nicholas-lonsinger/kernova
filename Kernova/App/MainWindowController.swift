@@ -1,11 +1,10 @@
 import Cocoa
 import os
-import SwiftUI
 
 /// Manages the main library window using an `NSSplitViewController` for sidebar/detail layout
 /// and an `NSToolbar` with native toolbar items.
 ///
-/// SwiftUI views render content inside each pane.
+/// AppKit view controllers render content inside each pane.
 @MainActor
 final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindowDelegate {
     private let viewModel: VMLibraryViewModel
@@ -35,9 +34,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             instanceProvider: { [weak viewModel] in viewModel?.selectedInstance }
         )
 
-        let sidebarHost = NSHostingController(rootView: SidebarView(viewModel: viewModel))
-        sidebarHost.sizingOptions = []
-        self.sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebarHost)
+        let sidebarVC = SidebarViewController(viewModel: viewModel)
+        self.sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebarVC)
         sidebarItem.minimumThickness = 200
         sidebarItem.maximumThickness = 350
         splitViewController.addSplitViewItem(sidebarItem)
