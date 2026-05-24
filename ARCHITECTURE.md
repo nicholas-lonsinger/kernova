@@ -87,8 +87,8 @@ Kernova/
 │   │   ├── DeleteVMSheetModifier.swift # SwiftUI bridge — `.deleteVMSheet(isPresented:instance:externals:onCancel:onConfirm:)` modifier matching the prior SwiftUI sheet's call surface; uses `SheetPresenter` + `WindowAccessor` to present as a window-modal sheet on the host `NSWindow`
 │   │   └── MacOSInstallProgressView.swift # Two-phase install progress (download + install)
 │   ├── Console/
-│   │   ├── VMConsoleView.swift         # SwiftUI `NSViewControllerRepresentable` shim — preserves the existing `VMConsoleView(instance:)` call surface used by `VMDetailView` while delegating all rendering and observation to AppKit
-│   │   ├── VMConsoleContentViewController.swift # Concrete `NSViewController` for the detail-pane "console" placeholder — centered empty-state (SF Symbol + title + description + optional action button) for the non-inline display states (Fullscreen / Popped Out / Suspended / No Display), inert black fill behind it for the `.live` case (covered by `VMDisplayBackingView`). Observes `VMInstance.displayMode`, `isColdPaused`, and `virtualMachine` via `observeRecurring`. Action buttons dispatch through `NSApp.sendAction(_:to:from:)` to `AppDelegate.toggleFullscreen(_:)` / `togglePopOut(_:)`. The reusable `ConsoleEmptyStateView` lives privately in the same file (one consumer today; no premature extraction).
+│   │   ├── VMDisplayPlaceholderView.swift # SwiftUI `NSViewControllerRepresentable` shim — preserves a stable `VMDisplayPlaceholderView(instance:)` call surface for `VMDetailView` while delegating all rendering and observation to AppKit
+│   │   ├── VMDisplayPlaceholderContentViewController.swift # Concrete `NSViewController` for the detail-pane placeholder shown when the VM display is unavailable inline — centered empty-state (SF Symbol + title + description + optional action button) for the non-inline display states (Fullscreen / Popped Out / Suspended / No Display), inert black fill behind it for the `.live` case (covered by `VMDisplayBackingView`). Observes `VMInstance.displayMode`, `isColdPaused`, and `virtualMachine` via `observeRecurring`. Action buttons dispatch through `NSApp.sendAction(_:to:from:)` to `AppDelegate.toggleFullscreen(_:)` / `togglePopOut(_:)`. The reusable `DisplayPlaceholderEmptyStateView` lives privately in the same file (one consumer today; no premature extraction).
 │   │   └── VMDisplayBackingView.swift  # Pure AppKit VM display with pause/transition overlays
 │   └── Creation/
 │       ├── VMCreationWizardView.swift  # Multi-step wizard container
@@ -317,7 +317,7 @@ NSSplitViewController (MainWindowController)
     │   └── VZVirtualMachineView + pause/transition overlays
     └── NSHostingController (SwiftUI, always present behind)
         └── MainDetailView → VMDetailView
-            ├── VMConsoleView (SwiftUI shim → AppKit VMConsoleContentViewController; placeholder when display is external, suspended, or unavailable)
+            ├── VMDisplayPlaceholderView (SwiftUI shim → AppKit VMDisplayPlaceholderContentViewController; placeholder when display is external, suspended, or unavailable)
             ├── VMSettingsView
             └── MacOSInstallProgressView
 VMCreationWizardView (modal sheet on detail pane)

@@ -12,12 +12,14 @@ import os
 /// Observes `VMInstance.displayMode`, `isColdPaused`, and `virtualMachine` via
 /// `observeRecurring` and recomputes the visible state in `apply()`.
 @MainActor
-final class VMConsoleContentViewController: NSViewController {
+final class VMDisplayPlaceholderContentViewController: NSViewController {
     private var instance: VMInstance
-    private let emptyState = ConsoleEmptyStateView()
+    private let emptyState = DisplayPlaceholderEmptyStateView()
     private var observation: ObservationLoop?
 
-    private static let logger = Logger(subsystem: "com.kernova.app", category: "VMConsoleVC")
+    private static let logger = Logger(
+        subsystem: "com.kernova.app", category: "VMDisplayPlaceholderVC"
+    )
 
     init(instance: VMInstance) {
         self.instance = instance
@@ -26,7 +28,7 @@ final class VMConsoleContentViewController: NSViewController {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) {
-        fatalError("VMConsoleContentViewController does not support NSCoder")
+        fatalError("VMDisplayPlaceholderContentViewController does not support NSCoder")
     }
 
     // MARK: - View Lifecycle
@@ -132,7 +134,7 @@ final class VMConsoleContentViewController: NSViewController {
                 symbolName: "arrow.up.left.and.arrow.down.right",
                 title: "Fullscreen",
                 description: "The virtual machine display is in fullscreen mode.",
-                action: ConsoleEmptyStateView.Action(
+                action: DisplayPlaceholderEmptyStateView.Action(
                     title: "Exit Fullscreen",
                     selector: #selector(AppDelegate.toggleFullscreen(_:))
                 )
@@ -143,7 +145,7 @@ final class VMConsoleContentViewController: NSViewController {
                 symbolName: "pip.exit",
                 title: "Popped Out",
                 description: "The virtual machine display is in a separate window.",
-                action: ConsoleEmptyStateView.Action(
+                action: DisplayPlaceholderEmptyStateView.Action(
                     title: "Pop In",
                     selector: #selector(AppDelegate.togglePopOut(_:))
                 )
@@ -170,7 +172,7 @@ final class VMConsoleContentViewController: NSViewController {
     }
 }
 
-// MARK: - ConsoleEmptyStateView
+// MARK: - DisplayPlaceholderEmptyStateView
 
 /// AppKit empty-state placeholder: a centered SF Symbol, title, description,
 /// and optional action button.
@@ -181,7 +183,7 @@ final class VMConsoleContentViewController: NSViewController {
 /// to the configured selector (matching how the SwiftUI predecessor reached
 /// `AppDelegate.toggleFullscreen(_:)` / `togglePopOut(_:)`).
 @MainActor
-private final class ConsoleEmptyStateView: NSView {
+private final class DisplayPlaceholderEmptyStateView: NSView {
     struct Action {
         let title: String
         let selector: Selector
@@ -243,7 +245,7 @@ private final class ConsoleEmptyStateView: NSView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) {
-        fatalError("ConsoleEmptyStateView does not support NSCoder")
+        fatalError("DisplayPlaceholderEmptyStateView does not support NSCoder")
     }
 
     func configure(symbolName: String, title: String, description: String, action: Action?) {

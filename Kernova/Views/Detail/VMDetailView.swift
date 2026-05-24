@@ -45,7 +45,7 @@ struct VMDetailView: View {
                 if instance.detailPaneMode == .settings {
                     VMSettingsView(instance: instance, viewModel: viewModel, isReadOnly: true)
                 } else {
-                    VMConsoleView(instance: instance)
+                    VMDisplayPlaceholderView(instance: instance)
                 }
 
             default:
