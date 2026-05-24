@@ -377,12 +377,19 @@ struct VsockControlServiceTests {
         host.start()
         defer { guest.close() }
 
+        // `terminateAfter` is set well beyond the test's wall-clock budget
+        // (two 5 s `waitUntil` calls plus per-test setup overhead) so the
+        // watchdog cannot close the channel before the recovery heartbeat
+        // lands. Same CI-jitter rationale as `terminateClosesChannel`: on
+        // slow runners the original 2 s value occasionally fired between
+        // detecting `.unresponsive` and sending the heartbeat, leaving the
+        // service stuck and timing out the second `waitUntil`.
         let service = makeService(
             channel: host,
             bundledAgentVersion: "0.9.0",
             heartbeatInterval: .milliseconds(60),
             unresponsiveAfter: .milliseconds(100),
-            terminateAfter: .milliseconds(2_000)
+            terminateAfter: .seconds(60)
         )
         service.start()
         defer { service.stop() }
