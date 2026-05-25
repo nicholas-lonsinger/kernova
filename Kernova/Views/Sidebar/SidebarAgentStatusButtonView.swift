@@ -81,6 +81,17 @@ final class SidebarAgentStatusButtonView: NSView,
         contentVC.update(status: status, vmName: vmName, hasDismissAction: hasDismissAction)
     }
 
+    /// Closes any open popover and stops the spinner.
+    ///
+    /// Called by the hosting sidebar cell when the cell is recycled, rebound to
+    /// a different VM, or the indicator is hidden — so a stale popover can't
+    /// fire its action against the wrong VM and the spinner can't keep
+    /// animating on a hidden/off-screen view.
+    func reset() {
+        popoverPresenter.close()
+        spinner.stopAnimation(nil)
+    }
+
     // MARK: - Subview configuration
 
     private func configureIconButton() {
