@@ -19,6 +19,13 @@ final class DetailContainerViewController: NSViewController {
     private let swiftUIHost: NSHostingController<MainDetailView>
     private var stateObservation: ObservationLoop?
 
+    /// Drives the AppKit creation-wizard sheet.
+    ///
+    /// Presentation moved out of the SwiftUI `MainDetailView.sheet` into this
+    /// AppKit host so the wizard is a pure-AppKit sheet on the main window.
+    private let wizardPresenter = SheetPresenter()
+    private var wizardObservation: ObservationLoop?
+
     private static let logger = Logger(subsystem: "com.kernova.app", category: "DetailContainerVC")
 
     // MARK: - Init
@@ -52,12 +59,18 @@ final class DetailContainerViewController: NSViewController {
         super.viewDidAppear()
         updateDisplayState()
         if stateObservation == nil { observeState() }
+        if wizardObservation == nil { observeWizardPresentation() }
+        // Handle the case where the flag was set before the window existed.
+        syncWizardPresentation()
     }
 
     override func viewWillDisappear() {
         super.viewWillDisappear()
         stateObservation?.cancel()
         stateObservation = nil
+        wizardObservation?.cancel()
+        wizardObservation = nil
+        if wizardPresenter.isShown { wizardPresenter.close() }
         for id in Array(backingViews.keys) {
             removeBackingView(for: id)
         }
@@ -129,6 +142,38 @@ final class DetailContainerViewController: NSViewController {
         )
     }
 
+    // MARK: - Creation Wizard Presentation
+
+    private func observeWizardPresentation() {
+        wizardObservation = observeRecurring(
+            track: { [weak self] in
+                _ = self?.viewModel.showCreationWizard
+            },
+            apply: { [weak self] in
+                self?.syncWizardPresentation()
+            }
+        )
+    }
+
+    private func syncWizardPresentation() {
+        if viewModel.showCreationWizard {
+            guard !wizardPresenter.isShown, let window = view.window else { return }
+            let creationVM = VMCreationViewModel()
+            let wizard = VMCreationWizardViewController(creationVM: creationVM)
+            wizard.delegate = self
+            wizardPresenter.onClose = { [weak self] in
+                // Resetting the flag re-fires the observation; the `isShown`
+                // guard above makes the resulting `syncWizardPresentation()` a
+                // no-op (the sheet is already gone).
+                self?.viewModel.showCreationWizard = false
+            }
+            wizardPresenter.show(content: wizard, in: window)
+            Self.logger.notice("Presented creation wizard")
+        } else if wizardPresenter.isShown {
+            wizardPresenter.close()
+        }
+    }
+
     private func updateDisplayState() {
         // Evict backing views for VMs no longer running inline
         let activeInlineIDs = Set(
@@ -177,5 +222,26 @@ final class DetailContainerViewController: NSViewController {
             isPaused: instance.status == .paused,
             transitionText: instance.status.transitionLabel
         )
+    }
+}
+
+// MARK: - VMCreationWizardViewControllerDelegate
+
+extension DetailContainerViewController: VMCreationWizardViewControllerDelegate {
+    func wizardDidCancel(_ vc: VMCreationWizardViewController) {
+        wizardPresenter.close()
+    }
+
+    func wizardDidRequestCreate(
+        _ vc: VMCreationWizardViewController,
+        creationVM: VMCreationViewModel
+    ) {
+        // Keep the sheet up until creation completes, matching the prior
+        // SwiftUI flow (`await createVM(from:); dismiss()`). Errors surface
+        // via the view model's non-blocking error presentation.
+        Task { [weak self] in
+            await self?.viewModel.createVM(from: creationVM)
+            self?.wizardPresenter.close()
+        }
     }
 }
