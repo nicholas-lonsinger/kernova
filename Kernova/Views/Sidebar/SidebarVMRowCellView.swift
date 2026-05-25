@@ -145,10 +145,14 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
         onMountAgent: @escaping () -> Void,
         onDismissAgentNudge: @escaping () -> Void
     ) {
+        let isRebindToDifferentVM = self.instance !== instance
         self.instance = instance
         self.onCommitRename = onCommitRename
         self.onCancelRename = onCancelRename
 
+        // A recycled cell may still show the previous VM's open agent popover;
+        // close it on rebind so its action can't fire against the new VM.
+        if isRebindToDifferentVM { agentButton.reset() }
         agentButton.onMount = onMountAgent
         agentButton.onDismiss = onDismissAgentNudge
 
@@ -198,7 +202,7 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
             spinner.stopAnimation(nil)
             spinner.isHidden = true
             statusDot.isHidden = false
-            statusDot.layer?.backgroundColor = instance.statusDisplayNSColor.cgColor
+            applyStatusDotColor()
             statusDot.toolTip = instance.statusToolTip
         }
 
@@ -209,8 +213,25 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
                 status: agentStatus, vmName: instance.name, hasDismissAction: dismissible
             )
         } else {
+            // No badge for this state: hide it and dismiss any popover/spinner
+            // left from a prior state so nothing lingers on the recycled view.
+            agentButton.reset()
             agentButton.isHidden = true
         }
+    }
+
+    /// Resolves the status-dot color in the cell's current effective appearance
+    /// so it follows light/dark switches (a baked `cgColor` otherwise wouldn't).
+    private func applyStatusDotColor() {
+        guard let instance, !statusDot.isHidden else { return }
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            self.statusDot.layer?.backgroundColor = instance.statusDisplayNSColor.cgColor
+        }
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyStatusDotColor()
     }
 
     // MARK: - Inline rename
@@ -271,6 +292,11 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
         onCommitRename = nil
         onCancelRename = nil
         spinner.stopAnimation(nil)
+        // Close any popover, stop the agent spinner, and drop the closures —
+        // they capture the bound VMInstance and would otherwise keep it alive.
+        agentButton.reset()
+        agentButton.onMount = nil
+        agentButton.onDismiss = nil
         agentButton.isHidden = true
     }
 
@@ -278,10 +304,14 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
 
     override var backgroundStyle: NSView.BackgroundStyle {
         didSet {
-            let emphasized = backgroundStyle == .emphasized
-            subtitleField.cell?.backgroundStyle = backgroundStyle
-            iconView.contentTintColor =
-                emphasized ? .alternateSelectedControlTextColor : .secondaryLabelColor
+            // Invert both the icon tint and the subtitle on the selection
+            // highlight; `.secondaryLabelColor` doesn't auto-adapt, so the
+            // subtitle would otherwise render gray-on-blue when selected.
+            let accessoryColor: NSColor =
+                backgroundStyle == .emphasized
+                ? .alternateSelectedControlTextColor : .secondaryLabelColor
+            subtitleField.textColor = accessoryColor
+            iconView.contentTintColor = accessoryColor
         }
     }
 

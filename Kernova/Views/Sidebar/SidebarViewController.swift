@@ -163,7 +163,18 @@ final class SidebarViewController: NSViewController {
     }
 
     private func reloadInstances() {
+        // Commit any in-flight rename first: a reload tears the field editor
+        // down underneath the user, which would otherwise drop keyboard focus
+        // and race a partial-text commit. Resigning first responder ends
+        // editing cleanly through the normal commit path.
+        if editingItemID != nil {
+            view.window?.makeFirstResponder(outlineView)
+        }
+        // Guard the reload so any selection churn it triggers isn't written
+        // back into the model (every other selection-mutating call guards too).
+        isUpdatingSelectionFromModel = true
         outlineView.reloadData()
+        isUpdatingSelectionFromModel = false
         applySelectionFromModel()
         applyRenameState()
     }
@@ -186,8 +197,14 @@ final class SidebarViewController: NSViewController {
             outlineView.expandItem(section)
             row = outlineView.row(forItem: instance)
         }
-        guard row >= 0, outlineView.selectedRow != row else { return }
-        outlineView.selectRowIndexes([row], byExtendingSelection: false)
+        guard row >= 0 else { return }
+        if outlineView.selectedRow != row {
+            outlineView.selectRowIndexes([row], byExtendingSelection: false)
+        }
+        // NSOutlineView doesn't auto-scroll programmatic selection into view
+        // (SwiftUI's List did), so a created/cloned/imported VM's row could land
+        // off-screen.
+        outlineView.scrollRowToVisible(row)
     }
 
     // MARK: - Inline rename
@@ -218,6 +235,9 @@ final class SidebarViewController: NSViewController {
         isUpdatingSelectionFromModel = false
         if viewModel.selectedID != id { viewModel.selectedID = id }
 
+        // Make the row visible before editing so `makeIfNecessary` returns the
+        // on-screen cell rather than fabricating a detached one.
+        outlineView.scrollRowToVisible(row)
         if let cell = outlineView.view(atColumn: 0, row: row, makeIfNecessary: true)
             as? SidebarVMRowCellView
         {
@@ -451,14 +471,23 @@ extension SidebarViewController: NSOutlineViewDelegate {
     func outlineViewSelectionDidChange(_ notification: Notification) {
         guard !isUpdatingSelectionFromModel else { return }
         let row = outlineView.selectedRow
-        let newID = (row >= 0 ? outlineView.item(atRow: row) as? VMInstance : nil)?.id
-        if viewModel.selectedID != newID {
-            viewModel.selectedID = newID
+        if row >= 0, let instance = outlineView.item(atRow: row) as? VMInstance {
+            if viewModel.selectedID != instance.id { viewModel.selectedID = instance.id }
+        } else if let id = viewModel.selectedID,
+            !viewModel.instances.contains(where: { $0.id == id })
+        {
+            // Empty selection clears the model only when the selected VM is
+            // truly gone — a transient -1 from collapsing the group (or an
+            // internal reload) must not wipe a still-valid selection.
+            viewModel.selectedID = nil
         }
     }
 
     func outlineViewItemDidExpand(_ notification: Notification) {
         persistExpansion()
+        // Restore the highlight for a still-selected row that was hidden while
+        // its group was collapsed.
+        applySelectionFromModel()
     }
 
     func outlineViewItemDidCollapse(_ notification: Notification) {
