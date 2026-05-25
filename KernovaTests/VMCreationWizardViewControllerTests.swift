@@ -41,7 +41,8 @@ struct VMCreationWizardViewControllerTests {
 
         #expect(vm.currentStep == .bootConfig)
         #expect(wizard.children.count == 1)
-        #expect(wizard.children.first is WizardStepPlaceholderViewController)
+        // Default OS is macOS, so the boot step mounts the IPSW selection VC.
+        #expect(wizard.children.first is IPSWSelectionContentViewController)
     }
 
     @Test("Back returns to the previous step")

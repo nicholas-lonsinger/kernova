@@ -284,10 +284,12 @@ final class VMCreationWizardViewController: NSViewController {
         case .osSelection:
             return OSSelectionContentViewController(creationVM: creationVM)
         case .bootConfig:
-            // Increment 4 replaces these placeholders with IPSWSelection /
-            // BootConfig content view controllers.
-            let title = creationVM.selectedOS == .macOS ? "macOS Restore Image" : "Boot Configuration"
-            return WizardStepPlaceholderViewController(stepTitle: title)
+            // OS-conditional: read `selectedOS` fresh each time the step is
+            // entered so going Back and changing the OS rebuilds the right VC.
+            if creationVM.selectedOS == .macOS {
+                return IPSWSelectionContentViewController(creationVM: creationVM)
+            }
+            return BootConfigContentViewController(creationVM: creationVM)
         case .resources:
             return ResourceConfigContentViewController(creationVM: creationVM)
         case .review:

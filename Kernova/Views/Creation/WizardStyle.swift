@@ -86,6 +86,43 @@ func makeWizardSubtitle(_ text: String) -> NSTextField {
     return label
 }
 
+// MARK: - Layout helpers
+
+/// Wraps `documentView` in a borderless, autohiding vertical scroll view with
+/// the clip-view content insets zeroed, and pins the document to the clip view
+/// (width-matched; bottom at `.defaultHigh` so short content doesn't stretch).
+///
+/// Used by the taller wizard steps, whose content can exceed the fixed sheet
+/// height. Callers add their own per-subview width constraints against
+/// `documentView`.
+@MainActor
+func makeWizardScrollView(documentView: NSView) -> NSScrollView {
+    let scrollView = NSScrollView()
+    scrollView.hasVerticalScroller = true
+    scrollView.hasHorizontalScroller = false
+    scrollView.borderType = .noBorder
+    scrollView.drawsBackground = false
+    scrollView.autohidesScrollers = true
+    scrollView.automaticallyAdjustsContentInsets = false
+    scrollView.contentInsets = NSEdgeInsetsZero
+    scrollView.contentView.automaticallyAdjustsContentInsets = false
+    scrollView.contentView.contentInsets = NSEdgeInsetsZero
+
+    documentView.translatesAutoresizingMaskIntoConstraints = false
+    scrollView.documentView = documentView
+
+    let bottomPin = documentView.bottomAnchor.constraint(equalTo: scrollView.contentView.bottomAnchor)
+    bottomPin.priority = .defaultHigh
+    NSLayoutConstraint.activate([
+        documentView.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
+        documentView.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
+        documentView.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
+        documentView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
+        bottomPin,
+    ])
+    return scrollView
+}
+
 // MARK: - Form atoms
 
 /// Builds a primary body label for a form row (the leading "Name"-style label).
@@ -151,6 +188,92 @@ func addWizardSpanningRow(to grid: NSGridView, _ content: NSView) {
     let row = grid.addRow(with: [content, NSGridCell.emptyContentView])
     row.mergeCells(in: NSRange(location: 0, length: 2))
     row.cell(at: 0).xPlacement = .leading
+}
+
+/// Builds a borderless, link-styled push button (caption font, link color).
+@MainActor
+func makeWizardLinkButton(_ title: String, target: AnyObject, action: Selector) -> NSButton {
+    let button = NSButton(title: title, target: target, action: action)
+    button.isBordered = false
+    button.bezelStyle = .inline
+    button.font = .preferredFont(forTextStyle: .caption1)
+    button.contentTintColor = .linkColor
+    button.setContentHuggingPriority(.required, for: .horizontal)
+    return button
+}
+
+/// Builds the IPSW path badge: a doc icon, a middle-truncating path, and a
+/// trailing "Change…" button, in a subtle rounded container.
+@MainActor
+func makeWizardPathBadge(path: String, changeButton: NSButton) -> NSView {
+    let icon = NSImageView(image: .systemSymbol("doc.fill", accessibilityDescription: ""))
+    icon.contentTintColor = .secondaryLabelColor
+    icon.setContentHuggingPriority(.required, for: .horizontal)
+
+    let pathLabel = NSTextField(labelWithString: wizardAbbreviateWithTilde(path))
+    pathLabel.font = .preferredFont(forTextStyle: .caption1)
+    pathLabel.lineBreakMode = .byTruncatingMiddle
+    pathLabel.maximumNumberOfLines = 1
+    pathLabel.isSelectable = false
+    pathLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+    let row = NSStackView(views: [icon, pathLabel, changeButton])
+    row.orientation = .horizontal
+    row.alignment = .firstBaseline
+    row.spacing = 6
+
+    return WizardTintedBox(
+        content: row,
+        fill: .secondaryLabelColor.withAlphaComponent(0.1),
+        border: .clear,
+        padding: 8,
+        cornerRadius: 6,
+        borderWidth: 0
+    )
+}
+
+/// Builds a tinted warning/info banner: a symbol, a message, and optional
+/// trailing action buttons, in a rounded tinted container.
+@MainActor
+func makeWizardBanner(
+    symbolName: String,
+    tint: NSColor,
+    message: String,
+    trailingButtons: [NSButton] = []
+) -> NSView {
+    let icon = NSImageView(image: .systemSymbol(symbolName, accessibilityDescription: ""))
+    icon.contentTintColor = tint
+    icon.setContentHuggingPriority(.required, for: .horizontal)
+    icon.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+    let label = NSTextField(wrappingLabelWithString: message)
+    label.font = .preferredFont(forTextStyle: .callout)
+    label.maximumNumberOfLines = 0
+    label.isSelectable = false
+
+    let spacer = NSView()
+    spacer.translatesAutoresizingMaskIntoConstraints = false
+    spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+    var views: [NSView] = [icon, label, spacer]
+    for button in trailingButtons {
+        button.controlSize = .small
+        button.setContentHuggingPriority(.required, for: .horizontal)
+        views.append(button)
+    }
+
+    let row = NSStackView(views: views)
+    row.orientation = .horizontal
+    row.alignment = .centerY
+    row.spacing = 8
+
+    return WizardTintedBox(
+        content: row,
+        fill: tint.withAlphaComponent(0.1),
+        border: tint.withAlphaComponent(0.3),
+        padding: 10,
+        cornerRadius: 8
+    )
 }
 
 /// Abbreviates a path with a leading `~` when it lives under the user's home
