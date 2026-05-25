@@ -289,7 +289,7 @@ final class VMCreationWizardViewController: NSViewController {
             let title = creationVM.selectedOS == .macOS ? "macOS Restore Image" : "Boot Configuration"
             return WizardStepPlaceholderViewController(stepTitle: title)
         case .resources:
-            return WizardStepPlaceholderViewController(stepTitle: "Resources")
+            return ResourceConfigContentViewController(creationVM: creationVM)
         case .review:
             return WizardStepPlaceholderViewController(stepTitle: "Review")
         }
