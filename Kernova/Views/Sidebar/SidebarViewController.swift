@@ -452,17 +452,23 @@ extension SidebarViewController: NSOutlineViewDelegate {
         cell.configure(
             instance: instance,
             isRenaming: viewModel.activeRename == .sidebar(instance.id),
-            onCommitRename: { [weak self] newName in
-                self?.viewModel.commitRename(for: instance, newName: newName)
+            // Capture `instance` weakly: the cell stores these closures, so a
+            // strong capture would keep a deleted VM alive until the cell is
+            // recycled. A nil instance means the VM is gone — no-op.
+            onCommitRename: { [weak self, weak instance] newName in
+                guard let self, let instance else { return }
+                self.viewModel.commitRename(for: instance, newName: newName)
             },
             onCancelRename: { [weak self] in
                 self?.viewModel.cancelRename()
             },
-            onMountAgent: { [weak self] in
-                self?.viewModel.mountGuestAgentInstaller(on: instance)
+            onMountAgent: { [weak self, weak instance] in
+                guard let self, let instance else { return }
+                self.viewModel.mountGuestAgentInstaller(on: instance)
             },
-            onDismissAgentNudge: { [weak self] in
-                self?.viewModel.dismissAgentInstallNudge(for: instance)
+            onDismissAgentNudge: { [weak self, weak instance] in
+                guard let self, let instance else { return }
+                self.viewModel.dismissAgentInstallNudge(for: instance)
             }
         )
         return cell

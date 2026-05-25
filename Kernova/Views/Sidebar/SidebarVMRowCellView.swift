@@ -281,6 +281,18 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
         return true
     }
 
+    /// Re-establishes first-responder focus when a renaming cell joins a window.
+    ///
+    /// During `reloadData` the cell is configured (and `setRenaming` runs)
+    /// before it's in the window hierarchy, so the `makeFirstResponder` there
+    /// no-ops; this catches that case on attach.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard isRenaming, let window else { return }
+        window.makeFirstResponder(nameField)
+        nameField.currentEditor()?.selectAll(nil)
+    }
+
     // MARK: - Reuse
 
     override func prepareForReuse() {
