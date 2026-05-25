@@ -85,21 +85,21 @@ final class ResourceConfigContentViewController: NSViewController {
         grid.rowSpacing = 10
         grid.translatesAutoresizingMaskIntoConstraints = false
 
-        grid.addRow(with: [makeRowLabel("Name"), nameField])
+        grid.addRow(with: [makeWizardFormLabel("Name"), nameField])
 
-        addSectionHeader(to: grid, "Compute")
+        addWizardSectionHeader(to: grid, "Compute")
         grid.addRow(with: [cpuValueLabel, cpuStepper])
         grid.addRow(with: [memoryValueLabel, memoryStepper])
 
-        addSectionHeader(to: grid, "Storage")
-        grid.addRow(with: [makeRowLabel("Disk Size"), diskPopUp])
-        addSpanningRow(
+        addWizardSectionHeader(to: grid, "Storage")
+        grid.addRow(with: [makeWizardFormLabel("Disk Size"), diskPopUp])
+        addWizardSpanningRow(
             to: grid,
-            makeCaption(
+            makeWizardCaption(
                 "Physical disk usage grows only as data is written (ASIF sparse format)."))
 
-        addSectionHeader(to: grid, "Network")
-        grid.addRow(with: [makeRowLabel("Networking"), networkSwitch])
+        addWizardSectionHeader(to: grid, "Network")
+        grid.addRow(with: [makeWizardFormLabel("Networking"), networkSwitch])
 
         grid.column(at: 0).xPlacement = .trailing
         grid.column(at: 1).xPlacement = .leading
@@ -158,45 +158,6 @@ final class ResourceConfigContentViewController: NSViewController {
         networkSwitch.state = creationVM.networkEnabled ? .on : .off
         networkSwitch.target = self
         networkSwitch.action = #selector(networkToggled)
-    }
-
-    // MARK: - Atoms
-
-    private func makeRowLabel(_ text: String) -> NSTextField {
-        let label = NSTextField(labelWithString: text)
-        label.font = .preferredFont(forTextStyle: .body)
-        label.isSelectable = false
-        return label
-    }
-
-    private func makeSectionHeaderLabel(_ text: String) -> NSTextField {
-        let label = NSTextField(labelWithString: text)
-        label.font = .preferredFont(forTextStyle: .subheadline)
-        label.textColor = .secondaryLabelColor
-        label.isSelectable = false
-        return label
-    }
-
-    private func makeCaption(_ text: String) -> NSTextField {
-        let label = NSTextField(wrappingLabelWithString: text)
-        label.font = .preferredFont(forTextStyle: .caption1)
-        label.textColor = .secondaryLabelColor
-        label.maximumNumberOfLines = 0
-        label.isSelectable = false
-        return label
-    }
-
-    private func addSectionHeader(to grid: NSGridView, _ title: String) {
-        let row = grid.addRow(with: [makeSectionHeaderLabel(title)])
-        row.mergeCells(in: NSRange(location: 0, length: 2))
-        row.cell(at: 0).xPlacement = .leading
-        row.topPadding = 8
-    }
-
-    private func addSpanningRow(to grid: NSGridView, _ content: NSView) {
-        let row = grid.addRow(with: [content])
-        row.mergeCells(in: NSRange(location: 0, length: 2))
-        row.cell(at: 0).xPlacement = .leading
     }
 
     // MARK: - Label updates

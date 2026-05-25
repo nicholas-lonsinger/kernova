@@ -77,6 +77,17 @@ struct VMCreationWizardViewControllerTests {
         #expect(delegate.createRequests.first === vm)
     }
 
+    @Test("Create is disabled on review when the name is blank")
+    func reviewCreateDisabledWhenNameBlank() {
+        let vm = VMCreationViewModel()
+        vm.currentStep = .review
+        vm.vmName = "   "
+        let wizard = VMCreationWizardViewController(creationVM: vm)
+        wizard.loadViewIfNeeded()
+
+        #expect(findButton(titled: "Create", in: wizard.view)?.isEnabled == false)
+    }
+
     @Test("Cancel reports to the delegate")
     func cancelFiresDelegate() {
         let wizard = VMCreationWizardViewController(creationVM: VMCreationViewModel())

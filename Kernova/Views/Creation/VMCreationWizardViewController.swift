@@ -291,7 +291,7 @@ final class VMCreationWizardViewController: NSViewController {
         case .resources:
             return ResourceConfigContentViewController(creationVM: creationVM)
         case .review:
-            return WizardStepPlaceholderViewController(stepTitle: "Review")
+            return ReviewContentViewController(creationVM: creationVM)
         }
     }
 

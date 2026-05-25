@@ -85,3 +85,84 @@ func makeWizardSubtitle(_ text: String) -> NSTextField {
     label.isSelectable = false
     return label
 }
+
+// MARK: - Form atoms
+
+/// Builds a primary body label for a form row (the leading "Name"-style label).
+@MainActor
+func makeWizardFormLabel(_ text: String) -> NSTextField {
+    let label = NSTextField(labelWithString: text)
+    label.font = .preferredFont(forTextStyle: .body)
+    label.isSelectable = false
+    return label
+}
+
+/// Builds a secondary value label for a form/review row (the trailing value).
+@MainActor
+func makeWizardValueLabel(_ text: String) -> NSTextField {
+    let label = NSTextField(labelWithString: text)
+    label.font = .preferredFont(forTextStyle: .body)
+    label.textColor = .secondaryLabelColor
+    label.lineBreakMode = .byTruncatingMiddle
+    label.isSelectable = false
+    return label
+}
+
+/// Builds a secondary section-header label for a grouped form section.
+@MainActor
+func makeWizardSectionHeader(_ text: String) -> NSTextField {
+    let label = NSTextField(labelWithString: text)
+    label.font = .preferredFont(forTextStyle: .subheadline)
+    label.textColor = .secondaryLabelColor
+    label.isSelectable = false
+    return label
+}
+
+/// Builds a secondary, wrapping caption label (explanatory footnote under a row).
+@MainActor
+func makeWizardCaption(_ text: String) -> NSTextField {
+    let label = NSTextField(wrappingLabelWithString: text)
+    label.font = .preferredFont(forTextStyle: .caption1)
+    label.textColor = .secondaryLabelColor
+    label.maximumNumberOfLines = 0
+    label.isSelectable = false
+    return label
+}
+
+/// Appends a leading-aligned, full-width section header row to a two-column form grid.
+///
+/// Adds an explicit empty second cell so the grid always has two columns to
+/// merge — otherwise a header added as the grid's *first* row (before any
+/// two-cell row exists) would index a column that doesn't exist yet and trap.
+@MainActor
+func addWizardSectionHeader(to grid: NSGridView, _ title: String) {
+    let row = grid.addRow(with: [makeWizardSectionHeader(title), NSGridCell.emptyContentView])
+    row.mergeCells(in: NSRange(location: 0, length: 2))
+    row.cell(at: 0).xPlacement = .leading
+    row.topPadding = 8
+}
+
+/// Appends a leading-aligned, full-width row spanning both columns of a form grid.
+///
+/// Like ``addWizardSectionHeader(to:_:)``, includes an explicit empty second
+/// cell so the span is valid even when this is the grid's first row.
+@MainActor
+func addWizardSpanningRow(to grid: NSGridView, _ content: NSView) {
+    let row = grid.addRow(with: [content, NSGridCell.emptyContentView])
+    row.mergeCells(in: NSRange(location: 0, length: 2))
+    row.cell(at: 0).xPlacement = .leading
+}
+
+/// Abbreviates a path with a leading `~` when it lives under the user's home
+/// directory.
+///
+/// Matches the SwiftUI predecessor's manual logic (keyed on
+/// `homeDirectoryForCurrentUser`) rather than `NSString.abbreviatingWithTildeInPath`,
+/// which keys on `NSHomeDirectory()` and can differ for a sandboxed app.
+func wizardAbbreviateWithTilde(_ path: String) -> String {
+    let home = FileManager.default.homeDirectoryForCurrentUser.path(percentEncoded: false)
+    if path.hasPrefix(home) {
+        return "~" + path.dropFirst(home.count)
+    }
+    return path
+}
