@@ -66,6 +66,7 @@ final class SidebarViewController: NSViewController {
         outlineView.outlineTableColumn = column
         outlineView.headerView = nil
         outlineView.style = .sourceList
+        outlineView.indentationPerLevel = 4
         outlineView.floatsGroupRows = false
         outlineView.allowsColumnReordering = false
         outlineView.allowsColumnResizing = false
@@ -88,12 +89,16 @@ final class SidebarViewController: NSViewController {
         scrollView.documentView = outlineView
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
+        // Overlay scrollers float over content and auto-fade, rather than a
+        // legacy scroller permanently reserving a strip on the right edge.
+        scrollView.scrollerStyle = .overlay
+        scrollView.autohidesScrollers = true
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = false
-        scrollView.automaticallyAdjustsContentInsets = false
-        scrollView.contentInsets = NSEdgeInsetsZero
-        scrollView.contentView.automaticallyAdjustsContentInsets = false
-        scrollView.contentView.contentInsets = NSEdgeInsetsZero
+        // Leave `automaticallyAdjustsContentInsets` at its default (true): in a
+        // full-size-content window with a unified toolbar, this insets the
+        // outline content below the toolbar/title bar instead of letting rows
+        // scroll up underneath it.
         scrollView.translatesAutoresizingMaskIntoConstraints = false
 
         container.addSubview(scrollView)

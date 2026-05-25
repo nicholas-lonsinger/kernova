@@ -60,6 +60,7 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
         iconView.imageScaling = .scaleProportionallyDown
         iconView.contentTintColor = .secondaryLabelColor
         iconView.setContentHuggingPriority(.required, for: .horizontal)
+        iconView.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         nameField.translatesAutoresizingMaskIntoConstraints = false
         nameField.isBordered = false
@@ -86,24 +87,34 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
         statusDot.wantsLayer = true
         statusDot.layer?.cornerRadius = 4
         statusDot.setContentHuggingPriority(.required, for: .horizontal)
+        statusDot.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         spinner.translatesAutoresizingMaskIntoConstraints = false
         spinner.style = .spinning
         spinner.controlSize = .small
         spinner.isDisplayedWhenStopped = false
         spinner.isHidden = true
+        spinner.setContentHuggingPriority(.required, for: .horizontal)
+        spinner.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         let textStack = NSStackView(views: [nameField, subtitleField])
         textStack.orientation = .vertical
         textStack.alignment = .leading
         textStack.spacing = 2
         textStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        textStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        // Keep the trailing accessory rigid so the text column is the sole
+        // flexible element: it claims all spare width, and the name truncates
+        // only when genuinely out of room.
+        agentButton.setContentHuggingPriority(.required, for: .horizontal)
+        agentButton.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         let row = NSStackView(views: [iconView, textStack, agentButton, statusDot, spinner])
         row.orientation = .horizontal
         row.alignment = .centerY
         row.distribution = .fill
-        row.spacing = 8
+        row.spacing = 6
         row.translatesAutoresizingMaskIntoConstraints = false
         addSubview(row)
 
@@ -112,8 +123,8 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
         imageView = iconView
 
         NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             row.centerYAnchor.constraint(equalTo: centerYAnchor),
             row.topAnchor.constraint(greaterThanOrEqualTo: topAnchor, constant: 2),
             row.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -2),
