@@ -12,7 +12,7 @@ Kernova/
 │   ├── AppDelegate.swift               # NSApplicationDelegate — startup, window tracking, menu, suspend-on-quit
 │   ├── MainWindowController.swift      # NSSplitViewController + NSToolbar with native items
 │   ├── VMDisplayWindowController.swift  # Per-VM display window (pop-out or fullscreen), auto-closes on VM stop
-│   ├── DetailContainerViewController.swift # Layers AppKit VM display over SwiftUI detail content; respects per-instance detailPaneMode
+│   ├── DetailContainerViewController.swift # Layers AppKit VM display over SwiftUI detail content; respects per-instance detailPaneMode; also presents the AppKit creation wizard as a sheet (observes viewModel.showCreationWizard via SheetPresenter)
 │   ├── VMToolbarManager.swift          # Shared toolbar logic for lifecycle, suspend, display, and settings-toggle items
 │   ├── SerialConsoleWindowController.swift # Per-VM serial console window, auto-closes on VM stop
 │   ├── SerialConsoleContentViewController.swift # Pure AppKit serial terminal + status bar (contains SerialTextView)
@@ -56,7 +56,7 @@ Kernova/
 │   ├── VMLifecycleCoordinator.swift    # Owns services, orchestrates multi-step operations (@MainActor)
 │   ├── VMCreationViewModel.swift       # Drives the multi-step VM creation wizard
 │   └── VMDirectoryWatcher.swift        # DispatchSource monitor for external filesystem changes
-├── Views/                              # SwiftUI views
+├── Views/                              # Mix of SwiftUI views and pure-AppKit NSViewControllers (e.g. all of Creation/, Sidebar/)
 │   ├── VMInstance+Display.swift        # Display-layer extension: cold-paused vs live-paused distinction
 │   ├── Sidebar/
 │   │   ├── SidebarViewController.swift  # Pure-AppKit source-list `NSOutlineView`: VM list under a collapsible "Virtual Machines" group; selection↔`selectedID`, double-click-to-start, status-dependent context menu, inline rename, drag-reorder + Finder-bundle import
@@ -66,7 +66,7 @@ Kernova/
 │   │   ├── SidebarAgentStatusButtonView.swift # Pure AppKit (`NSView`) wrapper: stacked `NSButton` (SF Symbol for static states) + `NSProgressIndicator` (.mini spinning for `.connecting`); owns a `PopoverPresenter` + content VC; refreshes popover in place when status changes mid-popover (e.g. `.waiting` → `.current`); anchors `.maxX` so the popover flows into the detail-pane area rather than out the sidebar's right edge
 │   │   └── AgentStatusPopoverContentViewController.swift # Concrete `NSViewController` for the agent-status popover: per-status title + wrapping body + action row with optional "Don't show again" link (surfaced only for `.waiting`) and per-status action button ("Install Guest Agent…" / "Update Guest Agent…" / "Reinstall Guest Agent…" / "Done"). Delegate protocol with `didTapAction` + `didTapDismiss`. Static helpers expose `title(for:)`, `bodyText(for:vmName:)`, `actionButtonTitle(for:)`, `requiresMountAction(for:)`. `update(status:vmName:hasDismissAction:)` swaps labels in place.
 │   ├── Detail/
-│   │   ├── MainDetailView.swift        # Detail pane wrapper — selection switch, creation sheet, error alert
+│   │   ├── MainDetailView.swift        # Detail pane wrapper — selection switch + error alerts (creation wizard is presented separately as an AppKit sheet by DetailContainerViewController)
 │   │   ├── VMDetailView.swift          # VM detail — console/settings switch (honors detailPaneMode), confirmation alerts
 │   │   ├── VMSettingsView.swift        # VM configuration editor; mostly read-only when the VM is running, but live-editable fields (clipboard, guest agent, removable media) stay interactive
 │   │   ├── StorageDiskReorderSheetContentViewController.swift # AppKit `NSViewController` for the Boot Order sheet — headline + `InfoButton` header, view-based `NSTableView` (alternating rows, hidden headers) inside `NSScrollView`, Done button. Drag-anywhere reorder via the native `NSTableView` drag-and-drop machinery (`pasteboardWriterForRow:`, `validateDrop:`, `acceptDrop:`); the pure index-math primitive is exposed as `performReorder(sourceRow:proposedRow:)` so tests can exercise it without mocking `NSDraggingInfo`. Re-arms a `withObservationTracking` subscription on `fileMonitor.existsByPath` so missing-file affordances update live without dismiss/re-present.
@@ -91,13 +91,17 @@ Kernova/
 │   │   ├── VMDisplayPlaceholderView.swift # SwiftUI `NSViewControllerRepresentable` shim — preserves a stable `VMDisplayPlaceholderView(instance:)` call surface for `VMDetailView` while delegating all rendering and observation to AppKit
 │   │   ├── VMDisplayPlaceholderContentViewController.swift # Concrete `NSViewController` for the detail-pane placeholder shown when the VM display is unavailable inline — centered empty-state (SF Symbol + title + description + optional action button) for the non-inline display states (Fullscreen / Popped Out / Suspended / No Display), inert black fill behind it for the `.live` case (covered by `VMDisplayBackingView`). Observes `VMInstance.displayMode`, `isColdPaused`, and `virtualMachine` via `observeRecurring`. Action buttons dispatch through `NSApp.sendAction(_:to:from:)` to `AppDelegate.toggleFullscreen(_:)` / `togglePopOut(_:)`. The reusable `DisplayPlaceholderEmptyStateView` lives privately in the same file (one consumer today; no premature extraction).
 │   │   └── VMDisplayBackingView.swift  # Pure AppKit VM display with pause/transition overlays
-│   └── Creation/
-│       ├── VMCreationWizardView.swift  # Multi-step wizard container
-│       ├── OSSelectionStep.swift       # Step 1: Choose macOS or Linux
-│       ├── IPSWSelectionStep.swift     # Step 2 (macOS): Choose restore image
-│       ├── BootConfigStep.swift        # Step 2 (Linux): Configure boot method
-│       ├── ResourceConfigStep.swift    # Step 3: CPU, memory, disk size
-│       └── ReviewStep.swift            # Step 4: Review and create
+│   └── Creation/                       # Pure AppKit — every wizard step is an NSViewController
+│       ├── VMCreationWizardViewController.swift # Shell: step indicator + swappable child step VCs + nav bar; observes VMCreationViewModel; reports Cancel/Create via VMCreationWizardViewControllerDelegate
+│       ├── OSSelectionContentViewController.swift   # Step 1: Choose macOS or Linux (selectable cards)
+│       ├── IPSWSelectionContentViewController.swift # Step 2 (macOS): IPSW source, path badge, overwrite/resume banners
+│       ├── BootConfigContentViewController.swift    # Step 2 (Linux): EFI/kernel segmented control + file pickers
+│       ├── ResourceConfigContentViewController.swift # Step 3: name, CPU/memory steppers, disk popup, networking (NSGridView form)
+│       ├── ReviewContentViewController.swift   # Step 4: read-only summary + start-after-create switch
+│       ├── WizardStyle.swift           # Scoped design tokens + make* atom factories (title/subtitle/form rows, section headers, banner, path badge, scroll-view helper)
+│       ├── WizardSelectableCardView.swift # Clickable card with accent selection chrome (OS + IPSW-source cards)
+│       ├── WizardStepIndicatorView.swift  # Dotted step-progress bar
+│       └── WizardTintedBox.swift       # Rounded tinted container for the path badge + warning banners
 ├── Utilities/
 │   ├── DataFormatters.swift            # Human-readable formatting for bytes, CPU counts, etc.
 │   ├── NSImageExtensions.swift         # Nil-safe SF Symbol image loading
@@ -298,7 +302,7 @@ All service implementations conform to protocols defined in `Services/Protocols/
 
 - **`VMLifecycleCoordinator`** is an `@MainActor` coordinator that owns the lifecycle services (`VirtualizationService`, `MacOSInstallService`, `IPSWService`). It orchestrates multi-step operations like macOS installation (which involves IPSW download → platform file creation → VM configuration → installation). This separation keeps `VMLibraryViewModel` focused on list management. The coordinator enforces **per-VM operation serialization** — at most one lifecycle operation can be in flight for a given VM at any time; concurrent requests are rejected with `VMLifecycleCoordinator.LifecycleError.operationInProgress`. `stop` and `forceStop` bypass serialization entirely (clearing the active-operation token before calling the service) so users can always cancel hung operations.
 
-- **`VMCreationViewModel`** drives the multi-step creation wizard. It tracks the current step, validates inputs at each stage, and produces a `VMConfiguration` + disk image on completion.
+- **`VMCreationViewModel`** drives the multi-step creation wizard. It tracks the current step, validates inputs at each stage, and produces a `VMConfiguration` + disk image on completion. It is a pure `@Observable` state machine with no UI framework dependency — the wizard's pure-AppKit step view controllers (`Views/Creation/`) read/write it directly and the shell observes it via `observeRecurring`.
 
 - **`VMDirectoryWatcher`** uses `DispatchSource.makeFileSystemObjectSource` to monitor the VMs directory for external changes (e.g., a user restoring a VM from Trash via Finder). When changes are detected, it triggers reconciliation in `VMLibraryViewModel` to sync the in-memory list with disk.
 
@@ -321,11 +325,11 @@ NSSplitViewController (MainWindowController)
             ├── VMDisplayPlaceholderView (SwiftUI shim → AppKit VMDisplayPlaceholderContentViewController; placeholder when display is external, suspended, or unavailable)
             ├── VMSettingsView
             └── MacOSInstallProgressView
-VMCreationWizardView (modal sheet on detail pane)
-├── OSSelectionStep
-├── IPSWSelectionStep / BootConfigStep
-├── ResourceConfigStep
-└── ReviewStep
+VMCreationWizardViewController (pure-AppKit modal sheet; presented by DetailContainerViewController via SheetPresenter when viewModel.showCreationWizard flips true)
+├── OSSelectionContentViewController
+├── IPSWSelectionContentViewController / BootConfigContentViewController   (chosen by selectedOS on entry)
+├── ResourceConfigContentViewController
+└── ReviewContentViewController
 SerialConsoleContentViewController → SerialTextView (in separate window)
 ```
 
