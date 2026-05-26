@@ -17,8 +17,9 @@ enum WizardStyle {
 
     /// Fixed wizard sheet height.
     ///
-    /// Matches the SwiftUI predecessor's `.frame(height:)`.
-    static let height: CGFloat = 480
+    /// Taller than the SwiftUI predecessor's 480pt to reduce scrolling on the
+    /// content-heavy steps (Boot with a conflict banner, Resources).
+    static let height: CGFloat = 580
 
     /// Inset from the content area edges to a step's content.
     static let contentPadding: CGFloat = 20
