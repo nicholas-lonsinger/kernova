@@ -11,15 +11,10 @@ import AppKit
 /// `CalloutStyle` (which is tuned for narrow 340pt popovers).
 enum WizardStyle {
     /// Fixed wizard sheet width.
-    ///
-    /// Matches the SwiftUI predecessor's `.frame(width:)`.
-    static let width: CGFloat = 550
+    static let width: CGFloat = 600
 
     /// Fixed wizard sheet height.
-    ///
-    /// Taller than the SwiftUI predecessor's 480pt to reduce scrolling on the
-    /// content-heavy steps (Boot with a conflict banner, Resources).
-    static let height: CGFloat = 580
+    static let height: CGFloat = 450
 
     /// Inset from the content area edges to a step's content.
     static let contentPadding: CGFloat = 20
