@@ -12,21 +12,21 @@ struct OSSelectionContentViewControllerTests {
         let vc = OSSelectionContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
 
-        #expect(card(containingLabel: "macOS", in: vc.view)?.isSelected == true)
-        #expect(card(containingLabel: "Linux", in: vc.view)?.isSelected == false)
+        #expect(radio(titled: "macOS", in: vc.view)?.state == .on)
+        #expect(radio(titled: "Linux", in: vc.view)?.state == .off)
     }
 
-    @Test("Selecting an OS updates the model and the selection chrome")
+    @Test("Selecting an OS updates the model and enforces radio exclusivity")
     func selectingUpdatesModelAndChrome() {
         let vm = VMCreationViewModel()
         let vc = OSSelectionContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
 
-        card(containingLabel: "Linux", in: vc.view)?.onClick?()
+        radio(titled: "Linux", in: vc.view)?.performClick(nil)
 
         #expect(vm.selectedOS == .linux)
-        #expect(card(containingLabel: "Linux", in: vc.view)?.isSelected == true)
-        #expect(card(containingLabel: "macOS", in: vc.view)?.isSelected == false)
+        #expect(radio(titled: "Linux", in: vc.view)?.state == .on)
+        #expect(radio(titled: "macOS", in: vc.view)?.state == .off)
     }
 
     @Test("Selecting an OS does not apply OS resource defaults")
@@ -39,7 +39,7 @@ struct OSSelectionContentViewControllerTests {
         let vc = OSSelectionContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
 
-        card(containingLabel: "Linux", in: vc.view)?.onClick?()
+        radio(titled: "Linux", in: vc.view)?.performClick(nil)
 
         #expect(vm.cpuCount == originalCPU)
         #expect(vm.memoryInGB == originalMemory)
@@ -48,15 +48,11 @@ struct OSSelectionContentViewControllerTests {
     // MARK: - Helpers
 
     @MainActor
-    private func allCards(in view: NSView) -> [WizardSelectableCardView] {
-        var result: [WizardSelectableCardView] = []
-        if let card = view as? WizardSelectableCardView { result.append(card) }
-        for subview in view.subviews { result.append(contentsOf: allCards(in: subview)) }
-        return result
-    }
-
-    @MainActor
-    private func card(containingLabel text: String, in view: NSView) -> WizardSelectableCardView? {
-        allCards(in: view).first { findLabel(withText: text, in: $0) != nil }
+    private func radio(titled title: String, in view: NSView) -> NSButton? {
+        if let button = view as? NSButton, button.title == title { return button }
+        for subview in view.subviews {
+            if let found = radio(titled: title, in: subview) { return found }
+        }
+        return nil
     }
 }

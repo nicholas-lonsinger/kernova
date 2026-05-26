@@ -2,15 +2,20 @@ import AppKit
 
 /// Step 1 of the creation wizard: choose the guest operating system.
 ///
-/// Presents one selectable card per ``VMGuestOS``. Clicking a card writes
-/// ``VMCreationViewModel/selectedOS`` directly (the shared model is the single
-/// source of truth) and restyles the cards. No delegate — selection state lives
-/// in the model, which the wizard shell observes to drive navigation.
+/// A native macOS form: a left-aligned heading and a radio-button group (one
+/// radio per ``VMGuestOS``, each with a secondary description). Selecting a radio
+/// writes ``VMCreationViewModel/selectedOS`` directly — the shared model is the
+/// single source of truth, which the wizard shell observes to drive navigation.
+/// Each radio lives in its own option view (so its description can sit beneath
+/// it), so they aren't siblings and AppKit's automatic radio grouping doesn't
+/// apply — exclusivity is enforced explicitly from the model in ``updateSelection()``.
 @MainActor
 final class OSSelectionContentViewController: NSViewController {
     private let creationVM: VMCreationViewModel
-    private var cards: [VMGuestOS: WizardSelectableCardView] = [:]
-    private var cardIcons: [VMGuestOS: NSImageView] = [:]
+    private var radios: [VMGuestOS: NSButton] = [:]
+
+    /// Indent (radio circle + gap) so a description aligns under its radio title.
+    private static let descriptionIndent: CGFloat = 20
 
     /// User-facing description shown beneath each OS name.
     private static func description(for os: VMGuestOS) -> String {
@@ -33,96 +38,87 @@ final class OSSelectionContentViewController: NSViewController {
     override func loadView() {
         let container = NSView()
 
-        let title = makeWizardTitle("Choose Operating System")
-        let subtitle = makeWizardSubtitle(
-            "Select the type of operating system you want to run in your virtual machine.")
+        let heading = NSTextField(labelWithString: "Choose Operating System")
+        heading.font = WizardStyle.titleFont
+        heading.isSelectable = false
 
-        let macCard = makeOSCard(for: .macOS)
-        let linuxCard = makeOSCard(for: .linux)
+        let subtitle = NSTextField(
+            wrappingLabelWithString:
+                "Select the operating system you want to run in your virtual machine.")
+        subtitle.font = WizardStyle.subtitleFont
+        subtitle.textColor = .secondaryLabelColor
+        subtitle.maximumNumberOfLines = 0
+        subtitle.isSelectable = false
 
-        let cardRow = NSStackView(views: [macCard, linuxCard])
-        cardRow.orientation = .horizontal
-        cardRow.alignment = .top
-        cardRow.distribution = .fillEqually
-        cardRow.spacing = 16
+        let options = NSStackView(views: VMGuestOS.allCases.map(makeOSOption))
+        options.orientation = .vertical
+        options.alignment = .leading
+        options.spacing = 16
 
-        let stack = NSStackView(views: [title, subtitle, cardRow])
+        let stack = NSStackView(views: [heading, subtitle, options])
         stack.orientation = .vertical
-        stack.alignment = .centerX
+        stack.alignment = .leading
         stack.spacing = 8
-        stack.setCustomSpacing(WizardStyle.sectionSpacing, after: subtitle)
+        stack.setCustomSpacing(20, after: subtitle)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         container.addSubview(stack)
+        let inset = WizardStyle.contentSideInset
         NSLayoutConstraint.activate([
-            // Top-anchored (not centered) so the chooser sits below the step
-            // indicator with predictable spacing instead of floating in the
-            // middle of the fixed-height sheet.
+            // Top-leading anchored (native form layout), not centered.
             stack.topAnchor.constraint(equalTo: container.topAnchor),
-            // Inset to match the scrolling steps' content margin (the shell only
-            // applies a small edge inset so scroll bars sit near the window edge).
-            stack.leadingAnchor.constraint(
-                equalTo: container.leadingAnchor, constant: WizardStyle.contentSideInset),
-            stack.trailingAnchor.constraint(
-                equalTo: container.trailingAnchor, constant: -WizardStyle.contentSideInset),
-            // The wrapping subtitle and the equally-split card row both need to
-            // lay out at the full step width (centerX alignment otherwise sizes
-            // them to their intrinsic width and the subtitle won't wrap).
-            title.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: inset),
+            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -inset),
+            // Full-width subtitle/options so the wrapping text lays out at the
+            // step width and the option rows fill it.
             subtitle.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            cardRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            macCard.heightAnchor.constraint(equalTo: linuxCard.heightAnchor),
+            options.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
 
         view = container
         updateSelection()
     }
 
-    private func makeOSCard(for os: VMGuestOS) -> WizardSelectableCardView {
-        let icon = NSImageView(image: .systemSymbol(os.iconName, accessibilityDescription: ""))
-        icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 36, weight: .regular)
-        icon.contentTintColor = .secondaryLabelColor
-
-        let name = NSTextField(labelWithString: os.displayName)
-        name.font = .preferredFont(forTextStyle: .headline)
-        name.alignment = .center
-        name.isSelectable = false
+    private func makeOSOption(_ os: VMGuestOS) -> NSView {
+        let radio = NSButton(
+            radioButtonWithTitle: os.displayName, target: self, action: #selector(osChanged(_:)))
+        radio.font = .preferredFont(forTextStyle: .body)
+        radio.translatesAutoresizingMaskIntoConstraints = false
+        radios[os] = radio
 
         let description = NSTextField(wrappingLabelWithString: Self.description(for: os))
-        description.font = .preferredFont(forTextStyle: .caption1)
+        description.font = .preferredFont(forTextStyle: .subheadline)
         description.textColor = .secondaryLabelColor
-        description.alignment = .center
         description.maximumNumberOfLines = 0
         description.isSelectable = false
-        // Wrap within the card instead of forcing an unbounded single-line width
-        // (a card is roughly half the step width minus padding).
-        description.preferredMaxLayoutWidth = 200
-        description.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        description.translatesAutoresizingMaskIntoConstraints = false
 
-        let content = NSStackView(views: [icon, name, description])
-        content.orientation = .vertical
-        content.alignment = .centerX
-        content.spacing = 12
+        let option = NSView()
+        option.addSubview(radio)
+        option.addSubview(description)
+        NSLayoutConstraint.activate([
+            radio.topAnchor.constraint(equalTo: option.topAnchor),
+            radio.leadingAnchor.constraint(equalTo: option.leadingAnchor),
+            radio.trailingAnchor.constraint(lessThanOrEqualTo: option.trailingAnchor),
 
-        let card = WizardSelectableCardView(content: content)
-        card.onClick = { [weak self] in
-            self?.select(os)
-        }
-        cards[os] = card
-        cardIcons[os] = icon
-        return card
+            description.topAnchor.constraint(equalTo: radio.bottomAnchor, constant: 2),
+            description.leadingAnchor.constraint(
+                equalTo: option.leadingAnchor, constant: Self.descriptionIndent),
+            description.trailingAnchor.constraint(equalTo: option.trailingAnchor),
+            description.bottomAnchor.constraint(equalTo: option.bottomAnchor),
+        ])
+        return option
     }
 
-    private func select(_ os: VMGuestOS) {
+    @objc private func osChanged(_ sender: NSButton) {
+        guard let os = radios.first(where: { $0.value === sender })?.key else { return }
         creationVM.selectedOS = os
         updateSelection()
     }
 
     private func updateSelection() {
-        for (os, card) in cards {
-            let isSelected = os == creationVM.selectedOS
-            card.isSelected = isSelected
-            cardIcons[os]?.contentTintColor = isSelected ? .controlAccentColor : .secondaryLabelColor
+        for (os, radio) in radios {
+            radio.state = os == creationVM.selectedOS ? .on : .off
         }
     }
 }
