@@ -1,5 +1,4 @@
 import Foundation
-import SwiftUI
 
 /// The runtime status of a virtual machine.
 enum VMStatus: String, Codable, Sendable {
@@ -27,16 +26,6 @@ enum VMStatus: String, Codable, Sendable {
         case .installing: "Installing"
         case .initialBoot: "Initial Boot"
         case .error: "Error"
-        }
-    }
-
-    var statusColor: Color {
-        switch self {
-        case .stopped: .secondary
-        case .starting, .saving, .restoring, .installing, .initialBoot: .orange
-        case .running: .green
-        case .paused: .yellow
-        case .error: .red
         }
     }
 

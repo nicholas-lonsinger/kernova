@@ -1,28 +1,40 @@
 import Cocoa
 import os
-import SwiftUI
 
-/// AppKit container that layers pure-AppKit VM displays on top of an always-present SwiftUI hosting controller.
+/// AppKit container that layers pure-AppKit VM displays on top of the detail
+/// content (the empty state, or the per-VM detail router).
 ///
 /// Each running VM that displays inline gets its own `VMDisplayBackingView`
 /// (and thus its own `VZVirtualMachineView`). Switching VMs swaps visibility rather than
 /// reassigning the `virtualMachine` property, which `VZVirtualMachineView` does not handle
 /// correctly.
 ///
-/// The SwiftUI layer is kept in the view hierarchy at all times so that SwiftUI-hosted alerts
-/// (delete, force-stop, cancel) remain functional even while the VM display is showing.
+/// The detail content layer (`DetailEmptyStateView` ⇆ `VMDetailRouterViewController`)
+/// is kept in the view hierarchy at all times beneath the backing views. The
+/// lifecycle confirmation alerts and the delete sheet are presented by
+/// ``DetailAlertsPresenter`` (owned here so they survive while the VM display is
+/// showing), and the creation wizard by ``wizardPresenter``.
 @MainActor
 final class DetailContainerViewController: NSViewController {
     private let viewModel: VMLibraryViewModel
     private var backingViews: [UUID: VMDisplayBackingView] = [:]
     private var activeBackingViewID: UUID?
-    private let swiftUIHost: NSHostingController<MainDetailView>
     private var stateObservation: ObservationLoop?
 
+    // MARK: - Detail content layer
+
+    private let contentContainer = NSView()
+    private lazy var emptyStateView = DetailEmptyStateView { [weak self] in
+        self?.viewModel.showCreationWizard = true
+    }
+    private var routerVC: VMDetailRouterViewController?
+    private var currentContentView: NSView?
+    private var displayedInstanceID: UUID?
+
+    /// Presents the lifecycle confirmation alerts and the delete sheet.
+    private let alertsPresenter: DetailAlertsPresenter
+
     /// Drives the AppKit creation-wizard sheet.
-    ///
-    /// Presentation moved out of the SwiftUI `MainDetailView.sheet` into this
-    /// AppKit host so the wizard is a pure-AppKit sheet on the main window.
     private let wizardPresenter = SheetPresenter()
     private var wizardObservation: ObservationLoop?
 
@@ -32,12 +44,8 @@ final class DetailContainerViewController: NSViewController {
 
     init(viewModel: VMLibraryViewModel) {
         self.viewModel = viewModel
-        self.swiftUIHost = NSHostingController(rootView: MainDetailView(viewModel: viewModel))
-        swiftUIHost.sizingOptions = []
-
+        self.alertsPresenter = DetailAlertsPresenter(viewModel: viewModel)
         super.init(nibName: nil, bundle: nil)
-
-        addChild(swiftUIHost)
     }
 
     required init?(coder: NSCoder) {
@@ -50,16 +58,28 @@ final class DetailContainerViewController: NSViewController {
         let container = NSView()
         container.wantsLayer = true
 
-        container.addFullSizeSubview(swiftUIHost.view)
+        contentContainer.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(contentContainer)
+        NSLayoutConstraint.activate([
+            contentContainer.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            contentContainer.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            contentContainer.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            // Pin the top to the safe area so detail content clears the
+            // full-size-content window's toolbar (matching the VM display
+            // backing view, which does the same).
+            contentContainer.topAnchor.constraint(equalTo: container.safeAreaLayoutGuide.topAnchor),
+        ])
 
         self.view = container
     }
 
     override func viewDidAppear() {
         super.viewDidAppear()
+        updateContent()
         updateDisplayState()
         if stateObservation == nil { observeState() }
         if wizardObservation == nil { observeWizardPresentation() }
+        if let window = view.window { alertsPresenter.start(window: window) }
         // Handle the case where the flag was set before the window existed.
         syncWizardPresentation()
     }
@@ -70,10 +90,41 @@ final class DetailContainerViewController: NSViewController {
         stateObservation = nil
         wizardObservation?.cancel()
         wizardObservation = nil
+        alertsPresenter.stop()
         if wizardPresenter.isShown { wizardPresenter.close() }
         for id in Array(backingViews.keys) {
             removeBackingView(for: id)
         }
+    }
+
+    // MARK: - Detail content (empty state ⇆ router)
+
+    private func updateContent() {
+        if let selected = viewModel.selectedInstance {
+            let router: VMDetailRouterViewController
+            if let existing = routerVC {
+                router = existing
+            } else {
+                router = VMDetailRouterViewController(instance: selected, viewModel: viewModel)
+                addChild(router)
+                routerVC = router
+            }
+            if displayedInstanceID != selected.id {
+                displayedInstanceID = selected.id
+                router.reconfigure(instance: selected, viewModel: viewModel)
+            }
+            showContentView(router.view)
+        } else {
+            displayedInstanceID = nil
+            showContentView(emptyStateView)
+        }
+    }
+
+    private func showContentView(_ newView: NSView) {
+        guard currentContentView !== newView else { return }
+        currentContentView?.removeFromSuperview()
+        contentContainer.addFullSizeSubview(newView)
+        currentContentView = newView
     }
 
     // MARK: - Backing View Management
@@ -137,6 +188,7 @@ final class DetailContainerViewController: NSViewController {
                 }
             },
             apply: { [weak self] in
+                self?.updateContent()
                 self?.updateDisplayState()
             }
         )
@@ -198,7 +250,7 @@ final class DetailContainerViewController: NSViewController {
         else {
             if let currentID = activeBackingViewID, let current = backingViews[currentID] {
                 current.isHidden = true
-                Self.logger.debug("VM display hidden — SwiftUI content visible")
+                Self.logger.debug("VM display hidden — detail content visible")
             }
             activeBackingViewID = nil
             return
@@ -239,7 +291,7 @@ extension DetailContainerViewController: VMCreationWizardViewControllerDelegate 
         // Keep the sheet up until creation completes. On success, dismiss it. On
         // failure, take over the error that `createVM` surfaced via
         // `showError`/`errorMessage` and re-present it on the wizard's own window:
-        // the SwiftUI `.sheetAlert` lives on this same main window, so letting it
+        // the alerts presenter lives on this same main window, so letting it
         // fire would race the still-open AppKit wizard sheet (two sheets on one
         // window). Keeping the wizard up also lets the user retry without
         // re-entering everything.

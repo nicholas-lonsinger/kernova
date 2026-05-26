@@ -52,7 +52,7 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
         stack.setCustomSpacing(16, after: bootModeControl)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
-        let scrollView = makeWizardScrollView(documentView: stack)
+        let scrollView = makeGroupedFormScrollView(documentView: stack)
         NSLayoutConstraint.activate([
             subtitle.widthAnchor.constraint(equalTo: stack.widthAnchor),
             conditionalContainer.widthAnchor.constraint(equalTo: stack.widthAnchor),
@@ -89,7 +89,7 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
             rows = [
                 makeFileRow(label: "Kernel", path: creationVM.kernelPath, browseAction: #selector(browseKernel)),
                 makeFileRow(label: "Initrd", path: creationVM.initrdPath, browseAction: #selector(browseInitrd)),
-                makeWizardCardRow("Command Line", control: commandLineField, fillsControl: true),
+                makeGroupedFormCardRow("Command Line", control: commandLineField, fillsControl: true),
             ]
         } else {
             caption = "Select an ISO image to boot from via EFI."
@@ -98,8 +98,8 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
             ]
         }
 
-        addFullWidth(makeWizardCaption(caption))
-        addFullWidth(makeWizardCard(rows: rows))
+        addFullWidth(makeGroupedFormCaption(caption))
+        addFullWidth(makeGroupedFormCard(rows: rows))
     }
 
     /// Adds an arranged subview to the conditional container and pins its width
@@ -133,7 +133,7 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
         control.alignment = .centerY
         control.spacing = 8
 
-        return makeWizardCardRow(label, control: control, fillsControl: true)
+        return makeGroupedFormCardRow(label, control: control, fillsControl: true)
     }
 
     // MARK: - Actions
