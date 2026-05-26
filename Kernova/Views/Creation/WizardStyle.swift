@@ -110,20 +110,25 @@ private final class WizardScrollView: NSScrollView {
     }
 }
 
-/// Wraps `documentView` in a borderless, autohiding vertical scroll view with
-/// the clip-view content insets zeroed, and pins the document to the clip view
-/// (width-matched; bottom at `.defaultHigh` so short content doesn't stretch).
+/// Wraps `content` in a borderless, autohiding vertical scroll view.
+///
+/// `content` is hosted inside a full-width document view and inset symmetrically
+/// by ``contentSideInset`` on both sides, so it stays horizontally centered. The
+/// document view fills the clip view's width on purpose: pinning it *narrower*
+/// than the clip makes `NSClipView` offset its bounds origin to align the
+/// under-sized document, which scrolls the content sideways and defeats the
+/// inset. Height flows from `content` (no bottom pin), so with the flipped clip
+/// view short content sits at the top and tall content scrolls.
 ///
 /// Used by the taller wizard steps, whose content can exceed the fixed sheet
-/// height. Callers add their own per-subview width constraints against
-/// `documentView`.
+/// height. Callers add their own per-subview width constraints against `content`.
 @MainActor
-func makeWizardScrollView(documentView: NSView) -> NSScrollView {
+func makeWizardScrollView(documentView content: NSView) -> NSScrollView {
     let scrollView = WizardScrollView()
     scrollView.contentView = FlippedClipView()
     // Overlay style plus the WizardScrollView full-width clip view keep the
     // scroller floating over the right margin instead of reserving width, so
-    // symmetrically-inset content stays centered.
+    // the centered content isn't shifted.
     scrollView.scrollerStyle = .overlay
     scrollView.hasVerticalScroller = true
     scrollView.hasHorizontalScroller = false
@@ -135,22 +140,25 @@ func makeWizardScrollView(documentView: NSView) -> NSScrollView {
     scrollView.contentView.automaticallyAdjustsContentInsets = false
     scrollView.contentView.contentInsets = NSEdgeInsetsZero
 
-    documentView.translatesAutoresizingMaskIntoConstraints = false
-    scrollView.documentView = documentView
+    let docView = NSView()
+    docView.translatesAutoresizingMaskIntoConstraints = false
+    content.translatesAutoresizingMaskIntoConstraints = false
+    docView.addSubview(content)
+    scrollView.documentView = docView
 
-    // Pin top/leading and inset the trailing edge by a gutter so content clears
-    // the (overlay) vertical scroller instead of colliding with it. Deliberately
-    // no bottom constraint — the document view's height flows from its content.
-    // With the flipped clip view this anchors the content at the top: short
-    // content sits at the top with empty space below, tall content scrolls. (A
-    // bottom pin here would stretch short content to fill the viewport, and the
-    // stack would distribute the slack to the top, pushing the title out of view.)
+    let clip = scrollView.contentView
+    let inset = WizardStyle.contentSideInset
     NSLayoutConstraint.activate([
-        documentView.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
-        documentView.leadingAnchor.constraint(
-            equalTo: scrollView.contentView.leadingAnchor, constant: WizardStyle.contentSideInset),
-        documentView.trailingAnchor.constraint(
-            equalTo: scrollView.contentView.trailingAnchor, constant: -WizardStyle.contentSideInset),
+        // Document view fills the clip width; its height flows from the content.
+        docView.topAnchor.constraint(equalTo: clip.topAnchor),
+        docView.leadingAnchor.constraint(equalTo: clip.leadingAnchor),
+        docView.trailingAnchor.constraint(equalTo: clip.trailingAnchor),
+        docView.widthAnchor.constraint(equalTo: clip.widthAnchor),
+        // Content inset symmetrically within the document view → centered.
+        content.topAnchor.constraint(equalTo: docView.topAnchor),
+        content.bottomAnchor.constraint(equalTo: docView.bottomAnchor),
+        content.leadingAnchor.constraint(equalTo: docView.leadingAnchor, constant: inset),
+        content.trailingAnchor.constraint(equalTo: docView.trailingAnchor, constant: -inset),
     ])
     return scrollView
 }
