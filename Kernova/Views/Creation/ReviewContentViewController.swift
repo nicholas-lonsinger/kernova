@@ -27,7 +27,8 @@ final class ReviewContentViewController: NSViewController {
         let subtitle = makeWizardSubtitle(
             "Review your virtual machine settings before creating it.")
 
-        let stack = NSStackView(views: [title, subtitle, makeSummary()])
+        let summary = makeSummary()
+        let stack = NSStackView(views: [title, subtitle, summary])
         stack.orientation = .vertical
         stack.alignment = .centerX
         stack.spacing = WizardStyle.sectionSpacing
@@ -37,69 +38,87 @@ final class ReviewContentViewController: NSViewController {
         NSLayoutConstraint.activate([
             title.widthAnchor.constraint(equalTo: stack.widthAnchor),
             subtitle.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            summary.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
 
         view = scrollView
     }
 
     private func makeSummary() -> NSView {
-        let grid = NSGridView()
-        grid.columnSpacing = 12
-        grid.rowSpacing = 10
-        grid.translatesAutoresizingMaskIntoConstraints = false
+        let form = NSStackView()
+        form.orientation = .vertical
+        form.alignment = .leading
+        form.spacing = 10
+        form.translatesAutoresizingMaskIntoConstraints = false
 
-        addWizardSectionHeader(to: grid, "General")
-        addRow(to: grid, "Name", creationVM.vmName)
-        addRow(to: grid, "Operating System", creationVM.selectedOS.displayName)
-        addRow(to: grid, "Boot Mode", creationVM.effectiveBootMode.displayName)
+        addSectionHeader("General", to: form)
+        addRow("Name", creationVM.vmName, to: form)
+        addRow("Operating System", creationVM.selectedOS.displayName, to: form)
+        addRow("Boot Mode", creationVM.effectiveBootMode.displayName, to: form)
 
-        addWizardSectionHeader(to: grid, "Resources")
-        addRow(to: grid, "CPU Cores", "\(creationVM.cpuCount)")
-        addRow(to: grid, "Memory", "\(creationVM.memoryInGB) GB")
-        addRow(to: grid, "Disk Size", DataFormatters.formatDiskSize(creationVM.diskSizeInGB))
+        addSectionHeader("Resources", to: form)
+        addRow("CPU Cores", "\(creationVM.cpuCount)", to: form)
+        addRow("Memory", "\(creationVM.memoryInGB) GB", to: form)
+        addRow("Disk Size", DataFormatters.formatDiskSize(creationVM.diskSizeInGB), to: form)
 
-        addWizardSectionHeader(to: grid, "Network")
-        addRow(to: grid, "Networking", creationVM.networkEnabled ? "Enabled" : "Disabled")
+        addSectionHeader("Network", to: form)
+        addRow("Networking", creationVM.networkEnabled ? "Enabled" : "Disabled", to: form)
 
         if creationVM.selectedOS == .macOS {
-            addWizardSectionHeader(to: grid, "Installation")
+            addSectionHeader("Installation", to: form)
             addRow(
-                to: grid, "IPSW Source",
-                creationVM.ipswSource == .downloadLatest ? "Download Latest" : "Local File")
+                "IPSW Source",
+                creationVM.ipswSource == .downloadLatest ? "Download Latest" : "Local File", to: form)
             if creationVM.ipswSource == .localFile, let path = creationVM.ipswPath {
-                addRow(to: grid, "File", URL(fileURLWithPath: path).lastPathComponent)
+                addRow("File", URL(fileURLWithPath: path).lastPathComponent, to: form)
             }
             if creationVM.ipswSource == .downloadLatest, let path = creationVM.ipswDownloadPath {
-                addRow(to: grid, "Save to", wizardAbbreviateWithTilde(path))
+                addRow("Save to", wizardAbbreviateWithTilde(path), to: form)
             }
         }
 
         if creationVM.selectedOS == .linux {
-            addWizardSectionHeader(to: grid, "Boot")
+            addSectionHeader("Boot", to: form)
             if let path = creationVM.isoPath {
-                addRow(to: grid, "ISO", URL(fileURLWithPath: path).lastPathComponent)
+                addRow("ISO", URL(fileURLWithPath: path).lastPathComponent, to: form)
             }
             if let path = creationVM.kernelPath {
-                addRow(to: grid, "Kernel", URL(fileURLWithPath: path).lastPathComponent)
+                addRow("Kernel", URL(fileURLWithPath: path).lastPathComponent, to: form)
             }
         }
 
         startSwitch.state = creationVM.startAfterCreate ? .on : .off
         startSwitch.target = self
         startSwitch.action = #selector(startToggled)
-        let startRow = grid.addRow(with: [
-            makeWizardFormLabel("Start this VM after creation"), startSwitch,
-        ])
-        startRow.topPadding = 8
+        if let last = form.arrangedSubviews.last {
+            form.setCustomSpacing(18, after: last)
+        }
+        addFullWidth(
+            makeWizardRow(
+                leading: makeWizardFormLabel("Start this VM after creation"), trailing: startSwitch),
+            to: form)
 
-        grid.column(at: 0).xPlacement = .trailing
-        grid.column(at: 1).xPlacement = .leading
-
-        return grid
+        return form
     }
 
-    private func addRow(to grid: NSGridView, _ label: String, _ value: String) {
-        grid.addRow(with: [makeWizardFormLabel(label), makeWizardValueLabel(value)])
+    /// Adds an arranged subview to the form and pins its width to the form.
+    private func addFullWidth(_ view: NSView, to form: NSStackView) {
+        form.addArrangedSubview(view)
+        view.widthAnchor.constraint(equalTo: form.widthAnchor).isActive = true
+    }
+
+    /// Adds a section header with extra space above it.
+    private func addSectionHeader(_ title: String, to form: NSStackView) {
+        if let last = form.arrangedSubviews.last {
+            form.setCustomSpacing(18, after: last)
+        }
+        addFullWidth(makeWizardSectionHeader(title), to: form)
+    }
+
+    private func addRow(_ label: String, _ value: String, to form: NSStackView) {
+        addFullWidth(
+            makeWizardRow(leading: makeWizardFormLabel(label), trailing: makeWizardValueLabel(value)),
+            to: form)
     }
 
     @objc private func startToggled() {

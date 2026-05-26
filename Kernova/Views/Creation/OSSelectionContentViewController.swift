@@ -57,7 +57,13 @@ final class OSSelectionContentViewController: NSViewController {
             stack.centerYAnchor.constraint(equalTo: container.centerYAnchor),
             stack.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            // Full-width title/subtitle (so the wrapping subtitle lays out at the
+            // step width instead of an unbounded single line) and a full-width
+            // card row split equally between the two cards.
+            title.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            subtitle.widthAnchor.constraint(equalTo: stack.widthAnchor),
             cardRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            macCard.heightAnchor.constraint(equalTo: linuxCard.heightAnchor),
         ])
 
         view = container
@@ -80,6 +86,10 @@ final class OSSelectionContentViewController: NSViewController {
         description.alignment = .center
         description.maximumNumberOfLines = 0
         description.isSelectable = false
+        // Wrap within the card instead of forcing an unbounded single-line width
+        // (a card is roughly half the step width minus padding).
+        description.preferredMaxLayoutWidth = 200
+        description.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         let content = NSStackView(views: [icon, name, description])
         content.orientation = .vertical

@@ -39,6 +39,12 @@ final class WizardSelectableCardView: NSView {
 
         addFullSizeSubview(box)
 
+        // Hug content vertically so the card is sized by its content (+ box
+        // margins) rather than stretched to fill a containing stack — otherwise
+        // a card in a vertical stack (the IPSW source list) balloons.
+        setContentHuggingPriority(.required, for: .vertical)
+        setContentCompressionResistancePriority(.required, for: .vertical)
+
         addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(clicked)))
 
         updateChrome()

@@ -71,6 +71,10 @@ final class IPSWSelectionContentViewController: NSViewController {
             subtitle.widthAnchor.constraint(equalTo: stack.widthAnchor),
             cardStack.widthAnchor.constraint(equalTo: stack.widthAnchor),
             conditionalContainer.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            // Source cards span the full step width (a leading-aligned stack
+            // would otherwise size them to their content).
+            downloadCard.widthAnchor.constraint(equalTo: cardStack.widthAnchor),
+            localCard.widthAnchor.constraint(equalTo: cardStack.widthAnchor),
         ])
 
         view = scrollView

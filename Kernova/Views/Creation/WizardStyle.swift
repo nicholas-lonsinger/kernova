@@ -151,28 +151,23 @@ func makeWizardCaption(_ text: String) -> NSTextField {
     return label
 }
 
-/// Appends a leading-aligned, full-width section header row to a two-column form grid.
+/// Builds a full-width form row from a leading view and a trailing view.
 ///
-/// Adds an explicit empty second cell so the grid always has two columns to
-/// merge — otherwise a header added as the grid's *first* row (before any
-/// two-cell row exists) would index a column that doesn't exist yet and trap.
+/// A flexible spacer between them pins the leading label to the left edge and
+/// the trailing control/value to the right edge — matching the SwiftUI grouped
+/// `Form` rows. The caller pins the row's width to the enclosing form.
 @MainActor
-func addWizardSectionHeader(to grid: NSGridView, _ title: String) {
-    let row = grid.addRow(with: [makeWizardSectionHeader(title), NSGridCell.emptyContentView])
-    row.mergeCells(in: NSRange(location: 0, length: 2))
-    row.cell(at: 0).xPlacement = .leading
-    row.topPadding = 8
-}
+func makeWizardRow(leading: NSView, trailing: NSView) -> NSStackView {
+    let spacer = NSView()
+    spacer.translatesAutoresizingMaskIntoConstraints = false
+    spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-/// Appends a leading-aligned, full-width row spanning both columns of a form grid.
-///
-/// Like ``addWizardSectionHeader(to:_:)``, includes an explicit empty second
-/// cell so the span is valid even when this is the grid's first row.
-@MainActor
-func addWizardSpanningRow(to grid: NSGridView, _ content: NSView) {
-    let row = grid.addRow(with: [content, NSGridCell.emptyContentView])
-    row.mergeCells(in: NSRange(location: 0, length: 2))
-    row.cell(at: 0).xPlacement = .leading
+    let row = NSStackView(views: [leading, spacer, trailing])
+    row.orientation = .horizontal
+    row.alignment = .centerY
+    row.spacing = 8
+    return row
 }
 
 /// Builds a borderless, link-styled push button (caption font, link color).

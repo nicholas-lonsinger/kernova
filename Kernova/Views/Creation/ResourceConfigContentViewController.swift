@@ -36,7 +36,8 @@ final class ResourceConfigContentViewController: NSViewController {
         let subtitle = makeWizardSubtitle(
             "Set the name and resource allocation for your virtual machine.")
 
-        let stack = NSStackView(views: [title, subtitle, makeForm()])
+        let form = makeForm()
+        let stack = NSStackView(views: [title, subtitle, form])
         stack.orientation = .vertical
         stack.alignment = .centerX
         stack.spacing = WizardStyle.sectionSpacing
@@ -48,6 +49,7 @@ final class ResourceConfigContentViewController: NSViewController {
         NSLayoutConstraint.activate([
             title.widthAnchor.constraint(equalTo: stack.widthAnchor),
             subtitle.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            form.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
 
         view = scrollView
@@ -62,31 +64,45 @@ final class ResourceConfigContentViewController: NSViewController {
         configureDiskPopUp()
         configureNetworkSwitch()
 
-        let grid = NSGridView()
-        grid.columnSpacing = 12
-        grid.rowSpacing = 10
-        grid.translatesAutoresizingMaskIntoConstraints = false
+        let form = NSStackView()
+        form.orientation = .vertical
+        form.alignment = .leading
+        form.spacing = 10
+        form.translatesAutoresizingMaskIntoConstraints = false
 
-        grid.addRow(with: [makeWizardFormLabel("Name"), nameField])
+        addFullWidth(makeWizardRow(leading: makeWizardFormLabel("Name"), trailing: nameField), to: form)
 
-        addWizardSectionHeader(to: grid, "Compute")
-        grid.addRow(with: [cpuValueLabel, cpuStepper])
-        grid.addRow(with: [memoryValueLabel, memoryStepper])
+        addSectionHeader("Compute", to: form)
+        addFullWidth(makeWizardRow(leading: cpuValueLabel, trailing: cpuStepper), to: form)
+        addFullWidth(makeWizardRow(leading: memoryValueLabel, trailing: memoryStepper), to: form)
 
-        addWizardSectionHeader(to: grid, "Storage")
-        grid.addRow(with: [makeWizardFormLabel("Disk Size"), diskPopUp])
-        addWizardSpanningRow(
-            to: grid,
-            makeWizardCaption(
-                "Physical disk usage grows only as data is written (ASIF sparse format)."))
+        addSectionHeader("Storage", to: form)
+        addFullWidth(makeWizardRow(leading: makeWizardFormLabel("Disk Size"), trailing: diskPopUp), to: form)
+        let caption = makeWizardCaption(
+            "Physical disk usage grows only as data is written (ASIF sparse format).")
+        addFullWidth(caption, to: form)
 
-        addWizardSectionHeader(to: grid, "Network")
-        grid.addRow(with: [makeWizardFormLabel("Networking"), networkSwitch])
+        addSectionHeader("Network", to: form)
+        addFullWidth(
+            makeWizardRow(leading: makeWizardFormLabel("Networking"), trailing: networkSwitch), to: form)
 
-        grid.column(at: 0).xPlacement = .trailing
-        grid.column(at: 1).xPlacement = .leading
+        return form
+    }
 
-        return grid
+    /// Adds an arranged subview to the form and pins its width to the form so
+    /// rows span the full step width.
+    private func addFullWidth(_ view: NSView, to form: NSStackView) {
+        form.addArrangedSubview(view)
+        view.widthAnchor.constraint(equalTo: form.widthAnchor).isActive = true
+    }
+
+    /// Adds a section-header label with a little extra space above it.
+    private func addSectionHeader(_ title: String, to form: NSStackView) {
+        let header = makeWizardSectionHeader(title)
+        if let last = form.arrangedSubviews.last {
+            form.setCustomSpacing(18, after: last)
+        }
+        addFullWidth(header, to: form)
     }
 
     private func configureNameField() {
