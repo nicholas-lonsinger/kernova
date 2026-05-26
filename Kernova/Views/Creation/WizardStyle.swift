@@ -19,13 +19,6 @@ enum WizardStyle {
     /// Fixed wizard sheet height.
     static let height: CGFloat = 540
 
-    /// Gap from the window edge to a step's view.
-    ///
-    /// Also the distance to the vertical scroller on scrolling steps. Kept small
-    /// so the scrollbar sits close to the window edge; steps inset their content
-    /// symmetrically the rest of the way via ``GroupedFormStyle/contentSideInset``.
-    static let edgeInset: CGFloat = 10
-
     /// Symmetric inset from a step's view to its content, applied on both sides.
     ///
     /// Used by steps that lay out their content manually (rather than through
