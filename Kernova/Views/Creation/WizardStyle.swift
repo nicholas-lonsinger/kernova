@@ -204,6 +204,9 @@ private func makeWizardBox(
     box.fillColor = fill
     box.borderColor = border
     box.contentViewMargins = NSSize(width: padding, height: padding)
+    // Auto Layout for the content view, so the box hugs it via margin
+    // constraints instead of falling back to frame/autoresizing sizing.
+    content.translatesAutoresizingMaskIntoConstraints = false
     box.contentView = content
     return box
 }

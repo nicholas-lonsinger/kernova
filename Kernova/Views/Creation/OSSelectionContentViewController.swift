@@ -44,22 +44,26 @@ final class OSSelectionContentViewController: NSViewController {
         cardRow.orientation = .horizontal
         cardRow.alignment = .top
         cardRow.distribution = .fillEqually
-        cardRow.spacing = 20
+        cardRow.spacing = 16
 
         let stack = NSStackView(views: [title, subtitle, cardRow])
         stack.orientation = .vertical
         stack.alignment = .centerX
-        stack.spacing = WizardStyle.sectionSpacing
+        stack.spacing = 8
+        stack.setCustomSpacing(WizardStyle.sectionSpacing, after: subtitle)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         container.addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            // Top-anchored (not centered) so the chooser sits below the step
+            // indicator with predictable spacing instead of floating in the
+            // middle of the fixed-height sheet.
+            stack.topAnchor.constraint(equalTo: container.topAnchor),
             stack.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            // Full-width title/subtitle (so the wrapping subtitle lays out at the
-            // step width instead of an unbounded single line) and a full-width
-            // card row split equally between the two cards.
+            // The wrapping subtitle and the equally-split card row both need to
+            // lay out at the full step width (centerX alignment otherwise sizes
+            // them to their intrinsic width and the subtitle won't wrap).
             title.widthAnchor.constraint(equalTo: stack.widthAnchor),
             subtitle.widthAnchor.constraint(equalTo: stack.widthAnchor),
             cardRow.widthAnchor.constraint(equalTo: stack.widthAnchor),

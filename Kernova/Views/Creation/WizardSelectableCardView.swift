@@ -35,6 +35,11 @@ final class WizardSelectableCardView: NSView {
         box.borderWidth = 1
         box.contentViewMargins = NSSize(
             width: WizardStyle.contentPadding, height: WizardStyle.contentPadding)
+        // The content must use Auto Layout, otherwise `NSBox` falls back to
+        // frame/autoresizing sizing for its content view and never derives an
+        // intrinsic height from it — the box collapses and the content spills
+        // out over neighboring views.
+        content.translatesAutoresizingMaskIntoConstraints = false
         box.contentView = content
 
         addFullSizeSubview(box)
