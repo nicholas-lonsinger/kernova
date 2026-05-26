@@ -11,10 +11,23 @@ import AppKit
 /// `CalloutStyle` (which is tuned for narrow 340pt popovers).
 enum WizardStyle {
     /// Fixed wizard sheet width.
-    static let width: CGFloat = 660
+    static let width: CGFloat = 720
 
     /// Fixed wizard sheet height.
-    static let height: CGFloat = 495
+    static let height: CGFloat = 540
+
+    /// Gap from the window edge to a step's view.
+    ///
+    /// Also the distance to the vertical scroller on scrolling steps. Kept small
+    /// so the scrollbar sits close to the edge; steps inset their content the
+    /// rest of the way to ``contentPadding``.
+    static let edgeInset: CGFloat = 10
+
+    /// Inset from a step's view to its content.
+    ///
+    /// Added on top of ``edgeInset`` so content sits ``contentPadding`` from the
+    /// window edge while the scrollbar stays near it (`contentPadding - edgeInset`).
+    static var innerContentInset: CGFloat { contentPadding - edgeInset }
 
     /// Right-side gutter inside scrolling steps so content clears the vertical
     /// scroller instead of colliding with it.
@@ -117,7 +130,8 @@ func makeWizardScrollView(documentView: NSView) -> NSScrollView {
     // stack would distribute the slack to the top, pushing the title out of view.)
     NSLayoutConstraint.activate([
         documentView.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
-        documentView.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
+        documentView.leadingAnchor.constraint(
+            equalTo: scrollView.contentView.leadingAnchor, constant: WizardStyle.innerContentInset),
         documentView.trailingAnchor.constraint(
             equalTo: scrollView.contentView.trailingAnchor, constant: -WizardStyle.scrollerGutter),
     ])

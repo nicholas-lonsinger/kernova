@@ -59,8 +59,12 @@ final class OSSelectionContentViewController: NSViewController {
             // indicator with predictable spacing instead of floating in the
             // middle of the fixed-height sheet.
             stack.topAnchor.constraint(equalTo: container.topAnchor),
-            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            // Inset to match the scrolling steps' content margin (the shell only
+            // applies a small edge inset so scroll bars sit near the window edge).
+            stack.leadingAnchor.constraint(
+                equalTo: container.leadingAnchor, constant: WizardStyle.innerContentInset),
+            stack.trailingAnchor.constraint(
+                equalTo: container.trailingAnchor, constant: -WizardStyle.innerContentInset),
             // The wrapping subtitle and the equally-split card row both need to
             // lay out at the full step width (centerX alignment otherwise sizes
             // them to their intrinsic width and the subtitle won't wrap).
