@@ -11,10 +11,10 @@ import AppKit
 /// `CalloutStyle` (which is tuned for narrow 340pt popovers).
 enum WizardStyle {
     /// Fixed wizard sheet width.
-    static let width: CGFloat = 600
+    static let width: CGFloat = 720
 
     /// Fixed wizard sheet height.
-    static let height: CGFloat = 450
+    static let height: CGFloat = 540
 
     /// Inset from the content area edges to a step's content.
     static let contentPadding: CGFloat = 20
