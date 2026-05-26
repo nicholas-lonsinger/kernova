@@ -80,6 +80,12 @@ final class OSSelectionContentViewController: NSViewController {
     }
 
     private func makeOSOption(_ os: VMGuestOS) -> NSView {
+        let icon = NSImageView(image: .systemSymbol(os.iconName, accessibilityDescription: ""))
+        icon.symbolConfiguration = NSImage.SymbolConfiguration(textStyle: .title3)
+        icon.contentTintColor = .secondaryLabelColor
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.setContentHuggingPriority(.required, for: .horizontal)
+
         let radio = NSButton(
             radioButtonWithTitle: os.displayName, target: self, action: #selector(osChanged(_:)))
         radio.font = .preferredFont(forTextStyle: .body)
@@ -94,16 +100,22 @@ final class OSSelectionContentViewController: NSViewController {
         description.translatesAutoresizingMaskIntoConstraints = false
 
         let option = NSView()
+        option.addSubview(icon)
         option.addSubview(radio)
         option.addSubview(description)
         NSLayoutConstraint.activate([
+            icon.leadingAnchor.constraint(equalTo: option.leadingAnchor),
+            icon.centerYAnchor.constraint(equalTo: radio.centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 22),
+
             radio.topAnchor.constraint(equalTo: option.topAnchor),
-            radio.leadingAnchor.constraint(equalTo: option.leadingAnchor),
+            radio.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 8),
             radio.trailingAnchor.constraint(lessThanOrEqualTo: option.trailingAnchor),
 
+            // Align the description under the radio title (past the radio circle).
             description.topAnchor.constraint(equalTo: radio.bottomAnchor, constant: 2),
             description.leadingAnchor.constraint(
-                equalTo: option.leadingAnchor, constant: Self.descriptionIndent),
+                equalTo: radio.leadingAnchor, constant: Self.descriptionIndent),
             description.trailingAnchor.constraint(equalTo: option.trailingAnchor),
             description.bottomAnchor.constraint(equalTo: option.bottomAnchor),
         ])
