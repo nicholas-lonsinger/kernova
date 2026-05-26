@@ -108,14 +108,17 @@ func makeWizardScrollView(documentView: NSView) -> NSScrollView {
     documentView.translatesAutoresizingMaskIntoConstraints = false
     scrollView.documentView = documentView
 
-    let bottomPin = documentView.bottomAnchor.constraint(equalTo: scrollView.contentView.bottomAnchor)
-    bottomPin.priority = .defaultHigh
+    // Pin top/leading/trailing and match width; deliberately no bottom
+    // constraint — the document view's height flows from its content. With the
+    // flipped clip view this anchors the content at the top: short content sits
+    // at the top with empty space below, tall content scrolls. (A bottom pin
+    // here would stretch short content to fill the viewport, and the stack would
+    // distribute the slack to the top, pushing the title out of view.)
     NSLayoutConstraint.activate([
         documentView.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
         documentView.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
         documentView.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
         documentView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
-        bottomPin,
     ])
     return scrollView
 }
