@@ -177,15 +177,9 @@ final class ResourceConfigContentViewController: NSViewController {
 
     private func configureDiskPopUp() {
         diskPopUp.controlSize = .small
-        // Hug content so the popup (and thus its menu) is sized to the widest
-        // item instead of being stretched wide by the card row, which would
-        // leave a large empty area after the unit.
-        diskPopUp.setContentHuggingPriority(.required, for: .horizontal)
         let sizes = os.availableDiskSizes
         for size in sizes {
-            // Empty plain title so only the tab-aligned attributed title drives
-            // the menu's width (the figure-space-padded plain title would inflate it).
-            diskPopUp.addItem(withTitle: "")
+            diskPopUp.addItem(withTitle: DataFormatters.formatDiskSize(size))
             diskPopUp.lastItem?.attributedTitle = diskItemTitle(size)
             diskPopUp.lastItem?.tag = size
         }
