@@ -11,10 +11,14 @@ import AppKit
 /// `CalloutStyle` (which is tuned for narrow 340pt popovers).
 enum WizardStyle {
     /// Fixed wizard sheet width.
-    static let width: CGFloat = 720
+    static let width: CGFloat = 660
 
     /// Fixed wizard sheet height.
-    static let height: CGFloat = 540
+    static let height: CGFloat = 495
+
+    /// Right-side gutter inside scrolling steps so content clears the vertical
+    /// scroller instead of colliding with it.
+    static let scrollerGutter: CGFloat = 16
 
     /// Inset from the content area edges to a step's content.
     static let contentPadding: CGFloat = 20
@@ -104,17 +108,18 @@ func makeWizardScrollView(documentView: NSView) -> NSScrollView {
     documentView.translatesAutoresizingMaskIntoConstraints = false
     scrollView.documentView = documentView
 
-    // Pin top/leading/trailing and match width; deliberately no bottom
-    // constraint — the document view's height flows from its content. With the
-    // flipped clip view this anchors the content at the top: short content sits
-    // at the top with empty space below, tall content scrolls. (A bottom pin
-    // here would stretch short content to fill the viewport, and the stack would
-    // distribute the slack to the top, pushing the title out of view.)
+    // Pin top/leading and inset the trailing edge by a gutter so content clears
+    // the (overlay) vertical scroller instead of colliding with it. Deliberately
+    // no bottom constraint — the document view's height flows from its content.
+    // With the flipped clip view this anchors the content at the top: short
+    // content sits at the top with empty space below, tall content scrolls. (A
+    // bottom pin here would stretch short content to fill the viewport, and the
+    // stack would distribute the slack to the top, pushing the title out of view.)
     NSLayoutConstraint.activate([
         documentView.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
         documentView.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
-        documentView.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
-        documentView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
+        documentView.trailingAnchor.constraint(
+            equalTo: scrollView.contentView.trailingAnchor, constant: -WizardStyle.scrollerGutter),
     ])
     return scrollView
 }
