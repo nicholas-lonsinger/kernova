@@ -73,6 +73,17 @@ func makeWizardSubtitle(_ text: String) -> NSTextField {
 
 // MARK: - Layout helpers
 
+/// A clip view that reports itself flipped so its document view is anchored at
+/// the top-left and scrolls downward.
+///
+/// Without this, `NSClipView`'s default bottom-left origin anchors short content
+/// to the bottom of the viewport — and when content is marginally taller than
+/// the viewport, the initial scroll position shows the bottom, clipping the top
+/// (the step title) out of view.
+private final class FlippedClipView: NSClipView {
+    override var isFlipped: Bool { true }
+}
+
 /// Wraps `documentView` in a borderless, autohiding vertical scroll view with
 /// the clip-view content insets zeroed, and pins the document to the clip view
 /// (width-matched; bottom at `.defaultHigh` so short content doesn't stretch).
@@ -83,6 +94,7 @@ func makeWizardSubtitle(_ text: String) -> NSTextField {
 @MainActor
 func makeWizardScrollView(documentView: NSView) -> NSScrollView {
     let scrollView = NSScrollView()
+    scrollView.contentView = FlippedClipView()
     scrollView.hasVerticalScroller = true
     scrollView.hasHorizontalScroller = false
     scrollView.borderType = .noBorder

@@ -56,7 +56,9 @@ final class IPSWSelectionContentViewController: NSViewController {
         cardStack.spacing = 12
 
         conditionalContainer.orientation = .vertical
-        conditionalContainer.alignment = .leading
+        // Center the content-sized path badge; the banner is pinned to the full
+        // width separately, so centering doesn't affect it.
+        conditionalContainer.alignment = .centerX
         conditionalContainer.spacing = 12
 
         let stack = NSStackView(views: [title, subtitle, cardStack, conditionalContainer])
