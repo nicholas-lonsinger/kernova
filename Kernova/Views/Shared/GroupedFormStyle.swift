@@ -53,8 +53,8 @@ private final class GroupedFormScrollView: NSScrollView {
 ///
 /// `content` is hosted inside a full-width document view and inset symmetrically
 /// by ``GroupedFormStyle/contentSideInset`` on both sides, so it stays
-/// horizontally centered, and by `verticalInset` on the top and bottom so a
-/// scrolling form keeps a margin from the viewport's top and bottom edges. The
+/// horizontally centered, and by `topInset` / `bottomInset` so a scrolling form
+/// can keep a margin from the viewport's top and/or bottom edges. The
 /// document view fills the clip view's width on purpose: pinning it *narrower*
 /// than the clip makes `NSClipView` offset its bounds origin to align the
 /// under-sized document, which scrolls the content sideways and defeats the
@@ -62,15 +62,24 @@ private final class GroupedFormScrollView: NSScrollView {
 /// content scrolls. Callers add their own per-subview width constraints against
 /// `content`.
 @MainActor
-func makeGroupedFormScrollView(documentView content: NSView, verticalInset: CGFloat = 0)
-    -> NSScrollView
-{
-    let scrollView = GroupedFormScrollView()
+func makeGroupedFormScrollView(
+    documentView content: NSView,
+    topInset: CGFloat = 0,
+    bottomInset: CGFloat = 0,
+    overlaysScroller: Bool = true
+) -> NSScrollView {
+    // When `overlaysScroller` is true (the wizard), force the clip view full
+    // width (via `GroupedFormScrollView.tile()`) and overlay scrollers so the
+    // scroller floats over the side margin and centered content never shifts —
+    // even with "Always show scroll bars" on. When false (the settings pane),
+    // use a stock scroll view whose scroller style follows the system: a legacy
+    // always-on scroller reserves a gutter (so the trailing margin grows when
+    // it shows) while overlay scrollers float and auto-hide.
+    let scrollView: NSScrollView = overlaysScroller ? GroupedFormScrollView() : NSScrollView()
     scrollView.contentView = FlippedClipView()
-    // Overlay style plus the full-width clip view keep the scroller floating over
-    // the right margin instead of reserving width, so centered content isn't
-    // shifted.
-    scrollView.scrollerStyle = .overlay
+    if overlaysScroller {
+        scrollView.scrollerStyle = .overlay
+    }
     scrollView.hasVerticalScroller = true
     scrollView.hasHorizontalScroller = false
     scrollView.borderType = .noBorder
@@ -96,9 +105,9 @@ func makeGroupedFormScrollView(documentView content: NSView, verticalInset: CGFl
         docView.trailingAnchor.constraint(equalTo: clip.trailingAnchor),
         docView.widthAnchor.constraint(equalTo: clip.widthAnchor),
         // Content inset symmetrically within the document view → centered,
-        // with a top/bottom margin so scrolling content clears the edges.
-        content.topAnchor.constraint(equalTo: docView.topAnchor, constant: verticalInset),
-        content.bottomAnchor.constraint(equalTo: docView.bottomAnchor, constant: -verticalInset),
+        // with optional top/bottom margins so scrolling content clears the edges.
+        content.topAnchor.constraint(equalTo: docView.topAnchor, constant: topInset),
+        content.bottomAnchor.constraint(equalTo: docView.bottomAnchor, constant: -bottomInset),
         content.leadingAnchor.constraint(equalTo: docView.leadingAnchor, constant: inset),
         content.trailingAnchor.constraint(equalTo: docView.trailingAnchor, constant: -inset),
     ])

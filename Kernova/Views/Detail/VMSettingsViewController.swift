@@ -148,7 +148,11 @@ final class VMSettingsViewController: NSViewController {
         formStack.spacing = 18
         formStack.translatesAutoresizingMaskIntoConstraints = false
 
-        let scrollView = makeGroupedFormScrollView(documentView: formStack, verticalInset: 16)
+        // Margin only at the bottom; the top sits flush under the toolbar. The
+        // settings pane uses native scroller reservation so the right margin
+        // grows when an always-on scroll bar shows.
+        let scrollView = makeGroupedFormScrollView(
+            documentView: formStack, topInset: 0, bottomInset: 16, overlaysScroller: false)
         scrollView.setContentHuggingPriority(.defaultLow, for: .vertical)
 
         bannerContainer = makeBannerContainer()
