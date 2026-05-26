@@ -33,57 +33,35 @@ private final class FlippedClipView: NSClipView {
     override var isFlipped: Bool { true }
 }
 
-/// A scroll view that keeps its clip view spanning the full width even when the
-/// system shows always-on (legacy) scroll bars.
-///
-/// `scrollerStyle = .overlay` alone isn't honored when the user sets "Show
-/// scroll bars: Always", so a legacy scroller would reserve width on the right,
-/// shrink the clip view, and shift symmetrically-inset content off-center.
-/// Forcing the clip view to fill `bounds` in `tile()` makes the scroller overlay
-/// the right content margin instead — content stays centered, and the margin
-/// inset keeps it clear of the floating scroller.
-private final class GroupedFormScrollView: NSScrollView {
-    override func tile() {
-        super.tile()
-        contentView.frame = bounds
-    }
-}
-
-/// Wraps `content` in a borderless, autohiding vertical scroll view.
+/// Wraps `content` in a borderless vertical scroll view.
 ///
 /// `content` is hosted inside a full-width document view and inset symmetrically
 /// by ``GroupedFormStyle/contentSideInset`` on both sides, so it stays
 /// horizontally centered, and by `topInset` / `bottomInset` so a scrolling form
-/// can keep a margin from the viewport's top and/or bottom edges. The
-/// document view fills the clip view's width on purpose: pinning it *narrower*
-/// than the clip makes `NSClipView` offset its bounds origin to align the
-/// under-sized document, which scrolls the content sideways and defeats the
-/// inset. With the flipped clip view short content sits at the top and tall
-/// content scrolls. Callers add their own per-subview width constraints against
-/// `content`.
+/// can keep a margin from the viewport's top and/or bottom edges. The document
+/// view fills the clip view's width on purpose: pinning it *narrower* than the
+/// clip makes `NSClipView` offset its bounds origin to align the under-sized
+/// document, which scrolls the content sideways and defeats the inset. With the
+/// flipped clip view short content sits at the top and tall content scrolls.
+/// Callers add their own per-subview width constraints against `content`.
+///
+/// The scroller style follows the system: with "Always show scroll bars" the
+/// vertical scroller reserves a gutter (its width comes out of the clip, so the
+/// trailing content margin grows when content overflows — a visible cue that
+/// there's more below); with overlay scrollers it floats and auto-hides.
 @MainActor
 func makeGroupedFormScrollView(
     documentView content: NSView,
     topInset: CGFloat = 0,
-    bottomInset: CGFloat = 0,
-    overlaysScroller: Bool = true
+    bottomInset: CGFloat = 0
 ) -> NSScrollView {
-    // When `overlaysScroller` is true (the wizard), force the clip view full
-    // width (via `GroupedFormScrollView.tile()`) and overlay scrollers so the
-    // scroller floats over the side margin and centered content never shifts —
-    // even with "Always show scroll bars" on. When false (the settings pane),
-    // use a stock scroll view whose scroller style follows the system: a legacy
-    // always-on scroller reserves a gutter (so the trailing margin grows when
-    // it shows) while overlay scrollers float and auto-hide.
-    let scrollView: NSScrollView = overlaysScroller ? GroupedFormScrollView() : NSScrollView()
+    let scrollView = NSScrollView()
     scrollView.contentView = FlippedClipView()
-    if overlaysScroller {
-        scrollView.scrollerStyle = .overlay
-    }
     scrollView.hasVerticalScroller = true
     scrollView.hasHorizontalScroller = false
     scrollView.borderType = .noBorder
     scrollView.drawsBackground = false
+    // Show the vertical scroller only when content overflows.
     scrollView.autohidesScrollers = true
     scrollView.automaticallyAdjustsContentInsets = false
     scrollView.contentInsets = NSEdgeInsetsZero
