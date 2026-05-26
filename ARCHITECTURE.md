@@ -60,7 +60,7 @@ Kernova/
 │   ├── VMInstance+Display.swift        # Display-layer extension: cold-paused vs live-paused distinction
 │   ├── Sidebar/
 │   │   ├── SidebarViewController.swift  # Pure-AppKit source-list `NSOutlineView`: VM list under a collapsible "Virtual Machines" group; selection↔`selectedID`, double-click-to-start, status-dependent context menu, inline rename, drag-reorder + Finder-bundle import
-│   │   ├── SidebarVMRowCellView.swift   # Leaf-row `NSTableCellView`: OS icon, name + OS subtitle, optional agent accessory, status dot/spinner; owns a per-instance `ObservationLoop` for live updates; hosts the inline-rename field editor
+│   │   ├── SidebarVMRowCellView.swift   # Leaf-row `NSTableCellView`: state-tinted OS icon (swapped in place for a spinner while busy), VM name, optional agent accessory; owns a per-instance `ObservationLoop` for live updates; hosts the inline-rename field editor
 │   │   ├── SidebarGroupHeaderCellView.swift # Group-row `NSTableCellView` rendering a section title
 │   │   ├── SidebarSection.swift         # Outline section model (single `.virtualMachines` today; structured so a second group is a localized addition)
 │   │   ├── SidebarAgentStatusButtonView.swift # Pure AppKit (`NSView`) wrapper: stacked `NSButton` (SF Symbol for static states) + `NSProgressIndicator` (.mini spinning for `.connecting`); owns a `PopoverPresenter` + content VC; refreshes popover in place when status changes mid-popover (e.g. `.waiting` → `.current`); anchors `.maxX` so the popover flows into the detail-pane area rather than out the sidebar's right edge

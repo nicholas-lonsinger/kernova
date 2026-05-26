@@ -2,9 +2,9 @@ import AppKit
 
 /// Leaf-row cell for a single virtual machine in the sidebar.
 ///
-/// Mirrors the former SwiftUI `VMRowView`: a guest-OS icon, the VM name over
-/// its OS subtitle, an optional guest-agent accessory, and a trailing status
-/// dot that swaps to a spinner while the VM is preparing or transitioning.
+/// A guest-OS icon tinted to the VM's state color, the VM name, and an optional
+/// guest-agent accessory. While the VM is preparing or transitioning the icon is
+/// swapped in place for a spinner.
 ///
 /// The cell owns a per-instance ``ObservationLoop`` so it repaints itself when
 /// its bound VM's observable state changes (status, name, agent status), the
@@ -35,24 +35,14 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
 
     // MARK: - Subviews
 
-    // RATIONALE: `iconView` and `subtitleField` are `nonisolated(unsafe)` so the
-    // `nonisolated` `backgroundStyle` override (below) can recolor them without
-    // a Swift main-actor executor check. AppKit only touches them on the main
-    // thread, so the access is safe; the `unsafe` opts out of the Sendable check.
-    // Assigned in `init` (not inline) because a `nonisolated(unsafe)` property
-    // can't take a main-actor-isolated default value.
-    nonisolated(unsafe) private let iconView: NSImageView
+    private let iconView = NSImageView()
     private let nameField = NSTextField()
-    nonisolated(unsafe) private let subtitleField: NSTextField
     private let agentButton = SidebarAgentStatusButtonView()
-    private let statusDot = NSView()
     private let spinner = NSProgressIndicator()
 
     // MARK: - Init
 
     init() {
-        iconView = NSImageView()
-        subtitleField = NSTextField(labelWithString: "")
         super.init(frame: .zero)
         identifier = Self.reuseIdentifier
         buildLayout()
@@ -66,7 +56,6 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
     private func buildLayout() {
         iconView.translatesAutoresizingMaskIntoConstraints = false
         iconView.imageScaling = .scaleProportionallyDown
-        iconView.contentTintColor = .secondaryLabelColor
         iconView.setContentHuggingPriority(.required, for: .horizontal)
         iconView.setContentCompressionResistancePriority(.required, for: .horizontal)
 
@@ -83,20 +72,6 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
         nameField.setContentHuggingPriority(.defaultLow, for: .horizontal)
         nameField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        subtitleField.translatesAutoresizingMaskIntoConstraints = false
-        subtitleField.font = .preferredFont(forTextStyle: .caption1)
-        subtitleField.textColor = .secondaryLabelColor
-        subtitleField.isSelectable = false
-        subtitleField.lineBreakMode = .byTruncatingTail
-        subtitleField.maximumNumberOfLines = 1
-        subtitleField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
-        statusDot.translatesAutoresizingMaskIntoConstraints = false
-        statusDot.wantsLayer = true
-        statusDot.layer?.cornerRadius = 4
-        statusDot.setContentHuggingPriority(.required, for: .horizontal)
-        statusDot.setContentCompressionResistancePriority(.required, for: .horizontal)
-
         spinner.translatesAutoresizingMaskIntoConstraints = false
         spinner.style = .spinning
         spinner.controlSize = .small
@@ -105,20 +80,17 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
         spinner.setContentHuggingPriority(.required, for: .horizontal)
         spinner.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-        let textStack = NSStackView(views: [nameField, subtitleField])
-        textStack.orientation = .vertical
-        textStack.alignment = .leading
-        textStack.spacing = 2
-        textStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        textStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
-        // Keep the trailing accessory rigid so the text column is the sole
-        // flexible element: it claims all spare width, and the name truncates
-        // only when genuinely out of room.
+        // Keep the trailing accessory rigid so the name field is the sole
+        // flexible element: it claims all spare width and truncates only when
+        // genuinely out of room.
         agentButton.setContentHuggingPriority(.required, for: .horizontal)
         agentButton.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-        let row = NSStackView(views: [iconView, textStack, agentButton, statusDot, spinner])
+        // The icon and spinner share the leading slot: exactly one is visible at
+        // a time, so the stack collapses the hidden one and the visible view
+        // owns that position. Both are pinned to the same 20pt width to keep the
+        // name field from shifting when they swap.
+        let row = NSStackView(views: [iconView, spinner, nameField, agentButton])
         row.orientation = .horizontal
         row.alignment = .centerY
         row.distribution = .fill
@@ -126,9 +98,11 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
         row.translatesAutoresizingMaskIntoConstraints = false
         addSubview(row)
 
-        // Auto-adjust the primary label + icon for selection highlighting.
+        // Auto-adjust the primary label for selection highlighting. The icon is
+        // deliberately not wired to `imageView`; its state color is baked into a
+        // non-template symbol image (see `applyIconStateColor()`) so the source
+        // list's selection vibrancy leaves it alone instead of drawing it white.
         textField = nameField
-        imageView = iconView
 
         NSLayoutConstraint.activate([
             row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
@@ -138,8 +112,7 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
             row.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -2),
 
             iconView.widthAnchor.constraint(equalToConstant: 20),
-            statusDot.widthAnchor.constraint(equalToConstant: 8),
-            statusDot.heightAnchor.constraint(equalToConstant: 8),
+            spinner.widthAnchor.constraint(equalToConstant: 20),
         ])
     }
 
@@ -192,10 +165,6 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
     private func applyLiveState() {
         guard let instance else { return }
 
-        let guestOS = instance.configuration.guestOS
-        iconView.image = .systemSymbol(guestOS.iconName, accessibilityDescription: guestOS.displayName)
-        subtitleField.stringValue = guestOS.displayName
-
         // Don't overwrite the field while the user is mid-rename.
         if !isRenaming {
             nameField.stringValue = instance.name
@@ -203,15 +172,15 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
 
         let busy = instance.isPreparing || instance.status.isTransitioning
         if busy {
-            statusDot.isHidden = true
+            iconView.isHidden = true
             spinner.isHidden = false
             spinner.startAnimation(nil)
         } else {
             spinner.stopAnimation(nil)
             spinner.isHidden = true
-            statusDot.isHidden = false
-            applyStatusDotColor()
-            statusDot.toolTip = instance.statusToolTip
+            iconView.isHidden = false
+            applyIconStateColor()
+            iconView.toolTip = instance.statusToolTip
         }
 
         if let agentStatus = Self.visibleAgentStatus(for: instance) {
@@ -228,18 +197,34 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
         }
     }
 
-    /// Resolves the status-dot color in the cell's current effective appearance
-    /// so it follows light/dark switches (a baked `cgColor` otherwise wouldn't).
-    private func applyStatusDotColor() {
-        guard let instance, !statusDot.isHidden else { return }
-        effectiveAppearance.performAsCurrentDrawingAppearance {
-            self.statusDot.layer?.backgroundColor = instance.statusDisplayNSColor.cgColor
-        }
+    /// Renders the OS symbol in the VM's state color.
+    ///
+    /// The color is baked into the symbol via a palette configuration and the
+    /// result is marked non-template. A plain template image tinted with
+    /// `contentTintColor` would be drawn white by the source list's selection
+    /// vibrancy when its row is highlighted; a non-template, pre-colored image
+    /// is exempt, so the state color survives selection. The point size is
+    /// folded into the same configuration so the glyph matches the spinner's
+    /// visual weight (the SF Symbol default reads small beside it).
+    private func applyIconStateColor() {
+        guard let instance else { return }
+        let guestOS = instance.configuration.guestOS
+        let configuration = NSImage.SymbolConfiguration(pointSize: 18, weight: .regular)
+            .applying(NSImage.SymbolConfiguration(paletteColors: [instance.statusDisplayNSColor]))
+        let symbol = NSImage.systemSymbol(
+            guestOS.iconName, accessibilityDescription: guestOS.displayName
+        )
+        let colored = symbol.withSymbolConfiguration(configuration) ?? symbol
+        colored.isTemplate = false
+        iconView.image = colored
     }
 
+    /// Rebuilds the icon so its baked palette color re-resolves for the new
+    /// light/dark appearance.
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        applyStatusDotColor()
+        guard instance != nil, !iconView.isHidden else { return }
+        applyIconStateColor()
     }
 
     // MARK: - Inline rename
@@ -318,34 +303,6 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
         agentButton.onMount = nil
         agentButton.onDismiss = nil
         agentButton.isHidden = true
-    }
-
-    // MARK: - Selection appearance
-
-    // RATIONALE: AppKit sets `backgroundStyle` via `objc_msgSend` from
-    // `-[NSTableRowView _updateBackgroundStylesForReals]` during window
-    // key-state changes — a plain main-thread call with no Swift concurrency
-    // context. A `@MainActor`-isolated `@objc` setter inserts a
-    // `_checkExpectedExecutor` precondition there, and on macOS 26 that
-    // executor-identity check (`swift_task_isCurrentExecutor`) can fault
-    // (EXC_BAD_ACCESS in `swift_getObjectType`) when invoked from that context.
-    // Declaring the override `nonisolated` removes the executor check entirely;
-    // the recolored subviews are `nonisolated(unsafe)` so we touch them directly
-    // (NOT via `MainActor.assumeIsolated`, which routes through the same faulting
-    // check). AppKit only sets this on the main thread, so the access is safe.
-    override nonisolated var backgroundStyle: NSView.BackgroundStyle {
-        get { super.backgroundStyle }
-        set {
-            super.backgroundStyle = newValue
-            // Invert both the icon tint and the subtitle on the selection
-            // highlight; `.secondaryLabelColor` doesn't auto-adapt, so the
-            // subtitle would otherwise render gray-on-blue when selected.
-            let accessoryColor: NSColor =
-                newValue == .emphasized
-                ? .alternateSelectedControlTextColor : .secondaryLabelColor
-            subtitleField.textColor = accessoryColor
-            iconView.contentTintColor = accessoryColor
-        }
     }
 
     // MARK: - Agent visibility

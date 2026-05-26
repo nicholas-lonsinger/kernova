@@ -59,12 +59,14 @@ struct SidebarViewControllerTests {
         return nil
     }
 
-    // MARK: - Status dot color
+    // MARK: - Status icon color
 
     @Test("statusDisplayNSColor maps each lifecycle state")
     func statusColorMapping() {
         let instance = makeInstance(status: .stopped)
-        #expect(instance.statusDisplayNSColor == .secondaryLabelColor)
+        // Concrete gray (not `.secondaryLabelColor`) so the OS icon keeps its
+        // stopped color on the selection highlight instead of inverting to white.
+        #expect(instance.statusDisplayNSColor == .systemGray)
 
         instance.status = .running
         #expect(instance.statusDisplayNSColor == .systemGreen)
