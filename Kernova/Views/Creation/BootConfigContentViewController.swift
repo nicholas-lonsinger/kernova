@@ -38,17 +38,18 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
 
         conditionalContainer.orientation = .vertical
         conditionalContainer.alignment = .leading
-        conditionalContainer.spacing = 12
+        conditionalContainer.spacing = 10
 
         let stack = NSStackView(views: [title, subtitle, bootModeControl, conditionalContainer])
         stack.orientation = .vertical
-        stack.alignment = .centerX
-        stack.spacing = WizardStyle.sectionSpacing
+        stack.alignment = .leading
+        stack.spacing = 8
+        stack.setCustomSpacing(20, after: subtitle)
+        stack.setCustomSpacing(20, after: bootModeControl)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         let scrollView = makeWizardScrollView(documentView: stack)
         NSLayoutConstraint.activate([
-            title.widthAnchor.constraint(equalTo: stack.widthAnchor),
             subtitle.widthAnchor.constraint(equalTo: stack.widthAnchor),
             conditionalContainer.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
@@ -78,7 +79,8 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
             let commandLineField = NSTextField(string: creationVM.kernelCommandLine ?? "console=hvc0")
             commandLineField.placeholderString = "Kernel Command Line"
             commandLineField.delegate = self
-            addFullWidth(commandLineField)
+            addFullWidth(
+                makeWizardFormRow("Command Line", control: commandLineField, alignment: .centerY))
         } else {
             addFullWidth(makeWizardCaption("Select an ISO image to boot from via EFI."))
             addFullWidth(
@@ -99,11 +101,6 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
     }
 
     private func makeFilePickerRow(label: String, path: String?, browseAction: Selector) -> NSView {
-        let labelField = NSTextField(labelWithString: label)
-        labelField.alignment = .right
-        labelField.isSelectable = false
-        labelField.widthAnchor.constraint(equalToConstant: 60).isActive = true
-
         let pathLabel: NSTextField
         if let path {
             pathLabel = NSTextField(labelWithString: URL(fileURLWithPath: path).lastPathComponent)
@@ -111,7 +108,6 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
             pathLabel = NSTextField(labelWithString: "No file selected")
             pathLabel.textColor = .secondaryLabelColor
         }
-        pathLabel.font = .preferredFont(forTextStyle: .caption1)
         pathLabel.lineBreakMode = .byTruncatingMiddle
         pathLabel.maximumNumberOfLines = 1
         pathLabel.isSelectable = false
@@ -120,16 +116,18 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
 
         let browse = NSButton(title: "Browse...", target: self, action: browseAction)
         browse.bezelStyle = .rounded
+        browse.controlSize = .small
         browse.setContentHuggingPriority(.required, for: .horizontal)
 
-        let row = NSStackView(views: [labelField, pathLabel, browse])
-        row.orientation = .horizontal
-        row.alignment = .firstBaseline
-        row.spacing = 8
+        let control = NSStackView(views: [pathLabel, browse])
+        control.orientation = .horizontal
+        control.alignment = .centerY
+        control.spacing = 8
+        control.setContentHuggingPriority(.defaultLow, for: .horizontal)
         // Width is pinned by the caller (`addFullWidth`) once the row is in the
-        // container — constraining to `conditionalContainer` here would have no
-        // common ancestor yet and trap.
-        return row
+        // container, so the control fills the space after the label column and
+        // the path truncates while Browse hugs the trailing edge.
+        return makeWizardFormRow(label, control: control, alignment: .centerY)
     }
 
     // MARK: - Actions

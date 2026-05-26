@@ -2,11 +2,12 @@ import AppKit
 
 /// Step 3 of the creation wizard: name the VM and allocate resources.
 ///
-/// All controls write the shared ``VMCreationViewModel`` directly. The name
-/// field writes on every keystroke (via `controlTextDidChange`) so the shell's
-/// `canAdvance`/`validationMessage` observation re-evaluates the Next button
-/// live. Stepper bounds come from the *current* `selectedOS`, and the standing
-/// values are clamped into range when the step is built.
+/// A native macOS aligned form (right-aligned label column, left-aligned
+/// controls). All controls write the shared ``VMCreationViewModel`` directly. The
+/// name field writes on every keystroke (via `controlTextDidChange`) so the
+/// shell's `canAdvance`/`validationMessage` observation re-evaluates the Next
+/// button live. Stepper bounds come from the *current* `selectedOS`, and the
+/// standing values are clamped into range when the step is built.
 @MainActor
 final class ResourceConfigContentViewController: NSViewController {
     private let creationVM: VMCreationViewModel
@@ -39,15 +40,13 @@ final class ResourceConfigContentViewController: NSViewController {
         let form = makeForm()
         let stack = NSStackView(views: [title, subtitle, form])
         stack.orientation = .vertical
-        stack.alignment = .centerX
-        stack.spacing = WizardStyle.sectionSpacing
+        stack.alignment = .leading
+        stack.spacing = 8
+        stack.setCustomSpacing(20, after: subtitle)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
-        // The form can exceed the fixed sheet height, so host it in a scroll
-        // view (the SwiftUI predecessor used a scrollable grouped Form).
         let scrollView = makeWizardScrollView(documentView: stack)
         NSLayoutConstraint.activate([
-            title.widthAnchor.constraint(equalTo: stack.widthAnchor),
             subtitle.widthAnchor.constraint(equalTo: stack.widthAnchor),
             form.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
@@ -70,39 +69,46 @@ final class ResourceConfigContentViewController: NSViewController {
         form.spacing = 10
         form.translatesAutoresizingMaskIntoConstraints = false
 
-        addFullWidth(makeWizardRow(leading: makeWizardFormLabel("Name"), trailing: nameField), to: form)
+        form.addArrangedSubview(makeWizardFormRow("Name", control: nameField))
 
         addSectionHeader("Compute", to: form)
-        addFullWidth(makeWizardRow(leading: cpuValueLabel, trailing: cpuStepper), to: form)
-        addFullWidth(makeWizardRow(leading: memoryValueLabel, trailing: memoryStepper), to: form)
+        form.addArrangedSubview(
+            makeWizardFormRow(
+                "CPU Cores", control: steppedControl(cpuValueLabel, cpuStepper), alignment: .centerY))
+        form.addArrangedSubview(
+            makeWizardFormRow(
+                "Memory", control: steppedControl(memoryValueLabel, memoryStepper), alignment: .centerY))
 
         addSectionHeader("Storage", to: form)
-        addFullWidth(makeWizardRow(leading: makeWizardFormLabel("Disk Size"), trailing: diskPopUp), to: form)
+        form.addArrangedSubview(makeWizardFormRow("Disk Size", control: diskPopUp, alignment: .centerY))
         let caption = makeWizardCaption(
             "Physical disk usage grows only as data is written (ASIF sparse format).")
-        addFullWidth(caption, to: form)
+        form.addArrangedSubview(caption)
+        caption.widthAnchor.constraint(equalTo: form.widthAnchor).isActive = true
 
         addSectionHeader("Network", to: form)
-        addFullWidth(
-            makeWizardRow(leading: makeWizardFormLabel("Networking"), trailing: networkSwitch), to: form)
+        form.addArrangedSubview(
+            makeWizardFormRow("Networking", control: networkSwitch, alignment: .centerY))
 
         return form
     }
 
-    /// Adds an arranged subview to the form and pins its width to the form so
-    /// rows span the full step width.
-    private func addFullWidth(_ view: NSView, to form: NSStackView) {
-        form.addArrangedSubview(view)
-        view.widthAnchor.constraint(equalTo: form.widthAnchor).isActive = true
+    /// Pairs a value label with its stepper (value to the left of the stepper).
+    private func steppedControl(_ value: NSTextField, _ stepper: NSStepper) -> NSStackView {
+        value.font = .preferredFont(forTextStyle: .body)
+        let control = NSStackView(views: [value, stepper])
+        control.orientation = .horizontal
+        control.alignment = .centerY
+        control.spacing = 6
+        return control
     }
 
     /// Adds a section-header label with a little extra space above it.
     private func addSectionHeader(_ title: String, to form: NSStackView) {
-        let header = makeWizardSectionHeader(title)
         if let last = form.arrangedSubviews.last {
             form.setCustomSpacing(18, after: last)
         }
-        addFullWidth(header, to: form)
+        form.addArrangedSubview(makeWizardSectionHeader(title))
     }
 
     private func configureNameField() {
@@ -165,11 +171,11 @@ final class ResourceConfigContentViewController: NSViewController {
     // MARK: - Label updates
 
     private func updateCPULabel() {
-        cpuValueLabel.stringValue = "CPU Cores: \(creationVM.cpuCount)"
+        cpuValueLabel.stringValue = "\(creationVM.cpuCount)"
     }
 
     private func updateMemoryLabel() {
-        memoryValueLabel.stringValue = "Memory: \(creationVM.memoryInGB) GB"
+        memoryValueLabel.stringValue = "\(creationVM.memoryInGB) GB"
     }
 
     // MARK: - Actions

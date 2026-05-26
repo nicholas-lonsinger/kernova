@@ -2,7 +2,8 @@ import AppKit
 
 /// Step 4 of the creation wizard: review the configuration before creating.
 ///
-/// Read-only summary rows (plus a "start after create" switch), built from a
+/// A native macOS aligned form of read-only rows (right-aligned label column,
+/// left-aligned values) plus a "start after create" switch, built from a
 /// snapshot of the shared ``VMCreationViewModel``. The shell rebuilds this VC
 /// each time the review step is entered, so it always reflects current values;
 /// no intra-step observation is needed. Tapping Create is handled by the shell
@@ -30,13 +31,13 @@ final class ReviewContentViewController: NSViewController {
         let summary = makeSummary()
         let stack = NSStackView(views: [title, subtitle, summary])
         stack.orientation = .vertical
-        stack.alignment = .centerX
-        stack.spacing = WizardStyle.sectionSpacing
+        stack.alignment = .leading
+        stack.spacing = 8
+        stack.setCustomSpacing(20, after: subtitle)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         let scrollView = makeWizardScrollView(documentView: stack)
         NSLayoutConstraint.activate([
-            title.widthAnchor.constraint(equalTo: stack.widthAnchor),
             subtitle.widthAnchor.constraint(equalTo: stack.widthAnchor),
             summary.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
@@ -48,7 +49,7 @@ final class ReviewContentViewController: NSViewController {
         let form = NSStackView()
         form.orientation = .vertical
         form.alignment = .leading
-        form.spacing = 10
+        form.spacing = 8
         form.translatesAutoresizingMaskIntoConstraints = false
 
         addSectionHeader("General", to: form)
@@ -94,18 +95,14 @@ final class ReviewContentViewController: NSViewController {
         if let last = form.arrangedSubviews.last {
             form.setCustomSpacing(18, after: last)
         }
-        addFullWidth(
-            makeWizardRow(
-                leading: makeWizardFormLabel("Start this VM after creation"), trailing: startSwitch),
-            to: form)
+        let startLabel = makeWizardFormLabel("Start this VM after creation")
+        let startRow = NSStackView(views: [startSwitch, startLabel])
+        startRow.orientation = .horizontal
+        startRow.alignment = .centerY
+        startRow.spacing = 8
+        form.addArrangedSubview(startRow)
 
         return form
-    }
-
-    /// Adds an arranged subview to the form and pins its width to the form.
-    private func addFullWidth(_ view: NSView, to form: NSStackView) {
-        form.addArrangedSubview(view)
-        view.widthAnchor.constraint(equalTo: form.widthAnchor).isActive = true
     }
 
     /// Adds a section header with extra space above it.
@@ -113,13 +110,11 @@ final class ReviewContentViewController: NSViewController {
         if let last = form.arrangedSubviews.last {
             form.setCustomSpacing(18, after: last)
         }
-        addFullWidth(makeWizardSectionHeader(title), to: form)
+        form.addArrangedSubview(makeWizardSectionHeader(title))
     }
 
     private func addRow(_ label: String, _ value: String, to form: NSStackView) {
-        addFullWidth(
-            makeWizardRow(leading: makeWizardFormLabel(label), trailing: makeWizardValueLabel(value)),
-            to: form)
+        form.addArrangedSubview(makeWizardFormRow(label, control: makeWizardValueLabel(value)))
     }
 
     @objc private func startToggled() {

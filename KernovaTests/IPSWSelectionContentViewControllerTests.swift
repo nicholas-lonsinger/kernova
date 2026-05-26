@@ -12,8 +12,8 @@ struct IPSWSelectionContentViewControllerTests {
         let vc = IPSWSelectionContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
 
-        #expect(card(containingLabel: "Download Latest", in: vc.view)?.isSelected == true)
-        #expect(card(containingLabel: "Choose Local File", in: vc.view)?.isSelected == false)
+        #expect(radio(titled: "Download Latest", in: vc.view)?.state == .on)
+        #expect(radio(titled: "Choose Local File", in: vc.view)?.state == .off)
         if let path = vm.ipswDownloadPath {
             #expect(findLabel(withText: wizardAbbreviateWithTilde(path), in: vc.view) != nil)
         }
@@ -69,15 +69,11 @@ struct IPSWSelectionContentViewControllerTests {
     }
 
     @MainActor
-    private func allCards(in view: NSView) -> [WizardSelectableCardView] {
-        var result: [WizardSelectableCardView] = []
-        if let card = view as? WizardSelectableCardView { result.append(card) }
-        for subview in view.subviews { result.append(contentsOf: allCards(in: subview)) }
-        return result
-    }
-
-    @MainActor
-    private func card(containingLabel text: String, in view: NSView) -> WizardSelectableCardView? {
-        allCards(in: view).first { findLabel(withText: text, in: $0) != nil }
+    private func radio(titled title: String, in view: NSView) -> NSButton? {
+        if let button = view as? NSButton, button.title == title { return button }
+        for subview in view.subviews {
+            if let found = radio(titled: title, in: subview) { return found }
+        }
+        return nil
     }
 }

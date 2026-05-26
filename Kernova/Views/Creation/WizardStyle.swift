@@ -36,15 +36,6 @@ enum WizardStyle {
     /// Inset around the chrome rows (step indicator, navigation bar).
     static let chromePadding: CGFloat = 20
 
-    /// Vertical spacing between major blocks within a step (title / subtitle / body).
-    static let sectionSpacing: CGFloat = 24
-
-    /// Corner radius for selectable cards.
-    static let cardCornerRadius: CGFloat = 12
-
-    /// Fill opacity applied to the accent color behind a selected card.
-    static let selectedFillOpacity: CGFloat = 0.1
-
     /// Font for a step's leading title row.
     ///
     /// Equivalent to SwiftUI's `.title2` + `.fontWeight(.semibold)`.
@@ -56,25 +47,25 @@ enum WizardStyle {
     static var subtitleFont: NSFont { .preferredFont(forTextStyle: .body) }
 }
 
-/// Builds a centered, semibold title label for the top of a wizard step.
+/// Builds a left-aligned, semibold heading label for the top of a wizard step.
 @MainActor
 func makeWizardTitle(_ text: String) -> NSTextField {
     let label = NSTextField(labelWithString: text)
     label.font = WizardStyle.titleFont
-    label.alignment = .center
+    label.alignment = .left
     label.lineBreakMode = .byWordWrapping
     label.maximumNumberOfLines = 0
     label.isSelectable = false
     return label
 }
 
-/// Builds a centered, secondary, wrapping subtitle label for a wizard step.
+/// Builds a left-aligned, secondary, wrapping subtitle label for a wizard step.
 @MainActor
 func makeWizardSubtitle(_ text: String) -> NSTextField {
     let label = NSTextField(wrappingLabelWithString: text)
     label.font = WizardStyle.subtitleFont
     label.textColor = .secondaryLabelColor
-    label.alignment = .center
+    label.alignment = .left
     label.lineBreakMode = .byWordWrapping
     label.maximumNumberOfLines = 0
     label.isSelectable = false
@@ -165,6 +156,88 @@ func makeWizardScrollView(documentView content: NSView) -> NSScrollView {
 
 // MARK: - Form atoms
 
+/// Width of the right-aligned label column in wizard forms.
+///
+/// Labels align and the controls/values all start at a common x — the native
+/// macOS aligned-form layout, as in System Settings.
+let wizardFormLabelColumnWidth: CGFloat = 130
+
+/// Builds an aligned form row: a fixed-width, right-aligned label paired with a
+/// trailing control or value that starts at the shared column edge.
+///
+/// Rows are left-aligned (intrinsic width) in the step's stack, so the label
+/// column lines up across rows. Use `.firstBaseline` for value/text rows and
+/// `.centerY` for control rows (steppers, switches, popups).
+@MainActor
+func makeWizardFormRow(
+    _ labelText: String, control: NSView, alignment: NSLayoutConstraint.Attribute = .firstBaseline
+) -> NSStackView {
+    let label = NSTextField(labelWithString: labelText)
+    label.font = .preferredFont(forTextStyle: .body)
+    label.alignment = .right
+    label.isSelectable = false
+    label.setContentHuggingPriority(.required, for: .horizontal)
+    label.widthAnchor.constraint(equalToConstant: wizardFormLabelColumnWidth).isActive = true
+
+    let row = NSStackView(views: [label, control])
+    row.orientation = .horizontal
+    row.alignment = alignment
+    row.spacing = 12
+    return row
+}
+
+/// Indent (radio circle + gap) so a radio option's description aligns under its
+/// title.
+let wizardRadioDescriptionIndent: CGFloat = 20
+
+/// Lays out a caller-supplied radio button as a native option row: a leading
+/// symbol icon, the radio (with its title), and a secondary description wrapped
+/// beneath the title.
+///
+/// The caller creates the radio (so it owns target/action and can track it for
+/// selection state); this only arranges the icon/description around it.
+@MainActor
+func makeWizardRadioOption(radio: NSButton, iconSymbol: String, description descriptionText: String)
+    -> NSView
+{
+    radio.font = .preferredFont(forTextStyle: .body)
+    radio.translatesAutoresizingMaskIntoConstraints = false
+
+    let icon = NSImageView(image: .systemSymbol(iconSymbol, accessibilityDescription: ""))
+    icon.symbolConfiguration = NSImage.SymbolConfiguration(textStyle: .title3)
+    icon.contentTintColor = .secondaryLabelColor
+    icon.translatesAutoresizingMaskIntoConstraints = false
+    icon.setContentHuggingPriority(.required, for: .horizontal)
+
+    let description = NSTextField(wrappingLabelWithString: descriptionText)
+    description.font = .preferredFont(forTextStyle: .subheadline)
+    description.textColor = .secondaryLabelColor
+    description.maximumNumberOfLines = 0
+    description.isSelectable = false
+    description.translatesAutoresizingMaskIntoConstraints = false
+
+    let option = NSView()
+    option.addSubview(icon)
+    option.addSubview(radio)
+    option.addSubview(description)
+    NSLayoutConstraint.activate([
+        icon.leadingAnchor.constraint(equalTo: option.leadingAnchor),
+        icon.centerYAnchor.constraint(equalTo: radio.centerYAnchor),
+        icon.widthAnchor.constraint(equalToConstant: 22),
+
+        radio.topAnchor.constraint(equalTo: option.topAnchor),
+        radio.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 8),
+        radio.trailingAnchor.constraint(lessThanOrEqualTo: option.trailingAnchor),
+
+        description.topAnchor.constraint(equalTo: radio.bottomAnchor, constant: 2),
+        description.leadingAnchor.constraint(
+            equalTo: radio.leadingAnchor, constant: wizardRadioDescriptionIndent),
+        description.trailingAnchor.constraint(equalTo: option.trailingAnchor),
+        description.bottomAnchor.constraint(equalTo: option.bottomAnchor),
+    ])
+    return option
+}
+
 /// Builds a primary body label for a form row (the leading "Name"-style label).
 @MainActor
 func makeWizardFormLabel(_ text: String) -> NSTextField {
@@ -204,25 +277,6 @@ func makeWizardCaption(_ text: String) -> NSTextField {
     label.maximumNumberOfLines = 0
     label.isSelectable = false
     return label
-}
-
-/// Builds a full-width form row from a leading view and a trailing view.
-///
-/// A flexible spacer between them pins the leading label to the left edge and
-/// the trailing control/value to the right edge — matching the SwiftUI grouped
-/// `Form` rows. The caller pins the row's width to the enclosing form.
-@MainActor
-func makeWizardRow(leading: NSView, trailing: NSView) -> NSStackView {
-    let spacer = NSView()
-    spacer.translatesAutoresizingMaskIntoConstraints = false
-    spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-    spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
-    let row = NSStackView(views: [leading, spacer, trailing])
-    row.orientation = .horizontal
-    row.alignment = .centerY
-    row.spacing = 8
-    return row
 }
 
 /// Builds a borderless, link-styled push button (caption font, link color).

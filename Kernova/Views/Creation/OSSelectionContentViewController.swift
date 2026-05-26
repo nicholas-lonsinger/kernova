@@ -14,9 +14,6 @@ final class OSSelectionContentViewController: NSViewController {
     private let creationVM: VMCreationViewModel
     private var radios: [VMGuestOS: NSButton] = [:]
 
-    /// Indent (radio circle + gap) so a description aligns under its radio title.
-    private static let descriptionIndent: CGFloat = 20
-
     /// User-facing description shown beneath each OS name.
     private static func description(for os: VMGuestOS) -> String {
         switch os {
@@ -80,46 +77,11 @@ final class OSSelectionContentViewController: NSViewController {
     }
 
     private func makeOSOption(_ os: VMGuestOS) -> NSView {
-        let icon = NSImageView(image: .systemSymbol(os.iconName, accessibilityDescription: ""))
-        icon.symbolConfiguration = NSImage.SymbolConfiguration(textStyle: .title3)
-        icon.contentTintColor = .secondaryLabelColor
-        icon.translatesAutoresizingMaskIntoConstraints = false
-        icon.setContentHuggingPriority(.required, for: .horizontal)
-
         let radio = NSButton(
             radioButtonWithTitle: os.displayName, target: self, action: #selector(osChanged(_:)))
-        radio.font = .preferredFont(forTextStyle: .body)
-        radio.translatesAutoresizingMaskIntoConstraints = false
         radios[os] = radio
-
-        let description = NSTextField(wrappingLabelWithString: Self.description(for: os))
-        description.font = .preferredFont(forTextStyle: .subheadline)
-        description.textColor = .secondaryLabelColor
-        description.maximumNumberOfLines = 0
-        description.isSelectable = false
-        description.translatesAutoresizingMaskIntoConstraints = false
-
-        let option = NSView()
-        option.addSubview(icon)
-        option.addSubview(radio)
-        option.addSubview(description)
-        NSLayoutConstraint.activate([
-            icon.leadingAnchor.constraint(equalTo: option.leadingAnchor),
-            icon.centerYAnchor.constraint(equalTo: radio.centerYAnchor),
-            icon.widthAnchor.constraint(equalToConstant: 22),
-
-            radio.topAnchor.constraint(equalTo: option.topAnchor),
-            radio.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 8),
-            radio.trailingAnchor.constraint(lessThanOrEqualTo: option.trailingAnchor),
-
-            // Align the description under the radio title (past the radio circle).
-            description.topAnchor.constraint(equalTo: radio.bottomAnchor, constant: 2),
-            description.leadingAnchor.constraint(
-                equalTo: radio.leadingAnchor, constant: Self.descriptionIndent),
-            description.trailingAnchor.constraint(equalTo: option.trailingAnchor),
-            description.bottomAnchor.constraint(equalTo: option.bottomAnchor),
-        ])
-        return option
+        return makeWizardRadioOption(
+            radio: radio, iconSymbol: os.iconName, description: Self.description(for: os))
     }
 
     @objc private func osChanged(_ sender: NSButton) {

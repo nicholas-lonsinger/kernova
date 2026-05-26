@@ -5,18 +5,15 @@ import UniformTypeIdentifiers
 /// source (download latest vs. local file), show the chosen path, and surface
 /// overwrite/resume warnings.
 ///
-/// All controls mutate the shared ``VMCreationViewModel`` and then call
-/// ``refresh()`` to reconcile the cards, path badge, and banners in place
-/// (every state change originates from this VC's own controls, so a synchronous
-/// refresh is sufficient and deterministic). The shell observes the model
-/// separately to keep its Next button in sync.
+/// A native macOS form: a left-aligned heading and a radio-button group for the
+/// source. All controls mutate the shared ``VMCreationViewModel`` and then call
+/// ``refresh()`` to reconcile the radios, path badge, and banners in place. The
+/// shell observes the model separately to keep its Next button in sync.
 @MainActor
 final class IPSWSelectionContentViewController: NSViewController {
     private let creationVM: VMCreationViewModel
 
-    private var cards: [IPSWSource: WizardSelectableCardView] = [:]
-    private var cardIcons: [IPSWSource: NSImageView] = [:]
-    private var cardCheckmarks: [IPSWSource: NSImageView] = [:]
+    private var radios: [IPSWSource: NSButton] = [:]
 
     /// Rebuilt by ``rebuildConditional()`` whenever the source/path/warning state changes.
     private let conditionalContainer = NSStackView()
@@ -36,124 +33,60 @@ final class IPSWSelectionContentViewController: NSViewController {
         let subtitle = makeWizardSubtitle(
             "Choose how to obtain the macOS restore image (IPSW) for installation.")
 
-        let downloadCard = makeSourceCard(
+        let downloadOption = makeSourceRadio(
             for: .downloadLatest,
             symbol: "arrow.down.circle",
             title: "Download Latest",
             description: "Download the latest compatible macOS restore image from Apple."
         )
-        let localCard = makeSourceCard(
+        let localOption = makeSourceRadio(
             for: .localFile,
             symbol: "folder",
             title: "Choose Local File",
             description: "Select an IPSW file already on your Mac."
         )
 
-        let cardStack = NSStackView(views: [downloadCard, localCard])
-        cardStack.orientation = .vertical
-        cardStack.alignment = .leading
-        cardStack.distribution = .fill
-        cardStack.spacing = 12
+        let options = NSStackView(views: [downloadOption, localOption])
+        options.orientation = .vertical
+        options.alignment = .leading
+        options.spacing = 16
 
         conditionalContainer.orientation = .vertical
-        // Center the content-sized path badge; the banner is pinned to the full
-        // width separately, so centering doesn't affect it.
-        conditionalContainer.alignment = .centerX
+        conditionalContainer.alignment = .leading
         conditionalContainer.spacing = 12
 
-        let stack = NSStackView(views: [title, subtitle, cardStack, conditionalContainer])
+        let stack = NSStackView(views: [title, subtitle, options, conditionalContainer])
         stack.orientation = .vertical
-        stack.alignment = .centerX
-        stack.spacing = WizardStyle.sectionSpacing
+        stack.alignment = .leading
+        stack.spacing = 8
+        stack.setCustomSpacing(20, after: subtitle)
+        stack.setCustomSpacing(20, after: options)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         let scrollView = makeWizardScrollView(documentView: stack)
         NSLayoutConstraint.activate([
-            title.widthAnchor.constraint(equalTo: stack.widthAnchor),
             subtitle.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            cardStack.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            options.widthAnchor.constraint(equalTo: stack.widthAnchor),
             conditionalContainer.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            // Source cards span the full step width (a leading-aligned stack
-            // would otherwise size them to their content).
-            downloadCard.widthAnchor.constraint(equalTo: cardStack.widthAnchor),
-            localCard.widthAnchor.constraint(equalTo: cardStack.widthAnchor),
         ])
 
         view = scrollView
         refresh()
     }
 
-    // MARK: - Cards
+    // MARK: - Source radios
 
-    private func makeSourceCard(
+    private func makeSourceRadio(
         for source: IPSWSource, symbol: String, title: String, description: String
-    ) -> WizardSelectableCardView {
-        let icon = NSImageView(image: .systemSymbol(symbol, accessibilityDescription: ""))
-        icon.symbolConfiguration = NSImage.SymbolConfiguration(textStyle: .title2)
-        icon.contentTintColor = .secondaryLabelColor
-        icon.translatesAutoresizingMaskIntoConstraints = false
-        icon.setContentHuggingPriority(.required, for: .horizontal)
-
-        let titleLabel = NSTextField(labelWithString: title)
-        titleLabel.font = .preferredFont(forTextStyle: .headline)
-        titleLabel.isSelectable = false
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
-
-        let descLabel = NSTextField(wrappingLabelWithString: description)
-        descLabel.font = .preferredFont(forTextStyle: .caption1)
-        descLabel.textColor = .secondaryLabelColor
-        descLabel.maximumNumberOfLines = 0
-        descLabel.isSelectable = false
-        descLabel.translatesAutoresizingMaskIntoConstraints = false
-
-        let checkmark = NSImageView(
-            image: .systemSymbol("checkmark.circle.fill", accessibilityDescription: "Selected"))
-        checkmark.contentTintColor = .controlAccentColor
-        checkmark.translatesAutoresizingMaskIntoConstraints = false
-        checkmark.setContentHuggingPriority(.required, for: .horizontal)
-        checkmark.setContentCompressionResistancePriority(.required, for: .horizontal)
-
-        // Explicit constraints rather than nested stacks: the icon and checkmark
-        // sit at the leading/trailing edges (vertically centered), and the title
-        // and description fill the column between them. Pinning the description's
-        // trailing edge to the checkmark gives it a definite width to wrap at, so
-        // the row height is well-defined and the title is never clipped. The
-        // checkmark keeps its layout slot even when hidden, so the text column
-        // width is identical selected vs. unselected.
-        let content = NSView()
-        content.translatesAutoresizingMaskIntoConstraints = false
-        [icon, titleLabel, descLabel, checkmark].forEach(content.addSubview)
-
-        let textLeading = icon.trailingAnchor
-        NSLayoutConstraint.activate([
-            icon.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-            icon.centerYAnchor.constraint(equalTo: content.centerYAnchor),
-            icon.widthAnchor.constraint(equalToConstant: 32),
-            icon.topAnchor.constraint(greaterThanOrEqualTo: content.topAnchor),
-
-            checkmark.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-            checkmark.centerYAnchor.constraint(equalTo: content.centerYAnchor),
-
-            titleLabel.topAnchor.constraint(equalTo: content.topAnchor),
-            titleLabel.leadingAnchor.constraint(equalTo: textLeading, constant: 12),
-            titleLabel.trailingAnchor.constraint(
-                lessThanOrEqualTo: checkmark.leadingAnchor, constant: -12),
-
-            descLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 2),
-            descLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
-            descLabel.trailingAnchor.constraint(equalTo: checkmark.leadingAnchor, constant: -12),
-            descLabel.bottomAnchor.constraint(equalTo: content.bottomAnchor),
-        ])
-
-        let card = WizardSelectableCardView(content: content)
-        card.onClick = { [weak self] in self?.select(source) }
-        cards[source] = card
-        cardIcons[source] = icon
-        cardCheckmarks[source] = checkmark
-        return card
+    ) -> NSView {
+        let radio = NSButton(
+            radioButtonWithTitle: title, target: self, action: #selector(sourceRadioClicked(_:)))
+        radios[source] = radio
+        return makeWizardRadioOption(radio: radio, iconSymbol: symbol, description: description)
     }
 
-    private func select(_ source: IPSWSource) {
+    @objc private func sourceRadioClicked(_ sender: NSButton) {
+        guard let source = radios.first(where: { $0.value === sender })?.key else { return }
         switch source {
         case .downloadLatest:
             creationVM.ipswSource = .downloadLatest
@@ -162,7 +95,10 @@ final class IPSWSelectionContentViewController: NSViewController {
             }
             refresh()
         case .localFile:
-            // Selection only commits when the user actually picks a file.
+            // Selection only commits when the user actually picks a file. Re-sync
+            // the radios to the (still-current) model so the just-clicked radio
+            // doesn't stay selected if the picker is cancelled, then open it.
+            updateRadioSelection()
             selectIPSWFile()
         }
     }
@@ -170,16 +106,13 @@ final class IPSWSelectionContentViewController: NSViewController {
     // MARK: - Refresh
 
     private func refresh() {
-        updateCardSelection()
+        updateRadioSelection()
         rebuildConditional()
     }
 
-    private func updateCardSelection() {
-        for (source, card) in cards {
-            let isSelected = source == creationVM.ipswSource
-            card.isSelected = isSelected
-            cardIcons[source]?.contentTintColor = isSelected ? .controlAccentColor : .secondaryLabelColor
-            cardCheckmarks[source]?.isHidden = !isSelected
+    private func updateRadioSelection() {
+        for (source, radio) in radios {
+            radio.state = source == creationVM.ipswSource ? .on : .off
         }
     }
 
@@ -227,7 +160,7 @@ final class IPSWSelectionContentViewController: NSViewController {
     }
 
     /// Adds a banner to the conditional container, pinned to the full step width
-    /// so it lines up with the source cards (the path badge stays content-sized).
+    /// so it lines up with the source options (the path badge stays content-sized).
     private func addFullWidthBanner(_ banner: NSView) {
         conditionalContainer.addArrangedSubview(banner)
         banner.widthAnchor.constraint(equalTo: conditionalContainer.widthAnchor).isActive = true
