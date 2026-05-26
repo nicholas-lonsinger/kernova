@@ -29,6 +29,14 @@ final class VMSettingsViewController: NSViewController {
     private let fileMonitor = AttachmentFileMonitor()
     private var modelObservation: ObservationLoop?
     private var hasDisappeared = false
+    /// Identifies the current file-monitor observation cycle.
+    ///
+    /// A new token is minted each `viewDidAppear`; a re-arming callback from an
+    /// older cycle (which `hasDisappeared` alone can't cancel —
+    /// `withObservationTracking` has no unregister) bails when its token no
+    /// longer matches, so stale chains can't accumulate across appear/disappear
+    /// cycles.
+    private var fileMonitorObservationToken: UUID?
     private var micPermission: AVAuthorizationStatus = AVCaptureDevice.authorizationStatus(for: .audio)
 
     // MARK: - Presenters & coordinators
@@ -136,6 +144,15 @@ final class VMSettingsViewController: NSViewController {
         if instanceChanged {
             buildForm()
             startInstanceSideEffects()
+            // Re-arm the model observation on the new instance. `withObservationTracking`
+            // is one-shot and re-registers only after it fires, so without this the loop
+            // stays bound to the previous instance and reactive updates (disk usage,
+            // config/status changes) for the new VM wouldn't fire. Only restart when
+            // already observing (i.e. the view has appeared); otherwise `viewDidAppear`
+            // sets it up — creating it here early would skip the notification observer.
+            if modelObservation != nil {
+                restartModelObservation()
+            }
         }
         apply()
     }
@@ -173,22 +190,31 @@ final class VMSettingsViewController: NSViewController {
         hasDisappeared = false
         startInstanceSideEffects()
         if modelObservation == nil {
-            modelObservation = observeRecurring(
-                track: { [weak self] in
-                    guard let self else { return }
-                    _ = self.instance.configuration
-                    _ = self.instance.status
-                    _ = self.instance.cachedDiskUsageBytes
-                    _ = self.viewModel.activeRename
-                },
-                apply: { [weak self] in self?.apply() }
-            )
+            restartModelObservation()
             NotificationCenter.default.addObserver(
                 self, selector: #selector(appDidBecomeActive),
                 name: NSApplication.didBecomeActiveNotification, object: nil)
         }
-        observeFileMonitor()
+        let token = UUID()
+        fileMonitorObservationToken = token
+        observeFileMonitor(token: token)
         apply()
+    }
+
+    /// (Re)starts the model observation loop, cancelling any prior one so it
+    /// tracks the current instance.
+    private func restartModelObservation() {
+        modelObservation?.cancel()
+        modelObservation = observeRecurring(
+            track: { [weak self] in
+                guard let self else { return }
+                _ = self.instance.configuration
+                _ = self.instance.status
+                _ = self.instance.cachedDiskUsageBytes
+                _ = self.viewModel.activeRename
+            },
+            apply: { [weak self] in self?.apply() }
+        )
     }
 
     override func viewWillDisappear() {
@@ -213,18 +239,22 @@ final class VMSettingsViewController: NSViewController {
     /// Re-arming `withObservationTracking` on `fileMonitor.existsByPath`, so the
     /// missing-file affordance on attachment rows updates live.
     ///
-    /// Mirrors the Boot Order sheet's pattern, including the `hasDisappeared`
-    /// guard that breaks the re-registration chain on dismissal.
-    private func observeFileMonitor() {
-        if hasDisappeared { return }
+    /// Mirrors the Boot Order sheet's pattern (the `hasDisappeared` guard breaks
+    /// the chain on dismissal), with an added `token`: `withObservationTracking`
+    /// can't unregister, so a callback from a prior appear cycle bails when its
+    /// token no longer matches the current one, preventing chains from piling up
+    /// across repeated appear/disappear cycles.
+    private func observeFileMonitor(token: UUID) {
+        if hasDisappeared || fileMonitorObservationToken != token { return }
         withObservationTracking { [fileMonitor] in
             _ = fileMonitor.existsByPath
         } onChange: { [weak self] in
             Task { @MainActor in
-                guard let self, !self.hasDisappeared else { return }
+                guard let self, !self.hasDisappeared, self.fileMonitorObservationToken == token
+                else { return }
                 self.refreshStorageList()
                 self.refreshRemovableList()
-                self.observeFileMonitor()
+                self.observeFileMonitor(token: token)
             }
         }
     }
