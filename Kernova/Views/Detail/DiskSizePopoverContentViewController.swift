@@ -136,6 +136,7 @@ final class DiskSizePopoverContentViewController: NSViewController {
 
         for size in availableSizes {
             sizePopUp.addItem(withTitle: DataFormatters.formatDiskSize(size))
+            sizePopUp.lastItem?.attributedTitle = diskSizeMenuItemTitle(size)
             sizePopUp.lastItem?.tag = size
         }
         if availableSizes.contains(defaultSizeInGB) {

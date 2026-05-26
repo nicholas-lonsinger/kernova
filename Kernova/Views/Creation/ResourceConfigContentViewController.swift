@@ -180,7 +180,7 @@ final class ResourceConfigContentViewController: NSViewController {
         let sizes = os.availableDiskSizes
         for size in sizes {
             diskPopUp.addItem(withTitle: DataFormatters.formatDiskSize(size))
-            diskPopUp.lastItem?.attributedTitle = diskItemTitle(size)
+            diskPopUp.lastItem?.attributedTitle = diskSizeMenuItemTitle(size)
             diskPopUp.lastItem?.tag = size
         }
         if !sizes.contains(creationVM.diskSizeInGB), let first = sizes.first {
@@ -189,24 +189,6 @@ final class ResourceConfigContentViewController: NSViewController {
         diskPopUp.selectItem(withTag: creationVM.diskSizeInGB)
         diskPopUp.target = self
         diskPopUp.action = #selector(diskChanged)
-    }
-
-    /// Builds a disk-size menu title with the number right-aligned and the unit
-    /// left-aligned to shared tab stops, so the number/unit columns line up down
-    /// the menu (generic AppKit tab stops — no custom menu-item view).
-    private func diskItemTitle(_ sizeInGB: Int) -> NSAttributedString {
-        let formatted = DataFormatters.formatDiskSize(sizeInGB)
-            .replacingOccurrences(of: "\u{2007}", with: " ")
-        let parts = formatted.split(separator: " ").filter { !$0.isEmpty }
-        guard parts.count == 2 else { return NSAttributedString(string: formatted) }
-
-        let style = NSMutableParagraphStyle()
-        style.tabStops = [
-            NSTextTab(textAlignment: .right, location: 30),
-            NSTextTab(textAlignment: .left, location: 38),
-        ]
-        return NSAttributedString(
-            string: "\t\(parts[0])\t\(parts[1])", attributes: [.paragraphStyle: style])
     }
 
     private func configureNetworkSwitch() {
