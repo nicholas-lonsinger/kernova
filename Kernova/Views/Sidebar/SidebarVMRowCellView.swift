@@ -35,9 +35,15 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
 
     // MARK: - Subviews
 
-    private let iconView = NSImageView()
+    // RATIONALE: `iconView` and `subtitleField` are `nonisolated(unsafe)` so the
+    // `nonisolated` `backgroundStyle` override (below) can recolor them without
+    // a Swift main-actor executor check. AppKit only touches them on the main
+    // thread, so the access is safe; the `unsafe` opts out of the Sendable check.
+    // Assigned in `init` (not inline) because a `nonisolated(unsafe)` property
+    // can't take a main-actor-isolated default value.
+    nonisolated(unsafe) private let iconView: NSImageView
     private let nameField = NSTextField()
-    private let subtitleField = NSTextField(labelWithString: "")
+    nonisolated(unsafe) private let subtitleField: NSTextField
     private let agentButton = SidebarAgentStatusButtonView()
     private let statusDot = NSView()
     private let spinner = NSProgressIndicator()
@@ -45,6 +51,8 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
     // MARK: - Init
 
     init() {
+        iconView = NSImageView()
+        subtitleField = NSTextField(labelWithString: "")
         super.init(frame: .zero)
         identifier = Self.reuseIdentifier
         buildLayout()
@@ -314,13 +322,26 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
 
     // MARK: - Selection appearance
 
-    override var backgroundStyle: NSView.BackgroundStyle {
-        didSet {
+    // RATIONALE: AppKit sets `backgroundStyle` via `objc_msgSend` from
+    // `-[NSTableRowView _updateBackgroundStylesForReals]` during window
+    // key-state changes — a plain main-thread call with no Swift concurrency
+    // context. A `@MainActor`-isolated `@objc` setter inserts a
+    // `_checkExpectedExecutor` precondition there, and on macOS 26 that
+    // executor-identity check (`swift_task_isCurrentExecutor`) can fault
+    // (EXC_BAD_ACCESS in `swift_getObjectType`) when invoked from that context.
+    // Declaring the override `nonisolated` removes the executor check entirely;
+    // the recolored subviews are `nonisolated(unsafe)` so we touch them directly
+    // (NOT via `MainActor.assumeIsolated`, which routes through the same faulting
+    // check). AppKit only sets this on the main thread, so the access is safe.
+    override nonisolated var backgroundStyle: NSView.BackgroundStyle {
+        get { super.backgroundStyle }
+        set {
+            super.backgroundStyle = newValue
             // Invert both the icon tint and the subtitle on the selection
             // highlight; `.secondaryLabelColor` doesn't auto-adapt, so the
             // subtitle would otherwise render gray-on-blue when selected.
             let accessoryColor: NSColor =
-                backgroundStyle == .emphasized
+                newValue == .emphasized
                 ? .alternateSelectedControlTextColor : .secondaryLabelColor
             subtitleField.textColor = accessoryColor
             iconView.contentTintColor = accessoryColor

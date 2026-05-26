@@ -203,7 +203,15 @@ final class VMLibraryViewModel {
 
     // MARK: - Create
 
-    func createVM(from wizard: VMCreationViewModel) async {
+    /// Creates a VM bundle and disk image from a wizard model, optionally
+    /// auto-starting it.
+    ///
+    /// Returns `true` on success and `false` if bundle/disk creation failed. On
+    /// failure the error is also surfaced via `presentError` (so non-wizard
+    /// callers get the standard alert); the wizard host inspects the return value
+    /// to keep its sheet open for a retry instead.
+    @discardableResult
+    func createVM(from wizard: VMCreationViewModel) async -> Bool {
         do {
             var config = wizard.buildConfiguration()
 
@@ -248,9 +256,11 @@ final class VMLibraryViewModel {
                 )
                 await start(instance)
             }
+            return true
         } catch {
             Self.logger.error("Failed to create VM: \(error.localizedDescription, privacy: .public)")
             presentError(error)
+            return false
         }
     }
 

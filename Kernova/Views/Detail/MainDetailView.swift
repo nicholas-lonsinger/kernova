@@ -1,7 +1,9 @@
 import SwiftUI
 
-/// Detail pane content that switches between VM detail and an empty state,
-/// and hosts the creation wizard sheet and error alert.
+/// Detail pane content that switches between VM detail and an empty state.
+///
+/// Hosts the error alerts. The creation wizard is presented separately as a
+/// pure-AppKit sheet by `DetailContainerViewController`.
 struct MainDetailView: View {
     @Bindable var viewModel: VMLibraryViewModel
 
@@ -27,9 +29,6 @@ struct MainDetailView: View {
                     }
                 }
             }
-        }
-        .sheet(isPresented: $viewModel.showCreationWizard) {
-            VMCreationWizardView(viewModel: viewModel)
         }
         .sheetAlert(
             isPresented: $viewModel.showError,
