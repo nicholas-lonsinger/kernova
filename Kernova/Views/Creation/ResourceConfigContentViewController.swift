@@ -183,7 +183,9 @@ final class ResourceConfigContentViewController: NSViewController {
         diskPopUp.setContentHuggingPriority(.required, for: .horizontal)
         let sizes = os.availableDiskSizes
         for size in sizes {
-            diskPopUp.addItem(withTitle: DataFormatters.formatDiskSize(size))
+            // Empty plain title so only the tab-aligned attributed title drives
+            // the menu's width (the figure-space-padded plain title would inflate it).
+            diskPopUp.addItem(withTitle: "")
             diskPopUp.lastItem?.attributedTitle = diskItemTitle(size)
             diskPopUp.lastItem?.tag = size
         }
