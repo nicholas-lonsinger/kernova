@@ -113,6 +113,7 @@ final class ResourceConfigContentViewController: NSViewController {
     }
 
     private func configureCPUStepper() {
+        cpuStepper.controlSize = .small
         cpuStepper.minValue = Double(os.minCPUCount)
         cpuStepper.maxValue = Double(os.maxCPUCount)
         cpuStepper.increment = 1
@@ -126,6 +127,7 @@ final class ResourceConfigContentViewController: NSViewController {
     }
 
     private func configureMemoryStepper() {
+        memoryStepper.controlSize = .small
         memoryStepper.minValue = Double(os.minMemoryInGB)
         memoryStepper.maxValue = Double(os.maxMemoryInGB)
         memoryStepper.increment = 1
@@ -139,6 +141,7 @@ final class ResourceConfigContentViewController: NSViewController {
     }
 
     private func configureDiskPopUp() {
+        diskPopUp.controlSize = .small
         let sizes = os.availableDiskSizes
         for size in sizes {
             diskPopUp.addItem(withTitle: DataFormatters.formatDiskSize(size))
@@ -153,6 +156,7 @@ final class ResourceConfigContentViewController: NSViewController {
     }
 
     private func configureNetworkSwitch() {
+        networkSwitch.controlSize = .small
         networkSwitch.state = creationVM.networkEnabled ? .on : .off
         networkSwitch.target = self
         networkSwitch.action = #selector(networkToggled)

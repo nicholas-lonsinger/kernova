@@ -87,6 +87,7 @@ final class ReviewContentViewController: NSViewController {
             }
         }
 
+        startSwitch.controlSize = .small
         startSwitch.state = creationVM.startAfterCreate ? .on : .off
         startSwitch.target = self
         startSwitch.action = #selector(startToggled)
