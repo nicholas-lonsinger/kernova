@@ -19,19 +19,16 @@ enum WizardStyle {
     /// Gap from the window edge to a step's view.
     ///
     /// Also the distance to the vertical scroller on scrolling steps. Kept small
-    /// so the scrollbar sits close to the edge; steps inset their content the
-    /// rest of the way to ``contentPadding``.
+    /// so the scrollbar sits close to the window edge; steps inset their content
+    /// symmetrically the rest of the way via ``contentSideInset``.
     static let edgeInset: CGFloat = 10
 
-    /// Inset from a step's view to its content.
+    /// Symmetric inset from a step's view to its content, applied on both sides.
     ///
-    /// Added on top of ``edgeInset`` so content sits ``contentPadding`` from the
-    /// window edge while the scrollbar stays near it (`contentPadding - edgeInset`).
-    static var innerContentInset: CGFloat { contentPadding - edgeInset }
-
-    /// Right-side gutter inside scrolling steps so content clears the vertical
-    /// scroller instead of colliding with it.
-    static let scrollerGutter: CGFloat = 16
+    /// On scrolling steps it also serves as the clearance between content and the
+    /// scroller (which sits at the step view's trailing edge), so content stays
+    /// centered — same left/right margin — whether or not the step is scrolling.
+    static let contentSideInset: CGFloat = 16
 
     /// Inset from the content area edges to a step's content.
     static let contentPadding: CGFloat = 20
@@ -131,9 +128,9 @@ func makeWizardScrollView(documentView: NSView) -> NSScrollView {
     NSLayoutConstraint.activate([
         documentView.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
         documentView.leadingAnchor.constraint(
-            equalTo: scrollView.contentView.leadingAnchor, constant: WizardStyle.innerContentInset),
+            equalTo: scrollView.contentView.leadingAnchor, constant: WizardStyle.contentSideInset),
         documentView.trailingAnchor.constraint(
-            equalTo: scrollView.contentView.trailingAnchor, constant: -WizardStyle.scrollerGutter),
+            equalTo: scrollView.contentView.trailingAnchor, constant: -WizardStyle.contentSideInset),
     ])
     return scrollView
 }
