@@ -75,7 +75,7 @@ final class ResourceConfigContentViewController: NSViewController {
         addSectionHeader("Compute", to: form)
         addCard(
             [
-                makeWizardCardRow("CPU Cores", control: steppedControl(cpuField, cpuStepper)),
+                makeWizardCardRow("CPU Cores", control: steppedControl(cpuField, cpuStepper, unit: "")),
                 makeWizardCardRow("Memory", control: steppedControl(memoryField, memoryStepper, unit: "GB")),
             ], to: form)
 
@@ -110,19 +110,21 @@ final class ResourceConfigContentViewController: NSViewController {
         form.setCustomSpacing(6, after: header)
     }
 
-    /// Pairs an editable numeric field with its stepper (and an optional unit).
-    private func steppedControl(_ field: NSTextField, _ stepper: NSStepper, unit: String? = nil)
+    /// Pairs an editable numeric field with its stepper and a trailing unit.
+    ///
+    /// The unit always occupies a fixed-width slot (empty for unitless values)
+    /// so the field and stepper line up in columns across rows regardless of
+    /// whether a unit is present.
+    private func steppedControl(_ field: NSTextField, _ stepper: NSStepper, unit: String)
         -> NSStackView
     {
-        var views: [NSView] = [field, stepper]
-        if let unit {
-            let unitLabel = NSTextField(labelWithString: unit)
-            unitLabel.font = .preferredFont(forTextStyle: .body)
-            unitLabel.textColor = .secondaryLabelColor
-            unitLabel.isSelectable = false
-            views.append(unitLabel)
-        }
-        let control = NSStackView(views: views)
+        let unitLabel = NSTextField(labelWithString: unit)
+        unitLabel.font = .preferredFont(forTextStyle: .body)
+        unitLabel.textColor = .secondaryLabelColor
+        unitLabel.isSelectable = false
+        unitLabel.widthAnchor.constraint(equalToConstant: 22).isActive = true
+
+        let control = NSStackView(views: [field, stepper, unitLabel])
         control.orientation = .horizontal
         control.alignment = .centerY
         control.spacing = 4

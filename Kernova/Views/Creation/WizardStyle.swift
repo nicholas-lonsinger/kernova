@@ -154,38 +154,6 @@ func makeWizardScrollView(documentView content: NSView) -> NSScrollView {
     return scrollView
 }
 
-// MARK: - Form atoms
-
-/// Width of the right-aligned label column in wizard forms.
-///
-/// Labels align and the controls/values all start at a common x — the native
-/// macOS aligned-form layout, as in System Settings.
-let wizardFormLabelColumnWidth: CGFloat = 130
-
-/// Builds an aligned form row: a fixed-width, right-aligned label paired with a
-/// trailing control or value that starts at the shared column edge.
-///
-/// Rows are left-aligned (intrinsic width) in the step's stack, so the label
-/// column lines up across rows. Use `.firstBaseline` for value/text rows and
-/// `.centerY` for control rows (steppers, switches, popups).
-@MainActor
-func makeWizardFormRow(
-    _ labelText: String, control: NSView, alignment: NSLayoutConstraint.Attribute = .firstBaseline
-) -> NSStackView {
-    let label = NSTextField(labelWithString: labelText)
-    label.font = .preferredFont(forTextStyle: .body)
-    label.alignment = .right
-    label.isSelectable = false
-    label.setContentHuggingPriority(.required, for: .horizontal)
-    label.widthAnchor.constraint(equalToConstant: wizardFormLabelColumnWidth).isActive = true
-
-    let row = NSStackView(views: [label, control])
-    row.orientation = .horizontal
-    row.alignment = alignment
-    row.spacing = 12
-    return row
-}
-
 // MARK: - Grouped cards (System Settings style)
 
 /// Builds a 1pt, appearance-adaptive horizontal hairline for separating card rows.
@@ -326,15 +294,6 @@ func makeWizardRadioOption(radio: NSButton, iconSymbol: String, description desc
         description.bottomAnchor.constraint(equalTo: option.bottomAnchor),
     ])
     return option
-}
-
-/// Builds a primary body label for a form row (the leading "Name"-style label).
-@MainActor
-func makeWizardFormLabel(_ text: String) -> NSTextField {
-    let label = NSTextField(labelWithString: text)
-    label.font = .preferredFont(forTextStyle: .body)
-    label.isSelectable = false
-    return label
 }
 
 /// Builds a secondary value label for a form/review row (the trailing value).

@@ -5,9 +5,11 @@ import UniformTypeIdentifiers
 /// EFI (boot an ISO) or direct Linux-kernel boot (kernel + optional initrd and
 /// command line).
 ///
-/// The segmented control and file pickers mutate the shared
-/// ``VMCreationViewModel`` and rebuild the conditional section in place. The
-/// shell observes the model separately to keep its Next button in sync.
+/// Native macOS layout: a left-aligned heading, a segmented mode switch, and a
+/// grouped card holding the selected mode's file pickers / fields. The segmented
+/// control and file pickers mutate the shared ``VMCreationViewModel`` and rebuild
+/// the conditional card in place. The shell observes the model separately to keep
+/// its Next button in sync.
 @MainActor
 final class BootConfigContentViewController: NSViewController, NSTextFieldDelegate {
     private let creationVM: VMCreationViewModel
@@ -34,18 +36,17 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
         bootModeControl.target = self
         bootModeControl.action = #selector(bootModeChanged)
         bootModeControl.translatesAutoresizingMaskIntoConstraints = false
-        bootModeControl.widthAnchor.constraint(lessThanOrEqualToConstant: 300).isActive = true
 
         conditionalContainer.orientation = .vertical
         conditionalContainer.alignment = .leading
-        conditionalContainer.spacing = 10
+        conditionalContainer.spacing = 8
 
         let stack = NSStackView(views: [title, subtitle, bootModeControl, conditionalContainer])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 8
         stack.setCustomSpacing(20, after: subtitle)
-        stack.setCustomSpacing(20, after: bootModeControl)
+        stack.setCustomSpacing(16, after: bootModeControl)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         let scrollView = makeWizardScrollView(documentView: stack)
@@ -66,41 +67,39 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
             view.removeFromSuperview()
         }
 
+        let caption: String
+        let rows: [NSView]
         if creationVM.selectedBootMode == .linuxKernel {
-            addFullWidth(
-                makeWizardCaption("Provide the kernel image and optional initrd/command line."))
-            addFullWidth(
-                makeFilePickerRow(
-                    label: "Kernel", path: creationVM.kernelPath, browseAction: #selector(browseKernel)))
-            addFullWidth(
-                makeFilePickerRow(
-                    label: "Initrd", path: creationVM.initrdPath, browseAction: #selector(browseInitrd)))
+            caption = "Provide the kernel image and optional initrd/command line."
 
             let commandLineField = NSTextField(string: creationVM.kernelCommandLine ?? "console=hvc0")
             commandLineField.placeholderString = "Kernel Command Line"
             commandLineField.delegate = self
-            addFullWidth(
-                makeWizardFormRow("Command Line", control: commandLineField, alignment: .centerY))
+
+            rows = [
+                makeFileRow(label: "Kernel", path: creationVM.kernelPath, browseAction: #selector(browseKernel)),
+                makeFileRow(label: "Initrd", path: creationVM.initrdPath, browseAction: #selector(browseInitrd)),
+                makeWizardCardRow("Command Line", control: commandLineField, fillsControl: true),
+            ]
         } else {
-            addFullWidth(makeWizardCaption("Select an ISO image to boot from via EFI."))
-            addFullWidth(
-                makeFilePickerRow(
-                    label: "ISO Image", path: creationVM.isoPath, browseAction: #selector(browseISO)))
+            caption = "Select an ISO image to boot from via EFI."
+            rows = [
+                makeFileRow(label: "ISO Image", path: creationVM.isoPath, browseAction: #selector(browseISO))
+            ]
         }
+
+        addFullWidth(makeWizardCaption(caption))
+        addFullWidth(makeWizardCard(rows: rows))
     }
 
     /// Adds an arranged subview to the conditional container and pins its width
-    /// to the container.
-    ///
-    /// The width constraint is activated *after* the view is in the container's
-    /// hierarchy — activating it inside a row builder (before the row is added)
-    /// has no common ancestor and traps.
+    /// to the container once it is in the hierarchy.
     private func addFullWidth(_ view: NSView) {
         conditionalContainer.addArrangedSubview(view)
         view.widthAnchor.constraint(equalTo: conditionalContainer.widthAnchor).isActive = true
     }
 
-    private func makeFilePickerRow(label: String, path: String?, browseAction: Selector) -> NSView {
+    private func makeFileRow(label: String, path: String?, browseAction: Selector) -> NSView {
         let pathLabel: NSTextField
         if let path {
             pathLabel = NSTextField(labelWithString: URL(fileURLWithPath: path).lastPathComponent)
@@ -123,11 +122,8 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
         control.orientation = .horizontal
         control.alignment = .centerY
         control.spacing = 8
-        control.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        // Width is pinned by the caller (`addFullWidth`) once the row is in the
-        // container, so the control fills the space after the label column and
-        // the path truncates while Browse hugs the trailing edge.
-        return makeWizardFormRow(label, control: control, alignment: .centerY)
+
+        return makeWizardCardRow(label, control: control, fillsControl: true)
     }
 
     // MARK: - Actions
