@@ -89,43 +89,59 @@ final class IPSWSelectionContentViewController: NSViewController {
         let icon = NSImageView(image: .systemSymbol(symbol, accessibilityDescription: ""))
         icon.symbolConfiguration = NSImage.SymbolConfiguration(textStyle: .title2)
         icon.contentTintColor = .secondaryLabelColor
+        icon.translatesAutoresizingMaskIntoConstraints = false
         icon.setContentHuggingPriority(.required, for: .horizontal)
-        icon.widthAnchor.constraint(equalToConstant: 32).isActive = true
 
         let titleLabel = NSTextField(labelWithString: title)
         titleLabel.font = .preferredFont(forTextStyle: .headline)
         titleLabel.isSelectable = false
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
 
         let descLabel = NSTextField(wrappingLabelWithString: description)
         descLabel.font = .preferredFont(forTextStyle: .caption1)
         descLabel.textColor = .secondaryLabelColor
         descLabel.maximumNumberOfLines = 0
         descLabel.isSelectable = false
-
-        let textStack = NSStackView(views: [titleLabel, descLabel])
-        textStack.orientation = .vertical
-        textStack.alignment = .leading
-        textStack.spacing = 2
-        // The text column expands to fill the space between the icon and the
-        // checkmark; the icon/checkmark hug their content. This gives the
-        // wrapping description a definite width to wrap at (pinned below),
-        // instead of letting it demand an unbounded single-line width that
-        // throws off the row's computed height and clips the title.
-        textStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        textStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        descLabel.translatesAutoresizingMaskIntoConstraints = false
 
         let checkmark = NSImageView(
             image: .systemSymbol("checkmark.circle.fill", accessibilityDescription: "Selected"))
         checkmark.contentTintColor = .controlAccentColor
+        checkmark.translatesAutoresizingMaskIntoConstraints = false
         checkmark.setContentHuggingPriority(.required, for: .horizontal)
         checkmark.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-        let content = NSStackView(views: [icon, textStack, checkmark])
-        content.orientation = .horizontal
-        content.alignment = .centerY
-        content.spacing = 12
+        // Explicit constraints rather than nested stacks: the icon and checkmark
+        // sit at the leading/trailing edges (vertically centered), and the title
+        // and description fill the column between them. Pinning the description's
+        // trailing edge to the checkmark gives it a definite width to wrap at, so
+        // the row height is well-defined and the title is never clipped. The
+        // checkmark keeps its layout slot even when hidden, so the text column
+        // width is identical selected vs. unselected.
+        let content = NSView()
+        content.translatesAutoresizingMaskIntoConstraints = false
+        [icon, titleLabel, descLabel, checkmark].forEach(content.addSubview)
 
-        descLabel.widthAnchor.constraint(equalTo: textStack.widthAnchor).isActive = true
+        let textLeading = icon.trailingAnchor
+        NSLayoutConstraint.activate([
+            icon.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            icon.centerYAnchor.constraint(equalTo: content.centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 32),
+            icon.topAnchor.constraint(greaterThanOrEqualTo: content.topAnchor),
+
+            checkmark.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            checkmark.centerYAnchor.constraint(equalTo: content.centerYAnchor),
+
+            titleLabel.topAnchor.constraint(equalTo: content.topAnchor),
+            titleLabel.leadingAnchor.constraint(equalTo: textLeading, constant: 12),
+            titleLabel.trailingAnchor.constraint(
+                lessThanOrEqualTo: checkmark.leadingAnchor, constant: -12),
+
+            descLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 2),
+            descLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            descLabel.trailingAnchor.constraint(equalTo: checkmark.leadingAnchor, constant: -12),
+            descLabel.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+        ])
 
         let card = WizardSelectableCardView(content: content)
         card.onClick = { [weak self] in self?.select(source) }
