@@ -148,7 +148,7 @@ final class VMSettingsViewController: NSViewController {
         formStack.spacing = 18
         formStack.translatesAutoresizingMaskIntoConstraints = false
 
-        let scrollView = makeGroupedFormScrollView(documentView: formStack)
+        let scrollView = makeGroupedFormScrollView(documentView: formStack, verticalInset: 16)
         scrollView.setContentHuggingPriority(.defaultLow, for: .vertical)
 
         bannerContainer = makeBannerContainer()

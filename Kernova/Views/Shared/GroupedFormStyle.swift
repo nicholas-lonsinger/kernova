@@ -53,15 +53,18 @@ private final class GroupedFormScrollView: NSScrollView {
 ///
 /// `content` is hosted inside a full-width document view and inset symmetrically
 /// by ``GroupedFormStyle/contentSideInset`` on both sides, so it stays
-/// horizontally centered. The document view fills the clip view's width on
-/// purpose: pinning it *narrower* than the clip makes `NSClipView` offset its
-/// bounds origin to align the under-sized document, which scrolls the content
-/// sideways and defeats the inset. Height flows from `content` (no bottom pin),
-/// so with the flipped clip view short content sits at the top and tall content
-/// scrolls. Callers add their own per-subview width constraints against
+/// horizontally centered, and by `verticalInset` on the top and bottom so a
+/// scrolling form keeps a margin from the viewport's top and bottom edges. The
+/// document view fills the clip view's width on purpose: pinning it *narrower*
+/// than the clip makes `NSClipView` offset its bounds origin to align the
+/// under-sized document, which scrolls the content sideways and defeats the
+/// inset. With the flipped clip view short content sits at the top and tall
+/// content scrolls. Callers add their own per-subview width constraints against
 /// `content`.
 @MainActor
-func makeGroupedFormScrollView(documentView content: NSView) -> NSScrollView {
+func makeGroupedFormScrollView(documentView content: NSView, verticalInset: CGFloat = 0)
+    -> NSScrollView
+{
     let scrollView = GroupedFormScrollView()
     scrollView.contentView = FlippedClipView()
     // Overlay style plus the full-width clip view keep the scroller floating over
@@ -92,9 +95,10 @@ func makeGroupedFormScrollView(documentView content: NSView) -> NSScrollView {
         docView.leadingAnchor.constraint(equalTo: clip.leadingAnchor),
         docView.trailingAnchor.constraint(equalTo: clip.trailingAnchor),
         docView.widthAnchor.constraint(equalTo: clip.widthAnchor),
-        // Content inset symmetrically within the document view → centered.
-        content.topAnchor.constraint(equalTo: docView.topAnchor),
-        content.bottomAnchor.constraint(equalTo: docView.bottomAnchor),
+        // Content inset symmetrically within the document view → centered,
+        // with a top/bottom margin so scrolling content clears the edges.
+        content.topAnchor.constraint(equalTo: docView.topAnchor, constant: verticalInset),
+        content.bottomAnchor.constraint(equalTo: docView.bottomAnchor, constant: -verticalInset),
         content.leadingAnchor.constraint(equalTo: docView.leadingAnchor, constant: inset),
         content.trailingAnchor.constraint(equalTo: docView.trailingAnchor, constant: -inset),
     ])

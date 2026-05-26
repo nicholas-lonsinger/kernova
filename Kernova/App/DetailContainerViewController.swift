@@ -59,7 +59,16 @@ final class DetailContainerViewController: NSViewController {
         container.wantsLayer = true
 
         contentContainer.translatesAutoresizingMaskIntoConstraints = false
-        container.addFullSizeSubview(contentContainer)
+        container.addSubview(contentContainer)
+        NSLayoutConstraint.activate([
+            contentContainer.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            contentContainer.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            contentContainer.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            // Pin the top to the safe area so detail content clears the
+            // full-size-content window's toolbar (matching the VM display
+            // backing view, which does the same).
+            contentContainer.topAnchor.constraint(equalTo: container.safeAreaLayoutGuide.topAnchor),
+        ])
 
         self.view = container
     }
