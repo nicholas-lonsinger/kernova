@@ -94,6 +94,22 @@ private final class FlippedClipView: NSClipView {
     override var isFlipped: Bool { true }
 }
 
+/// A scroll view that keeps its clip view spanning the full width even when the
+/// system shows always-on (legacy) scroll bars.
+///
+/// `scrollerStyle = .overlay` alone isn't honored when the user sets "Show
+/// scroll bars: Always", so a legacy scroller would reserve width on the right,
+/// shrink the clip view, and shift symmetrically-inset content off-center.
+/// Forcing the clip view to fill `bounds` in `tile()` makes the scroller overlay
+/// the right content margin instead — content stays centered, and the margin
+/// inset keeps it clear of the floating scroller.
+private final class WizardScrollView: NSScrollView {
+    override func tile() {
+        super.tile()
+        contentView.frame = bounds
+    }
+}
+
 /// Wraps `documentView` in a borderless, autohiding vertical scroll view with
 /// the clip-view content insets zeroed, and pins the document to the clip view
 /// (width-matched; bottom at `.defaultHigh` so short content doesn't stretch).
@@ -103,11 +119,11 @@ private final class FlippedClipView: NSClipView {
 /// `documentView`.
 @MainActor
 func makeWizardScrollView(documentView: NSView) -> NSScrollView {
-    let scrollView = NSScrollView()
+    let scrollView = WizardScrollView()
     scrollView.contentView = FlippedClipView()
-    // Force overlay scrollers so the scroller floats over the content instead of
-    // reserving width on the right. A legacy (always-on) scroller would shrink
-    // the clip view and shift the symmetrically-inset content off-center.
+    // Overlay style plus the WizardScrollView full-width clip view keep the
+    // scroller floating over the right margin instead of reserving width, so
+    // symmetrically-inset content stays centered.
     scrollView.scrollerStyle = .overlay
     scrollView.hasVerticalScroller = true
     scrollView.hasHorizontalScroller = false
