@@ -150,21 +150,21 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
 
     @objc private func browseISO() {
         browse(title: "Select ISO Image", types: [.iso]) { [weak self] url in
-            self?.creationVM.isoPath = url.path
+            self?.creationVM.isoPath = url.path(percentEncoded: false)
             self?.rebuildConditional()
         }
     }
 
     @objc private func browseKernel() {
         browse(title: "Select Kernel", types: [.data]) { [weak self] url in
-            self?.creationVM.kernelPath = url.path
+            self?.creationVM.kernelPath = url.path(percentEncoded: false)
             self?.rebuildConditional()
         }
     }
 
     @objc private func browseInitrd() {
         browse(title: "Select Initrd", types: [.data]) { [weak self] url in
-            self?.creationVM.initrdPath = url.path
+            self?.creationVM.initrdPath = url.path(percentEncoded: false)
             self?.rebuildConditional()
         }
     }

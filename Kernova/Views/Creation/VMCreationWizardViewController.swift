@@ -308,6 +308,7 @@ final class VMCreationWizardViewController: NSViewController {
     }
 
     @objc private func backTapped() {
+        commitPendingEdits()
         creationVM.goBack()
         // Apply synchronously for an immediate, flicker-free transition. The
         // observation loop is the backstop for model changes originating inside
@@ -317,11 +318,13 @@ final class VMCreationWizardViewController: NSViewController {
     }
 
     @objc private func nextTapped() {
+        commitPendingEdits()
         creationVM.goNext()
         apply()
     }
 
     @objc private func createTapped() {
+        commitPendingEdits()
         // VM creation is async and takes seconds (bundle write + sparse disk
         // allocation). Disable navigation immediately so a second click can't
         // spawn a duplicate create and Cancel can't tear the sheet down mid-
@@ -330,6 +333,17 @@ final class VMCreationWizardViewController: NSViewController {
         backButton.isEnabled = false
         cancelButton.isEnabled = false
         delegate?.wizardDidRequestCreate(self, creationVM: creationVM)
+    }
+
+    /// Forces the active text field (if any) to end editing so its value is
+    /// committed to the model before we navigate.
+    ///
+    /// Step fields like CPU/Memory commit on `controlTextDidEndEditing`. Clicking
+    /// a button resigns first responder and triggers that, but pressing Return
+    /// (the Next/Create key equivalent) can fire the button action without first
+    /// ending the field's edit; resigning first responder here closes that gap.
+    private func commitPendingEdits() {
+        view.window?.makeFirstResponder(nil)
     }
 
     // MARK: - Failure recovery
