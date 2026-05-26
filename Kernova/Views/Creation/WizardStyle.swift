@@ -105,6 +105,10 @@ private final class FlippedClipView: NSClipView {
 func makeWizardScrollView(documentView: NSView) -> NSScrollView {
     let scrollView = NSScrollView()
     scrollView.contentView = FlippedClipView()
+    // Force overlay scrollers so the scroller floats over the content instead of
+    // reserving width on the right. A legacy (always-on) scroller would shrink
+    // the clip view and shift the symmetrically-inset content off-center.
+    scrollView.scrollerStyle = .overlay
     scrollView.hasVerticalScroller = true
     scrollView.hasHorizontalScroller = false
     scrollView.borderType = .noBorder
