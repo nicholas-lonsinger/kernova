@@ -17,7 +17,7 @@ enum VMDisplayPreference: String, Codable, Sendable, Equatable {
 /// > the custom `init(from:)` as well.** Optional properties decoded via
 /// > synthesized `init(from:)` would default to `nil` silently; the manual
 /// > initializer makes that decision explicit.
-struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
+struct VMConfiguration: Codable, Sendable, Equatable {
     // MARK: - Identity
 
     var id: UUID
@@ -388,7 +388,7 @@ struct VMConfiguration: Codable, Identifiable, Sendable, Equatable {
 // MARK: - SharedDirectory
 
 /// A host directory shared with the guest VM via VirtioFS.
-struct SharedDirectory: Codable, Sendable, Equatable, Identifiable {
+struct SharedDirectory: Codable, Sendable, Equatable {
     var id: UUID
     var path: String
     var readOnly: Bool

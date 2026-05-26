@@ -178,7 +178,7 @@ final class SerialConsoleContentViewController: NSViewController {
     private func makeStatusBar() -> NSView {
         let leftStack = NSStackView(views: [statusCircle, statusLabel])
         leftStack.orientation = .horizontal
-        leftStack.spacing = 6
+        leftStack.spacing = Spacing.small
 
         let stack = NSStackView(views: [leftStack, characterCountLabel])
         stack.orientation = .horizontal

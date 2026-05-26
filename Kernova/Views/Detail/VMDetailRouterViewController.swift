@@ -49,7 +49,7 @@ final class VMDetailRouterViewController: NSViewController {
     override func loadView() {
         contentStack.orientation = .vertical
         contentStack.alignment = .leading
-        contentStack.spacing = 0
+        contentStack.spacing = Spacing.none
         contentStack.translatesAutoresizingMaskIntoConstraints = false
         view = contentStack
     }

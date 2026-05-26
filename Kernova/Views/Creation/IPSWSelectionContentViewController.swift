@@ -49,16 +49,16 @@ final class IPSWSelectionContentViewController: NSViewController {
         let options = NSStackView(views: [downloadOption, localOption])
         options.orientation = .vertical
         options.alignment = .leading
-        options.spacing = 16
+        options.spacing = Spacing.large
 
         conditionalContainer.orientation = .vertical
         conditionalContainer.alignment = .leading
-        conditionalContainer.spacing = 12
+        conditionalContainer.spacing = Spacing.medium
 
         let stack = NSStackView(views: [title, subtitle, options, conditionalContainer])
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 8
+        stack.spacing = Spacing.standard
         stack.setCustomSpacing(20, after: subtitle)
         stack.setCustomSpacing(20, after: options)
         stack.translatesAutoresizingMaskIntoConstraints = false

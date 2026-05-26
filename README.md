@@ -24,7 +24,7 @@ A macOS GUI application for creating and managing virtual machines using Apple's
 
 ### Display and Console
 
-- **Native UI** — AppKit app with SwiftUI views, Liquid Glass design language
+- **Native UI** — Pure-AppKit app, Liquid Glass design language
 - **Fullscreen mode** — Dedicated fullscreen window per VM
 - **Serial console** — Terminal window for serial port access
 
@@ -80,7 +80,7 @@ Kernova/
 ├── App/          # AppDelegate, MainWindowController
 ├── Models/       # VMConfiguration, VMInstance, enums
 ├── Services/     # VM lifecycle, storage, disk images, IPSW, installation
-├── Views/        # SwiftUI views (sidebar, detail, console, creation wizard)
+├── Views/        # AppKit view controllers (sidebar, detail, console, creation wizard)
 ├── ViewModels/   # Observable view models
 └── Utilities/    # Formatters, extensions
 ```

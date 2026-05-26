@@ -34,7 +34,7 @@ final class DetailEmptyStateView: NSView {
 
         let description = NSTextField(
             wrappingLabelWithString: "Select a virtual machine from the sidebar or create a new one.")
-        description.font = .preferredFont(forTextStyle: .body)
+        description.font = Typography.body
         description.textColor = .secondaryLabelColor
         description.alignment = .center
         description.isSelectable = false
@@ -46,7 +46,7 @@ final class DetailEmptyStateView: NSView {
         let stack = NSStackView(views: [icon, title, description, button])
         stack.orientation = .vertical
         stack.alignment = .centerX
-        stack.spacing = 8
+        stack.spacing = Spacing.standard
         stack.setCustomSpacing(16, after: description)
         stack.translatesAutoresizingMaskIntoConstraints = false
 

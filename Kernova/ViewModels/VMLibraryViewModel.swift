@@ -1086,7 +1086,7 @@ final class VMLibraryViewModel {
     /// agent-status popover, and the menubar item.
     ///
     /// On successful mount, sets `installerMountedVMName` to drive an
-    /// SwiftUI `.alert()` that explains the next step (open the disk in the
+    /// alert that explains the next step (open the disk in the
     /// guest's Finder, run install.command). The alert unifies the
     /// post-click experience across all three entry points.
     ///
@@ -1225,8 +1225,8 @@ final class VMLibraryViewModel {
     /// file open, so we don't need to wait for the detach to complete.
     ///
     /// The trash runs in `Task.detached` (see `removeStorageDisk` for the
-    /// reasoning). The returned Task lets tests await completion; the
-    /// SwiftUI caller uses `@discardableResult` and ignores it.
+    /// reasoning). The returned Task lets tests await completion;
+    /// `@discardableResult` lets the UI callers ignore it.
     @discardableResult
     func removeRemovableMedia(
         _ item: RemovableMediaItem, from instance: VMInstance, trashFile: Bool
@@ -1772,7 +1772,7 @@ final class VMLibraryViewModel {
 
     /// Moves VMs in the sidebar list and persists the new order.
     ///
-    /// Called by SwiftUI's onMove handler.
+    /// Called by the sidebar outline view's drag-drop `acceptDrop`.
     func moveVM(fromOffsets source: IndexSet, toOffset destination: Int) {
         instances.move(fromOffsets: source, toOffset: destination)
         persistOrder()

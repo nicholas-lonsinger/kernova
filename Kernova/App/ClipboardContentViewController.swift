@@ -252,7 +252,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
         let stack = NSStackView(views: [statusCircle, statusLabel, spacer, actionButton])
         stack.orientation = .horizontal
-        stack.spacing = 6
+        stack.spacing = Spacing.small
         stack.edgeInsets = NSEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
         stack.alignment = .centerY
 

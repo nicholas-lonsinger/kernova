@@ -23,7 +23,7 @@ enum DetailPaneMode: Sendable {
 /// Runtime wrapper around a VM configuration, its backing virtual machine, and current status.
 @MainActor
 @Observable
-final class VMInstance: Identifiable {
+final class VMInstance {
     // MARK: - Properties
 
     let instanceID: UUID

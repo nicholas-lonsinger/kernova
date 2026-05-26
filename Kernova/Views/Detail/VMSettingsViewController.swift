@@ -162,7 +162,7 @@ final class VMSettingsViewController: NSViewController {
     override func loadView() {
         formStack.orientation = .vertical
         formStack.alignment = .leading
-        formStack.spacing = 18
+        formStack.spacing = Spacing.section
         formStack.translatesAutoresizingMaskIntoConstraints = false
 
         // Margin only at the bottom; the top sits flush under the toolbar.
@@ -174,7 +174,7 @@ final class VMSettingsViewController: NSViewController {
         let root = NSStackView(views: [bannerContainer, scrollView])
         root.orientation = .vertical
         root.alignment = .leading
-        root.spacing = 0
+        root.spacing = Spacing.none
         root.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             bannerContainer.widthAnchor.constraint(equalTo: root.widthAnchor),
@@ -336,7 +336,7 @@ extension VMSettingsViewController {
         let stack = NSStackView(views: subviews)
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 6
+        stack.spacing = Spacing.small
         stack.translatesAutoresizingMaskIntoConstraints = false
         for view in subviews {
             view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
@@ -377,7 +377,7 @@ extension VMSettingsViewController {
         let header = NSStackView(views: views)
         header.orientation = .horizontal
         header.alignment = .centerY
-        header.spacing = 6
+        header.spacing = Spacing.small
         return header
     }
 
@@ -418,7 +418,7 @@ extension VMSettingsViewController {
         let nameRow = NSStackView(views: [nameDisplayRow, nameEditRow])
         nameRow.orientation = .vertical
         nameRow.alignment = .leading
-        nameRow.spacing = 0
+        nameRow.spacing = Spacing.none
         nameDisplayRow.widthAnchor.constraint(equalTo: nameRow.widthAnchor).isActive = true
         nameEditRow.widthAnchor.constraint(equalTo: nameRow.widthAnchor).isActive = true
 
@@ -594,7 +594,7 @@ extension VMSettingsViewController {
         audioWarningContainer = NSStackView()
         audioWarningContainer.orientation = .vertical
         audioWarningContainer.alignment = .leading
-        audioWarningContainer.spacing = 6
+        audioWarningContainer.spacing = Spacing.small
         audioWarningContainer.translatesAutoresizingMaskIntoConstraints = false
 
         var paragraphs: [InfoPopoverParagraph] = [
@@ -670,7 +670,7 @@ extension VMSettingsViewController {
         let stack = NSStackView()
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 8
+        stack.spacing = Spacing.standard
         stack.translatesAutoresizingMaskIntoConstraints = false
         return stack
     }
@@ -689,7 +689,7 @@ extension VMSettingsViewController {
         let row = NSStackView(views: buttons + [spacer])
         row.orientation = .horizontal
         row.alignment = .centerY
-        row.spacing = 8
+        row.spacing = Spacing.standard
         return row
     }
 
@@ -705,7 +705,7 @@ extension VMSettingsViewController {
         _ title: String, control: NSControl, paragraphs: [InfoPopoverParagraph]
     ) -> NSView {
         let label = NSTextField(labelWithString: title)
-        label.font = .preferredFont(forTextStyle: .body)
+        label.font = Typography.body
         label.isSelectable = false
         label.setContentHuggingPriority(.defaultHigh, for: .horizontal)
 
@@ -719,13 +719,13 @@ extension VMSettingsViewController {
         let row = NSStackView(views: [label, info, spacer, control])
         row.orientation = .horizontal
         row.alignment = .centerY
-        row.spacing = 6
+        row.spacing = Spacing.small
         return row
     }
 
     private func steppedControl(_ field: NSTextField, _ stepper: NSStepper, unit: String) -> NSStackView {
         let unitLabel = NSTextField(labelWithString: unit)
-        unitLabel.font = .preferredFont(forTextStyle: .body)
+        unitLabel.font = Typography.body
         unitLabel.textColor = .secondaryLabelColor
         unitLabel.isSelectable = false
         unitLabel.widthAnchor.constraint(equalToConstant: 22).isActive = true
@@ -733,7 +733,7 @@ extension VMSettingsViewController {
         let control = NSStackView(views: [field, stepper, unitLabel])
         control.orientation = .horizontal
         control.alignment = .centerY
-        control.spacing = 4
+        control.spacing = Spacing.tight
         return control
     }
 
@@ -787,7 +787,7 @@ extension VMSettingsViewController {
         controlsEnabled: Bool, readOnlySelector: Selector, deleteSelector: Selector
     ) -> NSView {
         let titleLabel = NSTextField(labelWithString: title)
-        titleLabel.font = .preferredFont(forTextStyle: .body)
+        titleLabel.font = Typography.body
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.maximumNumberOfLines = 1
         titleLabel.isSelectable = false
@@ -795,7 +795,7 @@ extension VMSettingsViewController {
         let textStack = NSStackView(views: [titleLabel, subtitle])
         textStack.orientation = .vertical
         textStack.alignment = .leading
-        textStack.spacing = 2
+        textStack.spacing = Spacing.hairline
 
         let readOnlyToggle = makeReadOnlySwitch(
             id: id, isOn: readOnly, enabled: controlsEnabled, action: readOnlySelector)
@@ -814,7 +814,7 @@ extension VMSettingsViewController {
         let row = NSStackView(views: [icon, textStack, spacer, readOnlyToggle, readOnlyCaption, delete])
         row.orientation = .horizontal
         row.alignment = .centerY
-        row.spacing = 8
+        row.spacing = Spacing.standard
         return row
     }
 

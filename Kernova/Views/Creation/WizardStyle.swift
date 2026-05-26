@@ -83,7 +83,7 @@ let wizardRadioDescriptionIndent: CGFloat = 20
 func makeWizardRadioOption(radio: NSButton, iconSymbol: String, description descriptionText: String)
     -> NSView
 {
-    radio.font = .preferredFont(forTextStyle: .body)
+    radio.font = Typography.body
     radio.translatesAutoresizingMaskIntoConstraints = false
 
     let icon = NSImageView(image: .systemSymbol(iconSymbol, accessibilityDescription: ""))
@@ -153,7 +153,7 @@ func makeWizardPathBadge(path: String, changeButton: NSButton) -> NSView {
     let row = NSStackView(views: [icon, pathLabel, changeButton])
     row.orientation = .horizontal
     row.alignment = .firstBaseline
-    row.spacing = 6
+    row.spacing = Spacing.small
 
     return makeGroupedFormBox(
         content: row,

@@ -3,9 +3,9 @@ import AppKit
 /// Delegate for ``StorageDiskReorderSheetContentViewController``.
 ///
 /// The view controller is intentionally decoupled from
-/// `VMLibraryViewModel`; the host (the SwiftUI bridge modifier)
-/// implements these methods and forwards the user's choice to the
-/// view model.
+/// `VMLibraryViewModel`; the host (the presenting view controller, e.g.
+/// `VMSettingsViewController`) implements these methods and forwards the
+/// user's choice to the view model.
 @MainActor
 protocol StorageDiskReorderSheetContentViewControllerDelegate: AnyObject {
     /// Invoked after a successful drag-reorder.
@@ -171,7 +171,7 @@ final class StorageDiskReorderSheetContentViewController: NSViewController {
         let stack = NSStackView(views: [title, info, spacer])
         stack.orientation = .horizontal
         stack.alignment = .centerY
-        stack.spacing = 6
+        stack.spacing = Spacing.small
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         container.addSubview(stack)
@@ -244,7 +244,7 @@ final class StorageDiskReorderSheetContentViewController: NSViewController {
 
         let stack = NSStackView(views: [spacer, done])
         stack.orientation = .horizontal
-        stack.spacing = 8
+        stack.spacing = Spacing.standard
         stack.alignment = .centerY
         stack.translatesAutoresizingMaskIntoConstraints = false
 
@@ -416,7 +416,7 @@ final class StorageDiskReorderRowCellView: NSTableCellView {
 
         iconButton.translatesAutoresizingMaskIntoConstraints = false
 
-        titleLabel.font = .preferredFont(forTextStyle: .body)
+        titleLabel.font = Typography.body
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.maximumNumberOfLines = 1
         titleLabel.isSelectable = false
@@ -425,19 +425,19 @@ final class StorageDiskReorderRowCellView: NSTableCellView {
 
         subtitleStack.orientation = .vertical
         subtitleStack.alignment = .leading
-        subtitleStack.spacing = 0
+        subtitleStack.spacing = Spacing.none
         subtitleStack.translatesAutoresizingMaskIntoConstraints = false
 
         let textStack = NSStackView(views: [titleLabel, subtitleStack])
         textStack.orientation = .vertical
         textStack.alignment = .leading
-        textStack.spacing = 2
+        textStack.spacing = Spacing.hairline
         textStack.translatesAutoresizingMaskIntoConstraints = false
 
         let row = NSStackView(views: [iconButton, textStack])
         row.orientation = .horizontal
         row.alignment = .centerY
-        row.spacing = 12
+        row.spacing = Spacing.medium
         row.translatesAutoresizingMaskIntoConstraints = false
 
         addSubview(row)

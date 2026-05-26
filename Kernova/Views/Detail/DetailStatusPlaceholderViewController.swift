@@ -25,7 +25,7 @@ final class DetailStatusPlaceholderViewController: NSViewController {
         let stack = NSStackView(views: [spinner, label])
         stack.orientation = .vertical
         stack.alignment = .centerX
-        stack.spacing = 12
+        stack.spacing = Spacing.medium
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         let container = NSView()

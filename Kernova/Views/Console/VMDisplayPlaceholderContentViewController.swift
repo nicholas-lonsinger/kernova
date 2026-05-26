@@ -211,7 +211,7 @@ private final class DisplayPlaceholderEmptyStateView: NSView {
         titleLabel.alignment = .center
         titleLabel.textColor = .labelColor
 
-        descriptionLabel.font = NSFont.preferredFont(forTextStyle: .body)
+        descriptionLabel.font = Typography.body
         descriptionLabel.textColor = .secondaryLabelColor
         descriptionLabel.alignment = .center
         descriptionLabel.maximumNumberOfLines = 0
@@ -223,7 +223,7 @@ private final class DisplayPlaceholderEmptyStateView: NSView {
 
         stack.orientation = .vertical
         stack.alignment = .centerX
-        stack.spacing = 12
+        stack.spacing = Spacing.medium
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.setViews([imageView, titleLabel, descriptionLabel, actionButton], in: .top)
         // Tighten the gap between the icon and title so the cluster reads as a unit.

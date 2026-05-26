@@ -19,7 +19,7 @@ enum StorageDiskKind: String, Codable, Sendable, Equatable {
 /// configuration, which EFI uses for boot order. Includes both the
 /// bundle's primary disk (`Disk.asif`) and any user-added internal /
 /// external disks or installer images — all rendered identically in the UI.
-struct StorageDisk: Codable, Sendable, Equatable, Identifiable {
+struct StorageDisk: Codable, Sendable, Equatable {
     var id: UUID
     /// Bundle-relative for internal disks (e.g. `"Disk.asif"`,
     /// `"AdditionalDisks/<id>.asif"`); absolute for external disks.
@@ -95,7 +95,7 @@ struct StorageDisk: Codable, Sendable, Equatable, Identifiable {
 /// media. Each item's `id` becomes the `VZUSBMassStorageDeviceConfiguration.uuid`
 /// so save-state restore can match the configured item against the
 /// saved-state device list.
-struct RemovableMediaItem: Codable, Sendable, Equatable, Identifiable {
+struct RemovableMediaItem: Codable, Sendable, Equatable {
     var id: UUID
     var path: String
     var readOnly: Bool
@@ -123,7 +123,7 @@ struct RemovableMediaItem: Codable, Sendable, Equatable, Identifiable {
 /// when one or more other VMs in the library reference the same path —
 /// the UI uses that to warn before the user opts in to trashing a shared
 /// file (e.g., a Windows installer ISO referenced by several VMs).
-struct ExternalAttachment: Identifiable, Sendable, Equatable {
+struct ExternalAttachment: Sendable, Equatable {
     enum Kind: Sendable, Equatable {
         case storageDisk
         case removableMedia

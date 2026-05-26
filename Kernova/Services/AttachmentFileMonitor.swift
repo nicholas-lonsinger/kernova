@@ -25,8 +25,8 @@ final class AttachmentFileMonitor {
 
     /// Latest known existence flag for each watched path.
     ///
-    /// Reads inside a SwiftUI `body` register an Observation dependency, so
-    /// updates re-render the row without a synchronous filesystem check.
+    /// Reads inside a `withObservationTracking` block register an Observation
+    /// dependency, so updates refresh the affected rows without a sync check.
     private(set) var existsByPath: [String: Bool] = [:]
 
     /// Parent directory -> live watcher. `nonisolated(unsafe)` so `deinit`

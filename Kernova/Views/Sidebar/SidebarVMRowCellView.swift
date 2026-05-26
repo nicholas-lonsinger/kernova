@@ -64,7 +64,7 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
         nameField.drawsBackground = false
         nameField.isEditable = false
         nameField.isSelectable = false
-        nameField.font = .preferredFont(forTextStyle: .body)
+        nameField.font = Typography.body
         nameField.lineBreakMode = .byTruncatingTail
         nameField.maximumNumberOfLines = 1
         nameField.cell?.usesSingleLineMode = true
@@ -94,7 +94,7 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
         row.orientation = .horizontal
         row.alignment = .centerY
         row.distribution = .fill
-        row.spacing = 6
+        row.spacing = Spacing.small
         row.translatesAutoresizingMaskIntoConstraints = false
         addSubview(row)
 

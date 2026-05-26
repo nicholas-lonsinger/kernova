@@ -42,12 +42,12 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
 
         conditionalContainer.orientation = .vertical
         conditionalContainer.alignment = .leading
-        conditionalContainer.spacing = 8
+        conditionalContainer.spacing = Spacing.standard
 
         let stack = NSStackView(views: [title, subtitle, bootModeControl, conditionalContainer])
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 8
+        stack.spacing = Spacing.standard
         stack.setCustomSpacing(20, after: subtitle)
         stack.setCustomSpacing(16, after: bootModeControl)
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -131,7 +131,7 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
         let control = NSStackView(views: [pathLabel, browse])
         control.orientation = .horizontal
         control.alignment = .centerY
-        control.spacing = 8
+        control.spacing = Spacing.standard
 
         return makeGroupedFormCardRow(label, control: control, fillsControl: true)
     }

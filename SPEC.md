@@ -8,7 +8,7 @@ Design philosophy and guidelines for Kernova.
 - Aggressively identify code that looks like a shortcut or band-aid. Either fix it in scope or file a GitHub issue for a future pass.
 - GitHub issues serve as durable context — when a fix is deferred, the issue should capture enough detail to address it later without rediscovery.
 - Prefer the simpler path first. Always attempt or plan the straightforward solution before introducing complexity through flags, intercepts, overrides, special cases, shims, or conditional branching.
-- When working on window layout issues, verify that the implementation follows AppKit/SwiftUI best practices. Cross-reference Apple documentation and well-known code examples where possible before settling on an approach.
+- When working on window layout issues, verify that the implementation follows AppKit best practices. Cross-reference Apple documentation and well-known code examples where possible before settling on an approach.
 
 ## GUI Design
 
@@ -20,49 +20,53 @@ Design philosophy and guidelines for Kernova.
 
 ### Layout
 
-- AppKit owns structural layout (`NSSplitViewController`, `NSToolbar`, `NSWindow`); SwiftUI renders content via `NSHostingController`.
+- AppKit owns the entire view layer — `NSSplitViewController`, `NSToolbar`, `NSWindow`, and concrete `NSViewController`s render all content (no SwiftUI / `NSHostingController`).
 - Main window: 1100×700 default, 800×500 minimum.
 - Sidebar: 200–350pt width.
 - Creation wizard sheet: 550×480.
 
 ### Typography
 
-- `.title2` + `.fontWeight(.semibold)` — section/page headings
-- `.headline` — important labels and step indicators
-- `.body` — primary form content
-- `.caption` / `.caption2` — secondary text, metadata, step numbers
-- `.system(.caption, design: .monospaced)` — code snippets and paths
+Use `NSFont.preferredFont(forTextStyle:)` so type scales with the system setting.
+
+- `.title2` at `.semibold` — section/page headings (`WizardStyle.titleFont`)
+- `.headline` — important labels and step indicators (`CalloutStyle.headlineFont`)
+- `.body` — primary form content (`Typography.body`)
+- `.caption1` / `.caption2` — secondary text, metadata, step numbers
+- monospaced `.caption1` (`NSFont.monospacedSystemFont`) — code snippets and paths (`CalloutStyle.makeCalloutCode`)
 
 ### Spacing
 
-- `VStack(spacing: 24)` — between major sections
-- `VStack(spacing: 12)` — between grouped elements
-- `VStack(spacing: 8)` — compact grouping (icon + label)
-- `VStack(spacing: 2–4)` — tightly related items
-- `HStack(spacing: 8)` — standard inline spacing
+Set `NSStackView.spacing` from the `Spacing` token scale (`Utilities/DesignTokens.swift`):
+
+- `Spacing.section` (18) / `Spacing.major` (20) — between settings-form / hero sections
+- `Spacing.medium` (12) — between grouped elements and containers
+- `Spacing.standard` (8) — default inline / row spacing
+- `Spacing.small` (6) — icon-to-label and section-header elements
+- `Spacing.tight` (4) / `Spacing.hairline` (2) — tightly related items
 
 ### Colors
 
-- Status mapping: `stopped` = `.secondary`, `starting`/`saving`/`restoring`/`installing` = `.orange`, `running` = `.green`, `paused` = `.yellow`, `error` = `.red`
-- Use semantic system colors (`.primary`, `.secondary`, `.accentColor`) — no hardcoded RGB values.
-- Destructive actions: `.red` foreground.
-- Selection highlights: `accentColor` at 0.1 opacity fill, 0.3 opacity border.
+- Status mapping lives in the `StatusColor` palette (`Utilities/DesignTokens.swift`): `inactive` = `.secondaryLabelColor` (stopped / agent idle), `warning` = `.systemOrange` (preparing/starting/saving/restoring/installing/suspended), `running` = `.systemGreen`, `pausedInMemory` = `.systemYellow`, `error` = `.systemRed`.
+- Use semantic `NSColor`s (`.labelColor`, `.secondaryLabelColor`, `.controlAccentColor`) — no hardcoded RGB values.
+- Destructive actions: `.systemRed` foreground.
+- Selection highlights: `.controlAccentColor` at 0.1 opacity fill, 0.3 opacity border.
 
 ### Controls
 
-- `.formStyle(.grouped)` for settings forms.
-- `.listStyle(.sidebar)` for navigation lists.
-- Default button style (`.plain`) in lists; `.bordered` for dialog actions.
-- `role: .destructive` for delete/stop confirmations.
-- `ProgressView`: `.controlSize(.large)` for major operations, `.controlSize(.mini)` for inline status.
+- Grouped settings forms: build with the `GroupedFormStyle` factories (`makeGroupedFormCard`, `makeGroupedFormCardRow`, …).
+- Navigation list: source-list `NSOutlineView` (`SidebarViewController`).
+- Borderless `NSButton` in lists; `.rounded` bezel for dialog actions.
+- `AlertButtonRole.destructive` for delete/stop confirmations (`SheetAlert`).
+- `NSProgressIndicator`: `.controlSize = .large` for major operations, `.mini` for inline status.
 
 ### Overlays
 
-- `.ultraThinMaterial` for temporary state overlays (pause, saving/restoring).
-- `.animation(.easeInOut(duration: 0.25))` for overlay transitions.
+- `NSVisualEffectView` for temporary state overlays (pause, saving/restoring).
+- `NSAnimationContext` (0.25s) for overlay transitions.
 - Large hero icons (64pt) centered on overlays.
 
 ### Cards and Containers
 
-- Selection cards: `RoundedRectangle(cornerRadius: 12)`, accent-tinted fill when selected.
-- Code blocks: `.background(.quaternary)`, `cornerRadius: 4`, `padding: 8`, monospaced font.
+- Selection cards: layer-backed `NSView` with `cornerRadius: 12`, accent-tinted fill when selected.
+- Code blocks: `CalloutStyle.makeCalloutCode` — quaternary fill, `cornerRadius: 4`, `Spacing.standard` padding, monospaced font.

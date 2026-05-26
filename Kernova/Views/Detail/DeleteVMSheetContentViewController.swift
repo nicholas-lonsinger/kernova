@@ -3,8 +3,8 @@ import AppKit
 /// Delegate for ``DeleteVMSheetContentViewController``.
 ///
 /// The view controller is intentionally decoupled from `VMLibraryViewModel`.
-/// The host (the SwiftUI bridge modifier) implements these methods and
-/// forwards the user's choice to the view model.
+/// The host (the presenter, e.g. `DetailAlertsPresenter`) implements these
+/// methods and forwards the user's choice to the view model.
 @MainActor
 protocol DeleteVMSheetContentViewControllerDelegate: AnyObject {
     /// Invoked when the user clicks Cancel (or presses Escape).
@@ -158,7 +158,7 @@ final class DeleteVMSheetContentViewController: NSViewController {
         let textStack = NSStackView(views: [title, body])
         textStack.orientation = .vertical
         textStack.alignment = .leading
-        textStack.spacing = 4
+        textStack.spacing = Spacing.tight
 
         // `.firstBaseline` alignment matches the icon's effective baseline
         // to the title's first-line baseline — looks right regardless of
@@ -168,7 +168,7 @@ final class DeleteVMSheetContentViewController: NSViewController {
         let headerStack = NSStackView(views: [icon, textStack])
         headerStack.orientation = .horizontal
         headerStack.alignment = .firstBaseline
-        headerStack.spacing = 12
+        headerStack.spacing = Spacing.medium
         headerStack.translatesAutoresizingMaskIntoConstraints = false
 
         let container = NSView()
@@ -206,7 +206,7 @@ final class DeleteVMSheetContentViewController: NSViewController {
         let listStack = NSStackView()
         listStack.orientation = .vertical
         listStack.alignment = .leading
-        listStack.spacing = 12
+        listStack.spacing = Spacing.medium
         // 16pt all around inside the scroll view — matches the SwiftUI
         // behavioral spec (`.padding(16)` on the inner VStack) and gives
         // the rows the same breathing room from the dividers that the
@@ -267,7 +267,7 @@ final class DeleteVMSheetContentViewController: NSViewController {
         icon.widthAnchor.constraint(equalToConstant: Self.iconColumnWidth).isActive = true
 
         let label = NSTextField(labelWithString: external.label)
-        label.font = .preferredFont(forTextStyle: .body)
+        label.font = Typography.body
         label.lineBreakMode = .byWordWrapping
         label.maximumNumberOfLines = 0
         label.isSelectable = false
@@ -294,7 +294,7 @@ final class DeleteVMSheetContentViewController: NSViewController {
         let textStack = NSStackView(views: textViews)
         textStack.orientation = .vertical
         textStack.alignment = .leading
-        textStack.spacing = 2
+        textStack.spacing = Spacing.hairline
 
         // `.firstBaseline` anchors the icon to the label's first-line
         // baseline — the canonical AppKit pattern for an icon row with a
@@ -305,7 +305,7 @@ final class DeleteVMSheetContentViewController: NSViewController {
         let row = NSStackView(views: [icon, textStack])
         row.orientation = .horizontal
         row.alignment = .firstBaseline
-        row.spacing = 12
+        row.spacing = Spacing.medium
         return row
     }
 
@@ -326,7 +326,7 @@ final class DeleteVMSheetContentViewController: NSViewController {
         let stack = NSStackView(views: [icon, label])
         stack.orientation = .horizontal
         stack.alignment = .centerY
-        stack.spacing = 6
+        stack.spacing = Spacing.small
         stack.translatesAutoresizingMaskIntoConstraints = false
         return stack
     }
@@ -350,7 +350,7 @@ final class DeleteVMSheetContentViewController: NSViewController {
             "Files marked as shared will become unavailable to the VMs listed above."
         )
         trashExternalsWarningRow.orientation = .horizontal
-        trashExternalsWarningRow.spacing = 0
+        trashExternalsWarningRow.spacing = Spacing.none
         trashExternalsWarningRow.alignment = .top
         trashExternalsWarningRow.addArrangedSubview(warning)
         trashExternalsWarningRow.isHidden = true
@@ -375,7 +375,7 @@ final class DeleteVMSheetContentViewController: NSViewController {
 
         let buttonRow = NSStackView(views: [spacer, cancelButton, confirmButton])
         buttonRow.orientation = .horizontal
-        buttonRow.spacing = 8
+        buttonRow.spacing = Spacing.standard
         buttonRow.alignment = .centerY
         buttonRow.translatesAutoresizingMaskIntoConstraints = false
 
@@ -384,7 +384,7 @@ final class DeleteVMSheetContentViewController: NSViewController {
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 8
+        stack.spacing = Spacing.standard
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         container.addSubview(stack)
