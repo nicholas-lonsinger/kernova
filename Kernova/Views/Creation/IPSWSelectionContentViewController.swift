@@ -106,20 +106,26 @@ final class IPSWSelectionContentViewController: NSViewController {
         textStack.orientation = .vertical
         textStack.alignment = .leading
         textStack.spacing = 2
-
-        let spacer = NSView()
-        spacer.translatesAutoresizingMaskIntoConstraints = false
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        // The text column expands to fill the space between the icon and the
+        // checkmark; the icon/checkmark hug their content. This gives the
+        // wrapping description a definite width to wrap at (pinned below),
+        // instead of letting it demand an unbounded single-line width that
+        // throws off the row's computed height and clips the title.
+        textStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        textStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         let checkmark = NSImageView(
             image: .systemSymbol("checkmark.circle.fill", accessibilityDescription: "Selected"))
         checkmark.contentTintColor = .controlAccentColor
         checkmark.setContentHuggingPriority(.required, for: .horizontal)
+        checkmark.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-        let content = NSStackView(views: [icon, textStack, spacer, checkmark])
+        let content = NSStackView(views: [icon, textStack, checkmark])
         content.orientation = .horizontal
         content.alignment = .centerY
         content.spacing = 12
+
+        descLabel.widthAnchor.constraint(equalTo: textStack.widthAnchor).isActive = true
 
         let card = WizardSelectableCardView(content: content)
         card.onClick = { [weak self] in self?.select(source) }
@@ -177,7 +183,7 @@ final class IPSWSelectionContentViewController: NSViewController {
                     title: "Use Existing File", target: self, action: #selector(useExistingTapped))
                 let replace = NSButton(
                     title: "Download & Replace", target: self, action: #selector(confirmOverwriteTapped))
-                conditionalContainer.addArrangedSubview(
+                addFullWidthBanner(
                     makeWizardBanner(
                         symbolName: "exclamationmark.triangle.fill",
                         tint: .systemYellow,
@@ -186,7 +192,7 @@ final class IPSWSelectionContentViewController: NSViewController {
                         trailingButtons: [useExisting, replace]
                     ))
             } else if creationVM.hasResumableDownload {
-                conditionalContainer.addArrangedSubview(
+                addFullWidthBanner(
                     makeWizardBanner(
                         symbolName: "arrow.clockwise.circle.fill",
                         tint: .systemBlue,
@@ -200,6 +206,13 @@ final class IPSWSelectionContentViewController: NSViewController {
                 "Change…", target: self, action: #selector(changeLocalFile))
             conditionalContainer.addArrangedSubview(makeWizardPathBadge(path: path, changeButton: change))
         }
+    }
+
+    /// Adds a banner to the conditional container, pinned to the full step width
+    /// so it lines up with the source cards (the path badge stays content-sized).
+    private func addFullWidthBanner(_ banner: NSView) {
+        conditionalContainer.addArrangedSubview(banner)
+        banner.widthAnchor.constraint(equalTo: conditionalContainer.widthAnchor).isActive = true
     }
 
     // MARK: - Actions
