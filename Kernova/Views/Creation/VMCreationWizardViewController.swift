@@ -318,6 +318,13 @@ final class VMCreationWizardViewController: NSViewController {
     }
 
     @objc private func createTapped() {
+        // VM creation is async and takes seconds (bundle write + sparse disk
+        // allocation). Disable navigation immediately so a second click can't
+        // spawn a duplicate create and Cancel can't tear the sheet down mid-
+        // creation; the host dismisses the sheet when createVM completes.
+        createButton.isEnabled = false
+        backButton.isEnabled = false
+        cancelButton.isEnabled = false
         delegate?.wizardDidRequestCreate(self, creationVM: creationVM)
     }
 }

@@ -5,10 +5,15 @@ import AppKit
 /// Renders one dot + title per ``VMCreationStep`` with thin connectors between
 /// them, highlighting the current step in the accent color. Purely a display of
 /// ``currentStep`` — it holds no model reference and reports no events.
+///
+/// The dots are `NSImageView`s (filled-circle SF Symbols tinted via
+/// `contentTintColor`) and the connectors are `NSBox` separators, so all colors
+/// adapt to light/dark automatically — no `viewDidChangeEffectiveAppearance`
+/// override or manual `CGColor` resolution.
 @MainActor
 final class WizardStepIndicatorView: NSView {
     private struct StepViews {
-        let dot: NSView
+        let dot: NSImageView
         let label: NSTextField
     }
 
@@ -24,7 +29,7 @@ final class WizardStepIndicatorView: NSView {
         }
     }
 
-    private static let dotSize: CGFloat = 8
+    private static let dotPointSize: CGFloat = 8
     private static let connectorWidth: CGFloat = 24
 
     init() {
@@ -36,11 +41,6 @@ final class WizardStepIndicatorView: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("WizardStepIndicatorView does not support NSCoder")
-    }
-
-    override func viewDidChangeEffectiveAppearance() {
-        super.viewDidChangeEffectiveAppearance()
-        updateHighlight()
     }
 
     private func build() {
@@ -62,14 +62,9 @@ final class WizardStepIndicatorView: NSView {
     }
 
     private func makeStepGroup(for step: VMCreationStep) -> NSView {
-        let dot = NSView()
-        dot.wantsLayer = true
-        dot.layer?.cornerRadius = Self.dotSize / 2
-        dot.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            dot.widthAnchor.constraint(equalToConstant: Self.dotSize),
-            dot.heightAnchor.constraint(equalToConstant: Self.dotSize),
-        ])
+        let dot = NSImageView(image: .systemSymbol("circle.fill", accessibilityDescription: ""))
+        dot.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: Self.dotPointSize, weight: .regular)
+        dot.setContentHuggingPriority(.required, for: .horizontal)
 
         let label = NSTextField(labelWithString: step.title)
         label.font = .preferredFont(forTextStyle: .caption1)
@@ -85,25 +80,17 @@ final class WizardStepIndicatorView: NSView {
     }
 
     private func makeConnector() -> NSView {
-        let line = NSView()
-        line.wantsLayer = true
+        let line = NSBox()
+        line.boxType = .separator
         line.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            line.widthAnchor.constraint(equalToConstant: Self.connectorWidth),
-            line.heightAnchor.constraint(equalToConstant: 1),
-        ])
-        line.layer?.backgroundColor = wizardResolvedCGColor(
-            .separatorColor, in: effectiveAppearance)
+        line.widthAnchor.constraint(equalToConstant: Self.connectorWidth).isActive = true
         return line
     }
 
     private func updateHighlight() {
         for (step, views) in stepViews {
             let isCurrent = step == currentStep
-            views.dot.layer?.backgroundColor = wizardResolvedCGColor(
-                isCurrent ? .controlAccentColor : .tertiaryLabelColor,
-                in: effectiveAppearance
-            )
+            views.dot.contentTintColor = isCurrent ? .controlAccentColor : .tertiaryLabelColor
             views.label.textColor = isCurrent ? .labelColor : .secondaryLabelColor
         }
     }

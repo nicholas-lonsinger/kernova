@@ -44,26 +44,8 @@ final class ResourceConfigContentViewController: NSViewController {
 
         // The form can exceed the fixed sheet height, so host it in a scroll
         // view (the SwiftUI predecessor used a scrollable grouped Form).
-        let scrollView = NSScrollView()
-        scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = false
-        scrollView.borderType = .noBorder
-        scrollView.drawsBackground = false
-        scrollView.autohidesScrollers = true
-        scrollView.automaticallyAdjustsContentInsets = false
-        scrollView.contentInsets = NSEdgeInsetsZero
-        scrollView.contentView.automaticallyAdjustsContentInsets = false
-        scrollView.contentView.contentInsets = NSEdgeInsetsZero
-        scrollView.documentView = stack
-
-        let bottomPin = stack.bottomAnchor.constraint(equalTo: scrollView.contentView.bottomAnchor)
-        bottomPin.priority = .defaultHigh
+        let scrollView = makeWizardScrollView(documentView: stack)
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
-            stack.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
-            stack.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
-            bottomPin,
             title.widthAnchor.constraint(equalTo: stack.widthAnchor),
             subtitle.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])

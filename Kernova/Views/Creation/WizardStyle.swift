@@ -46,21 +46,6 @@ enum WizardStyle {
     static var subtitleFont: NSFont { .preferredFont(forTextStyle: .body) }
 }
 
-/// Resolves an `NSColor` to a `CGColor` in the given appearance.
-///
-/// Layer-backed views need explicit `CGColor`s, which do not auto-update when
-/// the effective appearance changes between light and dark. Call this from
-/// `viewDidChangeEffectiveAppearance()` (and on first build) so layer colors
-/// track the current appearance.
-@MainActor
-func wizardResolvedCGColor(_ color: NSColor, in appearance: NSAppearance) -> CGColor {
-    var resolved = color.cgColor
-    appearance.performAsCurrentDrawingAppearance {
-        resolved = color.cgColor
-    }
-    return resolved
-}
-
 /// Builds a centered, semibold title label for the top of a wizard step.
 @MainActor
 func makeWizardTitle(_ text: String) -> NSTextField {
@@ -202,6 +187,32 @@ func makeWizardLinkButton(_ title: String, target: AnyObject, action: Selector) 
     return button
 }
 
+/// Wraps `content` in a rounded, tinted `NSBox`.
+///
+/// `NSBox` draws its `fillColor`/`borderColor` (`NSColor`s) and adapts to
+/// light/dark automatically — no layer-backed `CGColor` juggling or
+/// `viewDidChangeEffectiveAppearance` override needed.
+@MainActor
+private func makeWizardBox(
+    content: NSView,
+    fill: NSColor,
+    border: NSColor,
+    borderWidth: CGFloat,
+    cornerRadius: CGFloat,
+    padding: CGFloat
+) -> NSBox {
+    let box = NSBox()
+    box.boxType = .custom
+    box.titlePosition = .noTitle
+    box.cornerRadius = cornerRadius
+    box.borderWidth = borderWidth
+    box.fillColor = fill
+    box.borderColor = border
+    box.contentViewMargins = NSSize(width: padding, height: padding)
+    box.contentView = content
+    return box
+}
+
 /// Builds the IPSW path badge: a doc icon, a middle-truncating path, and a
 /// trailing "Change…" button, in a subtle rounded container.
 @MainActor
@@ -222,13 +233,13 @@ func makeWizardPathBadge(path: String, changeButton: NSButton) -> NSView {
     row.alignment = .firstBaseline
     row.spacing = 6
 
-    return WizardTintedBox(
+    return makeWizardBox(
         content: row,
         fill: .secondaryLabelColor.withAlphaComponent(0.1),
         border: .clear,
-        padding: 8,
+        borderWidth: 0,
         cornerRadius: 6,
-        borderWidth: 0
+        padding: 8
     )
 }
 
@@ -267,12 +278,13 @@ func makeWizardBanner(
     row.alignment = .centerY
     row.spacing = 8
 
-    return WizardTintedBox(
+    return makeWizardBox(
         content: row,
         fill: tint.withAlphaComponent(0.1),
         border: tint.withAlphaComponent(0.3),
-        padding: 10,
-        cornerRadius: 8
+        borderWidth: 1,
+        cornerRadius: 8,
+        padding: 10
     )
 }
 

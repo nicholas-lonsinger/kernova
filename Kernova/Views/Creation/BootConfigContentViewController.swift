@@ -145,32 +145,38 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
     }
 
     @objc private func browseISO() {
-        if let url = browse(title: "Select ISO Image", types: [.iso]) {
-            creationVM.isoPath = url.path
-            rebuildConditional()
+        browse(title: "Select ISO Image", types: [.iso]) { [weak self] url in
+            self?.creationVM.isoPath = url.path
+            self?.rebuildConditional()
         }
     }
 
     @objc private func browseKernel() {
-        if let url = browse(title: "Select Kernel", types: [.data]) {
-            creationVM.kernelPath = url.path
-            rebuildConditional()
+        browse(title: "Select Kernel", types: [.data]) { [weak self] url in
+            self?.creationVM.kernelPath = url.path
+            self?.rebuildConditional()
         }
     }
 
     @objc private func browseInitrd() {
-        if let url = browse(title: "Select Initrd", types: [.data]) {
-            creationVM.initrdPath = url.path
-            rebuildConditional()
+        browse(title: "Select Initrd", types: [.data]) { [weak self] url in
+            self?.creationVM.initrdPath = url.path
+            self?.rebuildConditional()
         }
     }
 
-    private func browse(title: String, types: [UTType]) -> URL? {
+    /// Presents an open panel as a sheet on the wizard window and invokes
+    /// `onPick` with the chosen URL (no-op on cancel).
+    private func browse(title: String, types: [UTType], onPick: @escaping (URL) -> Void) {
         let panel = NSOpenPanel()
         panel.title = title
         panel.allowedContentTypes = types
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
-        return panel.runModal() == .OK ? panel.url : nil
+        guard let window = view.window else { return }
+        panel.beginSheetModal(for: window) { response in
+            guard response == .OK, let url = panel.url else { return }
+            onPick(url)
+        }
     }
 }

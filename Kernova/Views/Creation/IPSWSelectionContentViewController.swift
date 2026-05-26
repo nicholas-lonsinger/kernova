@@ -233,9 +233,11 @@ final class IPSWSelectionContentViewController: NSViewController {
         }
         panel.allowedContentTypes = [.ipsw]
 
-        if panel.runModal() == .OK, let url = panel.url {
-            creationVM.ipswDownloadPath = url.path(percentEncoded: false)
-            refresh()
+        guard let window = view.window else { return }
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard let self, response == .OK, let url = panel.url else { return }
+            self.creationVM.ipswDownloadPath = url.path(percentEncoded: false)
+            self.refresh()
         }
     }
 
@@ -246,10 +248,12 @@ final class IPSWSelectionContentViewController: NSViewController {
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
 
-        if panel.runModal() == .OK, let url = panel.url {
-            creationVM.ipswSource = .localFile
-            creationVM.ipswPath = url.path(percentEncoded: false)
-            refresh()
+        guard let window = view.window else { return }
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard let self, response == .OK, let url = panel.url else { return }
+            self.creationVM.ipswSource = .localFile
+            self.creationVM.ipswPath = url.path(percentEncoded: false)
+            self.refresh()
         }
     }
 }
