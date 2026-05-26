@@ -186,6 +186,96 @@ func makeWizardFormRow(
     return row
 }
 
+// MARK: - Grouped cards (System Settings style)
+
+/// Builds a 1pt, appearance-adaptive horizontal hairline for separating card rows.
+@MainActor
+func makeWizardHairline() -> NSView {
+    let line = NSBox()
+    line.boxType = .custom
+    line.borderWidth = 0
+    line.fillColor = .separatorColor
+    line.translatesAutoresizingMaskIntoConstraints = false
+    line.heightAnchor.constraint(equalToConstant: 1).isActive = true
+    return line
+}
+
+/// Builds a full-width card row: a leading label and a trailing control/value.
+///
+/// By default the control is pushed to the trailing edge (for steppers, switches,
+/// popups, and read-only values). Pass `fillsControl: true` for an input that
+/// should stretch to fill the row (a text field).
+@MainActor
+func makeWizardCardRow(
+    _ labelText: String,
+    control: NSView,
+    alignment: NSLayoutConstraint.Attribute = .centerY,
+    fillsControl: Bool = false
+) -> NSView {
+    let label = NSTextField(labelWithString: labelText)
+    label.font = .preferredFont(forTextStyle: .body)
+    label.isSelectable = false
+    label.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+    label.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+    let views: [NSView]
+    if fillsControl {
+        control.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        views = [label, control]
+    } else {
+        let spacer = NSView()
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        views = [label, spacer, control]
+    }
+
+    let row = NSStackView(views: views)
+    row.orientation = .horizontal
+    row.alignment = alignment
+    row.spacing = 8
+    return row
+}
+
+/// Wraps rows in a rounded, subtly-filled card with hairline separators between
+/// them — the native macOS grouped-form look.
+@MainActor
+func makeWizardCard(rows: [NSView]) -> NSView {
+    let content = NSStackView()
+    content.orientation = .vertical
+    content.alignment = .leading
+    content.spacing = 10
+    content.translatesAutoresizingMaskIntoConstraints = false
+
+    for (index, row) in rows.enumerated() {
+        if index > 0 { content.addArrangedSubview(makeWizardHairline()) }
+        content.addArrangedSubview(row)
+    }
+
+    let box = NSBox()
+    box.boxType = .custom
+    box.titlePosition = .noTitle
+    box.cornerRadius = 8
+    box.borderWidth = 1
+    box.fillColor = .secondaryLabelColor.withAlphaComponent(0.06)
+    box.borderColor = .separatorColor
+
+    let container = NSView()
+    container.addFullSizeSubview(box)
+    container.addSubview(content)
+    let pad: CGFloat = 12
+    NSLayoutConstraint.activate([
+        content.topAnchor.constraint(equalTo: container.topAnchor, constant: pad),
+        content.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -pad),
+        content.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: pad),
+        content.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -pad),
+    ])
+    for view in content.arrangedSubviews {
+        view.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+    }
+    return container
+}
+
 /// Indent (radio circle + gap) so a radio option's description aligns under its
 /// title.
 let wizardRadioDescriptionIndent: CGFloat = 20

@@ -2,12 +2,12 @@ import AppKit
 
 /// Step 4 of the creation wizard: review the configuration before creating.
 ///
-/// A native macOS aligned form of read-only rows (right-aligned label column,
-/// left-aligned values) plus a "start after create" switch, built from a
-/// snapshot of the shared ``VMCreationViewModel``. The shell rebuilds this VC
-/// each time the review step is entered, so it always reflects current values;
-/// no intra-step observation is needed. Tapping Create is handled by the shell
-/// (which reports to its host via the delegate).
+/// Native macOS grouped cards (System Settings style) of read-only rows plus a
+/// "start after create" switch, built from a snapshot of the shared
+/// ``VMCreationViewModel``. The shell rebuilds this VC each time the review step
+/// is entered, so it always reflects current values; no intra-step observation
+/// is needed. Tapping Create is handled by the shell (which reports to its host
+/// via the delegate).
 @MainActor
 final class ReviewContentViewController: NSViewController {
     private let creationVM: VMCreationViewModel
@@ -52,40 +52,50 @@ final class ReviewContentViewController: NSViewController {
         form.spacing = 8
         form.translatesAutoresizingMaskIntoConstraints = false
 
-        addSectionHeader("General", to: form)
-        addRow("Name", creationVM.vmName, to: form)
-        addRow("Operating System", creationVM.selectedOS.displayName, to: form)
-        addRow("Boot Mode", creationVM.effectiveBootMode.displayName, to: form)
+        addSection(
+            "General",
+            rows: [
+                valueRow("Name", creationVM.vmName),
+                valueRow("Operating System", creationVM.selectedOS.displayName),
+                valueRow("Boot Mode", creationVM.effectiveBootMode.displayName),
+            ], to: form)
 
-        addSectionHeader("Resources", to: form)
-        addRow("CPU Cores", "\(creationVM.cpuCount)", to: form)
-        addRow("Memory", "\(creationVM.memoryInGB) GB", to: form)
-        addRow("Disk Size", DataFormatters.formatDiskSize(creationVM.diskSizeInGB), to: form)
+        addSection(
+            "Resources",
+            rows: [
+                valueRow("CPU Cores", "\(creationVM.cpuCount)"),
+                valueRow("Memory", "\(creationVM.memoryInGB) GB"),
+                valueRow("Disk Size", DataFormatters.formatDiskSize(creationVM.diskSizeInGB)),
+            ], to: form)
 
-        addSectionHeader("Network", to: form)
-        addRow("Networking", creationVM.networkEnabled ? "Enabled" : "Disabled", to: form)
+        addSection(
+            "Network",
+            rows: [valueRow("Networking", creationVM.networkEnabled ? "Enabled" : "Disabled")], to: form)
 
         if creationVM.selectedOS == .macOS {
-            addSectionHeader("Installation", to: form)
-            addRow(
-                "IPSW Source",
-                creationVM.ipswSource == .downloadLatest ? "Download Latest" : "Local File", to: form)
+            var rows = [
+                valueRow(
+                    "IPSW Source",
+                    creationVM.ipswSource == .downloadLatest ? "Download Latest" : "Local File")
+            ]
             if creationVM.ipswSource == .localFile, let path = creationVM.ipswPath {
-                addRow("File", URL(fileURLWithPath: path).lastPathComponent, to: form)
+                rows.append(valueRow("File", URL(fileURLWithPath: path).lastPathComponent))
             }
             if creationVM.ipswSource == .downloadLatest, let path = creationVM.ipswDownloadPath {
-                addRow("Save to", wizardAbbreviateWithTilde(path), to: form)
+                rows.append(valueRow("Save to", wizardAbbreviateWithTilde(path)))
             }
+            addSection("Installation", rows: rows, to: form)
         }
 
         if creationVM.selectedOS == .linux {
-            addSectionHeader("Boot", to: form)
+            var rows: [NSView] = []
             if let path = creationVM.isoPath {
-                addRow("ISO", URL(fileURLWithPath: path).lastPathComponent, to: form)
+                rows.append(valueRow("ISO", URL(fileURLWithPath: path).lastPathComponent))
             }
             if let path = creationVM.kernelPath {
-                addRow("Kernel", URL(fileURLWithPath: path).lastPathComponent, to: form)
+                rows.append(valueRow("Kernel", URL(fileURLWithPath: path).lastPathComponent))
             }
+            if !rows.isEmpty { addSection("Boot", rows: rows, to: form) }
         }
 
         startSwitch.controlSize = .small
@@ -95,26 +105,31 @@ final class ReviewContentViewController: NSViewController {
         if let last = form.arrangedSubviews.last {
             form.setCustomSpacing(18, after: last)
         }
-        let startLabel = makeWizardFormLabel("Start this VM after creation")
-        let startRow = NSStackView(views: [startSwitch, startLabel])
-        startRow.orientation = .horizontal
-        startRow.alignment = .centerY
-        startRow.spacing = 8
-        form.addArrangedSubview(startRow)
+        addCard(
+            [makeWizardCardRow("Start this VM after creation", control: startSwitch)], to: form)
 
         return form
     }
 
-    /// Adds a section header with extra space above it.
-    private func addSectionHeader(_ title: String, to form: NSStackView) {
+    /// Adds a section: a header followed by a grouped card of its rows.
+    private func addSection(_ title: String, rows: [NSView], to form: NSStackView) {
         if let last = form.arrangedSubviews.last {
             form.setCustomSpacing(18, after: last)
         }
-        form.addArrangedSubview(makeWizardSectionHeader(title))
+        let header = makeWizardSectionHeader(title)
+        form.addArrangedSubview(header)
+        form.setCustomSpacing(6, after: header)
+        addCard(rows, to: form)
     }
 
-    private func addRow(_ label: String, _ value: String, to form: NSStackView) {
-        form.addArrangedSubview(makeWizardFormRow(label, control: makeWizardValueLabel(value)))
+    private func addCard(_ rows: [NSView], to form: NSStackView) {
+        let card = makeWizardCard(rows: rows)
+        form.addArrangedSubview(card)
+        card.widthAnchor.constraint(equalTo: form.widthAnchor).isActive = true
+    }
+
+    private func valueRow(_ label: String, _ value: String) -> NSView {
+        makeWizardCardRow(label, control: makeWizardValueLabel(value), alignment: .firstBaseline)
     }
 
     @objc private func startToggled() {

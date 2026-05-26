@@ -2,21 +2,22 @@ import AppKit
 
 /// Step 3 of the creation wizard: name the VM and allocate resources.
 ///
-/// A native macOS aligned form (right-aligned label column, left-aligned
-/// controls). All controls write the shared ``VMCreationViewModel`` directly. The
-/// name field writes on every keystroke (via `controlTextDidChange`) so the
-/// shell's `canAdvance`/`validationMessage` observation re-evaluates the Next
-/// button live. Stepper bounds come from the *current* `selectedOS`, and the
+/// Native macOS grouped cards (System Settings style): a heading, then sections
+/// of rows inside rounded boxes. All controls write the shared
+/// ``VMCreationViewModel`` directly. The name field and the CPU/Memory fields
+/// write on every keystroke (via `controlTextDidChange`) so the shell's
+/// `canAdvance`/`validationMessage` observation re-evaluates the Next button
+/// live. Stepper/field bounds come from the *current* `selectedOS`, and the
 /// standing values are clamped into range when the step is built.
 @MainActor
 final class ResourceConfigContentViewController: NSViewController {
     private let creationVM: VMCreationViewModel
 
     private let nameField = NSTextField()
+    private let cpuField = NSTextField()
     private let cpuStepper = NSStepper()
-    private let cpuValueLabel = NSTextField(labelWithString: "")
+    private let memoryField = NSTextField()
     private let memoryStepper = NSStepper()
-    private let memoryValueLabel = NSTextField(labelWithString: "")
     private let diskPopUp = NSPopUpButton()
     private let networkSwitch = NSSwitch()
 
@@ -58,55 +59,62 @@ final class ResourceConfigContentViewController: NSViewController {
 
     private func makeForm() -> NSView {
         configureNameField()
-        configureCPUStepper()
-        configureMemoryStepper()
+        configureCPU()
+        configureMemory()
         configureDiskPopUp()
         configureNetworkSwitch()
 
         let form = NSStackView()
         form.orientation = .vertical
         form.alignment = .leading
-        form.spacing = 10
+        form.spacing = 8
         form.translatesAutoresizingMaskIntoConstraints = false
 
-        form.addArrangedSubview(makeWizardFormRow("Name", control: nameField))
+        addCard([makeWizardCardRow("Name", control: nameField, fillsControl: true)], to: form)
 
         addSectionHeader("Compute", to: form)
-        form.addArrangedSubview(
-            makeWizardFormRow(
-                "CPU Cores", control: steppedControl(cpuValueLabel, cpuStepper), alignment: .centerY))
-        form.addArrangedSubview(
-            makeWizardFormRow(
-                "Memory", control: steppedControl(memoryValueLabel, memoryStepper, unit: "GB"),
-                alignment: .centerY))
+        addCard(
+            [
+                makeWizardCardRow("CPU Cores", control: steppedControl(cpuField, cpuStepper)),
+                makeWizardCardRow("Memory", control: steppedControl(memoryField, memoryStepper, unit: "GB")),
+            ], to: form)
 
         addSectionHeader("Storage", to: form)
-        form.addArrangedSubview(makeWizardFormRow("Disk Size", control: diskPopUp, alignment: .centerY))
+        addCard([makeWizardCardRow("Disk Size", control: diskPopUp)], to: form)
         let caption = makeWizardCaption(
             "Physical disk usage grows only as data is written (ASIF sparse format).")
         form.addArrangedSubview(caption)
         caption.widthAnchor.constraint(equalTo: form.widthAnchor).isActive = true
 
         addSectionHeader("Network", to: form)
-        form.addArrangedSubview(
-            makeWizardFormRow("Networking", control: networkSwitch, alignment: .centerY))
+        addCard([makeWizardCardRow("Networking", control: networkSwitch)], to: form)
 
         return form
     }
 
-    /// Pairs a numeric value with its stepper (and an optional trailing unit).
-    ///
-    /// The value sits in a fixed-width, right-aligned slot so the steppers line
-    /// up in a column across rows regardless of digit count; the unit (e.g. "GB")
-    /// trails the stepper so it doesn't throw off that alignment.
-    private func steppedControl(_ value: NSTextField, _ stepper: NSStepper, unit: String? = nil)
+    /// Adds a grouped card spanning the form width.
+    private func addCard(_ rows: [NSView], to form: NSStackView) {
+        let card = makeWizardCard(rows: rows)
+        form.addArrangedSubview(card)
+        card.widthAnchor.constraint(equalTo: form.widthAnchor).isActive = true
+    }
+
+    /// Adds a section-header label with extra space above it and a tight gap to
+    /// the card that follows.
+    private func addSectionHeader(_ title: String, to form: NSStackView) {
+        if let last = form.arrangedSubviews.last {
+            form.setCustomSpacing(18, after: last)
+        }
+        let header = makeWizardSectionHeader(title)
+        form.addArrangedSubview(header)
+        form.setCustomSpacing(6, after: header)
+    }
+
+    /// Pairs an editable numeric field with its stepper (and an optional unit).
+    private func steppedControl(_ field: NSTextField, _ stepper: NSStepper, unit: String? = nil)
         -> NSStackView
     {
-        value.font = .preferredFont(forTextStyle: .body)
-        value.alignment = .right
-        value.widthAnchor.constraint(equalToConstant: 30).isActive = true
-
-        var views: [NSView] = [value, stepper]
+        var views: [NSView] = [field, stepper]
         if let unit {
             let unitLabel = NSTextField(labelWithString: unit)
             unitLabel.font = .preferredFont(forTextStyle: .body)
@@ -114,55 +122,55 @@ final class ResourceConfigContentViewController: NSViewController {
             unitLabel.isSelectable = false
             views.append(unitLabel)
         }
-
         let control = NSStackView(views: views)
         control.orientation = .horizontal
         control.alignment = .centerY
-        control.spacing = 6
+        control.spacing = 4
         return control
-    }
-
-    /// Adds a section-header label with a little extra space above it.
-    private func addSectionHeader(_ title: String, to form: NSStackView) {
-        if let last = form.arrangedSubviews.last {
-            form.setCustomSpacing(18, after: last)
-        }
-        form.addArrangedSubview(makeWizardSectionHeader(title))
     }
 
     private func configureNameField() {
         nameField.stringValue = creationVM.vmName
         nameField.placeholderString = "Name"
         nameField.delegate = self
-        nameField.widthAnchor.constraint(equalToConstant: 240).isActive = true
     }
 
-    private func configureCPUStepper() {
+    private func configureCPU() {
+        let clamped = min(max(creationVM.cpuCount, os.minCPUCount), os.maxCPUCount)
+        creationVM.cpuCount = clamped
+
+        cpuField.alignment = .right
+        cpuField.delegate = self
+        cpuField.integerValue = clamped
+        cpuField.widthAnchor.constraint(equalToConstant: 44).isActive = true
+
         cpuStepper.controlSize = .small
         cpuStepper.minValue = Double(os.minCPUCount)
         cpuStepper.maxValue = Double(os.maxCPUCount)
         cpuStepper.increment = 1
         cpuStepper.valueWraps = false
-        let clamped = min(max(creationVM.cpuCount, os.minCPUCount), os.maxCPUCount)
-        creationVM.cpuCount = clamped
         cpuStepper.integerValue = clamped
         cpuStepper.target = self
-        cpuStepper.action = #selector(cpuChanged)
-        updateCPULabel()
+        cpuStepper.action = #selector(cpuStepperChanged)
     }
 
-    private func configureMemoryStepper() {
+    private func configureMemory() {
+        let clamped = min(max(creationVM.memoryInGB, os.minMemoryInGB), os.maxMemoryInGB)
+        creationVM.memoryInGB = clamped
+
+        memoryField.alignment = .right
+        memoryField.delegate = self
+        memoryField.integerValue = clamped
+        memoryField.widthAnchor.constraint(equalToConstant: 44).isActive = true
+
         memoryStepper.controlSize = .small
         memoryStepper.minValue = Double(os.minMemoryInGB)
         memoryStepper.maxValue = Double(os.maxMemoryInGB)
         memoryStepper.increment = 1
         memoryStepper.valueWraps = false
-        let clamped = min(max(creationVM.memoryInGB, os.minMemoryInGB), os.maxMemoryInGB)
-        creationVM.memoryInGB = clamped
         memoryStepper.integerValue = clamped
         memoryStepper.target = self
-        memoryStepper.action = #selector(memoryChanged)
-        updateMemoryLabel()
+        memoryStepper.action = #selector(memoryStepperChanged)
     }
 
     private func configureDiskPopUp() {
@@ -187,26 +195,16 @@ final class ResourceConfigContentViewController: NSViewController {
         networkSwitch.action = #selector(networkToggled)
     }
 
-    // MARK: - Label updates
-
-    private func updateCPULabel() {
-        cpuValueLabel.stringValue = "\(creationVM.cpuCount)"
-    }
-
-    private func updateMemoryLabel() {
-        memoryValueLabel.stringValue = "\(creationVM.memoryInGB)"
-    }
-
     // MARK: - Actions
 
-    @objc private func cpuChanged() {
+    @objc private func cpuStepperChanged() {
         creationVM.cpuCount = cpuStepper.integerValue
-        updateCPULabel()
+        cpuField.integerValue = cpuStepper.integerValue
     }
 
-    @objc private func memoryChanged() {
+    @objc private func memoryStepperChanged() {
         creationVM.memoryInGB = memoryStepper.integerValue
-        updateMemoryLabel()
+        memoryField.integerValue = memoryStepper.integerValue
     }
 
     @objc private func diskChanged() {
@@ -216,14 +214,51 @@ final class ResourceConfigContentViewController: NSViewController {
     @objc private func networkToggled() {
         creationVM.networkEnabled = networkSwitch.state == .on
     }
+
+    /// Clamps a typed CPU/Memory value into the OS-allowed range and syncs the
+    /// model and the paired stepper, without rewriting the field mid-edit.
+    private func applyCPUFieldEdit() {
+        let clamped = min(max(cpuField.integerValue, os.minCPUCount), os.maxCPUCount)
+        creationVM.cpuCount = clamped
+        cpuStepper.integerValue = clamped
+    }
+
+    private func applyMemoryFieldEdit() {
+        let clamped = min(max(memoryField.integerValue, os.minMemoryInGB), os.maxMemoryInGB)
+        creationVM.memoryInGB = clamped
+        memoryStepper.integerValue = clamped
+    }
 }
 
 // MARK: - NSTextFieldDelegate
 
 extension ResourceConfigContentViewController: NSTextFieldDelegate {
     func controlTextDidChange(_ obj: Notification) {
-        // Live write-back so `canAdvance`/`validationMessage` (which the shell
-        // observes) re-evaluate on every keystroke.
-        creationVM.vmName = nameField.stringValue
+        guard let field = obj.object as? NSTextField else { return }
+        switch field {
+        case nameField:
+            // Live write-back so `canAdvance`/`validationMessage` (which the shell
+            // observes) re-evaluate on every keystroke.
+            creationVM.vmName = nameField.stringValue
+        case cpuField:
+            applyCPUFieldEdit()
+        case memoryField:
+            applyMemoryFieldEdit()
+        default:
+            break
+        }
+    }
+
+    func controlTextDidEndEditing(_ obj: Notification) {
+        // Normalize the field text to the clamped model value once editing ends.
+        guard let field = obj.object as? NSTextField else { return }
+        switch field {
+        case cpuField:
+            cpuField.integerValue = creationVM.cpuCount
+        case memoryField:
+            memoryField.integerValue = creationVM.memoryInGB
+        default:
+            break
+        }
     }
 }
