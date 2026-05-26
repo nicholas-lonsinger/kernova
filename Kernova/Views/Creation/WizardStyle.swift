@@ -182,11 +182,16 @@ func makeWizardLinkButton(_ title: String, target: AnyObject, action: Selector) 
     return button
 }
 
-/// Wraps `content` in a rounded, tinted `NSBox`.
+/// Wraps `content` in a rounded, tinted container drawn by an `NSBox`.
 ///
-/// `NSBox` draws its `fillColor`/`borderColor` (`NSColor`s) and adapts to
+/// The `NSBox` draws its `fillColor`/`borderColor` (`NSColor`s) and adapts to
 /// light/dark automatically — no layer-backed `CGColor` juggling or
-/// `viewDidChangeEffectiveAppearance` override needed.
+/// `viewDidChangeEffectiveAppearance` override needed. It is used purely as a
+/// chrome layer pinned behind the content rather than via `box.contentView`: a
+/// custom `NSBox` sizes its content view through the legacy autoresizing path
+/// and never derives an intrinsic height from Auto Layout content, so it
+/// collapses. Pinning the content as a sibling makes the container's size a
+/// pure function of the content's own constraints.
 @MainActor
 private func makeWizardBox(
     content: NSView,
@@ -195,7 +200,7 @@ private func makeWizardBox(
     borderWidth: CGFloat,
     cornerRadius: CGFloat,
     padding: CGFloat
-) -> NSBox {
+) -> NSView {
     let box = NSBox()
     box.boxType = .custom
     box.titlePosition = .noTitle
@@ -203,12 +208,19 @@ private func makeWizardBox(
     box.borderWidth = borderWidth
     box.fillColor = fill
     box.borderColor = border
-    box.contentViewMargins = NSSize(width: padding, height: padding)
-    // Auto Layout for the content view, so the box hugs it via margin
-    // constraints instead of falling back to frame/autoresizing sizing.
+
+    let container = NSView()
+    container.addFullSizeSubview(box)
+
     content.translatesAutoresizingMaskIntoConstraints = false
-    box.contentView = content
-    return box
+    container.addSubview(content)
+    NSLayoutConstraint.activate([
+        content.topAnchor.constraint(equalTo: container.topAnchor, constant: padding),
+        content.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -padding),
+        content.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: padding),
+        content.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -padding),
+    ])
+    return container
 }
 
 /// Builds the IPSW path badge: a doc icon, a middle-truncating path, and a

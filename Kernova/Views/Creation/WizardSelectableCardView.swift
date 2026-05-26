@@ -29,26 +29,28 @@ final class WizardSelectableCardView: NSView {
     init(content: NSView) {
         super.init(frame: .zero)
 
+        // The box is used purely as a chrome layer (rounded fill + border),
+        // pinned behind the content. We deliberately do NOT use `box.contentView`
+        // to host the content: a custom `NSBox` sizes its content view through
+        // the legacy autoresizing path, so it never derives an intrinsic height
+        // from Auto Layout content and collapses, spilling the content over
+        // neighboring views. Laying the content out as a direct subview makes the
+        // card's height a pure function of the content's own constraints.
         box.boxType = .custom
         box.titlePosition = .noTitle
         box.cornerRadius = WizardStyle.cardCornerRadius
         box.borderWidth = 1
-        box.contentViewMargins = NSSize(
-            width: WizardStyle.contentPadding, height: WizardStyle.contentPadding)
-        // The content must use Auto Layout, otherwise `NSBox` falls back to
-        // frame/autoresizing sizing for its content view and never derives an
-        // intrinsic height from it — the box collapses and the content spills
-        // out over neighboring views.
-        content.translatesAutoresizingMaskIntoConstraints = false
-        box.contentView = content
-
         addFullSizeSubview(box)
 
-        // Hug content vertically so the card is sized by its content (+ box
-        // margins) rather than stretched to fill a containing stack — otherwise
-        // a card in a vertical stack (the IPSW source list) balloons.
-        setContentHuggingPriority(.required, for: .vertical)
-        setContentCompressionResistancePriority(.required, for: .vertical)
+        content.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(content)
+        let padding = WizardStyle.contentPadding
+        NSLayoutConstraint.activate([
+            content.topAnchor.constraint(equalTo: topAnchor, constant: padding),
+            content.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -padding),
+            content.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padding),
+            content.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -padding),
+        ])
 
         addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(clicked)))
 
