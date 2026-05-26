@@ -100,6 +100,27 @@ struct VMCreationWizardViewControllerTests {
         #expect(delegate.cancelCount == 1)
     }
 
+    @Test("Create disables navigation; presentCreationFailure re-enables it")
+    func failedCreateReenablesNavigation() {
+        let vm = VMCreationViewModel()
+        vm.currentStep = .review
+        vm.vmName = "Retry VM"
+        let wizard = VMCreationWizardViewController(creationVM: vm)
+        wizard.delegate = MockDelegate()
+        wizard.loadViewIfNeeded()
+
+        // Clicking Create disables Cancel/Back/Create to block a duplicate.
+        findButton(titled: "Create", in: wizard.view)?.performClick(nil)
+        #expect(findButton(titled: "Cancel", in: wizard.view)?.isEnabled == false)
+        #expect(findButton(titled: "Create", in: wizard.view)?.isEnabled == false)
+
+        // The host calls this when creation fails; the wizard must become usable
+        // again for a retry. (No window in the test, so no alert is presented.)
+        wizard.presentCreationFailure(message: "Disk full")
+        #expect(findButton(titled: "Cancel", in: wizard.view)?.isEnabled == true)
+        #expect(findButton(titled: "Create", in: wizard.view)?.isEnabled == true)
+    }
+
     @Test("Validation message displays and gates Next when the model is invalid")
     func validationGatesNext() {
         let vm = VMCreationViewModel()

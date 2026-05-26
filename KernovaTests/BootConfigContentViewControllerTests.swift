@@ -51,14 +51,42 @@ struct BootConfigContentViewControllerTests {
             Issue.record("Expected an editable command-line NSTextField")
             return
         }
-        // Field pre-fills the default for display but leaves the model untouched
-        // until edited.
+        // The default is both displayed and committed, so the value the user
+        // sees is the one `buildConfiguration()` will use.
         #expect(field.stringValue == "console=hvc0")
+        #expect(vm.kernelCommandLine == "console=hvc0")
 
         field.stringValue = "root=/dev/vda console=hvc0"
         vc.controlTextDidChange(
             Notification(name: NSControl.textDidChangeNotification, object: field))
         #expect(vm.kernelCommandLine == "root=/dev/vda console=hvc0")
+    }
+
+    @Test("Default kernel command line is committed to the model, not just displayed")
+    func defaultCommandLineCommitted() {
+        let vm = VMCreationViewModel()
+        vm.selectedOS = .linux
+        vm.selectedBootMode = .linuxKernel
+        #expect(vm.kernelCommandLine == nil)
+
+        let vc = BootConfigContentViewController(creationVM: vm)
+        vc.loadViewIfNeeded()
+
+        // Building the kernel section seeds the default so an untouched field
+        // doesn't leave the guest booting without the shown command line.
+        #expect(vm.kernelCommandLine == "console=hvc0")
+    }
+
+    @Test("An explicitly cleared command line is not re-seeded with the default")
+    func clearedCommandLineNotReseeded() {
+        let vm = VMCreationViewModel()
+        vm.selectedOS = .linux
+        vm.selectedBootMode = .linuxKernel
+        vm.kernelCommandLine = ""  // user cleared it intentionally
+        let vc = BootConfigContentViewController(creationVM: vm)
+        vc.loadViewIfNeeded()
+
+        #expect(vm.kernelCommandLine == "")
     }
 
     // MARK: - Helpers

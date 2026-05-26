@@ -331,4 +331,28 @@ final class VMCreationWizardViewController: NSViewController {
         cancelButton.isEnabled = false
         delegate?.wizardDidRequestCreate(self, creationVM: creationVM)
     }
+
+    // MARK: - Failure recovery
+
+    /// Re-enables navigation after a failed create and presents the error as a
+    /// sheet on the wizard's own window so the user can read it and retry.
+    ///
+    /// The error is shown here rather than via the host's main-window alert
+    /// because the wizard sheet is still attached to that window; a sheet-on-
+    /// sheet (the alert atop the wizard) is well-defined, whereas two sheets on
+    /// the same window would contend.
+    func presentCreationFailure(message: String?) {
+        cancelButton.isEnabled = true
+        backButton.isEnabled = true
+        // Restore Create/Next enabled state from the model.
+        apply()
+
+        guard let window = view.window else { return }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Couldn’t Create Virtual Machine"
+        alert.informativeText = message ?? "An unknown error occurred while creating the virtual machine."
+        alert.addButton(withTitle: "OK")
+        alert.beginSheetModal(for: window, completionHandler: nil)
+    }
 }

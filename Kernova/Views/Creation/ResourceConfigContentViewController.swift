@@ -237,17 +237,25 @@ final class ResourceConfigContentViewController: NSViewController {
     }
 
     /// Clamps a typed CPU/Memory value into the OS-allowed range and syncs the
-    /// model and the paired stepper, without rewriting the field mid-edit.
+    /// model, the paired stepper, and the field text together.
+    ///
+    /// Called on end-of-edit (not per keystroke): clamping mid-type would snap
+    /// the stepper to the minimum while the field still showed a partial value
+    /// (e.g. typing "16" momentarily reads as 1 → clamps to the minimum), which
+    /// desyncs the field from the stepper. CPU/Memory don't gate `canAdvance`,
+    /// so there's no need to write them live.
     private func applyCPUFieldEdit() {
         let clamped = min(max(cpuField.integerValue, os.minCPUCount), os.maxCPUCount)
         creationVM.cpuCount = clamped
         cpuStepper.integerValue = clamped
+        cpuField.integerValue = clamped
     }
 
     private func applyMemoryFieldEdit() {
         let clamped = min(max(memoryField.integerValue, os.minMemoryInGB), os.maxMemoryInGB)
         creationVM.memoryInGB = clamped
         memoryStepper.integerValue = clamped
+        memoryField.integerValue = clamped
     }
 }
 
@@ -256,28 +264,22 @@ final class ResourceConfigContentViewController: NSViewController {
 extension ResourceConfigContentViewController: NSTextFieldDelegate {
     func controlTextDidChange(_ obj: Notification) {
         guard let field = obj.object as? NSTextField else { return }
-        switch field {
-        case nameField:
-            // Live write-back so `canAdvance`/`validationMessage` (which the shell
-            // observes) re-evaluate on every keystroke.
+        // Only the name affects `canAdvance`/`validationMessage` (which the shell
+        // observes), so write it live. CPU/Memory are clamped on end-of-edit to
+        // avoid a mid-type stepper/field desync.
+        if field === nameField {
             creationVM.vmName = nameField.stringValue
-        case cpuField:
-            applyCPUFieldEdit()
-        case memoryField:
-            applyMemoryFieldEdit()
-        default:
-            break
         }
     }
 
     func controlTextDidEndEditing(_ obj: Notification) {
-        // Normalize the field text to the clamped model value once editing ends.
+        // Clamp and reconcile the model, stepper, and field text once editing ends.
         guard let field = obj.object as? NSTextField else { return }
         switch field {
         case cpuField:
-            cpuField.integerValue = creationVM.cpuCount
+            applyCPUFieldEdit()
         case memoryField:
-            memoryField.integerValue = creationVM.memoryInGB
+            applyMemoryFieldEdit()
         default:
             break
         }

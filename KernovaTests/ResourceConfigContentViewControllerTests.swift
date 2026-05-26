@@ -72,6 +72,38 @@ struct ResourceConfigContentViewControllerTests {
         #expect(vm.diskSizeInGB == target)
     }
 
+    @Test("CPU field does not clamp mid-keystroke; it clamps on end-of-edit")
+    func cpuClampsOnEndEditingOnly() {
+        let vm = VMCreationViewModel()  // macOS, minCPUCount == 2
+        let vc = ResourceConfigContentViewController(creationVM: vm)
+        vc.loadViewIfNeeded()
+
+        let steppers = allSteppers(in: vc.view)
+        guard let cpuField = editableNumberField(in: vc.view),
+            let cpuStepper = steppers.first(where: { $0.minValue == Double(VMGuestOS.macOS.minCPUCount) })
+        else {
+            Issue.record("Expected a CPU field and stepper")
+            return
+        }
+        let startingStepper = cpuStepper.integerValue
+
+        // Typing the first digit of "16" reads as 1 (below the minimum). The
+        // change notification must NOT clamp — the stepper stays put and the
+        // field keeps the partial text.
+        cpuField.stringValue = "1"
+        vc.controlTextDidChange(
+            Notification(name: NSControl.textDidChangeNotification, object: cpuField))
+        #expect(cpuStepper.integerValue == startingStepper)
+        #expect(cpuField.stringValue == "1")
+
+        // End-of-edit clamps and reconciles model, stepper, and field together.
+        vc.controlTextDidEndEditing(
+            Notification(name: NSControl.textDidEndEditingNotification, object: cpuField))
+        #expect(vm.cpuCount == VMGuestOS.macOS.minCPUCount)
+        #expect(cpuStepper.integerValue == VMGuestOS.macOS.minCPUCount)
+        #expect(cpuField.integerValue == VMGuestOS.macOS.minCPUCount)
+    }
+
     @Test("Standing CPU/memory values are clamped into the OS range on build")
     func valuesClampedOnBuild() {
         let vm = VMCreationViewModel()
@@ -99,6 +131,19 @@ struct ResourceConfigContentViewControllerTests {
         if let popup = view as? NSPopUpButton { return popup }
         for subview in view.subviews {
             if let popup = diskPopUp(in: subview) { return popup }
+        }
+        return nil
+    }
+
+    /// The CPU/Memory fields are right-aligned; the CPU one is built first, so a
+    /// pre-order walk returns it.
+    @MainActor
+    private func editableNumberField(in view: NSView) -> NSTextField? {
+        if let field = view as? NSTextField, field.isEditable, field.alignment == .right {
+            return field
+        }
+        for subview in view.subviews {
+            if let field = editableNumberField(in: subview) { return field }
         }
         return nil
     }

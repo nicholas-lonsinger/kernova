@@ -236,12 +236,24 @@ extension DetailContainerViewController: VMCreationWizardViewControllerDelegate 
         _ vc: VMCreationWizardViewController,
         creationVM: VMCreationViewModel
     ) {
-        // Keep the sheet up until creation completes, matching the prior
-        // SwiftUI flow (`await createVM(from:); dismiss()`). Errors surface
-        // via the view model's non-blocking error presentation.
+        // Keep the sheet up until creation completes. On success, dismiss it. On
+        // failure, take over the error that `createVM` surfaced via
+        // `showError`/`errorMessage` and re-present it on the wizard's own window:
+        // the SwiftUI `.sheetAlert` lives on this same main window, so letting it
+        // fire would race the still-open AppKit wizard sheet (two sheets on one
+        // window). Keeping the wizard up also lets the user retry without
+        // re-entering everything.
         Task { [weak self] in
-            await self?.viewModel.createVM(from: creationVM)
-            self?.wizardPresenter.close()
+            guard let self else { return }
+            let succeeded = await self.viewModel.createVM(from: creationVM)
+            if succeeded {
+                self.wizardPresenter.close()
+            } else {
+                let message = self.viewModel.errorMessage
+                self.viewModel.showError = false
+                self.viewModel.errorMessage = nil
+                vc.presentCreationFailure(message: message)
+            }
         }
     }
 }

@@ -18,6 +18,9 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
         labels: ["EFI (ISO Image)", "Linux Kernel"], trackingMode: .selectOne, target: nil, action: nil)
     private let conditionalContainer = NSStackView()
 
+    /// Default kernel command line shown — and committed — when none is set.
+    private static let defaultKernelCommandLine = "console=hvc0"
+
     init(creationVM: VMCreationViewModel) {
         self.creationVM = creationVM
         super.init(nibName: nil, bundle: nil)
@@ -72,7 +75,14 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
         if creationVM.selectedBootMode == .linuxKernel {
             caption = "Provide the kernel image and optional initrd/command line."
 
-            let commandLineField = NSTextField(string: creationVM.kernelCommandLine ?? "console=hvc0")
+            // Commit the displayed default so the value the user sees is the one
+            // `buildConfiguration()` uses; without this an untouched field leaves
+            // `kernelCommandLine` nil and the guest boots without it.
+            if creationVM.kernelCommandLine == nil {
+                creationVM.kernelCommandLine = Self.defaultKernelCommandLine
+            }
+            let commandLineField = NSTextField(
+                string: creationVM.kernelCommandLine ?? Self.defaultKernelCommandLine)
             commandLineField.placeholderString = "Kernel Command Line"
             commandLineField.delegate = self
 
