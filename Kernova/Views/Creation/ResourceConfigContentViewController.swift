@@ -46,7 +46,7 @@ final class ResourceConfigContentViewController: NSViewController {
         stack.setCustomSpacing(20, after: subtitle)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
-        let scrollView = makeWizardScrollView(documentView: stack)
+        let scrollView = makeGroupedFormScrollView(documentView: stack)
         NSLayoutConstraint.activate([
             subtitle.widthAnchor.constraint(equalTo: stack.widthAnchor),
             form.widthAnchor.constraint(equalTo: stack.widthAnchor),
@@ -70,31 +70,31 @@ final class ResourceConfigContentViewController: NSViewController {
         form.spacing = 8
         form.translatesAutoresizingMaskIntoConstraints = false
 
-        addCard([makeWizardCardRow("Name", control: nameField, fillsControl: true)], to: form)
+        addCard([makeGroupedFormCardRow("Name", control: nameField, fillsControl: true)], to: form)
 
         addSectionHeader("Compute", to: form)
         addCard(
             [
-                makeWizardCardRow("CPU Cores", control: steppedControl(cpuField, cpuStepper, unit: "")),
-                makeWizardCardRow("Memory", control: steppedControl(memoryField, memoryStepper, unit: "GB")),
+                makeGroupedFormCardRow("CPU Cores", control: steppedControl(cpuField, cpuStepper, unit: "")),
+                makeGroupedFormCardRow("Memory", control: steppedControl(memoryField, memoryStepper, unit: "GB")),
             ], to: form)
 
         addSectionHeader("Storage", to: form)
-        addCard([makeWizardCardRow("Disk Size", control: diskPopUp)], to: form)
-        let caption = makeWizardCaption(
+        addCard([makeGroupedFormCardRow("Disk Size", control: diskPopUp)], to: form)
+        let caption = makeGroupedFormCaption(
             "Physical disk usage grows only as data is written (ASIF sparse format).")
         form.addArrangedSubview(caption)
         caption.widthAnchor.constraint(equalTo: form.widthAnchor).isActive = true
 
         addSectionHeader("Network", to: form)
-        addCard([makeWizardCardRow("Networking", control: networkSwitch)], to: form)
+        addCard([makeGroupedFormCardRow("Networking", control: networkSwitch)], to: form)
 
         return form
     }
 
     /// Adds a grouped card spanning the form width.
     private func addCard(_ rows: [NSView], to form: NSStackView) {
-        let card = makeWizardCard(rows: rows)
+        let card = makeGroupedFormCard(rows: rows)
         form.addArrangedSubview(card)
         card.widthAnchor.constraint(equalTo: form.widthAnchor).isActive = true
     }
@@ -105,7 +105,7 @@ final class ResourceConfigContentViewController: NSViewController {
         if let last = form.arrangedSubviews.last {
             form.setCustomSpacing(18, after: last)
         }
-        let header = makeWizardSectionHeader(title)
+        let header = makeGroupedFormSectionHeader(title)
         form.addArrangedSubview(header)
         form.setCustomSpacing(6, after: header)
     }

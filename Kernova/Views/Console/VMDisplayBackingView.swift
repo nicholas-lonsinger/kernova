@@ -4,8 +4,8 @@ import Virtualization
 /// Pure AppKit view containing a `VZVirtualMachineView` with built-in pause and transition overlays.
 ///
 /// Used directly as `window.contentView` in the detached display window and layered on top of
-/// SwiftUI content in the inline detail pane. Eliminates the need for `NSViewRepresentable`
-/// bridging — `VZVirtualMachineView` stays entirely in AppKit.
+/// the inline detail content (`DetailContainerViewController`). `VZVirtualMachineView` stays
+/// entirely in AppKit.
 @MainActor
 final class VMDisplayBackingView: NSView {
     private(set) var machineView: VZVirtualMachineView = {
