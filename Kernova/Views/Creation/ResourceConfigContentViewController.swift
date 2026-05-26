@@ -77,7 +77,8 @@ final class ResourceConfigContentViewController: NSViewController {
                 "CPU Cores", control: steppedControl(cpuValueLabel, cpuStepper), alignment: .centerY))
         form.addArrangedSubview(
             makeWizardFormRow(
-                "Memory", control: steppedControl(memoryValueLabel, memoryStepper), alignment: .centerY))
+                "Memory", control: steppedControl(memoryValueLabel, memoryStepper, unit: "GB"),
+                alignment: .centerY))
 
         addSectionHeader("Storage", to: form)
         form.addArrangedSubview(makeWizardFormRow("Disk Size", control: diskPopUp, alignment: .centerY))
@@ -93,10 +94,28 @@ final class ResourceConfigContentViewController: NSViewController {
         return form
     }
 
-    /// Pairs a value label with its stepper (value to the left of the stepper).
-    private func steppedControl(_ value: NSTextField, _ stepper: NSStepper) -> NSStackView {
+    /// Pairs a numeric value with its stepper (and an optional trailing unit).
+    ///
+    /// The value sits in a fixed-width, right-aligned slot so the steppers line
+    /// up in a column across rows regardless of digit count; the unit (e.g. "GB")
+    /// trails the stepper so it doesn't throw off that alignment.
+    private func steppedControl(_ value: NSTextField, _ stepper: NSStepper, unit: String? = nil)
+        -> NSStackView
+    {
         value.font = .preferredFont(forTextStyle: .body)
-        let control = NSStackView(views: [value, stepper])
+        value.alignment = .right
+        value.widthAnchor.constraint(equalToConstant: 30).isActive = true
+
+        var views: [NSView] = [value, stepper]
+        if let unit {
+            let unitLabel = NSTextField(labelWithString: unit)
+            unitLabel.font = .preferredFont(forTextStyle: .body)
+            unitLabel.textColor = .secondaryLabelColor
+            unitLabel.isSelectable = false
+            views.append(unitLabel)
+        }
+
+        let control = NSStackView(views: views)
         control.orientation = .horizontal
         control.alignment = .centerY
         control.spacing = 6
@@ -175,7 +194,7 @@ final class ResourceConfigContentViewController: NSViewController {
     }
 
     private func updateMemoryLabel() {
-        memoryValueLabel.stringValue = "\(creationVM.memoryInGB) GB"
+        memoryValueLabel.stringValue = "\(creationVM.memoryInGB)"
     }
 
     // MARK: - Actions
