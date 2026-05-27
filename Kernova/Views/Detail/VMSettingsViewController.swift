@@ -113,6 +113,25 @@ final class VMSettingsViewController: NSViewController {
     private var clipboardSwitch = NSSwitch()
     private var clipboardCaption = NSView()
 
+    // MARK: - Rendered-list snapshots (early-out keys)
+
+    /// Value snapshot of one attachment row's rendered appearance, used to
+    /// skip rebuilding a list when nothing it displays has changed.
+    private struct RenderedRow: Equatable {
+        let id: UUID
+        let iconSystemName: String
+        let title: String
+        let subtitle: String
+        let isMissing: Bool
+        let missingPath: String?
+        let readOnly: Bool
+        let controlsEnabled: Bool
+    }
+    private var renderedStorageRows: [RenderedRow]?
+    private var renderedRemovableRows: [RenderedRow]?
+    private var renderedSharedRows: [RenderedRow]?
+    private var renderedAudioWarning: MicWarningState?
+
     // MARK: - Init
 
     init(instance: VMInstance, viewModel: VMLibraryViewModel, isReadOnly: Bool) {
@@ -162,7 +181,7 @@ final class VMSettingsViewController: NSViewController {
     override func loadView() {
         formStack.orientation = .vertical
         formStack.alignment = .leading
-        formStack.spacing = 18
+        formStack.spacing = Spacing.section
         formStack.translatesAutoresizingMaskIntoConstraints = false
 
         // Margin only at the bottom; the top sits flush under the toolbar.
@@ -174,7 +193,7 @@ final class VMSettingsViewController: NSViewController {
         let root = NSStackView(views: [bannerContainer, scrollView])
         root.orientation = .vertical
         root.alignment = .leading
-        root.spacing = 0
+        root.spacing = Spacing.none
         root.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             bannerContainer.widthAnchor.constraint(equalTo: root.widthAnchor),
@@ -313,6 +332,12 @@ extension VMSettingsViewController {
         lockIcons.removeAll()
         persistentLockableControls.removeAll()
         nameRowIsEditing = false
+        // The list stacks and audio-warning container are recreated below, so
+        // invalidate the render snapshots that guard their refreshes.
+        renderedStorageRows = nil
+        renderedRemovableRows = nil
+        renderedSharedRows = nil
+        renderedAudioWarning = nil
 
         addSection(buildGeneralSection())
         addSection(buildResourcesSection())
@@ -336,7 +361,7 @@ extension VMSettingsViewController {
         let stack = NSStackView(views: subviews)
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 6
+        stack.spacing = Spacing.small
         stack.translatesAutoresizingMaskIntoConstraints = false
         for view in subviews {
             view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
@@ -377,7 +402,7 @@ extension VMSettingsViewController {
         let header = NSStackView(views: views)
         header.orientation = .horizontal
         header.alignment = .centerY
-        header.spacing = 6
+        header.spacing = Spacing.small
         return header
     }
 
@@ -418,7 +443,7 @@ extension VMSettingsViewController {
         let nameRow = NSStackView(views: [nameDisplayRow, nameEditRow])
         nameRow.orientation = .vertical
         nameRow.alignment = .leading
-        nameRow.spacing = 0
+        nameRow.spacing = Spacing.none
         nameDisplayRow.widthAnchor.constraint(equalTo: nameRow.widthAnchor).isActive = true
         nameEditRow.widthAnchor.constraint(equalTo: nameRow.widthAnchor).isActive = true
 
@@ -594,7 +619,7 @@ extension VMSettingsViewController {
         audioWarningContainer = NSStackView()
         audioWarningContainer.orientation = .vertical
         audioWarningContainer.alignment = .leading
-        audioWarningContainer.spacing = 6
+        audioWarningContainer.spacing = Spacing.small
         audioWarningContainer.translatesAutoresizingMaskIntoConstraints = false
 
         var paragraphs: [InfoPopoverParagraph] = [
@@ -670,7 +695,7 @@ extension VMSettingsViewController {
         let stack = NSStackView()
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 8
+        stack.spacing = Spacing.standard
         stack.translatesAutoresizingMaskIntoConstraints = false
         return stack
     }
@@ -689,7 +714,7 @@ extension VMSettingsViewController {
         let row = NSStackView(views: buttons + [spacer])
         row.orientation = .horizontal
         row.alignment = .centerY
-        row.spacing = 8
+        row.spacing = Spacing.standard
         return row
     }
 
@@ -705,7 +730,7 @@ extension VMSettingsViewController {
         _ title: String, control: NSControl, paragraphs: [InfoPopoverParagraph]
     ) -> NSView {
         let label = NSTextField(labelWithString: title)
-        label.font = .preferredFont(forTextStyle: .body)
+        label.font = Typography.body
         label.isSelectable = false
         label.setContentHuggingPriority(.defaultHigh, for: .horizontal)
 
@@ -719,13 +744,13 @@ extension VMSettingsViewController {
         let row = NSStackView(views: [label, info, spacer, control])
         row.orientation = .horizontal
         row.alignment = .centerY
-        row.spacing = 6
+        row.spacing = Spacing.small
         return row
     }
 
     private func steppedControl(_ field: NSTextField, _ stepper: NSStepper, unit: String) -> NSStackView {
         let unitLabel = NSTextField(labelWithString: unit)
-        unitLabel.font = .preferredFont(forTextStyle: .body)
+        unitLabel.font = Typography.body
         unitLabel.textColor = .secondaryLabelColor
         unitLabel.isSelectable = false
         unitLabel.widthAnchor.constraint(equalToConstant: 22).isActive = true
@@ -733,7 +758,7 @@ extension VMSettingsViewController {
         let control = NSStackView(views: [field, stepper, unitLabel])
         control.orientation = .horizontal
         control.alignment = .centerY
-        control.spacing = 4
+        control.spacing = Spacing.tight
         return control
     }
 
@@ -787,7 +812,7 @@ extension VMSettingsViewController {
         controlsEnabled: Bool, readOnlySelector: Selector, deleteSelector: Selector
     ) -> NSView {
         let titleLabel = NSTextField(labelWithString: title)
-        titleLabel.font = .preferredFont(forTextStyle: .body)
+        titleLabel.font = Typography.body
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.maximumNumberOfLines = 1
         titleLabel.isSelectable = false
@@ -795,7 +820,7 @@ extension VMSettingsViewController {
         let textStack = NSStackView(views: [titleLabel, subtitle])
         textStack.orientation = .vertical
         textStack.alignment = .leading
-        textStack.spacing = 2
+        textStack.spacing = Spacing.hairline
 
         let readOnlyToggle = makeReadOnlySwitch(
             id: id, isOn: readOnly, enabled: controlsEnabled, action: readOnlySelector)
@@ -814,7 +839,7 @@ extension VMSettingsViewController {
         let row = NSStackView(views: [icon, textStack, spacer, readOnlyToggle, readOnlyCaption, delete])
         row.orientation = .horizontal
         row.alignment = .centerY
-        row.spacing = 8
+        row.spacing = Spacing.standard
         return row
     }
 
@@ -884,9 +909,13 @@ extension VMSettingsViewController {
 
     private func refreshAudio() {
         micSwitch.state = instance.configuration.microphoneEnabled ? .on : .off
+        let warning = micPermissionPresentation(
+            micPermission, micEnabled: instance.configuration.microphoneEnabled)
+        guard warning != renderedAudioWarning else { return }
+        renderedAudioWarning = warning
         audioWarningContainer.arrangedSubviews.forEach { $0.removeFromSuperview() }
 
-        switch micPermissionPresentation(micPermission, micEnabled: instance.configuration.microphoneEnabled) {
+        switch warning {
         case .none:
             break
         case .willPrompt:
@@ -923,45 +952,68 @@ extension VMSettingsViewController {
 
     private func refreshStorageList() {
         let disks = currentStorageDisks
-        clear(storageListStack)
-        for disk in disks {
+        editBootOrderButton.isHidden = disks.count <= 1
+        let models = disks.map { disk -> RenderedRow in
             let isMissing = !disk.isInternal && !fileMonitor.exists(disk.path)
+            return RenderedRow(
+                id: disk.id,
+                iconSystemName: diskIconSystemName(for: disk),
+                title: disk.label,
+                subtitle: diskSubtitle(for: disk, in: instance),
+                isMissing: isMissing,
+                missingPath: isMissing ? disk.path : nil,
+                readOnly: disk.readOnly,
+                controlsEnabled: !isReadOnly)
+        }
+        guard models != renderedStorageRows else { return }
+        renderedStorageRows = models
+        clear(storageListStack)
+        for model in models {
             let icon = AttachmentIconButton()
-            icon.configure(
-                systemName: diskIconSystemName(for: disk), missingPath: isMissing ? disk.path : nil)
+            icon.configure(systemName: model.iconSystemName, missingPath: model.missingPath)
             let row = makeListRow(
                 icon: icon,
-                title: disk.label,
-                subtitle: makeAttachmentSubtitleLabel(
-                    path: diskSubtitle(for: disk, in: instance), isMissing: isMissing),
-                id: disk.id,
-                readOnly: disk.readOnly,
-                controlsEnabled: !isReadOnly,
+                title: model.title,
+                subtitle: makeAttachmentSubtitleLabel(path: model.subtitle, isMissing: model.isMissing),
+                id: model.id,
+                readOnly: model.readOnly,
+                controlsEnabled: model.controlsEnabled,
                 readOnlySelector: #selector(storageReadOnlyToggled),
                 deleteSelector: #selector(storageDeleteTapped))
             addFullWidth(row, to: storageListStack)
         }
-        editBootOrderButton.isHidden = disks.count <= 1
     }
 
     private func refreshRemovableList() {
-        let items = currentRemovableMedia
+        let models = currentRemovableMedia.map { item -> RenderedRow in
+            let isMissing = !fileMonitor.exists(item.path)
+            return RenderedRow(
+                id: item.id,
+                iconSystemName: "opticaldisc",
+                title: item.label,
+                subtitle: item.path,
+                isMissing: isMissing,
+                missingPath: isMissing ? item.path : nil,
+                readOnly: item.readOnly,
+                controlsEnabled: true)
+        }
+        guard models != renderedRemovableRows else { return }
+        renderedRemovableRows = models
         clear(removableListStack)
-        if items.isEmpty {
+        if models.isEmpty {
             addFullWidth(makeSecondaryLabel("No removable media attached"), to: removableListStack)
             return
         }
-        for item in items {
-            let isMissing = !fileMonitor.exists(item.path)
+        for model in models {
             let icon = AttachmentIconButton()
-            icon.configure(systemName: "opticaldisc", missingPath: isMissing ? item.path : nil)
+            icon.configure(systemName: model.iconSystemName, missingPath: model.missingPath)
             let row = makeListRow(
                 icon: icon,
-                title: item.label,
-                subtitle: makeAttachmentSubtitleLabel(path: item.path, isMissing: isMissing),
-                id: item.id,
-                readOnly: item.readOnly,
-                controlsEnabled: true,
+                title: model.title,
+                subtitle: makeAttachmentSubtitleLabel(path: model.subtitle, isMissing: model.isMissing),
+                id: model.id,
+                readOnly: model.readOnly,
+                controlsEnabled: model.controlsEnabled,
                 readOnlySelector: #selector(removableReadOnlyToggled),
                 deleteSelector: #selector(removableDeleteTapped))
             addFullWidth(row, to: removableListStack)
@@ -969,24 +1021,35 @@ extension VMSettingsViewController {
     }
 
     private func refreshSharedList() {
-        let directories = currentSharedDirectories
+        let models = currentSharedDirectories.map { directory in
+            RenderedRow(
+                id: directory.id,
+                iconSystemName: "folder",
+                title: directory.displayName,
+                subtitle: directory.path,
+                isMissing: false,
+                missingPath: nil,
+                readOnly: directory.readOnly,
+                controlsEnabled: !isReadOnly)
+        }
+        guard models != renderedSharedRows else { return }
+        renderedSharedRows = models
         clear(sharedListStack)
-        if directories.isEmpty {
+        if models.isEmpty {
             addFullWidth(makeSecondaryLabel("No shared directories"), to: sharedListStack)
             return
         }
-        for directory in directories {
+        for model in models {
             let icon = NSImageView(image: .systemSymbol("folder", accessibilityDescription: ""))
             icon.contentTintColor = .secondaryLabelColor
             icon.setContentHuggingPriority(.required, for: .horizontal)
-            let subtitle = makeAttachmentSubtitleLabel(path: directory.path, isMissing: false)
             let row = makeListRow(
                 icon: icon,
-                title: directory.displayName,
-                subtitle: subtitle,
-                id: directory.id,
-                readOnly: directory.readOnly,
-                controlsEnabled: !isReadOnly,
+                title: model.title,
+                subtitle: makeAttachmentSubtitleLabel(path: model.subtitle, isMissing: false),
+                id: model.id,
+                readOnly: model.readOnly,
+                controlsEnabled: model.controlsEnabled,
                 readOnlySelector: #selector(sharedReadOnlyToggled),
                 deleteSelector: #selector(sharedDeleteTapped))
             addFullWidth(row, to: sharedListStack)

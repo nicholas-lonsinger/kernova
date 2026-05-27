@@ -63,7 +63,7 @@ final class MissingAttachmentPopoverContentViewController: NSViewController {
     private func makeHeader() -> NSView {
         let header = NSStackView()
         header.orientation = .horizontal
-        header.spacing = 6
+        header.spacing = Spacing.small
         header.alignment = .centerY
 
         let icon = NSImageView(

@@ -32,7 +32,7 @@ final class ReviewContentViewController: NSViewController {
         let stack = NSStackView(views: [title, subtitle, summary])
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 8
+        stack.spacing = Spacing.standard
         stack.setCustomSpacing(20, after: subtitle)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
@@ -49,7 +49,7 @@ final class ReviewContentViewController: NSViewController {
         let form = NSStackView()
         form.orientation = .vertical
         form.alignment = .leading
-        form.spacing = 8
+        form.spacing = Spacing.standard
         form.translatesAutoresizingMaskIntoConstraints = false
 
         addSection(

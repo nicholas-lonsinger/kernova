@@ -3,9 +3,9 @@ import AppKit
 /// Delegate for ``DiskSizePopoverContentViewController``.
 ///
 /// The view controller is intentionally decoupled from `VMLibraryViewModel`
-/// — the host (typically a SwiftUI/AppKit bridge representable) implements
-/// these methods to forward the user's choice to the appropriate view-model
-/// action and to close the surrounding popover.
+/// — the host (a presenter or coordinator, e.g. `DiskSizePopoverCoordinator`)
+/// implements these methods to forward the user's choice to the appropriate
+/// view-model action and to close the surrounding popover.
 @MainActor
 protocol DiskSizePopoverContentViewControllerDelegate: AnyObject {
     /// Invoked when the user clicks the confirm (Create) button.
@@ -128,7 +128,7 @@ final class DiskSizePopoverContentViewController: NSViewController {
     private func makeSizeRow() -> NSView {
         let row = NSStackView()
         row.orientation = .horizontal
-        row.spacing = 8
+        row.spacing = Spacing.standard
         row.alignment = .firstBaseline
 
         let label = NSTextField(labelWithString: "Size:")
@@ -152,7 +152,7 @@ final class DiskSizePopoverContentViewController: NSViewController {
     private func makeButtonRow() -> NSView {
         let row = NSStackView()
         row.orientation = .horizontal
-        row.spacing = 8
+        row.spacing = Spacing.standard
         row.alignment = .centerY
 
         let spacer = NSView()

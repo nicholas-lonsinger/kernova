@@ -55,7 +55,7 @@ final class InitialBootBannerView: NSView {
         let textStack = NSStackView(views: [title, subtitle])
         textStack.orientation = .vertical
         textStack.alignment = .leading
-        textStack.spacing = 2
+        textStack.spacing = Spacing.hairline
 
         let spacer = NSView()
         spacer.translatesAutoresizingMaskIntoConstraints = false
@@ -64,7 +64,7 @@ final class InitialBootBannerView: NSView {
         let row = NSStackView(views: [icon, textStack, spacer])
         row.orientation = .horizontal
         row.alignment = .centerY
-        row.spacing = 12
+        row.spacing = Spacing.medium
         row.translatesAutoresizingMaskIntoConstraints = false
 
         addSubview(row)

@@ -10,7 +10,7 @@ import Foundation
 ///
 /// Both implementations are `@Observable` classes so consumers can observe
 /// `clipboardText` and `isConnected` through the existential type without losing
-/// SwiftUI / `withObservationTracking` integration: the `@Observable` macro
+/// `withObservationTracking` integration: the `@Observable` macro
 /// installs the registrar on the concrete type, so reading or writing through
 /// the protocol witness still fires observation.
 ///

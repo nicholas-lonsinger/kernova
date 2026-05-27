@@ -155,7 +155,7 @@ final class VMDisplayBackingView: NSView {
         let stack = NSStackView(views: arrangedSubviews)
         stack.orientation = .vertical
         stack.alignment = .centerX
-        stack.spacing = 12
+        stack.spacing = Spacing.medium
         stack.translatesAutoresizingMaskIntoConstraints = false
         return stack
     }

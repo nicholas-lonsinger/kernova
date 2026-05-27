@@ -2,13 +2,11 @@ import Foundation
 import Virtualization
 
 /// Wizard steps for creating a new VM.
-enum VMCreationStep: String, CaseIterable, Identifiable, Sendable {
+enum VMCreationStep: String, CaseIterable, Sendable {
     case osSelection
     case bootConfig
     case resources
     case review
-
-    var id: String { rawValue }
 
     var title: String {
         switch self {

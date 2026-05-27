@@ -47,7 +47,7 @@ final class WizardStepIndicatorView: NSView {
         let mainStack = NSStackView()
         mainStack.orientation = .horizontal
         mainStack.alignment = .centerY
-        mainStack.spacing = 4
+        mainStack.spacing = Spacing.tight
         mainStack.translatesAutoresizingMaskIntoConstraints = false
 
         let steps = VMCreationStep.allCases
@@ -75,7 +75,7 @@ final class WizardStepIndicatorView: NSView {
         let group = NSStackView(views: [dot, label])
         group.orientation = .horizontal
         group.alignment = .centerY
-        group.spacing = 4
+        group.spacing = Spacing.tight
         return group
     }
 

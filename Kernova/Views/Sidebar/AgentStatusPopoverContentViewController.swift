@@ -82,7 +82,7 @@ final class AgentStatusPopoverContentViewController: NSViewController {
 
         let actionRow = NSStackView()
         actionRow.orientation = .horizontal
-        actionRow.spacing = 8
+        actionRow.spacing = Spacing.standard
         actionRow.alignment = .centerY
         dismissSpacer.translatesAutoresizingMaskIntoConstraints = false
         dismissSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)

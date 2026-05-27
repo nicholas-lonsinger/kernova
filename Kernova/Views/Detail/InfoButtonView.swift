@@ -56,9 +56,8 @@ final class InfoButtonView: NSView {
     /// Set the info-circle icon, hover tooltip, VoiceOver label, and the
     /// popover paragraph payload that fires on click.
     ///
-    /// Safe to call repeatedly — used both by the SwiftUI shim
-    /// (re-invoked on every `updateNSView`) and by pure-AppKit callers
-    /// during view-controller setup.
+    /// Safe to call repeatedly — re-invoked by callers during
+    /// view-controller setup or reuse.
     ///
     /// - Parameters:
     ///   - label: Section or control name; rendered as "About \(label)"

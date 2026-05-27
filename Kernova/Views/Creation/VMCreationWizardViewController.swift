@@ -200,7 +200,7 @@ final class VMCreationWizardViewController: NSViewController {
         ])
         row.orientation = .horizontal
         row.alignment = .centerY
-        row.spacing = 8
+        row.spacing = Spacing.standard
         row.translatesAutoresizingMaskIntoConstraints = false
 
         container.addSubview(row)

@@ -86,7 +86,7 @@ final class MacOSInstallProgressViewController: NSViewController {
         let stack = NSStackView(views: arranged)
         stack.orientation = .vertical
         stack.alignment = .centerX
-        stack.spacing = 20
+        stack.spacing = Spacing.major
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         let container = NSView()
@@ -146,7 +146,7 @@ final class MacOSInstallProgressViewController: NSViewController {
         let indicator = NSStackView(views: [downloadRow, connectorRow, installRow])
         indicator.orientation = .vertical
         indicator.alignment = .leading
-        indicator.spacing = 0
+        indicator.spacing = Spacing.none
         indicator.translatesAutoresizingMaskIntoConstraints = false
         indicator.widthAnchor.constraint(equalToConstant: 240).isActive = true
         downloadRow.widthAnchor.constraint(equalTo: indicator.widthAnchor).isActive = true
@@ -163,7 +163,7 @@ final class MacOSInstallProgressViewController: NSViewController {
         circle.heightAnchor.constraint(equalToConstant: 24).isActive = true
         circle.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 22, weight: .regular)
 
-        label.font = .preferredFont(forTextStyle: .body)
+        label.font = Typography.body
         label.isSelectable = false
 
         spinner.style = .spinning
@@ -182,7 +182,7 @@ final class MacOSInstallProgressViewController: NSViewController {
         let row = NSStackView(views: [circle, label, spacer, spinner, check])
         row.orientation = .horizontal
         row.alignment = .centerY
-        row.spacing = 10
+        row.spacing = Spacing.relaxed
         return row
     }
 
@@ -227,7 +227,7 @@ final class MacOSInstallProgressViewController: NSViewController {
             circle.image = .systemSymbol("checkmark.circle.fill", accessibilityDescription: "Completed")
             circle.contentTintColor = .controlAccentColor
             label.textColor = .labelColor
-            label.font = .preferredFont(forTextStyle: .body)
+            label.font = Typography.body
             spinner.stopAnimation(nil)
             spinner.isHidden = true
             check.isHidden = false
@@ -244,7 +244,7 @@ final class MacOSInstallProgressViewController: NSViewController {
             circle.image = .systemSymbol("\(number).circle", accessibilityDescription: "")
             circle.contentTintColor = .secondaryLabelColor
             label.textColor = .secondaryLabelColor
-            label.font = .preferredFont(forTextStyle: .body)
+            label.font = Typography.body
             spinner.stopAnimation(nil)
             spinner.isHidden = true
             check.isHidden = true

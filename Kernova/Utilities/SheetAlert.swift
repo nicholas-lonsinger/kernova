@@ -37,8 +37,7 @@ struct AlertButton {
 
 /// Declarative description of a sheet alert.
 ///
-/// Passed to ``presentSheetAlert(_:in:completion:)`` (or the SwiftUI
-/// `.sheetAlert(...)` modifier). Buttons appear in `NSAlert` in the order
+/// Passed to ``presentSheetAlert(_:in:completion:)``. Buttons appear in `NSAlert` in the order
 /// listed; the first button added is the AppKit "default" by convention,
 /// but ``presentSheetAlert(_:in:completion:)`` overrides the default
 /// key-equivalent based on roles so the user's chosen `.default` (or none
@@ -59,12 +58,9 @@ struct AlertConfiguration {
 ///
 /// - Parameters:
 ///   - config: Title, message, and buttons.
-///   - window: The window the sheet attaches to. Typically the host view's
-///     own `view.window`, captured via the
-///     `.sheetAlert(...)` SwiftUI modifier's `WindowAccessor`.
+///   - window: The window the sheet attaches to — typically the presenting
+///     view controller's own `view.window`.
 ///   - completion: Fired after the user's chosen button action has run.
-///     The bridge modifier uses this to reset the SwiftUI `isPresented`
-///     binding.
 @MainActor
 func presentSheetAlert(
     _ config: AlertConfiguration,

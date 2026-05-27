@@ -1,17 +1,15 @@
 import AppKit
 
-/// AppKit counterpart of the SwiftUI `attachmentSubtitle` helper.
+/// Single-line, middle-truncating caption `NSTextField` for an attachment's
+/// path/stats subtitle.
 ///
-/// Produces a single-line, middle-truncating `NSTextField` styled as a
-/// caption. When `isMissing` is `true` the field is colored red and
-/// prefixed with a bold "Missing — " so the broken state is obvious
-/// without relying on a hover tooltip. Otherwise the field renders the
-/// path in secondary label color.
+/// When `isMissing` is `true` the field is colored red and prefixed with a
+/// bold "Missing — " so the broken state is obvious without relying on a hover
+/// tooltip. Otherwise it renders the path in secondary label color.
 ///
-/// Used by the AppKit Boot Order sheet
-/// (``StorageDiskReorderSheetContentViewController``) so its rows match
-/// the SwiftUI `attachmentSubtitle` rendering used by
-/// `VMSettingsView`.
+/// Used by the settings pane (``VMSettingsViewController``) and the Boot Order
+/// sheet (``StorageDiskReorderSheetContentViewController``) so their attachment
+/// rows render identically.
 ///
 /// - Parameters:
 ///   - path: Absolute file path of the backing attachment.
@@ -28,7 +26,16 @@ func makeAttachmentSubtitleLabel(path: String, isMissing: Bool) -> NSTextField {
     field.translatesAutoresizingMaskIntoConstraints = false
     field.setContentHuggingPriority(.defaultLow, for: .horizontal)
     field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    applyAttachmentSubtitle(to: field, path: path, isMissing: isMissing)
+    return field
+}
 
+/// Updates an existing subtitle field's content in place.
+///
+/// Applies the missing-state red "Missing — " prefix, or the normal secondary
+/// path, so a reused table cell can refresh without recreating the label.
+@MainActor
+func applyAttachmentSubtitle(to field: NSTextField, path: String, isMissing: Bool) {
     if isMissing {
         let attributed = NSMutableAttributedString(
             string: "Missing — ",
@@ -52,7 +59,6 @@ func makeAttachmentSubtitleLabel(path: String, isMissing: Bool) -> NSTextField {
         field.stringValue = path
         field.textColor = .secondaryLabelColor
     }
-    return field
 }
 
 extension NSFont {

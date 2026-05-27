@@ -42,7 +42,7 @@ final class ResourceConfigContentViewController: NSViewController {
         let stack = NSStackView(views: [title, subtitle, form])
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 8
+        stack.spacing = Spacing.standard
         stack.setCustomSpacing(20, after: subtitle)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
@@ -67,7 +67,7 @@ final class ResourceConfigContentViewController: NSViewController {
         let form = NSStackView()
         form.orientation = .vertical
         form.alignment = .leading
-        form.spacing = 8
+        form.spacing = Spacing.standard
         form.translatesAutoresizingMaskIntoConstraints = false
 
         addCard([makeGroupedFormCardRow("Name", control: nameField, fillsControl: true)], to: form)
@@ -119,7 +119,7 @@ final class ResourceConfigContentViewController: NSViewController {
         -> NSStackView
     {
         let unitLabel = NSTextField(labelWithString: unit)
-        unitLabel.font = .preferredFont(forTextStyle: .body)
+        unitLabel.font = Typography.body
         unitLabel.textColor = .secondaryLabelColor
         unitLabel.isSelectable = false
         unitLabel.widthAnchor.constraint(equalToConstant: 22).isActive = true
@@ -127,7 +127,7 @@ final class ResourceConfigContentViewController: NSViewController {
         let control = NSStackView(views: [field, stepper, unitLabel])
         control.orientation = .horizontal
         control.alignment = .centerY
-        control.spacing = 4
+        control.spacing = Spacing.tight
         return control
     }
 

@@ -29,28 +29,24 @@ final class VMLibraryViewModel {
             }
         }
     }
-    var showCreationWizard = false
-    var showDeleteConfirmation = false
-    /// Drives the richer delete sheet for VMs with external attachments.
-    ///
-    /// Appears in place of `showDeleteConfirmation`'s alert when the
-    /// VM-to-delete references external files (storage disks or removable
-    /// media) that the user may also want to send to Trash. Mutually
-    /// exclusive with `showDeleteConfirmation`; `confirmDelete(_:)` picks
-    /// exactly one.
-    var showDeleteSheet = false
 
-    var showError = false
-    var errorMessage: String?
-
-    /// Drives the post-mount instructions alert.
+    /// Presentation delegate for alerts, sheets, and the creation wizard.
     ///
-    /// Set after a successful
-    /// `mountGuestAgentInstaller(on:)` so the user gets unified guidance no
-    /// matter which entry point (sidebar popover, clipboard window button, or
-    /// menubar item) triggered the mount.
-    var showInstallerMountedAlert = false
-    var installerMountedVMName: String?
+    /// Set by `DetailContainerViewController`. The view model calls these
+    /// methods imperatively instead of toggling observed `show*` flags. Errors
+    /// raised before a presenter is attached (e.g. the initial `loadVMs()` in
+    /// `init`) are buffered and flushed when one is set.
+    @ObservationIgnored weak var presenter: (any VMLibraryPresenting)? {
+        didSet {
+            guard presenter != nil, !bufferedErrorMessages.isEmpty else { return }
+            let buffered = bufferedErrorMessages
+            bufferedErrorMessages.removeAll()
+            buffered.forEach { presenter?.presentError($0) }
+        }
+    }
+
+    /// Error messages raised while `presenter` was nil, flushed when it is set.
+    @ObservationIgnored private var bufferedErrorMessages: [String] = []
 
     /// VMs with an in-flight removable-media reconciliation Task.
     ///
@@ -67,14 +63,7 @@ final class VMLibraryViewModel {
     /// time `applyLivePolicy` sees a list change on a running/paused VM
     /// and drained by `runRemovableMediaReconciliation` until empty.
     private var pendingRemovableMediaTarget: [UUID: [RemovableMediaItem]] = [:]
-    var instanceToDelete: VMInstance?
     var activeRename: RenameTarget?
-    var showCancelPreparingConfirmation = false
-    var preparingInstanceToCancel: VMInstance?
-    var showForceStopConfirmation = false
-    var instanceToForceStop: VMInstance?
-    var showStopPausedConfirmation = false
-    var instanceToStopPaused: VMInstance?
 
     /// `true` when any instance is mid-clone or mid-import.
     var hasPreparing: Bool { instances.contains(where: \.isPreparing) }
@@ -206,12 +195,11 @@ final class VMLibraryViewModel {
     /// Creates a VM bundle and disk image from a wizard model, optionally
     /// auto-starting it.
     ///
-    /// Returns `true` on success and `false` if bundle/disk creation failed. On
-    /// failure the error is also surfaced via `presentError` (so non-wizard
-    /// callers get the standard alert); the wizard host inspects the return value
-    /// to keep its sheet open for a retry instead.
+    /// Returns `.success` on success, or `.failure(error)` if bundle/disk
+    /// creation failed. The error is returned (not presented) so the wizard host
+    /// can show it on the wizard's own sheet and keep it open for a retry.
     @discardableResult
-    func createVM(from wizard: VMCreationViewModel) async -> Bool {
+    func createVM(from wizard: VMCreationViewModel) async -> Result<Void, Error> {
         do {
             var config = wizard.buildConfiguration()
 
@@ -256,11 +244,10 @@ final class VMLibraryViewModel {
                 )
                 await start(instance)
             }
-            return true
+            return .success(())
         } catch {
             Self.logger.error("Failed to create VM: \(error.localizedDescription, privacy: .public)")
-            presentError(error)
-            return false
+            return .failure(error)
         }
     }
 
@@ -384,8 +371,7 @@ final class VMLibraryViewModel {
         // VZ rejects requestStop() on paused VMs ("Invalid virtual machine state").
         // Surface a confirmation sheet offering resume-and-shutdown or force-stop instead.
         if instance.status == .paused && !instance.isColdPaused {
-            instanceToStopPaused = instance
-            showStopPausedConfirmation = true
+            presenter?.presentStopPaused(for: instance)
             return
         }
         do {
@@ -417,16 +403,12 @@ final class VMLibraryViewModel {
             )
             presentError(error)
         }
-        instanceToStopPaused = nil
-        showStopPausedConfirmation = false
     }
 
     /// Force-stops a paused VM via the stop-paused confirmation sheet's "Force Stop" action.
     /// Wrapper around `forceStop` that clears the alert state, matching `deleteConfirmed`'s pattern.
     func forceStopFromPaused(_ instance: VMInstance) async {
         await forceStop(instance)
-        instanceToStopPaused = nil
-        showStopPausedConfirmation = false
     }
 
     func forceStop(_ instance: VMInstance) async {
@@ -444,8 +426,7 @@ final class VMLibraryViewModel {
     // MARK: - Force Stop Confirmation
 
     func confirmForceStop(_ instance: VMInstance) {
-        instanceToForceStop = instance
-        showForceStopConfirmation = true
+        presenter?.presentForceStop(for: instance)
     }
 
     func forceStopConfirmed(_ instance: VMInstance) async {
@@ -504,11 +485,10 @@ final class VMLibraryViewModel {
     /// or removable media (so the user can opt to trash those files too);
     /// falls back to the simple alert otherwise.
     func confirmDelete(_ instance: VMInstance) {
-        instanceToDelete = instance
         if externalAttachments(for: instance).isEmpty {
-            showDeleteConfirmation = true
+            presenter?.presentDeleteConfirmation(for: instance)
         } else {
-            showDeleteSheet = true
+            presenter?.presentDeleteSheet(for: instance)
         }
     }
 
@@ -550,9 +530,6 @@ final class VMLibraryViewModel {
             )
             presentError(error)
         }
-        instanceToDelete = nil
-        showDeleteConfirmation = false
-        showDeleteSheet = false
         return tasks
     }
 
@@ -662,9 +639,7 @@ final class VMLibraryViewModel {
                     "Failed to trash external attachment '\(label, privacy: .public)' (\(url.lastPathComponent, privacy: .public)) on deleted VM '\(vmName, privacy: .public)': \(message, privacy: .public)"
                 )
                 await MainActor.run { [weak self] in
-                    guard let self else { return }
-                    self.errorMessage = message
-                    self.showError = true
+                    self?.surfaceError(message)
                 }
             }
         }
@@ -1085,10 +1060,10 @@ final class VMLibraryViewModel {
     /// clipboard window's "Install Guest Agent…" affordance, the sidebar's
     /// agent-status popover, and the menubar item.
     ///
-    /// On successful mount, sets `installerMountedVMName` to drive an
-    /// SwiftUI `.alert()` that explains the next step (open the disk in the
-    /// guest's Finder, run install.command). The alert unifies the
-    /// post-click experience across all three entry points.
+    /// On mount (or when the disk is already mounted), asks the presenter to
+    /// show an alert explaining the next step (open the disk in the guest's
+    /// Finder, run install.command). The alert unifies the post-click
+    /// experience across all three entry points.
     ///
     /// No-op if the bundled DMG is already present in this VM's
     /// `removableMedia` list — duplicate mounts don't help the user.
@@ -1105,8 +1080,7 @@ final class VMLibraryViewModel {
             // Still surface the instructions — the user just clicked an
             // install/update affordance and is owed feedback even if the
             // disk happens to already be mounted from a prior click.
-            installerMountedVMName = instance.name
-            showInstallerMountedAlert = true
+            presenter?.presentInstallerMounted(vmName: instance.name)
             return
         }
         Self.logger.notice("Mounting guest agent installer on '\(instance.name, privacy: .public)'")
@@ -1120,8 +1094,7 @@ final class VMLibraryViewModel {
                     )
                 ]
         }
-        installerMountedVMName = instance.name
-        showInstallerMountedAlert = true
+        presenter?.presentInstallerMounted(vmName: instance.name)
     }
 
     /// Marks this VM's `.waiting` install nudge as dismissed and persists the choice.
@@ -1200,9 +1173,7 @@ final class VMLibraryViewModel {
                     "Failed to trash disk '\(label, privacy: .public)' (\(diskURL.lastPathComponent, privacy: .public)): \(message, privacy: .public)"
                 )
                 await MainActor.run { [weak self] in
-                    guard let self else { return }
-                    self.errorMessage = message
-                    self.showError = true
+                    self?.surfaceError(message)
                 }
             }
         }
@@ -1225,8 +1196,8 @@ final class VMLibraryViewModel {
     /// file open, so we don't need to wait for the detach to complete.
     ///
     /// The trash runs in `Task.detached` (see `removeStorageDisk` for the
-    /// reasoning). The returned Task lets tests await completion; the
-    /// SwiftUI caller uses `@discardableResult` and ignores it.
+    /// reasoning). The returned Task lets tests await completion;
+    /// `@discardableResult` lets the UI callers ignore it.
     @discardableResult
     func removeRemovableMedia(
         _ item: RemovableMediaItem, from instance: VMInstance, trashFile: Bool
@@ -1257,9 +1228,7 @@ final class VMLibraryViewModel {
                     "Failed to trash removable media '\(label, privacy: .public)' (\(url.lastPathComponent, privacy: .public)): \(message, privacy: .public)"
                 )
                 await MainActor.run { [weak self] in
-                    guard let self else { return }
-                    self.errorMessage = message
-                    self.showError = true
+                    self?.surfaceError(message)
                 }
             }
         }
@@ -1741,8 +1710,7 @@ final class VMLibraryViewModel {
     // MARK: - Cancel Preparing
 
     func confirmCancelPreparing(_ instance: VMInstance) {
-        preparingInstanceToCancel = instance
-        showCancelPreparingConfirmation = true
+        presenter?.presentCancelPreparing(for: instance)
     }
 
     func cancelPreparingConfirmed(_ instance: VMInstance) {
@@ -1750,9 +1718,6 @@ final class VMLibraryViewModel {
 
         instance.preparingState?.task.cancel()
         cleanupPhantomInstance(instance)
-
-        preparingInstanceToCancel = nil
-        showCancelPreparingConfirmation = false
 
         Self.logger.notice("Cancelled \(operationLabel, privacy: .public) for '\(instance.name, privacy: .public)'")
     }
@@ -1772,7 +1737,7 @@ final class VMLibraryViewModel {
 
     /// Moves VMs in the sidebar list and persists the new order.
     ///
-    /// Called by SwiftUI's onMove handler.
+    /// Called by the sidebar outline view's drag-drop `acceptDrop`.
     func moveVM(fromOffsets source: IndexSet, toOffset destination: Int) {
         instances.move(fromOffsets: source, toOffset: destination)
         persistOrder()
@@ -1864,7 +1829,16 @@ final class VMLibraryViewModel {
     }
 
     func presentError(_ error: Error) {
-        errorMessage = error.localizedDescription
-        showError = true
+        surfaceError(error.localizedDescription)
+    }
+
+    /// Routes an error message to the presenter, buffering it if none is
+    /// attached yet (e.g. during the initial `loadVMs()` in `init`).
+    private func surfaceError(_ message: String) {
+        if let presenter {
+            presenter.presentError(message)
+        } else {
+            bufferedErrorMessages.append(message)
+        }
     }
 }

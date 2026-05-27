@@ -173,12 +173,12 @@ final class SidebarAgentStatusButtonView: NSView,
 
     static func symbolColor(for status: AgentStatus) -> NSColor {
         switch status {
-        case .waiting: .secondaryLabelColor
-        case .outdated: .systemOrange
-        case .connecting: .secondaryLabelColor
-        case .current: .systemGreen
-        case .unresponsive: .systemOrange
-        case .expectedMissing: .systemOrange
+        case .waiting: StatusColor.inactive
+        case .outdated: StatusColor.warning
+        case .connecting: StatusColor.inactive
+        case .current: StatusColor.running
+        case .unresponsive: StatusColor.warning
+        case .expectedMissing: StatusColor.warning
         }
     }
 

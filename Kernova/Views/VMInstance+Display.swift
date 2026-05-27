@@ -13,15 +13,15 @@ extension VMInstance {
     /// Preparing and cold-paused are orange, live-paused is yellow, and the
     /// remaining states follow `status`.
     var statusDisplayNSColor: NSColor {
-        if isPreparing || isColdPaused { return .systemOrange }
+        if isPreparing || isColdPaused { return StatusColor.warning }
         switch status {
         // A concrete gray (not `.secondaryLabelColor`) so the icon keeps its
         // stopped color on the selection highlight instead of inverting to white.
         case .stopped: return .systemGray
-        case .starting, .saving, .restoring, .installing, .initialBoot: return .systemOrange
-        case .running: return .systemGreen
-        case .paused: return .systemYellow
-        case .error: return .systemRed
+        case .starting, .saving, .restoring, .installing, .initialBoot: return StatusColor.warning
+        case .running: return StatusColor.running
+        case .paused: return StatusColor.pausedInMemory
+        case .error: return StatusColor.error
         }
     }
 

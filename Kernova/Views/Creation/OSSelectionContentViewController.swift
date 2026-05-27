@@ -50,12 +50,12 @@ final class OSSelectionContentViewController: NSViewController {
         let options = NSStackView(views: VMGuestOS.allCases.map(makeOSOption))
         options.orientation = .vertical
         options.alignment = .leading
-        options.spacing = 16
+        options.spacing = Spacing.large
 
         let stack = NSStackView(views: [heading, subtitle, options])
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 8
+        stack.spacing = Spacing.standard
         stack.setCustomSpacing(20, after: subtitle)
         stack.translatesAutoresizingMaskIntoConstraints = false
 

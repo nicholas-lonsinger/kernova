@@ -3,9 +3,9 @@ import AppKit
 /// Delegate for ``StorageDiskReorderSheetContentViewController``.
 ///
 /// The view controller is intentionally decoupled from
-/// `VMLibraryViewModel`; the host (the SwiftUI bridge modifier)
-/// implements these methods and forwards the user's choice to the
-/// view model.
+/// `VMLibraryViewModel`; the host (the presenting view controller, e.g.
+/// `VMSettingsViewController`) implements these methods and forwards the
+/// user's choice to the view model.
 @MainActor
 protocol StorageDiskReorderSheetContentViewControllerDelegate: AnyObject {
     /// Invoked after a successful drag-reorder.
@@ -171,7 +171,7 @@ final class StorageDiskReorderSheetContentViewController: NSViewController {
         let stack = NSStackView(views: [title, info, spacer])
         stack.orientation = .horizontal
         stack.alignment = .centerY
-        stack.spacing = 6
+        stack.spacing = Spacing.small
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         container.addSubview(stack)
@@ -244,7 +244,7 @@ final class StorageDiskReorderSheetContentViewController: NSViewController {
 
         let stack = NSStackView(views: [spacer, done])
         stack.orientation = .horizontal
-        stack.spacing = 8
+        stack.spacing = Spacing.standard
         stack.alignment = .centerY
         stack.translatesAutoresizingMaskIntoConstraints = false
 
@@ -408,36 +408,32 @@ extension StorageDiskReorderSheetContentViewController: NSTableViewDelegate {
 final class StorageDiskReorderRowCellView: NSTableCellView {
     private let iconButton = AttachmentIconButton()
     private let titleLabel = NSTextField(labelWithString: "")
-    private let subtitleStack = NSStackView()
+    private let subtitleLabel: NSTextField
 
     init() {
+        subtitleLabel = makeAttachmentSubtitleLabel(path: "", isMissing: false)
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
 
         iconButton.translatesAutoresizingMaskIntoConstraints = false
 
-        titleLabel.font = .preferredFont(forTextStyle: .body)
+        titleLabel.font = Typography.body
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.maximumNumberOfLines = 1
         titleLabel.isSelectable = false
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        subtitleStack.orientation = .vertical
-        subtitleStack.alignment = .leading
-        subtitleStack.spacing = 0
-        subtitleStack.translatesAutoresizingMaskIntoConstraints = false
-
-        let textStack = NSStackView(views: [titleLabel, subtitleStack])
+        let textStack = NSStackView(views: [titleLabel, subtitleLabel])
         textStack.orientation = .vertical
         textStack.alignment = .leading
-        textStack.spacing = 2
+        textStack.spacing = Spacing.hairline
         textStack.translatesAutoresizingMaskIntoConstraints = false
 
         let row = NSStackView(views: [iconButton, textStack])
         row.orientation = .horizontal
         row.alignment = .centerY
-        row.spacing = 12
+        row.spacing = Spacing.medium
         row.translatesAutoresizingMaskIntoConstraints = false
 
         addSubview(row)
@@ -457,24 +453,19 @@ final class StorageDiskReorderRowCellView: NSTableCellView {
 
     /// Apply the disk's icon + label + subtitle to the cell.
     ///
-    /// Rebuilds the subtitle field on every call so the missing-file
+    /// Updates the icon, label, and subtitle in place so the missing-file
     /// color/weight updates as the live ``AttachmentFileMonitor`` flips
-    /// a path's `exists` state.
+    /// a path's `exists` state — without tearing down the reused cell's views.
     func configure(disk: StorageDisk, instance: VMInstance, isMissing: Bool) {
         iconButton.configure(
             systemName: diskIconSystemName(for: disk),
             missingPath: isMissing ? disk.path : nil
         )
         titleLabel.stringValue = disk.label
-
-        subtitleStack.arrangedSubviews.forEach {
-            subtitleStack.removeArrangedSubview($0)
-            $0.removeFromSuperview()
-        }
-        let subtitle = makeAttachmentSubtitleLabel(
+        applyAttachmentSubtitle(
+            to: subtitleLabel,
             path: diskSubtitle(for: disk, in: instance),
             isMissing: isMissing
         )
-        subtitleStack.addArrangedSubview(subtitle)
     }
 }

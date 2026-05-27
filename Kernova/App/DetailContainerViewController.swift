@@ -25,7 +25,7 @@ final class DetailContainerViewController: NSViewController {
 
     private let contentContainer = NSView()
     private lazy var emptyStateView = DetailEmptyStateView { [weak self] in
-        self?.viewModel.showCreationWizard = true
+        self?.presentCreationWizard()
     }
     private var routerVC: VMDetailRouterViewController?
     private var currentContentView: NSView?
@@ -36,7 +36,9 @@ final class DetailContainerViewController: NSViewController {
 
     /// Drives the AppKit creation-wizard sheet.
     private let wizardPresenter = SheetPresenter()
-    private var wizardObservation: ObservationLoop?
+    /// Set when a wizard presentation is requested before the window exists;
+    /// `viewDidAppear` honors it once the window is available.
+    private var pendingWizard = false
 
     private static let logger = Logger(subsystem: "com.kernova.app", category: "DetailContainerVC")
 
@@ -46,6 +48,7 @@ final class DetailContainerViewController: NSViewController {
         self.viewModel = viewModel
         self.alertsPresenter = DetailAlertsPresenter(viewModel: viewModel)
         super.init(nibName: nil, bundle: nil)
+        viewModel.presenter = self
     }
 
     required init?(coder: NSCoder) {
@@ -78,18 +81,14 @@ final class DetailContainerViewController: NSViewController {
         updateContent()
         updateDisplayState()
         if stateObservation == nil { observeState() }
-        if wizardObservation == nil { observeWizardPresentation() }
         if let window = view.window { alertsPresenter.start(window: window) }
-        // Handle the case where the flag was set before the window existed.
-        syncWizardPresentation()
+        if pendingWizard { presentCreationWizard() }
     }
 
     override func viewWillDisappear() {
         super.viewWillDisappear()
         stateObservation?.cancel()
         stateObservation = nil
-        wizardObservation?.cancel()
-        wizardObservation = nil
         alertsPresenter.stop()
         if wizardPresenter.isShown { wizardPresenter.close() }
         for id in Array(backingViews.keys) {
@@ -194,38 +193,6 @@ final class DetailContainerViewController: NSViewController {
         )
     }
 
-    // MARK: - Creation Wizard Presentation
-
-    private func observeWizardPresentation() {
-        wizardObservation = observeRecurring(
-            track: { [weak self] in
-                _ = self?.viewModel.showCreationWizard
-            },
-            apply: { [weak self] in
-                self?.syncWizardPresentation()
-            }
-        )
-    }
-
-    private func syncWizardPresentation() {
-        if viewModel.showCreationWizard {
-            guard !wizardPresenter.isShown, let window = view.window else { return }
-            let creationVM = VMCreationViewModel()
-            let wizard = VMCreationWizardViewController(creationVM: creationVM)
-            wizard.delegate = self
-            wizardPresenter.onClose = { [weak self] in
-                // Resetting the flag re-fires the observation; the `isShown`
-                // guard above makes the resulting `syncWizardPresentation()` a
-                // no-op (the sheet is already gone).
-                self?.viewModel.showCreationWizard = false
-            }
-            wizardPresenter.show(content: wizard, in: window)
-            Self.logger.notice("Presented creation wizard")
-        } else if wizardPresenter.isShown {
-            wizardPresenter.close()
-        }
-    }
-
     private func updateDisplayState() {
         // Evict backing views for VMs no longer running inline
         let activeInlineIDs = Set(
@@ -288,24 +255,65 @@ extension DetailContainerViewController: VMCreationWizardViewControllerDelegate 
         _ vc: VMCreationWizardViewController,
         creationVM: VMCreationViewModel
     ) {
-        // Keep the sheet up until creation completes. On success, dismiss it. On
-        // failure, take over the error that `createVM` surfaced via
-        // `showError`/`errorMessage` and re-present it on the wizard's own window:
-        // the alerts presenter lives on this same main window, so letting it
-        // fire would race the still-open AppKit wizard sheet (two sheets on one
-        // window). Keeping the wizard up also lets the user retry without
-        // re-entering everything.
+        // Keep the sheet up until creation completes. On success, dismiss it; on
+        // failure, present the error on the wizard's own window and keep it open
+        // for a retry. `createVM` returns the error rather than presenting it, so
+        // the global alerts presenter on this same window can't race the
+        // still-open wizard sheet.
         Task { [weak self] in
             guard let self else { return }
-            let succeeded = await self.viewModel.createVM(from: creationVM)
-            if succeeded {
+            switch await self.viewModel.createVM(from: creationVM) {
+            case .success:
                 self.wizardPresenter.close()
-            } else {
-                let message = self.viewModel.errorMessage
-                self.viewModel.showError = false
-                self.viewModel.errorMessage = nil
-                vc.presentCreationFailure(message: message)
+            case .failure(let error):
+                vc.presentCreationFailure(message: error.localizedDescription)
             }
         }
+    }
+}
+
+// MARK: - VMLibraryPresenting
+
+extension DetailContainerViewController: VMLibraryPresenting {
+    func presentError(_ message: String) {
+        alertsPresenter.presentError(message)
+    }
+
+    func presentDeleteConfirmation(for instance: VMInstance) {
+        alertsPresenter.presentDeleteConfirmation(for: instance)
+    }
+
+    func presentDeleteSheet(for instance: VMInstance) {
+        alertsPresenter.presentDeleteSheet(for: instance)
+    }
+
+    func presentForceStop(for instance: VMInstance) {
+        alertsPresenter.presentForceStop(for: instance)
+    }
+
+    func presentStopPaused(for instance: VMInstance) {
+        alertsPresenter.presentStopPaused(for: instance)
+    }
+
+    func presentCancelPreparing(for instance: VMInstance) {
+        alertsPresenter.presentCancelPreparing(for: instance)
+    }
+
+    func presentInstallerMounted(vmName: String) {
+        alertsPresenter.presentInstallerMounted(vmName: vmName)
+    }
+
+    func presentCreationWizard() {
+        guard !wizardPresenter.isShown else { return }
+        guard let window = view.window else {
+            pendingWizard = true
+            return
+        }
+        pendingWizard = false
+        let creationVM = VMCreationViewModel()
+        let wizard = VMCreationWizardViewController(creationVM: creationVM)
+        wizard.delegate = self
+        wizardPresenter.show(content: wizard, in: window)
+        Self.logger.notice("Presented creation wizard")
     }
 }

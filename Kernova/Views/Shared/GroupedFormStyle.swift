@@ -119,7 +119,7 @@ func makeGroupedFormCardRow(
     fillsControl: Bool = false
 ) -> NSView {
     let label = NSTextField(labelWithString: labelText)
-    label.font = .preferredFont(forTextStyle: .body)
+    label.font = Typography.body
     label.isSelectable = false
     label.setContentHuggingPriority(.defaultHigh, for: .horizontal)
     label.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -139,7 +139,7 @@ func makeGroupedFormCardRow(
     let row = NSStackView(views: views)
     row.orientation = .horizontal
     row.alignment = alignment
-    row.spacing = 8
+    row.spacing = Spacing.standard
     return row
 }
 
@@ -150,7 +150,7 @@ func makeGroupedFormCard(rows: [NSView]) -> NSView {
     let content = NSStackView()
     content.orientation = .vertical
     content.alignment = .leading
-    content.spacing = 10
+    content.spacing = Spacing.relaxed
     content.translatesAutoresizingMaskIntoConstraints = false
 
     for (index, row) in rows.enumerated() {
@@ -188,7 +188,7 @@ func makeGroupedFormCard(rows: [NSView]) -> NSView {
 @MainActor
 func makeGroupedFormValueLabel(_ text: String) -> NSTextField {
     let label = NSTextField(labelWithString: text)
-    label.font = .preferredFont(forTextStyle: .body)
+    label.font = Typography.body
     label.textColor = .secondaryLabelColor
     label.lineBreakMode = .byTruncatingMiddle
     label.isSelectable = false
@@ -292,7 +292,7 @@ func makeGroupedFormBanner(
     let row = NSStackView(views: views)
     row.orientation = .horizontal
     row.alignment = .centerY
-    row.spacing = 8
+    row.spacing = Spacing.standard
 
     return makeGroupedFormBox(
         content: row,
