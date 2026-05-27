@@ -438,6 +438,7 @@ extension VMSettingsViewController {
         nameDisplayRow = makeGroupedFormCardRow("Name", control: nameButton)
 
         nameField.placeholderString = "Name"
+        nameField.alignment = .right
         nameField.delegate = self
         nameEditRow = makeGroupedFormCardRow("Name", control: nameField, fillsControl: true)
         nameEditRow.isHidden = true
