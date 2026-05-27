@@ -419,7 +419,9 @@ extension VMSettingsViewController {
         let inset = GroupedFormStyle.contentSideInset
         NSLayoutConstraint.activate([
             banner.topAnchor.constraint(equalTo: container.topAnchor, constant: inset),
-            banner.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            // Buffer below the banner so it doesn't crowd the first section title;
+            // matches the inter-section rhythm of the form below.
+            banner.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -Spacing.section),
             banner.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: inset),
             banner.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -inset),
         ])
