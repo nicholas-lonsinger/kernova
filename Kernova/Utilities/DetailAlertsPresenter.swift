@@ -1,23 +1,29 @@
 import AppKit
 
 /// Presents the detail pane's lifecycle confirmation alerts and the delete
-/// sheet, driven by the view model's flags.
+/// sheet on behalf of `DetailContainerViewController`.
 ///
 /// AppKit replacement for the SwiftUI `LifecycleAlerts` modifier (on the former
 /// `VMDetailView`) plus the error / installer-mounted alerts that lived on
-/// `MainDetailView`. Because these were hosted on the always-present SwiftUI
-/// layer so they survived while the VM display was showing, the AppKit home is
-/// here — owned by `DetailContainerViewController`, which is always present and
-/// owns the window. One `ObservationLoop` watches the flags; each `false→true`
-/// transition presents the matching alert (or the rich delete sheet) and resets
-/// the flag on dismissal.
+/// `MainDetailView`. These are owned by `DetailContainerViewController` — which
+/// is always present and owns the window — so they survive while the VM display
+/// is showing.
+///
+/// Presentation is imperative: the container forwards each request here. One
+/// alert/sheet shows at a time; requests that arrive while one is up (or before
+/// the window exists) are queued and run in order.
 @MainActor
 final class DetailAlertsPresenter: NSObject {
     private let viewModel: VMLibraryViewModel
     private weak var window: NSWindow?
     private let deleteSheetPresenter = SheetPresenter()
-    private var observation: ObservationLoop?
     private var isShowingAlert = false
+    /// The VM the delete sheet is currently presenting for, read by the sheet
+    /// delegate on confirm.
+    private var deleteSheetInstance: VMInstance?
+    /// Presentation requests deferred because the presenter was busy (an alert
+    /// or sheet was up) or had no window yet; drained in order once free.
+    private var pending: [(DetailAlertsPresenter) -> Void] = []
 
     init(viewModel: VMLibraryViewModel) {
         self.viewModel = viewModel
@@ -26,95 +32,77 @@ final class DetailAlertsPresenter: NSObject {
 
     func start(window: NSWindow) {
         self.window = window
-        guard observation == nil else { return }
-        observation = observeRecurring(
-            track: { [weak self] in
-                guard let self else { return }
-                _ = self.viewModel.showDeleteConfirmation
-                _ = self.viewModel.showDeleteSheet
-                _ = self.viewModel.showCancelPreparingConfirmation
-                _ = self.viewModel.showForceStopConfirmation
-                _ = self.viewModel.showStopPausedConfirmation
-                _ = self.viewModel.showError
-                _ = self.viewModel.showInstallerMountedAlert
-            },
-            apply: { [weak self] in self?.apply() }
-        )
-        apply()
+        runNext()
     }
 
     func stop() {
-        observation?.cancel()
-        observation = nil
         if deleteSheetPresenter.isShown { deleteSheetPresenter.close() }
+        pending.removeAll()
     }
 
-    // MARK: - Presentation
+    // MARK: - Imperative presentation
 
-    private func apply() {
-        guard let window, !isShowingAlert, !deleteSheetPresenter.isShown else { return }
-
-        if viewModel.showDeleteSheet, let vm = viewModel.instanceToDelete {
-            presentDeleteSheet(vm: vm, window: window)
-            return
-        }
-        if viewModel.showDeleteConfirmation, let vm = viewModel.instanceToDelete {
-            present(deleteConfirmationConfig(vm)) { [weak self] in
-                self?.viewModel.showDeleteConfirmation = false
-            }
-            return
-        }
-        if viewModel.showCancelPreparingConfirmation, let instance = viewModel.preparingInstanceToCancel {
-            present(cancelPreparingConfig(instance)) { [weak self] in
-                self?.viewModel.showCancelPreparingConfirmation = false
-            }
-            return
-        }
-        if viewModel.showForceStopConfirmation, let vm = viewModel.instanceToForceStop {
-            present(forceStopConfig(vm)) { [weak self] in
-                self?.viewModel.showForceStopConfirmation = false
-            }
-            return
-        }
-        if viewModel.showStopPausedConfirmation, let vm = viewModel.instanceToStopPaused {
-            present(stopPausedConfig(vm)) { [weak self] in
-                self?.viewModel.showStopPausedConfirmation = false
-            }
-            return
-        }
-        if viewModel.showError, let message = viewModel.errorMessage {
-            present(errorConfig(message)) { [weak self] in
-                self?.viewModel.showError = false
-            }
-            return
-        }
-        if viewModel.showInstallerMountedAlert, let name = viewModel.installerMountedVMName {
-            present(installerMountedConfig(name)) { [weak self] in
-                self?.viewModel.showInstallerMountedAlert = false
-            }
-            return
-        }
+    func presentError(_ message: String) {
+        enqueue { $0.present($0.errorConfig(message)) }
     }
 
-    private func present(_ config: AlertConfiguration, reset: @escaping () -> Void) {
+    func presentDeleteConfirmation(for instance: VMInstance) {
+        enqueue { $0.present($0.deleteConfirmationConfig(instance)) }
+    }
+
+    func presentDeleteSheet(for instance: VMInstance) {
+        enqueue { $0.showDeleteSheet(for: instance) }
+    }
+
+    func presentForceStop(for instance: VMInstance) {
+        enqueue { $0.present($0.forceStopConfig(instance)) }
+    }
+
+    func presentStopPaused(for instance: VMInstance) {
+        enqueue { $0.present($0.stopPausedConfig(instance)) }
+    }
+
+    func presentCancelPreparing(for instance: VMInstance) {
+        enqueue { $0.present($0.cancelPreparingConfig(instance)) }
+    }
+
+    func presentInstallerMounted(vmName: String) {
+        enqueue { $0.present($0.installerMountedConfig(vmName)) }
+    }
+
+    // MARK: - Serialization queue
+
+    private func enqueue(_ work: @escaping (DetailAlertsPresenter) -> Void) {
+        pending.append(work)
+        runNext()
+    }
+
+    private func runNext() {
+        guard window != nil, !isShowingAlert, !deleteSheetPresenter.isShown, !pending.isEmpty else {
+            return
+        }
+        let next = pending.removeFirst()
+        next(self)
+    }
+
+    private func present(_ config: AlertConfiguration) {
         guard let window else { return }
         isShowingAlert = true
         presentSheetAlert(config, in: window) { [weak self] in
             self?.isShowingAlert = false
-            reset()
-            // Another flag may have been set meanwhile; re-evaluate.
-            self?.apply()
+            self?.runNext()
         }
     }
 
-    private func presentDeleteSheet(vm: VMInstance, window: NSWindow) {
-        let externals = viewModel.externalAttachments(for: vm)
-        let content = DeleteVMSheetContentViewController(vmName: vm.name, externals: externals)
+    private func showDeleteSheet(for instance: VMInstance) {
+        guard let window else { return }
+        let externals = viewModel.externalAttachments(for: instance)
+        let content = DeleteVMSheetContentViewController(vmName: instance.name, externals: externals)
         content.delegate = self
+        deleteSheetInstance = instance
         deleteSheetPresenter.onClose = { [weak self] in
-            self?.viewModel.showDeleteSheet = false
-            self?.viewModel.instanceToDelete = nil
-            self?.apply()
+            self?.deleteSheetInstance = nil
+            self?.runNext()
         }
         deleteSheetPresenter.show(content: content, in: window)
     }
@@ -210,16 +198,14 @@ final class DetailAlertsPresenter: NSObject {
 
 extension DetailAlertsPresenter: DeleteVMSheetContentViewControllerDelegate {
     func deleteVMSheetDidCancel(_ vc: DeleteVMSheetContentViewController) {
-        viewModel.showDeleteSheet = false
-        viewModel.instanceToDelete = nil
         deleteSheetPresenter.close()
     }
 
     func deleteVMSheet(
         _ vc: DeleteVMSheetContentViewController, didConfirmTrashExternals trashExternals: Bool
     ) {
-        if let vm = viewModel.instanceToDelete {
-            _ = viewModel.deleteConfirmed(vm, trashExternals: trashExternals)
+        if let instance = deleteSheetInstance {
+            _ = viewModel.deleteConfirmed(instance, trashExternals: trashExternals)
         }
         deleteSheetPresenter.close()
     }

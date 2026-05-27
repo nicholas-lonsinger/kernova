@@ -12,7 +12,7 @@ Kernova/
 │   ├── AppDelegate.swift               # NSApplicationDelegate — startup, window tracking, menu, suspend-on-quit
 │   ├── MainWindowController.swift      # NSSplitViewController + NSToolbar with native items
 │   ├── VMDisplayWindowController.swift  # Per-VM display window (pop-out or fullscreen), auto-closes on VM stop
-│   ├── DetailContainerViewController.swift # Layers AppKit VM display over the AppKit detail content (empty-state view ⇆ `VMDetailRouterViewController`); respects per-instance detailPaneMode; owns `DetailAlertsPresenter`; also presents the AppKit creation wizard as a sheet (observes viewModel.showCreationWizard via SheetPresenter)
+│   ├── DetailContainerViewController.swift # Layers AppKit VM display over the AppKit detail content (empty-state view ⇆ `VMDetailRouterViewController`); respects per-instance detailPaneMode; owns `DetailAlertsPresenter`; conforms to `VMLibraryPresenting` (the view model's presentation delegate), forwarding lifecycle alerts to `DetailAlertsPresenter` and presenting the creation-wizard sheet via `SheetPresenter`
 │   ├── VMToolbarManager.swift          # Shared toolbar logic for lifecycle, suspend, display, and settings-toggle items
 │   ├── SerialConsoleWindowController.swift # Per-VM serial console window, auto-closes on VM stop
 │   ├── SerialConsoleContentViewController.swift # Pure AppKit serial terminal + status bar (contains SerialTextView)
@@ -52,7 +52,8 @@ Kernova/
 │       ├── MacOSInstallProviding.swift
 │       └── IPSWProviding.swift
 ├── ViewModels/                         # Observable view models and coordinators
-│   ├── VMLibraryViewModel.swift        # Central view model — owns [VMInstance], delegates to coordinator
+│   ├── VMLibraryViewModel.swift        # Central view model — owns [VMInstance], delegates to coordinator; surfaces alerts/sheets/wizard imperatively via the `VMLibraryPresenting` delegate
+│   ├── VMLibraryPresenting.swift       # Presentation delegate protocol the view model calls (implemented by `DetailContainerViewController`)
 │   ├── VMLifecycleCoordinator.swift    # Owns services, orchestrates multi-step operations (@MainActor)
 │   ├── VMCreationViewModel.swift       # Drives the multi-step VM creation wizard
 │   └── VMDirectoryWatcher.swift        # DispatchSource monitor for external filesystem changes
@@ -71,7 +72,7 @@ Kernova/
 │   │   ├── VMSettingsViewController.swift # VM configuration editor (9 grouped-form sections) in pure AppKit; observation-driven idempotent `apply()`; lockable sections disabled while running with their headers/info still live; writes route through `VMLibraryViewModel.updateConfiguration`; reuses the AppKit popovers/sheets/alerts below. Rebuilds the form on VM switch
 │   │   ├── DetailStatusPlaceholderViewController.swift # Centered spinner + status label for transient states (starting/suspending/restoring) and clone/import preparing
 │   │   ├── InitialBootBannerView.swift # Orange "Initial Boot" banner with install-context-aware subtitle, stacked above the settings form for not-yet-booted macOS VMs
-│   │   ├── DetailEmptyStateView.swift  # Centered "No Virtual Machine Selected" empty state with a New Virtual Machine button (sets `viewModel.showCreationWizard`)
+│   │   ├── DetailEmptyStateView.swift  # Centered "No Virtual Machine Selected" empty state with a New Virtual Machine button (calls the container's `presentCreationWizard()`)
 │   │   ├── MacOSInstallProgressViewController.swift # Two-step (download → install) progress UI in pure AppKit — numbered step circles + connector, linear progress bar, monospaced detail text; observes `instance.installState`; Cancel confirms via `presentSheetAlert`
 │   │   ├── MicPermissionPresentation.swift # Pure helpers (unit-tested): `micPermissionPresentation(_:micEnabled:)` status→warning mapping, `externalAttachmentPaths(for:)`, `isGuestAgentSectionVisible(guestOS:)`
 │   │   ├── DiskSizePopoverCoordinator.swift # Pure-AppKit coordinator owning a `PopoverPresenter`; shows `DiskSizePopoverContentViewController` and forwards the confirmed size to an `onConfirm` closure (the settings VC wires in-bundle disk creation vs. the removable-media save panel). Replaces the former SwiftUI Create* anchors
@@ -106,11 +107,12 @@ Kernova/
 │   ├── DataFormatters.swift            # Human-readable formatting for bytes, CPU counts, etc.
 │   ├── NSImageExtensions.swift         # Nil-safe SF Symbol image loading
 │   ├── NSViewExtensions.swift          # Full-size subview constraint helper
+│   ├── DesignTokens.swift              # Centralized `Spacing` scale, `StatusColor` palette, and shared `Typography` font token
 │   ├── ObservationLoop.swift           # observeRecurring(track:apply:) helper wrapping withObservationTracking
 │   ├── PopoverPresenter.swift          # `NSPopover` lifecycle wrapper — one instance per anchor, refreshes content in place if shown again, fires `onClose` after dismissal
 │   ├── SheetPresenter.swift            # Custom-content sheet lifecycle wrapper — wraps an `NSViewController` in an `NSWindow` and attaches it as a sheet via `parent.beginSheet(_:completionHandler:)`. Use for richer sheets than `NSAlert` can express (e.g. `DeleteVMSheetContentViewController`, `StorageDiskReorderSheetContentViewController`).
 │   ├── SheetAlert.swift                # AppKit `NSAlert` presenter — `AlertConfiguration` (title + message + ordered `[AlertButton]`) + role enum (`.default` / `.cancel` / `.destructive` / `.standard`) maps to key-equivalents and `hasDestructiveAction`. `presentSheetAlert(_:in:completion:)` shows the alert as a window-modal sheet on the supplied `NSWindow`.
-│   └── DetailAlertsPresenter.swift     # Observes the seven detail-pane alert flags on `VMLibraryViewModel` (delete confirmation/sheet, cancel-preparing, force-stop, stop-paused, error, installer-mounted) and presents each via `presentSheetAlert` / `SheetPresenter(DeleteVMSheetContentViewController)`. Owned by `DetailContainerViewController` so alerts survive while the VM display is showing
+│   └── DetailAlertsPresenter.swift     # Imperative presenter for the detail-pane lifecycle alerts + delete sheet (delete confirmation/sheet, cancel-preparing, force-stop, stop-paused, error, installer-mounted). `DetailContainerViewController` forwards `VMLibraryPresenting` calls here; it serializes presentations (one at a time, queueing the rest) and shows each via `presentSheetAlert` / `SheetPresenter(DeleteVMSheetContentViewController)`. Owned by `DetailContainerViewController` so alerts survive while the VM display is showing
 └── Resources/
     ├── Assets.xcassets/                # App icons and image assets
     └── Kernova.entitlements            # com.apple.security.virtualization entitlement
@@ -153,7 +155,7 @@ Tools/
 └── regen-proto.sh                      # Regenerates kernova.pb.swift via protoc + protoc-gen-swift
 
 KernovaTests/
-├── Mocks/                              # Mock service implementations (8 files)
+├── Mocks/                              # Mock service implementations (9 files)
 │   ├── MockVirtualizationService.swift
 │   ├── SuspendingMockVirtualizationService.swift
 │   ├── MockVMStorageService.swift
@@ -161,7 +163,8 @@ KernovaTests/
 │   ├── MockMacOSInstallService.swift
 │   ├── MockIPSWService.swift
 │   ├── MockUSBDeviceService.swift
-│   └── SuspendingMockUSBDeviceService.swift
+│   ├── SuspendingMockUSBDeviceService.swift
+│   └── MockVMLibraryPresenting.swift   # Records VMLibraryViewModel presentation requests for test assertions
 ├── VMConfigurationTests.swift          # 43 tests for VMConfiguration
 ├── VMToolbarManagerTests.swift          # Toolbar manager item creation and state update tests
 ├── VMConfigurationCloneTests.swift     # Clone-specific configuration tests
@@ -309,7 +312,7 @@ All service implementations conform to protocols defined in `Services/Protocols/
 
 ### Views
 
-**Files:** the entire app target is pure AppKit — `NSViewController`/`NSView` subclasses plus free `make*` atom-factory functions, with no `import SwiftUI` anywhere. The detail pane (settings, router, install progress, placeholders, empty state) was the last SwiftUI surface and is now AppKit: `VMDetailRouterViewController` routes by status (via the unit-tested `DetailRoute.resolve`) to `VMSettingsViewController`, `DetailStatusPlaceholderViewController`, `MacOSInstallProgressViewController`, or the display placeholder. **Every popover, sheet, and alert is end-to-end AppKit**: missing-attachment (`AttachmentIconButton` → `MissingAttachmentPopoverContentViewController`), Storage Disk / Removable Media Create (`DiskSizePopoverCoordinator` → `DiskSizePopoverContentViewController`), the generic info-popover surface (`InfoButtonView` → `InfoPopoverContentViewController`), the mic-permission warning popover (`MicrophonePermissionPopoverContentViewController`), the Boot Order and Delete-VM sheets (via `SheetPresenter`), the lifecycle confirmation alerts (`DetailAlertsPresenter` → `presentSheetAlert`), and the sidebar agent-status popover (`SidebarVMRowCellView` → `SidebarAgentStatusButtonView` → `AgentStatusPopoverContentViewController`). Each uses a real `NSPopover`/`NSAlert`/sheet; controllers build their full layouts in `loadView()` using shared token sets (`CalloutStyle` for popovers, `GroupedFormStyle` for grouped forms shared with the wizard) + atom factory functions. **All popover anchors target a wrapper `NSView`** (never an inner control) so `NSPopover.preferredEdge` semantics are interpreted in an unflipped coordinate system. **No shared callout/form container or base class** — visual consistency comes from shared tokens, not inheritance. **Genuinely shareable controllers are reused via init parameterization** (`DiskSizePopoverContentViewController` serves both Create flows via `headline`/`caption`; `InfoPopoverContentViewController` takes `[InfoPopoverParagraph]` distinguishing `.body` from `.code`). AppKit content controllers decouple from `VMLibraryViewModel` via delegate protocols; their hosts (settings VC, alerts presenter) implement the delegates and forward user choices to the view model.
+**Files:** the entire app target is pure AppKit — `NSViewController`/`NSView` subclasses plus free `make*` atom-factory functions, with no `import SwiftUI` anywhere. The detail pane (settings, router, install progress, placeholders, empty state) was the last SwiftUI surface and is now AppKit: `VMDetailRouterViewController` routes by status (via the unit-tested `DetailRoute.resolve`) to `VMSettingsViewController`, `DetailStatusPlaceholderViewController`, `MacOSInstallProgressViewController`, or the display placeholder. **Every popover, sheet, and alert is end-to-end AppKit**: missing-attachment (`AttachmentIconButton` → `MissingAttachmentPopoverContentViewController`), Storage Disk / Removable Media Create (`DiskSizePopoverCoordinator` → `DiskSizePopoverContentViewController`), the generic info-popover surface (`InfoButtonView` → `InfoPopoverContentViewController`), the mic-permission warning popover (`MicrophonePermissionPopoverContentViewController`), the Boot Order and Delete-VM sheets (via `SheetPresenter`), the lifecycle confirmation alerts (`DetailAlertsPresenter` → `presentSheetAlert`), and the sidebar agent-status popover (`SidebarVMRowCellView` → `SidebarAgentStatusButtonView` → `AgentStatusPopoverContentViewController`). Each uses a real `NSPopover`/`NSAlert`/sheet; controllers build their full layouts in `loadView()` using shared token sets (`CalloutStyle` for popovers, `GroupedFormStyle` for grouped forms shared with the wizard) + atom factory functions. **All popover anchors target a wrapper `NSView`** (never an inner control) so `NSPopover.preferredEdge` semantics are interpreted in an unflipped coordinate system. **No shared callout/form container or base class** — visual consistency comes from shared tokens, not inheritance. **Genuinely shareable controllers are reused via init parameterization** (`DiskSizePopoverContentViewController` serves both Create flows via `headline`/`caption`; `InfoPopoverContentViewController` takes `[InfoPopoverParagraph]` distinguishing `.body` from `.code`). AppKit content controllers decouple from `VMLibraryViewModel` via delegate protocols; their hosts (settings VC, alerts presenter) implement the delegates and forward user choices to the view model. Conversely, the view model surfaces alerts, sheets, and the wizard by calling its `VMLibraryPresenting` delegate (`DetailContainerViewController`) imperatively — not by toggling observed `show*` flags. Errors raised before the delegate attaches (e.g. the initial `loadVMs()` in `init`) are buffered on the view model and flushed when it is set.
 
 Views observe `VMLibraryViewModel` and individual `VMInstance`s via the Observation framework (`observeRecurring`). The view hierarchy (AppKit throughout):
 
@@ -325,7 +328,7 @@ NSSplitViewController (MainWindowController)
             ├── DetailStatusPlaceholderViewController          (route: preparing / transition)
             ├── MacOSInstallProgressViewController             (route: installing)
             └── VMDisplayPlaceholderContentViewController      (route: display — placeholder when external/suspended/unavailable)
-VMCreationWizardViewController (pure-AppKit modal sheet; presented by DetailContainerViewController via SheetPresenter when viewModel.showCreationWizard flips true)
+VMCreationWizardViewController (pure-AppKit modal sheet; presented by DetailContainerViewController via SheetPresenter when presentCreationWizard() is called)
 ├── OSSelectionContentViewController
 ├── IPSWSelectionContentViewController / BootConfigContentViewController   (chosen by selectedOS on entry)
 ├── ResourceConfigContentViewController

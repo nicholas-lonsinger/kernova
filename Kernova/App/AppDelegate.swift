@@ -332,7 +332,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     // MARK: - Menu Actions
 
     @objc func newVM(_ sender: Any?) {
-        viewModel.showCreationWizard = true
+        showLibraryWindow(bringToFront: true)
+        viewModel.presenter?.presentCreationWizard()
     }
 
     @objc func showLibrary(_ sender: Any?) {

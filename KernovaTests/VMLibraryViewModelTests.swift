@@ -5,6 +5,7 @@ import Foundation
 @Suite("VMLibraryViewModel Tests", .serialized)
 @MainActor
 struct VMLibraryViewModelTests {
+    private let presenter = MockVMLibraryPresenting()
     private func makeViewModel(
         storageService: MockVMStorageService = MockVMStorageService(),
         diskImageService: MockDiskImageService = MockDiskImageService(),
@@ -24,6 +25,7 @@ struct VMLibraryViewModelTests {
             ipswService: MockIPSWService(),
             usbDeviceService: usbDeviceService
         )
+        vm.presenter = presenter
         return (vm, storageService, diskImageService, virtualizationService, usbDeviceService)
     }
 
@@ -45,8 +47,8 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, _, _) = makeViewModel()
         #expect(viewModel.instances.isEmpty)
         #expect(viewModel.selectedID == nil)
-        #expect(viewModel.showCreationWizard == false)
-        #expect(viewModel.showError == false)
+        #expect(presenter.showCreationWizard == false)
+        #expect(presenter.showError == false)
     }
 
     // MARK: - Load
@@ -140,6 +142,7 @@ struct VMLibraryViewModelTests {
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService()
         )
+        viewModel.presenter = presenter
 
         #expect(viewModel.selectedID == config2.id)
     }
@@ -165,8 +168,8 @@ struct VMLibraryViewModelTests {
         #expect(viewModel.instances.count == 1)
         #expect(viewModel.instances.first?.name == "Good VM")
         // Error surfaced to user about the failed bundle
-        #expect(viewModel.showError == true)
-        #expect(viewModel.errorMessage != nil)
+        #expect(presenter.showError == true)
+        #expect(presenter.errorMessage != nil)
     }
 
     @Test("loadVMs falls back to first VM when stored ID is invalid")
@@ -188,6 +191,7 @@ struct VMLibraryViewModelTests {
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService()
         )
+        viewModel.presenter = presenter
 
         #expect(viewModel.selectedID == config.id)
     }
@@ -202,8 +206,8 @@ struct VMLibraryViewModelTests {
 
         viewModel.confirmDelete(instance)
 
-        #expect(viewModel.instanceToDelete?.id == instance.id)
-        #expect(viewModel.showDeleteConfirmation == true)
+        #expect(presenter.instanceToDelete?.id == instance.id)
+        #expect(presenter.showDeleteConfirmation == true)
     }
 
     @Test("deleteConfirmed removes instance and clears selection")
@@ -220,8 +224,8 @@ struct VMLibraryViewModelTests {
 
         #expect(viewModel.instances.isEmpty)
         #expect(viewModel.selectedID == nil)
-        #expect(viewModel.showDeleteConfirmation == false)
-        #expect(viewModel.instanceToDelete == nil)
+        #expect(presenter.showDeleteConfirmation == false)
+        #expect(presenter.instanceToDelete == nil)
         #expect(storage.deleteVMBundleCallCount == 1)
     }
 
@@ -252,9 +256,9 @@ struct VMLibraryViewModelTests {
 
         viewModel.confirmDelete(instance)
 
-        #expect(viewModel.instanceToDelete?.id == instance.id)
-        #expect(viewModel.showDeleteSheet == true)
-        #expect(viewModel.showDeleteConfirmation == false)
+        #expect(presenter.instanceToDelete?.id == instance.id)
+        #expect(presenter.showDeleteSheet == true)
+        #expect(presenter.showDeleteConfirmation == false)
     }
 
     @Test("externalAttachments returns external disks and removable media with sharing info")
@@ -344,7 +348,7 @@ struct VMLibraryViewModelTests {
         #expect(viewModel.instances.isEmpty)
         #expect(FileManager.default.fileExists(atPath: externalDisk.path(percentEncoded: false)))
         #expect(FileManager.default.fileExists(atPath: externalISO.path(percentEncoded: false)))
-        #expect(!viewModel.showError)
+        #expect(!presenter.showError)
     }
 
     @Test("deleteConfirmed with trashExternals=true trashes external disks and removable media")
@@ -381,8 +385,8 @@ struct VMLibraryViewModelTests {
         #expect(viewModel.instances.isEmpty)
         #expect(!FileManager.default.fileExists(atPath: externalDisk.path(percentEncoded: false)))
         #expect(!FileManager.default.fileExists(atPath: externalISO.path(percentEncoded: false)))
-        #expect(!viewModel.showError)
-        #expect(viewModel.showDeleteSheet == false)
+        #expect(!presenter.showError)
+        #expect(presenter.showDeleteSheet == false)
     }
 
     #if arch(arm64)
@@ -397,7 +401,7 @@ struct VMLibraryViewModelTests {
     ) -> VMLibraryViewModel {
         UserDefaults.standard.removeObject(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
         UserDefaults.standard.removeObject(forKey: VMLibraryViewModel.vmOrderKey)
-        return VMLibraryViewModel(
+        let vm = VMLibraryViewModel(
             storageService: storage,
             diskImageService: MockDiskImageService(),
             virtualizationService: MockVirtualizationService(),
@@ -405,6 +409,8 @@ struct VMLibraryViewModelTests {
             ipswService: ipswService,
             usbDeviceService: MockUSBDeviceService()
         )
+        vm.presenter = presenter
+        return vm
     }
 
     @Test("deleteConfirmed discards the IPSW resume-data sidecar")
@@ -465,7 +471,7 @@ struct VMLibraryViewModelTests {
         for task in tasks { await task.value }
 
         #expect(viewModel.instances.isEmpty)
-        #expect(!viewModel.showError)
+        #expect(!presenter.showError)
     }
 
     // MARK: - Lifecycle Delegation
@@ -558,8 +564,8 @@ struct VMLibraryViewModelTests {
 
         await viewModel.start(instance)
 
-        #expect(viewModel.showError == true)
-        #expect(viewModel.errorMessage != nil)
+        #expect(presenter.showError == true)
+        #expect(presenter.errorMessage != nil)
     }
 
     @Test("forceStop presents error on service failure")
@@ -571,8 +577,8 @@ struct VMLibraryViewModelTests {
 
         await viewModel.forceStop(instance)
 
-        #expect(viewModel.showError == true)
-        #expect(viewModel.errorMessage != nil)
+        #expect(presenter.showError == true)
+        #expect(presenter.errorMessage != nil)
     }
 
     @Test("stop presents error on service failure")
@@ -584,8 +590,8 @@ struct VMLibraryViewModelTests {
 
         viewModel.stop(instance)
 
-        #expect(viewModel.showError == true)
-        #expect(viewModel.errorMessage != nil)
+        #expect(presenter.showError == true)
+        #expect(presenter.errorMessage != nil)
     }
 
     // MARK: - Stop Paused Confirmation
@@ -618,13 +624,11 @@ struct VMLibraryViewModelTests {
         let instance = makeInstance()
         instance.status = .paused
         viewModel.instances.append(instance)
-        viewModel.instanceToStopPaused = instance
-        viewModel.showStopPausedConfirmation = true
 
         await viewModel.resumeAndStop(instance)
 
-        #expect(viewModel.instanceToStopPaused == nil)
-        #expect(viewModel.showStopPausedConfirmation == false)
+        #expect(presenter.instanceToStopPaused == nil)
+        #expect(presenter.showStopPausedConfirmation == false)
     }
 
     @Test("forceStopFromPaused dispatches forceStop and clears state")
@@ -633,14 +637,12 @@ struct VMLibraryViewModelTests {
         let instance = makeInstance()
         instance.status = .paused
         viewModel.instances.append(instance)
-        viewModel.instanceToStopPaused = instance
-        viewModel.showStopPausedConfirmation = true
 
         await viewModel.forceStopFromPaused(instance)
 
         #expect(virtService.forceStopCallCount == 1)
-        #expect(viewModel.instanceToStopPaused == nil)
-        #expect(viewModel.showStopPausedConfirmation == false)
+        #expect(presenter.instanceToStopPaused == nil)
+        #expect(presenter.showStopPausedConfirmation == false)
     }
 
     @Test("resumeAndStop presents error if resume fails")
@@ -653,7 +655,7 @@ struct VMLibraryViewModelTests {
 
         await viewModel.resumeAndStop(instance)
 
-        #expect(viewModel.showError == true)
+        #expect(presenter.showError == true)
         #expect(virtService.stopCallCount == 0)
     }
 
@@ -667,8 +669,8 @@ struct VMLibraryViewModelTests {
         viewModel.stop(instance)
 
         #expect(virtService.stopCallCount == 1)
-        #expect(viewModel.showStopPausedConfirmation == false)
-        #expect(viewModel.instanceToStopPaused == nil)
+        #expect(presenter.showStopPausedConfirmation == false)
+        #expect(presenter.instanceToStopPaused == nil)
     }
 
     @Test("pause presents error on service failure")
@@ -680,8 +682,8 @@ struct VMLibraryViewModelTests {
 
         await viewModel.pause(instance)
 
-        #expect(viewModel.showError == true)
-        #expect(viewModel.errorMessage != nil)
+        #expect(presenter.showError == true)
+        #expect(presenter.errorMessage != nil)
     }
 
     @Test("resume presents error on service failure")
@@ -693,8 +695,8 @@ struct VMLibraryViewModelTests {
 
         await viewModel.resume(instance)
 
-        #expect(viewModel.showError == true)
-        #expect(viewModel.errorMessage != nil)
+        #expect(presenter.showError == true)
+        #expect(presenter.errorMessage != nil)
     }
 
     @Test("save presents error on service failure")
@@ -706,8 +708,8 @@ struct VMLibraryViewModelTests {
 
         await viewModel.save(instance)
 
-        #expect(viewModel.showError == true)
-        #expect(viewModel.errorMessage != nil)
+        #expect(presenter.showError == true)
+        #expect(presenter.errorMessage != nil)
     }
 
     // MARK: - Save Configuration
@@ -730,8 +732,8 @@ struct VMLibraryViewModelTests {
 
         viewModel.saveConfiguration(for: instance)
 
-        #expect(viewModel.showError == true)
-        #expect(viewModel.errorMessage != nil)
+        #expect(presenter.showError == true)
+        #expect(presenter.errorMessage != nil)
     }
 
     // MARK: - trySave / tryForceStop
@@ -821,10 +823,9 @@ struct VMLibraryViewModelTests {
         wizard.selectedBootMode = .efi
         wizard.vmName = "Fail VM"
 
-        await viewModel.createVM(from: wizard)
+        let result = await viewModel.createVM(from: wizard)
 
-        #expect(viewModel.showError == true)
-        #expect(viewModel.errorMessage != nil)
+        #expect(result.isFailure)
         #expect(viewModel.instances.isEmpty)
     }
 
@@ -838,10 +839,9 @@ struct VMLibraryViewModelTests {
         wizard.selectedBootMode = .efi
         wizard.vmName = "Disk Fail VM"
 
-        await viewModel.createVM(from: wizard)
+        let result = await viewModel.createVM(from: wizard)
 
-        #expect(viewModel.showError == true)
-        #expect(viewModel.errorMessage != nil)
+        #expect(result.isFailure)
     }
 
     @Test("createVM auto-starts the new VM when startAfterCreate is true (default)")
@@ -1050,21 +1050,19 @@ struct VMLibraryViewModelTests {
         storage.bundles[badURL] = VMConfiguration(name: "Bad VM", guestOS: .linux, bootMode: .efi)
         storage.loadConfigurationFailURLs.insert(badURL)
 
-        viewModel.showError = false
-        viewModel.errorMessage = nil
+        presenter.reset()
 
         viewModel.reconcileWithDisk()
 
-        #expect(viewModel.showError == true)
-        #expect(viewModel.errorMessage?.contains("broken-vm") == true)
+        #expect(presenter.showError == true)
+        #expect(presenter.errorMessage?.contains("broken-vm") == true)
         #expect(viewModel.instances.contains { $0.name == "Good VM" })
     }
 
     @Test("reconcileWithDisk presents error when listing bundles fails")
     func reconcilePresentsErrorForFilesystemFailure() {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        viewModel.showError = false
-        viewModel.errorMessage = nil
+        presenter.reset()
 
         storage.listVMBundlesError = VMStorageError.bundleNotFound(
             FileManager.default.temporaryDirectory
@@ -1072,8 +1070,8 @@ struct VMLibraryViewModelTests {
 
         viewModel.reconcileWithDisk()
 
-        #expect(viewModel.showError == true)
-        #expect(viewModel.errorMessage?.contains("VM bundle not found") == true)
+        #expect(presenter.showError == true)
+        #expect(presenter.errorMessage?.contains("VM bundle not found") == true)
     }
 
     @Test("reconcileWithDisk does not re-present error for already-reported corrupted bundles")
@@ -1088,18 +1086,16 @@ struct VMLibraryViewModelTests {
         storage.loadConfigurationFailURLs.insert(badURL)
 
         // First reconciliation should present the error
-        viewModel.showError = false
-        viewModel.errorMessage = nil
+        presenter.reset()
         viewModel.reconcileWithDisk()
-        #expect(viewModel.showError == true)
-        #expect(viewModel.errorMessage?.contains("broken-vm") == true)
+        #expect(presenter.showError == true)
+        #expect(presenter.errorMessage?.contains("broken-vm") == true)
 
         // Second reconciliation should NOT re-present the same error
-        viewModel.showError = false
-        viewModel.errorMessage = nil
+        presenter.reset()
         viewModel.reconcileWithDisk()
-        #expect(viewModel.showError == false)
-        #expect(viewModel.errorMessage == nil)
+        #expect(presenter.showError == false)
+        #expect(presenter.errorMessage == nil)
     }
 
     @Test("reconcileWithDisk suppression is maintained after full reload")
@@ -1112,25 +1108,23 @@ struct VMLibraryViewModelTests {
 
         // loadVMs() in init reports the error and seeds reportedFailedBundles
         let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
-        #expect(viewModel.showError == true)
-        #expect(viewModel.errorMessage?.contains("broken-vm") == true)
+        #expect(presenter.showError == true)
+        #expect(presenter.errorMessage?.contains("broken-vm") == true)
 
         // First reconcile after init is suppressed
-        viewModel.showError = false
-        viewModel.errorMessage = nil
+        presenter.reset()
         viewModel.reconcileWithDisk()
-        #expect(viewModel.showError == false)
+        #expect(presenter.showError == false)
 
         // Full reload resets suppression, then re-seeds from its own failures
         viewModel.loadVMs()
-        #expect(viewModel.showError == true)
-        #expect(viewModel.errorMessage?.contains("broken-vm") == true)
+        #expect(presenter.showError == true)
+        #expect(presenter.errorMessage?.contains("broken-vm") == true)
 
         // Reconciliation should still be suppressed since loadVMs re-seeded the set
-        viewModel.showError = false
-        viewModel.errorMessage = nil
+        presenter.reset()
         viewModel.reconcileWithDisk()
-        #expect(viewModel.showError == false)
+        #expect(presenter.showError == false)
     }
 
     @Test("reconcileWithDisk does not re-present errors already reported by loadVMs")
@@ -1143,17 +1137,16 @@ struct VMLibraryViewModelTests {
 
         // loadVMs() runs in init and should report the error
         let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
-        #expect(viewModel.showError == true)
-        #expect(viewModel.errorMessage?.contains("broken-vm") == true)
+        #expect(presenter.showError == true)
+        #expect(presenter.errorMessage?.contains("broken-vm") == true)
 
         // Clear the alert state (simulating user dismissing the dialog)
-        viewModel.showError = false
-        viewModel.errorMessage = nil
+        presenter.reset()
 
         // First reconcileWithDisk should NOT re-present the same error
         viewModel.reconcileWithDisk()
-        #expect(viewModel.showError == false)
-        #expect(viewModel.errorMessage == nil)
+        #expect(presenter.showError == false)
+        #expect(presenter.errorMessage == nil)
     }
 
     @Test("reconcileWithDisk re-presents error after previously-failed bundle loads successfully")
@@ -1169,20 +1162,18 @@ struct VMLibraryViewModelTests {
         storage.loadConfigurationFailURLs.insert(bundleURL)
 
         // First reconciliation reports the error
-        viewModel.showError = false
-        viewModel.errorMessage = nil
+        presenter.reset()
         viewModel.reconcileWithDisk()
-        #expect(viewModel.showError == true)
-        #expect(viewModel.errorMessage?.contains("recoverable") == true)
+        #expect(presenter.showError == true)
+        #expect(presenter.errorMessage?.contains("recoverable") == true)
 
         // "Fix" the bundle by removing it from the fail set
         storage.loadConfigurationFailURLs.remove(bundleURL)
 
         // Reconciliation succeeds — no error, and the bundle is cleared from reported set
-        viewModel.showError = false
-        viewModel.errorMessage = nil
+        presenter.reset()
         viewModel.reconcileWithDisk()
-        #expect(viewModel.showError == false)
+        #expect(presenter.showError == false)
 
         // Re-corrupt it
         storage.loadConfigurationFailURLs.insert(bundleURL)
@@ -1191,8 +1182,8 @@ struct VMLibraryViewModelTests {
 
         // Should report the error again since it was cleared from the reported set
         viewModel.reconcileWithDisk()
-        #expect(viewModel.showError == true)
-        #expect(viewModel.errorMessage?.contains("recoverable") == true)
+        #expect(presenter.showError == true)
+        #expect(presenter.errorMessage?.contains("recoverable") == true)
     }
 
     // MARK: - Initial Boot status assignment
@@ -1339,6 +1330,7 @@ struct VMLibraryViewModelTests {
             ipswService: MockIPSWService(),
             usbDeviceService: MockUSBDeviceService()
         )
+        viewModel.presenter = presenter
         let instance = makeInstance(name: "Race VM")
         instance.configuration.installContext = MacOSInstallContext(
             source: .localFile, localIPSWPath: "/tmp/foo.ipsw"
@@ -1366,7 +1358,7 @@ struct VMLibraryViewModelTests {
         // to .initialBoot, no error dialog, error message cleared.
         #expect(instance.status == .initialBoot)
         #expect(instance.errorMessage == nil)
-        #expect(viewModel.showError == false)
+        #expect(presenter.showError == false)
     }
 
     @Test("cancelInstallation does not change selection")
@@ -1548,8 +1540,8 @@ struct VMLibraryViewModelTests {
         await viewModel.pauseAllForSleep()
 
         // Error is surfaced to the user
-        #expect(viewModel.showError == true)
-        #expect(viewModel.errorMessage?.contains("Running") == true)
+        #expect(presenter.showError == true)
+        #expect(presenter.errorMessage?.contains("Running") == true)
         // Failed pause should not track the instance
         #expect(viewModel.sleepPausedInstanceIDs.isEmpty)
     }
@@ -1568,8 +1560,8 @@ struct VMLibraryViewModelTests {
 
         #expect(viewModel.sleepPausedInstanceIDs.isEmpty)
         // Error is surfaced to the user
-        #expect(viewModel.showError == true)
-        #expect(viewModel.errorMessage?.contains("Sleep Paused") == true)
+        #expect(presenter.showError == true)
+        #expect(presenter.errorMessage?.contains("Sleep Paused") == true)
     }
 
     @Test("pauseAllForSleep is no-op when no running VMs")
@@ -1698,8 +1690,8 @@ struct VMLibraryViewModelTests {
         #expect(viewModel.instances.count == 1)
         #expect(viewModel.instances.first?.id == instance.id)
         #expect(viewModel.selectedID == instance.id)
-        #expect(viewModel.showError == true)
-        #expect(viewModel.errorMessage != nil)
+        #expect(presenter.showError == true)
+        #expect(presenter.errorMessage != nil)
     }
 
     @Test("cloneVM is skipped when VM is running")
@@ -1728,7 +1720,7 @@ struct VMLibraryViewModelTests {
 
         // No new instance added, error shown
         #expect(viewModel.instances.count == 2)
-        #expect(viewModel.showError == true)
+        #expect(presenter.showError == true)
     }
 
     @Test("cloneVM increments name when Copy already exists")
@@ -1760,8 +1752,8 @@ struct VMLibraryViewModelTests {
 
         #expect(viewModel.instances.isEmpty)
         #expect(phantom.preparingState == nil)
-        #expect(viewModel.showCancelPreparingConfirmation == false)
-        #expect(viewModel.preparingInstanceToCancel == nil)
+        #expect(presenter.showCancelPreparingConfirmation == false)
+        #expect(presenter.preparingInstanceToCancel == nil)
     }
 
     @Test("cancelPreparingConfirmed selects remaining instance")
@@ -1788,8 +1780,8 @@ struct VMLibraryViewModelTests {
 
         viewModel.confirmCancelPreparing(phantom)
 
-        #expect(viewModel.showCancelPreparingConfirmation == true)
-        #expect(viewModel.preparingInstanceToCancel?.id == phantom.id)
+        #expect(presenter.showCancelPreparingConfirmation == true)
+        #expect(presenter.preparingInstanceToCancel?.id == phantom.id)
     }
 
     // MARK: - Force Stop Confirmation
@@ -1803,8 +1795,8 @@ struct VMLibraryViewModelTests {
 
         viewModel.confirmForceStop(instance)
 
-        #expect(viewModel.instanceToForceStop?.id == instance.id)
-        #expect(viewModel.showForceStopConfirmation == true)
+        #expect(presenter.instanceToForceStop?.id == instance.id)
+        #expect(presenter.showForceStopConfirmation == true)
     }
 
     @Test("forceStopConfirmed delegates to lifecycle")
@@ -1932,6 +1924,7 @@ struct VMLibraryViewModelTests {
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService()
         )
+        viewModel.presenter = presenter
 
         #expect(viewModel.instances.map(\.name) == ["Third", "First", "Second"])
     }
@@ -2020,6 +2013,7 @@ struct VMLibraryViewModelTests {
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService()
         )
+        viewModel.presenter = presenter
 
         #expect(viewModel.instances.count == 1)
         #expect(viewModel.instances.first?.name == "Only VM")
@@ -2039,8 +2033,8 @@ struct VMLibraryViewModelTests {
         viewModel.mountGuestAgentInstaller(on: instance)
 
         // Alert is set synchronously; reconcile attach is async.
-        #expect(viewModel.showInstallerMountedAlert == true)
-        #expect(viewModel.installerMountedVMName == instance.name)
+        #expect(presenter.showInstallerMountedAlert == true)
+        #expect(presenter.installerMountedVMName == instance.name)
         #expect(instance.configuration.removableMedia?.count == 1)
         #expect(instance.configuration.removableMedia?.first?.path == installerURL.path(percentEncoded: false))
 
@@ -2064,8 +2058,8 @@ struct VMLibraryViewModelTests {
         viewModel.mountGuestAgentInstaller(on: instance)
 
         #expect(mock.attachCallCount == 0)
-        #expect(viewModel.showInstallerMountedAlert == true)
-        #expect(viewModel.installerMountedVMName == instance.name)
+        #expect(presenter.showInstallerMountedAlert == true)
+        #expect(presenter.installerMountedVMName == instance.name)
         // List unchanged
         #expect(instance.configuration.removableMedia?.count == 1)
     }
@@ -2283,10 +2277,10 @@ struct VMLibraryViewModelTests {
 
         viewModel.applyLivePolicy(for: instance, old: old, new: new)
 
-        while !viewModel.showError { await Task.yield() }
+        while !presenter.showError { await Task.yield() }
 
         #expect(mock.attachCallCount == 1)
-        #expect(viewModel.errorMessage != nil)
+        #expect(presenter.errorMessage != nil)
         #expect(instance.liveRemovableMedia.isEmpty)
     }
 
@@ -2341,7 +2335,7 @@ struct VMLibraryViewModelTests {
 
         viewModel.applyLivePolicy(for: instance, old: old, new: new)
 
-        while !viewModel.showError { await Task.yield() }
+        while !presenter.showError { await Task.yield() }
         for _ in 0..<5 { await Task.yield() }
 
         #expect(mock.detachCallCount == 1)
@@ -2371,7 +2365,7 @@ struct VMLibraryViewModelTests {
 
         #expect(mock.detachCallCount == 1)
         #expect(mock.attachCallCount == 0)
-        #expect(!viewModel.showError)
+        #expect(!presenter.showError)
     }
 
     @Test("Attach noVirtualMachine error bails the reconcile silently")
@@ -2391,7 +2385,7 @@ struct VMLibraryViewModelTests {
 
         #expect(mock.attachCallCount == 1)
         #expect(mock.detachCallCount == 0)
-        #expect(!viewModel.showError)
+        #expect(!presenter.showError)
         #expect(instance.liveRemovableMedia.isEmpty)
     }
 
@@ -2418,7 +2412,7 @@ struct VMLibraryViewModelTests {
 
         #expect(mock.attachCallCount == 1)
         #expect(mock.lastAttachedPath == "/tmp/A.iso")
-        #expect(!viewModel.showError)
+        #expect(!presenter.showError)
     }
 
     @Test("Rapid-fire media swaps coalesce — one Task drains to the latest target")
@@ -2479,7 +2473,7 @@ struct VMLibraryViewModelTests {
         #expect(disks.count == 1)
         #expect(disks.first?.id == mainDisk.id)
         // No presentError side effect — no file op was attempted.
-        #expect(!viewModel.showError)
+        #expect(!presenter.showError)
     }
 
     @Test("removeStorageDisk on external disk with trashFile=true trashes the host file")
@@ -2503,7 +2497,7 @@ struct VMLibraryViewModelTests {
         #expect(instance.configuration.storageDisks == nil)
         // trashItem moved the file out of its original location.
         #expect(!FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)))
-        #expect(!viewModel.showError)
+        #expect(!presenter.showError)
     }
 
     @Test("removeStorageDisk on external disk with trashFile=false leaves the host file alone")
@@ -2526,7 +2520,7 @@ struct VMLibraryViewModelTests {
 
         #expect(instance.configuration.storageDisks == nil)
         #expect(FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)))
-        #expect(!viewModel.showError)
+        #expect(!presenter.showError)
     }
 
     @Test("removeStorageDisk with trashFile=true swallows missing-file errors")
@@ -2550,7 +2544,7 @@ struct VMLibraryViewModelTests {
         await viewModel.removeStorageDisk(ghost, from: instance, trashFile: true)?.value
 
         #expect(instance.configuration.storageDisks == nil)
-        #expect(!viewModel.showError)
+        #expect(!presenter.showError)
     }
 
     @Test("removeRemovableMedia with trashFile=false removes the entry without touching the file")
@@ -2571,7 +2565,7 @@ struct VMLibraryViewModelTests {
 
         #expect(instance.configuration.removableMedia == nil)
         #expect(FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)))
-        #expect(!viewModel.showError)
+        #expect(!presenter.showError)
     }
 
     @Test("removeRemovableMedia with trashFile=true trashes the host file")
@@ -2592,7 +2586,7 @@ struct VMLibraryViewModelTests {
 
         #expect(instance.configuration.removableMedia == nil)
         #expect(!FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)))
-        #expect(!viewModel.showError)
+        #expect(!presenter.showError)
     }
 
     @Test("removeRemovableMedia with trashFile=true swallows missing-file errors")
@@ -2609,7 +2603,7 @@ struct VMLibraryViewModelTests {
         await viewModel.removeRemovableMedia(item, from: instance, trashFile: true)?.value
 
         #expect(instance.configuration.removableMedia == nil)
-        #expect(!viewModel.showError)
+        #expect(!presenter.showError)
     }
 
     @Test("createStorageDisk appends an internal virtio disk with the expected fields")
@@ -2642,7 +2636,7 @@ struct VMLibraryViewModelTests {
 
         #expect(diskService.createDiskImageCallCount == 1)
         #expect(diskService.lastCreatedSizeInGB == 32)
-        #expect(!viewModel.showError)
+        #expect(!presenter.showError)
     }
 
     @Test("createRemovableMedia appends an external item with the chosen path and read-write default")
@@ -2670,7 +2664,7 @@ struct VMLibraryViewModelTests {
 
         #expect(diskService.createDiskImageCallCount == 1)
         #expect(diskService.lastCreatedSizeInGB == 16)
-        #expect(!viewModel.showError)
+        #expect(!presenter.showError)
     }
 
     @Test("createRemovableMedia surfaces errors and leaves the list unchanged")
@@ -2686,7 +2680,7 @@ struct VMLibraryViewModelTests {
 
         viewModel.createRemovableMedia(for: instance, sizeInGB: 16, destinationURL: destination)
 
-        while !viewModel.showError { await Task.yield() }
+        while !presenter.showError { await Task.yield() }
 
         #expect(instance.configuration.removableMedia == nil)
         #expect(diskService.createDiskImageCallCount == 1)
@@ -2711,7 +2705,7 @@ struct VMLibraryViewModelTests {
 
         viewModel.createRemovableMedia(for: instance, sizeInGB: 16, destinationURL: destination)
 
-        while !viewModel.showError { await Task.yield() }
+        while !presenter.showError { await Task.yield() }
 
         // `trashItem` moved the file out of its original location.
         #expect(!FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)))
@@ -2736,7 +2730,7 @@ struct VMLibraryViewModelTests {
 
         viewModel.createRemovableMedia(for: instance, sizeInGB: 16, destinationURL: destination)
 
-        while !viewModel.showError { await Task.yield() }
+        while !presenter.showError { await Task.yield() }
 
         // Pre-existing file is intact.
         #expect(FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)))
@@ -2779,7 +2773,7 @@ struct VMLibraryViewModelTests {
         #expect(mock.detachCallCount == 0)
         #expect(mock.attachCallCount == 0)
         #expect(instance.liveRemovableMedia.count == 2)
-        #expect(!viewModel.showError)
+        #expect(!presenter.showError)
     }
 
     @Test("Failed detach rolls config back to live state (item stays attached)")
@@ -2808,7 +2802,7 @@ struct VMLibraryViewModelTests {
         instance.configuration = new
 
         viewModel.applyLivePolicy(for: instance, old: old, new: new)
-        while !viewModel.showError { await Task.yield() }
+        while !presenter.showError { await Task.yield() }
         for _ in 0..<5 { await Task.yield() }
 
         // Detach failed → device still mounted → config must reflect that.
@@ -2843,7 +2837,7 @@ struct VMLibraryViewModelTests {
         instance.configuration = new
 
         viewModel.applyLivePolicy(for: instance, old: old, new: new)
-        while !viewModel.showError { await Task.yield() }
+        while !presenter.showError { await Task.yield() }
         for _ in 0..<5 { await Task.yield() }
 
         // Attach failed → device never mounted → config rolled back to nil.
@@ -2878,7 +2872,7 @@ struct VMLibraryViewModelTests {
         instance.configuration = new
 
         viewModel.applyLivePolicy(for: instance, old: old, new: new)
-        while !viewModel.showError { await Task.yield() }
+        while !presenter.showError { await Task.yield() }
         for _ in 0..<5 { await Task.yield() }
 
         let rolled = try #require(instance.configuration.removableMedia)
@@ -2950,3 +2944,10 @@ private final class CancelRaceInstallService: MacOSInstallProviding {
     }
 }
 #endif
+
+extension Result {
+    fileprivate var isFailure: Bool {
+        if case .failure = self { return true }
+        return false
+    }
+}
