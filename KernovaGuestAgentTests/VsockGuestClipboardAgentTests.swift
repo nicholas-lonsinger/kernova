@@ -217,7 +217,7 @@ struct VsockGuestClipboardAgentTests {
         try await waitUntil { agent.liveChannelForTesting == nil }
 
         // Wait for second connection
-        try await waitUntil(timeout: .seconds(3)) { agent.liveChannelForTesting != nil }
+        try await waitUntil(timeout: .seconds(2)) { agent.liveChannelForTesting != nil }
 
         // After reconnect, lastSeenText is cleared — next poll should re-offer
         await MainActor.run { agent.checkClipboardChange() }
@@ -333,7 +333,7 @@ struct VsockGuestClipboardAgentTests {
         // logs .error, and attempts a best-effort error frame (also fails,
         // swallowed). It must not crash and liveChannel must be cleared once
         // the receive loop observes EOF.
-        try await waitUntil(timeout: .seconds(3)) { agent.liveChannelForTesting == nil }
+        try await waitUntil(timeout: .seconds(2)) { agent.liveChannelForTesting == nil }
         #expect(agent.liveChannelForTesting == nil, "liveChannel should be nil after peer EOF")
     }
 
