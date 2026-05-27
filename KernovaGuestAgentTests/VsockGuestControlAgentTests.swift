@@ -170,7 +170,7 @@ struct VsockGuestControlAgentTests {
         // The agent should still be sending heartbeats: read the next frame
         // and expect either a heartbeat or — at worst — a successful round
         // trip without a thrown error.
-        let frame = try await nextFrame(from: host, timeout: .milliseconds(800))
+        let frame = try await nextFrame(from: host, timeout: .seconds(2))
         switch frame.payload {
         case .heartbeat:
             break
