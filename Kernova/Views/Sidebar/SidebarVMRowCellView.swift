@@ -305,6 +305,53 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
         agentButton.isHidden = true
     }
 
+    // MARK: - Intrinsic width
+
+    /// The cell content width (within the cell's own bounds, excluding the
+    /// outline view's per-row indentation) at which `name` is fully visible and
+    /// the label stops truncating.
+    ///
+    /// Mirrors `buildLayout()`: the leading row inset, the fixed icon/spinner
+    /// slot and its gap, the measured name width, the trailing inset, and — when
+    /// the agent accessory is shown — its width plus gap. Used by the
+    /// split-view divider's Finder-style snap-to-fit; the caller adds the
+    /// outline indentation.
+    static func contentWidth(forName name: String, showsAgentAccessory: Bool) -> CGFloat {
+        let leadingInset: CGFloat = 4  // row.leadingAnchor constant
+        let iconSlot: CGFloat = 20  // iconView/spinner width
+        let trailingInset: CGFloat = 8  // row.trailingAnchor constant
+        let accessoryWidth: CGFloat = 16  // SidebarAgentStatusButtonView width
+
+        let nameWidth = ceil(measuredNameWidth(for: name))
+        var width = leadingInset + iconSlot + Spacing.small + nameWidth + trailingInset
+        if showsAgentAccessory {
+            width += Spacing.small + accessoryWidth
+        }
+        return width
+    }
+
+    /// A borderless field configured exactly like the row's `nameField`, reused
+    /// to measure label widths. Its `fittingSize` includes `NSTextField`'s
+    /// internal text inset — which a bare `NSString.size(withAttributes:)`
+    /// omits, leaving the snapped sidebar a few points too narrow and the name
+    /// still truncated.
+    private static let measuringNameField: NSTextField = {
+        let field = NSTextField()
+        field.isBordered = false
+        field.drawsBackground = false
+        field.isEditable = false
+        field.font = Typography.body
+        field.lineBreakMode = .byTruncatingTail
+        field.maximumNumberOfLines = 1
+        field.cell?.usesSingleLineMode = true
+        return field
+    }()
+
+    private static func measuredNameWidth(for name: String) -> CGFloat {
+        measuringNameField.stringValue = name
+        return measuringNameField.fittingSize.width
+    }
+
     // MARK: - Agent visibility
 
     /// The agent status to surface as a sidebar indicator, or `nil` to hide.

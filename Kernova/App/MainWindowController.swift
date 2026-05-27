@@ -9,7 +9,8 @@ import os
 final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindowDelegate {
     private let viewModel: VMLibraryViewModel
     private let toolbarManager: VMToolbarManager
-    private let splitViewController = NSSplitViewController()
+    private let splitViewController = SnapToFitSplitViewController()
+    private let sidebarViewController: SidebarViewController
     private let sidebarItem: NSSplitViewItem
     private var sidebarCollapseObservation: NSKeyValueObservation?
     private var toolbarObservation: ObservationLoop?
@@ -35,9 +36,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         )
 
         let sidebarVC = SidebarViewController(viewModel: viewModel)
+        self.sidebarViewController = sidebarVC
         self.sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebarVC)
-        sidebarItem.minimumThickness = 200
-        sidebarItem.maximumThickness = 350
+        sidebarItem.minimumThickness = 212
+        sidebarItem.maximumThickness = 400
         splitViewController.addSplitViewItem(sidebarItem)
 
         let detailContainer = DetailContainerViewController(viewModel: viewModel)
@@ -68,6 +70,23 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         window.toolbarStyle = .unified
 
         window.setFrameAutosaveName("KernovaMainWindow")
+
+        // Finder-style snap: while dragging the divider, magnetize it to the
+        // width that fully shows the longest VM name, clamped to the sidebar's
+        // min/max thickness. The closure reports the width the *outline view*
+        // needs plus its current width; the split controller converts that to a
+        // divider position (they differ by fixed divider chrome) and clamps.
+        splitViewController.sidebarMetrics = { [weak self] in
+            guard let self, let needed = self.sidebarViewController.widthToFitLongestRow() else {
+                return nil
+            }
+            return (
+                neededOutlineWidth: needed,
+                currentOutlineWidth: self.sidebarViewController.currentOutlineWidth,
+                minThickness: self.sidebarItem.minimumThickness,
+                maxThickness: self.sidebarItem.maximumThickness
+            )
+        }
 
         updateToolbarItems()
         observeToolbarState()
@@ -220,5 +239,57 @@ extension MainWindowController: NSToolbarItemValidation {
         Self.logger.debug(
             "validateToolbarItem: unrecognized identifier '\(item.itemIdentifier.rawValue, privacy: .public)'")
         return true
+    }
+}
+
+// MARK: - Snap-to-fit split view controller
+
+/// `NSSplitViewController` that magnetizes the sidebar divider to a caller-
+/// supplied "fit" width during a drag, the way Finder snaps its sidebar to the
+/// width of the longest item.
+///
+/// The sidebar's hard min/max thickness is still enforced by the split view
+/// item; this only adds a soft snap point in between. `sidebarMetrics` returns
+/// the outline geometry to snap to, or `nil` when there's nothing to snap to.
+@MainActor
+final class SnapToFitSplitViewController: NSSplitViewController {
+    /// Sidebar geometry needed to compute the snap, or `nil` to disable it.
+    var sidebarMetrics:
+        (
+            () -> (
+                neededOutlineWidth: CGFloat, currentOutlineWidth: CGFloat, minThickness: CGFloat,
+                maxThickness: CGFloat
+            )?
+        )?
+
+    /// How close (in points) the drag must come to the fit width before it snaps.
+    private static let snapThreshold: CGFloat = 10
+
+    override func splitView(
+        _ splitView: NSSplitView,
+        constrainSplitPosition proposedPosition: CGFloat,
+        ofSubviewAt dividerIndex: Int
+    ) -> CGFloat {
+        guard dividerIndex == 0, let metrics = sidebarMetrics?(),
+            let sidebarItem = splitViewItems.first
+        else { return proposedPosition }
+
+        // `proposedPosition` is a divider coordinate; the sidebar's content
+        // (the outline) is inset a few points from the pane's trailing edge, so
+        // the snap target must be expressed as a pane width, not an outline
+        // width. Find the sidebar's arranged subview (a direct child of the
+        // split view — a sidebar item may wrap its content) and use its trailing
+        // edge as the live divider position, against the outline's current
+        // width. The view controller's own `view.frame` is in its wrapper's
+        // coordinates, so walk up to the split view's child.
+        var arranged: NSView? = sidebarItem.viewController.view
+        while let view = arranged, view.superview !== splitView { arranged = view.superview }
+        let dividerNow = arranged?.frame.maxX ?? proposedPosition
+        let offset = max(0, dividerNow - metrics.currentOutlineWidth)
+        let target = min(
+            max(metrics.neededOutlineWidth + offset, metrics.minThickness), metrics.maxThickness)
+
+        guard abs(proposedPosition - target) <= Self.snapThreshold else { return proposedPosition }
+        return target
     }
 }
