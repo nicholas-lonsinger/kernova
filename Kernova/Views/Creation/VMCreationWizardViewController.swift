@@ -258,18 +258,16 @@ final class VMCreationWizardViewController: NSViewController {
         addChild(newChild)
         newChild.view.translatesAutoresizingMaskIntoConstraints = false
         contentContainer.addSubview(newChild.view)
-        // Small horizontal inset so a scrolling step's scroller sits close to
-        // the window edge; the step insets its own content the rest of the way.
-        // Vertical padding stays at the full content padding.
+        // The step view spans the full content width so a scrolling step's
+        // scroller sits flush with the sheet edge (matching the settings pane);
+        // the step insets its own content via `contentSideInset`. Vertical
+        // padding stays at the full content padding.
         let vPad = WizardStyle.contentPadding
-        let hPad = WizardStyle.edgeInset
         NSLayoutConstraint.activate([
             newChild.view.topAnchor.constraint(
                 equalTo: contentContainer.topAnchor, constant: vPad),
-            newChild.view.leadingAnchor.constraint(
-                equalTo: contentContainer.leadingAnchor, constant: hPad),
-            newChild.view.trailingAnchor.constraint(
-                equalTo: contentContainer.trailingAnchor, constant: -hPad),
+            newChild.view.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
+            newChild.view.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
             newChild.view.bottomAnchor.constraint(
                 equalTo: contentContainer.bottomAnchor, constant: -vPad),
         ])

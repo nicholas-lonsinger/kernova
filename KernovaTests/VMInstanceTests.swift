@@ -1,6 +1,6 @@
 import Testing
 import Foundation
-import SwiftUI
+import AppKit
 @testable import Kernova
 
 @Suite("VMInstance Tests")
@@ -344,19 +344,21 @@ struct VMInstanceTests {
         }
     }
 
-    @Test("statusDisplayColor returns orange when cold-paused")
-    func statusDisplayColorColdPaused() {
+    @Test("statusDisplayNSColor returns systemOrange when cold-paused")
+    func statusDisplayNSColorColdPaused() {
         let instance = makeInstance(status: .paused)
         #expect(instance.isColdPaused == true)
-        #expect(instance.statusDisplayColor == .orange)
+        #expect(instance.statusDisplayNSColor == .systemOrange)
     }
 
-    @Test("statusDisplayColor delegates to status.statusColor for non-paused states")
-    func statusDisplayColorDelegates() {
-        for status in [VMStatus.stopped, .running, .starting, .saving, .restoring, .installing, .error] {
-            let instance = makeInstance(status: status)
-            #expect(instance.statusDisplayColor == status.statusColor)
-        }
+    @Test("statusDisplayNSColor maps non-paused states")
+    func statusDisplayNSColorByStatus() {
+        // Concrete gray (not `.secondaryLabelColor`) so the OS icon keeps its
+        // stopped color on the selection highlight instead of inverting to white.
+        #expect(makeInstance(status: .stopped).statusDisplayNSColor == .systemGray)
+        #expect(makeInstance(status: .running).statusDisplayNSColor == .systemGreen)
+        #expect(makeInstance(status: .starting).statusDisplayNSColor == .systemOrange)
+        #expect(makeInstance(status: .error).statusDisplayNSColor == .systemRed)
     }
 
     @Test("statusToolTip mentions disk when cold-paused")
@@ -410,13 +412,13 @@ struct VMInstanceTests {
         #expect(instance.statusDisplayName == "Importing\u{2026}")
     }
 
-    @Test("statusDisplayColor returns orange when isPreparing")
-    func statusDisplayColorPreparing() {
+    @Test("statusDisplayNSColor returns systemOrange when isPreparing")
+    func statusDisplayNSColorPreparing() {
         let instance = makeInstance()
         let task = Task {}
         defer { task.cancel() }
         instance.preparingState = VMInstance.PreparingState(operation: .cloning, task: task)
-        #expect(instance.statusDisplayColor == .orange)
+        #expect(instance.statusDisplayNSColor == .systemOrange)
     }
 
     @Test("statusToolTip returns preparing label when isPreparing")

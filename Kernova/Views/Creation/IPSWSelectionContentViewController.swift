@@ -63,7 +63,7 @@ final class IPSWSelectionContentViewController: NSViewController {
         stack.setCustomSpacing(20, after: options)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
-        let scrollView = makeWizardScrollView(documentView: stack)
+        let scrollView = makeGroupedFormScrollView(documentView: stack)
         NSLayoutConstraint.activate([
             subtitle.widthAnchor.constraint(equalTo: stack.widthAnchor),
             options.widthAnchor.constraint(equalTo: stack.widthAnchor),
@@ -135,7 +135,7 @@ final class IPSWSelectionContentViewController: NSViewController {
                 let replace = NSButton(
                     title: "Download & Replace", target: self, action: #selector(confirmOverwriteTapped))
                 addFullWidthBanner(
-                    makeWizardBanner(
+                    makeGroupedFormBanner(
                         symbolName: "exclamationmark.triangle.fill",
                         tint: .systemYellow,
                         message:
@@ -144,7 +144,7 @@ final class IPSWSelectionContentViewController: NSViewController {
                     ))
             } else if creationVM.hasResumableDownload {
                 addFullWidthBanner(
-                    makeWizardBanner(
+                    makeGroupedFormBanner(
                         symbolName: "arrow.clockwise.circle.fill",
                         tint: .systemBlue,
                         message:

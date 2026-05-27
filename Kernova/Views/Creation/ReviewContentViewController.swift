@@ -36,7 +36,7 @@ final class ReviewContentViewController: NSViewController {
         stack.setCustomSpacing(20, after: subtitle)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
-        let scrollView = makeWizardScrollView(documentView: stack)
+        let scrollView = makeGroupedFormScrollView(documentView: stack)
         NSLayoutConstraint.activate([
             subtitle.widthAnchor.constraint(equalTo: stack.widthAnchor),
             summary.widthAnchor.constraint(equalTo: stack.widthAnchor),
@@ -106,7 +106,7 @@ final class ReviewContentViewController: NSViewController {
             form.setCustomSpacing(18, after: last)
         }
         addCard(
-            [makeWizardCardRow("Start this VM after creation", control: startSwitch)], to: form)
+            [makeGroupedFormCardRow("Start this VM after creation", control: startSwitch)], to: form)
 
         return form
     }
@@ -116,20 +116,20 @@ final class ReviewContentViewController: NSViewController {
         if let last = form.arrangedSubviews.last {
             form.setCustomSpacing(18, after: last)
         }
-        let header = makeWizardSectionHeader(title)
+        let header = makeGroupedFormSectionHeader(title)
         form.addArrangedSubview(header)
         form.setCustomSpacing(6, after: header)
         addCard(rows, to: form)
     }
 
     private func addCard(_ rows: [NSView], to form: NSStackView) {
-        let card = makeWizardCard(rows: rows)
+        let card = makeGroupedFormCard(rows: rows)
         form.addArrangedSubview(card)
         card.widthAnchor.constraint(equalTo: form.widthAnchor).isActive = true
     }
 
     private func valueRow(_ label: String, _ value: String) -> NSView {
-        makeWizardCardRow(label, control: makeWizardValueLabel(value), alignment: .firstBaseline)
+        makeGroupedFormCardRow(label, control: makeGroupedFormValueLabel(value), alignment: .firstBaseline)
     }
 
     @objc private func startToggled() {

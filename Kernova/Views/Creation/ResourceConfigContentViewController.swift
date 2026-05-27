@@ -46,7 +46,7 @@ final class ResourceConfigContentViewController: NSViewController {
         stack.setCustomSpacing(20, after: subtitle)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
-        let scrollView = makeWizardScrollView(documentView: stack)
+        let scrollView = makeGroupedFormScrollView(documentView: stack)
         NSLayoutConstraint.activate([
             subtitle.widthAnchor.constraint(equalTo: stack.widthAnchor),
             form.widthAnchor.constraint(equalTo: stack.widthAnchor),
@@ -70,31 +70,31 @@ final class ResourceConfigContentViewController: NSViewController {
         form.spacing = 8
         form.translatesAutoresizingMaskIntoConstraints = false
 
-        addCard([makeWizardCardRow("Name", control: nameField, fillsControl: true)], to: form)
+        addCard([makeGroupedFormCardRow("Name", control: nameField, fillsControl: true)], to: form)
 
         addSectionHeader("Compute", to: form)
         addCard(
             [
-                makeWizardCardRow("CPU Cores", control: steppedControl(cpuField, cpuStepper, unit: "")),
-                makeWizardCardRow("Memory", control: steppedControl(memoryField, memoryStepper, unit: "GB")),
+                makeGroupedFormCardRow("CPU Cores", control: steppedControl(cpuField, cpuStepper, unit: "")),
+                makeGroupedFormCardRow("Memory", control: steppedControl(memoryField, memoryStepper, unit: "GB")),
             ], to: form)
 
         addSectionHeader("Storage", to: form)
-        addCard([makeWizardCardRow("Disk Size", control: diskPopUp)], to: form)
-        let caption = makeWizardCaption(
+        addCard([makeGroupedFormCardRow("Disk Size", control: diskPopUp)], to: form)
+        let caption = makeGroupedFormCaption(
             "Physical disk usage grows only as data is written (ASIF sparse format).")
         form.addArrangedSubview(caption)
         caption.widthAnchor.constraint(equalTo: form.widthAnchor).isActive = true
 
         addSectionHeader("Network", to: form)
-        addCard([makeWizardCardRow("Networking", control: networkSwitch)], to: form)
+        addCard([makeGroupedFormCardRow("Networking", control: networkSwitch)], to: form)
 
         return form
     }
 
     /// Adds a grouped card spanning the form width.
     private func addCard(_ rows: [NSView], to form: NSStackView) {
-        let card = makeWizardCard(rows: rows)
+        let card = makeGroupedFormCard(rows: rows)
         form.addArrangedSubview(card)
         card.widthAnchor.constraint(equalTo: form.widthAnchor).isActive = true
     }
@@ -105,7 +105,7 @@ final class ResourceConfigContentViewController: NSViewController {
         if let last = form.arrangedSubviews.last {
             form.setCustomSpacing(18, after: last)
         }
-        let header = makeWizardSectionHeader(title)
+        let header = makeGroupedFormSectionHeader(title)
         form.addArrangedSubview(header)
         form.setCustomSpacing(6, after: header)
     }
@@ -180,7 +180,7 @@ final class ResourceConfigContentViewController: NSViewController {
         let sizes = os.availableDiskSizes
         for size in sizes {
             diskPopUp.addItem(withTitle: DataFormatters.formatDiskSize(size))
-            diskPopUp.lastItem?.attributedTitle = diskItemTitle(size)
+            diskPopUp.lastItem?.attributedTitle = diskSizeMenuItemTitle(size)
             diskPopUp.lastItem?.tag = size
         }
         if !sizes.contains(creationVM.diskSizeInGB), let first = sizes.first {
@@ -189,24 +189,6 @@ final class ResourceConfigContentViewController: NSViewController {
         diskPopUp.selectItem(withTag: creationVM.diskSizeInGB)
         diskPopUp.target = self
         diskPopUp.action = #selector(diskChanged)
-    }
-
-    /// Builds a disk-size menu title with the number right-aligned and the unit
-    /// left-aligned to shared tab stops, so the number/unit columns line up down
-    /// the menu (generic AppKit tab stops — no custom menu-item view).
-    private func diskItemTitle(_ sizeInGB: Int) -> NSAttributedString {
-        let formatted = DataFormatters.formatDiskSize(sizeInGB)
-            .replacingOccurrences(of: "\u{2007}", with: " ")
-        let parts = formatted.split(separator: " ").filter { !$0.isEmpty }
-        guard parts.count == 2 else { return NSAttributedString(string: formatted) }
-
-        let style = NSMutableParagraphStyle()
-        style.tabStops = [
-            NSTextTab(textAlignment: .right, location: 30),
-            NSTextTab(textAlignment: .left, location: 38),
-        ]
-        return NSAttributedString(
-            string: "\t\(parts[0])\t\(parts[1])", attributes: [.paragraphStyle: style])
     }
 
     private func configureNetworkSwitch() {
