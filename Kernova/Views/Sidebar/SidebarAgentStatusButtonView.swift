@@ -30,6 +30,11 @@ final class SidebarAgentStatusButtonView: NSView,
     /// link (only surfaced when ``hasDismissAction`` is true).
     var onDismiss: (() -> Void)?
 
+    /// The accessory's fixed square dimension — also read by
+    /// `SidebarVMRowCellView.contentWidth(...)` so the sidebar snap-to-fit
+    /// reserves the right trailing width.
+    static let width: CGFloat = 16
+
     private let iconButton = NSButton()
     private let spinner = NSProgressIndicator()
     private let popoverPresenter = PopoverPresenter()
@@ -48,8 +53,8 @@ final class SidebarAgentStatusButtonView: NSView,
         contentVC.delegate = self
 
         NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: 16),
-            heightAnchor.constraint(equalToConstant: 16),
+            widthAnchor.constraint(equalToConstant: Self.width),
+            heightAnchor.constraint(equalToConstant: Self.width),
             iconButton.leadingAnchor.constraint(equalTo: leadingAnchor),
             iconButton.trailingAnchor.constraint(equalTo: trailingAnchor),
             iconButton.topAnchor.constraint(equalTo: topAnchor),

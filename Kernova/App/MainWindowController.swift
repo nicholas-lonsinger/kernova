@@ -80,7 +80,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             guard let self, let needed = self.sidebarViewController.widthToFitLongestRow() else {
                 return nil
             }
-            return (
+            return SidebarSnapMetrics(
                 neededOutlineWidth: needed,
                 currentOutlineWidth: self.sidebarViewController.currentOutlineWidth,
                 minThickness: self.sidebarItem.minimumThickness,
@@ -251,16 +251,22 @@ extension MainWindowController: NSToolbarItemValidation {
 /// The sidebar's hard min/max thickness is still enforced by the split view
 /// item; this only adds a soft snap point in between. `sidebarMetrics` returns
 /// the outline geometry to snap to, or `nil` when there's nothing to snap to.
+/// Live sidebar geometry the snap controller needs to convert a "fit the
+/// longest name" outline width into a divider position.
+struct SidebarSnapMetrics {
+    /// Outline width at which the longest VM name is fully visible.
+    let neededOutlineWidth: CGFloat
+    /// The outline view's current width (to derive the divider→outline offset).
+    let currentOutlineWidth: CGFloat
+    /// The sidebar's hard min/max thickness, clamping the snap target.
+    let minThickness: CGFloat
+    let maxThickness: CGFloat
+}
+
 @MainActor
 final class SnapToFitSplitViewController: NSSplitViewController {
     /// Sidebar geometry needed to compute the snap, or `nil` to disable it.
-    var sidebarMetrics:
-        (
-            () -> (
-                neededOutlineWidth: CGFloat, currentOutlineWidth: CGFloat, minThickness: CGFloat,
-                maxThickness: CGFloat
-            )?
-        )?
+    var sidebarMetrics: (() -> SidebarSnapMetrics?)?
 
     /// How close (in points) the drag must come to the fit width before it snaps.
     private static let snapThreshold: CGFloat = 10
