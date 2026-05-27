@@ -353,7 +353,9 @@ struct VMInstanceTests {
 
     @Test("statusDisplayNSColor maps non-paused states")
     func statusDisplayNSColorByStatus() {
-        #expect(makeInstance(status: .stopped).statusDisplayNSColor == .secondaryLabelColor)
+        // Concrete gray (not `.secondaryLabelColor`) so the OS icon keeps its
+        // stopped color on the selection highlight instead of inverting to white.
+        #expect(makeInstance(status: .stopped).statusDisplayNSColor == .systemGray)
         #expect(makeInstance(status: .running).statusDisplayNSColor == .systemGreen)
         #expect(makeInstance(status: .starting).statusDisplayNSColor == .systemOrange)
         #expect(makeInstance(status: .error).statusDisplayNSColor == .systemRed)

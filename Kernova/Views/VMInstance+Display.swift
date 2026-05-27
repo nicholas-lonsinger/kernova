@@ -8,14 +8,16 @@ extension VMInstance {
         return isColdPaused ? "Suspended" : status.displayName
     }
 
-    /// Status dot color for the pure-AppKit sidebar.
+    /// Color used to tint the pure-AppKit sidebar's OS icon.
     ///
     /// Preparing and cold-paused are orange, live-paused is yellow, and the
     /// remaining states follow `status`.
     var statusDisplayNSColor: NSColor {
         if isPreparing || isColdPaused { return .systemOrange }
         switch status {
-        case .stopped: return .secondaryLabelColor
+        // A concrete gray (not `.secondaryLabelColor`) so the icon keeps its
+        // stopped color on the selection highlight instead of inverting to white.
+        case .stopped: return .systemGray
         case .starting, .saving, .restoring, .installing, .initialBoot: return .systemOrange
         case .running: return .systemGreen
         case .paused: return .systemYellow
