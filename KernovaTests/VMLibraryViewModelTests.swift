@@ -315,6 +315,66 @@ struct VMLibraryViewModelTests {
         #expect(viewModel.externalAttachments(for: instance).isEmpty)
     }
 
+    @Test("externalAttachments excludes the bundled Guest Agent DMG")
+    func externalAttachmentsExcludesGuestAgentDMG() throws {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let agentPath = try #require(KernovaGuestAgentInfo.installerDiskImageURL)
+            .path(percentEncoded: false)
+        let instance = makeInstance()
+        instance.configuration.removableMedia = [
+            RemovableMediaItem(path: agentPath, readOnly: true, label: "Kernova Guest Agent"),
+            RemovableMediaItem(path: "/Volumes/External/installer.iso", readOnly: true, label: "Installer"),
+        ]
+        viewModel.instances.append(instance)
+
+        let attachments = viewModel.externalAttachments(for: instance)
+
+        // The app-owned DMG is filtered out; only the user's ISO remains —
+        // so it can never be surfaced for, or moved to, the Trash.
+        #expect(attachments.count == 1)
+        #expect(attachments[0].path == "/Volumes/External/installer.iso")
+        #expect(!attachments.contains { $0.path == agentPath })
+    }
+
+    @Test("externalAttachments is empty when the only external is the Guest Agent DMG")
+    func externalAttachmentsEmptyForGuestAgentOnly() throws {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let agentPath = try #require(KernovaGuestAgentInfo.installerDiskImageURL)
+            .path(percentEncoded: false)
+        let instance = makeInstance()
+        instance.configuration.removableMedia = [
+            RemovableMediaItem(path: agentPath, readOnly: true, label: "Kernova Guest Agent")
+        ]
+        viewModel.instances.append(instance)
+
+        // Empty means confirmDelete routes to the simple alert, not the
+        // file-trashing sheet.
+        #expect(viewModel.externalAttachments(for: instance).isEmpty)
+    }
+
+    @Test("deleteConfirmed with trashExternals=true never trashes the Guest Agent DMG")
+    func deleteConfirmedNeverTrashesGuestAgentDMG() throws {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let agentPath = try #require(KernovaGuestAgentInfo.installerDiskImageURL)
+            .path(percentEncoded: false)
+        let instance = makeInstance()
+        instance.configuration.removableMedia = [
+            RemovableMediaItem(path: agentPath, readOnly: true, label: "Kernova Guest Agent")
+        ]
+        viewModel.instances.append(instance)
+        storage.bundles[instance.bundleURL] = instance.configuration
+
+        let tasks = viewModel.deleteConfirmed(instance, trashExternals: true)
+
+        // No trash task is spawned for the bundled DMG. Require this *before*
+        // awaiting any task: a regression that did enqueue one would
+        // otherwise move the real app-bundle DMG to the Trash.
+        try #require(tasks.isEmpty)
+        #expect(viewModel.instances.isEmpty)
+        #expect(FileManager.default.fileExists(atPath: agentPath))
+        #expect(!presenter.showError)
+    }
+
     @Test("deleteConfirmed with trashExternals=false leaves external files untouched")
     func deleteConfirmedKeepsExternalsByDefault() throws {
         let (viewModel, storage, _, _, _) = makeViewModel()

@@ -539,7 +539,17 @@ final class VMLibraryViewModel {
     /// the library that reference the same path. The shared-with list
     /// lets the delete confirmation warn before trashing a file that
     /// another VM still depends on (e.g., a shared installer ISO).
+    ///
+    /// The bundled Guest Agent installer DMG is deliberately excluded: it
+    /// is mounted as a read-only `RemovableMediaItem` whose path points
+    /// *inside the app bundle* (see ``mountGuestAgentInstaller(on:)``), so
+    /// it is never a user-owned file. Surfacing it in the delete sheet is
+    /// meaningless, and trashing it would corrupt the app bundle and break
+    /// Guest Agent installation for every VM in the library. Identified by
+    /// path equality with `KernovaGuestAgentInfo.installerDiskImageURL`,
+    /// the same mechanism ``unmountGuestAgentInstaller(from:)`` uses.
     func externalAttachments(for instance: VMInstance) -> [ExternalAttachment] {
+        let agentPath = Self.guestAgentInstallerPath
         let otherInstances = instances.filter { $0.id != instance.id }
         func vmsSharing(path: String) -> [String] {
             otherInstances.compactMap { other -> String? in
@@ -566,7 +576,7 @@ final class VMLibraryViewModel {
                 )
             )
         }
-        for item in instance.configuration.removableMedia ?? [] {
+        for item in instance.configuration.removableMedia ?? [] where item.path != agentPath {
             attachments.append(
                 ExternalAttachment(
                     id: item.id,
@@ -578,6 +588,17 @@ final class VMLibraryViewModel {
             )
         }
         return attachments
+    }
+
+    /// Filesystem path of the bundled Guest Agent installer DMG, if present.
+    ///
+    /// Resolved at the call site (not cached) so it always reflects the
+    /// running app bundle's location. `nil` when the DMG is missing — in
+    /// that case nothing is filtered, which is correct: there is no bundled
+    /// resource to protect. Mirrors the path-equality identity used by
+    /// ``mountGuestAgentInstaller(on:)`` / ``unmountGuestAgentInstaller(from:)``.
+    private static var guestAgentInstallerPath: String? {
+        KernovaGuestAgentInfo.installerDiskImageURL?.path(percentEncoded: false)
     }
 
     /// Trashes any in-progress IPSW download bundle for a VM that's being deleted.
@@ -603,17 +624,18 @@ final class VMLibraryViewModel {
         #endif
     }
 
-    /// Flat list of external (label, URL) pairs to feed the trash helper —
-    /// mirrors `externalAttachments(for:)` but drops the sharing metadata.
+    /// Flat list of external (label, URL) pairs to feed the trash helper.
+    ///
+    /// Derived from `externalAttachments(for:)` so the set of files shown
+    /// in the delete sheet and the set actually trashed can never diverge —
+    /// in particular, the bundled Guest Agent DMG is excluded in exactly one
+    /// place. External attachment paths are always absolute (external disks
+    /// and removable media), so `URL(fileURLWithPath:)` is the correct
+    /// resolution; the sharing metadata is dropped here.
     private func externalURLs(for instance: VMInstance) -> [(label: String, url: URL)] {
-        var result: [(label: String, url: URL)] = []
-        for disk in instance.configuration.storageDisks ?? [] where !disk.isInternal {
-            result.append((label: disk.label, url: URL(fileURLWithPath: disk.path)))
+        externalAttachments(for: instance).map { attachment in
+            (label: attachment.label, url: URL(fileURLWithPath: attachment.path))
         }
-        for item in instance.configuration.removableMedia ?? [] {
-            result.append((label: item.label, url: URL(fileURLWithPath: item.path)))
-        }
-        return result
     }
 
     /// Detached trash for a single external attachment.
