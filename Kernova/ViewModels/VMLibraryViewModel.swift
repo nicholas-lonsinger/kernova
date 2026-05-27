@@ -1464,12 +1464,28 @@ final class VMLibraryViewModel {
                     return skipped
                 }.value
 
-                // Remove skipped disks. Internal disk paths are
-                // bundle-relative (`AdditionalDisks/<id>.asif`) so they
-                // travel with the bundle and don't need remapping.
+                // Remove skipped disks and remap each kept internal additional
+                // disk's `path` to its regenerated id-based filename.
+                // `clonedForNewInstance` gives every disk a fresh `id` (so
+                // virtio/USB device identifiers don't collide with the source
+                // bundle) but copies the old `path` verbatim; the file copy
+                // above wrote each disk to `AdditionalDisks/<new-id>.asif`, so
+                // the stored path must follow or boot-time resolution looks for
+                // the source bundle's old id and fails with `storageDiskNotFound`.
                 if !diskMapping.isEmpty {
+                    let remappedPaths: [UUID: String] = Dictionary(
+                        uniqueKeysWithValues: diskMapping.map { mapping in
+                            (mapping.clonedDisk.id, "AdditionalDisks/\(mapping.clonedDisk.id.uuidString).asif")
+                        }
+                    )
                     phantom.configuration.storageDisks = phantom.configuration.storageDisks?
                         .filter { !skippedDiskIDs.contains($0.id) }
+                        .map { disk in
+                            guard let newPath = remappedPaths[disk.id] else { return disk }
+                            var updated = disk
+                            updated.path = newPath
+                            return updated
+                        }
                     if phantom.configuration.storageDisks?.isEmpty == true {
                         phantom.configuration.storageDisks = nil
                     }
