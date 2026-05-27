@@ -350,12 +350,29 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
         return field
     }()
 
+    /// Memoized name-to-width measurements for the sidebar snap-to-fit.
+    ///
+    /// The snap recomputes the fit width on every `constrainSplitPosition` call
+    /// (many per second during a drag) over every VM, so caching the text-layout
+    /// pass keeps that hot path off the layout engine. Keyed only by name;
+    /// cleared when the font changes (system text-size change), which also keeps
+    /// it tracking `Typography.body` for live rows. Bounded by the VM count.
+    private static var nameWidthCache: [String: CGFloat] = [:]
+    private static var nameWidthCacheFont: NSFont?
+
     private static func measuredNameWidth(for name: String) -> CGFloat {
-        // Set the font per-measurement (not once at init) so it tracks
-        // `Typography.body` if the system text size changes, matching live rows.
-        measuringNameField.font = Typography.body
+        let font = Typography.body
+        if font != nameWidthCacheFont {
+            nameWidthCache.removeAll()
+            nameWidthCacheFont = font
+        }
+        if let cached = nameWidthCache[name] { return cached }
+
+        measuringNameField.font = font
         measuringNameField.stringValue = name
-        return measuringNameField.fittingSize.width
+        let width = measuringNameField.fittingSize.width
+        nameWidthCache[name] = width
+        return width
     }
 
     // MARK: - Agent visibility
