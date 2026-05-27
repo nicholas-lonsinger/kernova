@@ -216,7 +216,16 @@ Place the directive **between** the doc comment (`///`) and the declaration so D
 
 ### Branch Naming
 
-Before starting work in a worktree, create a descriptively-named branch. Use the format `<type>/<short-description>`, where `<type>` matches the commit type prefixes (e.g., `feat`, `fix`, `refactor`):
+Worktrees start on an auto-generated `worktree-<name>` branch (the harness also
+mangles any `/` in the name to `+`). **Treat that as a throwaway scratch branch:
+do the work on it without renaming up front.** Don't try to pick a branch name
+before starting — the right name depends on the full scope of the work, which
+you only know once it's ready to push.
+
+When the work is ready to push to origin, rename the scratch branch to a clean
+`<type>/<short-description>`, where `<type>` matches the commit type prefixes
+(e.g., `feat`, `fix`, `refactor`), and push it under that same name so the local
+branch and the origin/PR branch match:
 
 ```
 feat/vm-snapshot-support
@@ -224,13 +233,19 @@ fix/display-sizing-on-switch
 refactor/extract-lifecycle-coordinator
 ```
 
-Create and switch to the branch before making any changes:
-
 ```bash
-git checkout -b feat/vm-snapshot-support
+git branch -m <type>/<short-description>        # rename the scratch branch in place
+git push -u origin <type>/<short-description>   # local and remote now match
 ```
 
-Keep descriptions concise (2-4 words, kebab-case). The branch name should make the PR's purpose clear at a glance.
+Keep descriptions concise (2-4 words, kebab-case). The branch name should make
+the PR's purpose clear at a glance.
+
+**Never push the `worktree-`-prefixed scratch name to origin.** It is a local
+implementation detail; a PR's head branch must always be the clean
+`<type>/<short-description>` name. (Renaming a branch on GitHub *after* a PR
+exists does not retarget the PR — it closes it — so name it correctly at first
+push.)
 
 ### Commit Messages
 
@@ -304,7 +319,7 @@ When merging PRs with `gh pr merge`, always squash-merge with `--squash --subjec
 After a successful merge, run the following steps to clean up the local branch and sync:
 
 1. `gh pr view <N> --json state -q .state` — confirm `"MERGED"` before deleting anything
-2. If in a worktree: switch to the worktree's local branch, which is always the worktree name with a `worktree-` prefix (e.g., `git checkout worktree-expressive-yawning-sutton` for a worktree named `expressive-yawning-sutton`)
+2. If in a worktree: you're checked out on the merged branch (the clean `<type>/<short-description>` name it was pushed under). You can't switch to `main` — the primary checkout holds it — so detach to get off the branch before deleting it: `git checkout --detach`
 3. `git branch -D <merged-branch>`
 4. `git branch -d -r origin/<merged-branch>`
 5. `git pull`
