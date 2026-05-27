@@ -21,6 +21,14 @@ import AppKit
 final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
     static let reuseIdentifier = NSUserInterfaceItemIdentifier("SidebarVMRowCell")
 
+    /// Layout metrics shared by `buildLayout()` and `contentWidth(forName:showsAgentAccessory:)`.
+    ///
+    /// Reading the constraints and the snap-to-fit width measurement from one
+    /// source keeps the rendered row and the measurement from drifting apart.
+    private static let rowLeadingInset: CGFloat = 4
+    private static let rowTrailingInset: CGFloat = 8
+    private static let iconSlotWidth: CGFloat = 20
+
     private weak var instance: VMInstance?
     private var rowObservation: ObservationLoop?
     private var onCommitRename: ((String) -> Void)?
@@ -88,7 +96,7 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
 
         // The icon and spinner share the leading slot: exactly one is visible at
         // a time, so the stack collapses the hidden one and the visible view
-        // owns that position. Both are pinned to the same 20pt width to keep the
+        // owns that position. Both are pinned to the same width to keep the
         // name field from shifting when they swap.
         let row = NSStackView(views: [iconView, spinner, nameField, agentButton])
         row.orientation = .horizontal
@@ -105,14 +113,14 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
         textField = nameField
 
         NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.rowLeadingInset),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.rowTrailingInset),
             row.centerYAnchor.constraint(equalTo: centerYAnchor),
             row.topAnchor.constraint(greaterThanOrEqualTo: topAnchor, constant: 2),
             row.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -2),
 
-            iconView.widthAnchor.constraint(equalToConstant: 20),
-            spinner.widthAnchor.constraint(equalToConstant: 20),
+            iconView.widthAnchor.constraint(equalToConstant: Self.iconSlotWidth),
+            spinner.widthAnchor.constraint(equalToConstant: Self.iconSlotWidth),
         ])
     }
 
@@ -303,6 +311,68 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
         agentButton.onMount = nil
         agentButton.onDismiss = nil
         agentButton.isHidden = true
+    }
+
+    // MARK: - Intrinsic width
+
+    /// The cell content width (within the cell's own bounds, excluding the
+    /// outline view's per-row indentation) at which `name` is fully visible and
+    /// the label stops truncating.
+    ///
+    /// Mirrors `buildLayout()`: the leading row inset, the fixed icon/spinner
+    /// slot and its gap, the measured name width, the trailing inset, and — when
+    /// the agent accessory is shown — its width plus gap. Used by the
+    /// split-view divider's Finder-style snap-to-fit; the caller adds the
+    /// outline indentation.
+    static func contentWidth(forName name: String, showsAgentAccessory: Bool) -> CGFloat {
+        let nameWidth = ceil(measuredNameWidth(for: name))
+        var width =
+            Self.rowLeadingInset + Self.iconSlotWidth + Spacing.small + nameWidth
+            + Self.rowTrailingInset
+        if showsAgentAccessory {
+            width += Spacing.small + SidebarAgentStatusButtonView.width
+        }
+        return width
+    }
+
+    /// A borderless field configured like the row's `nameField`, reused to
+    /// measure label widths. Its `fittingSize` includes `NSTextField`'s internal
+    /// text inset — which a bare `NSString.size(withAttributes:)` omits, leaving
+    /// the snapped sidebar a few points too narrow and the name still truncated.
+    private static let measuringNameField: NSTextField = {
+        let field = NSTextField()
+        field.isBordered = false
+        field.drawsBackground = false
+        field.isEditable = false
+        field.lineBreakMode = .byTruncatingTail
+        field.maximumNumberOfLines = 1
+        field.cell?.usesSingleLineMode = true
+        return field
+    }()
+
+    /// Memoized name-to-width measurements for the sidebar snap-to-fit.
+    ///
+    /// The snap recomputes the fit width on every `constrainSplitPosition` call
+    /// (many per second during a drag) over every VM, so caching the text-layout
+    /// pass keeps that hot path off the layout engine. Keyed only by name;
+    /// cleared when the font changes (system text-size change), which also keeps
+    /// it tracking `Typography.body` for live rows. Bounded by the VM count.
+    private static var nameWidthCache: [String: CGFloat] = [:]
+    private static var nameWidthCacheFont: NSFont?
+
+    private static func measuredNameWidth(for name: String) -> CGFloat {
+        let font = Typography.body
+        if font != nameWidthCacheFont {
+            nameWidthCache.removeAll()
+            nameWidthCacheFont = font
+        }
+        if let cached = nameWidthCache[name] { return cached }
+
+        measuringNameField.font = font
+        measuringNameField.stringValue = name
+        let width = measuringNameField.fittingSize.width
+        nameWidthCache[name] = width
+        return width
     }
 
     // MARK: - Agent visibility

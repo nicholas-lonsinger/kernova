@@ -292,6 +292,52 @@ final class SidebarViewController: NSViewController {
         UserDefaults.standard.set(expandedIDs, forKey: Self.expandedSectionsKey)
     }
 
+    // MARK: - Content-fit width
+
+    /// The sidebar width at which the longest VM name is fully visible (no
+    /// truncation), or `nil` when there's nothing to measure — an empty list or
+    /// a collapsed group, in which case no leaf row is laid out to read the
+    /// indentation from.
+    ///
+    /// Drives the split-view divider's Finder-style snap-to-fit. The width is
+    /// the outline view's per-row indentation (group disclosure + level indent,
+    /// read from a real leaf cell's frame) plus the widest row's content width.
+    func widthToFitLongestRow() -> CGFloat? {
+        let instances = viewModel.instances
+        guard !instances.isEmpty else { return nil }
+
+        guard
+            let firstLeafRow = (0..<outlineView.numberOfRows).first(where: {
+                outlineView.item(atRow: $0) is VMInstance
+            })
+        else { return nil }
+        let indentation = outlineView.frameOfCell(atColumn: 0, row: firstLeafRow).minX
+
+        let widestContent =
+            instances.map { instance in
+                SidebarVMRowCellView.contentWidth(
+                    forName: instance.name,
+                    showsAgentAccessory: SidebarVMRowCellView.visibleAgentStatus(for: instance) != nil
+                )
+            }.max() ?? 0
+
+        // The width the *outline view* must have for the longest name to fit,
+        // plus breathing room so the snapped fit leaves a comfortable gap after
+        // the name (Finder-style) rather than seating it flush against the edge.
+        // The split-view divider sits a few points outboard of this (divider
+        // chrome), so the snap controller converts to a divider position.
+        return indentation + widestContent + Self.fitBreathingRoom
+    }
+
+    /// Trailing slack added to the snap-to-fit width so the longest name isn't
+    /// flush against the sidebar edge.
+    private static let fitBreathingRoom: CGFloat = 12
+
+    /// The outline view's current width — paired with `widthToFitLongestRow()`
+    /// so the snap controller can derive the divider-to-outline offset from
+    /// live geometry.
+    var currentOutlineWidth: CGFloat { outlineView.bounds.width }
+
     // MARK: - Helpers
 
     private func sectionContaining(_ instance: VMInstance) -> SidebarSection? {

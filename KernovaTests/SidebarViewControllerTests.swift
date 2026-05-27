@@ -209,6 +209,57 @@ struct SidebarViewControllerTests {
         #expect(!menuTitles.contains("Rename"))
     }
 
+    // MARK: - Content-fit width
+
+    @Test("contentWidth grows with name length")
+    func contentWidthGrowsWithName() {
+        let short = SidebarVMRowCellView.contentWidth(forName: "A", showsAgentAccessory: false)
+        let long = SidebarVMRowCellView.contentWidth(
+            forName: "A much longer virtual machine name", showsAgentAccessory: false)
+        #expect(long > short)
+    }
+
+    @Test("contentWidth adds the agent accessory width and gap")
+    func contentWidthAccessoryDelta() {
+        let withoutBadge = SidebarVMRowCellView.contentWidth(
+            forName: "Test VM", showsAgentAccessory: false)
+        let withBadge = SidebarVMRowCellView.contentWidth(
+            forName: "Test VM", showsAgentAccessory: true)
+        // The accessory adds its 16pt width plus the small inter-element gap.
+        #expect(withBadge - withoutBadge == Spacing.small + 16)
+    }
+
+    @Test("widthToFitLongestRow is nil with no VMs")
+    func fitWidthNilWhenEmpty() {
+        let viewModel = makeViewModel()
+        let controller = SidebarViewController(viewModel: viewModel)
+        controller.loadViewIfNeeded()
+        #expect(controller.widthToFitLongestRow() == nil)
+    }
+
+    @Test("widthToFitLongestRow grows with the longest VM name")
+    func fitWidthTracksLongestName() {
+        let shortModel = makeViewModel()
+        shortModel.instances.append(makeInstance(name: "VM"))
+        let shortController = SidebarViewController(viewModel: shortModel)
+        shortController.loadViewIfNeeded()
+        shortController.view.layoutSubtreeIfNeeded()
+
+        let longModel = makeViewModel()
+        longModel.instances.append(makeInstance(name: "An extremely long virtual machine name"))
+        let longController = SidebarViewController(viewModel: longModel)
+        longController.loadViewIfNeeded()
+        longController.view.layoutSubtreeIfNeeded()
+
+        guard let shortWidth = shortController.widthToFitLongestRow(),
+            let longWidth = longController.widthToFitLongestRow()
+        else {
+            Issue.record("Expected a fit width for both controllers")
+            return
+        }
+        #expect(longWidth > shortWidth)
+    }
+
     // MARK: - View loading
 
     @Test("Outline view loads the group with its VM rows expanded")
