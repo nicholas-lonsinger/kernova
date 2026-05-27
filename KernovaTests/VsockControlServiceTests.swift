@@ -524,9 +524,12 @@ struct VsockControlServiceTests {
         try guest.send(makeGuestHello(agentVersion: "0.9.0"))
         try await waitUntil { service.isConnected }
 
-        // Read a few frames; none should be PolicyUpdate.
+        // Read a few frames; none should be PolicyUpdate. Each read returns as
+        // soon as a frame arrives (heartbeats fire every 40 ms), so the timeout
+        // only bounds the worst case — keep it generous so a CI scheduling
+        // stall between heartbeats doesn't time out and flake the test.
         for _ in 0..<3 {
-            let next = try await nextFrame(from: guest, timeout: .milliseconds(200))
+            let next = try await nextFrame(from: guest, timeout: .seconds(2))
             if case .policyUpdate = next.payload {
                 Issue.record("Unexpected PolicyUpdate when no provider was supplied")
                 return
