@@ -1738,6 +1738,57 @@ struct VMLibraryViewModelTests {
         #expect(cloned?.name == "VM Copy 2")
     }
 
+    @Test("cloneVM remaps internal additional disk path to its regenerated id and copies the file")
+    func cloneVMRemapsAdditionalDiskPath() async throws {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+
+        // Build a source bundle on disk with a real additional-disk file
+        // living at `AdditionalDisks/<source-disk-id>.asif`.
+        let instance = makeInstance(name: "Original")
+        instance.status = .stopped
+        let sourceDiskID = UUID()
+        let sourceLayout = VMBundleLayout(bundleURL: instance.bundleURL)
+        let fm = FileManager.default
+        try fm.createDirectory(at: sourceLayout.additionalDisksDirectoryURL, withIntermediateDirectories: true)
+        let sourceDiskFile = sourceLayout.additionalDiskURL(id: sourceDiskID)
+        try Data("disk-bytes".utf8).write(to: sourceDiskFile)
+        defer { try? fm.removeItem(at: instance.bundleURL) }
+
+        instance.configuration.storageDisks = [
+            StorageDisk(path: "Disk.asif", isInternal: true),
+            StorageDisk(
+                id: sourceDiskID,
+                path: "AdditionalDisks/\(sourceDiskID.uuidString).asif",
+                label: "Extra",
+                isInternal: true
+            ),
+        ]
+        viewModel.instances.append(instance)
+        storage.bundles[instance.bundleURL] = instance.configuration
+
+        viewModel.cloneVM(instance)
+
+        let phantom = viewModel.instances.first { $0.id != instance.id }
+        #expect(phantom != nil)
+        await phantom?.preparingState?.task.value
+        defer { phantom.map { try? fm.removeItem(at: $0.bundleURL) } }
+
+        let clonedDisks = phantom?.configuration.storageDisks ?? []
+        guard let extra = clonedDisks.first(where: { $0.path.hasPrefix("AdditionalDisks/") }) else {
+            Issue.record("Cloned configuration is missing the additional disk")
+            return
+        }
+
+        // The path must point at the regenerated id, not the source's id,
+        // and the copied file must exist at exactly that resolved location.
+        #expect(extra.id != sourceDiskID)
+        #expect(extra.path == "AdditionalDisks/\(extra.id.uuidString).asif")
+        if let phantom {
+            let resolved = phantom.bundleURL.appendingPathComponent(extra.path)
+            #expect(fm.fileExists(atPath: resolved.path(percentEncoded: false)))
+        }
+    }
+
     // MARK: - Cancel Preparing
 
     @Test("cancelPreparingConfirmed removes phantom instance and cancels task")
