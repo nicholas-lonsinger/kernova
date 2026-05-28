@@ -30,6 +30,14 @@ retain_objc_accessible: true
 # observation tokens whose lifetime IS the value — flagging them is noisy.
 retain_assign_only_properties: true
 
+# Delegate-protocol methods follow the Cocoa convention of passing the
+# sender back (`func diskSizePopover(_ vc: …)`); conformers routinely don't
+# use that argument. Retaining unused protocol-function parameters silences
+# that noise while still flagging genuinely-dead parameters on non-protocol
+# functions. (`@objc` action `sender` params aren't protocol funcs, so they
+# are handled at the source: the unused binding is renamed to `_`.)
+retain_unused_protocol_func_params: true
+
 report_exclude:
   - "**/.build/**"
   - "DerivedData/**"

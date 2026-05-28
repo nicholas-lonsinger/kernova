@@ -178,11 +178,11 @@ final class DiskSizePopoverContentViewController: NSViewController {
         return row
     }
 
-    @objc private func cancelTapped(_ sender: NSButton) {
+    @objc private func cancelTapped(_: NSButton) {
         delegate?.diskSizePopoverDidCancel(self)
     }
 
-    @objc private func createTapped(_ sender: NSButton) {
+    @objc private func createTapped(_: NSButton) {
         delegate?.diskSizePopover(self, didConfirmSizeInGB: selectedSizeInGB)
     }
 }

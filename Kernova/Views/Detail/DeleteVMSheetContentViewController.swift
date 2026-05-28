@@ -514,11 +514,11 @@ final class DeleteVMSheetContentViewController: NSViewController {
 
     // MARK: - Actions
 
-    @objc private func cancelTapped(_ sender: NSButton) {
+    @objc private func cancelTapped(_: NSButton) {
         delegate?.deleteVMSheetDidCancel(self)
     }
 
-    @objc private func confirmTapped(_ sender: NSButton) {
+    @objc private func confirmTapped(_: NSButton) {
         delegate?.deleteVMSheet(self, didConfirmTrashingExternalIDs: selectedExternalIDs)
     }
 

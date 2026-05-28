@@ -64,10 +64,8 @@ struct KernovaLogMessage: ExpressibleByStringInterpolation, ExpressibleByStringL
         }
 
         // Default-privacy = `.private` matches `os.Logger`'s string default.
-
-        // periphery:ignore - StringInterpolationProtocol witness, called by
-        // Swift's compiler-emitted interpolation machinery rather than from
-        // source — Periphery's symbol graph never sees the call site.
+        // `StringInterpolationProtocol` witness, invoked by Swift's
+        // compiler-emitted interpolation machinery.
         mutating func appendInterpolation(
             _ value: String,
             privacy: LogPrivacy = .private
@@ -78,8 +76,7 @@ struct KernovaLogMessage: ExpressibleByStringInterpolation, ExpressibleByStringL
 
         // Generic fallback for non-`String` types — numbers, booleans,
         // arrays, anything `CustomStringConvertible`. Rendered via
-        // `String(describing:)`.
-        // periphery:ignore - Same rationale as the `String` overload above.
+        // `String(describing:)`. Same witness rationale as the `String` overload.
         mutating func appendInterpolation<T>(
             _ value: T,
             privacy: LogPrivacy = .private
@@ -89,9 +86,8 @@ struct KernovaLogMessage: ExpressibleByStringInterpolation, ExpressibleByStringL
             localRendered += redacted(s, privacy: privacy)
         }
 
-        // periphery:ignore - Only called from the `appendInterpolation`
-        // witnesses above; transitively unreachable to Periphery for the
-        // same reason.
+        // Applies the privacy policy; called only from the `appendInterpolation`
+        // witnesses above.
         func redacted(_ value: String, privacy: LogPrivacy) -> String {
             switch privacy.kind {
             case .public, .auto:

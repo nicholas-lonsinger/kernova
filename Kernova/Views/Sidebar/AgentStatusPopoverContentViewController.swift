@@ -190,11 +190,11 @@ final class AgentStatusPopoverContentViewController: NSViewController {
 
     // MARK: - Actions
 
-    @objc private func actionTapped(_ sender: NSButton) {
+    @objc private func actionTapped(_: NSButton) {
         delegate?.agentStatusPopoverDidTapAction(self)
     }
 
-    @objc private func dismissTapped(_ sender: NSButton) {
+    @objc private func dismissTapped(_: NSButton) {
         delegate?.agentStatusPopoverDidTapDismiss(self)
     }
 

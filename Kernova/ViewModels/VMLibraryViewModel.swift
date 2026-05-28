@@ -1134,23 +1134,6 @@ final class VMLibraryViewModel {
         )
     }
 
-    // MARK: - USB Device Management
-
-    func detachUSBDevice(_ device: USBDeviceInfo, from instance: VMInstance) {
-        Self.logger.debug(
-            "Detaching USB device '\(device.displayName, privacy: .public)' from '\(instance.name, privacy: .public)'")
-        Task {
-            do {
-                try await lifecycle.detachUSBDevice(device, from: instance)
-            } catch {
-                Self.logger.error(
-                    "USB detach failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-                )
-                presentError(error)
-            }
-        }
-    }
-
     // MARK: - Guest Agent Installer
 
     /// Mounts the bundled `KernovaGuestAgent.dmg` as a read-only USB device so
