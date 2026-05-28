@@ -557,6 +557,14 @@ final class VMLibraryViewModel {
             .filter(\.isInternal)
     }
 
+    /// `true` when `disk` is the VM's primary (boot) disk.
+    ///
+    /// The synthesized `Disk.asif`, identified by its stable, bundle-derived id;
+    /// used to warn before removing the disk the VM starts from.
+    func isMainDisk(_ disk: StorageDisk, of instance: VMInstance) -> Bool {
+        disk.id == Self.defaultStorageDisks(for: instance).first?.id
+    }
+
     /// Returns the external (non-bundle) files referenced by `instance`.
     ///
     /// Each attachment is annotated with the names of any other VMs in
@@ -574,20 +582,6 @@ final class VMLibraryViewModel {
     /// the same mechanism ``unmountGuestAgentInstaller(from:)`` uses.
     func externalAttachments(for instance: VMInstance) -> [ExternalAttachment] {
         let agentPath = Self.guestAgentInstallerPath
-        let otherInstances = instances.filter { $0.id != instance.id }
-        func vmsSharing(path: String) -> [String] {
-            otherInstances.compactMap { other -> String? in
-                let externalDiskPaths = (other.configuration.storageDisks ?? [])
-                    .filter { !$0.isInternal }
-                    .map(\.path)
-                let mediaPaths = (other.configuration.removableMedia ?? []).map(\.path)
-                if externalDiskPaths.contains(path) || mediaPaths.contains(path) {
-                    return other.name
-                }
-                return nil
-            }
-        }
-
         var attachments: [ExternalAttachment] = []
         for disk in instance.configuration.storageDisks ?? [] where !disk.isInternal {
             attachments.append(
@@ -596,7 +590,7 @@ final class VMLibraryViewModel {
                     kind: .storageDisk,
                     label: disk.label,
                     path: disk.path,
-                    sharedWithVMNames: vmsSharing(path: disk.path)
+                    sharedWithVMNames: sharingVMNames(forPath: disk.path, excluding: instance)
                 )
             )
         }
@@ -607,11 +601,44 @@ final class VMLibraryViewModel {
                     kind: .removableMedia,
                     label: item.label,
                     path: item.path,
-                    sharedWithVMNames: vmsSharing(path: item.path)
+                    sharedWithVMNames: sharingVMNames(forPath: item.path, excluding: instance)
                 )
             )
         }
         return attachments
+    }
+
+    /// Names of other VMs in the library that reference `path` as an external
+    /// storage disk or removable medium.
+    ///
+    /// The single source of truth for "who else uses this file", shared by the
+    /// VM-delete sheet (``externalAttachments(for:)``) and the per-row delete
+    /// confirmations in settings. Only *external* (non-bundle) storage disks
+    /// count — bundle-relative paths are per-VM by construction. `instance` is
+    /// excluded so the file isn't reported as shared with itself.
+    func sharingVMNames(forPath path: String, excluding instance: VMInstance) -> [String] {
+        instances.compactMap { other -> String? in
+            guard other.id != instance.id else { return nil }
+            let externalDiskPaths = (other.configuration.storageDisks ?? [])
+                .filter { !$0.isInternal }
+                .map(\.path)
+            let mediaPaths = (other.configuration.removableMedia ?? []).map(\.path)
+            if externalDiskPaths.contains(path) || mediaPaths.contains(path) {
+                return other.name
+            }
+            return nil
+        }
+    }
+
+    /// `true` when `item` is the bundled Guest Agent installer DMG.
+    ///
+    /// The installer lives *inside the app bundle* and is mounted read-only by
+    /// ``mountGuestAgentInstaller(on:)``; it is never a user-owned file, so a
+    /// "remove" of it must only detach the entry and never trash the file.
+    /// Identified by path equality, the same mechanism the delete flow uses.
+    func isGuestAgentInstaller(_ item: RemovableMediaItem) -> Bool {
+        guard let agentPath = Self.guestAgentInstallerPath else { return false }
+        return item.path == agentPath
     }
 
     /// Filesystem path of the bundled Guest Agent installer DMG, if present.
@@ -1183,6 +1210,16 @@ final class VMLibraryViewModel {
         }
 
         guard trashFile else { return nil }
+        // Never trash a file another VM still references. Only external disks
+        // can be shared (bundle-relative paths are per-VM), so the check is
+        // scoped to those. The UI hard-blocks the trash option for shared
+        // disks; this enforces the same invariant at the model layer.
+        if !disk.isInternal, !sharingVMNames(forPath: disk.path, excluding: instance).isEmpty {
+            Self.logger.notice(
+                "Kept shared disk '\(disk.label, privacy: .public)' — still used by another VM; removed entry only"
+            )
+            return nil
+        }
         let diskURL: URL =
             disk.isInternal
             ? instance.bundleURL.appendingPathComponent(disk.path)
@@ -1241,6 +1278,23 @@ final class VMLibraryViewModel {
         }
 
         guard trashFile else { return nil }
+        // The bundled Guest Agent installer lives inside the app bundle and is
+        // app-owned: removing it only detaches the entry, never trashes the
+        // file (trashing it would corrupt the bundle for every VM).
+        if isGuestAgentInstaller(item) {
+            Self.logger.notice(
+                "Kept Guest Agent installer '\(item.label, privacy: .public)' — app-owned; removed entry only"
+            )
+            return nil
+        }
+        // Never trash a file another VM still references (the UI hard-blocks
+        // the trash option for shared media; this enforces it at the model layer).
+        if !sharingVMNames(forPath: item.path, excluding: instance).isEmpty {
+            Self.logger.notice(
+                "Kept shared media '\(item.label, privacy: .public)' — still used by another VM; removed entry only"
+            )
+            return nil
+        }
         let url = URL(fileURLWithPath: item.path)
         let label = item.label
         let vmName = instance.name

@@ -1171,23 +1171,96 @@ extension VMSettingsViewController {
         guard let id = uuid(from: sender), let window = view.window,
             let disk = currentStorageDisks.first(where: { $0.id == id })
         else { return }
-        let config = AlertConfiguration(
-            title: "Remove \(disk.label)?",
-            message: disk.isInternal
-                ? "Move to Trash will send the bundle-owned disk image to the Trash. Remove from VM will delist the entry while keeping the file."
-                : "Move to Trash will send \(disk.path) to the Trash. Remove from VM will delist the disk and leave the file alone.",
-            buttons: [
-                AlertButton("Move to Trash", role: .destructive) { [weak self] in
-                    guard let self else { return }
-                    _ = self.viewModel.removeStorageDisk(disk, from: self.instance, trashFile: true)
-                },
-                AlertButton("Remove from VM", role: .default) { [weak self] in
-                    guard let self else { return }
-                    _ = self.viewModel.removeStorageDisk(disk, from: self.instance, trashFile: false)
-                },
-                AlertButton("Cancel", role: .cancel),
-            ])
-        presentSheetAlert(config, in: window)
+        // Internal (bundle-relative) disks are per-VM, so they're never shared;
+        // only resolve sharing for external disks.
+        let shared = disk.isInternal ? [] : viewModel.sharingVMNames(forPath: disk.path, excluding: instance)
+        let prompt = Self.attachmentDeletePrompt(
+            label: disk.label,
+            isInternal: disk.isInternal,
+            isMainDisk: viewModel.isMainDisk(disk, of: instance),
+            isGuestAgent: false,
+            sharedVMNames: shared)
+        presentSheetAlert(
+            makeDeleteAlert(prompt: prompt) { [weak self] trashFile in
+                guard let self else { return }
+                _ = self.viewModel.removeStorageDisk(disk, from: self.instance, trashFile: trashFile)
+            },
+            in: window)
+    }
+
+    /// Builds the per-row delete confirmation that ``attachmentDeletePrompt`` decided,
+    /// wiring each action to `perform(trashFile:)` and appending Cancel.
+    private func makeDeleteAlert(
+        prompt: AttachmentDeletePrompt,
+        perform: @escaping (_ trashFile: Bool) -> Void
+    ) -> AlertConfiguration {
+        var buttons: [AlertButton] = prompt.actions.map { action in
+            switch action {
+            case .moveToTrash:
+                return AlertButton("Move to Trash", role: .destructive) { perform(true) }
+            case .removeFromVM:
+                return AlertButton("Remove from VM", role: .default) { perform(false) }
+            }
+        }
+        buttons.append(AlertButton("Cancel", role: .cancel))
+        return AlertConfiguration(title: prompt.title, message: prompt.message, buttons: buttons)
+    }
+
+    /// Decides the per-row delete confirmation (title, message, offered actions)
+    /// purely from the item's nature, so it is unit-testable without a window.
+    ///
+    /// Mirrors the VM-delete sheet's rules: the Guest Agent installer and files
+    /// shared with another VM can only be detached (never trashed); in-bundle
+    /// disks are trashed-or-cancelled; private external files may be trashed or
+    /// merely detached.
+    static func attachmentDeletePrompt(
+        label: String,
+        isInternal: Bool,
+        isMainDisk: Bool,
+        isGuestAgent: Bool,
+        sharedVMNames: [String]
+    ) -> AttachmentDeletePrompt {
+        let title = "Remove \u{201C}\(label)\u{201D}?"
+
+        if isGuestAgent {
+            return AttachmentDeletePrompt(
+                title: title,
+                message:
+                    "The Kernova Guest Agent installer will be detached from this VM. It's part of Kernova, so the installer itself isn't deleted.",
+                actions: [.removeFromVM])
+        }
+
+        if !sharedVMNames.isEmpty {
+            return AttachmentDeletePrompt(
+                title: title,
+                message:
+                    "\u{201C}\(label)\u{201D} will be detached from this VM. Its file is kept because it's still used by \(formatVMNames(sharedVMNames)).",
+                actions: [.removeFromVM])
+        }
+
+        if isInternal {
+            let base = "The disk image will be moved to the Trash. You can restore it using Finder's Put Back command."
+            return AttachmentDeletePrompt(
+                title: title,
+                message: isMainDisk
+                    ? "\(base) This is the VM's startup disk — it won't be able to start without it."
+                    : base,
+                actions: [.moveToTrash])
+        }
+
+        return AttachmentDeletePrompt(
+            title: title,
+            message:
+                "Move to Trash sends the file to the Trash. Remove from VM detaches it and leaves the file in place.",
+            actions: [.moveToTrash, .removeFromVM])
+    }
+
+    /// Quotes and joins VM names with the locale's list conjunction.
+    ///
+    /// English: "A", "A and B", "A, B, and C". Matches the delete sheet's
+    /// name formatting.
+    static func formatVMNames(_ names: [String]) -> String {
+        ListFormatter.localizedString(byJoining: names.map { "\u{201C}\($0)\u{201D}" })
     }
 
     // MARK: Removable
@@ -1223,22 +1296,20 @@ extension VMSettingsViewController {
         guard let id = uuid(from: sender), let window = view.window,
             let item = currentRemovableMedia.first(where: { $0.id == id })
         else { return }
-        let config = AlertConfiguration(
-            title: "Remove \(item.label)?",
-            message:
-                "Move to Trash will send \(item.path) to the Trash. Remove from VM will detach the disc and leave the file alone.",
-            buttons: [
-                AlertButton("Move to Trash", role: .destructive) { [weak self] in
-                    guard let self else { return }
-                    _ = self.viewModel.removeRemovableMedia(item, from: self.instance, trashFile: true)
-                },
-                AlertButton("Remove from VM", role: .default) { [weak self] in
-                    guard let self else { return }
-                    _ = self.viewModel.removeRemovableMedia(item, from: self.instance, trashFile: false)
-                },
-                AlertButton("Cancel", role: .cancel),
-            ])
-        presentSheetAlert(config, in: window)
+        let isAgent = viewModel.isGuestAgentInstaller(item)
+        let shared = isAgent ? [] : viewModel.sharingVMNames(forPath: item.path, excluding: instance)
+        let prompt = Self.attachmentDeletePrompt(
+            label: item.label,
+            isInternal: false,
+            isMainDisk: false,
+            isGuestAgent: isAgent,
+            sharedVMNames: shared)
+        presentSheetAlert(
+            makeDeleteAlert(prompt: prompt) { [weak self] trashFile in
+                guard let self else { return }
+                _ = self.viewModel.removeRemovableMedia(item, from: self.instance, trashFile: trashFile)
+            },
+            in: window)
     }
 
     // MARK: Shared
@@ -1339,6 +1410,28 @@ extension VMSettingsViewController: NSTextFieldDelegate {
         memoryStepper.integerValue = clamped
         writeConfig { $0.memorySizeInGB = clamped }
     }
+}
+
+// MARK: - AttachmentDeletePrompt
+
+/// The confirmation a per-row storage/removable delete should present.
+///
+/// Decided purely from the item's nature, so it is unit-testable without a
+/// window. The trailing Cancel button is added by the presenter, not modeled
+/// here.
+struct AttachmentDeletePrompt: Equatable {
+    /// A non-cancel action and the file disposition it implies.
+    enum Action: Equatable {
+        /// Remove the entry AND move its file to the Trash.
+        case moveToTrash
+        /// Remove the entry; leave the file in place.
+        case removeFromVM
+    }
+
+    let title: String
+    let message: String
+    /// Offered actions in display order; the first is the default button.
+    let actions: [Action]
 }
 
 // MARK: - StorageDiskReorderSheetContentViewControllerDelegate

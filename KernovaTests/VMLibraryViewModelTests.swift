@@ -2837,6 +2837,138 @@ struct VMLibraryViewModelTests {
         #expect(!presenter.showError)
     }
 
+    @Test("removeStorageDisk with trashFile=true keeps a file shared with another VM")
+    func removeStorageDiskKeepsSharedFile() throws {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let shared = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString)-shared.img")
+        try Data("payload".utf8).write(to: shared)
+        defer { try? FileManager.default.removeItem(at: shared) }
+        let sharedPath = shared.path(percentEncoded: false)
+
+        let target = makeInstance(name: "Target")
+        let disk = StorageDisk(
+            path: sharedPath, readOnly: false, label: "Shared", isInternal: false, kind: .virtio)
+        target.configuration.storageDisks = [disk]
+        let other = makeInstance(name: "Other")
+        other.configuration.storageDisks = [
+            StorageDisk(path: sharedPath, readOnly: false, label: "Shared", isInternal: false, kind: .virtio)
+        ]
+        viewModel.instances = [target, other]
+
+        // Even asked to trash, a file another VM still references is kept: no
+        // trash task is spawned and the file remains on disk.
+        let task = viewModel.removeStorageDisk(disk, from: target, trashFile: true)
+        #expect(task == nil)
+        #expect(target.configuration.storageDisks == nil)
+        #expect(FileManager.default.fileExists(atPath: sharedPath))
+        #expect(!presenter.showError)
+    }
+
+    @Test("removeRemovableMedia with trashFile=true keeps a file shared with another VM")
+    func removeRemovableMediaKeepsSharedFile() throws {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let shared = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString)-shared.iso")
+        try Data("payload".utf8).write(to: shared)
+        defer { try? FileManager.default.removeItem(at: shared) }
+        let sharedPath = shared.path(percentEncoded: false)
+
+        let target = makeInstance(name: "Target")
+        let item = RemovableMediaItem(path: sharedPath, readOnly: true)
+        target.configuration.removableMedia = [item]
+        let other = makeInstance(name: "Other")
+        other.configuration.removableMedia = [RemovableMediaItem(path: sharedPath, readOnly: true)]
+        viewModel.instances = [target, other]
+
+        let task = viewModel.removeRemovableMedia(item, from: target, trashFile: true)
+        #expect(task == nil)
+        #expect(target.configuration.removableMedia == nil)
+        #expect(FileManager.default.fileExists(atPath: sharedPath))
+        #expect(!presenter.showError)
+    }
+
+    @Test("removeRemovableMedia with trashFile=true never trashes the Guest Agent DMG")
+    func removeRemovableMediaNeverTrashesGuestAgent() throws {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let agentPath = try #require(KernovaGuestAgentInfo.installerDiskImageURL)
+            .path(percentEncoded: false)
+        let instance = makeInstance()
+        let item = RemovableMediaItem(path: agentPath, readOnly: true, label: "Kernova Guest Agent")
+        instance.configuration.removableMedia = [item]
+        viewModel.instances.append(instance)
+
+        // No trash task is spawned for the app-owned DMG (guard returns nil
+        // before any detached trash), and the bundled file is left intact.
+        let task = viewModel.removeRemovableMedia(item, from: instance, trashFile: true)
+        #expect(task == nil)
+        #expect(instance.configuration.removableMedia == nil)
+        #expect(FileManager.default.fileExists(atPath: agentPath))
+        #expect(!presenter.showError)
+    }
+
+    @Test("sharingVMNames lists other VMs referencing a path and excludes the instance")
+    func sharingVMNamesDetectsAndExcludes() throws {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let sharedPath = "/Volumes/External/shared.img"
+        let target = makeInstance(name: "Target")
+        target.configuration.storageDisks = [
+            StorageDisk(path: sharedPath, readOnly: false, label: "S", isInternal: false, kind: .virtio)
+        ]
+        let diskSharer = makeInstance(name: "DiskSharer")
+        diskSharer.configuration.storageDisks = [
+            StorageDisk(path: sharedPath, readOnly: false, label: "S", isInternal: false, kind: .virtio)
+        ]
+        let mediaSharer = makeInstance(name: "MediaSharer")
+        mediaSharer.configuration.removableMedia = [RemovableMediaItem(path: sharedPath, readOnly: true)]
+        let unrelated = makeInstance(name: "Unrelated")
+        viewModel.instances = [target, diskSharer, mediaSharer, unrelated]
+
+        let names = viewModel.sharingVMNames(forPath: sharedPath, excluding: target)
+        #expect(Set(names) == ["DiskSharer", "MediaSharer"])
+
+        // A unique path is shared with no one.
+        #expect(viewModel.sharingVMNames(forPath: "/Volumes/External/unique.img", excluding: target).isEmpty)
+    }
+
+    @Test("sharingVMNames ignores internal (bundle-relative) disks")
+    func sharingVMNamesIgnoresInternalDisks() {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let a = makeInstance(name: "A")
+        a.configuration.storageDisks = [
+            StorageDisk(path: "Disk.asif", readOnly: false, label: "Main", isInternal: true, kind: .virtio)
+        ]
+        let b = makeInstance(name: "B")
+        b.configuration.storageDisks = [
+            StorageDisk(path: "Disk.asif", readOnly: false, label: "Main", isInternal: true, kind: .virtio)
+        ]
+        viewModel.instances = [a, b]
+        // Same relative path, but both are bundle-internal → not shared.
+        #expect(viewModel.sharingVMNames(forPath: "Disk.asif", excluding: a).isEmpty)
+    }
+
+    @Test("isGuestAgentInstaller matches the bundled DMG path only")
+    func isGuestAgentInstallerMatches() throws {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let agentPath = try #require(KernovaGuestAgentInfo.installerDiskImageURL)
+            .path(percentEncoded: false)
+        #expect(viewModel.isGuestAgentInstaller(RemovableMediaItem(path: agentPath, readOnly: true)))
+        #expect(!viewModel.isGuestAgentInstaller(RemovableMediaItem(path: "/tmp/other.iso", readOnly: true)))
+    }
+
+    @Test("isMainDisk identifies the synthesized main disk, not additional internal disks")
+    func isMainDiskIdentifiesMain() {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        viewModel.instances.append(instance)
+        let main = VMLibraryViewModel.defaultStorageDisks(for: instance)[0]
+        let extra = StorageDisk(
+            path: "AdditionalDisks/extra.asif", readOnly: false, label: "Extra",
+            isInternal: true, kind: .virtio)
+        #expect(viewModel.isMainDisk(main, of: instance))
+        #expect(!viewModel.isMainDisk(extra, of: instance))
+    }
+
     @Test("createStorageDisk appends an internal virtio disk with the expected fields")
     func createStorageDiskAppends() async throws {
         let (viewModel, _, diskService, _, _) = makeViewModel()
