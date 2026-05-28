@@ -141,8 +141,9 @@ final class DeleteVMSheetContentViewController: NSViewController {
 
     override func viewDidAppear() {
         super.viewDidAppear()
-        // Flash the scrollbar once on open when the list overflows, so the user
-        // sees there's more below. Matches the app's (system) scroller style.
+        // Flash the scrollbar when the sheet appears with an overflowing list,
+        // so the user sees there's more below. Matches the app's (system)
+        // scroller style. (A repeat flash on any re-appearance is harmless.)
         if contentOverflows {
             contentScrollView?.flashScrollers()
         }
@@ -246,7 +247,7 @@ final class DeleteVMSheetContentViewController: NSViewController {
 
         // Section 1 — in-bundle disks removed along with the VM. Always
         // present: every VM has at least its main disk.
-        listStack.addArrangedSubview(makeSectionHeader("Removed with the VM"))
+        listStack.addArrangedSubview(makeGroupedFormSectionHeader("Removed with the VM"))
         for disk in bundledDisks {
             listStack.addArrangedSubview(makeBundledRow(disk))
         }
@@ -257,7 +258,7 @@ final class DeleteVMSheetContentViewController: NSViewController {
             if let lastBundledRow = listStack.arrangedSubviews.last {
                 listStack.setCustomSpacing(Self.padding, after: lastBundledRow)
             }
-            listStack.addArrangedSubview(makeSectionHeader("Files outside this VM"))
+            listStack.addArrangedSubview(makeGroupedFormSectionHeader("Files outside this VM"))
             for external in externals {
                 listStack.addArrangedSubview(makeExternalRow(external))
             }
@@ -336,14 +337,6 @@ final class DeleteVMSheetContentViewController: NSViewController {
         let height = stack.fittingSize.height
         widthConstraint.isActive = false
         return height
-    }
-
-    private func makeSectionHeader(_ title: String) -> NSView {
-        let label = NSTextField(labelWithString: title)
-        label.font = .preferredFont(forTextStyle: .subheadline)
-        label.textColor = .secondaryLabelColor
-        label.isSelectable = false
-        return label
     }
 
     /// Read-only row for an in-bundle disk (no checkbox; it rides along with
