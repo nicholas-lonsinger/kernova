@@ -70,6 +70,71 @@ struct DeleteVMSheetContentViewControllerTests {
         #expect(labels.contains { $0.contains("Kept — still used by") && $0.contains("Other VM") })
     }
 
+    @Test("missing external is locked off and not selectable")
+    func missingExternalLockedOff() {
+        let id = UUID()
+        let missing = makeAttachment(id: id, label: "Gone Disk", path: "/tmp/gone.img", missing: true)
+        let vc = make(vmName: "MyVM", externals: [missing])
+        vc.loadViewIfNeeded()
+        // Nothing to trash: no checkbox recorded, nothing selected.
+        #expect(vc.checkboxes[id] == nil)
+        #expect(vc.selectedExternalIDs.isEmpty)
+    }
+
+    @Test("missing external renders its path in the red 'Missing —' style")
+    func missingExternalShowsMissingPath() {
+        let path = "/Volumes/USB/win.iso"
+        let missing = makeAttachment(id: UUID(), label: "Installer ISO", path: path, missing: true)
+        let vc = make(vmName: "MyVM", externals: [missing])
+        vc.loadViewIfNeeded()
+        // The subtitle uses attributedStringValue for the missing state; NSTextField's
+        // stringValue still reflects the attributed string's characters.
+        let labels = collectLabels(in: vc.view).map(\.stringValue)
+        #expect(labels.contains { $0.contains("Missing — ") && $0.contains(path) })
+    }
+
+    @Test("missing external shows an 'already gone' note")
+    func missingExternalShowsAlreadyGoneNote() {
+        let missing = makeAttachment(id: UUID(), label: "Gone Disk", path: "/tmp/gone.img", missing: true)
+        let vc = make(vmName: "MyVM", externals: [missing])
+        vc.loadViewIfNeeded()
+        let labels = collectLabels(in: vc.view).map(\.stringValue)
+        #expect(labels.contains { $0.contains("Already gone — nothing to remove") })
+    }
+
+    @Test("missing AND shared: locked off, 'kept' note wins, path still marked missing")
+    func missingSharedPrecedence() {
+        let id = UUID()
+        let path = "/tmp/shared-gone.iso"
+        let attachment = makeAttachment(
+            id: id, label: "Shared ISO", path: path, shared: ["Other VM"], missing: true)
+        let vc = make(vmName: "MyVM", externals: [attachment])
+        vc.loadViewIfNeeded()
+        #expect(vc.checkboxes[id] == nil)
+        #expect(vc.selectedExternalIDs.isEmpty)
+        let labels = collectLabels(in: vc.view).map(\.stringValue)
+        // Shared note wins over the "already gone" note.
+        #expect(labels.contains { $0.contains("Kept — still used by") && $0.contains("Other VM") })
+        #expect(!labels.contains { $0.contains("Already gone") })
+        // Path is still rendered in the missing style.
+        #expect(labels.contains { $0.contains("Missing — ") && $0.contains(path) })
+    }
+
+    @Test("a present external stays checked even when others are missing")
+    func presentExternalStaysChecked() {
+        let presentID = UUID()
+        let missingID = UUID()
+        let externals = [
+            makeAttachment(id: presentID, label: "Here", path: "/tmp/here.img", missing: false),
+            makeAttachment(id: missingID, label: "Gone", path: "/tmp/gone.img", missing: true),
+        ]
+        let vc = make(vmName: "MyVM", externals: externals)
+        vc.loadViewIfNeeded()
+        #expect(vc.selectedExternalIDs == [presentID])
+        #expect(vc.checkboxes[presentID]?.state == .on)
+        #expect(vc.checkboxes[missingID] == nil)
+    }
+
     @Test("Cancel button fires delegate's cancel")
     func cancelFiresDelegate() {
         let vc = make(vmName: "MyVM")
@@ -186,7 +251,8 @@ struct DeleteVMSheetContentViewControllerTests {
             sharedWithVMNames: [
                 "Windows 11 Pro", "Development Box", "CI Runner Node",
                 "Sonoma Test", "Ventura Test", "Sequoia Test",
-            ])
+            ],
+            isMissing: false)
         let vc = make(
             vmName: "VM",
             bundledDisks: [makeDisk(label: "Main Disk", path: "Disk.asif")],
@@ -236,14 +302,15 @@ struct DeleteVMSheetContentViewControllerTests {
     }
 
     private func makeAttachment(
-        id: UUID, label: String, path: String, shared: [String] = []
+        id: UUID, label: String, path: String, shared: [String] = [], missing: Bool = false
     ) -> ExternalAttachment {
         ExternalAttachment(
             id: id,
             kind: .storageDisk,
             label: label,
             path: path,
-            sharedWithVMNames: shared
+            sharedWithVMNames: shared,
+            isMissing: missing
         )
     }
 

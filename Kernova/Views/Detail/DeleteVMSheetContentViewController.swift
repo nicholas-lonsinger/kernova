@@ -382,15 +382,19 @@ final class DeleteVMSheetContentViewController: NSViewController {
 
     /// Row for an external attachment, with a leading checkbox.
     ///
-    /// Exclusively owned files default to on (trash); shared files get a
-    /// disabled, always-off checkbox plus an inline "kept" warning.
+    /// Exclusively owned files default to on (trash). Shared files get a
+    /// disabled, always-off checkbox plus an inline "kept" warning. Missing
+    /// files (backing path no longer resolves) are likewise locked off — there
+    /// is nothing to trash — with the path shown in the red "Missing —" style
+    /// and an "already gone" note. A locked-off checkbox is never recorded in
+    /// `checkboxes`, so it can never be collected on confirm.
     private func makeExternalRow(_ external: ExternalAttachment) -> NSView {
         let checkbox = NSButton(checkboxWithTitle: "", target: self, action: nil)
         checkbox.identifier = NSUserInterfaceItemIdentifier(external.id.uuidString)
         checkbox.translatesAutoresizingMaskIntoConstraints = false
         checkbox.setContentHuggingPriority(.required, for: .horizontal)
         checkbox.setContentCompressionResistancePriority(.required, for: .horizontal)
-        if external.isShared {
+        if external.isShared || external.isMissing {
             checkbox.state = .off
             checkbox.isEnabled = false
         } else {
@@ -415,22 +419,22 @@ final class DeleteVMSheetContentViewController: NSViewController {
         label.isSelectable = false
         label.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        let path = NSTextField(labelWithString: external.path)
-        path.font = .preferredFont(forTextStyle: .caption1)
-        path.textColor = .secondaryLabelColor
-        path.lineBreakMode = .byTruncatingMiddle
-        path.maximumNumberOfLines = 1
-        path.isSelectable = false
-        path.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        path.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        // Shared by the settings pane and Boot Order sheet: a present path renders
+        // as a secondary-color middle-truncated caption; a missing one gets the
+        // bold red "Missing —" prefix.
+        let path = makeAttachmentSubtitleLabel(path: external.path, isMissing: external.isMissing)
 
         var textViews: [NSView] = [label, path]
         if external.isShared {
+            // Shared takes precedence over missing: other VMs still reference the
+            // path, so "kept" is the accurate framing even if this VM's copy is gone.
             textViews.append(
-                makeSharedWarningRow(
+                makeInlineWarningRow(
                     "Kept — still used by \(DataFormatters.quotedList(external.sharedWithVMNames))"
                 )
             )
+        } else if external.isMissing {
+            textViews.append(makeInlineWarningRow("Already gone — nothing to remove"))
         }
 
         let textStack = NSStackView(views: textViews)
@@ -445,7 +449,9 @@ final class DeleteVMSheetContentViewController: NSViewController {
         return row
     }
 
-    private func makeSharedWarningRow(_ text: String) -> NSView {
+    /// A caution-triangle + caption row appended under a locked-off external,
+    /// used for both the shared ("Kept — …") and missing ("Already gone …") notes.
+    private func makeInlineWarningRow(_ text: String) -> NSView {
         let icon = NSImageView(
             image: .systemSymbol("exclamationmark.triangle.fill", accessibilityDescription: "")
         )

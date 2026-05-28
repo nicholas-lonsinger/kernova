@@ -47,7 +47,15 @@ final class DetailAlertsPresenter: NSObject {
     }
 
     func presentDeleteSheet(for instance: VMInstance) {
-        enqueue { $0.showDeleteSheet(for: instance) }
+        // Resolve external-file existence off-main *before* enqueuing, so the
+        // serialized presentation step stays synchronous and a stale mount
+        // can't block the main actor. The brief async gap is acceptable for a
+        // user-initiated confirmation sheet.
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let externals = await self.viewModel.externalAttachmentsResolvingExistence(for: instance)
+            self.enqueue { $0.showDeleteSheet(for: instance, externals: externals) }
+        }
     }
 
     func presentForceStop(for instance: VMInstance) {
@@ -90,12 +98,12 @@ final class DetailAlertsPresenter: NSObject {
         }
     }
 
-    private func showDeleteSheet(for instance: VMInstance) {
+    private func showDeleteSheet(for instance: VMInstance, externals: [ExternalAttachment]) {
         guard let window else { return }
         let content = DeleteVMSheetContentViewController(
             vmName: instance.name,
             bundledDisks: viewModel.bundledDisks(for: instance),
-            externals: viewModel.externalAttachments(for: instance)
+            externals: externals
         )
         content.delegate = self
         deleteSheetInstance = instance

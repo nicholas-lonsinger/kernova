@@ -300,6 +300,39 @@ struct VMLibraryViewModelTests {
         #expect(attachments[1].sharedWithVMNames == ["Sharer"])
     }
 
+    @Test("externalAttachmentsResolvingExistence flags isMissing per backing-file existence")
+    func externalAttachmentsResolvingExistenceFlagsMissing() async throws {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let presentDisk = FileManager.default.temporaryDirectory
+            .appendingPathComponent("present-\(UUID().uuidString).img")
+        try Data("disk".utf8).write(to: presentDisk)
+        defer { try? FileManager.default.removeItem(at: presentDisk) }
+        let missingPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("missing-\(UUID().uuidString).iso").path
+
+        let instance = makeInstance(name: "Target")
+        instance.configuration.storageDisks = [
+            StorageDisk(
+                path: presentDisk.path, readOnly: false, label: "Present",
+                isInternal: false, kind: .virtio
+            )
+        ]
+        instance.configuration.removableMedia = [
+            RemovableMediaItem(path: missingPath, readOnly: true, label: "Missing ISO")
+        ]
+        viewModel.instances = [instance]
+
+        // The synchronous enumeration never touches the filesystem.
+        #expect(viewModel.externalAttachments(for: instance).allSatisfy { !$0.isMissing })
+
+        let attachments = await viewModel.externalAttachmentsResolvingExistence(for: instance)
+        #expect(attachments.count == 2)
+        #expect(attachments[0].path == presentDisk.path)
+        #expect(attachments[0].isMissing == false)
+        #expect(attachments[1].path == missingPath)
+        #expect(attachments[1].isMissing == true)
+    }
+
     @Test("externalAttachments is empty when the VM only has internal disks")
     func externalAttachmentsEmptyForInternalOnly() {
         let (viewModel, _, _, _, _) = makeViewModel()

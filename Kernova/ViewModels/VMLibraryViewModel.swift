@@ -581,6 +581,14 @@ final class VMLibraryViewModel {
     /// Guest Agent installation for every VM in the library. Identified by
     /// path equality with `KernovaGuestAgentInfo.installerDiskImageURL`,
     /// the same mechanism ``unmountGuestAgentInstaller(from:)`` uses.
+    ///
+    /// Existence is **not** resolved here — every attachment's
+    /// ``ExternalAttachment/isMissing`` is left `false`. This keeps the method
+    /// free of filesystem syscalls so it stays cheap on the main actor (the
+    /// trash fan-out in ``deleteConfirmed(_:trashingExternalIDs:)`` only needs
+    /// id/sharing). The delete sheet, which *does* surface missing-file state,
+    /// uses ``externalAttachmentsResolvingExistence(for:)`` to fill `isMissing`
+    /// off-main.
     func externalAttachments(for instance: VMInstance) -> [ExternalAttachment] {
         let agentPath = Self.guestAgentInstallerPath
         var attachments: [ExternalAttachment] = []
@@ -591,7 +599,8 @@ final class VMLibraryViewModel {
                     kind: .storageDisk,
                     label: disk.label,
                     path: disk.path,
-                    sharedWithVMNames: sharingVMNames(forPath: disk.path, excluding: instance)
+                    sharedWithVMNames: sharingVMNames(forPath: disk.path, excluding: instance),
+                    isMissing: false
                 )
             )
         }
@@ -602,11 +611,42 @@ final class VMLibraryViewModel {
                     kind: .removableMedia,
                     label: item.label,
                     path: item.path,
-                    sharedWithVMNames: sharingVMNames(forPath: item.path, excluding: instance)
+                    sharedWithVMNames: sharingVMNames(forPath: item.path, excluding: instance),
+                    isMissing: false
                 )
             )
         }
         return attachments
+    }
+
+    /// ``externalAttachments(for:)`` with each attachment's
+    /// ``ExternalAttachment/isMissing`` resolved against the filesystem.
+    ///
+    /// The `FileManager.fileExists` syscalls run on a detached task so a stale
+    /// or unreachable mount can't freeze the main actor while the delete sheet
+    /// is assembled — the same reason ``AttachmentFileMonitor`` probes off-main.
+    /// Used by `DetailAlertsPresenter` before presenting the sheet.
+    func externalAttachmentsResolvingExistence(for instance: VMInstance) async -> [ExternalAttachment] {
+        let attachments = externalAttachments(for: instance)
+        guard !attachments.isEmpty else { return attachments }
+        let paths = attachments.map(\.path)
+        let missingByPath = await Task.detached(priority: .userInitiated) {
+            var result: [String: Bool] = [:]
+            for path in paths where result[path] == nil {
+                result[path] = !FileManager.default.fileExists(atPath: path)
+            }
+            return result
+        }.value
+        return attachments.map { attachment in
+            ExternalAttachment(
+                id: attachment.id,
+                kind: attachment.kind,
+                label: attachment.label,
+                path: attachment.path,
+                sharedWithVMNames: attachment.sharedWithVMNames,
+                isMissing: missingByPath[attachment.path] ?? false
+            )
+        }
     }
 
     /// Names of other VMs in the library that reference `path` as an external
