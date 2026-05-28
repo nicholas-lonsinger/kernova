@@ -12,10 +12,9 @@ import Foundation
 protocol VMLibraryPresenting: AnyObject {
     /// Show a generic error alert with `message`.
     func presentError(_ message: String)
-    /// Show the simple delete confirmation for a VM with no external attachments.
-    func presentDeleteConfirmation(for instance: VMInstance)
-    /// Show the richer delete sheet (which offers trashing external files) for a
-    /// VM that references external storage or removable media.
+    /// Show the unified delete sheet: the VM's in-bundle disks (removed with
+    /// the VM) plus any external files, each individually selectable for
+    /// trashing. Used for every delete.
     func presentDeleteSheet(for instance: VMInstance)
     /// Show the force-stop / discard-saved-state confirmation.
     func presentForceStop(for instance: VMInstance)

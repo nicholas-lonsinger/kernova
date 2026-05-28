@@ -46,10 +46,6 @@ final class DetailAlertsPresenter: NSObject {
         enqueue { $0.present($0.errorConfig(message)) }
     }
 
-    func presentDeleteConfirmation(for instance: VMInstance) {
-        enqueue { $0.present($0.deleteConfirmationConfig(instance)) }
-    }
-
     func presentDeleteSheet(for instance: VMInstance) {
         enqueue { $0.showDeleteSheet(for: instance) }
     }
@@ -96,8 +92,11 @@ final class DetailAlertsPresenter: NSObject {
 
     private func showDeleteSheet(for instance: VMInstance) {
         guard let window else { return }
-        let externals = viewModel.externalAttachments(for: instance)
-        let content = DeleteVMSheetContentViewController(vmName: instance.name, externals: externals)
+        let content = DeleteVMSheetContentViewController(
+            vmName: instance.name,
+            bundledDisks: viewModel.bundledDisks(for: instance),
+            externals: viewModel.externalAttachments(for: instance)
+        )
         content.delegate = self
         deleteSheetInstance = instance
         deleteSheetPresenter.onClose = { [weak self] in
@@ -108,19 +107,6 @@ final class DetailAlertsPresenter: NSObject {
     }
 
     // MARK: - Alert configurations (copied from the former SwiftUI modifiers)
-
-    private func deleteConfirmationConfig(_ vm: VMInstance) -> AlertConfiguration {
-        AlertConfiguration(
-            title: "Delete Virtual Machine",
-            message:
-                "\"\(vm.name)\" will be moved to the Trash. You can restore it using Finder's Put Back command. Empty the Trash to permanently delete the VM and reclaim disk space.",
-            buttons: [
-                AlertButton("Move to Trash", role: .destructive) { [weak self] in
-                    _ = self?.viewModel.deleteConfirmed(vm)
-                },
-                AlertButton("Cancel", role: .cancel),
-            ])
-    }
 
     private func cancelPreparingConfig(_ instance: VMInstance) -> AlertConfiguration {
         AlertConfiguration(
@@ -202,10 +188,10 @@ extension DetailAlertsPresenter: DeleteVMSheetContentViewControllerDelegate {
     }
 
     func deleteVMSheet(
-        _ vc: DeleteVMSheetContentViewController, didConfirmTrashExternals trashExternals: Bool
+        _ vc: DeleteVMSheetContentViewController, didConfirmTrashingExternalIDs ids: Set<UUID>
     ) {
         if let instance = deleteSheetInstance {
-            _ = viewModel.deleteConfirmed(instance, trashExternals: trashExternals)
+            _ = viewModel.deleteConfirmed(instance, trashingExternalIDs: ids)
         }
         deleteSheetPresenter.close()
     }

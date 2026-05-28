@@ -481,33 +481,39 @@ final class VMLibraryViewModel {
 
     /// Begins the delete-VM flow.
     ///
-    /// Routes to the richer sheet when the VM references external storage
-    /// or removable media (so the user can opt to trash those files too);
-    /// falls back to the simple alert otherwise.
+    /// Always presents the unified delete sheet, which lists the VM's
+    /// in-bundle disks (removed with the VM) and any external files (each
+    /// individually selectable for trashing). There is no longer a separate
+    /// "simple alert" path: every VM has at least its main disk to show.
     func confirmDelete(_ instance: VMInstance) {
-        if externalAttachments(for: instance).isEmpty {
-            presenter?.presentDeleteConfirmation(for: instance)
-        } else {
-            presenter?.presentDeleteSheet(for: instance)
-        }
+        presenter?.presentDeleteSheet(for: instance)
     }
 
-    /// Trashes the VM bundle and (optionally) any external files it
-    /// references.
+    /// Trashes the VM bundle and the chosen external files.
     ///
     /// Bundle-internal disks ride along inside the trashed bundle. External
-    /// storage disks and removable media live outside the bundle, so when
-    /// `trashExternals` is `true` each one is moved to Trash via a
+    /// storage disks and removable media live outside the bundle, so each
+    /// one whose `id` is in `trashingExternalIDs` is moved to Trash via a
     /// detached Task (mirroring `removeStorageDisk` / `removeRemovableMedia`
-    /// — see those for the rationale on `Task.detached`). Externals are
-    /// trashed *after* the bundle so the VM disappears from the library
-    /// even if a downstream trash op fails, and the returned Tasks let
-    /// tests await completion.
+    /// — see those for the rationale on `Task.detached`).
+    ///
+    /// Files shared with other VMs are **never** trashed even if their id is
+    /// passed in: the sheet locks their toggle off, and this guard enforces
+    /// the same invariant at the model layer so a delete can never break
+    /// another VM. Externals are trashed *after* the bundle so the VM
+    /// disappears from the library even if a downstream trash op fails, and
+    /// the returned Tasks let tests await completion.
     @discardableResult
-    func deleteConfirmed(_ instance: VMInstance, trashExternals: Bool = false) -> [Task<Void, Never>] {
+    func deleteConfirmed(
+        _ instance: VMInstance, trashingExternalIDs: Set<UUID> = []
+    ) -> [Task<Void, Never>] {
         instance.tearDownSession()
-        let externals: [(label: String, url: URL)] =
-            trashExternals ? externalURLs(for: instance) : []
+        let toTrash =
+            trashingExternalIDs.isEmpty
+            ? []
+            : externalAttachments(for: instance).filter {
+                trashingExternalIDs.contains($0.id) && !$0.isShared
+            }
         var tasks: [Task<Void, Never>] = []
         do {
             try storageService.deleteVMBundle(at: instance.bundleURL)
@@ -521,8 +527,14 @@ final class VMLibraryViewModel {
             }
             Self.logger.notice("Moved VM '\(instance.name, privacy: .public)' to Trash")
             let vmName = instance.name
-            for external in externals {
-                tasks.append(trashExternalAttachment(at: external.url, label: external.label, vmName: vmName))
+            for attachment in toTrash {
+                tasks.append(
+                    trashExternalAttachment(
+                        at: URL(fileURLWithPath: attachment.path),
+                        label: attachment.label,
+                        vmName: vmName
+                    )
+                )
             }
         } catch {
             Self.logger.error(
@@ -531,6 +543,27 @@ final class VMLibraryViewModel {
             presentError(error)
         }
         return tasks
+    }
+
+    /// The VM's in-bundle (internal) disks, shown read-only in the delete
+    /// sheet's "Removed with the VM" section.
+    ///
+    /// Falls back to the synthesized main disk when `storageDisks` is `nil`
+    /// (the same default `removeStorageDisk` uses), so a freshly created VM
+    /// still shows its `Disk.asif`. External disks are excluded — those are
+    /// the user's individually selectable attachments.
+    func bundledDisks(for instance: VMInstance) -> [StorageDisk] {
+        (instance.configuration.storageDisks ?? Self.defaultStorageDisks(for: instance))
+            .filter(\.isInternal)
+    }
+
+    /// `true` when `disk` is the VM's primary (boot) `Disk.asif`.
+    ///
+    /// Used to warn before removing the disk the VM starts from. Delegates to
+    /// `ConfigurationBuilder.isMainBundleDisk`, which matches by bundle-relative
+    /// path so it stays correct on cloned VMs (whose disk ids are regenerated).
+    func isMainDisk(_ disk: StorageDisk, of instance: VMInstance) -> Bool {
+        ConfigurationBuilder.isMainBundleDisk(disk, layout: VMBundleLayout(bundleURL: instance.bundleURL))
     }
 
     /// Returns the external (non-bundle) files referenced by `instance`.
@@ -550,20 +583,6 @@ final class VMLibraryViewModel {
     /// the same mechanism ``unmountGuestAgentInstaller(from:)`` uses.
     func externalAttachments(for instance: VMInstance) -> [ExternalAttachment] {
         let agentPath = Self.guestAgentInstallerPath
-        let otherInstances = instances.filter { $0.id != instance.id }
-        func vmsSharing(path: String) -> [String] {
-            otherInstances.compactMap { other -> String? in
-                let externalDiskPaths = (other.configuration.storageDisks ?? [])
-                    .filter { !$0.isInternal }
-                    .map(\.path)
-                let mediaPaths = (other.configuration.removableMedia ?? []).map(\.path)
-                if externalDiskPaths.contains(path) || mediaPaths.contains(path) {
-                    return other.name
-                }
-                return nil
-            }
-        }
-
         var attachments: [ExternalAttachment] = []
         for disk in instance.configuration.storageDisks ?? [] where !disk.isInternal {
             attachments.append(
@@ -572,7 +591,7 @@ final class VMLibraryViewModel {
                     kind: .storageDisk,
                     label: disk.label,
                     path: disk.path,
-                    sharedWithVMNames: vmsSharing(path: disk.path)
+                    sharedWithVMNames: sharingVMNames(forPath: disk.path, excluding: instance)
                 )
             )
         }
@@ -583,11 +602,44 @@ final class VMLibraryViewModel {
                     kind: .removableMedia,
                     label: item.label,
                     path: item.path,
-                    sharedWithVMNames: vmsSharing(path: item.path)
+                    sharedWithVMNames: sharingVMNames(forPath: item.path, excluding: instance)
                 )
             )
         }
         return attachments
+    }
+
+    /// Names of other VMs in the library that reference `path` as an external
+    /// storage disk or removable medium.
+    ///
+    /// The single source of truth for "who else uses this file", shared by the
+    /// VM-delete sheet (``externalAttachments(for:)``) and the per-row delete
+    /// confirmations in settings. Only *external* (non-bundle) storage disks
+    /// count — bundle-relative paths are per-VM by construction. `instance` is
+    /// excluded so the file isn't reported as shared with itself.
+    func sharingVMNames(forPath path: String, excluding instance: VMInstance) -> [String] {
+        instances.compactMap { other -> String? in
+            guard other.id != instance.id else { return nil }
+            let externalDiskPaths = (other.configuration.storageDisks ?? [])
+                .filter { !$0.isInternal }
+                .map(\.path)
+            let mediaPaths = (other.configuration.removableMedia ?? []).map(\.path)
+            if externalDiskPaths.contains(path) || mediaPaths.contains(path) {
+                return other.name
+            }
+            return nil
+        }
+    }
+
+    /// `true` when `item` is the bundled Guest Agent installer DMG.
+    ///
+    /// The installer lives *inside the app bundle* and is mounted read-only by
+    /// ``mountGuestAgentInstaller(on:)``; it is never a user-owned file, so a
+    /// "remove" of it must only detach the entry and never trash the file.
+    /// Identified by path equality, the same mechanism the delete flow uses.
+    func isGuestAgentInstaller(_ item: RemovableMediaItem) -> Bool {
+        guard let agentPath = Self.guestAgentInstallerPath else { return false }
+        return item.path == agentPath
     }
 
     /// Filesystem path of the bundled Guest Agent installer DMG, if present.
@@ -622,20 +674,6 @@ final class VMLibraryViewModel {
             "Trashed in-progress download bundle for deleted VM '\(instance.name, privacy: .public)'"
         )
         #endif
-    }
-
-    /// Flat list of external (label, URL) pairs to feed the trash helper.
-    ///
-    /// Derived from `externalAttachments(for:)` so the set of files shown
-    /// in the delete sheet and the set actually trashed can never diverge —
-    /// in particular, the bundled Guest Agent DMG is excluded in exactly one
-    /// place. External attachment paths are always absolute (external disks
-    /// and removable media), so `URL(fileURLWithPath:)` is the correct
-    /// resolution; the sharing metadata is dropped here.
-    private func externalURLs(for instance: VMInstance) -> [(label: String, url: URL)] {
-        externalAttachments(for: instance).map { attachment in
-            (label: attachment.label, url: URL(fileURLWithPath: attachment.path))
-        }
     }
 
     /// Detached trash for a single external attachment.
@@ -1173,6 +1211,16 @@ final class VMLibraryViewModel {
         }
 
         guard trashFile else { return nil }
+        // Never trash a file another VM still references. Only external disks
+        // can be shared (bundle-relative paths are per-VM), so the check is
+        // scoped to those. The UI hard-blocks the trash option for shared
+        // disks; this enforces the same invariant at the model layer.
+        if !disk.isInternal, !sharingVMNames(forPath: disk.path, excluding: instance).isEmpty {
+            Self.logger.notice(
+                "Kept shared disk '\(disk.label, privacy: .public)' — still used by another VM; removed entry only"
+            )
+            return nil
+        }
         let diskURL: URL =
             disk.isInternal
             ? instance.bundleURL.appendingPathComponent(disk.path)
@@ -1231,6 +1279,23 @@ final class VMLibraryViewModel {
         }
 
         guard trashFile else { return nil }
+        // The bundled Guest Agent installer lives inside the app bundle and is
+        // app-owned: removing it only detaches the entry, never trashes the
+        // file (trashing it would corrupt the bundle for every VM).
+        if isGuestAgentInstaller(item) {
+            Self.logger.notice(
+                "Kept Guest Agent installer '\(item.label, privacy: .public)' — app-owned; removed entry only"
+            )
+            return nil
+        }
+        // Never trash a file another VM still references (the UI hard-blocks
+        // the trash option for shared media; this enforces it at the model layer).
+        if !sharingVMNames(forPath: item.path, excluding: instance).isEmpty {
+            Self.logger.notice(
+                "Kept shared media '\(item.label, privacy: .public)' — still used by another VM; removed entry only"
+            )
+            return nil
+        }
         let url = URL(fileURLWithPath: item.path)
         let label = item.label
         let vmName = instance.name

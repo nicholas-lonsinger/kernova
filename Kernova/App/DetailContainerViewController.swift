@@ -279,10 +279,6 @@ extension DetailContainerViewController: VMLibraryPresenting {
         alertsPresenter.presentError(message)
     }
 
-    func presentDeleteConfirmation(for instance: VMInstance) {
-        alertsPresenter.presentDeleteConfirmation(for: instance)
-    }
-
     func presentDeleteSheet(for instance: VMInstance) {
         alertsPresenter.presentDeleteSheet(for: instance)
     }

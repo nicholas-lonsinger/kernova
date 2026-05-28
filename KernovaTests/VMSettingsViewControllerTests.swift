@@ -41,6 +41,53 @@ struct VMSettingsViewControllerTests {
         return (vc, instance, viewModel)
     }
 
+    // MARK: - Per-row delete confirmation prompt
+
+    @Test("Internal disk delete offers Move-to-Trash only (no keep-file)")
+    func deletePromptInternalDisk() {
+        let prompt = VMSettingsViewController.attachmentDeletePrompt(
+            label: "Extra Disk", isInternal: true, isMainDisk: false,
+            isGuestAgent: false, sharedVMNames: [])
+        #expect(prompt.actions == [.moveToTrash])
+        #expect(prompt.title.contains("Extra Disk"))
+    }
+
+    @Test("Main disk delete warns it's the startup disk")
+    func deletePromptMainDisk() {
+        let prompt = VMSettingsViewController.attachmentDeletePrompt(
+            label: "Main Disk", isInternal: true, isMainDisk: true,
+            isGuestAgent: false, sharedVMNames: [])
+        #expect(prompt.actions == [.moveToTrash])
+        #expect(prompt.message.contains("startup disk"))
+    }
+
+    @Test("Private external delete offers both Move-to-Trash and Remove-from-VM")
+    func deletePromptPrivateExternal() {
+        let prompt = VMSettingsViewController.attachmentDeletePrompt(
+            label: "Scratch", isInternal: false, isMainDisk: false,
+            isGuestAgent: false, sharedVMNames: [])
+        #expect(prompt.actions == [.moveToTrash, .removeFromVM])
+    }
+
+    @Test("Shared external delete hard-blocks trashing (Remove-from-VM only) and names the VMs")
+    func deletePromptSharedExternal() {
+        let prompt = VMSettingsViewController.attachmentDeletePrompt(
+            label: "Installer", isInternal: false, isMainDisk: false,
+            isGuestAgent: false, sharedVMNames: ["macOS Copy", "Linux"])
+        #expect(prompt.actions == [.removeFromVM])
+        #expect(prompt.message.contains("macOS Copy"))
+        #expect(prompt.message.contains("Linux"))
+    }
+
+    @Test("Guest Agent delete only detaches and says the installer isn't deleted")
+    func deletePromptGuestAgent() {
+        let prompt = VMSettingsViewController.attachmentDeletePrompt(
+            label: "Kernova Guest Agent", isInternal: false, isMainDisk: false,
+            isGuestAgent: true, sharedVMNames: [])
+        #expect(prompt.actions == [.removeFromVM])
+        #expect(prompt.message.contains("isn't deleted"))
+    }
+
     // MARK: - Guest Agent visibility
 
     @Test("Guest Agent section is present for macOS guests")

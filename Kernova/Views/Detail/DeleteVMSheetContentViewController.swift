@@ -14,56 +14,79 @@ protocol DeleteVMSheetContentViewControllerDelegate: AnyObject {
     ///
     /// - Parameters:
     ///   - vc: The sheet view controller firing the event.
-    ///   - trashExternals: The current state of the "Also move these
-    ///     files to Trash" checkbox at the moment of confirmation.
+    ///   - ids: The ids of the external attachments whose per-row checkbox
+    ///     is on at the moment of confirmation. Shared attachments are never
+    ///     included — their checkbox is locked off.
     func deleteVMSheet(
         _ vc: DeleteVMSheetContentViewController,
-        didConfirmTrashExternals trashExternals: Bool
+        didConfirmTrashingExternalIDs ids: Set<UUID>
     )
 }
 
-/// Confirmation sheet shown when deleting a VM that references external
-/// files (storage disks or removable media outside the bundle).
+/// Confirmation sheet shown when deleting a VM.
 ///
-/// Unique structure (header with red trash icon + body + scrolling
-/// attachment list + footer with checkbox toggle + conditional warning +
-/// Cancel/Move-to-Trash buttons) lives in its own concrete subclass per
-/// the established per-sheet-subclass pattern.
+/// Lists everything the deletion touches in two sections:
+///
+/// - **Removed with the VM** — the VM's in-bundle (internal) disks, shown
+///   read-only. They live inside the bundle and are trashed along with it;
+///   there's nothing to decide, but they're surfaced so the user sees the
+///   full picture of what's being deleted.
+/// - **Files outside this VM** — external storage disks and removable media
+///   that live outside the bundle. Each gets its own checkbox so the user
+///   can pick which to move to Trash. A file **shared** with other VMs is
+///   shown with its checkbox locked off (deleting this VM only detaches it),
+///   so a delete can never pull a disk out from under another VM.
+///
+/// The bundled Guest Agent installer is already filtered out upstream (it's
+/// app-owned, not a user file), so it never appears here.
 @MainActor
 final class DeleteVMSheetContentViewController: NSViewController {
     weak var delegate: DeleteVMSheetContentViewControllerDelegate?
 
     private let vmName: String
+    private let bundledDisks: [StorageDisk]
     private let externals: [ExternalAttachment]
 
-    /// `true` when at least one external in `externals` is shared with another VM in the library.
+    /// Per-row checkboxes for the *selectable* (non-shared) externals, keyed
+    /// by attachment id.
     ///
-    /// Drives the conditional footer warning row's visibility (along with
-    /// the checkbox state).
-    private var anyShared: Bool { externals.contains(where: \.isShared) }
+    /// Shared externals get a disabled checkbox that is deliberately not
+    /// recorded here, so they can never be collected on confirm. Exposed
+    /// `private(set)` so tests can read state and toggle a specific row's
+    /// `NSButton`.
+    private(set) var checkboxes: [UUID: NSButton] = [:]
+
+    /// Ids of the externals whose checkbox is currently on.
+    var selectedExternalIDs: Set<UUID> {
+        Set(checkboxes.filter { $0.value.state == .on }.map(\.key))
+    }
+
+    /// The content scroll view, and whether its list is taller than the cap.
+    ///
+    /// Used by `viewDidAppear` to flash the scrollbar as a "more below" hint
+    /// when the list overflows.
+    private weak var contentScrollView: NSScrollView?
+    private(set) var contentOverflows = false
 
     // MARK: - Layout constants
 
     private static let sheetWidth: CGFloat = 520
     private static let padding: CGFloat = 16
-    private static let scrollMaxHeight: CGFloat = 240
-
-    /// Shared leading-icon column width for the header trash icon and the per-row attachment icon.
+    /// Height at which the content list stops growing and starts scrolling.
     ///
-    /// Sized to fit the largest expected leading glyph (the 22pt trash
-    /// symbol in the header); smaller symbols center within it. Pinning
-    /// both icons to the same column makes the header title and the row
-    /// label start at the same X coordinate (`padding + iconColumnWidth +
-    /// 12pt spacing` from the sheet's leading edge).
+    /// The list hugs its content below this; a VM with many disks scrolls
+    /// rather than producing an over-tall sheet. Every row keeps its full
+    /// intrinsic height either way (see the constraints in `makeContentList`).
+    private static let scrollMaxHeight: CGFloat = 320
+
+    /// Shared leading-icon column width for the header trash icon and the
+    /// per-row attachment icon (sized to the 22pt header glyph; smaller
+    /// symbols center within it).
     private static let iconColumnWidth: CGFloat = 22
 
-    // MARK: - Subviews (held for state updates)
-
-    private let trashIconExternalsCheckbox = NSButton()
-    private let trashExternalsWarningRow = NSStackView()
-
-    init(vmName: String, externals: [ExternalAttachment]) {
+    init(vmName: String, bundledDisks: [StorageDisk], externals: [ExternalAttachment]) {
         self.vmName = vmName
+        self.bundledDisks = bundledDisks
         self.externals = externals
         super.init(nibName: nil, bundle: nil)
     }
@@ -73,18 +96,13 @@ final class DeleteVMSheetContentViewController: NSViewController {
         fatalError("DeleteVMSheetContentViewController does not support NSCoder")
     }
 
-    /// Current "Also move these files to Trash" checkbox state.
-    var trashExternalsChecked: Bool {
-        trashIconExternalsCheckbox.state == .on
-    }
-
     override func loadView() {
         let container = NSView()
         container.translatesAutoresizingMaskIntoConstraints = false
 
         let header = makeHeader()
         let divider1 = makeHorizontalSeparator()
-        let listScrollView = makeAttachmentList()
+        let listScrollView = makeContentList()
         let divider2 = makeHorizontalSeparator()
         let footer = makeFooter()
 
@@ -121,6 +139,16 @@ final class DeleteVMSheetContentViewController: NSViewController {
         view = container
     }
 
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        // Flash the scrollbar when the sheet appears with an overflowing list,
+        // so the user sees there's more below. Matches the app's (system)
+        // scroller style. (A repeat flash on any re-appearance is harmless.)
+        if contentOverflows {
+            contentScrollView?.flashScrollers()
+        }
+    }
+
     // MARK: - Header
 
     private func makeHeader() -> NSView {
@@ -136,7 +164,7 @@ final class DeleteVMSheetContentViewController: NSViewController {
         icon.setContentCompressionResistancePriority(.required, for: .horizontal)
         icon.setContentCompressionResistancePriority(.required, for: .vertical)
         // Pin to the shared icon column so the title text starts at the
-        // same X as the row label below the first divider.
+        // same X as the row labels below the first divider.
         icon.widthAnchor.constraint(equalToConstant: Self.iconColumnWidth).isActive = true
 
         let title = NSTextField(labelWithString: "Move \u{201C}\(vmName)\u{201D} to Trash?")
@@ -147,7 +175,7 @@ final class DeleteVMSheetContentViewController: NSViewController {
 
         let body = NSTextField(
             wrappingLabelWithString:
-                "The VM bundle will be moved to the Trash. You can restore it using Finder's Put Back command. Empty the Trash to permanently delete the VM and reclaim disk space."
+                "The VM moves to the Trash. Restore it with Finder's Put Back, or empty the Trash to delete it permanently."
         )
         body.font = .preferredFont(forTextStyle: .callout)
         body.textColor = .secondaryLabelColor
@@ -160,11 +188,6 @@ final class DeleteVMSheetContentViewController: NSViewController {
         textStack.alignment = .leading
         textStack.spacing = Spacing.tight
 
-        // `.firstBaseline` alignment matches the icon's effective baseline
-        // to the title's first-line baseline — looks right regardless of
-        // each subview's internal padding/baseline math. Top-anchor
-        // alignment produces a visual offset because NSImageView and
-        // NSTextField interpret their bounds differently.
         let headerStack = NSStackView(views: [icon, textStack])
         headerStack.orientation = .horizontal
         headerStack.alignment = .firstBaseline
@@ -183,19 +206,26 @@ final class DeleteVMSheetContentViewController: NSViewController {
         return container
     }
 
-    // MARK: - Attachment list
+    // MARK: - Content list
 
-    private func makeAttachmentList() -> NSScrollView {
+    private func makeContentList() -> NSScrollView {
         let scrollView = NSScrollView()
+        // Flipped clip view so content anchors at the TOP and tall content
+        // scrolls downward (a default NSClipView bottom-anchors short content
+        // and shows the bottom first). Same `FlippedClipView` the grouped-form
+        // scroll views use.
+        scrollView.contentView = FlippedClipView()
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = false
         scrollView.autohidesScrollers = true
+        // Use the system's scroller style (matches every other scroll view in
+        // the app). When the list overflows, `viewDidAppear` flashes the
+        // scrollbar as a "there's more below" hint — overlay scrollers can't be
+        // pinned permanently visible, so a flash is the consistent equivalent.
         // Disable safe-area-like auto-adjustment AND zero the clip view's
-        // own contentInsets — NSClipView (the actual frame around the
-        // documentView) carries its own contentInsets separate from
-        // NSScrollView's, and on macOS Tahoe that default contributes a
+        // own contentInsets — on macOS Tahoe the default contributes a
         // visible ~10pt of padding above the document.
         scrollView.automaticallyAdjustsContentInsets = false
         scrollView.contentInsets = NSEdgeInsetsZero
@@ -207,10 +237,6 @@ final class DeleteVMSheetContentViewController: NSViewController {
         listStack.orientation = .vertical
         listStack.alignment = .leading
         listStack.spacing = Spacing.medium
-        // 16pt all around inside the scroll view — matches the SwiftUI
-        // behavioral spec (`.padding(16)` on the inner VStack) and gives
-        // the rows the same breathing room from the dividers that the
-        // header and footer have from their own container edges.
         listStack.edgeInsets = NSEdgeInsets(
             top: Self.padding,
             left: Self.padding,
@@ -219,38 +245,159 @@ final class DeleteVMSheetContentViewController: NSViewController {
         )
         listStack.translatesAutoresizingMaskIntoConstraints = false
 
-        for external in externals {
-            listStack.addArrangedSubview(makeAttachmentRow(external))
+        // Section 1 — in-bundle disks removed along with the VM. Always
+        // present: every VM has at least its main disk.
+        listStack.addArrangedSubview(makeGroupedFormSectionHeader("Removed with the VM"))
+        for disk in bundledDisks {
+            listStack.addArrangedSubview(makeBundledRow(disk))
         }
 
-        scrollView.documentView = listStack
+        // Section 2 — external files the user can individually trash.
+        if !externals.isEmpty {
+            // Extra breathing room separating the two sections.
+            if let lastBundledRow = listStack.arrangedSubviews.last {
+                listStack.setCustomSpacing(Self.padding, after: lastBundledRow)
+            }
+            listStack.addArrangedSubview(makeGroupedFormSectionHeader("Files outside this VM"))
+            for external in externals {
+                listStack.addArrangedSubview(makeExternalRow(external))
+            }
+        }
 
-        // Pin the stack to all four edges of the scroll view's clip view.
-        // The bottom anchor is held at `.defaultHigh` so the scroll view's
-        // height naturally collapses to the stack's intrinsic content
-        // height when that's smaller than `scrollMaxHeight`, but yields
-        // to the `lessThanOrEqualToConstant` cap below when the content
-        // would otherwise overflow (the stack then extends past the
-        // visible region and scrolls).
-        let bottomPin = listStack.bottomAnchor.constraint(
-            equalTo: scrollView.contentView.bottomAnchor
-        )
-        bottomPin.priority = .defaultHigh
+        // Wrap the stack in a plain document view pinned to all four edges of
+        // it, so the document view exactly tracks the stack.
+        let docView = NSView()
+        docView.translatesAutoresizingMaskIntoConstraints = false
+        docView.addSubview(listStack)
+        scrollView.documentView = docView
+        let clip = scrollView.contentView
+
+        // Drive the geometry from the content's measured height rather than the
+        // NSScrollView/NSStackView priority interplay (which kept resolving the
+        // cap by *compressing* the rows). The document is pinned to its measured
+        // height (so it physically cannot compress — every row keeps its full
+        // height) and the scroll view's visible height is `min(content, cap)`:
+        // a short list is hugged, a long one is capped and scrolls.
+        //
+        // The height MUST be measured at the actual render width, because the
+        // shared-file warning ("Kept — still used by …") and the row titles are
+        // wrapping labels: a file shared with several VMs wraps onto extra lines.
+        // The render width is the full sheet width — minus a scroller gutter
+        // only on systems set to "Always show scroll bars" (legacy style, which
+        // reserves width); overlay scrollers float and reserve nothing. So
+        // measure at full width to detect overflow, then re-measure narrower
+        // only when an in-flow gutter scroller will actually be shown.
+        let fullWidthHeight = measuredContentHeight(of: listStack, atWidth: Self.sheetWidth)
+        contentOverflows = fullWidthHeight > Self.scrollMaxHeight
+        let contentHeight: CGFloat
+        let visibleHeight: CGFloat
+        if contentOverflows {
+            let gutter =
+                NSScroller.preferredScrollerStyle == .legacy
+                ? NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy)
+                : 0
+            contentHeight =
+                gutter > 0
+                ? measuredContentHeight(of: listStack, atWidth: Self.sheetWidth - gutter)
+                : fullWidthHeight
+            visibleHeight = Self.scrollMaxHeight
+        } else {
+            contentHeight = fullWidthHeight
+            visibleHeight = fullWidthHeight
+        }
+
         NSLayoutConstraint.activate([
-            listStack.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
-            listStack.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
-            listStack.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
-            listStack.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
-            bottomPin,
-            scrollView.heightAnchor.constraint(
-                lessThanOrEqualToConstant: Self.scrollMaxHeight
-            ),
+            docView.topAnchor.constraint(equalTo: clip.topAnchor),
+            docView.leadingAnchor.constraint(equalTo: clip.leadingAnchor),
+            docView.trailingAnchor.constraint(equalTo: clip.trailingAnchor),
+            docView.widthAnchor.constraint(equalTo: clip.widthAnchor),
+            docView.heightAnchor.constraint(equalToConstant: contentHeight),
+
+            listStack.topAnchor.constraint(equalTo: docView.topAnchor),
+            listStack.bottomAnchor.constraint(equalTo: docView.bottomAnchor),
+            listStack.leadingAnchor.constraint(equalTo: docView.leadingAnchor),
+            listStack.trailingAnchor.constraint(equalTo: docView.trailingAnchor),
+
+            scrollView.heightAnchor.constraint(equalToConstant: visibleHeight),
         ])
 
+        contentScrollView = scrollView
         return scrollView
     }
 
-    private func makeAttachmentRow(_ external: ExternalAttachment) -> NSView {
+    /// Height the content `stack` needs when laid out at `width`.
+    ///
+    /// Pins the stack to `width` so wrapping rows (the shared-file warning)
+    /// report their true multi-line height, measures, then releases the
+    /// constraint (render width is governed by the clip-view pin).
+    private func measuredContentHeight(of stack: NSView, atWidth width: CGFloat) -> CGFloat {
+        let widthConstraint = stack.widthAnchor.constraint(equalToConstant: width)
+        widthConstraint.isActive = true
+        stack.layoutSubtreeIfNeeded()
+        let height = stack.fittingSize.height
+        widthConstraint.isActive = false
+        return height
+    }
+
+    /// Read-only row for an in-bundle disk (no checkbox; it rides along with
+    /// the bundle).
+    private func makeBundledRow(_ disk: StorageDisk) -> NSView {
+        let icon = NSImageView(
+            image: .systemSymbol("internaldrive", accessibilityDescription: "")
+        )
+        icon.contentTintColor = .secondaryLabelColor
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.imageAlignment = .alignCenter
+        icon.setContentHuggingPriority(.required, for: .horizontal)
+        icon.setContentCompressionResistancePriority(.required, for: .horizontal)
+        icon.widthAnchor.constraint(equalToConstant: Self.iconColumnWidth).isActive = true
+
+        let label = NSTextField(labelWithString: disk.label)
+        label.font = Typography.body
+        label.lineBreakMode = .byWordWrapping
+        label.maximumNumberOfLines = 0
+        label.isSelectable = false
+        label.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        let subtitle = NSTextField(labelWithString: disk.displayPath)
+        subtitle.font = .preferredFont(forTextStyle: .caption1)
+        subtitle.textColor = .secondaryLabelColor
+        subtitle.lineBreakMode = .byTruncatingMiddle
+        subtitle.maximumNumberOfLines = 1
+        subtitle.isSelectable = false
+        subtitle.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        subtitle.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        let textStack = NSStackView(views: [label, subtitle])
+        textStack.orientation = .vertical
+        textStack.alignment = .leading
+        textStack.spacing = Spacing.hairline
+
+        let row = NSStackView(views: [icon, textStack])
+        row.orientation = .horizontal
+        row.alignment = .firstBaseline
+        row.spacing = Spacing.medium
+        return row
+    }
+
+    /// Row for an external attachment, with a leading checkbox.
+    ///
+    /// Exclusively owned files default to on (trash); shared files get a
+    /// disabled, always-off checkbox plus an inline "kept" warning.
+    private func makeExternalRow(_ external: ExternalAttachment) -> NSView {
+        let checkbox = NSButton(checkboxWithTitle: "", target: self, action: nil)
+        checkbox.identifier = NSUserInterfaceItemIdentifier(external.id.uuidString)
+        checkbox.translatesAutoresizingMaskIntoConstraints = false
+        checkbox.setContentHuggingPriority(.required, for: .horizontal)
+        checkbox.setContentCompressionResistancePriority(.required, for: .horizontal)
+        if external.isShared {
+            checkbox.state = .off
+            checkbox.isEnabled = false
+        } else {
+            checkbox.state = .on
+            checkboxes[external.id] = checkbox
+        }
+
         let icon = NSImageView(
             image: .systemSymbol(external.symbolName, accessibilityDescription: "")
         )
@@ -259,11 +406,6 @@ final class DeleteVMSheetContentViewController: NSViewController {
         icon.imageAlignment = .alignCenter
         icon.setContentHuggingPriority(.required, for: .horizontal)
         icon.setContentCompressionResistancePriority(.required, for: .horizontal)
-        // Shared icon column — keeps every row's label leading-aligned
-        // with every other row and with the header title above the first
-        // divider. (SF Symbols also have per-glyph intrinsic widths —
-        // `externaldrive` vs `opticaldisc` — and an explicit column
-        // defends against that drift across rows in a multi-row list.)
         icon.widthAnchor.constraint(equalToConstant: Self.iconColumnWidth).isActive = true
 
         let label = NSTextField(labelWithString: external.label)
@@ -286,7 +428,7 @@ final class DeleteVMSheetContentViewController: NSViewController {
         if external.isShared {
             textViews.append(
                 makeSharedWarningRow(
-                    "Also used by \(formatSharedVMs(external.sharedWithVMNames))"
+                    "Kept — still used by \(DataFormatters.quotedList(external.sharedWithVMNames))"
                 )
             )
         }
@@ -296,13 +438,7 @@ final class DeleteVMSheetContentViewController: NSViewController {
         textStack.alignment = .leading
         textStack.spacing = Spacing.hairline
 
-        // `.firstBaseline` anchors the icon to the label's first-line
-        // baseline — the canonical AppKit pattern for an icon row with a
-        // primary label plus a metadata caption (Finder Get Info
-        // attachments panel, Mail attachment cells). `.centerY` would
-        // float the icon into the middle of the label+path stack
-        // (visually drifting it away from the label it's labeling).
-        let row = NSStackView(views: [icon, textStack])
+        let row = NSStackView(views: [checkbox, icon, textStack])
         row.orientation = .horizontal
         row.alignment = .firstBaseline
         row.spacing = Spacing.medium
@@ -336,26 +472,6 @@ final class DeleteVMSheetContentViewController: NSViewController {
     private func makeFooter() -> NSView {
         let container = NSView()
 
-        trashIconExternalsCheckbox.setButtonType(.switch)
-        trashIconExternalsCheckbox.title = "Also move these files to Trash"
-        trashIconExternalsCheckbox.translatesAutoresizingMaskIntoConstraints = false
-        trashIconExternalsCheckbox.target = self
-        trashIconExternalsCheckbox.action = #selector(trashExternalsToggled(_:))
-
-        // The "files will become unavailable" warning row is built once and
-        // shown/hidden based on (checkbox checked) AND (any external is
-        // shared with another VM).
-        trashExternalsWarningRow.removeArrangedSubviews()
-        let warning = makeSharedWarningRow(
-            "Files marked as shared will become unavailable to the VMs listed above."
-        )
-        trashExternalsWarningRow.orientation = .horizontal
-        trashExternalsWarningRow.spacing = Spacing.none
-        trashExternalsWarningRow.alignment = .top
-        trashExternalsWarningRow.addArrangedSubview(warning)
-        trashExternalsWarningRow.isHidden = true
-        trashExternalsWarningRow.translatesAutoresizingMaskIntoConstraints = false
-
         let cancelButton = NSButton(
             title: "Cancel", target: self, action: #selector(cancelTapped(_:))
         )
@@ -379,22 +495,13 @@ final class DeleteVMSheetContentViewController: NSViewController {
         buttonRow.alignment = .centerY
         buttonRow.translatesAutoresizingMaskIntoConstraints = false
 
-        let stack = NSStackView(views: [
-            trashIconExternalsCheckbox, trashExternalsWarningRow, buttonRow,
-        ])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = Spacing.standard
-        stack.translatesAutoresizingMaskIntoConstraints = false
-
-        container.addSubview(stack)
+        container.addSubview(buttonRow)
         let padding = Self.padding
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: padding),
-            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: padding),
-            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -padding),
-            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -padding),
-            buttonRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            buttonRow.topAnchor.constraint(equalTo: container.topAnchor, constant: padding),
+            buttonRow.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: padding),
+            buttonRow.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -padding),
+            buttonRow.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -padding),
         ])
         return container
     }
@@ -406,40 +513,15 @@ final class DeleteVMSheetContentViewController: NSViewController {
     }
 
     @objc private func confirmTapped(_ sender: NSButton) {
-        delegate?.deleteVMSheet(self, didConfirmTrashExternals: trashExternalsChecked)
-    }
-
-    @objc private func trashExternalsToggled(_ sender: NSButton) {
-        // Conditional warning: visible only when checkbox is on AND at
-        // least one external is shared with another VM.
-        trashExternalsWarningRow.isHidden = !(trashExternalsChecked && anyShared)
+        delegate?.deleteVMSheet(self, didConfirmTrashingExternalIDs: selectedExternalIDs)
     }
 
     // MARK: - Helpers
-
-    private func formatSharedVMs(_ names: [String]) -> String {
-        // Quote each name first, then let Foundation's `ListFormatter`
-        // join them with the locale-correct conjunction and punctuation
-        // (in English: "A", "A and B", "A, B, and C" with the Oxford
-        // comma). Replaces a hand-rolled switch over `names.count`.
-        ListFormatter.localizedString(
-            byJoining: names.map { "\u{201C}\($0)\u{201D}" }
-        )
-    }
 
     private func makeHorizontalSeparator() -> NSBox {
         let box = NSBox()
         box.boxType = .separator
         return box
-    }
-}
-
-extension NSStackView {
-    fileprivate func removeArrangedSubviews() {
-        for view in arrangedSubviews {
-            removeArrangedSubview(view)
-            view.removeFromSuperview()
-        }
     }
 }
 
