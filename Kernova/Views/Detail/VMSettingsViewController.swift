@@ -1226,7 +1226,7 @@ extension VMSettingsViewController {
             return AttachmentDeletePrompt(
                 title: title,
                 message:
-                    "The Kernova Guest Agent installer will be detached from this VM. It's part of Kernova, so the installer itself isn't deleted.",
+                    "Detaches the Guest Agent installer from this VM. It's part of Kernova, so the file isn't deleted.",
                 actions: [.removeFromVM])
         }
 
@@ -1234,16 +1234,16 @@ extension VMSettingsViewController {
             return AttachmentDeletePrompt(
                 title: title,
                 message:
-                    "\u{201C}\(label)\u{201D} will be detached from this VM. Its file is kept because it's still used by \(DataFormatters.quotedList(sharedVMNames)).",
+                    "Detaches it from this VM. Its file is kept — still used by \(DataFormatters.quotedList(sharedVMNames)).",
                 actions: [.removeFromVM])
         }
 
         if isInternal {
-            let base = "The disk image will be moved to the Trash. You can restore it using Finder's Put Back command."
+            let base = "Moves the disk image to the Trash. You can restore it with Finder's Put Back."
             return AttachmentDeletePrompt(
                 title: title,
                 message: isMainDisk
-                    ? "\(base) This is the VM's startup disk — it won't be able to start without it."
+                    ? "\(base) This is the VM's startup disk — it won't boot without it."
                     : base,
                 actions: [.moveToTrash])
         }
@@ -1251,7 +1251,7 @@ extension VMSettingsViewController {
         return AttachmentDeletePrompt(
             title: title,
             message:
-                "Move to Trash sends the file to the Trash. Remove from VM detaches it and leaves the file in place.",
+                "Move to Trash sends the file to the Trash. Remove from VM detaches it but keeps the file.",
             actions: [.moveToTrash, .removeFromVM])
     }
 

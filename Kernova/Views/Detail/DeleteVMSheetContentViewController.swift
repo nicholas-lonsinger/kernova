@@ -158,7 +158,7 @@ final class DeleteVMSheetContentViewController: NSViewController {
 
         let body = NSTextField(
             wrappingLabelWithString:
-                "The VM bundle will be moved to the Trash. You can restore it using Finder's Put Back command. Empty the Trash to permanently delete the VM and reclaim disk space."
+                "The VM moves to the Trash. Restore it with Finder's Put Back, or empty the Trash to delete it permanently."
         )
         body.font = .preferredFont(forTextStyle: .callout)
         body.textColor = .secondaryLabelColor
