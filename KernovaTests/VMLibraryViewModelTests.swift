@@ -300,8 +300,8 @@ struct VMLibraryViewModelTests {
         #expect(attachments[1].sharedWithVMNames == ["Sharer"])
     }
 
-    @Test("externalAttachments flags isMissing per backing-file existence")
-    func externalAttachmentsFlagsMissing() throws {
+    @Test("externalAttachmentsResolvingExistence flags isMissing per backing-file existence")
+    func externalAttachmentsResolvingExistenceFlagsMissing() async throws {
         let (viewModel, _, _, _, _) = makeViewModel()
         let presentDisk = FileManager.default.temporaryDirectory
             .appendingPathComponent("present-\(UUID().uuidString).img")
@@ -322,7 +322,10 @@ struct VMLibraryViewModelTests {
         ]
         viewModel.instances = [instance]
 
-        let attachments = viewModel.externalAttachments(for: instance)
+        // The synchronous enumeration never touches the filesystem.
+        #expect(viewModel.externalAttachments(for: instance).allSatisfy { !$0.isMissing })
+
+        let attachments = await viewModel.externalAttachmentsResolvingExistence(for: instance)
         #expect(attachments.count == 2)
         #expect(attachments[0].path == presentDisk.path)
         #expect(attachments[0].isMissing == false)

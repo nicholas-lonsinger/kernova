@@ -429,12 +429,12 @@ final class DeleteVMSheetContentViewController: NSViewController {
             // Shared takes precedence over missing: other VMs still reference the
             // path, so "kept" is the accurate framing even if this VM's copy is gone.
             textViews.append(
-                makeSharedWarningRow(
+                makeInlineWarningRow(
                     "Kept — still used by \(DataFormatters.quotedList(external.sharedWithVMNames))"
                 )
             )
         } else if external.isMissing {
-            textViews.append(makeSharedWarningRow("Already gone — nothing to remove"))
+            textViews.append(makeInlineWarningRow("Already gone — nothing to remove"))
         }
 
         let textStack = NSStackView(views: textViews)
@@ -449,7 +449,9 @@ final class DeleteVMSheetContentViewController: NSViewController {
         return row
     }
 
-    private func makeSharedWarningRow(_ text: String) -> NSView {
+    /// A caution-triangle + caption row appended under a locked-off external,
+    /// used for both the shared ("Kept — …") and missing ("Already gone …") notes.
+    private func makeInlineWarningRow(_ text: String) -> NSView {
         let icon = NSImageView(
             image: .systemSymbol("exclamationmark.triangle.fill", accessibilityDescription: "")
         )
