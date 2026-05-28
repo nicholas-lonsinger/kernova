@@ -156,6 +156,10 @@ struct DeleteVMSheetContentViewControllerTests {
         // …while the document keeps its full content height and overflows, so
         // the rows scroll rather than being squashed to fit.
         #expect(documentHeight > visibleHeight + 100)
+        // The scrollbar is a persistent (legacy) gutter, shown when overflowing
+        // so the user sees there's more content below.
+        #expect(scrollView.scrollerStyle == .legacy)
+        #expect(scrollView.verticalScroller?.isHidden == false)
     }
 
     @Test("a short disk list hugs its content with no cap and no empty gap")
@@ -172,6 +176,8 @@ struct DeleteVMSheetContentViewControllerTests {
         // scroll, no empty gap) and stays under the cap.
         #expect(visibleHeight < 320)
         #expect(abs(visibleHeight - documentHeight) <= 1)
+        // Content fits, so the scrollbar is autohidden — no gutter, no hint.
+        #expect(scrollView.verticalScroller?.isHidden == true)
     }
 
     @Test("a file shared with many VMs renders its wrapped warning without clipping")

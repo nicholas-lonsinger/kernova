@@ -203,6 +203,13 @@ final class DeleteVMSheetContentViewController: NSViewController {
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = false
         scrollView.autohidesScrollers = true
+        // Legacy (gutter) scroller rather than the transient overlay style, so
+        // that when the list overflows the height cap a scrollbar stays
+        // *visible* — a persistent hint that there's more below. With
+        // `autohidesScrollers` it's still hidden whenever the content fits.
+        // (A legacy scroller reserves width when shown; the overflow branch
+        // below measures at that reduced width so wrapping rows don't clip.)
+        scrollView.scrollerStyle = .legacy
         // Disable safe-area-like auto-adjustment AND zero the clip view's
         // own contentInsets — on macOS Tahoe the default contributes a
         // visible ~10pt of padding above the document.
@@ -251,30 +258,31 @@ final class DeleteVMSheetContentViewController: NSViewController {
         scrollView.documentView = docView
         let clip = scrollView.contentView
 
-        // Measure the content's natural height once and drive the geometry
-        // from that constant, rather than trying to coax it out of the
-        // NSScrollView/NSStackView priority interplay (which kept resolving
-        // the cap by *compressing* the rows). The document is pinned to its
-        // measured height (so it physically cannot compress — every row keeps
-        // its full height), and the scroll view's visible height is
-        // `min(content, cap)`: it hugs a short list and caps a long one, with
-        // the surplus scrolling.
+        // Drive the geometry from the content's measured height rather than the
+        // NSScrollView/NSStackView priority interplay (which kept resolving the
+        // cap by *compressing* the rows). The document is pinned to its measured
+        // height (so it physically cannot compress — every row keeps its full
+        // height) and the scroll view's visible height is `min(content, cap)`:
+        // a short list is hugged, a long one is capped and scrolls.
         //
-        // The measurement MUST be taken at the render width: the shared-file
-        // warning ("Kept — still used by …") and the row titles are wrapping
-        // labels, so a file shared with several VMs wraps onto extra lines at
-        // the sheet's width. An unconstrained `fittingSize` would measure them
-        // single-line and under-pin the document, re-introducing the very
-        // compression this design avoids. So pin the stack to the sheet width
-        // for the measurement (the list spans the full sheet width; its own
-        // `edgeInsets` account for the side padding), then release it — at
-        // render `listStack.widthAnchor == clip` (below) governs the width.
-        let measuringWidth = listStack.widthAnchor.constraint(equalToConstant: Self.sheetWidth)
-        measuringWidth.isActive = true
-        listStack.layoutSubtreeIfNeeded()
-        let contentHeight = listStack.fittingSize.height
-        measuringWidth.isActive = false
-        let visibleHeight = min(contentHeight, Self.scrollMaxHeight)
+        // The height MUST be measured at the actual render width, because the
+        // shared-file warning ("Kept — still used by …") and the row titles are
+        // wrapping labels: a file shared with several VMs wraps onto extra lines.
+        // The render width is the full sheet width — minus the legacy scroller's
+        // gutter once the content overflows and the scrollbar appears. So
+        // measure at full width to detect overflow, then re-measure at the
+        // narrower width when a scroller will be shown.
+        let fullWidthHeight = measuredContentHeight(of: listStack, atWidth: Self.sheetWidth)
+        let contentHeight: CGFloat
+        let visibleHeight: CGFloat
+        if fullWidthHeight > Self.scrollMaxHeight {
+            let scrollerWidth = NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy)
+            contentHeight = measuredContentHeight(of: listStack, atWidth: Self.sheetWidth - scrollerWidth)
+            visibleHeight = Self.scrollMaxHeight
+        } else {
+            contentHeight = fullWidthHeight
+            visibleHeight = fullWidthHeight
+        }
 
         NSLayoutConstraint.activate([
             docView.topAnchor.constraint(equalTo: clip.topAnchor),
@@ -292,6 +300,20 @@ final class DeleteVMSheetContentViewController: NSViewController {
         ])
 
         return scrollView
+    }
+
+    /// Height the content `stack` needs when laid out at `width`.
+    ///
+    /// Pins the stack to `width` so wrapping rows (the shared-file warning)
+    /// report their true multi-line height, measures, then releases the
+    /// constraint (render width is governed by the clip-view pin).
+    private func measuredContentHeight(of stack: NSView, atWidth width: CGFloat) -> CGFloat {
+        let widthConstraint = stack.widthAnchor.constraint(equalToConstant: width)
+        widthConstraint.isActive = true
+        stack.layoutSubtreeIfNeeded()
+        let height = stack.fittingSize.height
+        widthConstraint.isActive = false
+        return height
     }
 
     private func makeSectionHeader(_ title: String) -> NSView {
