@@ -123,6 +123,11 @@ struct RemovableMediaItem: Codable, Sendable, Equatable {
 /// when one or more other VMs in the library reference the same path —
 /// the UI uses that to warn before the user opts in to trashing a shared
 /// file (e.g., a Windows installer ISO referenced by several VMs).
+///
+/// `isMissing` is `true` when the backing file no longer resolves on disk
+/// (deleted/moved out-of-band, or on an ejected volume). The delete sheet
+/// renders such rows as inert — there is nothing left to trash — instead of
+/// implying an action that would silently no-op.
 struct ExternalAttachment: Sendable, Equatable {
     enum Kind: Sendable, Equatable {
         case storageDisk
@@ -134,6 +139,8 @@ struct ExternalAttachment: Sendable, Equatable {
     let label: String
     let path: String
     let sharedWithVMNames: [String]
+    /// `true` when `path` no longer resolves to a file on disk.
+    let isMissing: Bool
 
     var isShared: Bool { !sharedWithVMNames.isEmpty }
 }

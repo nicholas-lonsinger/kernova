@@ -591,7 +591,8 @@ final class VMLibraryViewModel {
                     kind: .storageDisk,
                     label: disk.label,
                     path: disk.path,
-                    sharedWithVMNames: sharingVMNames(forPath: disk.path, excluding: instance)
+                    sharedWithVMNames: sharingVMNames(forPath: disk.path, excluding: instance),
+                    isMissing: !FileManager.default.fileExists(atPath: disk.path)
                 )
             )
         }
@@ -602,7 +603,8 @@ final class VMLibraryViewModel {
                     kind: .removableMedia,
                     label: item.label,
                     path: item.path,
-                    sharedWithVMNames: sharingVMNames(forPath: item.path, excluding: instance)
+                    sharedWithVMNames: sharingVMNames(forPath: item.path, excluding: instance),
+                    isMissing: !FileManager.default.fileExists(atPath: item.path)
                 )
             )
         }
