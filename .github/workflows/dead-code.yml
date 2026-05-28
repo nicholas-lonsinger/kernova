@@ -96,27 +96,33 @@ jobs:
           retention-days: 14
 
       - name: Manage tracking issue
+        # Only the canonical scan of the default branch owns the tracking
+        # issue. Branch / PR `workflow_dispatch` runs still scan and upload
+        # their artifacts, but must never edit, close, or open the shared
+        # tracker — otherwise a clean branch would wrongly close the issue
+        # that reflects `main`.
+        if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FINDINGS: ${{ steps.scan.outputs.findings }}
         run: |
           set -euo pipefail
 
-          ISSUE_NUMBER=$(gh issue list \
+          # The live tracker is the single OPEN issue, if any. Each scan writes
+          # a complete snapshot — findings are never merged across runs — and
+          # closed issues are immutable history.
+          OPEN_ISSUE=$(gh issue list \
             --label "review-debt/dead-code" \
-            --state all \
+            --state open \
             --limit 1 \
             --json number,title \
             --jq 'map(select(.title | startswith("Dead-code scan"))) | .[0].number // empty')
 
           if [ "$FINDINGS" -eq 0 ]; then
-            if [ -n "$ISSUE_NUMBER" ]; then
-              STATE=$(gh issue view "$ISSUE_NUMBER" --json state --jq '.state')
-              if [ "$STATE" = "OPEN" ]; then
-                gh issue comment "$ISSUE_NUMBER" \
-                  --body "Scan ran clean on $(date -u +%Y-%m-%dT%H:%MZ) — closing. Reopened automatically when new findings appear."
-                gh issue close "$ISSUE_NUMBER"
-              fi
+            if [ -n "$OPEN_ISSUE" ]; then
+              gh issue comment "$OPEN_ISSUE" \
+                --body "Scan ran clean on $(date -u +%Y-%m-%dT%H:%MZ) — closing. A new issue is opened automatically if findings reappear."
+              gh issue close "$OPEN_ISSUE"
             fi
             exit 0
           fi
@@ -125,7 +131,7 @@ jobs:
           {
             echo "Last scan: $(date -u +%Y-%m-%dT%H:%MZ) — **$FINDINGS finding(s)**"
             echo
-            echo "Auto-managed by [\`.github/workflows/dead-code.yml\`](.github/workflows/dead-code.yml). Runs weekly (Mondays 14:00 UTC) and on \`workflow_dispatch\`. Closes automatically on the next clean run."
+            echo "Auto-managed by [\`.github/workflows/dead-code.yml\`](.github/workflows/dead-code.yml). Runs weekly (Mondays 14:00 UTC) and on \`workflow_dispatch\` against \`main\`. Each scan fully replaces the list below — findings are never combined across runs. Closes automatically on the next clean run; a brand-new issue is opened if findings reappear later."
             echo
             echo "<details><summary>Periphery output</summary>"
             echo
@@ -136,17 +142,37 @@ jobs:
             echo "</details>"
           } > "$BODY_FILE"
 
-          if [ -n "$ISSUE_NUMBER" ]; then
-            gh issue edit "$ISSUE_NUMBER" \
+          if [ -n "$OPEN_ISSUE" ]; then
+            # Low churn: refresh the live issue in place. The body is replaced
+            # wholesale, so the new findings supersede the old — never appended.
+            gh issue edit "$OPEN_ISSUE" \
               --title "Dead-code scan: $FINDINGS finding(s)" \
               --body-file "$BODY_FILE"
-            STATE=$(gh issue view "$ISSUE_NUMBER" --json state --jq '.state')
-            if [ "$STATE" = "CLOSED" ]; then
-              gh issue reopen "$ISSUE_NUMBER"
-            fi
           else
-            gh issue create \
+            # No live issue — open a fresh one. If a prior (closed) tracker
+            # exists, cross-link it so it is unambiguous that this new set
+            # supersedes, and does not extend, the old one.
+            PREV_CLOSED=$(gh issue list \
+              --label "review-debt/dead-code" \
+              --state closed \
+              --limit 1 \
+              --json number,title \
+              --jq 'map(select(.title | startswith("Dead-code scan"))) | .[0].number // empty')
+
+            if [ -n "$PREV_CLOSED" ]; then
+              { echo "Supersedes #$PREV_CLOSED — these findings replace that issue's list; they are not combined with it."; echo; cat "$BODY_FILE"; } > "${BODY_FILE}.linked"
+              mv "${BODY_FILE}.linked" "$BODY_FILE"
+            fi
+
+            NEW_URL=$(gh issue create \
               --title "Dead-code scan: $FINDINGS finding(s)" \
               --label "review-debt/dead-code" \
-              --body-file "$BODY_FILE"
+              --body-file "$BODY_FILE")
+            echo "Opened $NEW_URL"
+
+            if [ -n "$PREV_CLOSED" ]; then
+              NEW_NUM="${NEW_URL##*/}"
+              gh issue comment "$PREV_CLOSED" \
+                --body "Superseded by #$NEW_NUM — newer scan with current findings. This issue's list is historical and is not combined with the new one."
+            fi
           fi
