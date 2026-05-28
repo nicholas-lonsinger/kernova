@@ -79,7 +79,7 @@ final class AttachmentIconButton: NSView {
         }
     }
 
-    @objc private func showMissingPopover(_ sender: Any?) {
+    @objc private func showMissingPopover(_: Any?) {
         guard let path = currentPath else { return }
         let content = MissingAttachmentPopoverContentViewController(path: path)
         // Anchor to `self` (the wrapper `NSView`) rather than the inner

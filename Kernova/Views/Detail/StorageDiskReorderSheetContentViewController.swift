@@ -260,7 +260,7 @@ final class StorageDiskReorderSheetContentViewController: NSViewController {
 
     // MARK: - Actions
 
-    @objc private func doneTapped(_ sender: NSButton) {
+    @objc private func doneTapped(_: NSButton) {
         delegate?.storageDiskReorderSheetDidDismiss(self)
     }
 

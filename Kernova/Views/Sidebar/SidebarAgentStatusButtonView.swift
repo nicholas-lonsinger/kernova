@@ -141,7 +141,7 @@ final class SidebarAgentStatusButtonView: NSView,
 
     // MARK: - Actions
 
-    @objc private func iconTapped(_ sender: NSButton) {
+    @objc private func iconTapped(_: NSButton) {
         if popoverPresenter.isShown {
             popoverPresenter.close()
         } else {

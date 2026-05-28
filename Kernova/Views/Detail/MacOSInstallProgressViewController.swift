@@ -122,10 +122,10 @@ final class MacOSInstallProgressViewController: NSViewController {
 
     private func makeStepIndicator() -> NSStackView {
         let downloadRow = makeStepRow(
-            number: 1, circle: downloadCircle, label: downloadLabel, spinner: downloadSpinner,
+            circle: downloadCircle, label: downloadLabel, spinner: downloadSpinner,
             check: downloadCheck)
         let installRow = makeStepRow(
-            number: 2, circle: installCircle, label: installLabel, spinner: installSpinner,
+            circle: installCircle, label: installLabel, spinner: installSpinner,
             check: installCheck)
 
         let line = NSBox()
@@ -155,7 +155,7 @@ final class MacOSInstallProgressViewController: NSViewController {
     }
 
     private func makeStepRow(
-        number: Int, circle: NSImageView, label: NSTextField, spinner: NSProgressIndicator,
+        circle: NSImageView, label: NSTextField, spinner: NSProgressIndicator,
         check: NSImageView
     ) -> NSView {
         circle.translatesAutoresizingMaskIntoConstraints = false

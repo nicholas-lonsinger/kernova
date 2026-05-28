@@ -903,17 +903,6 @@ final class StubURLProtocol: URLProtocol, @unchecked Sendable {
                 body: body, declaresLargerLength: false, failAfterBody: nil)
         }
 
-        static func truncatedResponse(
-            url: URL,
-            declaredLength: Int,
-            actualBody: Data
-        ) -> StubResponse {
-            let headers: [String: String] = ["Content-Length": "\(declaredLength)"]
-            return StubResponse(
-                response: makeResponse(url: url, statusCode: 200, headers: headers),
-                body: actualBody, declaresLargerLength: true, failAfterBody: nil)
-        }
-
         /// Delivers `partialBody` then signals `didFailWithError:` to simulate a
         /// mid-stream network drop. `declaredLength` should be larger than
         /// `partialBody.count` so the receiver sees an incomplete transfer.

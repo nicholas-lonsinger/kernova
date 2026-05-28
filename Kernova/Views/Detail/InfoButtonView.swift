@@ -87,7 +87,7 @@ final class InfoButtonView: NSView {
         weak var anchor: NSView?
         var paragraphs: [InfoPopoverParagraph] = []
 
-        @objc func buttonClicked(_ sender: NSButton) {
+        @objc func buttonClicked(_: NSButton) {
             guard let anchor else { return }
             let vc = InfoPopoverContentViewController(paragraphs: paragraphs)
             presenter.show(content: vc, from: anchor, preferredEdge: .minY)

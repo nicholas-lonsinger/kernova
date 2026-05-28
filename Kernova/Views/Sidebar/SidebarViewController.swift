@@ -1,6 +1,5 @@
 import AppKit
 import UniformTypeIdentifiers
-import os
 
 /// Pure-AppKit sidebar: a source-list `NSOutlineView` listing virtual machines
 /// under a collapsible "Virtual Machines" group.
@@ -40,8 +39,6 @@ final class SidebarViewController: NSViewController {
     private static let expandedSectionsKey = "KernovaSidebarExpandedSections"
     private static let leafRowHeight: CGFloat = 42
     private static let groupRowHeight: CGFloat = 24
-
-    private static let logger = Logger(subsystem: "com.kernova.app", category: "SidebarViewController")
 
     // MARK: - Init
 
@@ -259,7 +256,7 @@ final class SidebarViewController: NSViewController {
 
     // MARK: - Double-click
 
-    @objc private func rowDoubleClicked(_ sender: Any?) {
+    @objc private func rowDoubleClicked(_: Any?) {
         let row = outlineView.clickedRow
         guard row >= 0,
             let instance = outlineView.item(atRow: row) as? VMInstance,
