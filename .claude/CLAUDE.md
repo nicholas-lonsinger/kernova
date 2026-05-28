@@ -24,7 +24,7 @@ Run `make install-hooks` once after cloning to enable the pre-push `make lint` h
 `make test` is the canonical `xcodebuild` invocation:
 
 ```bash
-xcodebuild -project Kernova.xcodeproj -scheme Kernova -destination 'platform=macOS' -derivedDataPath DerivedData <build|test>
+xcodebuild -project Kernova.xcodeproj -scheme Kernova -destination 'platform=macOS' -derivedDataPath DerivedData -configuration Debug <build|test>
 ```
 
 A single `xcodebuild test -scheme Kernova` runs all three test targets (`KernovaTests`, `KernovaGuestAgentTests`, `KernovaProtocolTests`) via `Kernova.xctestplan`. This works because `KernovaProtocol` is referenced as a top-level peer in the project (a `PBXFileReference` in `Kernova.xcodeproj`'s main group) rather than as an `XCLocalSwiftPackageReference` under Package Dependencies. In the dependency form, Xcode treats the package as upstream and hides its `.testTarget`s from the test-plan picker; in the peer form, the package's tests appear in `Edit Scheme → Test → +` as first-class targets and can be added to the test plan. If `KernovaProtocol` ever needs to be re-added, drag the folder into the Project Navigator from Finder rather than using `Add Package Dependencies → Add Local`. `make test-package` exists as a focused shortcut for iterating on package tests in isolation.
