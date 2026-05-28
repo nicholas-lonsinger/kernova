@@ -62,6 +62,15 @@ When adding new functionality or modifying existing behavior, include unit tests
 - Reuse shared test helpers and factories (e.g., `makeInstance()`) rather than duplicating setup logic across test files
 - Run the full test suite before committing to ensure nothing is broken
 
+#### Test-only seams
+
+When a test needs to observe state that is `private` in production, pick the tightest exposure that still works:
+
+1. **`private(set) var x`** — internal getter, private setter. The idiomatic choice when production code reading the state is harmless; tests reach it via `@testable import`, no extra accessor needed.
+2. **`#if DEBUG`-gated read accessor** — when the state is a test-only implementation detail that production code should *not* read. Keep the field `private` and add a `…ForTesting` computed getter wrapped in `#if DEBUG`, so the seam is physically absent from Release builds and test-only access becomes a compile-time guarantee rather than a naming convention. Place `#if DEBUG` before the doc comment and `#endif` after the accessor.
+
+`AttachmentFileMonitor.watchedParentsForTesting` is the canonical example; the `…ForTesting` accessors in `VsockClipboardService`, `VsockGuestClipboardAgent`, and `VsockHostConnection` follow the same pattern. Because this rationale is shared, the gate itself is the documentation — don't repeat a "DEBUG-only so it can't leak" note at each site.
+
 ### Logging
 
 The app uses Apple's `os.Logger` (subsystem `com.kernova.app`) with per-component categories. Each service, view model, or model that logs declares a `private static let logger`. When adding or modifying functionality, include log calls at appropriate levels:

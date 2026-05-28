@@ -78,6 +78,7 @@ final class VsockClipboardService: ClipboardServicing {
     /// `grabIfChanged()` is called repeatedly with the same content.
     private var lastGrabbedText: String?
 
+    #if DEBUG
     /// Exposes `pendingInboundGeneration` for tests that need to assert the
     /// inbound-request lifecycle without relying on observable side effects.
     ///
@@ -87,6 +88,7 @@ final class VsockClipboardService: ClipboardServicing {
     /// via `stop()`. That reset would satisfy a behavioral assertion for the
     /// wrong reason, masking a regression in the generation commit logic itself.
     var pendingInboundGenerationForTesting: UInt64? { pendingInboundGeneration }
+    #endif
 
     private static let logger = Logger(subsystem: "com.kernova.app", category: "VsockClipboardService")
 

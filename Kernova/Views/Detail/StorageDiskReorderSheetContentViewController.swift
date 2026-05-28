@@ -86,11 +86,6 @@ final class StorageDiskReorderSheetContentViewController: NSViewController {
         fatalError("StorageDiskReorderSheetContentViewController does not support NSCoder")
     }
 
-    /// Latest known disk ordering.
-    ///
-    /// Useful for tests asserting on state after a simulated drop.
-    var currentOrdering: [StorageDisk] { disks }
-
     override func loadView() {
         let container = NSView()
         container.translatesAutoresizingMaskIntoConstraints = false

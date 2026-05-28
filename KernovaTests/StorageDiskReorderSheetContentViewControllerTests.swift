@@ -39,7 +39,7 @@ struct StorageDiskReorderSheetContentViewControllerTests {
         // last row." After the downward shift A should land at index 2.
         let didReorder = vc.performReorder(sourceRow: 0, proposedRow: 3)
         #expect(didReorder)
-        #expect(vc.currentOrdering.map(\.label) == ["B", "C", "A"])
+        #expect(vc.disks.map(\.label) == ["B", "C", "A"])
         #expect(delegate.reorderedOrderings.count == 1)
         #expect(delegate.reorderedOrderings.last?.map(\.label) == ["B", "C", "A"])
     }
@@ -56,7 +56,7 @@ struct StorageDiskReorderSheetContentViewControllerTests {
         // the first row." Target stays at 0 (upward drag).
         let didReorder = vc.performReorder(sourceRow: 2, proposedRow: 0)
         #expect(didReorder)
-        #expect(vc.currentOrdering.map(\.label) == ["C", "A", "B"])
+        #expect(vc.disks.map(\.label) == ["C", "A", "B"])
         #expect(delegate.reorderedOrderings.last?.map(\.label) == ["C", "A", "B"])
     }
 
@@ -74,7 +74,7 @@ struct StorageDiskReorderSheetContentViewControllerTests {
         // Drag row 1 to proposedRow 2 — target == 2 - 1 == 1 == source.
         let droppedJustAfter = vc.performReorder(sourceRow: 1, proposedRow: 2)
         #expect(!droppedJustAfter)
-        #expect(vc.currentOrdering.map(\.label) == ["A", "B", "C"])
+        #expect(vc.disks.map(\.label) == ["A", "B", "C"])
         #expect(delegate.reorderedOrderings.isEmpty)
     }
 
@@ -118,7 +118,7 @@ struct StorageDiskReorderSheetContentViewControllerTests {
             table, acceptDrop: dragInfo, row: 3, dropOperation: .above
         )
         #expect(accepted)
-        #expect(vc.currentOrdering.map(\.label) == ["B", "C", "A"])
+        #expect(vc.disks.map(\.label) == ["B", "C", "A"])
         #expect(delegate.reorderedOrderings.last?.map(\.label) == ["B", "C", "A"])
     }
 
