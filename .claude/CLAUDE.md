@@ -19,7 +19,7 @@ make install-hooks       # One-time: enable .githooks/pre-push (runs `make lint`
 make clean               # Remove DerivedData/
 ```
 
-After cloning, run `make install-hooks` once. This sets `core.hooksPath` to the checked-in `.githooks/` directory so a pre-push hook runs `make lint` locally and matches the swift-format check in `.github/workflows/lint.yml`. Bypass an individual push with `git push --no-verify`.
+Run `make install-hooks` once after cloning to enable the pre-push `make lint` hook (see [Development setup](../README.md#development-setup) in the README for the mechanics; bypass an individual push with `git push --no-verify`).
 
 `make test` is the canonical `xcodebuild` invocation:
 
@@ -35,7 +35,7 @@ The `-derivedDataPath DerivedData` flag ensures build output goes to a determini
 
 `CFBundleVersion` is `git rev-list --count HEAD` (the total commit count), substituted into the source `Info.plist` via `INFOPLIST_PREPROCESS`. The `Set Build Number from Git` build phase generates `KernovaBuildNumber.h` with `#define KERNOVA_BUILD_NUMBER N`, and `Kernova/App/Info.plist` references the symbol directly (`<string>KERNOVA_BUILD_NUMBER</string>`). Substitution happens inside `ProcessInfoPlistFile` so build-graph reordering can't clobber it. The `KernovaGuestAgent` target uses the same pattern with its own `AGENT_BUILD_NUMBER` (scoped to `git rev-list --count HEAD -- KernovaGuestAgent/`). When adding a new top-level target that needs a dynamic build number, replicate this pattern instead of patching the built `Info.plist` after the fact.
 
-Requires **macOS 26 (Tahoe)**, **Xcode 26**, **Swift 6**, and **Apple Silicon** (for macOS guest support). The app uses the `com.apple.security.virtualization` entitlement.
+Requires the toolchain listed under [Requirements](../README.md#requirements) in the README (Apple Silicon is needed for macOS guest support). The app uses the `com.apple.security.virtualization` entitlement.
 
 ## Architecture
 

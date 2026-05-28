@@ -51,7 +51,7 @@ make install-hooks
 
 This points the repo at the checked-in `.githooks/` directory so a pre-push hook runs `make lint` locally and matches the swift-format check enforced on `main`. It's a one-time setup per clone (Git does not auto-activate checked-in hooks). Bypass an individual push with `git push --no-verify`.
 
-Other useful Makefile targets: `make build`, `make test`, `make format`, `make lint`. Run `make` with no arguments for the full list.
+Run `make` with no arguments to see all build, test, format, and lint targets.
 
 ## Building
 
@@ -66,10 +66,10 @@ The app requires the `com.apple.security.virtualization` entitlement, which is i
 The project has comprehensive test coverage using [Swift Testing](https://developer.apple.com/documentation/testing/) (`@Test`, `#expect`). All services use protocol-based dependency injection with mock implementations for full testability.
 
 ```bash
-xcodebuild -project Kernova.xcodeproj -scheme Kernova -destination 'platform=macOS' test
+make test
 ```
 
-See the test coverage section in [ARCHITECTURE.md](ARCHITECTURE.md) for details.
+This runs all three test targets via the test plan; it wraps the canonical `xcodebuild` invocation documented in [CLAUDE.md](.claude/CLAUDE.md). See the test coverage section in [ARCHITECTURE.md](ARCHITECTURE.md) for details.
 
 ## Architecture
 
