@@ -58,6 +58,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// the host isn't reachable.
     private var liveChannel: VsockChannel?
 
+    #if DEBUG
     /// Exposes `liveChannel` as an internal read for tests that need to wait
     /// until the main-queue async assignment completes before driving polls.
     var liveChannelForTesting: VsockChannel? { liveChannel }
@@ -72,6 +73,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// assertion for the wrong reason, masking a regression in the generation
     /// commit logic itself.
     var pendingInboundGenerationForTesting: UInt64? { pendingInboundGeneration }
+    #endif
 
     /// Counter for outbound offer generations.
     ///
@@ -112,8 +114,10 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// on the main queue.
     private var enabled: Bool = false
 
+    #if DEBUG
     /// Test seam.
     var isEnabledForTesting: Bool { enabled }
+    #endif
 
     // MARK: - Init
 

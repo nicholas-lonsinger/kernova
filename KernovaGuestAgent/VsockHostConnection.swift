@@ -41,10 +41,12 @@ final class VsockHostConnection: @unchecked Sendable {
     /// initial `PolicyUpdate` says otherwise. Toggled by `setEnabled(_:)`.
     private var enabled: Bool = false
 
+    #if DEBUG
     /// Test seam: read the current enabled state without exposing the mutator.
     var isEnabledForTesting: Bool {
         lock.withLock { enabled }
     }
+    #endif
 
     init() {
         self.client = VsockGuestClient(port: KernovaVsockPort.log, label: "log")
