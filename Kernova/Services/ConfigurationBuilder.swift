@@ -299,7 +299,10 @@ struct ConfigurationBuilder: Sendable {
     /// Returns `true` when this disk represents the bundle's primary disk
     /// (`Disk.asif`) — the implicit "main disk" that historically had no
     /// `VZVirtioBlockDeviceConfiguration.blockDeviceIdentifier` set on it.
-    private static func isMainBundleDisk(_ disk: StorageDisk, layout: VMBundleLayout) -> Bool {
+    ///
+    /// Path-based (not id-based) so it stays correct after `clonedForNewInstance`
+    /// regenerates disk ids; also used by `VMLibraryViewModel.isMainDisk`.
+    static func isMainBundleDisk(_ disk: StorageDisk, layout: VMBundleLayout) -> Bool {
         disk.isInternal && disk.path == layout.diskImageURL.lastPathComponent
     }
 

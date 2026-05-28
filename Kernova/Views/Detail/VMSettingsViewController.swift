@@ -1234,7 +1234,7 @@ extension VMSettingsViewController {
             return AttachmentDeletePrompt(
                 title: title,
                 message:
-                    "\u{201C}\(label)\u{201D} will be detached from this VM. Its file is kept because it's still used by \(formatVMNames(sharedVMNames)).",
+                    "\u{201C}\(label)\u{201D} will be detached from this VM. Its file is kept because it's still used by \(DataFormatters.quotedList(sharedVMNames)).",
                 actions: [.removeFromVM])
         }
 
@@ -1253,14 +1253,6 @@ extension VMSettingsViewController {
             message:
                 "Move to Trash sends the file to the Trash. Remove from VM detaches it and leaves the file in place.",
             actions: [.moveToTrash, .removeFromVM])
-    }
-
-    /// Quotes and joins VM names with the locale's list conjunction.
-    ///
-    /// English: "A", "A and B", "A, B, and C". Matches the delete sheet's
-    /// name formatting.
-    static func formatVMNames(_ names: [String]) -> String {
-        ListFormatter.localizedString(byJoining: names.map { "\u{201C}\($0)\u{201D}" })
     }
 
     // MARK: Removable

@@ -29,7 +29,9 @@ enum GroupedFormStyle {
 /// to the bottom of the viewport — and when content is marginally taller than
 /// the viewport, the initial scroll position shows the bottom, clipping the top
 /// out of view.
-private final class FlippedClipView: NSClipView {
+/// Top-anchoring clip view shared by the grouped-form scroll views and the
+/// delete sheet's content list.
+final class FlippedClipView: NSClipView {
     override var isFlipped: Bool { true }
 }
 

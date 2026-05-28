@@ -557,12 +557,13 @@ final class VMLibraryViewModel {
             .filter(\.isInternal)
     }
 
-    /// `true` when `disk` is the VM's primary (boot) disk.
+    /// `true` when `disk` is the VM's primary (boot) `Disk.asif`.
     ///
-    /// The synthesized `Disk.asif`, identified by its stable, bundle-derived id;
-    /// used to warn before removing the disk the VM starts from.
+    /// Used to warn before removing the disk the VM starts from. Delegates to
+    /// `ConfigurationBuilder.isMainBundleDisk`, which matches by bundle-relative
+    /// path so it stays correct on cloned VMs (whose disk ids are regenerated).
     func isMainDisk(_ disk: StorageDisk, of instance: VMInstance) -> Bool {
-        disk.id == Self.defaultStorageDisks(for: instance).first?.id
+        ConfigurationBuilder.isMainBundleDisk(disk, layout: VMBundleLayout(bundleURL: instance.bundleURL))
     }
 
     /// Returns the external (non-bundle) files referenced by `instance`.

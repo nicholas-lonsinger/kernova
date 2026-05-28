@@ -195,7 +195,8 @@ final class DeleteVMSheetContentViewController: NSViewController {
         let scrollView = NSScrollView()
         // Flipped clip view so content anchors at the TOP and tall content
         // scrolls downward (a default NSClipView bottom-anchors short content
-        // and shows the bottom first). Mirrors `makeGroupedFormScrollView`.
+        // and shows the bottom first). Same `FlippedClipView` the grouped-form
+        // scroll views use.
         scrollView.contentView = FlippedClipView()
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
@@ -255,12 +256,24 @@ final class DeleteVMSheetContentViewController: NSViewController {
         // NSScrollView/NSStackView priority interplay (which kept resolving
         // the cap by *compressing* the rows). The document is pinned to its
         // measured height (so it physically cannot compress — every row keeps
-        // its full two-line height), and the scroll view's visible height is
+        // its full height), and the scroll view's visible height is
         // `min(content, cap)`: it hugs a short list and caps a long one, with
-        // the surplus scrolling. The rows don't wrap (short labels, truncating
-        // paths), so the natural height is width-independent and stable.
+        // the surplus scrolling.
+        //
+        // The measurement MUST be taken at the render width: the shared-file
+        // warning ("Kept — still used by …") and the row titles are wrapping
+        // labels, so a file shared with several VMs wraps onto extra lines at
+        // the sheet's width. An unconstrained `fittingSize` would measure them
+        // single-line and under-pin the document, re-introducing the very
+        // compression this design avoids. So pin the stack to the sheet width
+        // for the measurement (the list spans the full sheet width; its own
+        // `edgeInsets` account for the side padding), then release it — at
+        // render `listStack.widthAnchor == clip` (below) governs the width.
+        let measuringWidth = listStack.widthAnchor.constraint(equalToConstant: Self.sheetWidth)
+        measuringWidth.isActive = true
         listStack.layoutSubtreeIfNeeded()
         let contentHeight = listStack.fittingSize.height
+        measuringWidth.isActive = false
         let visibleHeight = min(contentHeight, Self.scrollMaxHeight)
 
         NSLayoutConstraint.activate([
@@ -378,7 +391,7 @@ final class DeleteVMSheetContentViewController: NSViewController {
         if external.isShared {
             textViews.append(
                 makeSharedWarningRow(
-                    "Kept — still used by \(formatSharedVMs(external.sharedWithVMNames))"
+                    "Kept — still used by \(DataFormatters.quotedList(external.sharedWithVMNames))"
                 )
             )
         }
@@ -468,15 +481,6 @@ final class DeleteVMSheetContentViewController: NSViewController {
 
     // MARK: - Helpers
 
-    private func formatSharedVMs(_ names: [String]) -> String {
-        // Quote each name, then let Foundation's `ListFormatter` join them
-        // with the locale-correct conjunction and punctuation (in English:
-        // "A", "A and B", "A, B, and C" with the Oxford comma).
-        ListFormatter.localizedString(
-            byJoining: names.map { "\u{201C}\($0)\u{201D}" }
-        )
-    }
-
     private func makeHorizontalSeparator() -> NSBox {
         let box = NSBox()
         box.boxType = .separator
@@ -494,15 +498,4 @@ extension ExternalAttachment {
         case .removableMedia: return "opticaldisc"
         }
     }
-}
-
-/// Top-anchoring clip view for the delete sheet's content list.
-///
-/// A default `NSClipView` is not flipped, so it anchors short content to the
-/// bottom of the viewport and shows the bottom (clipping the top) when content
-/// marginally overflows. Flipping makes content start at the top and tall
-/// content scroll downward. (`GroupedFormStyle` has its own `private`
-/// equivalent; this is the local counterpart for this sheet.)
-private final class FlippedClipView: NSClipView {
-    override var isFlipped: Bool { true }
 }

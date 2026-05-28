@@ -2967,6 +2967,15 @@ struct VMLibraryViewModelTests {
             isInternal: true, kind: .virtio)
         #expect(viewModel.isMainDisk(main, of: instance))
         #expect(!viewModel.isMainDisk(extra, of: instance))
+
+        // Cloned VMs regenerate every disk id, so identity must be matched by
+        // bundle-relative path, not id: a main disk with a fresh UUID but the
+        // canonical "Disk.asif" path is still the main disk.
+        let mainWithFreshID = StorageDisk(
+            id: UUID(), path: main.path, readOnly: false, label: "Main Disk",
+            isInternal: true, kind: .virtio)
+        #expect(mainWithFreshID.id != main.id)
+        #expect(viewModel.isMainDisk(mainWithFreshID, of: instance))
     }
 
     @Test("createStorageDisk appends an internal virtio disk with the expected fields")

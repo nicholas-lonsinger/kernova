@@ -89,6 +89,15 @@ enum DataFormatters {
         count == 1 ? "1 core" : "\(count) cores"
     }
 
+    /// Quotes each item with typographic double quotes and joins them with the
+    /// locale's list conjunction.
+    ///
+    /// English: "A", "A and B", "A, B, and C" with the Oxford comma. Used to
+    /// name the VMs that share a file in the delete confirmations.
+    static func quotedList(_ items: [String]) -> String {
+        ListFormatter.localizedString(byJoining: items.map { "\u{201C}\($0)\u{201D}" })
+    }
+
     private static let durationFormatter: DateComponentsFormatter = {
         let formatter = DateComponentsFormatter()
         formatter.allowedUnits = [.hour, .minute, .second]

@@ -174,6 +174,37 @@ struct DeleteVMSheetContentViewControllerTests {
         #expect(abs(visibleHeight - documentHeight) <= 1)
     }
 
+    @Test("a file shared with many VMs renders its wrapped warning without clipping")
+    func sharedWarningWrapsWithoutClipping() throws {
+        let external = ExternalAttachment(
+            id: UUID(), kind: .storageDisk, label: "Installer",
+            path: "/Volumes/External/installer.iso",
+            sharedWithVMNames: [
+                "Windows 11 Pro", "Development Box", "CI Runner Node",
+                "Sonoma Test", "Ventura Test", "Sequoia Test",
+            ])
+        let vc = make(
+            vmName: "VM",
+            bundledDisks: [makeDisk(label: "Main Disk", path: "Disk.asif")],
+            externals: [external])
+        vc.loadViewIfNeeded()
+        vc.view.layoutSubtreeIfNeeded()
+
+        let scrollView = try #require(firstScrollView(in: vc.view))
+        let documentView = try #require(scrollView.documentView)
+        let warning = try #require(
+            collectLabels(in: vc.view).first { $0.stringValue.hasPrefix("Kept — still used by") })
+
+        // The long name list wraps the warning onto multiple lines. Because the
+        // document height is measured at the render width, the row keeps its
+        // full wrapped height (≥ 2 lines, not compressed to one) and its bottom
+        // stays within the document (not clipped). A measurement taken at the
+        // wrong width would clip or mis-size it.
+        #expect(warning.frame.height > 18)
+        let warningMaxY = warning.convert(warning.bounds, to: documentView).maxY
+        #expect(warningMaxY <= documentView.frame.height + 1)
+    }
+
     // MARK: - Helpers
 
     @MainActor
