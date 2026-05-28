@@ -61,6 +61,13 @@ final class DeleteVMSheetContentViewController: NSViewController {
         Set(checkboxes.filter { $0.value.state == .on }.map(\.key))
     }
 
+    /// The content scroll view, and whether its list is taller than the cap.
+    ///
+    /// Used by `viewDidAppear` to flash the scrollbar as a "more below" hint
+    /// when the list overflows.
+    private weak var contentScrollView: NSScrollView?
+    private(set) var contentOverflows = false
+
     // MARK: - Layout constants
 
     private static let sheetWidth: CGFloat = 520
@@ -130,6 +137,15 @@ final class DeleteVMSheetContentViewController: NSViewController {
         ])
 
         view = container
+    }
+
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        // Flash the scrollbar once on open when the list overflows, so the user
+        // sees there's more below. Matches the app's (system) scroller style.
+        if contentOverflows {
+            contentScrollView?.flashScrollers()
+        }
     }
 
     // MARK: - Header
@@ -203,13 +219,10 @@ final class DeleteVMSheetContentViewController: NSViewController {
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = false
         scrollView.autohidesScrollers = true
-        // Legacy (gutter) scroller rather than the transient overlay style, so
-        // that when the list overflows the height cap a scrollbar stays
-        // *visible* — a persistent hint that there's more below. With
-        // `autohidesScrollers` it's still hidden whenever the content fits.
-        // (A legacy scroller reserves width when shown; the overflow branch
-        // below measures at that reduced width so wrapping rows don't clip.)
-        scrollView.scrollerStyle = .legacy
+        // Use the system's scroller style (matches every other scroll view in
+        // the app). When the list overflows, `viewDidAppear` flashes the
+        // scrollbar as a "there's more below" hint — overlay scrollers can't be
+        // pinned permanently visible, so a flash is the consistent equivalent.
         // Disable safe-area-like auto-adjustment AND zero the clip view's
         // own contentInsets — on macOS Tahoe the default contributes a
         // visible ~10pt of padding above the document.
@@ -268,16 +281,24 @@ final class DeleteVMSheetContentViewController: NSViewController {
         // The height MUST be measured at the actual render width, because the
         // shared-file warning ("Kept — still used by …") and the row titles are
         // wrapping labels: a file shared with several VMs wraps onto extra lines.
-        // The render width is the full sheet width — minus the legacy scroller's
-        // gutter once the content overflows and the scrollbar appears. So
-        // measure at full width to detect overflow, then re-measure at the
-        // narrower width when a scroller will be shown.
+        // The render width is the full sheet width — minus a scroller gutter
+        // only on systems set to "Always show scroll bars" (legacy style, which
+        // reserves width); overlay scrollers float and reserve nothing. So
+        // measure at full width to detect overflow, then re-measure narrower
+        // only when an in-flow gutter scroller will actually be shown.
         let fullWidthHeight = measuredContentHeight(of: listStack, atWidth: Self.sheetWidth)
+        contentOverflows = fullWidthHeight > Self.scrollMaxHeight
         let contentHeight: CGFloat
         let visibleHeight: CGFloat
-        if fullWidthHeight > Self.scrollMaxHeight {
-            let scrollerWidth = NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy)
-            contentHeight = measuredContentHeight(of: listStack, atWidth: Self.sheetWidth - scrollerWidth)
+        if contentOverflows {
+            let gutter =
+                NSScroller.preferredScrollerStyle == .legacy
+                ? NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy)
+                : 0
+            contentHeight =
+                gutter > 0
+                ? measuredContentHeight(of: listStack, atWidth: Self.sheetWidth - gutter)
+                : fullWidthHeight
             visibleHeight = Self.scrollMaxHeight
         } else {
             contentHeight = fullWidthHeight
@@ -299,6 +320,7 @@ final class DeleteVMSheetContentViewController: NSViewController {
             scrollView.heightAnchor.constraint(equalToConstant: visibleHeight),
         ])
 
+        contentScrollView = scrollView
         return scrollView
     }
 
