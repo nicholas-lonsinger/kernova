@@ -9,10 +9,16 @@ SCHEME       := Kernova
 DESTINATION  := platform=macOS
 DERIVED_DATA := DerivedData
 
+# Build configuration, passed explicitly rather than relying on the scheme's
+# per-action default (Debug). Override on the command line to build/test in
+# Release, e.g. `make build CONFIGURATION=Release`.
+CONFIGURATION ?= Debug
+
 XCODEBUILD_FLAGS := -project $(PROJECT) \
                     -scheme $(SCHEME) \
                     -destination '$(DESTINATION)' \
-                    -derivedDataPath $(DERIVED_DATA)
+                    -derivedDataPath $(DERIVED_DATA) \
+                    -configuration $(CONFIGURATION)
 
 # swift-format ships with the Xcode toolchain (Xcode 26+); use xcrun so the
 # command resolves the same binary in CI and locally without a brew install.
@@ -33,6 +39,8 @@ help:
 	@printf '  make lint                Check Swift sources with swift-format (--strict)\n'
 	@printf '  make install-hooks       Point git at .githooks/ (runs lint on pre-push)\n'
 	@printf '  make clean               Remove the DerivedData directory\n'
+	@printf '\n'
+	@printf '  Append CONFIGURATION=Release to build/test in Release (default: Debug)\n'
 
 build: check-hooks
 	xcodebuild $(XCODEBUILD_FLAGS) build
