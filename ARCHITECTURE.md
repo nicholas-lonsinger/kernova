@@ -15,7 +15,7 @@ Kernova/
 │   ├── DetailContainerViewController.swift # Layers AppKit VM display over the AppKit detail content (empty-state view ⇆ `VMDetailRouterViewController`); respects per-instance detailPaneMode; owns `DetailAlertsPresenter`; conforms to `VMLibraryPresenting` (the view model's presentation delegate), forwarding lifecycle alerts to `DetailAlertsPresenter` and presenting the creation-wizard sheet via `SheetPresenter`
 │   ├── VMToolbarManager.swift          # Shared toolbar logic for lifecycle, suspend, display, and settings-toggle items
 │   ├── SerialConsoleWindowController.swift # Per-VM serial console window, auto-closes on VM stop
-│   ├── SerialConsoleContentViewController.swift # Pure AppKit serial terminal + status bar (contains SerialTextView)
+│   ├── SerialConsoleContentViewController.swift # Pure AppKit serial console: hosts `TerminalView` over the VM's `TerminalEmulator`, a connection/grid-size status bar, and a ⌘F find bar
 │   ├── ClipboardWindowController.swift   # Per-VM clipboard sharing window, auto-closes on VM stop
 │   ├── ClipboardContentViewController.swift # Pure AppKit clipboard text editor + status bar
 │   └── Info.plist                        # App configuration and metadata
@@ -51,6 +51,11 @@ Kernova/
 │       ├── DiskImageProviding.swift
 │       ├── MacOSInstallProviding.swift
 │       └── IPSWProviding.swift
+├── Terminal/                           # Pure-logic VT100/xterm terminal emulator (AppKit-free) for the Serial Console
+│   ├── TerminalCell.swift              # Cell value type (glyph + 256-color/truecolor fg/bg + `CellAttributes` SGR flags) and `TerminalColor`
+│   ├── VTParser.swift                  # Paul Williams VT500 escape-sequence DFA + `TerminalPerformer` protocol; incremental UTF-8 decode; bounded params/OSC accumulators for untrusted guest input
+│   ├── TerminalBuffer.swift            # Array-of-arrays cell grid: scroll / erase / line+char insert-delete / resize by explicit coordinates
+│   └── TerminalEmulator.swift          # @MainActor engine conforming to `TerminalPerformer`: CSI/ESC/OSC/DCS handlers, SGR pen, cursor, scroll regions, alt-screen, 5000-row scrollback, DEC line-drawing; answers DSR/DA probes via a `respond` hook; redraw via `onRender`
 ├── ViewModels/                         # Observable view models and coordinators
 │   ├── VMLibraryViewModel.swift        # Central view model — owns [VMInstance], delegates to coordinator; surfaces alerts/sheets/wizard imperatively via the `VMLibraryPresenting` delegate
 │   ├── VMLibraryPresenting.swift       # Presentation delegate protocol the view model calls (implemented by `DetailContainerViewController`)
@@ -91,7 +96,10 @@ Kernova/
 │   │   └── GroupedFormStyle.swift      # Grouped-form design atoms shared by the creation wizard and the settings pane — `makeGroupedFormCard` / `makeGroupedFormCardRow` / `makeGroupedFormSectionHeader` / `makeGroupedFormCaption` / `makeGroupedFormValueLabel` / `makeGroupedFormBanner` / `makeGroupedFormHairline` / `makeGroupedFormBox` + `makeGroupedFormScrollView` (top-anchored, centered, overlay-scroller). Extracted from `WizardStyle`; visual consistency without a shared base class
 │   ├── Console/
 │   │   ├── VMDisplayPlaceholderContentViewController.swift # Concrete `NSViewController` for the detail-pane placeholder shown when the VM display is unavailable inline — centered empty-state (SF Symbol + title + description + optional action button) for the non-inline display states (Fullscreen / Popped Out / Suspended / No Display), inert black fill behind it for the `.live` case (covered by `VMDisplayBackingView`). Observes `VMInstance.displayMode`, `isColdPaused`, and `virtualMachine` via `observeRecurring`. Action buttons dispatch through `NSApp.sendAction(_:to:from:)` to `AppDelegate.toggleFullscreen(_:)` / `togglePopOut(_:)`. The reusable `DisplayPlaceholderEmptyStateView` lives privately in the same file (one consumer today; no premature extraction). Used directly by `VMDetailRouterViewController`
-│   │   └── VMDisplayBackingView.swift  # Pure AppKit VM display with pause/transition overlays
+│   │   ├── VMDisplayBackingView.swift  # Pure AppKit VM display with pause/transition overlays
+│   │   ├── TerminalView.swift          # Custom-drawn `NSView` rendering the emulator grid (run-batched cells, block/hollow cursor), with its own scrollback offset + auto-follow, rubber-band selection + ⌘C copy, scroll-wheel history, key forwarding, find-match highlight, and minimal NSAccessibility
+│   │   ├── TerminalFindBar.swift        # Compact ⌘F bar (search field + match count + prev/next/Done) reporting to a delegate
+│   │   └── TerminalTheme.swift          # `TerminalColor` → `NSColor` over the xterm 256-color palette (RATIONALE-annotated: the one justified hardcoded-RGB site)
 │   └── Creation/                       # Pure AppKit — every wizard step is an NSViewController
 │       ├── VMCreationWizardViewController.swift # Shell: step indicator + swappable child step VCs + nav bar; observes VMCreationViewModel; reports Cancel/Create via VMCreationWizardViewControllerDelegate
 │       ├── OSSelectionContentViewController.swift   # Step 1: Choose macOS or Linux (selectable cards)
@@ -178,6 +186,10 @@ KernovaTests/
 ├── VMBundleLayoutTests.swift           # Bundle path calculation tests
 ├── VMStatusTests.swift                 # Status enum behavior tests
 ├── VMStatusSerialConsoleTests.swift    # Serial console status tests
+├── VTParserTests.swift                 # Escape-sequence DFA: CSI/OSC/DCS parsing, param caps, split-UTF-8, aborts
+├── TerminalBufferTests.swift           # Cell-grid ops: scroll regions, erase, line/char insert-delete, resize
+├── TerminalEmulatorTests.swift         # SGR, cursor clamping, DSR/DA replies, DECSTR, alt-screen scrollback freeze, RIS
+├── TerminalIssue249Tests.swift         # Regression: the exact garbled #249 banner renders with zero escape residue
 ├── VMBootModeTests.swift               # Boot mode enum tests
 ├── VMGuestOSTests.swift                # Guest OS enum tests
 ├── MacOSInstallStateTests.swift        # Install state tracking tests
@@ -333,7 +345,7 @@ VMCreationWizardViewController (pure-AppKit modal sheet; presented by DetailCont
 ├── IPSWSelectionContentViewController / BootConfigContentViewController   (chosen by selectedOS on entry)
 ├── ResourceConfigContentViewController
 └── ReviewContentViewController
-SerialConsoleContentViewController → SerialTextView (in separate window)
+SerialConsoleContentViewController → TerminalView (renders VMInstance.terminal; in separate window)
 ```
 
 ### Data Flow
@@ -476,6 +488,9 @@ No third-party (non-Apple) package dependencies. No CocoaPods or Carthage.
 | `VMBootMode` | Yes | Enum cases and properties |
 | `VMGuestOS` | Yes | Enum cases and properties |
 | `MacOSInstallState` | Yes | Phase tracking, progress calculation |
+| `VTParser` | Yes | CSI/OSC/DCS parsing, 16-param cap, 65535 value clamp, intermediates, private prefix, split-UTF-8-across-feeds, invalid UTF-8, CAN/ESC aborts |
+| `TerminalBuffer` | Yes | Scroll regions, erase spans, line/char insert-delete, resize grow/shrink |
+| `TerminalEmulator` | Yes | SGR→cell attrs, CUP clamping, DSR/DA replies, DECSTR, alt-screen scrollback freeze, RIS, scrollback accumulation, autowrap; plus the #249 garbled-banner regression (zero escape residue + answered probes) |
 | `VMToolbarManager` | 22 tests | Item creation, state updates, configuration flags, label toggling |
 | `DataFormatters` | Yes | Byte formatting, CPU count formatting |
 | `NSImageExtensions` | Yes | SF Symbol loading with known symbol validation |
