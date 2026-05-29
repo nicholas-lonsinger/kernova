@@ -459,7 +459,6 @@ final class VMInstance {
     ///
     /// Returns the relay (also stored on `self`) so the readability handler can
     /// capture it as a local. Returns `nil` only if the input pipe is missing.
-    @discardableResult
     private func makeSerialRelay() -> SerialSocketRelay? {
         guard let inputPipe = serialInputPipe else { return nil }
         let relay = SerialSocketRelay(
@@ -478,9 +477,11 @@ final class VMInstance {
     ///
     /// Lives under the per-user temporary directory (which resolves into the
     /// app container under App Sandbox) with a short filename — the VM bundle
-    /// path is too long for `sockaddr_un.sun_path` (104-byte cap).
+    /// path is too long for `sockaddr_un.sun_path` (104-byte cap). Uses 16 hex
+    /// digits of the UUID (64 bits) so two VMs cannot collide on the same
+    /// socket path while staying comfortably within the cap.
     static func serialSocketPath(for id: UUID) -> String {
-        let short = id.uuidString.prefix(8).lowercased()
+        let short = id.uuidString.replacingOccurrences(of: "-", with: "").prefix(16).lowercased()
         return (NSTemporaryDirectory() as NSString).appendingPathComponent("knv-\(short).sock")
     }
 

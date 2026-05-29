@@ -244,29 +244,42 @@ final class SerialSocketRelay: @unchecked Sendable {
 
     private func readFromClient() {
         lock.lock()
-        defer { lock.unlock() }
-        guard clientFd >= 0 else { return }
+        guard clientFd >= 0 else {
+            lock.unlock()
+            return
+        }
 
+        // The client fd is non-blocking, so this read returns immediately.
         var buffer = [UInt8](repeating: 0, count: 16 * 1024)
         let n = buffer.withUnsafeMutableBytes { read(clientFd, $0.baseAddress, $0.count) }
-        if n > 0 {
-            let data = Data(buffer[0..<n])
-            do {
-                try guestInput.write(contentsOf: data)
-            } catch {
-                Self.logger.error(
-                    "Serial relay failed to write client input to guest for '\(self.label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-                )
-            }
-        } else if n == 0 {
-            // EOF — client disconnected. Drop it; keep the listener for reconnects.
-            tearDownClientLocked()
-            Self.logger.info("Serial relay client disconnected for '\(self.label, privacy: .public)'")
-        } else {
-            let err = errno
-            if err != EAGAIN, err != EWOULDBLOCK, err != EINTR {
+
+        guard n > 0 else {
+            let err = n < 0 ? errno : 0
+            let wasEOF = n == 0
+            // EOF or a fatal error drops the client (keeping the listener for
+            // reconnects); EAGAIN/EWOULDBLOCK/EINTR are transient and ignored.
+            if wasEOF || (err != EAGAIN && err != EWOULDBLOCK && err != EINTR) {
                 tearDownClientLocked()
             }
+            lock.unlock()
+            if wasEOF {
+                Self.logger.info("Serial relay client disconnected for '\(self.label, privacy: .public)'")
+            }
+            return
+        }
+
+        // Forward to the guest OUTSIDE the lock. `guestInput.write` is a blocking
+        // pipe write that stalls if the guest stops draining its serial input;
+        // holding `lock` across it would block `forwardOutput` (the output tee)
+        // and a MainActor `stop()` / hot-toggle, hanging the app.
+        let data = Data(buffer[0..<n])
+        lock.unlock()
+        do {
+            try guestInput.write(contentsOf: data)
+        } catch {
+            Self.logger.error(
+                "Serial relay failed to write client input to guest for '\(self.label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
         }
     }
 
