@@ -205,16 +205,23 @@ final class TerminalEmulator: TerminalPerformer {
 
     /// Scrollback + live screen serialized to text (for find), trailing blanks trimmed.
     func fullText() -> String {
-        rowsToText(scrollback + buffers[activeIndex].rows)
+        historyLines().joined(separator: "\n")
+    }
+
+    /// Scrollback + live screen as one trimmed string per line (for find). The
+    /// last `rows` entries are the live screen; earlier entries are scrollback.
+    func historyLines() -> [String] {
+        (scrollback + buffers[activeIndex].rows).map(Self.trimmedLine)
     }
 
     private func rowsToText(_ rows: [[TerminalCell]]) -> String {
-        rows.map { row in
-            var line = String(String.UnicodeScalarView(row.map { $0.scalar }))
-            while line.hasSuffix(" ") { line.removeLast() }
-            return line
-        }
-        .joined(separator: "\n")
+        rows.map(Self.trimmedLine).joined(separator: "\n")
+    }
+
+    private static func trimmedLine(_ row: [TerminalCell]) -> String {
+        var line = String(String.UnicodeScalarView(row.map { $0.scalar }))
+        while line.hasSuffix(" ") { line.removeLast() }
+        return line
     }
 
     // MARK: - TerminalPerformer
