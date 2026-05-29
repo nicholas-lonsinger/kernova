@@ -12,7 +12,7 @@ final class SerialConsoleContentViewController: NSViewController, TerminalFindBa
     private let instance: VMInstance
     private let terminalView: TerminalView
     private let findBar = TerminalFindBar()
-    private var findBarHeight: NSLayoutConstraint!
+    private var findBarHeight: NSLayoutConstraint?
     private let statusCircle: NSView
     private let statusLabel: NSTextField
     private let gridSizeLabel: NSTextField
@@ -90,13 +90,14 @@ final class SerialConsoleContentViewController: NSViewController, TerminalFindBa
         statusBar.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(statusBar)
 
-        findBarHeight = findBar.heightAnchor.constraint(equalToConstant: 0)
+        let findBarHeightConstraint = findBar.heightAnchor.constraint(equalToConstant: 0)
+        findBarHeight = findBarHeightConstraint
 
         NSLayoutConstraint.activate([
             findBar.topAnchor.constraint(equalTo: container.topAnchor),
             findBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             findBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            findBarHeight,
+            findBarHeightConstraint,
 
             terminalView.topAnchor.constraint(equalTo: findBar.bottomAnchor),
             terminalView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
@@ -199,14 +200,14 @@ final class SerialConsoleContentViewController: NSViewController, TerminalFindBa
 
     private func showFindBar() {
         findBar.isHidden = false
-        findBarHeight.constant = 30
+        findBarHeight?.constant = 30
         findBar.focusSearchField()
         recomputeMatches()
     }
 
     private func hideFindBar() {
         findBar.isHidden = true
-        findBarHeight.constant = 0
+        findBarHeight?.constant = 0
         matches.removeAll()
         terminalView.clearFindHighlight()
         view.window?.makeFirstResponder(terminalView)

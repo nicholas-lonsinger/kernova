@@ -6,7 +6,7 @@ import Foundation
 /// Wide (CJK/emoji) characters are treated as single-cell in v1 — see the
 /// terminal emulator's known limitations.
 struct TerminalCell: Equatable, Sendable {
-    /// The glyph occupying this cell. Defaults to a space.
+    /// The glyph occupying this cell (a space by default).
     var scalar: UnicodeScalar
     /// Foreground (text) color.
     var foreground: TerminalColor
@@ -33,7 +33,7 @@ struct TerminalCell: Equatable, Sendable {
 
 // MARK: - Cell Attributes
 
-/// SGR style flags applied to a cell. Packed into a `UInt16` option set.
+/// SGR style flags applied to a cell, packed into a `UInt16` option set.
 struct CellAttributes: OptionSet, Equatable, Sendable {
     let rawValue: UInt16
     init(rawValue: UInt16) { self.rawValue = rawValue }
@@ -50,9 +50,10 @@ struct CellAttributes: OptionSet, Equatable, Sendable {
 
 // MARK: - Terminal Color
 
-/// A terminal color: the default fg/bg, one of the 256 indexed xterm colors,
-/// or a 24-bit truecolor value. The concrete `NSColor` mapping lives in the
-/// AppKit render layer (`TerminalTheme`) so this type stays AppKit-free.
+/// A terminal color: default fg/bg, a 256-indexed xterm color, or 24-bit truecolor.
+///
+/// The concrete `NSColor` mapping lives in the AppKit render layer
+/// (`TerminalTheme`) so this type stays AppKit-free.
 enum TerminalColor: Equatable, Sendable {
     /// The terminal's default foreground or background (context-dependent).
     case `default`

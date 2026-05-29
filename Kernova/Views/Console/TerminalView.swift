@@ -1,10 +1,10 @@
 import AppKit
 import os
 
-/// A custom-drawn AppKit view that renders a `TerminalEmulator`'s cell grid and
-/// forwards keyboard input to the guest.
+/// A custom-drawn AppKit view that renders the `TerminalEmulator` cell grid.
 ///
-/// Draws the visible grid directly (no `NSTextView`): per-row, runs of cells
+/// Forwards keyboard input to the guest, and draws the visible grid directly
+/// (no `NSTextView`): per-row, runs of cells
 /// sharing the same rendition are painted in one shot. Owns its own scrollback
 /// offset (scroll-wheel scrolls into history; output auto-follows only when
 /// pinned to the bottom). Supports rubber-band selection + ⌘C copy and a

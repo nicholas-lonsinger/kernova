@@ -80,7 +80,7 @@ struct VTParser {
     private var utf8Buffer: [UInt8] = []
     private var utf8Remaining = 0
 
-    private static let replacement = UnicodeScalar(0xFFFD)!
+    private static let replacement: UnicodeScalar = "\u{FFFD}"
 
     // MARK: Feed
 

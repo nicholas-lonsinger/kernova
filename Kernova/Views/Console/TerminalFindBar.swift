@@ -11,8 +11,10 @@ protocol TerminalFindBarDelegate: AnyObject {
 }
 
 /// A compact ⌘F search bar: a search field, a match-count label, previous/next
-/// steppers, and a close button. Stateless about matches — it just relays
-/// interaction to its delegate and displays the count it's told.
+/// steppers, and a close button.
+///
+/// Stateless about matches — it just relays interaction to its delegate and
+/// displays the count it's told.
 @MainActor
 final class TerminalFindBar: NSView, NSSearchFieldDelegate {
     weak var delegate: TerminalFindBarDelegate?

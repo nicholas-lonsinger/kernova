@@ -29,10 +29,12 @@ final class TerminalEmulator: TerminalPerformer {
     // MARK: Output hooks
 
     /// Sends a reply (DSR cursor report, device attributes) back to the guest.
+    ///
     /// Wired by `VMInstance` so probes are answered even with the console window closed.
     var respond: ((String) -> Void)?
-    /// Called once after each `feed`/`resize`/`reset` that may have changed the
-    /// visible grid. Set by the render view (and cleared on teardown).
+    /// Called once after each `feed`/`resize`/`reset` that may have changed the visible grid.
+    ///
+    /// Set by the render view (and cleared on teardown).
     var onRender: (() -> Void)?
     /// The most recent window/icon title set via OSC 0/1/2.
     private(set) var title: String = ""
@@ -105,7 +107,7 @@ final class TerminalEmulator: TerminalPerformer {
 
     // MARK: Public API
 
-    /// Feed raw guest bytes. Fires `onRender` once afterward.
+    /// Feeds raw guest bytes, firing `onRender` once afterward.
     func feed(_ data: Data) {
         guard !data.isEmpty else { return }
         parser.feed(data, to: self)
@@ -113,6 +115,7 @@ final class TerminalEmulator: TerminalPerformer {
     }
 
     /// Full reset of contents (RIS-equivalent) while preserving the grid size.
+    ///
     /// Called at serial-session start and teardown so a restarted VM shows no
     /// stale output.
     func reset() {
@@ -143,7 +146,7 @@ final class TerminalEmulator: TerminalPerformer {
         onRender?()
     }
 
-    /// Resize the grid (driven by the render view's font metrics). No scrollback reflow.
+    /// Resizes the grid from the render view's font metrics (no scrollback reflow).
     func resize(cols newCols: Int, rows newRows: Int) {
         let nc = min(max(1, newCols), Self.maxDimension)
         let nr = min(max(1, newRows), Self.maxDimension)
@@ -174,8 +177,9 @@ final class TerminalEmulator: TerminalPerformer {
     var scrollbackCount: Int { activeIndex == 0 ? scrollback.count : 0 }
 
     /// The `rows` lines to display for a given scrollback offset (0 = live screen,
-    /// up to `scrollbackCount` = oldest history at top). O(rows) — indexes rather
-    /// than concatenating the whole history.
+    /// up to `scrollbackCount` = oldest history at top).
+    ///
+    /// O(rows) — indexes rather than concatenating the whole history.
     func displayRows(scrollOffset: Int) -> [[TerminalCell]] {
         let active = buffers[activeIndex].rows
         guard activeIndex == 0, !scrollback.isEmpty else { return active }
@@ -208,8 +212,9 @@ final class TerminalEmulator: TerminalPerformer {
         historyLines().joined(separator: "\n")
     }
 
-    /// Scrollback + live screen as one trimmed string per line (for find). The
-    /// last `rows` entries are the live screen; earlier entries are scrollback.
+    /// Scrollback + live screen as one trimmed string per line (for find).
+    ///
+    /// The last `rows` entries are the live screen; earlier entries are scrollback.
     func historyLines() -> [String] {
         (scrollback + buffers[activeIndex].rows).map(Self.trimmedLine)
     }
@@ -692,6 +697,7 @@ final class TerminalEmulator: TerminalPerformer {
     }
 
     /// Parses `38;5;n` / `38;2;r;g;b` (or `48;…`) starting at the `38`/`48` index.
+    ///
     /// Returns the color and how many extra params it consumed.
     private func parseExtendedColor(_ params: [Int], from i: Int) -> (TerminalColor, Int)? {
         guard i + 1 < params.count else { return nil }

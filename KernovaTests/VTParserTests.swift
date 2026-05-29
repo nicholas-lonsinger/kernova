@@ -64,9 +64,10 @@ struct VTParserTests {
     @Test("C0 controls are executed, not printed")
     func c0Controls() {
         let p = parse("a\r\nb")
-        #expect(p.events == [
-            .print("a"), .execute(0x0D), .execute(0x0A), .print("b"),
-        ])
+        #expect(
+            p.events == [
+                .print("a"), .execute(0x0D), .execute(0x0A), .print("b"),
+            ])
     }
 
     // MARK: - CSI parsing

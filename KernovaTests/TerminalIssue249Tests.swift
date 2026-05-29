@@ -4,9 +4,11 @@ import Testing
 @testable import Kernova
 
 /// Regression test for issue #249: the Serial Console rendered raw ANSI/VT
-/// escape sequences as literal text. Feeds the exact garbled boot banner from
-/// the issue and asserts the emulator produces a clean grid with zero escape
-/// residue, and that the guest's cursor probes are answered.
+/// escape sequences as literal text.
+///
+/// Feeds the exact garbled boot banner from the issue and asserts the emulator
+/// produces a clean grid with zero escape residue, and that the guest's cursor
+/// probes are answered.
 @Suite("Terminal Issue #249 Regression")
 @MainActor
 struct TerminalIssue249Tests {

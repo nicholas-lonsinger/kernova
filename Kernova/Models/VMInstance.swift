@@ -219,12 +219,13 @@ final class VMInstance {
 
     // MARK: - Serial Console
 
-    /// Terminal emulator that interprets the guest serial byte stream into a
-    /// cell grid for the Serial Console. Owned here (not by the console window)
-    /// so it accrues state across window open/close and answers the guest's
-    /// terminal probes (DSR/DA) even when no console window is open. Full raw
-    /// history is still preserved byte-for-byte on disk in `serial.log`; the
-    /// in-memory bound is the emulator's grid plus its capped scrollback.
+    /// Terminal emulator that interprets the guest serial byte stream into a cell grid.
+    ///
+    /// Owned here (not by the console window) so it accrues state across window
+    /// open/close and answers the guest's terminal probes (DSR/DA) even when no
+    /// console window is open. Full raw history is still preserved byte-for-byte
+    /// on disk in `serial.log`; the in-memory bound is the emulator's grid plus
+    /// its capped scrollback.
     let terminal = TerminalEmulator()
 
     /// Bidirectional pipes for serial port communication.

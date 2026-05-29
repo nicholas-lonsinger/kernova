@@ -50,8 +50,10 @@ struct TerminalBuffer: Sendable {
     // MARK: - Scrolling
 
     /// Scrolls the inclusive region `[top, bottom]` up by `count` lines, filling
-    /// vacated lines at the bottom with `fill`. Returns the lines pushed off the
-    /// top (so the caller can route them to scrollback).
+    /// vacated lines at the bottom with `fill`.
+    ///
+    /// Returns the lines pushed off the top (so the caller can route them to
+    /// scrollback).
     @discardableResult
     mutating func scrollUp(top: Int, bottom: Int, count: Int = 1, fill: TerminalCell = .blank)
         -> [[TerminalCell]]
@@ -108,7 +110,9 @@ struct TerminalBuffer: Sendable {
     // MARK: - Line / character insert & delete (within the scroll region)
 
     /// Inserts `count` blank lines at `row`, pushing lines below down within
-    /// `[row, bottom]`. Lines pushed past `bottom` are lost.
+    /// `[row, bottom]`.
+    ///
+    /// Lines pushed past `bottom` are lost.
     mutating func insertLines(at row: Int, count: Int, bottom: Int, fill: TerminalCell = .blank) {
         let bottom = min(rowCount - 1, bottom)
         guard row >= 0, row <= bottom else { return }
@@ -156,9 +160,11 @@ struct TerminalBuffer: Sendable {
 
     // MARK: - Resize
 
-    /// Resizes to `newCols × newRows`. Existing content is preserved top-aligned;
-    /// rows are truncated/padded to the new width, rows are dropped from the
-    /// bottom or appended as blanks. No reflow (matches xterm's default).
+    /// Resizes to `newCols × newRows`.
+    ///
+    /// Existing content is preserved top-aligned; rows are truncated/padded to
+    /// the new width, rows are dropped from the bottom or appended as blanks. No
+    /// reflow (matches xterm's default).
     mutating func resize(cols newCols: Int, rows newRows: Int, fill: TerminalCell = .blank) {
         let nc = max(1, newCols)
         let nr = max(1, newRows)
