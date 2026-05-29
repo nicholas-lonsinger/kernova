@@ -6,14 +6,11 @@ import os
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenuDelegate {
     private var mainWindowController: MainWindowController?
     private let viewModel: VMLibraryViewModel
-    private var serialConsoleWindows: [UUID: SerialConsoleWindowController] = [:]
-    private var serialConsoleObservers: [UUID: Any] = [:]
     private var clipboardWindows: [UUID: ClipboardWindowController] = [:]
     private var clipboardObservers: [UUID: Any] = [:]
     private var displayWindows: [UUID: VMDisplayWindowController] = [:]
     private var displayWindowObservers: [UUID: Any] = [:]
     private var terminationObservation: ObservationLoop?
-    private let serialConsoleMenuItem: NSMenuItem
     private let clipboardMenuItem: NSMenuItem
     /// Set in `applicationWillBecomeActive` and read in `applicationShouldHandleReopen`
     /// to distinguish a dock click that activates the app from one on an already-active app.
@@ -54,14 +51,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         return path
     }()
 
-    /// Returns the VM that menu actions should target: the display or serial console
+    /// Returns the VM that menu actions should target: the display or clipboard
     /// window's VM if its window is key, otherwise the sidebar-selected VM.
     private var activeInstance: VMInstance? {
         if let keyWindow = NSApp.keyWindow {
             if let controller = displayWindows.values.first(where: { $0.window === keyWindow }) {
-                return controller.instance
-            }
-            if let controller = serialConsoleWindows.values.first(where: { $0.window === keyWindow }) {
                 return controller.instance
             }
             if let controller = clipboardWindows.values.first(where: { $0.window === keyWindow }) {
@@ -82,14 +76,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     override init() {
         self.viewModel = VMLibraryViewModel()
-
-        let serialItem = NSMenuItem(
-            title: "Serial Console",
-            action: #selector(showSerialConsole(_:)),
-            keyEquivalent: "t"
-        )
-        serialItem.keyEquivalentModifierMask = [.command, .shift]
-        self.serialConsoleMenuItem = serialItem
 
         let clipboardItem = NSMenuItem(
             title: "Clipboard",
@@ -482,17 +468,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         controller.showWindow(nil)
     }
 
-    @objc func showSerialConsole(_ sender: Any?) {
-        guard let instance = activeInstance else { return }
-        showAuxiliaryWindow(
-            for: instance,
-            isEligible: instance.canShowSerialConsole,
-            windowsPath: \.serialConsoleWindows,
-            observersPath: \.serialConsoleObservers,
-            factory: SerialConsoleWindowController.init
-        )
-    }
-
     @objc func showClipboard(_ sender: Any?) {
         guard let instance = activeInstance else { return }
         showAuxiliaryWindow(
@@ -673,7 +648,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private var isIdle: Bool {
         guard isMainWindowDismissed else { return false }
         guard displayWindows.isEmpty else { return false }
-        guard serialConsoleWindows.isEmpty else { return false }
         guard clipboardWindows.isEmpty else { return false }
         return !viewModel.instances.contains(where: \.isKeepingAppAlive)
     }
@@ -738,8 +712,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // AppKit bypasses NSMenuItemValidation for windowsMenu items, so
         // menuNeedsUpdate(_:) handles visual state. This case covers keyboard
         // shortcut validation, which still routes through validateMenuItem(_:).
-        case #selector(showSerialConsole(_:)):
-            return activeInstance?.canShowSerialConsole ?? false
         case #selector(showClipboard(_:)):
             return activeInstance?.canShowClipboard ?? false
         case #selector(attachGuestAgentDisk(_:)):
@@ -788,7 +760,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         if menu === NSApp.windowsMenu {
-            serialConsoleMenuItem.isEnabled = activeInstance?.canShowSerialConsole ?? false
             clipboardMenuItem.isEnabled = activeInstance?.canShowClipboard ?? false
         }
     }
@@ -894,7 +865,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         )
         windowMenu.addItem(showLibraryItem)
         windowMenu.addItem(.separator())
-        windowMenu.addItem(serialConsoleMenuItem)
         windowMenu.addItem(clipboardMenuItem)
         windowMenu.addItem(.separator())
         windowMenu.addItem(

@@ -14,8 +14,6 @@ Kernova/
 │   ├── VMDisplayWindowController.swift  # Per-VM display window (pop-out or fullscreen), auto-closes on VM stop
 │   ├── DetailContainerViewController.swift # Layers AppKit VM display over the AppKit detail content (empty-state view ⇆ `VMDetailRouterViewController`); respects per-instance detailPaneMode; owns `DetailAlertsPresenter`; conforms to `VMLibraryPresenting` (the view model's presentation delegate), forwarding lifecycle alerts to `DetailAlertsPresenter` and presenting the creation-wizard sheet via `SheetPresenter`
 │   ├── VMToolbarManager.swift          # Shared toolbar logic for lifecycle, suspend, display, and settings-toggle items
-│   ├── SerialConsoleWindowController.swift # Per-VM serial console window, auto-closes on VM stop
-│   ├── SerialConsoleContentViewController.swift # Pure AppKit serial terminal + status bar (contains SerialTextView)
 │   ├── ClipboardWindowController.swift   # Per-VM clipboard sharing window, auto-closes on VM stop
 │   ├── ClipboardContentViewController.swift # Pure AppKit clipboard text editor + status bar
 │   └── Info.plist                        # App configuration and metadata
@@ -45,6 +43,7 @@ Kernova/
 │   ├── VsockControlService.swift      # macOS always-on control channel: Hello + bidirectional heartbeat, owns AgentStatus (@MainActor, @Observable)
 │   ├── KernovaGuestAgentInfo.swift    # Bundled guest agent version + installer DMG URL accessors
 │   ├── AttachmentFileMonitor.swift    # Reactive existence tracker for external attachments — DispatchSource on each parent dir + NSWorkspace mount notifications (@MainActor, @Observable)
+│   ├── SerialSocketRelay.swift        # Host-side AF_UNIX listener exposing the serial port to an external terminal; raw-byte tee/input (@unchecked Sendable, NSLock + DispatchSourceRead, re-startable for hot-toggle)
 │   └── Protocols/                      # Service protocol abstractions for DI and testing
 │       ├── VirtualizationProviding.swift
 │       ├── VMStorageProviding.swift
@@ -165,7 +164,7 @@ KernovaTests/
 │   ├── MockUSBDeviceService.swift
 │   ├── SuspendingMockUSBDeviceService.swift
 │   └── MockVMLibraryPresenting.swift   # Records VMLibraryViewModel presentation requests for test assertions
-├── VMConfigurationTests.swift          # 43 tests for VMConfiguration
+├── VMConfigurationTests.swift          # 45 tests for VMConfiguration
 ├── VMToolbarManagerTests.swift          # Toolbar manager item creation and state update tests
 ├── VMConfigurationCloneTests.swift     # Clone-specific configuration tests
 ├── VMLibraryViewModelTests.swift       # 39 tests for the central view model
@@ -177,7 +176,7 @@ KernovaTests/
 ├── VMStorageServiceTests.swift         # Storage CRUD tests
 ├── VMBundleLayoutTests.swift           # Bundle path calculation tests
 ├── VMStatusTests.swift                 # Status enum behavior tests
-├── VMStatusSerialConsoleTests.swift    # Serial console status tests
+├── SerialSocketRelayTests.swift        # AF_UNIX serial relay: output tee, client input, supersede, reconnect, unlink, length guard, idempotency
 ├── VMBootModeTests.swift               # Boot mode enum tests
 ├── VMGuestOSTests.swift                # Guest OS enum tests
 ├── MacOSInstallStateTests.swift        # Install state tracking tests
@@ -217,9 +216,9 @@ KernovaGuestAgentTests/                 # Unit tests for the guest agent (standa
 
 ### App Layer
 
-**Files:** `AppDelegate.swift`, `MainWindowController.swift`, `DetailContainerViewController.swift`, `VMDisplayWindowController.swift`, `VMToolbarManager.swift`, `SerialConsoleWindowController.swift`, `ClipboardWindowController.swift`
+**Files:** `AppDelegate.swift`, `MainWindowController.swift`, `DetailContainerViewController.swift`, `VMDisplayWindowController.swift`, `VMToolbarManager.swift`, `ClipboardWindowController.swift`
 
-`AppDelegate` is the entry point. It creates the `VMLibraryViewModel` and `VMLifecycleCoordinator`, opens the main window, and manages the lifecycle of all windows. It tracks window controllers in dictionaries keyed by VM UUID, enabling one-to-many relationships (a VM can have a main view, a fullscreen window, and a serial console open simultaneously). `AppDelegate` also handles:
+`AppDelegate` is the entry point. It creates the `VMLibraryViewModel` and `VMLifecycleCoordinator`, opens the main window, and manages the lifecycle of all windows. It tracks window controllers in dictionaries keyed by VM UUID, enabling one-to-many relationships (a VM can have a main view, a fullscreen window, and a clipboard window open simultaneously). `AppDelegate` also handles:
 - The application menu (including VM-specific actions, Force Stop with `canForceStop` validation, and Window > Show Library with Cmd+0)
 - Suspend-on-quit behavior (suspending VMs before termination)
 - Conditional termination: `applicationShouldTerminateAfterLastWindowClosed` returns `false` when VMs are active or fullscreen windows exist, preventing premature exit on fullscreen-to-inline transitions
@@ -333,8 +332,22 @@ VMCreationWizardViewController (pure-AppKit modal sheet; presented by DetailCont
 ├── IPSWSelectionContentViewController / BootConfigContentViewController   (chosen by selectedOS on entry)
 ├── ResourceConfigContentViewController
 └── ReviewContentViewController
-SerialConsoleContentViewController → SerialTextView (in separate window)
 ```
+
+**Serial console data flow:** the guest serial output pipe has a single reader —
+`VMInstance.startSerialReading`'s `readabilityHandler` (background GCD queue) — which
+fans out to (a) `serial.log` (authoritative, always on) and (b) `SerialSocketRelay.forwardOutput`
+(best-effort tee, only when `serialSocketRelayEnabled`). An external terminal attaches to the
+relay's AF_UNIX socket; bytes it sends are written straight to the serial input pipe, making the
+relay the sole host-side writer of serial input. There is no in-app terminal emulator and no serial
+window — emulation is delegated to the user's terminal. The connect instructions and the (per-VM
+deterministic) socket path are surfaced via the info button on the **Serial Console** section of
+`VMSettingsViewController` (the path is `VMInstance.serialSocketPath(for:)`, computed the same way
+the relay binds it). The relay socket lives under `NSTemporaryDirectory()` (short path; the bundle
+dir overflows `sockaddr_un.sun_path`) and is App-Sandbox/Mac-App-Store-compatible (no entitlement).
+The per-VM `serialSocketRelayEnabled` flag is hot-toggleable via `applyLivePolicy` →
+`applyLiveSerialRelayPolicy`, handled before the vsock-socket-device guard since the relay is
+host-only.
 
 ### Data Flow
 
@@ -356,7 +369,6 @@ AppDelegate
     │                              └── DetailEmptyStateView ⇆ VMDetailRouterViewController (AppKit)
     │
     ├── manages → VMDisplayWindowController (per VM)
-    ├── manages → SerialConsoleWindowController (per VM)
     └── manages → ClipboardWindowController (per VM)
 
 AppKit views ──observe──→ VMLibraryViewModel ──delegates──→ VMLifecycleCoordinator ──calls──→ Services
@@ -371,7 +383,7 @@ SystemSleepWatcher ──sleep/wake──→ VMLibraryViewModel ──pause/resu
 
 - `DataFormatters` — human-readable formatting for bytes (e.g., "107.4 GB"), CPU counts, etc.
 - `NSImageExtensions` — `NSImage.systemSymbol(_:accessibilityDescription:)` for nil-safe SF Symbol loading with error logging
-- `ObservationLoop` — `observeRecurring(track:apply:) -> ObservationLoop` helper that encapsulates the `withObservationTracking` + `Task { @MainActor }` + recursive re-register dance. Returns a cancel token stored by the caller; the loop stops when the token is deallocated or `cancel()` is called. Used by all 8 observation sites (`MainWindowController`, `VMDisplayWindowController`, `ClipboardWindowController`, `SerialConsoleWindowController`, `DetailContainerViewController`, `ClipboardContentViewController`, `SerialConsoleContentViewController`, `AppDelegate.observeForTermination`) so each site only declares *what* to track and *what* to do — not how to sustain the loop.
+- `ObservationLoop` — `observeRecurring(track:apply:) -> ObservationLoop` helper that encapsulates the `withObservationTracking` + `Task { @MainActor }` + recursive re-register dance. Returns a cancel token stored by the caller; the loop stops when the token is deallocated or `cancel()` is called. Used by all 6 observation sites (`MainWindowController`, `VMDisplayWindowController`, `ClipboardWindowController`, `DetailContainerViewController`, `ClipboardContentViewController`, `AppDelegate.observeForTermination`) so each site only declares *what* to track and *what* to do — not how to sustain the loop.
 
 ## Key Design Decisions
 
@@ -502,7 +514,7 @@ These services interact with system processes, the network, or VZ installer inte
 - `VMDirectoryWatcher` — relies on `DispatchSource` file system monitoring
 - `SystemSleepWatcher` — relies on `NSWorkspace` sleep/wake notifications (sleep/wake logic tested via `VMLibraryViewModel`)
 - `KernovaUTType` — static UTType declaration
-- All window controllers (`MainWindowController`, `VMDisplayWindowController`, `SerialConsoleWindowController`, `ClipboardWindowController`)
+- All window controllers (`MainWindowController`, `VMDisplayWindowController`, `ClipboardWindowController`)
 - `AppDelegate` — app lifecycle and window management
 - Pure AppKit view rendering beyond the extracted testable helpers (`DetailRoute`, `MicPermissionPresentation`) and the VC-level tests (`VMSettingsViewControllerTests`, wizard-step tests)
 

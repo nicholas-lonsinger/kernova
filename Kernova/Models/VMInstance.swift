@@ -219,12 +219,6 @@ final class VMInstance {
 
     // MARK: - Serial Console
 
-    /// Observable text buffer driven by serial port output.
-    ///
-    /// Capped at 1 MB in memory;
-    /// full history is preserved on disk in `serial.log`.
-    var serialOutputText: String = ""
-
     /// Bidirectional pipes for serial port communication.
     var serialInputPipe: Pipe?
     var serialOutputPipe: Pipe?
@@ -232,10 +226,14 @@ final class VMInstance {
     /// File handle for writing serial output to the on-disk log.
     private var serialLogFileHandle: FileHandle?
 
-    private static let logger = Logger(subsystem: "com.kernova.app", category: "VMInstance")
+    /// Host-side AF_UNIX relay exposing the serial port to an external terminal.
+    ///
+    /// Created once per running session in `startSerialReading()` and captured
+    /// by the output readability handler; it only binds a socket while started.
+    /// `serialSocketRelayEnabled` drives start/stop, including live hot-toggle.
+    private var serialSocketRelay: SerialSocketRelay?
 
-    /// Maximum in-memory serial buffer size (1 MB).
-    private static let maxSerialBufferSize = 1_000_000
+    private static let logger = Logger(subsystem: "com.kernova.app", category: "VMInstance")
 
     nonisolated var id: UUID { instanceID }
     var name: String { configuration.name }
@@ -329,11 +327,6 @@ final class VMInstance {
     /// `true` when the display is in any separate window (pop-out or fullscreen).
     var isInSeparateWindow: Bool { displayMode != .inline }
 
-    /// `true` when the VM is eligible to show a serial console window (active status + live VM).
-    var canShowSerialConsole: Bool {
-        (status == .running || status == .paused) && virtualMachine != nil
-    }
-
     /// `true` when the VM has clipboard sharing enabled and is eligible to show the clipboard window.
     var canShowClipboard: Bool {
         configuration.clipboardSharingEnabled && (status == .running || status == .paused) && virtualMachine != nil
@@ -409,13 +402,12 @@ final class VMInstance {
 
     /// Begins reading from the serial output pipe.
     ///
-    /// Output is appended to
-    /// `serialOutputText` (for the UI) and written to the on-disk log file.
+    /// Output is written to the on-disk `serial.log` and tee'd to the optional
+    /// `SerialSocketRelay` (when `serialSocketRelayEnabled`). There is no in-app
+    /// text buffer — interactive serial access is via the relay socket, which an
+    /// external terminal attaches to.
     func startSerialReading() {
         guard let outputPipe = serialOutputPipe else { return }
-
-        // Clear text buffer for a fresh session
-        serialOutputText = ""
 
         // Open (or create) the log file for appending
         let logURL = serialLogURL
@@ -434,11 +426,17 @@ final class VMInstance {
                 "Could not open serial log for writing: \(error.localizedDescription, privacy: .public)")
         }
 
+        // Create the relay once per session so the readability handler can
+        // capture it as a `Sendable` local — avoiding any off-actor access to
+        // `self`. The relay only binds a socket while started (see
+        // `makeSerialRelay`); hot-toggling flips start/stop on this same object.
+        let relay = makeSerialRelay()
+
         // Capture for the readability handler closure (runs on a background GCD queue)
         let logFileHandle = serialLogFileHandle
         let logger = Self.logger
 
-        outputPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+        outputPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             guard !data.isEmpty else { return }
 
@@ -449,45 +447,50 @@ final class VMInstance {
                 logger.error("Failed to write to serial log: \(error.localizedDescription, privacy: .public)")
             }
 
-            // Update UI buffer on the main actor
-            if let text = String(data: data, encoding: .utf8) {
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    self.serialOutputText.append(text)
-
-                    // Cap in-memory buffer at 1 MB
-                    if self.serialOutputText.utf8.count > Self.maxSerialBufferSize {
-                        let overflow = self.serialOutputText.utf8.count - Self.maxSerialBufferSize
-                        let idx = self.serialOutputText.utf8.index(
-                            self.serialOutputText.startIndex,
-                            offsetBy: overflow
-                        )
-                        self.serialOutputText = String(self.serialOutputText[idx...])
-                    }
-                }
-            }
+            // Best-effort tee to the external-terminal relay (no-op when the
+            // relay is off or no client is attached).
+            relay?.forwardOutput(data)
         }
 
         Self.logger.info("Serial reading started for '\(self.name, privacy: .public)'")
     }
 
-    /// Sends a string to the guest via the serial input pipe.
-    func sendSerialInput(_ string: String) {
-        guard let data = string.data(using: .utf8),
-            let inputPipe = serialInputPipe
-        else { return }
-        do {
-            try inputPipe.fileHandleForWriting.write(contentsOf: data)
-        } catch {
-            Self.logger.error(
-                "Failed to send serial input to VM '\(self.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-            )
+    /// Creates the per-session serial relay and, when enabled, starts it.
+    ///
+    /// Returns the relay (also stored on `self`) so the readability handler can
+    /// capture it as a local. Returns `nil` only if the input pipe is missing.
+    private func makeSerialRelay() -> SerialSocketRelay? {
+        guard let inputPipe = serialInputPipe else { return nil }
+        let relay = SerialSocketRelay(
+            path: Self.serialSocketPath(for: instanceID),
+            guestInputWriteHandle: inputPipe.fileHandleForWriting,
+            label: name
+        )
+        serialSocketRelay = relay
+        if configuration.serialSocketRelayEnabled {
+            relay.start()
         }
+        return relay
     }
 
-    /// Stops reading from the serial output pipe and closes the log file handle.
+    /// On-disk path for a VM's serial relay socket.
+    ///
+    /// Lives under the per-user temporary directory (which resolves into the
+    /// app container under App Sandbox) with a short filename — the VM bundle
+    /// path is too long for `sockaddr_un.sun_path` (104-byte cap). Uses 16 hex
+    /// digits of the UUID (64 bits) so two VMs cannot collide on the same
+    /// socket path while staying comfortably within the cap.
+    static func serialSocketPath(for id: UUID) -> String {
+        let short = id.uuidString.replacingOccurrences(of: "-", with: "").prefix(16).lowercased()
+        return (NSTemporaryDirectory() as NSString).appendingPathComponent("knv-\(short).sock")
+    }
+
+    /// Stops reading from the serial output pipe, tears down the relay, and
+    /// closes the log file handle.
     func stopSerialReading() {
         serialOutputPipe?.fileHandleForReading.readabilityHandler = nil
+        serialSocketRelay?.stop()
+        serialSocketRelay = nil
         do {
             try serialLogFileHandle?.close()
         } catch {
@@ -791,6 +794,14 @@ final class VMInstance {
     func applyLivePolicy(oldConfig: VMConfiguration, newConfig: VMConfiguration) {
         guard status == .running || status == .paused else { return }
         guard let vm = virtualMachine else { return }
+
+        // The serial socket relay is host-only — no vsock device, no guest
+        // cooperation — so handle it before the socket-device guard, which
+        // otherwise returns early for guests without a `VZVirtioSocketDevice`.
+        if oldConfig.serialSocketRelayEnabled != newConfig.serialSocketRelayEnabled {
+            applyLiveSerialRelayPolicy(enabled: newConfig.serialSocketRelayEnabled)
+        }
+
         guard let socketDevice = vm.socketDevices.first(where: { $0 is VZVirtioSocketDevice }) as? VZVirtioSocketDevice
         else {
             return
@@ -834,6 +845,22 @@ final class VMInstance {
 
         Self.logger.notice(
             "Applied live policy for '\(self.name, privacy: .public)' (logForwarding=\(newConfig.agentLogForwardingEnabled, privacy: .public), clipboard=\(newConfig.clipboardSharingEnabled, privacy: .public))"
+        )
+    }
+
+    /// Starts or stops the host-side serial relay live.
+    ///
+    /// The relay object is created once per session in `startSerialReading`
+    /// (idle when disabled) so this only flips its socket on/off — the output
+    /// readability handler already holds a reference to it.
+    private func applyLiveSerialRelayPolicy(enabled: Bool) {
+        if enabled {
+            serialSocketRelay?.start()
+        } else {
+            serialSocketRelay?.stop()
+        }
+        Self.logger.notice(
+            "Serial relay \(enabled ? "enabled" : "disabled", privacy: .public) live for '\(self.name, privacy: .public)'"
         )
     }
 

@@ -255,28 +255,6 @@ struct VMInstanceTests {
         #expect(instance.canSave == false)
     }
 
-    // MARK: - canShowSerialConsole
-
-    @Test("canShowSerialConsole is false when running without a virtual machine")
-    func canShowSerialConsoleFalseWithoutVM() {
-        let instance = makeInstance(status: .running)
-        #expect(instance.virtualMachine == nil)
-        #expect(instance.canShowSerialConsole == false)
-    }
-
-    @Test("canShowSerialConsole is false when stopped")
-    func canShowSerialConsoleFalseWhenStopped() {
-        let instance = makeInstance(status: .stopped)
-        #expect(instance.canShowSerialConsole == false)
-    }
-
-    @Test("canShowSerialConsole is false for cold-paused VM")
-    func canShowSerialConsoleFalseWhenColdPaused() {
-        let instance = makeInstance(status: .paused)
-        #expect(instance.isColdPaused == true)
-        #expect(instance.canShowSerialConsole == false)
-    }
-
     // MARK: - Bundle Paths
 
     @Test("Bundle path URLs are correctly derived from bundleURL")
@@ -289,24 +267,6 @@ struct VMInstanceTests {
     }
 
     // MARK: - Serial Console
-
-    @Test("serialOutputText starts empty")
-    func serialOutputTextStartsEmpty() {
-        let instance = makeInstance()
-        #expect(instance.serialOutputText.isEmpty)
-    }
-
-    @Test("sendSerialInput writes to input pipe")
-    func sendSerialInputWritesToPipe() {
-        let instance = makeInstance()
-        let pipe = Pipe()
-        instance.serialInputPipe = pipe
-
-        instance.sendSerialInput("hello")
-
-        let data = pipe.fileHandleForReading.availableData
-        #expect(String(data: data, encoding: .utf8) == "hello")
-    }
 
     @Test("resetToStopped clears serial pipes")
     func resetToStoppedClearsSerialPipes() {
@@ -572,9 +532,10 @@ struct VMInstanceTests {
     @Test("VMConfiguration.hotToggleFields covers all runtime-editable booleans")
     func hotToggleFieldsCovered() {
         let fields = VMConfiguration.hotToggleFields
-        #expect(fields.count == 3)
+        #expect(fields.count == 4)
         #expect(fields.contains(\.agentLogForwardingEnabled))
         #expect(fields.contains(\.clipboardSharingEnabled))
+        #expect(fields.contains(\.serialSocketRelayEnabled))
         #expect(fields.contains(\.agentInstallNudgeDismissed))
     }
 

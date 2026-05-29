@@ -50,6 +50,14 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     /// exchange between host and guest via the clipboard panel window.
     var clipboardSharingEnabled: Bool
 
+    // MARK: - Serial Console
+
+    /// When `true`, the running VM exposes its serial port over a host-side
+    /// AF_UNIX socket so an external terminal (e.g. `socat`/`nc -U`) can attach.
+    ///
+    /// Host-only and hot-toggleable — see `VMInstance.applyLiveSerialRelayPolicy`.
+    var serialSocketRelayEnabled: Bool
+
     // MARK: - Audio
 
     /// When `true`, the host microphone is passed through to the guest as a
@@ -175,6 +183,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         networkEnabled: Bool = true,
         macAddress: String? = nil,
         clipboardSharingEnabled: Bool = false,
+        serialSocketRelayEnabled: Bool = false,
         microphoneEnabled: Bool = false,
         agentLogForwardingEnabled: Bool = false,
         lastSeenAgentVersion: String? = nil,
@@ -206,6 +215,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.networkEnabled = networkEnabled
         self.macAddress = macAddress
         self.clipboardSharingEnabled = clipboardSharingEnabled
+        self.serialSocketRelayEnabled = serialSocketRelayEnabled
         self.microphoneEnabled = microphoneEnabled
         self.agentLogForwardingEnabled = agentLogForwardingEnabled
         self.lastSeenAgentVersion = lastSeenAgentVersion
@@ -246,6 +256,8 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.networkEnabled = try c.decode(Bool.self, forKey: .networkEnabled)
         self.macAddress = try c.decodeIfPresent(String.self, forKey: .macAddress)
         self.clipboardSharingEnabled = try c.decode(Bool.self, forKey: .clipboardSharingEnabled)
+        self.serialSocketRelayEnabled =
+            try c.decodeIfPresent(Bool.self, forKey: .serialSocketRelayEnabled) ?? false
         self.microphoneEnabled = try c.decode(Bool.self, forKey: .microphoneEnabled)
         self.agentLogForwardingEnabled = try c.decodeIfPresent(Bool.self, forKey: .agentLogForwardingEnabled) ?? false
         self.lastSeenAgentVersion = try c.decodeIfPresent(String.self, forKey: .lastSeenAgentVersion)
@@ -356,6 +368,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     static let hotToggleFields: [KeyPath<VMConfiguration, Bool> & Sendable] = [
         \.agentLogForwardingEnabled,
         \.clipboardSharingEnabled,
+        \.serialSocketRelayEnabled,
         \.agentInstallNudgeDismissed,
     ]
 
