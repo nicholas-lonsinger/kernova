@@ -115,6 +115,7 @@ final class VMSettingsViewController: NSViewController {
 
     // Serial Console
     private var serialRelaySwitch = NSSwitch()
+    private var revealSerialLogButton = NSButton()
 
     // MARK: - Rendered-list snapshots (early-out keys)
 
@@ -698,13 +699,26 @@ extension VMSettingsViewController {
 
     private func buildSerialRelaySection() -> NSView {
         serialRelaySwitch = makeSwitch(action: #selector(serialRelayToggled))
-        let body: InfoPopoverParagraph = .body(
-            "Exposes the running VM's serial port over a local UNIX socket so an external terminal can attach. Connect with `socat -,raw,echo=0 UNIX-CONNECT:<path>` (best for full-screen apps; `brew install socat`) or `nc -U <path>` (built in). The socket path appears in the Serial Console window. Output is always captured to `serial.log` regardless of this setting."
-        )
-        return makeSection([
-            makeHeader("Serial Console", paragraphs: [body]),
-            makeGroupedFormCard(rows: [makeGroupedFormCardRow("Expose Serial Socket", control: serialRelaySwitch)]),
+        revealSerialLogButton = makePushButton(
+            "Reveal serial.log in Finder", action: #selector(revealSerialLog))
+        let socketPath = VMInstance.serialSocketPath(for: instance.id)
+        let card = makeGroupedFormCard(rows: [
+            makeToggleRowWithInfo(
+                "Expose Serial Socket", control: serialRelaySwitch,
+                paragraphs: [
+                    .body(
+                        "Exposes the running VM's serial port over a local UNIX socket so an external terminal can attach. Output is always captured to `serial.log` regardless of this setting."
+                    ),
+                    .body(
+                        "While the VM is running, connect with `socat` (best for full-screen apps; `brew install socat`):"
+                    ),
+                    .code("socat -,raw,echo=0 UNIX-CONNECT:\(socketPath)"),
+                    .body("…or the built-in `nc` (line mode):"),
+                    .code("nc -U \(socketPath)"),
+                ]),
+            makeButtonRow([revealSerialLogButton]),
         ])
+        return makeSection([makeHeader("Serial Console"), card])
     }
 }
 
@@ -973,6 +987,10 @@ extension VMSettingsViewController {
 
     private func refreshSerialRelay() {
         serialRelaySwitch.state = instance.configuration.serialSocketRelayEnabled ? .on : .off
+        // serial.log is created on first run and persists thereafter; disable
+        // the reveal button until it exists.
+        revealSerialLogButton.isEnabled = FileManager.default.fileExists(
+            atPath: instance.serialLogURL.path(percentEncoded: false))
     }
 
     private func refreshStorageList() {
@@ -1141,6 +1159,10 @@ extension VMSettingsViewController {
 
     @objc private func serialRelayToggled() {
         writeConfig { $0.serialSocketRelayEnabled = serialRelaySwitch.state == .on }
+    }
+
+    @objc private func revealSerialLog() {
+        NSWorkspace.shared.activateFileViewerSelecting([instance.serialLogURL])
     }
 
     @objc private func clipboardToggled() {

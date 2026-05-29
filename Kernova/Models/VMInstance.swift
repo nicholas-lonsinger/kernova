@@ -233,14 +233,6 @@ final class VMInstance {
     /// `serialSocketRelayEnabled` drives start/stop, including live hot-toggle.
     private var serialSocketRelay: SerialSocketRelay?
 
-    /// Filesystem path of the live serial relay socket, or `nil` when the relay
-    /// is off/unavailable.
-    ///
-    /// Mirrors `serialSocketRelay?.socketPath` as an observable stored property
-    /// so the serial connection panel updates when the relay is started or
-    /// stopped (the relay object itself isn't `@Observable`).
-    private(set) var serialSocketPath: String?
-
     private static let logger = Logger(subsystem: "com.kernova.app", category: "VMInstance")
 
     nonisolated var id: UUID { instanceID }
@@ -334,11 +326,6 @@ final class VMInstance {
 
     /// `true` when the display is in any separate window (pop-out or fullscreen).
     var isInSeparateWindow: Bool { displayMode != .inline }
-
-    /// `true` when the VM is eligible to show a serial console window (active status + live VM).
-    var canShowSerialConsole: Bool {
-        (status == .running || status == .paused) && virtualMachine != nil
-    }
 
     /// `true` when the VM has clipboard sharing enabled and is eligible to show the clipboard window.
     var canShowClipboard: Bool {
@@ -483,7 +470,6 @@ final class VMInstance {
         serialSocketRelay = relay
         if configuration.serialSocketRelayEnabled {
             relay.start()
-            serialSocketPath = relay.socketPath
         }
         return relay
     }
@@ -504,7 +490,6 @@ final class VMInstance {
         serialOutputPipe?.fileHandleForReading.readabilityHandler = nil
         serialSocketRelay?.stop()
         serialSocketRelay = nil
-        serialSocketPath = nil
         do {
             try serialLogFileHandle?.close()
         } catch {
@@ -870,10 +855,8 @@ final class VMInstance {
     private func applyLiveSerialRelayPolicy(enabled: Bool) {
         if enabled {
             serialSocketRelay?.start()
-            serialSocketPath = serialSocketRelay?.socketPath
         } else {
             serialSocketRelay?.stop()
-            serialSocketPath = nil
         }
         Self.logger.notice(
             "Serial relay \(enabled ? "enabled" : "disabled", privacy: .public) live for '\(self.name, privacy: .public)'"
