@@ -290,10 +290,27 @@ struct VMInstanceTests {
 
     // MARK: - Serial Console
 
-    @Test("serialOutputText starts empty")
-    func serialOutputTextStartsEmpty() {
+    @Test("terminal starts at the default size with no content")
+    func terminalStartsEmpty() {
         let instance = makeInstance()
-        #expect(instance.serialOutputText.isEmpty)
+        #expect(instance.terminal.cols == 80)
+        #expect(instance.terminal.rows == 24)
+        // A blank screen serializes to empty lines (only newline separators).
+        #expect(instance.terminal.visibleText().allSatisfy { $0 == "\n" })
+    }
+
+    @Test("terminal DSR replies route back to the serial input pipe")
+    func terminalDSRRoutesToInputPipe() {
+        let instance = makeInstance()
+        let pipe = Pipe()
+        instance.serialInputPipe = pipe
+
+        // A cursor-position report should be written to the guest's input pipe
+        // via the respond hook wired up in VMInstance.init.
+        instance.terminal.feed(Data("\u{1B}[6n".utf8))
+
+        let data = pipe.fileHandleForReading.availableData
+        #expect(String(data: data, encoding: .utf8) == "\u{1B}[1;1R")
     }
 
     @Test("sendSerialInput writes to input pipe")

@@ -86,8 +86,7 @@ final class TerminalFindBar: NSView, NSSearchFieldDelegate {
     }
 
     @objc private func searchFieldEntered() {
-        // Enter in the field advances to the next match.
-        delegate?.findBar(self, didChangeQuery: searchField.stringValue)
+        // Live search already ran via controlTextDidChange — Enter advances.
         delegate?.findBarDidRequestNext(self)
     }
 

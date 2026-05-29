@@ -21,6 +21,9 @@ final class TerminalView: NSView, NSMenuItemValidation {
     /// Called with characters typed by the user, to send to the guest's serial input.
     var sendInput: ((String) -> Void)?
 
+    /// Called with the grid dimensions whenever they change (for the status bar).
+    var onGridSizeChange: ((Int, Int) -> Void)?
+
     // MARK: Fonts & metrics
 
     private let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
@@ -99,6 +102,7 @@ final class TerminalView: NSView, NSMenuItemValidation {
         let cols = max(1, Int(bounds.width / cellWidth))
         let rows = max(1, Int(bounds.height / cellHeight))
         emulator.resize(cols: cols, rows: rows)
+        onGridSizeChange?(emulator.cols, emulator.rows)
     }
 
     /// Re-anchors the scrollback view as new output arrives, then redraws.

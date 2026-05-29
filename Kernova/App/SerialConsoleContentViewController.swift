@@ -2,57 +2,34 @@ import Cocoa
 
 /// Pure AppKit view controller for the serial console window content.
 ///
-/// Provides a terminal-style `NSTextView` (via `SerialTextView`) that displays
-/// guest serial output and forwards keyboard input, plus a status bar showing
-/// connection state and character count. Observes `VMInstance` properties via
-/// `withObservationTracking`.
+/// Hosts a `TerminalView` that renders the VM's `TerminalEmulator` grid and
+/// forwards keyboard input to the guest, a status bar (connection state + grid
+/// size), and a toggleable ⌘F find bar. Observes `VMInstance.status` via
+/// `observeRecurring` for the connection indicator; the terminal's own redraw
+/// is driven directly by the emulator's `onRender` hook, off the observation path.
 @MainActor
-final class SerialConsoleContentViewController: NSViewController {
+final class SerialConsoleContentViewController: NSViewController, TerminalFindBarDelegate {
     private let instance: VMInstance
-    private let textView: SerialTextView
-    private let scrollView: NSScrollView
+    private let terminalView: TerminalView
+    private let findBar = TerminalFindBar()
+    private var findBarHeight: NSLayoutConstraint!
     private let statusCircle: NSView
     private let statusLabel: NSTextField
-    private let characterCountLabel: NSTextField
-    private var instanceObservation: ObservationLoop?
+    private let gridSizeLabel: NSTextField
+    private var statusObservation: ObservationLoop?
+    private var keyMonitor: Any?
+
+    private struct Match {
+        let line: Int
+        let colStart: Int
+        let colEnd: Int
+    }
+    private var matches: [Match] = []
+    private var currentMatchIndex = 0
 
     init(instance: VMInstance) {
         self.instance = instance
-
-        let textView = SerialTextView()
-        textView.isEditable = false
-        textView.isSelectable = true
-        textView.isRichText = false
-        textView.isFieldEditor = false
-        textView.allowsUndo = false
-        textView.usesFindPanel = true
-        textView.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
-        textView.textColor = .init(white: 0.9, alpha: 1.0)
-        textView.backgroundColor = .init(white: 0.1, alpha: 1.0)
-        textView.insertionPointColor = .init(white: 0.9, alpha: 1.0)
-        textView.isAutomaticQuoteSubstitutionEnabled = false
-        textView.isAutomaticDashSubstitutionEnabled = false
-        textView.isAutomaticTextReplacementEnabled = false
-        textView.isAutomaticSpellingCorrectionEnabled = false
-        textView.isContinuousSpellCheckingEnabled = false
-        textView.isGrammarCheckingEnabled = false
-        textView.isVerticallyResizable = true
-        textView.isHorizontallyResizable = false
-        textView.textContainer?.widthTracksTextView = true
-        textView.textContainer?.containerSize = NSSize(
-            width: 0,
-            height: CGFloat.greatestFiniteMagnitude
-        )
-        self.textView = textView
-
-        let scrollView = NSScrollView()
-        scrollView.documentView = textView
-        scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = false
-        scrollView.autohidesScrollers = true
-        scrollView.drawsBackground = true
-        scrollView.backgroundColor = .init(white: 0.1, alpha: 1.0)
-        self.scrollView = scrollView
+        self.terminalView = TerminalView(emulator: instance.terminal)
 
         let circle = NSView()
         circle.wantsLayer = true
@@ -69,17 +46,25 @@ final class SerialConsoleContentViewController: NSViewController {
         label.textColor = .secondaryLabelColor
         self.statusLabel = label
 
-        let countLabel = NSTextField(labelWithString: "")
-        countLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        countLabel.textColor = .secondaryLabelColor
-        countLabel.alignment = .right
-        self.characterCountLabel = countLabel
+        let gridLabel = NSTextField(labelWithString: "")
+        gridLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        gridLabel.textColor = .secondaryLabelColor
+        gridLabel.alignment = .right
+        self.gridSizeLabel = gridLabel
 
         super.init(nibName: nil, bundle: nil)
 
-        textView.sendInput = { [weak self] string in
+        terminalView.translatesAutoresizingMaskIntoConstraints = false
+        terminalView.sendInput = { [weak self] string in
             self?.instance.sendSerialInput(string)
         }
+        terminalView.onGridSizeChange = { [weak self] cols, rows in
+            self?.gridSizeLabel.stringValue = "\(cols) × \(rows)"
+        }
+
+        findBar.delegate = self
+        findBar.translatesAutoresizingMaskIntoConstraints = false
+        findBar.isHidden = true
     }
 
     required init?(coder: NSCoder) {
@@ -90,9 +75,11 @@ final class SerialConsoleContentViewController: NSViewController {
 
     override func loadView() {
         let container = NSView()
+        container.wantsLayer = true
+        container.layer?.backgroundColor = TerminalTheme.defaultBackground.cgColor
 
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(scrollView)
+        container.addSubview(findBar)
+        container.addSubview(terminalView)
 
         let divider = NSBox()
         divider.boxType = .separator
@@ -103,12 +90,19 @@ final class SerialConsoleContentViewController: NSViewController {
         statusBar.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(statusBar)
 
-        NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: container.topAnchor),
-            scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+        findBarHeight = findBar.heightAnchor.constraint(equalToConstant: 0)
 
-            divider.topAnchor.constraint(equalTo: scrollView.bottomAnchor),
+        NSLayoutConstraint.activate([
+            findBar.topAnchor.constraint(equalTo: container.topAnchor),
+            findBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            findBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            findBarHeight,
+
+            terminalView.topAnchor.constraint(equalTo: findBar.bottomAnchor),
+            terminalView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            terminalView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+
+            divider.topAnchor.constraint(equalTo: terminalView.bottomAnchor),
             divider.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             divider.trailingAnchor.constraint(equalTo: container.trailingAnchor),
 
@@ -118,59 +112,45 @@ final class SerialConsoleContentViewController: NSViewController {
             statusBar.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
 
-        scrollView.setContentHuggingPriority(.defaultLow, for: .vertical)
-        scrollView.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
-
         self.view = container
     }
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        updateUI()
-        observeInstanceChanges()
+        updateStatusBar()
+        observeStatus()
+    }
+
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        view.window?.makeFirstResponder(terminalView)
+        installKeyMonitor()
+    }
+
+    override func viewWillDisappear() {
+        super.viewWillDisappear()
+        removeKeyMonitor()
     }
 
     // MARK: - Observation
 
-    private func observeInstanceChanges() {
-        instanceObservation = observeRecurring(
+    private func observeStatus() {
+        statusObservation = observeRecurring(
             track: { [weak self] in
-                guard let self else { return }
-                _ = self.instance.serialOutputText
-                _ = self.instance.status
+                _ = self?.instance.status
             },
             apply: { [weak self] in
-                self?.updateUI()
+                self?.updateStatusBar()
             }
         )
     }
 
-    private func updateUI() {
+    private func updateStatusBar() {
         let isConnected = instance.status == .running || instance.status == .paused
-
-        // Sync serial output with scroll-position preservation
-        let currentText = textView.string
-        let newText = instance.serialOutputText
-        if currentText != newText {
-            let clipView = scrollView.contentView
-            let contentHeight = textView.frame.height
-            let scrollOffset = clipView.bounds.origin.y + clipView.bounds.height
-            let isAtBottom = scrollOffset >= contentHeight - 10
-
-            textView.string = newText
-
-            if isAtBottom {
-                textView.scrollToEndOfDocument(nil)
-            }
-        }
-
-        // Update status bar
         statusCircle.layer?.backgroundColor =
-            isConnected
-            ? NSColor.systemGreen.cgColor
-            : NSColor.secondaryLabelColor.cgColor
+            isConnected ? NSColor.systemGreen.cgColor : NSColor.secondaryLabelColor.cgColor
         statusLabel.stringValue = isConnected ? "Connected" : "Disconnected"
-        characterCountLabel.stringValue = "\(newText.count) characters"
+        gridSizeLabel.stringValue = "\(instance.terminal.cols) × \(instance.terminal.rows)"
     }
 
     // MARK: - View Construction
@@ -180,46 +160,112 @@ final class SerialConsoleContentViewController: NSViewController {
         leftStack.orientation = .horizontal
         leftStack.spacing = Spacing.small
 
-        let stack = NSStackView(views: [leftStack, characterCountLabel])
+        let stack = NSStackView(views: [leftStack, gridSizeLabel])
         stack.orientation = .horizontal
         stack.distribution = .fill
         stack.edgeInsets = NSEdgeInsets(top: 5, left: 10, bottom: 5, right: 10)
-
         return stack
     }
-}
 
-// MARK: - SerialTextView
+    // MARK: - Find
 
-/// Custom `NSTextView` that intercepts keyboard input and forwards it
-/// to the guest VM's serial input pipe instead of editing the text buffer.
-final class SerialTextView: NSTextView {
-    /// Closure called with raw input characters to send to the guest VM.
-    var sendInput: ((String) -> Void)?
+    private var isFindBarVisible: Bool { !findBar.isHidden }
 
-    override func keyDown(with event: NSEvent) {
-        if let characters = event.characters, !characters.isEmpty {
-            sendInput?(characters)
+    private func installKeyMonitor() {
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, self.view.window?.isKeyWindow == true else { return event }
+            if event.modifierFlags.contains(.command),
+                event.charactersIgnoringModifiers?.lowercased() == "f"
+            {
+                self.toggleFindBar()
+                return nil
+            }
+            if event.keyCode == 53, self.isFindBarVisible {  // Escape
+                self.hideFindBar()
+                return nil
+            }
+            return event
+        }
+    }
+
+    private func removeKeyMonitor() {
+        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+        keyMonitor = nil
+    }
+
+    private func toggleFindBar() {
+        if isFindBarVisible { hideFindBar() } else { showFindBar() }
+    }
+
+    private func showFindBar() {
+        findBar.isHidden = false
+        findBarHeight.constant = 30
+        findBar.focusSearchField()
+        recomputeMatches()
+    }
+
+    private func hideFindBar() {
+        findBar.isHidden = true
+        findBarHeight.constant = 0
+        matches.removeAll()
+        terminalView.clearFindHighlight()
+        view.window?.makeFirstResponder(terminalView)
+    }
+
+    private func recomputeMatches() {
+        matches.removeAll()
+        let query = findBar.query
+        guard !query.isEmpty else {
+            terminalView.clearFindHighlight()
+            findBar.updateMatchCount(current: 0, total: 0)
             return
         }
-        super.keyDown(with: event)
+        let lines = terminalView.searchableLines()
+        for (index, line) in lines.enumerated() {
+            var start = line.startIndex
+            while let range = line.range(of: query, options: .caseInsensitive, range: start..<line.endIndex) {
+                let colStart = line.distance(from: line.startIndex, to: range.lowerBound)
+                let colEnd = colStart + line.distance(from: range.lowerBound, to: range.upperBound)
+                matches.append(Match(line: index, colStart: colStart, colEnd: colEnd))
+                start = range.upperBound
+                if start == line.endIndex { break }
+            }
+        }
+        currentMatchIndex = 0
+        if matches.isEmpty {
+            terminalView.clearFindHighlight()
+            findBar.updateMatchCount(current: 0, total: 0)
+        } else {
+            highlightCurrentMatch()
+        }
     }
 
-    override func insertNewline(_ sender: Any?) {
-        sendInput?("\r")
+    private func highlightCurrentMatch() {
+        guard !matches.isEmpty else { return }
+        let match = matches[currentMatchIndex]
+        terminalView.highlightMatch(absoluteLine: match.line, colStart: match.colStart, colEnd: match.colEnd)
+        findBar.updateMatchCount(current: currentMatchIndex + 1, total: matches.count)
     }
 
-    override func deleteBackward(_ sender: Any?) {
-        sendInput?("\u{7f}")
+    // MARK: - TerminalFindBarDelegate
+
+    func findBar(_ bar: TerminalFindBar, didChangeQuery query: String) {
+        recomputeMatches()
     }
 
-    override func insertTab(_ sender: Any?) {
-        sendInput?("\t")
+    func findBarDidRequestNext(_ bar: TerminalFindBar) {
+        guard !matches.isEmpty else { return }
+        currentMatchIndex = (currentMatchIndex + 1) % matches.count
+        highlightCurrentMatch()
     }
 
-    override var acceptsFirstResponder: Bool { true }
+    func findBarDidRequestPrevious(_ bar: TerminalFindBar) {
+        guard !matches.isEmpty else { return }
+        currentMatchIndex = (currentMatchIndex - 1 + matches.count) % matches.count
+        highlightCurrentMatch()
+    }
 
-    override func becomeFirstResponder() -> Bool {
-        super.becomeFirstResponder()
+    func findBarDidClose(_ bar: TerminalFindBar) {
+        hideFindBar()
     }
 }

@@ -219,11 +219,13 @@ final class VMInstance {
 
     // MARK: - Serial Console
 
-    /// Observable text buffer driven by serial port output.
-    ///
-    /// Capped at 1 MB in memory;
-    /// full history is preserved on disk in `serial.log`.
-    var serialOutputText: String = ""
+    /// Terminal emulator that interprets the guest serial byte stream into a
+    /// cell grid for the Serial Console. Owned here (not by the console window)
+    /// so it accrues state across window open/close and answers the guest's
+    /// terminal probes (DSR/DA) even when no console window is open. Full raw
+    /// history is still preserved byte-for-byte on disk in `serial.log`; the
+    /// in-memory bound is the emulator's grid plus its capped scrollback.
+    let terminal = TerminalEmulator()
 
     /// Bidirectional pipes for serial port communication.
     var serialInputPipe: Pipe?
@@ -232,10 +234,16 @@ final class VMInstance {
     /// File handle for writing serial output to the on-disk log.
     private var serialLogFileHandle: FileHandle?
 
+    /// Raw serial bytes received since the last coalesced drain.
+    private var pendingSerialData = Data()
+    /// `true` while a `drainSerialInput()` hop is already scheduled.
+    private var serialDrainScheduled = false
+
     private static let logger = Logger(subsystem: "com.kernova.app", category: "VMInstance")
 
-    /// Maximum in-memory serial buffer size (1 MB).
-    private static let maxSerialBufferSize = 1_000_000
+    /// Max bytes fed to the emulator per drain; the remainder is re-scheduled so
+    /// a large boot-time burst can't stall the main run loop.
+    private static let serialDrainByteBudget = 256 * 1024
 
     nonisolated var id: UUID { instanceID }
     var name: String { configuration.name }
@@ -270,6 +278,11 @@ final class VMInstance {
         self.bundleURL = bundleURL
         self.bundleLayout = VMBundleLayout(bundleURL: bundleURL)
         self.status = status
+
+        // Route the emulator's terminal-probe replies (DSR/DA) back to the guest.
+        terminal.respond = { [weak self] reply in
+            self?.sendSerialInput(reply)
+        }
     }
 
     // MARK: - VM Bundle Paths (forwarded from VMBundleLayout)
@@ -359,6 +372,9 @@ final class VMInstance {
         stopVsockServices()
         stopClipboardService()
         stopSerialReading()
+        terminal.reset()
+        pendingSerialData.removeAll(keepingCapacity: false)
+        serialDrainScheduled = false
         cancelAgentPostStartWatchdog()
         agentExpectedButMissing = false
         serialInputPipe = nil
@@ -409,13 +425,15 @@ final class VMInstance {
 
     /// Begins reading from the serial output pipe.
     ///
-    /// Output is appended to
-    /// `serialOutputText` (for the UI) and written to the on-disk log file.
+    /// Every byte is written to the on-disk `serial.log` (byte-exact) and fed to
+    /// the terminal emulator (which interprets escape sequences into the grid).
     func startSerialReading() {
         guard let outputPipe = serialOutputPipe else { return }
 
-        // Clear text buffer for a fresh session
-        serialOutputText = ""
+        // Reset the terminal so a restarted VM shows no stale output.
+        terminal.reset()
+        pendingSerialData.removeAll(keepingCapacity: false)
+        serialDrainScheduled = false
 
         // Open (or create) the log file for appending
         let logURL = serialLogURL
@@ -440,7 +458,11 @@ final class VMInstance {
 
         outputPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
-            guard !data.isEmpty else { return }
+            guard !data.isEmpty else {
+                // EOF — pipe closed. Nil out the handler to prevent a GCD spin loop.
+                handle.readabilityHandler = nil
+                return
+            }
 
             // Write to disk log (background-safe — FileHandle is thread-safe for sequential writes)
             do {
@@ -449,26 +471,50 @@ final class VMInstance {
                 logger.error("Failed to write to serial log: \(error.localizedDescription, privacy: .public)")
             }
 
-            // Update UI buffer on the main actor
-            if let text = String(data: data, encoding: .utf8) {
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    self.serialOutputText.append(text)
-
-                    // Cap in-memory buffer at 1 MB
-                    if self.serialOutputText.utf8.count > Self.maxSerialBufferSize {
-                        let overflow = self.serialOutputText.utf8.count - Self.maxSerialBufferSize
-                        let idx = self.serialOutputText.utf8.index(
-                            self.serialOutputText.startIndex,
-                            offsetBy: overflow
-                        )
-                        self.serialOutputText = String(self.serialOutputText[idx...])
-                    }
-                }
+            // Hand the raw bytes to the main actor for the terminal emulator.
+            Task { @MainActor [weak self] in
+                self?.enqueueSerialData(data)
             }
         }
 
         Self.logger.info("Serial reading started for '\(self.name, privacy: .public)'")
+    }
+
+    /// Appends freshly-read serial bytes and schedules a coalesced drain so a
+    /// burst of pipe reads collapses into a single emulator feed per run-loop turn.
+    private func enqueueSerialData(_ data: Data) {
+        pendingSerialData.append(data)
+        guard !serialDrainScheduled else { return }
+        serialDrainScheduled = true
+        Task { @MainActor [weak self] in
+            self?.drainSerialInput()
+        }
+    }
+
+    /// Feeds pending serial bytes to the terminal emulator, bounded per pass by
+    /// `serialDrainByteBudget` so a large boot-time burst yields the run loop.
+    private func drainSerialInput() {
+        serialDrainScheduled = false
+        guard !pendingSerialData.isEmpty else { return }
+
+        let chunk: Data
+        if pendingSerialData.count > Self.serialDrainByteBudget {
+            chunk = pendingSerialData.prefix(Self.serialDrainByteBudget)
+            pendingSerialData.removeFirst(Self.serialDrainByteBudget)
+        } else {
+            chunk = pendingSerialData
+            pendingSerialData.removeAll(keepingCapacity: true)
+        }
+
+        terminal.feed(chunk)
+
+        // More remains than the budget allowed — finish on the next turn.
+        if !pendingSerialData.isEmpty {
+            serialDrainScheduled = true
+            Task { @MainActor [weak self] in
+                self?.drainSerialInput()
+            }
+        }
     }
 
     /// Sends a string to the guest via the serial input pipe.
