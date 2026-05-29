@@ -15,7 +15,7 @@ Kernova/
 │   ├── DetailContainerViewController.swift # Layers AppKit VM display over the AppKit detail content (empty-state view ⇆ `VMDetailRouterViewController`); respects per-instance detailPaneMode; owns `DetailAlertsPresenter`; conforms to `VMLibraryPresenting` (the view model's presentation delegate), forwarding lifecycle alerts to `DetailAlertsPresenter` and presenting the creation-wizard sheet via `SheetPresenter`
 │   ├── VMToolbarManager.swift          # Shared toolbar logic for lifecycle, suspend, display, and settings-toggle items
 │   ├── SerialConsoleWindowController.swift # Per-VM serial console window, auto-closes on VM stop
-│   ├── SerialConsoleContentViewController.swift # Pure AppKit serial terminal + status bar (contains SerialTextView)
+│   ├── SerialConsoleContentViewController.swift # Pure AppKit serial *connection panel* — status + socket path + copy-connect-command buttons (no embedded terminal; emulation is delegated to an external terminal via `SerialSocketRelay`)
 │   ├── ClipboardWindowController.swift   # Per-VM clipboard sharing window, auto-closes on VM stop
 │   ├── ClipboardContentViewController.swift # Pure AppKit clipboard text editor + status bar
 │   └── Info.plist                        # App configuration and metadata
@@ -45,6 +45,7 @@ Kernova/
 │   ├── VsockControlService.swift      # macOS always-on control channel: Hello + bidirectional heartbeat, owns AgentStatus (@MainActor, @Observable)
 │   ├── KernovaGuestAgentInfo.swift    # Bundled guest agent version + installer DMG URL accessors
 │   ├── AttachmentFileMonitor.swift    # Reactive existence tracker for external attachments — DispatchSource on each parent dir + NSWorkspace mount notifications (@MainActor, @Observable)
+│   ├── SerialSocketRelay.swift        # Host-side AF_UNIX listener exposing the serial port to an external terminal; raw-byte tee/input (@unchecked Sendable, NSLock + DispatchSourceRead, re-startable for hot-toggle)
 │   └── Protocols/                      # Service protocol abstractions for DI and testing
 │       ├── VirtualizationProviding.swift
 │       ├── VMStorageProviding.swift
@@ -165,7 +166,7 @@ KernovaTests/
 │   ├── MockUSBDeviceService.swift
 │   ├── SuspendingMockUSBDeviceService.swift
 │   └── MockVMLibraryPresenting.swift   # Records VMLibraryViewModel presentation requests for test assertions
-├── VMConfigurationTests.swift          # 43 tests for VMConfiguration
+├── VMConfigurationTests.swift          # 45 tests for VMConfiguration
 ├── VMToolbarManagerTests.swift          # Toolbar manager item creation and state update tests
 ├── VMConfigurationCloneTests.swift     # Clone-specific configuration tests
 ├── VMLibraryViewModelTests.swift       # 39 tests for the central view model
@@ -178,6 +179,7 @@ KernovaTests/
 ├── VMBundleLayoutTests.swift           # Bundle path calculation tests
 ├── VMStatusTests.swift                 # Status enum behavior tests
 ├── VMStatusSerialConsoleTests.swift    # Serial console status tests
+├── SerialSocketRelayTests.swift        # AF_UNIX serial relay: output tee, client input, supersede, reconnect, unlink, length guard, idempotency
 ├── VMBootModeTests.swift               # Boot mode enum tests
 ├── VMGuestOSTests.swift                # Guest OS enum tests
 ├── MacOSInstallStateTests.swift        # Install state tracking tests
@@ -333,8 +335,21 @@ VMCreationWizardViewController (pure-AppKit modal sheet; presented by DetailCont
 ├── IPSWSelectionContentViewController / BootConfigContentViewController   (chosen by selectedOS on entry)
 ├── ResourceConfigContentViewController
 └── ReviewContentViewController
-SerialConsoleContentViewController → SerialTextView (in separate window)
+SerialConsoleContentViewController → connection panel (path + connect command, in separate window)
 ```
+
+**Serial console data flow:** the guest serial output pipe has a single reader —
+`VMInstance.startSerialReading`'s `readabilityHandler` (background GCD queue) — which
+fans out to (a) `serial.log` (authoritative, always on) and (b) `SerialSocketRelay.forwardOutput`
+(best-effort tee, only when `serialSocketRelayEnabled`). An external terminal attaches to the
+relay's AF_UNIX socket; bytes it sends are written straight to the serial input pipe, making the
+relay the sole host-side writer of serial input. There is no in-app terminal emulator — the
+`SerialConsoleContentViewController` is a connection panel surfacing the socket path and
+`socat`/`nc -U` connect commands. The relay socket lives under `NSTemporaryDirectory()` (short
+path; the bundle dir overflows `sockaddr_un.sun_path`) and is App-Sandbox/Mac-App-Store-compatible
+(no entitlement). The per-VM `serialSocketRelayEnabled` flag is hot-toggleable via
+`applyLivePolicy` → `applyLiveSerialRelayPolicy`, handled before the vsock-socket-device guard
+since the relay is host-only.
 
 ### Data Flow
 

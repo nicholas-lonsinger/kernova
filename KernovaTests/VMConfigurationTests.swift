@@ -273,6 +273,29 @@ struct VMConfigurationTests {
         #expect(config.sharedDirectories == nil)
     }
 
+    @Test("serialSocketRelayEnabled round-trips through JSON")
+    func serialSocketRelayEnabledRoundTrip() throws {
+        var original = VMConfiguration(name: "Relay VM", guestOS: .linux, bootMode: .efi)
+        original.serialSocketRelayEnabled = true
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(VMConfiguration.self, from: try encoder.encode(original))
+
+        #expect(decoded.serialSocketRelayEnabled == true)
+    }
+
+    @Test("Missing serialSocketRelayEnabled decodes as false")
+    func missingSerialSocketRelayEnabledDefaultsFalse() throws {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
+
+        #expect(config.serialSocketRelayEnabled == false)
+    }
+
     @Test("Unknown JSON keys are silently ignored")
     func unknownKeysIgnored() throws {
         let json = Self.makeBaseJSON(

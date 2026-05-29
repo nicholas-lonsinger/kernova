@@ -1,85 +1,38 @@
 import Cocoa
 
-/// Pure AppKit view controller for the serial console window content.
+/// Pure-AppKit content for the serial console window.
 ///
-/// Provides a terminal-style `NSTextView` (via `SerialTextView`) that displays
-/// guest serial output and forwards keyboard input, plus a status bar showing
-/// connection state and character count. Observes `VMInstance` properties via
-/// `withObservationTracking`.
+/// Kernova does not embed a terminal emulator — interactive serial access is
+/// delegated to a real external terminal (Terminal.app, iTerm, Ghostty, …) that
+/// attaches to a host-side AF_UNIX socket (see `SerialSocketRelay`). This panel
+/// surfaces the connection state and the command to connect, or an affordance
+/// to enable the socket when it is off for this VM.
+///
+/// Observes `VMInstance` via `withObservationTracking`.
 @MainActor
 final class SerialConsoleContentViewController: NSViewController {
     private let instance: VMInstance
-    private let textView: SerialTextView
-    private let scrollView: NSScrollView
-    private let statusCircle: NSView
-    private let statusLabel: NSTextField
-    private let characterCountLabel: NSTextField
-    private var instanceObservation: ObservationLoop?
+
+    private let statusCircle = NSView()
+    private let statusLabel = NSTextField(labelWithString: "")
+
+    /// Shown when the relay is live: path + connect commands.
+    private let connectedStack = NSStackView()
+    private let pathField = NSTextField(labelWithString: "")
+    private let hintLabel = NSTextField(labelWithString: "")
+
+    /// Shown when the relay is off for this VM.
+    private let disabledStack = NSStackView()
+    private let enableButton = NSButton()
+
+    private var observation: ObservationLoop?
+
+    private static let socatTemplate = "socat -,raw,echo=0 UNIX-CONNECT:"
+    private static let ncTemplate = "nc -U "
 
     init(instance: VMInstance) {
         self.instance = instance
-
-        let textView = SerialTextView()
-        textView.isEditable = false
-        textView.isSelectable = true
-        textView.isRichText = false
-        textView.isFieldEditor = false
-        textView.allowsUndo = false
-        textView.usesFindPanel = true
-        textView.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
-        textView.textColor = .init(white: 0.9, alpha: 1.0)
-        textView.backgroundColor = .init(white: 0.1, alpha: 1.0)
-        textView.insertionPointColor = .init(white: 0.9, alpha: 1.0)
-        textView.isAutomaticQuoteSubstitutionEnabled = false
-        textView.isAutomaticDashSubstitutionEnabled = false
-        textView.isAutomaticTextReplacementEnabled = false
-        textView.isAutomaticSpellingCorrectionEnabled = false
-        textView.isContinuousSpellCheckingEnabled = false
-        textView.isGrammarCheckingEnabled = false
-        textView.isVerticallyResizable = true
-        textView.isHorizontallyResizable = false
-        textView.textContainer?.widthTracksTextView = true
-        textView.textContainer?.containerSize = NSSize(
-            width: 0,
-            height: CGFloat.greatestFiniteMagnitude
-        )
-        self.textView = textView
-
-        let scrollView = NSScrollView()
-        scrollView.documentView = textView
-        scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = false
-        scrollView.autohidesScrollers = true
-        scrollView.drawsBackground = true
-        scrollView.backgroundColor = .init(white: 0.1, alpha: 1.0)
-        self.scrollView = scrollView
-
-        let circle = NSView()
-        circle.wantsLayer = true
-        circle.layer?.cornerRadius = 4
-        circle.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            circle.widthAnchor.constraint(equalToConstant: 8),
-            circle.heightAnchor.constraint(equalToConstant: 8),
-        ])
-        self.statusCircle = circle
-
-        let label = NSTextField(labelWithString: "")
-        label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        label.textColor = .secondaryLabelColor
-        self.statusLabel = label
-
-        let countLabel = NSTextField(labelWithString: "")
-        countLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        countLabel.textColor = .secondaryLabelColor
-        countLabel.alignment = .right
-        self.characterCountLabel = countLabel
-
         super.init(nibName: nil, bundle: nil)
-
-        textView.sendInput = { [weak self] string in
-            self?.instance.sendSerialInput(string)
-        }
     }
 
     required init?(coder: NSCoder) {
@@ -91,37 +44,104 @@ final class SerialConsoleContentViewController: NSViewController {
     override func loadView() {
         let container = NSView()
 
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(scrollView)
+        // Status row
+        statusCircle.wantsLayer = true
+        statusCircle.layer?.cornerRadius = 4
+        statusCircle.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            statusCircle.widthAnchor.constraint(equalToConstant: 8),
+            statusCircle.heightAnchor.constraint(equalToConstant: 8),
+        ])
+        statusLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        statusLabel.textColor = .secondaryLabelColor
+        let statusRow = NSStackView(views: [statusCircle, statusLabel])
+        statusRow.orientation = .horizontal
+        statusRow.spacing = Spacing.small
 
-        let divider = NSBox()
-        divider.boxType = .separator
-        divider.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(divider)
+        buildConnectedStack()
+        buildDisabledStack()
 
-        let statusBar = makeStatusBar()
-        statusBar.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(statusBar)
+        let root = NSStackView(views: [statusRow, connectedStack, disabledStack])
+        root.orientation = .vertical
+        root.alignment = .leading
+        root.spacing = Spacing.large
+        root.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(root)
 
         NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: container.topAnchor),
-            scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-
-            divider.topAnchor.constraint(equalTo: scrollView.bottomAnchor),
-            divider.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            divider.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-
-            statusBar.topAnchor.constraint(equalTo: divider.bottomAnchor),
-            statusBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            statusBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            statusBar.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            root.topAnchor.constraint(equalTo: container.topAnchor, constant: Spacing.major),
+            root.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: Spacing.major),
+            root.trailingAnchor.constraint(
+                lessThanOrEqualTo: container.trailingAnchor, constant: -Spacing.major),
+            root.bottomAnchor.constraint(
+                lessThanOrEqualTo: container.bottomAnchor, constant: -Spacing.major),
         ])
 
-        scrollView.setContentHuggingPriority(.defaultLow, for: .vertical)
-        scrollView.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
-
         self.view = container
+    }
+
+    private func buildConnectedStack() {
+        let intro = NSTextField(
+            wrappingLabelWithString:
+                "Attach an external terminal to this VM's serial port via its UNIX socket:")
+        intro.font = .systemFont(ofSize: NSFont.systemFontSize)
+        intro.preferredMaxLayoutWidth = 560
+
+        pathField.isSelectable = true
+        pathField.font = .monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+        pathField.textColor = .labelColor
+        pathField.lineBreakMode = .byTruncatingMiddle
+
+        let socatButton = NSButton(
+            title: "Copy socat command", target: self, action: #selector(copySocatCommand))
+        socatButton.bezelStyle = .rounded
+        let ncButton = NSButton(
+            title: "Copy nc command", target: self, action: #selector(copyNcCommand))
+        ncButton.bezelStyle = .rounded
+        let buttonRow = NSStackView(views: [socatButton, ncButton])
+        buttonRow.orientation = .horizontal
+        buttonRow.spacing = Spacing.standard
+
+        hintLabel.maximumNumberOfLines = 0
+        hintLabel.lineBreakMode = .byWordWrapping
+        hintLabel.preferredMaxLayoutWidth = 560
+        hintLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        hintLabel.textColor = .secondaryLabelColor
+        hintLabel.stringValue =
+            "socat gives the best experience for full-screen apps (install via Homebrew: brew install socat). "
+            + "nc -U is built in but runs in line mode."
+
+        connectedStack.orientation = .vertical
+        connectedStack.alignment = .leading
+        connectedStack.spacing = Spacing.standard
+        for subview in [intro, pathField, buttonRow, hintLabel] as [NSView] {
+            connectedStack.addArrangedSubview(subview)
+        }
+    }
+
+    private func buildDisabledStack() {
+        let label = NSTextField(wrappingLabelWithString: "The serial socket is off for this VM.")
+        label.font = .systemFont(ofSize: NSFont.systemFontSize)
+
+        enableButton.title = "Enable Serial Socket"
+        enableButton.bezelStyle = .rounded
+        enableButton.target = self
+        enableButton.action = #selector(enableRelay)
+
+        let note = NSTextField(
+            wrappingLabelWithString:
+                "Turn it on here or in Settings to expose the serial port to an external terminal. "
+                + "Output is captured to serial.log either way.")
+        note.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        note.textColor = .secondaryLabelColor
+        note.preferredMaxLayoutWidth = 560
+
+        disabledStack.orientation = .vertical
+        disabledStack.alignment = .leading
+        disabledStack.spacing = Spacing.standard
+        disabledStack.addArrangedSubview(label)
+        disabledStack.addArrangedSubview(enableButton)
+        disabledStack.addArrangedSubview(note)
     }
 
     override func viewDidLoad() {
@@ -133,11 +153,12 @@ final class SerialConsoleContentViewController: NSViewController {
     // MARK: - Observation
 
     private func observeInstanceChanges() {
-        instanceObservation = observeRecurring(
+        observation = observeRecurring(
             track: { [weak self] in
                 guard let self else { return }
-                _ = self.instance.serialOutputText
+                _ = self.instance.serialSocketPath
                 _ = self.instance.status
+                _ = self.instance.configuration.serialSocketRelayEnabled
             },
             apply: { [weak self] in
                 self?.updateUI()
@@ -146,80 +167,50 @@ final class SerialConsoleContentViewController: NSViewController {
     }
 
     private func updateUI() {
-        let isConnected = instance.status == .running || instance.status == .paused
-
-        // Sync serial output with scroll-position preservation
-        let currentText = textView.string
-        let newText = instance.serialOutputText
-        if currentText != newText {
-            let clipView = scrollView.contentView
-            let contentHeight = textView.frame.height
-            let scrollOffset = clipView.bounds.origin.y + clipView.bounds.height
-            let isAtBottom = scrollOffset >= contentHeight - 10
-
-            textView.string = newText
-
-            if isAtBottom {
-                textView.scrollToEndOfDocument(nil)
-            }
-        }
-
-        // Update status bar
+        let isActive = instance.status == .running || instance.status == .paused
         statusCircle.layer?.backgroundColor =
-            isConnected
-            ? NSColor.systemGreen.cgColor
-            : NSColor.secondaryLabelColor.cgColor
-        statusLabel.stringValue = isConnected ? "Connected" : "Disconnected"
-        characterCountLabel.stringValue = "\(newText.count) characters"
-    }
+            isActive ? NSColor.systemGreen.cgColor : NSColor.secondaryLabelColor.cgColor
 
-    // MARK: - View Construction
-
-    private func makeStatusBar() -> NSView {
-        let leftStack = NSStackView(views: [statusCircle, statusLabel])
-        leftStack.orientation = .horizontal
-        leftStack.spacing = Spacing.small
-
-        let stack = NSStackView(views: [leftStack, characterCountLabel])
-        stack.orientation = .horizontal
-        stack.distribution = .fill
-        stack.edgeInsets = NSEdgeInsets(top: 5, left: 10, bottom: 5, right: 10)
-
-        return stack
-    }
-}
-
-// MARK: - SerialTextView
-
-/// Custom `NSTextView` that intercepts keyboard input and forwards it
-/// to the guest VM's serial input pipe instead of editing the text buffer.
-final class SerialTextView: NSTextView {
-    /// Closure called with raw input characters to send to the guest VM.
-    var sendInput: ((String) -> Void)?
-
-    override func keyDown(with event: NSEvent) {
-        if let characters = event.characters, !characters.isEmpty {
-            sendInput?(characters)
-            return
+        if let path = instance.serialSocketPath {
+            statusLabel.stringValue = "Serial socket ready"
+            pathField.stringValue = path
+            pathField.toolTip = path
+            connectedStack.isHidden = false
+            disabledStack.isHidden = true
+        } else {
+            statusLabel.stringValue = isActive ? "Serial socket off" : "Not running"
+            connectedStack.isHidden = true
+            disabledStack.isHidden = false
+            enableButton.isEnabled = isActive
         }
-        super.keyDown(with: event)
     }
 
-    override func insertNewline(_ sender: Any?) {
-        sendInput?("\r")
+    // MARK: - Actions
+
+    @objc private func copySocatCommand() {
+        copyToPasteboard(Self.socatTemplate + quoted(instance.serialSocketPath))
     }
 
-    override func deleteBackward(_ sender: Any?) {
-        sendInput?("\u{7f}")
+    @objc private func copyNcCommand() {
+        copyToPasteboard(Self.ncTemplate + quoted(instance.serialSocketPath))
     }
 
-    override func insertTab(_ sender: Any?) {
-        sendInput?("\t")
+    @objc private func enableRelay() {
+        instance.performConfigurationMutation { $0.serialSocketRelayEnabled = true }
     }
 
-    override var acceptsFirstResponder: Bool { true }
+    /// Shell-single-quotes the path so it pastes correctly even if it contains
+    /// spaces.
+    ///
+    /// Returns an empty string when no socket is bound.
+    private func quoted(_ path: String?) -> String {
+        guard let path else { return "" }
+        return "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
 
-    override func becomeFirstResponder() -> Bool {
-        super.becomeFirstResponder()
+    private func copyToPasteboard(_ string: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(string, forType: .string)
     }
 }

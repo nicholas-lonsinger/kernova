@@ -113,6 +113,9 @@ final class VMSettingsViewController: NSViewController {
     private var clipboardSwitch = NSSwitch()
     private var clipboardCaption = NSView()
 
+    // Serial Console
+    private var serialRelaySwitch = NSSwitch()
+
     // MARK: - Rendered-list snapshots (early-out keys)
 
     /// Value snapshot of one attachment row's rendered appearance, used to
@@ -350,6 +353,7 @@ extension VMSettingsViewController {
             addSection(buildGuestAgentSection())
         }
         addSection(buildClipboardSection())
+        addSection(buildSerialRelaySection())
     }
 
     private func addSection(_ section: NSView) {
@@ -689,6 +693,19 @@ extension VMSettingsViewController {
             clipboardCaption,
         ])
     }
+
+    // MARK: Serial Console
+
+    private func buildSerialRelaySection() -> NSView {
+        serialRelaySwitch = makeSwitch(action: #selector(serialRelayToggled))
+        let body: InfoPopoverParagraph = .body(
+            "Exposes the running VM's serial port over a local UNIX socket so an external terminal can attach. Connect with `socat -,raw,echo=0 UNIX-CONNECT:<path>` (best for full-screen apps; `brew install socat`) or `nc -U <path>` (built in). The socket path appears in the Serial Console window. Output is always captured to `serial.log` regardless of this setting."
+        )
+        return makeSection([
+            makeHeader("Serial Console", paragraphs: [body]),
+            makeGroupedFormCard(rows: [makeGroupedFormCardRow("Expose Serial Socket", control: serialRelaySwitch)]),
+        ])
+    }
 }
 
 // MARK: - Small control/layout factories
@@ -871,6 +888,7 @@ extension VMSettingsViewController {
         refreshAudio()
         refreshGuestAgent()
         refreshClipboard()
+        refreshSerialRelay()
         refreshStorageList()
         refreshRemovableList()
         refreshSharedList()
@@ -951,6 +969,10 @@ extension VMSettingsViewController {
     private func refreshClipboard() {
         clipboardSwitch.state = instance.configuration.clipboardSharingEnabled ? .on : .off
         clipboardCaption.isHidden = !(isReadOnly && instance.configuration.guestOS == .linux)
+    }
+
+    private func refreshSerialRelay() {
+        serialRelaySwitch.state = instance.configuration.serialSocketRelayEnabled ? .on : .off
     }
 
     private func refreshStorageList() {
@@ -1115,6 +1137,10 @@ extension VMSettingsViewController {
 
     @objc private func installReminderToggled() {
         writeConfig { $0.agentInstallNudgeDismissed = installReminderSwitch.state != .on }
+    }
+
+    @objc private func serialRelayToggled() {
+        writeConfig { $0.serialSocketRelayEnabled = serialRelaySwitch.state == .on }
     }
 
     @objc private func clipboardToggled() {

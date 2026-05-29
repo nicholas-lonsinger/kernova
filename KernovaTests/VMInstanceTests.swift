@@ -290,22 +290,10 @@ struct VMInstanceTests {
 
     // MARK: - Serial Console
 
-    @Test("serialOutputText starts empty")
-    func serialOutputTextStartsEmpty() {
+    @Test("serialSocketPath is nil before a session starts")
+    func serialSocketPathStartsNil() {
         let instance = makeInstance()
-        #expect(instance.serialOutputText.isEmpty)
-    }
-
-    @Test("sendSerialInput writes to input pipe")
-    func sendSerialInputWritesToPipe() {
-        let instance = makeInstance()
-        let pipe = Pipe()
-        instance.serialInputPipe = pipe
-
-        instance.sendSerialInput("hello")
-
-        let data = pipe.fileHandleForReading.availableData
-        #expect(String(data: data, encoding: .utf8) == "hello")
+        #expect(instance.serialSocketPath == nil)
     }
 
     @Test("resetToStopped clears serial pipes")
@@ -572,9 +560,10 @@ struct VMInstanceTests {
     @Test("VMConfiguration.hotToggleFields covers all runtime-editable booleans")
     func hotToggleFieldsCovered() {
         let fields = VMConfiguration.hotToggleFields
-        #expect(fields.count == 3)
+        #expect(fields.count == 4)
         #expect(fields.contains(\.agentLogForwardingEnabled))
         #expect(fields.contains(\.clipboardSharingEnabled))
+        #expect(fields.contains(\.serialSocketRelayEnabled))
         #expect(fields.contains(\.agentInstallNudgeDismissed))
     }
 
