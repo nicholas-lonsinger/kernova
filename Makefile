@@ -1,7 +1,7 @@
 # Kernova build & test invocations.
 #
 # These targets wrap the canonical `xcodebuild` calls documented in
-# .claude/CLAUDE.md. Inside Xcode, just use the IDE (CMD-B / CMD-U); this
+# CLAUDE.md. Inside Xcode, just use the IDE (CMD-B / CMD-U); this
 # Makefile is for terminal, CI, and tooling use.
 
 PROJECT      := Kernova.xcodeproj
