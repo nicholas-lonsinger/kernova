@@ -73,6 +73,13 @@ final class SidebarViewController: NSViewController {
         outlineView.delegate = self
         outlineView.target = self
         outlineView.doubleAction = #selector(rowDoubleClicked(_:))
+        outlineView.beginRenameForRow = { [weak self] row in
+            guard let self,
+                let instance = self.outlineView.item(atRow: row) as? VMInstance,
+                instance.status.canRename
+            else { return }
+            self.viewModel.renameVMInSidebar(instance)
+        }
         outlineView.registerForDraggedTypes([
             Self.rowPasteboardType,
             .fileURL,
@@ -728,12 +735,77 @@ extension SidebarViewController {
 // MARK: - Outline view subclass
 
 /// `NSOutlineView` subclass that routes right-clicks to a controller-supplied
-/// menu builder, resolving the clicked row itself.
+/// menu builder, and begins a rename on a Finder-style slow second click of an
+/// already-selected row's name.
 final class SidebarOutlineView: NSOutlineView {
     var contextMenuForRow: ((Int) -> NSMenu?)?
+    /// Called with the row to rename on a slow second click of a selected row.
+    ///
+    /// Fired when the user clicks the name of an already-selected row and no
+    /// double-click follows; the controller resolves the row and starts the
+    /// inline edit.
+    var beginRenameForRow: ((Int) -> Void)?
+
+    private var pendingRenameRow = -1
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let point = convert(event.locationInWindow, from: nil)
         return contextMenuForRow?(row(at: point))
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let startPoint = convert(event.locationInWindow, from: nil)
+        let clickedRow = row(at: startPoint)
+
+        // A double-click is the Start/Resume action: drop any pending rename and
+        // let the base class route the event to `doubleAction`.
+        if event.clickCount >= 2 {
+            cancelPendingRename()
+            super.mouseDown(with: event)
+            return
+        }
+
+        // Capture selection *before* the click changes it: renaming requires the
+        // row to have already been selected (the second click of click-to-select
+        // then click-to-rename).
+        let wasSelected = clickedRow >= 0 && selectedRow == clickedRow
+        let overName = isClick(startPoint, overNameOfRow: clickedRow)
+
+        super.mouseDown(with: event)  // selection + drag tracking, returns on mouse-up
+
+        // Skip if the gesture became a drag (row reorder) rather than a click.
+        let endPoint =
+            window.map { convert($0.mouseLocationOutsideOfEventStream, from: nil) } ?? startPoint
+        let moved = hypot(endPoint.x - startPoint.x, endPoint.y - startPoint.y) > 4
+
+        guard wasSelected, overName, !moved, clickedRow >= 0, selectedRow == clickedRow else {
+            return
+        }
+        // Defer past the double-click window so a follow-up double-click (Start)
+        // cancels the rename instead of racing it.
+        pendingRenameRow = clickedRow
+        perform(
+            #selector(firePendingRename), with: nil, afterDelay: NSEvent.doubleClickInterval)
+    }
+
+    private func isClick(_ point: NSPoint, overNameOfRow row: Int) -> Bool {
+        guard row >= 0,
+            let cell = view(atColumn: 0, row: row, makeIfNecessary: false)
+                as? SidebarVMRowCellView
+        else { return false }
+        return cell.isPointOverName(cell.convert(point, from: self))
+    }
+
+    @objc private func firePendingRename() {
+        let row = pendingRenameRow
+        pendingRenameRow = -1
+        guard row >= 0 else { return }
+        beginRenameForRow?(row)
+    }
+
+    private func cancelPendingRename() {
+        NSObject.cancelPreviousPerformRequests(
+            withTarget: self as Any, selector: #selector(firePendingRename), object: nil)
+        pendingRenameRow = -1
     }
 }

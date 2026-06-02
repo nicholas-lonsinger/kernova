@@ -22,9 +22,9 @@ private final class RenameTitleField: NSTextField {
 /// affordances the plain `makeListRow` rows don't have — inline rename of the
 /// title and a per-row right-click context menu.
 ///
-/// Double-clicking the title (when the row's controls are enabled) flips it
-/// into an editable field; Return / focus-loss commits, Escape cancels. The
-/// rename mechanics mirror ``SidebarVMRowCellView``. The context menu is
+/// Clicking the title (when the row's controls are enabled) flips it into an
+/// editable field; Return / focus-loss commits, Escape cancels. The rename
+/// mechanics mirror ``SidebarVMRowCellView``. The context menu is
 /// supplied lazily by the controller via ``contextMenu`` so it reflects current
 /// state (the Read Only checkmark, missing-file disabling) at click time.
 ///
@@ -43,10 +43,10 @@ final class StorageDiskRowView: NSView, NSTextFieldDelegate {
     private let controlsEnabled: Bool
     private let originalTitle: String
     private let titleField = RenameTitleField()
-    /// Title-field width constraints toggled by ``beginRename()`` /
-    /// ``endRenameAppearance()``: the title fills the column in its display
-    /// state and hugs its text (growing as you type) while renaming.
-    private var titleFillWidth: NSLayoutConstraint?
+    /// A `<=` cap on the title's width, activated only while renaming.
+    ///
+    /// So the box hugs the text (growing as you type) yet never demands width and
+    /// stretches the window. The title otherwise fills the column.
     private var titleEditWidth: NSLayoutConstraint?
 
     private var isRenaming = false
@@ -68,10 +68,10 @@ final class StorageDiskRowView: NSView, NSTextFieldDelegate {
     /// Supplies the right-click menu, built lazily by the controller.
     var contextMenu: (() -> NSMenu?)?
 
-    private lazy var doubleClickRecognizer: NSClickGestureRecognizer = {
+    private lazy var clickRecognizer: NSClickGestureRecognizer = {
         let recognizer = NSClickGestureRecognizer(
-            target: self, action: #selector(titleDoubleClicked))
-        recognizer.numberOfClicksRequired = 2
+            target: self, action: #selector(titleClicked))
+        recognizer.numberOfClicksRequired = 1
         return recognizer
     }()
 
@@ -127,31 +127,43 @@ final class StorageDiskRowView: NSView, NSTextFieldDelegate {
         titleField.setContentHuggingPriority(.defaultLow, for: .horizontal)
         titleField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         titleField.contextMenuProvider = { [weak self] in self?.contextMenu?() }
-        titleField.addGestureRecognizer(doubleClickRecognizer)
-        doubleClickRecognizer.isEnabled = controlsEnabled
+        titleField.addGestureRecognizer(clickRecognizer)
+        clickRecognizer.isEnabled = controlsEnabled
 
-        let textStack = NSStackView(views: [titleField, subtitle])
+        // The title sits in a horizontal `.fill` line with a trailing spacer:
+        // the field fills the column (it has the lowest hugging), and while
+        // renaming `titleEditWidth` *caps* its width so the box hugs the name
+        // while the spacer soaks up the slack and keeps it left-aligned. The fill
+        // comes from the spacer, not an `==` on the field, and the cap is a `<=`
+        // bound — so a long name fills and scrolls, and the box never demands
+        // width that would stretch the detail pane (and the limitless window).
+        let titleSpacer = NSView()
+        titleSpacer.translatesAutoresizingMaskIntoConstraints = false
+        titleSpacer.setContentHuggingPriority(.defaultLow + 1, for: .horizontal)
+        titleSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        let titleLine = NSStackView(views: [titleField, titleSpacer])
+        titleLine.orientation = .horizontal
+        titleLine.distribution = .fill
+        titleLine.spacing = 0
+
+        let titleEdit = titleField.widthAnchor.constraint(lessThanOrEqualToConstant: 0)
+        titleEdit.priority = .defaultHigh
+        titleEditWidth = titleEdit
+
+        let textStack = NSStackView(views: [titleLine, subtitle])
         textStack.orientation = .vertical
         textStack.alignment = .leading
         textStack.spacing = Spacing.hairline
         textStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
         textStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        // The vertical stack's `.leading` alignment pins only the leading edge.
-        // `titleFillWidth` makes the title fill the column in its display state;
-        // `titleEditWidth` (active only while renaming) sizes it to its text. A
-        // required `<=` clamp caps both so the box can't exceed the column — a
-        // longer-than-column name scrolls inside it. The subtitle always fills
-        // and middle-truncates.
-        let titleFill = titleField.trailingAnchor.constraint(equalTo: textStack.trailingAnchor)
-        titleFill.priority = .defaultHigh
-        let titleEdit = titleField.widthAnchor.constraint(equalToConstant: 0)
-        titleEdit.priority = .defaultHigh
-        titleFillWidth = titleFill
-        titleEditWidth = titleEdit
+        // Both rows fill the column width: the title line so it can hold its
+        // spacer, the subtitle so it middle-truncates.
         NSLayoutConstraint.activate([
-            titleField.trailingAnchor.constraint(lessThanOrEqualTo: textStack.trailingAnchor),
-            titleFill,
+            titleLine.leadingAnchor.constraint(equalTo: textStack.leadingAnchor),
+            titleLine.trailingAnchor.constraint(equalTo: textStack.trailingAnchor),
+            subtitle.leadingAnchor.constraint(equalTo: textStack.leadingAnchor),
             subtitle.trailingAnchor.constraint(equalTo: textStack.trailingAnchor),
         ])
 
@@ -189,21 +201,19 @@ final class StorageDiskRowView: NSView, NSTextFieldDelegate {
 
     /// Begins inline editing of the title.
     ///
-    /// Invoked by a title double-click and by the controller's "Rename" menu
-    /// item.
+    /// Invoked by a title click and by the controller's "Rename" menu item.
     func beginRename() {
         guard controlsEnabled, !isRenaming, let window else { return }
         isRenaming = true
         onRenameBegan?(diskID)
-        doubleClickRecognizer.isEnabled = false
+        clickRecognizer.isEnabled = false
         titleField.isEditable = true
         titleField.isSelectable = true
         titleField.isBordered = true
         titleField.bezelStyle = .roundedBezel
         titleField.drawsBackground = true
-        // Swap the column-filling width for a content-hugging box sized to the
-        // current name.
-        titleFillWidth?.isActive = false
+        // Cap the (still column-filling) title at the current name's width so the
+        // box hugs it; re-capped as the user types.
         updateRenameBoxWidth(for: titleField.stringValue)
         titleEditWidth?.isActive = true
         window.makeFirstResponder(titleField)
@@ -212,8 +222,8 @@ final class StorageDiskRowView: NSView, NSTextFieldDelegate {
     }
 
     /// Installs a local mouse-down monitor that commits the rename when the user
-    /// clicks anywhere outside the title field — AppKit doesn't end field
-    /// editing on clicks that land on non-focusable empty space.
+    /// clicks anywhere outside the title field — AppKit doesn't end field editing
+    /// on clicks that land on non-focusable empty space.
     private func installOutsideClickMonitor() {
         removeOutsideClickMonitor()
         outsideClickMonitor = NSEvent.addLocalMonitorForEvents(
@@ -227,6 +237,23 @@ final class StorageDiskRowView: NSView, NSTextFieldDelegate {
             }
             return event
         }
+    }
+
+    /// Cancels the in-progress rename (Escape), tearing down the field editor and
+    /// restoring the original label.
+    ///
+    /// Resigning is what actually ends the edit — setting `isEditable = false`
+    /// alone leaves the field editor active and the box stuck in its editing
+    /// state. The live buffer is reverted first so the resign doesn't carry the
+    /// typed text into the field's value.
+    private func cancelRename() {
+        guard isRenaming else { return }
+        isCancellingRename = true
+        titleField.currentEditor()?.string = originalTitle
+        window?.makeFirstResponder(nil)
+        endRenameAppearance()
+        isCancellingRename = false
+        onRenameCancelled?(diskID)
     }
 
     private func removeOutsideClickMonitor() {
@@ -256,14 +283,13 @@ final class StorageDiskRowView: NSView, NSTextFieldDelegate {
         titleField.isSelectable = false
         titleField.isBordered = false
         titleField.drawsBackground = false
-        // Back to filling the column for the display label.
+        // Drop the text-width cap; the title goes back to filling the column.
         titleEditWidth?.isActive = false
-        titleFillWidth?.isActive = true
         titleField.stringValue = originalTitle
-        doubleClickRecognizer.isEnabled = controlsEnabled
+        clickRecognizer.isEnabled = controlsEnabled
     }
 
-    @objc private func titleDoubleClicked() {
+    @objc private func titleClicked() {
         beginRename()
     }
 
@@ -284,57 +310,19 @@ final class StorageDiskRowView: NSView, NSTextFieldDelegate {
         _ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector
     ) -> Bool {
         guard commandSelector == #selector(NSResponder.cancelOperation(_:)) else { return false }
-        isCancellingRename = true
-        endRenameAppearance()
-        isCancellingRename = false
-        onRenameCancelled?(diskID)
+        cancelRename()
         return true
     }
 
     // MARK: - Rename box sizing
 
-    /// Extra width added beyond the measured rename-box width.
-    ///
-    /// Kept at zero: ``titleMeasuringField`` already measures the rounded-bezel
-    /// chrome, whose own right-hand inset (~4 pt) houses the caret, so the box
-    /// hugs the text as tightly as Finder's. Grow-as-you-type keeps it sized to
-    /// the live text, so the caret never needs surplus room. Nudge up a couple
-    /// points only if a caret ever clips.
-    private static let renameBoxHorizontalPadding: CGFloat = 0
-    /// Floor so a very short or momentarily empty name still has a usable box.
-    private static let renameBoxMinWidth: CGFloat = 48
-
-    /// Sizes the rename box to fit `text` (plus a little breathing room), floored
-    /// at a small minimum.
+    /// Sizes the rename box to fit `text`.
     ///
     /// The required `<=` column clamp from ``buildLayout()`` caps the result, so
     /// an over-long name leaves the box at the column width and scrolls inside it
-    /// rather than the box overflowing the row.
+    /// rather than the box overflowing the row. Sizing is shared with the other
+    /// inline-rename surfaces via ``InlineRenameSizing``.
     private func updateRenameBoxWidth(for text: String) {
-        let measured = Self.measuredTitleWidth(for: text)
-        titleEditWidth?.constant = max(
-            measured + Self.renameBoxHorizontalPadding, Self.renameBoxMinWidth)
-    }
-
-    /// Field reused to measure a title's width for the rename box.
-    ///
-    /// Configured with the *same* rounded-bezel chrome the live editing field
-    /// uses, so `fittingSize` already includes that bezel's insets — the box
-    /// then hugs the text instead of leaving the slack a borderless measurement
-    /// (whose insets are smaller) would.
-    private static let titleMeasuringField: NSTextField = {
-        let field = NSTextField()
-        field.isBordered = true
-        field.bezelStyle = .roundedBezel
-        field.isEditable = false
-        field.maximumNumberOfLines = 1
-        field.cell?.usesSingleLineMode = true
-        return field
-    }()
-
-    private static func measuredTitleWidth(for text: String) -> CGFloat {
-        titleMeasuringField.font = Typography.body
-        titleMeasuringField.stringValue = text
-        return ceil(titleMeasuringField.fittingSize.width)
+        titleEditWidth?.constant = InlineRenameSizing.boxWidth(for: text, font: Typography.body)
     }
 }

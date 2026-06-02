@@ -47,6 +47,17 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
     private let nameField = NSTextField()
     private let agentButton = SidebarAgentStatusButtonView()
     private let spinner = NSProgressIndicator()
+    /// A flexible filler trailing the name so the name field can hug its text
+    /// while renaming (the filler soaks up the spare width); inert in the
+    /// display state, where the name field fills the row instead.
+    private let nameSpacer = NSView()
+    /// Caps the name field at its text width while renaming so the box hugs it.
+    ///
+    /// The field otherwise fills the row, so a short name gets a snug box. A
+    /// `<=` bound, *not* `==`, so a long name in a narrow sidebar fills the
+    /// available width and scrolls rather than the box demanding room and
+    /// stretching the window.
+    private var nameEditMaxWidth: NSLayoutConstraint?
 
     // MARK: - Init
 
@@ -77,8 +88,17 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
         nameField.maximumNumberOfLines = 1
         nameField.cell?.usesSingleLineMode = true
         nameField.delegate = self
+        nameField.cell?.isScrollable = true
         nameField.setContentHuggingPriority(.defaultLow, for: .horizontal)
         nameField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        // The filler hugs slightly more eagerly than the name field, so in the
+        // display state the name field claims the spare width (the filler stays
+        // collapsed) and while renaming the fixed-width name box leaves the
+        // filler to absorb the slack instead of the box ballooning.
+        nameSpacer.translatesAutoresizingMaskIntoConstraints = false
+        nameSpacer.setContentHuggingPriority(.defaultLow + 1, for: .horizontal)
+        nameSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         spinner.translatesAutoresizingMaskIntoConstraints = false
         spinner.style = .spinning
@@ -98,13 +118,25 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
         // a time, so the stack collapses the hidden one and the visible view
         // owns that position. Both are pinned to the same width to keep the
         // name field from shifting when they swap.
-        let row = NSStackView(views: [iconView, spinner, nameField, agentButton])
+        let row = NSStackView(views: [iconView, spinner, nameField, nameSpacer, agentButton])
         row.orientation = .horizontal
         row.alignment = .centerY
         row.distribution = .fill
         row.spacing = Spacing.small
+        // No gap between the name and its filler, so the display row looks the
+        // same as before the filler existed (name directly abutting the spare
+        // space, the standard accessory gap before the agent badge).
+        row.setCustomSpacing(0, after: nameField)
         row.translatesAutoresizingMaskIntoConstraints = false
         addSubview(row)
+
+        // Caps the name box at its text width while renaming (see
+        // `setRenaming(_:)`); inactive here so the name fills the row in its
+        // display state. A `<=` bound rather than `==` so it never demands width
+        // and pushes the sidebar wider — a long name just fills and scrolls.
+        let editMax = nameField.widthAnchor.constraint(lessThanOrEqualToConstant: 0)
+        editMax.priority = .defaultHigh
+        nameEditMaxWidth = editMax
 
         // Auto-adjust the primary label for selection highlighting. The icon is
         // deliberately not wired to `imageView`; its state color is baked into a
@@ -237,6 +269,19 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
 
     // MARK: - Inline rename
 
+    /// `true` when `point` (in this cell's coordinate space) is over the
+    /// editable name.
+    ///
+    /// Lets the outline view start a slow-second-click rename only on a click
+    /// over the name itself, not the leading icon or the trailing agent badge.
+    func isPointOverName(_ point: NSPoint) -> Bool {
+        // `point` is in this cell's coordinate space; convert into the name
+        // field's own space — its `frame` is relative to the inset row stack,
+        // not the cell, so comparing them directly never matches.
+        guard !nameField.isHidden else { return false }
+        return nameField.bounds.contains(nameField.convert(point, from: self))
+    }
+
     /// Flips the name field between display and editable states.
     ///
     /// Driven by the controller when `activeRename` enters/leaves
@@ -253,6 +298,10 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
             nameField.bezelStyle = .roundedBezel
             nameField.drawsBackground = true
             if let instance { nameField.stringValue = instance.name }
+            // Cap the box at the text width so it hugs the name; the field
+            // otherwise fills the row. Re-capped as the user types.
+            updateRenameBoxWidth(for: nameField.stringValue)
+            nameEditMaxWidth?.isActive = true
             window?.makeFirstResponder(nameField)
             nameField.currentEditor()?.selectAll(nil)
         } else {
@@ -260,8 +309,26 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
             nameField.isSelectable = false
             nameField.isBordered = false
             nameField.drawsBackground = false
+            // Back to filling the row for the display label.
+            nameEditMaxWidth?.isActive = false
             if let instance { nameField.stringValue = instance.name }
         }
+    }
+
+    /// Caps the rename box at the width of `text` so it hugs the name.
+    ///
+    /// Shared sizing via ``InlineRenameSizing``. Because the cap is a `<=` bound
+    /// and the field fills the row, a name wider than the sidebar isn't forced to
+    /// fit — the box fills the available width and the text scrolls, so the box
+    /// never demands room and stretches the window.
+    private func updateRenameBoxWidth(for text: String) {
+        nameEditMaxWidth?.constant = InlineRenameSizing.boxWidth(for: text, font: Typography.body)
+    }
+
+    func controlTextDidChange(_ obj: Notification) {
+        // Grow/shrink the box with the live text so it stays snug while typing.
+        let live = nameField.currentEditor()?.string ?? nameField.stringValue
+        updateRenameBoxWidth(for: live)
     }
 
     func controlTextDidEndEditing(_ obj: Notification) {
@@ -276,6 +343,11 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
     ) -> Bool {
         guard commandSelector == #selector(NSResponder.cancelOperation(_:)) else { return false }
         isCancellingRename = true
+        // Revert the live buffer and resign so the field editor actually tears
+        // down — setting `isEditable = false` in `setRenaming(false)` alone
+        // leaves it active, so the box would stay in its editing state.
+        if let instance { nameField.currentEditor()?.string = instance.name }
+        window?.makeFirstResponder(nil)
         setRenaming(false)
         isCancellingRename = false
         onCancelRename?()

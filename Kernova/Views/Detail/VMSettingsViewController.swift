@@ -79,6 +79,20 @@ final class VMSettingsViewController: NSViewController {
     private var nameDisplayRow = NSView()
     private var nameEditRow = NSView()
     private var nameRowIsEditing = false
+    /// Caps the name edit box at its text width so it hugs the name and grows as
+    /// you type (right-aligned, the leading spacer absorbs the slack).
+    ///
+    /// A `<=` bound, not `==`, so a name wider than the form fills the available
+    /// width and scrolls instead of the box stretching the window. Matches the
+    /// storage-disk and sidebar rename boxes.
+    private var nameEditMaxWidth: NSLayoutConstraint?
+    /// Active only while renaming: ends the edit on a click outside the name field.
+    ///
+    /// Resigns the field editor (committing the current text) — AppKit doesn't end
+    /// field editing when a click lands on the settings card's non-focusable space,
+    /// so without this the box would linger. Mirrors the storage-disk row's
+    /// outside-click monitor.
+    private var nameOutsideClickMonitor: Any?
 
     // Resources
     private var cpuField = NSTextField()
@@ -251,6 +265,7 @@ final class VMSettingsViewController: NSViewController {
     override func viewWillDisappear() {
         super.viewWillDisappear()
         hasDisappeared = true
+        removeNameOutsideClickMonitor()
         modelObservation?.cancel()
         modelObservation = nil
         NotificationCenter.default.removeObserver(
@@ -453,13 +468,39 @@ extension VMSettingsViewController {
         nameButton.isBordered = false
         nameButton.alignment = .right
         nameButton.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        // Right-click "Rename" too, matching the storage rows and sidebar (the
+        // item is gated by `validateMenuItem` when the VM can't be renamed).
+        let renameMenu = NSMenu()
+        let renameItem = NSMenuItem(title: "Rename", action: #selector(startRename), keyEquivalent: "")
+        renameItem.target = self
+        renameMenu.addItem(renameItem)
+        nameButton.menu = renameMenu
         nameDisplayRow = makeGroupedFormCardRow("Name", control: nameButton)
 
         nameField.placeholderString = "Name"
         nameField.alignment = .right
         nameField.delegate = self
-        nameEditRow = makeGroupedFormCardRow("Name", control: nameField, fillsControl: true)
+        nameField.cell?.isScrollable = true
+        // The field fills the row (the leading spacer absorbs the slack) and
+        // `nameEditMaxWidth` caps it at the text width, so the box hugs the name
+        // and grows as you type. The cap is a `<=` bound, *not* `==`: it never
+        // demands width, so a name wider than the form fills the available width
+        // and scrolls instead of the box stretching the form (and the window)
+        // wider. Hug is one step below the spacer's so the field claims the slack
+        // first; compression is low so it yields (scrolls) rather than pushes.
+        nameField.setContentHuggingPriority(.defaultLow - 1, for: .horizontal)
+        nameField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        nameEditRow = makeGroupedFormCardRow("Name", control: nameField)
+        // `.fill` (vs the default gravity-areas) actually stretches the field to
+        // fill the row, so it claims the slack and the `<=` cap below binds —
+        // otherwise the scrollable field sits at its sliver-sized intrinsic.
+        (nameEditRow as? NSStackView)?.distribution = .fill
         nameEditRow.isHidden = true
+
+        let nameMaxWidth = nameField.widthAnchor.constraint(lessThanOrEqualToConstant: 0)
+        nameMaxWidth.priority = .defaultHigh
+        nameMaxWidth.isActive = true
+        nameEditMaxWidth = nameMaxWidth
 
         let nameRow = NSStackView(views: [nameDisplayRow, nameEditRow])
         nameRow.orientation = .vertical
@@ -939,8 +980,40 @@ extension VMSettingsViewController {
             nameEditRow.isHidden = !renaming
             if renaming {
                 nameField.stringValue = instance.name
+                nameEditMaxWidth?.constant = InlineRenameSizing.boxWidth(
+                    for: instance.name, font: Typography.body)
                 view.window?.makeFirstResponder(nameField)
+                installNameOutsideClickMonitor()
+            } else {
+                removeNameOutsideClickMonitor()
             }
+        }
+    }
+
+    /// Installs a local mouse-down monitor that ends the rename on an outside click.
+    ///
+    /// Resigns the field editor so `controlTextDidEndEditing` commits when the user
+    /// clicks anywhere outside the name field — AppKit doesn't end field editing on
+    /// clicks that land on non-focusable space in the settings card. Mirrors the
+    /// storage-disk row's outside-click monitor.
+    private func installNameOutsideClickMonitor() {
+        removeNameOutsideClickMonitor()
+        nameOutsideClickMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown]
+        ) { [weak self] event in
+            guard let self, self.isRenaming else { return event }
+            let pointInField = self.nameField.convert(event.locationInWindow, from: nil)
+            if !self.nameField.bounds.contains(pointInField) {
+                self.view.window?.makeFirstResponder(nil)
+            }
+            return event
+        }
+    }
+
+    private func removeNameOutsideClickMonitor() {
+        if let monitor = nameOutsideClickMonitor {
+            NSEvent.removeMonitor(monitor)
+            nameOutsideClickMonitor = nil
         }
     }
 
@@ -1207,7 +1280,17 @@ extension VMSettingsViewController {
 
 extension VMSettingsViewController {
     @objc private func startRename() {
+        guard instance.status.canRename else { return }
         viewModel.renameVM(instance)
+    }
+
+    /// Disables the name field's right-click "Rename" while the VM can't be
+    /// renamed (e.g. while running), mirroring the disabled name button.
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(startRename) {
+            return instance.status.canRename
+        }
+        return true
     }
 
     @objc private func cpuStepperChanged() {
@@ -1637,6 +1720,13 @@ extension VMSettingsViewController {
 // MARK: - NSTextFieldDelegate
 
 extension VMSettingsViewController: NSTextFieldDelegate {
+    func controlTextDidChange(_ obj: Notification) {
+        // Grow/shrink the name box with the live text so it stays snug.
+        guard (obj.object as? NSTextField) === nameField else { return }
+        let live = nameField.currentEditor()?.string ?? nameField.stringValue
+        nameEditMaxWidth?.constant = InlineRenameSizing.boxWidth(for: live, font: Typography.body)
+    }
+
     func controlTextDidEndEditing(_ obj: Notification) {
         guard let field = obj.object as? NSTextField else { return }
         switch field {
@@ -1660,7 +1750,10 @@ extension VMSettingsViewController: NSTextFieldDelegate {
             return true
         }
         if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+            // Clear the rename first (so the resign below can't commit), then end
+            // the field editor so it doesn't linger on the now-hidden field.
             viewModel.cancelRename()
+            view.window?.makeFirstResponder(nil)
             return true
         }
         return false
