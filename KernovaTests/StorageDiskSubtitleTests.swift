@@ -46,20 +46,22 @@ struct StorageDiskSubtitleTests {
         #expect(subtitle.contains("50"))
     }
 
-    @Test("In-bundle non-ASIF disk shows on-disk only")
-    func nonASIFDiskShowsOnDiskOnly() throws {
+    @Test("In-bundle non-ASIF disk shows on-disk and the logical size as allocated")
+    func nonASIFDiskShowsLogicalSizeAsAllocated() throws {
         let instance = try makeInstanceWithBundle()
         defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
         let disk = StorageDisk(
             path: "AdditionalDisks/raw.img", label: "Raw", isInternal: true, kind: .virtio)
+        // A raw image isn't a sparse container, so its apparent size *is* its
+        // capacity — the subtitle shows both figures, not on-disk only.
         try writeDiskFile(
             at: instance.bundleURL.appendingPathComponent(disk.path),
             totalBytes: 16384, capacitySectors: nil)
 
         let subtitle = diskSubtitle(for: disk, bundleLayout: instance.bundleLayout)
 
-        #expect(subtitle.hasSuffix("on disk"))
-        #expect(!subtitle.contains("allocated"))
+        #expect(subtitle.contains("on disk"))
+        #expect(subtitle.contains("allocated"))
     }
 
     @Test("In-bundle disk with no file shows the generic label")
@@ -72,13 +74,35 @@ struct StorageDiskSubtitleTests {
         #expect(diskSubtitle(for: disk, bundleLayout: instance.bundleLayout) == "In-bundle disk image")
     }
 
-    @Test("External disk shows its path")
-    func externalDiskShowsPath() throws {
+    @Test("External disk with an unreadable file falls back to its path")
+    func externalDiskFallsBackToPathWhenUnreadable() throws {
         let instance = try makeInstanceWithBundle()
         defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
+        // No file at this path, so neither figure is readable — the row degrades
+        // to the path rather than showing nothing.
         let disk = StorageDisk(path: "/tmp/data.asif", label: "Data", isInternal: false)
 
         #expect(diskSubtitle(for: disk, bundleLayout: instance.bundleLayout) == "/tmp/data.asif")
+    }
+
+    @Test("External raw disk shows on-disk and allocated read live from the file")
+    func externalRawDiskShowsOnDiskAndAllocated() throws {
+        let instance = try makeInstanceWithBundle()
+        defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
+        // A real external file (absolute path, raw — no ASIF header): its
+        // apparent size is the capacity, so the row shows both figures, exactly
+        // like an in-bundle disk.
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString).img")
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+        try writeDiskFile(at: fileURL, totalBytes: 16384, capacitySectors: nil)
+        let disk = StorageDisk(
+            path: fileURL.path(percentEncoded: false), label: "Data", isInternal: false)
+
+        let subtitle = diskSubtitle(for: disk, bundleLayout: instance.bundleLayout)
+
+        #expect(subtitle.contains("on disk"))
+        #expect(subtitle.contains("allocated"))
     }
 
     @Test("Main disk is measured exactly the same way as additional disks")

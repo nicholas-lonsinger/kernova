@@ -70,8 +70,51 @@ struct VMBundleLayout: Sendable {
         return UInt64(size)
     }
 
-    /// Virtual capacity (bytes) of an ASIF disk image, read from its header, or
-    /// `nil` when the file isn't a recognizable ASIF.
+    /// Virtual capacity (bytes) of a disk image, or `nil` when it can't be read.
+    ///
+    /// Sparse **ASIF** images record their capacity in the header — the apparent
+    /// file size tracks the *grown* footprint, not the capacity (a 100 GB disk
+    /// holding 27 GB has a ~27 GB apparent size) — so it's parsed out. Any other
+    /// format (a raw `.img`, an `.iso`, a `.dmg`) is *not* a sparse container, so
+    /// its apparent file size **is** its virtual capacity and is read directly.
+    /// Resolves bundle-relative `path`s against `bundleURL` and absolute paths
+    /// as-is, serving both in-bundle and external disks. `VMBundleLayout` is
+    /// `Sendable`, so callers can hop this onto a detached task.
+    func diskCapacityBytes(forRelativePath path: String, isInternal: Bool) -> UInt64? {
+        let url =
+            isInternal ? bundleURL.appendingPathComponent(path) : URL(fileURLWithPath: path)
+        switch asifCapacity(at: url) {
+        case .capacity(let bytes):
+            return bytes
+        case .malformedASIF:
+            // A recognizable-but-unparseable ASIF: do *not* guess from the
+            // apparent size (it tracks the grown footprint, not capacity) —
+            // report unknown so the row degrades to on-disk-only.
+            return nil
+        case .notASIF:
+            // Raw `.img` / `.iso` / `.dmg`: apparent size *is* the capacity.
+            guard let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize else {
+                return nil
+            }
+            return UInt64(size)
+        }
+    }
+
+    /// Outcome of inspecting a file's ASIF header for its virtual capacity.
+    private enum ASIFCapacity {
+        /// A valid ASIF whose header yielded a sane capacity.
+        case capacity(UInt64)
+        /// An ASIF (magic matched) whose capacity failed the sanity bounds —
+        /// likely a format change. Distinguished from ``notASIF`` so the caller
+        /// knows *not* to fall back to the apparent file size, which an ASIF's
+        /// sparse layout doesn't tie to capacity.
+        case malformedASIF
+        /// Not an ASIF (no `shdw` magic, or the file couldn't be opened) — the
+        /// caller may treat the apparent file size as the capacity.
+        case notASIF
+    }
+
+    /// Reads the virtual capacity recorded in an ASIF image's header.
     ///
     // RATIONALE: ASIF's on-disk layout is undocumented, but its `shdw`
     // container records the virtual size at byte offset 0x30 as a big-endian
@@ -80,21 +123,19 @@ struct VMBundleLayout: Sendable {
     // the result is bounds-checked and used *only* for the allocated-capacity
     // display, so a future format change degrades to on-disk-only rather than
     // misbehaving.
-    func asifCapacityBytes(forRelativePath path: String, isInternal: Bool) -> UInt64? {
-        let url =
-            isInternal ? bundleURL.appendingPathComponent(path) : URL(fileURLWithPath: path)
-        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+    private func asifCapacity(at url: URL) -> ASIFCapacity {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return .notASIF }
         defer { try? handle.close() }
         guard
             let header = try? handle.read(upToCount: 0x38), header.count >= 0x38,
             header.prefix(4) == Data("shdw".utf8)
         else {
-            return nil
+            return .notASIF
         }
         let sectors = header[0x30..<0x38].reduce(UInt64(0)) { ($0 << 8) | UInt64($1) }
         let bytes = sectors &* 512
         // Sanity bounds: 1 MB … 1 PB.
-        guard (1_000_000...1_000_000_000_000_000).contains(bytes) else { return nil }
-        return bytes
+        guard (1_000_000...1_000_000_000_000_000).contains(bytes) else { return .malformedASIF }
+        return .capacity(bytes)
     }
 }

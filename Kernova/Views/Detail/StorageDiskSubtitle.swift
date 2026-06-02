@@ -13,24 +13,27 @@ func diskIconSystemName(for disk: StorageDisk) -> String {
 
 /// Human-readable subtitle for a storage disk row.
 ///
-/// In-bundle disks show their real on-disk footprint and (when readable)
-/// virtual capacity, e.g. `"2.1 GB (on disk) / 100 GB (allocated)"`; external
-/// disks show their absolute file path. Both figures are read **live** from the
-/// file — a stat + 56-byte header read — so they reflect the disk's actual
-/// current state (including an external resize) rather than a stored snapshot.
-/// Every in-bundle disk, the main disk included, is measured exactly the same
-/// way.
+/// Every disk — in-bundle or external, ASIF or a raw `.img`/`.iso`/`.dmg` —
+/// shows its real on-disk footprint and (when readable) virtual capacity, e.g.
+/// `"2.1 GB (on disk) / 100 GB (allocated)"`. Both figures are read **live**
+/// from the file — a stat plus, for ASIF, a 56-byte header read — so they
+/// reflect the disk's actual current state (including an external resize)
+/// rather than a stored snapshot. When neither figure is readable (an ejected
+/// or vanished external volume), it falls back to the disk's identity: the
+/// in-bundle placeholder, or the external file's path.
 ///
 /// `nonisolated` and takes the `Sendable` `VMBundleLayout` (not the instance) so
 /// it can run on a detached task — the file reads happen off the main thread.
 /// Callers paint the result via ``populateDiskSubtitle(_:for:bundleLayout:isMissing:)``.
 nonisolated func diskSubtitle(for disk: StorageDisk, bundleLayout: VMBundleLayout) -> String {
-    guard disk.isInternal else { return disk.path }
-
-    let onDiskText = bundleLayout.diskOnDiskBytes(forRelativePath: disk.path, isInternal: true)
-        .map { DataFormatters.formatBytes($0) }
-    let allocatedText = bundleLayout.asifCapacityBytes(forRelativePath: disk.path, isInternal: true)
-        .map { DataFormatters.formatBytes($0) }
+    let onDiskText = bundleLayout.diskOnDiskBytes(
+        forRelativePath: disk.path, isInternal: disk.isInternal
+    )
+    .map { DataFormatters.formatBytes($0) }
+    let allocatedText = bundleLayout.diskCapacityBytes(
+        forRelativePath: disk.path, isInternal: disk.isInternal
+    )
+    .map { DataFormatters.formatBytes($0) }
 
     switch (onDiskText, allocatedText) {
     case let (.some(onDisk), .some(allocated)):
@@ -40,7 +43,7 @@ nonisolated func diskSubtitle(for disk: StorageDisk, bundleLayout: VMBundleLayou
     case let (.none, .some(allocated)):
         return "\(allocated) allocated"
     case (.none, .none):
-        return "In-bundle disk image"
+        return disk.isInternal ? "In-bundle disk image" : disk.path
     }
 }
 
@@ -73,21 +76,26 @@ private func fadeInDiskSubtitle(_ field: NSTextField, text: String) {
     }
 }
 
-/// Fills `field` with a disk's subtitle, reading in-bundle sizes **off the main
+/// Fills `field` with a disk's subtitle, reading its sizes **off the main
 /// thread**.
 ///
-/// External disks resolve synchronously to their path. In-bundle disks need a
-/// file read for their on-disk/allocated figures, so this reads on a detached
-/// task and paints the result when it lands. The field is tagged with the disk
-/// id (via `identifier`) so a row reused for a different disk — the Boot Order
-/// table recycles cells — ignores a late result, and so a re-populate of the
-/// *same* disk (a settings-list refresh) updates in place.
+/// Every disk — in-bundle or external — needs a file read for its
+/// on-disk/allocated figures, so this reads on a detached task and paints the
+/// result when it lands. The field is tagged with the disk id (via
+/// `identifier`) so a row reused for a different disk — the Boot Order table
+/// recycles cells — ignores a late result, and so a re-populate of the *same*
+/// disk (a settings-list refresh) updates in place.
 ///
-/// The "In-bundle disk image" placeholder is **deferred**: when the field is
-/// bound to a new disk it's first cleared (invisible for the sub-ms read, and it
-/// stops a recycled cell showing the previous disk's size), and the placeholder
-/// is shown only if the read is still pending after
-/// ``diskSubtitlePlaceholderGrace`` — so the fast path never flickers it.
+/// A **missing** external file short-circuits to the red "Missing — path"
+/// state: there's nothing to measure, and the broken path is the useful thing
+/// to show.
+///
+/// The holding value while the read is pending depends on the disk: an external
+/// disk seeds its **path** (instantly known, and also the graceful fallback if
+/// the volume is slow or unreadable), so it never flickers; an in-bundle disk
+/// clears to empty and, only if the read is still pending after
+/// ``diskSubtitlePlaceholderGrace``, shows the deferred "In-bundle disk image"
+/// placeholder — so the fast path never flickers it.
 ///
 /// The async value (and the placeholder, if shown) eases in via
 /// ``fadeInDiskSubtitle(_:text:)`` so it doesn't pop; a no-op repaint with an
@@ -96,9 +104,12 @@ private func fadeInDiskSubtitle(_ field: NSTextField, text: String) {
 func populateDiskSubtitle(
     _ field: NSTextField, for disk: StorageDisk, bundleLayout: VMBundleLayout, isMissing: Bool
 ) {
-    guard disk.isInternal else {
+    guard !isMissing else {
+        // A vanished external file has nothing to measure — show the red
+        // "Missing — path" state and stop. Clearing the token also makes any
+        // in-flight read from a prior binding ignore its late result.
         field.identifier = nil
-        applyAttachmentSubtitle(to: field, path: disk.path, isMissing: isMissing)
+        applyAttachmentSubtitle(to: field, path: disk.path, isMissing: true)
         return
     }
 
@@ -106,17 +117,20 @@ func populateDiskSubtitle(
     let isNewBinding = field.identifier != token
     field.identifier = token
     if isNewBinding {
-        // Clear any prior disk's value so a recycled cell can't show the wrong
-        // size; an empty subtitle is invisible for the read that follows.
-        applyAttachmentSubtitle(to: field, path: "", isMissing: false)
+        // Seed the best value known synchronously so a recycled cell never
+        // flashes a stale size: an external disk shows its path (also the
+        // fallback if the volume is slow/unreadable); an in-bundle disk clears
+        // to empty, invisible for the sub-ms read that follows.
+        applyAttachmentSubtitle(to: field, path: disk.isInternal ? "" : disk.path, isMissing: false)
     }
 
     Task { [weak field] in
         let read = Task.detached { diskSubtitle(for: disk, bundleLayout: bundleLayout) }
         // Defer the placeholder behind a grace period, cancelled the instant the
-        // read lands — only a genuinely slow read ever surfaces it.
+        // read lands — only a genuinely slow read ever surfaces it. External
+        // disks already hold their path, so they need no placeholder.
         let placeholder: Task<Void, Never>? =
-            isNewBinding
+            (isNewBinding && disk.isInternal)
             ? Task { [weak field] in
                 do {
                     try await Task.sleep(for: diskSubtitlePlaceholderGrace)

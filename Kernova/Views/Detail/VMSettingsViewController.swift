@@ -1520,7 +1520,7 @@ extension VMSettingsViewController {
             layout.diskOnDiskBytes(forRelativePath: disk.path, isInternal: disk.isInternal)
             .map { DataFormatters.formatBytes($0) } ?? "—"
         let allocatedText =
-            layout.asifCapacityBytes(forRelativePath: disk.path, isInternal: disk.isInternal)
+            layout.diskCapacityBytes(forRelativePath: disk.path, isInternal: disk.isInternal)
             .map { DataFormatters.formatBytes($0) } ?? "Unknown"
         let content = StorageDiskInfoPopoverContentViewController(
             label: disk.label,
