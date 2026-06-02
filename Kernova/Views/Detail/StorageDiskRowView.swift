@@ -209,8 +209,7 @@ final class StorageDiskRowView: NSView, NSTextFieldDelegate {
         clickRecognizer.isEnabled = false
         titleField.isEditable = true
         titleField.isSelectable = true
-        titleField.isBordered = true
-        titleField.bezelStyle = .roundedBezel
+        titleField.isBezeled = true
         titleField.drawsBackground = true
         // Cap the (still column-filling) title at the current name's width so the
         // box hugs it; re-capped as the user types.
@@ -282,6 +281,7 @@ final class StorageDiskRowView: NSView, NSTextFieldDelegate {
         titleField.isEditable = false
         titleField.isSelectable = false
         titleField.isBordered = false
+        titleField.isBezeled = false
         titleField.drawsBackground = false
         // Drop the text-width cap; the title goes back to filling the column.
         titleEditWidth?.isActive = false

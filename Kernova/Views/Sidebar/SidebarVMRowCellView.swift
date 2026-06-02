@@ -294,8 +294,7 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
         if renaming {
             nameField.isEditable = true
             nameField.isSelectable = true
-            nameField.isBordered = true
-            nameField.bezelStyle = .roundedBezel
+            nameField.isBezeled = true
             nameField.drawsBackground = true
             if let instance { nameField.stringValue = instance.name }
             // Cap the box at the text width so it hugs the name; the field
@@ -308,6 +307,7 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
             nameField.isEditable = false
             nameField.isSelectable = false
             nameField.isBordered = false
+            nameField.isBezeled = false
             nameField.drawsBackground = false
             // Back to filling the row for the display label.
             nameEditMaxWidth?.isActive = false
