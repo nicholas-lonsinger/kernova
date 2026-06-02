@@ -51,6 +51,28 @@ nonisolated func diskSubtitle(for disk: StorageDisk, bundleLayout: VMBundleLayou
 /// genuinely slow.
 private let diskSubtitlePlaceholderGrace: Duration = .milliseconds(100)
 
+/// Duration of the subtitle's fade-in when an async size read — or its deferred
+/// placeholder — lands, easing the value in instead of snapping it.
+private let diskSubtitleFadeDuration: TimeInterval = 0.2
+
+/// Paints `text` into the subtitle field, fading it in when the content changes.
+///
+/// The in-bundle size figures arrive after an off-main read, so snapping them
+/// into the row reads as an abrupt pop; a quick alpha fade softens it. A repaint
+/// with the *same* string — the common case when a steady-state refresh re-reads
+/// an unchanged size — skips the animation so the row doesn't shimmer.
+@MainActor
+private func fadeInDiskSubtitle(_ field: NSTextField, text: String) {
+    guard field.stringValue != text else { return }
+    field.alphaValue = 0
+    applyAttachmentSubtitle(to: field, path: text, isMissing: false)
+    NSAnimationContext.runAnimationGroup { context in
+        context.duration = diskSubtitleFadeDuration
+        context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        field.animator().alphaValue = 1
+    }
+}
+
 /// Fills `field` with a disk's subtitle, reading in-bundle sizes **off the main
 /// thread**.
 ///
@@ -66,6 +88,10 @@ private let diskSubtitlePlaceholderGrace: Duration = .milliseconds(100)
 /// stops a recycled cell showing the previous disk's size), and the placeholder
 /// is shown only if the read is still pending after
 /// ``diskSubtitlePlaceholderGrace`` — so the fast path never flickers it.
+///
+/// The async value (and the placeholder, if shown) eases in via
+/// ``fadeInDiskSubtitle(_:text:)`` so it doesn't pop; a no-op repaint with an
+/// unchanged size doesn't animate.
 @MainActor
 func populateDiskSubtitle(
     _ field: NSTextField, for disk: StorageDisk, bundleLayout: VMBundleLayout, isMissing: Bool
@@ -100,13 +126,13 @@ func populateDiskSubtitle(
                 guard let field, field.identifier == token, field.stringValue.isEmpty else {
                     return
                 }
-                applyAttachmentSubtitle(to: field, path: "In-bundle disk image", isMissing: false)
+                fadeInDiskSubtitle(field, text: "In-bundle disk image")
             }
             : nil
 
         let text = await read.value
         placeholder?.cancel()
         guard let field, field.identifier == token else { return }
-        applyAttachmentSubtitle(to: field, path: text, isMissing: false)
+        fadeInDiskSubtitle(field, text: text)
     }
 }
