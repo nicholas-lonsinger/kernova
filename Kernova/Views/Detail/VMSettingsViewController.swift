@@ -1107,9 +1107,15 @@ extension VMSettingsViewController {
                 controlsEnabled: !isReadOnly)
         }
 
-        // Rebuild the row views only when the structure changed.
-        if models != renderedStorageRows {
-            renderedStorageRows = models
+        let previousRows = renderedStorageRows
+        renderedStorageRows = models
+
+        // A structural change — disks added, removed, or reordered — rebuilds the
+        // stack. Anything else (a rename, a Read Only toggle, a start/stop
+        // enabling change, a file going missing) updates the affected rows in
+        // place: rebuilding on a rename would recreate every subtitle field empty
+        // and re-fade the sizes in, so we keep the existing fields instead.
+        guard previousRows?.map(\.id) == models.map(\.id) else {
             clear(storageListStack)
             storageRowsByID.removeAll(keepingCapacity: true)
             for model in models {
@@ -1149,15 +1155,34 @@ extension VMSettingsViewController {
                 storageRowsByID[model.id] = row
                 addFullWidth(row, to: storageListStack)
             }
+            // Freshly built rows start with an empty subtitle — read every size once.
+            for (disk, model) in zip(disks, models) {
+                if let field = storageRowsByID[disk.id]?.subtitleField {
+                    populateDiskSubtitle(
+                        field, for: disk, bundleLayout: instance.bundleLayout,
+                        isMissing: model.isMissing)
+                }
+            }
+            return
         }
 
-        // (Re-)populate every row's subtitle from a live, off-main read on each
-        // refresh, so the figures reflect the disk's current state even when the
-        // structure was unchanged (e.g. an external resize or on-disk growth).
+        // Same disks in the same order: update only the rows whose display state
+        // changed, and re-read a subtitle only when the backing file's identity
+        // (its structural subtitle/path) or missing-state changed. A rename or
+        // toggle leaves the size untouched, so its field — and its fade — is left
+        // exactly as it is, which is what stops the size flicker.
+        let previousByID = Dictionary(
+            (previousRows ?? []).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         for (disk, model) in zip(disks, models) {
-            if let field = storageRowsByID[disk.id]?.subtitleField {
+            guard let row = storageRowsByID[disk.id], previousByID[model.id] != model else { continue }
+            row.update(
+                title: model.title, iconSystemName: model.iconSystemName,
+                missingPath: model.missingPath, readOnly: model.readOnly,
+                controlsEnabled: model.controlsEnabled)
+            let previous = previousByID[model.id]
+            if previous?.subtitle != model.subtitle || previous?.isMissing != model.isMissing {
                 populateDiskSubtitle(
-                    field, for: disk, bundleLayout: instance.bundleLayout,
+                    row.subtitleField, for: disk, bundleLayout: instance.bundleLayout,
                     isMissing: model.isMissing)
             }
         }

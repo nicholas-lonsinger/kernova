@@ -38,10 +38,15 @@ final class StorageDiskRowView: NSView, NSTextFieldDelegate {
     /// popover to it (matching the click-the-icon affordance).
     let infoAnchor: NSView
     /// The subtitle label, exposed so the controller can (re-)populate it with
-    /// the live, off-main size read on every refresh.
+    /// the live, off-main size read.
     let subtitleField: NSTextField
-    private let controlsEnabled: Bool
-    private let originalTitle: String
+    /// Accessory views the row updates in place (see ``update(title:iconSystemName:missingPath:readOnly:controlsEnabled:)``)
+    /// so a refresh that only changes display state doesn't tear the row down.
+    private let iconButton: AttachmentIconButton
+    private let readOnlyToggle: NSSwitch
+    private let deleteButton: NSButton
+    private var controlsEnabled: Bool
+    private var originalTitle: String
     private let titleField = RenameTitleField()
     /// A `<=` cap on the title's width, activated only while renaming.
     ///
@@ -79,21 +84,50 @@ final class StorageDiskRowView: NSView, NSTextFieldDelegate {
         diskID: UUID,
         title: String,
         controlsEnabled: Bool,
-        icon: NSView,
+        icon: AttachmentIconButton,
         subtitle: NSTextField,
-        readOnlyToggle: NSView,
+        readOnlyToggle: NSSwitch,
         readOnlyCaption: NSView,
-        deleteButton: NSView
+        deleteButton: NSButton
     ) {
         self.diskID = diskID
         self.infoAnchor = icon
+        self.iconButton = icon
         self.subtitleField = subtitle
+        self.readOnlyToggle = readOnlyToggle
+        self.deleteButton = deleteButton
         self.controlsEnabled = controlsEnabled
         self.originalTitle = title
         super.init(frame: .zero)
         buildLayout(
             icon: icon, subtitle: subtitle, readOnlyToggle: readOnlyToggle,
             readOnlyCaption: readOnlyCaption, deleteButton: deleteButton)
+    }
+
+    /// Updates the row's display state in place, without a teardown/rebuild.
+    ///
+    /// Used when the disk set and order are unchanged — a rename, a Read Only
+    /// toggle, a start/stop enabling change, or a file going missing. Rebuilding
+    /// instead would recreate the subtitle field empty and re-fade its size in,
+    /// so the existing field is kept; the subtitle is (re-)read by the
+    /// controller, and only when the backing file changed.
+    ///
+    /// Never invoked mid-edit (the controller suppresses refreshes while a rename
+    /// is active), but it leaves the title alone if an edit is somehow live.
+    func update(
+        title: String, iconSystemName: String, missingPath: String?, readOnly: Bool,
+        controlsEnabled: Bool
+    ) {
+        self.controlsEnabled = controlsEnabled
+        if !isRenaming {
+            originalTitle = title
+            titleField.stringValue = title
+        }
+        clickRecognizer.isEnabled = controlsEnabled
+        readOnlyToggle.state = readOnly ? .on : .off
+        readOnlyToggle.isEnabled = controlsEnabled
+        deleteButton.isEnabled = controlsEnabled
+        iconButton.configure(systemName: iconSystemName, missingPath: missingPath)
     }
 
     @available(*, unavailable)
