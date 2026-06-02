@@ -2,13 +2,18 @@ import AppKit
 
 /// SF Symbol name for a storage disk row's leading icon.
 ///
-/// Shared so the settings list and the reorder sheet stay in lockstep
-/// if the icon mapping ever changes.
+/// Shared so the settings list and the reorder sheet stay in lockstep if the
+/// icon mapping ever changes. The three glyphs are chosen to read distinctly at
+/// list size: `cylinder.split.1x2` (the stacked-disk/volume glyph) for an
+/// in-bundle disk, `externaldrive` for a linked external file, and `opticaldisc`
+/// for USB mass-storage installer media (`.iso`/`.dmg`). `internaldrive` and
+/// `externaldrive` were too alike at a glance, so the in-bundle case uses the
+/// distinct disk-cylinder — outline, matching the other two glyphs' weight.
 func diskIconSystemName(for disk: StorageDisk) -> String {
     if disk.kind == .usbMassStorage {
         return "opticaldisc"
     }
-    return disk.isInternal ? "internaldrive" : "externaldrive"
+    return disk.isInternal ? "cylinder.split.1x2" : "externaldrive"
 }
 
 /// Human-readable subtitle for a storage-disk row.
