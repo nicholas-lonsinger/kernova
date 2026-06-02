@@ -343,7 +343,7 @@ final class DeleteVMSheetContentViewController: NSViewController {
     /// the bundle).
     private func makeBundledRow(_ disk: StorageDisk) -> NSView {
         let icon = NSImageView(
-            image: .systemSymbol("internaldrive", accessibilityDescription: "")
+            image: .systemSymbol(diskIconSystemName(for: disk), accessibilityDescription: "")
         )
         icon.contentTintColor = .secondaryLabelColor
         icon.translatesAutoresizingMaskIntoConstraints = false

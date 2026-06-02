@@ -13,6 +13,25 @@ final class AttachmentIconButton: NSView {
     private let popoverPresenter = PopoverPresenter()
     private var currentPath: String?
 
+    /// Optional action for clicking the icon in its non-missing (plain) state.
+    ///
+    /// Receives `self` so the caller can anchor a popover to the icon. When
+    /// `nil` the plain icon is inert (the default for rows that don't offer an
+    /// info affordance); the missing-file warning button is unaffected.
+    var onActivate: ((NSView) -> Void)? {
+        didSet {
+            activateRecognizer.isEnabled = onActivate != nil
+            toolTip = onActivate != nil ? "Show Info" : nil
+        }
+    }
+
+    private lazy var activateRecognizer: NSClickGestureRecognizer = {
+        let recognizer = NSClickGestureRecognizer(
+            target: self, action: #selector(plainIconActivated))
+        recognizer.isEnabled = false
+        return recognizer
+    }()
+
     init() {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
@@ -24,6 +43,7 @@ final class AttachmentIconButton: NSView {
         plainIcon.translatesAutoresizingMaskIntoConstraints = false
         plainIcon.contentTintColor = .secondaryLabelColor
         plainIcon.imageScaling = .scaleProportionallyUpOrDown
+        plainIcon.addGestureRecognizer(activateRecognizer)
         // Hidden until `configure(systemName:missingPath:)` reveals the
         // correct state. Without this, the unconfigured cell briefly
         // shows an empty 20×20 icon slot between `init()` and the first
@@ -77,6 +97,10 @@ final class AttachmentIconButton: NSView {
             plainIcon.isHidden = false
             plainIcon.image = .systemSymbol(systemName, accessibilityDescription: systemName)
         }
+    }
+
+    @objc private func plainIconActivated() {
+        onActivate?(self)
     }
 
     @objc private func showMissingPopover(_: Any?) {

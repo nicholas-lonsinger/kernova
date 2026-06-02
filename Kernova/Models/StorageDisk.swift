@@ -71,6 +71,19 @@ struct StorageDisk: Codable, Sendable, Equatable {
         return (ext == "iso" || ext == "dmg") ? .usbMassStorage : .virtio
     }
 
+    /// A label derived from `base` that doesn't collide with `existingLabels`.
+    ///
+    /// Returns `base` when it's free, otherwise the first available
+    /// `"<base> 2"`, `"<base> 3"`, … Mirrors
+    /// ``VMConfiguration/generateCloneName(baseName:existingNames:)`` but with a
+    /// bare numeric suffix (no "Copy"), used to give machine-created disks
+    /// distinct default labels so same-size disks are tellable apart out of the
+    /// box. Case-sensitive exact match; only machine-generated defaults are
+    /// uniqued — explicit user renames are left exactly as typed.
+    static func uniqueLabel(base: String, existingLabels: [String]) -> String {
+        UniqueName.firstAvailable(prefix: base, existing: existingLabels)
+    }
+
     /// Display string used in the UI subtitle.
     var displayPath: String {
         isInternal ? "In-bundle disk image" : path

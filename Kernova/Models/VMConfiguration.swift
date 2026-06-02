@@ -334,15 +334,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
 
     /// Generates a unique clone name by appending " Copy", " Copy 2", etc.
     static func generateCloneName(baseName: String, existingNames: [String]) -> String {
-        let candidate = "\(baseName) Copy"
-        if !existingNames.contains(candidate) {
-            return candidate
-        }
-        var counter = 2
-        while existingNames.contains("\(baseName) Copy \(counter)") {
-            counter += 1
-        }
-        return "\(baseName) Copy \(counter)"
+        UniqueName.firstAvailable(prefix: "\(baseName) Copy", existing: existingNames)
     }
 
     // MARK: - Computed

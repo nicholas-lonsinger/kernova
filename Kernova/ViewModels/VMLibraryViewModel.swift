@@ -1272,6 +1272,49 @@ final class VMLibraryViewModel {
         }
     }
 
+    /// Renames a storage disk's user-facing label, persisting through
+    /// `updateConfiguration`.
+    ///
+    /// The label is cosmetic — it has no effect on the guest (the virtio block
+    /// identifier is derived from the disk's UUID, not its label), so renaming
+    /// is safe for any disk including the main disk and costs nothing on the
+    /// filesystem (the backing file keeps its stable UUID name). Whitespace is
+    /// trimmed and an empty result is ignored, so clearing the field doesn't
+    /// blank the label. Duplicate labels are allowed on an explicit rename —
+    /// only machine-generated defaults are uniqued (see
+    /// `StorageDisk.uniqueLabel`).
+    func renameStorageDisk(_ disk: StorageDisk, newLabel: String, on instance: VMInstance) {
+        let trimmed = newLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        updateConfiguration(of: instance) { config in
+            var disks = config.storageDisks ?? Self.defaultStorageDisks(for: instance)
+            guard let index = disks.firstIndex(where: { $0.id == disk.id }) else { return }
+            disks[index].label = trimmed
+            config.storageDisks = disks
+        }
+    }
+
+    /// Renames a removable medium's user-facing label, persisting through
+    /// `updateConfiguration`.
+    ///
+    /// Like ``renameStorageDisk(_:newLabel:on:)`` the label is purely cosmetic.
+    /// It's safe to rename while the VM is running: the change persists and the
+    /// live reconciliation (`applyLiveRemovableMediaChange`) only detaches/
+    /// reattaches when `path` or `readOnly` differs, so a label-only edit leaves
+    /// the medium mounted. Whitespace is trimmed and an empty result is ignored.
+    func renameRemovableMedia(
+        _ item: RemovableMediaItem, newLabel: String, on instance: VMInstance
+    ) {
+        let trimmed = newLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        updateConfiguration(of: instance) { config in
+            var items = config.removableMedia ?? []
+            guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
+            items[index].label = trimmed
+            config.removableMedia = items.isEmpty ? nil : items
+        }
+    }
+
     /// Removes a removable media entry from the configuration.
     ///
     /// When `trashFile` is `true`, the underlying file at the item's
@@ -1358,12 +1401,17 @@ final class VMLibraryViewModel {
 
     /// Creates a new ASIF disk image inside the VM bundle and adds it to
     /// `storageDisks`.
-    func createStorageDisk(for instance: VMInstance, sizeInGB: Int) {
+    ///
+    /// The returned Task lets tests await completion of the async create +
+    /// persist; production callers use `@discardableResult` and ignore it
+    /// (mirrors ``removeStorageDisk(_:from:trashFile:)``).
+    @discardableResult
+    func createStorageDisk(for instance: VMInstance, sizeInGB: Int) -> Task<Void, Never> {
         let layout = VMBundleLayout(bundleURL: instance.bundleURL)
         let diskID = UUID()
         let diskURL = layout.additionalDiskURL(id: diskID)
 
-        Task {
+        return Task {
             do {
                 try FileManager.default.createDirectory(
                     at: layout.additionalDisksDirectoryURL, withIntermediateDirectories: true)
@@ -1373,22 +1421,30 @@ final class VMLibraryViewModel {
                 // Bundle-relative path (`AdditionalDisks/<id>.asif`) so the
                 // entry travels with the bundle on clone / move.
                 let relativePath = "AdditionalDisks/\(diskID.uuidString).asif"
-                let disk = StorageDisk(
-                    id: diskID,
-                    path: relativePath,
-                    readOnly: false,
-                    label: "\(sizeInGB) GB Disk",
-                    isInternal: true,
-                    kind: .virtio
-                )
+                // Compute the unique default label *inside* the mutate closure
+                // against the live config, so two rapid creates can't both read
+                // the same snapshot and pick the same "… 2" suffix.
+                var createdLabel = "\(sizeInGB) GB Disk"
                 updateConfiguration(of: instance) { config in
                     var disks = config.storageDisks ?? Self.defaultStorageDisks(for: instance)
-                    disks.append(disk)
+                    let label = StorageDisk.uniqueLabel(
+                        base: "\(sizeInGB) GB Disk", existingLabels: disks.map(\.label))
+                    createdLabel = label
+                    disks.append(
+                        StorageDisk(
+                            id: diskID,
+                            path: relativePath,
+                            readOnly: false,
+                            label: label,
+                            isInternal: true,
+                            kind: .virtio
+                        )
+                    )
                     config.storageDisks = disks
                 }
 
                 Self.logger.notice(
-                    "Created in-bundle storage disk '\(disk.label, privacy: .public)' (\(sizeInGB, privacy: .public) GB) for VM '\(instance.name, privacy: .public)'"
+                    "Created in-bundle storage disk '\(createdLabel, privacy: .public)' (\(sizeInGB, privacy: .public) GB) for VM '\(instance.name, privacy: .public)'"
                 )
             } catch {
                 // Only attempt cleanup when the write itself failed — earlier

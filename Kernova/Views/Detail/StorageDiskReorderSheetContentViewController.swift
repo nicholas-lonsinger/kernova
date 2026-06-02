@@ -457,10 +457,12 @@ final class StorageDiskReorderRowCellView: NSTableCellView {
             missingPath: isMissing ? disk.path : nil
         )
         titleLabel.stringValue = disk.label
-        applyAttachmentSubtitle(
-            to: subtitleLabel,
-            path: diskSubtitle(for: disk, in: instance),
-            isMissing: isMissing
-        )
+        // Reads in-bundle sizes off-main; the `identifier` token guards against
+        // this reused cell being rebound to a different disk mid-read. Painted
+        // without the fade — a drag-drop reorder triggers `reloadData()`, and a
+        // fade on every rebound cell reads as a flicker on each reorder.
+        populateDiskSubtitle(
+            subtitleLabel, for: disk, bundleLayout: instance.bundleLayout, isMissing: isMissing,
+            animated: false)
     }
 }

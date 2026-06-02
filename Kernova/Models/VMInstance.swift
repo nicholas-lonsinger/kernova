@@ -246,20 +246,6 @@ final class VMInstance {
 
     let bundleLayout: VMBundleLayout
 
-    /// Cached on-disk usage for the VM's disk image, populated asynchronously
-    /// by `refreshDiskUsage()` to avoid blocking the main thread.
-    var cachedDiskUsageBytes: UInt64?
-
-    /// Reads the physical disk usage off the main thread and caches the result.
-    func refreshDiskUsage() async {
-        let layout = bundleLayout
-        let usage = await Task.detached { layout.diskUsageBytes }.value
-        cachedDiskUsageBytes = usage
-        Self.logger.debug(
-            "Refreshed disk usage for '\(self.name, privacy: .public)': \(usage.map { "\($0) bytes" } ?? "nil", privacy: .public)"
-        )
-    }
-
     // MARK: - Initializer
 
     init(configuration: VMConfiguration, bundleURL: URL, status: VMStatus = .stopped) {

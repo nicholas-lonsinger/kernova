@@ -425,6 +425,32 @@ struct VMConfigurationTests {
         #expect(clone.storageDisks?[0].label == originalDisk.label)
     }
 
+    @Test("StorageDisk.uniqueLabel returns base when there's no collision")
+    func uniqueLabelNoCollision() {
+        #expect(StorageDisk.uniqueLabel(base: "100 GB Disk", existingLabels: []) == "100 GB Disk")
+        #expect(
+            StorageDisk.uniqueLabel(base: "100 GB Disk", existingLabels: ["Main Disk"])
+                == "100 GB Disk")
+    }
+
+    @Test("StorageDisk.uniqueLabel suffixes to the next free number on collision")
+    func uniqueLabelCollision() {
+        #expect(
+            StorageDisk.uniqueLabel(base: "100 GB Disk", existingLabels: ["100 GB Disk"])
+                == "100 GB Disk 2")
+        #expect(
+            StorageDisk.uniqueLabel(
+                base: "100 GB Disk",
+                existingLabels: ["100 GB Disk", "100 GB Disk 2", "100 GB Disk 3"])
+                == "100 GB Disk 4")
+    }
+
+    @Test("StorageDisk.uniqueLabel is case-sensitive")
+    func uniqueLabelCaseSensitive() {
+        // A differently-cased existing label is not treated as a collision.
+        #expect(StorageDisk.uniqueLabel(base: "Disk", existingLabels: ["disk"]) == "Disk")
+    }
+
     // MARK: - installContext Tests
 
     @Test("installContext round-trips through JSON (downloadLatest)")
