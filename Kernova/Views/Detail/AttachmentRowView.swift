@@ -1,6 +1,6 @@
 import AppKit
 
-/// The editable title field for a storage-disk row.
+/// The editable title field for an attachment row.
 ///
 /// It spans the row width so the inline rename box is comfortably sized, which
 /// means it also covers most of the row's right-click target. In its display
@@ -17,23 +17,25 @@ private final class RenameTitleField: NSTextField {
     }
 }
 
-/// A single Storage Disks list row: the standard attachment layout (leading
-/// icon, title + subtitle, Read Only switch, remove button) plus two
-/// affordances the plain `makeListRow` rows don't have — inline rename of the
-/// title and a per-row right-click context menu.
+/// A single attachment list row — a storage disk or a removable medium: the
+/// standard attachment layout (leading icon, title + subtitle, Read Only switch)
+/// plus two affordances the plain `makeListRow` rows don't have — inline rename
+/// of the title and a per-row right-click context menu.
 ///
 /// Clicking the title (when the row's controls are enabled) flips it into an
 /// editable field; Return / focus-loss commits, Escape cancels. The rename
 /// mechanics mirror ``SidebarVMRowCellView``. The context menu is
 /// supplied lazily by the controller via ``contextMenu`` so it reflects current
-/// state (the Read Only checkmark, missing-file disabling) at click time.
+/// state (the Read Only checkmark, missing-file disabling) at click time, and is
+/// where Remove lives — these rows have no inline minus button.
 ///
-/// The icon, subtitle, Read Only switch, and remove button are built by the
-/// controller (so their target/action wiring stays in one place) and handed in;
-/// this view owns only the editable title and the rename state machine.
+/// The icon, subtitle, and Read Only switch are built by the controller (so
+/// their target/action wiring stays in one place) and handed in; this view owns
+/// only the editable title and the rename state machine. The `itemID` is the
+/// backing model's id (a `StorageDisk` or `RemovableMediaItem`).
 @MainActor
-final class StorageDiskRowView: NSView, NSTextFieldDelegate {
-    let diskID: UUID
+final class AttachmentRowView: NSView, NSTextFieldDelegate {
+    let itemID: UUID
     /// The leading icon view, exposed so the controller can anchor the Get Info
     /// popover to it (matching the click-the-icon affordance).
     let infoAnchor: NSView
@@ -44,7 +46,6 @@ final class StorageDiskRowView: NSView, NSTextFieldDelegate {
     /// so a refresh that only changes display state doesn't tear the row down.
     private let iconButton: AttachmentIconButton
     private let readOnlyToggle: NSSwitch
-    private let deleteButton: NSButton
     private var controlsEnabled: Bool
     private var originalTitle: String
     private let titleField = RenameTitleField()
@@ -81,32 +82,30 @@ final class StorageDiskRowView: NSView, NSTextFieldDelegate {
     }()
 
     init(
-        diskID: UUID,
+        itemID: UUID,
         title: String,
         controlsEnabled: Bool,
         icon: AttachmentIconButton,
         subtitle: NSTextField,
         readOnlyToggle: NSSwitch,
-        readOnlyCaption: NSView,
-        deleteButton: NSButton
+        readOnlyCaption: NSView
     ) {
-        self.diskID = diskID
+        self.itemID = itemID
         self.infoAnchor = icon
         self.iconButton = icon
         self.subtitleField = subtitle
         self.readOnlyToggle = readOnlyToggle
-        self.deleteButton = deleteButton
         self.controlsEnabled = controlsEnabled
         self.originalTitle = title
         super.init(frame: .zero)
         buildLayout(
             icon: icon, subtitle: subtitle, readOnlyToggle: readOnlyToggle,
-            readOnlyCaption: readOnlyCaption, deleteButton: deleteButton)
+            readOnlyCaption: readOnlyCaption)
     }
 
     /// Updates the row's display state in place, without a teardown/rebuild.
     ///
-    /// Used when the disk set and order are unchanged — a rename, a Read Only
+    /// Used when the item set and order are unchanged — a rename, a Read Only
     /// toggle, a start/stop enabling change, or a file going missing. Rebuilding
     /// instead would recreate the subtitle field empty and re-fade its size in,
     /// so the existing field is kept; the subtitle is (re-)read by the
@@ -126,18 +125,16 @@ final class StorageDiskRowView: NSView, NSTextFieldDelegate {
         clickRecognizer.isEnabled = controlsEnabled
         readOnlyToggle.state = readOnly ? .on : .off
         readOnlyToggle.isEnabled = controlsEnabled
-        deleteButton.isEnabled = controlsEnabled
         iconButton.configure(systemName: iconSystemName, missingPath: missingPath)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) {
-        fatalError("StorageDiskRowView does not support NSCoder")
+        fatalError("AttachmentRowView does not support NSCoder")
     }
 
     private func buildLayout(
-        icon: NSView, subtitle: NSTextField, readOnlyToggle: NSView, readOnlyCaption: NSView,
-        deleteButton: NSView
+        icon: NSView, subtitle: NSTextField, readOnlyToggle: NSView, readOnlyCaption: NSView
     ) {
         translatesAutoresizingMaskIntoConstraints = false
 
@@ -203,13 +200,13 @@ final class StorageDiskRowView: NSView, NSTextFieldDelegate {
 
         // Keep the leading icon and trailing controls rigid so the text column
         // is the only view that stretches to absorb the row's spare width.
-        for accessory in [icon, readOnlyToggle, deleteButton] {
+        for accessory in [icon, readOnlyToggle] {
             accessory.setContentHuggingPriority(.required, for: .horizontal)
             accessory.setContentCompressionResistancePriority(.required, for: .horizontal)
         }
 
         let row = NSStackView(views: [
-            icon, textStack, readOnlyToggle, readOnlyCaption, deleteButton,
+            icon, textStack, readOnlyToggle, readOnlyCaption,
         ])
         row.orientation = .horizontal
         row.alignment = .centerY
@@ -239,7 +236,7 @@ final class StorageDiskRowView: NSView, NSTextFieldDelegate {
     func beginRename() {
         guard controlsEnabled, !isRenaming, let window else { return }
         isRenaming = true
-        onRenameBegan?(diskID)
+        onRenameBegan?(itemID)
         clickRecognizer.isEnabled = false
         titleField.isEditable = true
         titleField.isSelectable = true
@@ -286,7 +283,7 @@ final class StorageDiskRowView: NSView, NSTextFieldDelegate {
         window?.makeFirstResponder(nil)
         endRenameAppearance()
         isCancellingRename = false
-        onRenameCancelled?(diskID)
+        onRenameCancelled?(itemID)
     }
 
     private func removeOutsideClickMonitor() {
@@ -337,7 +334,7 @@ final class StorageDiskRowView: NSView, NSTextFieldDelegate {
         guard isRenaming, !isCancellingRename else { return }
         let newLabel = titleField.stringValue
         endRenameAppearance()
-        onRenameCommitted?(diskID, newLabel)
+        onRenameCommitted?(itemID, newLabel)
     }
 
     func control(

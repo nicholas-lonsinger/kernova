@@ -1294,6 +1294,27 @@ final class VMLibraryViewModel {
         }
     }
 
+    /// Renames a removable medium's user-facing label, persisting through
+    /// `updateConfiguration`.
+    ///
+    /// Like ``renameStorageDisk(_:newLabel:on:)`` the label is purely cosmetic.
+    /// It's safe to rename while the VM is running: the change persists and the
+    /// live reconciliation (`applyLiveRemovableMediaChange`) only detaches/
+    /// reattaches when `path` or `readOnly` differs, so a label-only edit leaves
+    /// the medium mounted. Whitespace is trimmed and an empty result is ignored.
+    func renameRemovableMedia(
+        _ item: RemovableMediaItem, newLabel: String, on instance: VMInstance
+    ) {
+        let trimmed = newLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        updateConfiguration(of: instance) { config in
+            var items = config.removableMedia ?? []
+            guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
+            items[index].label = trimmed
+            config.removableMedia = items.isEmpty ? nil : items
+        }
+    }
+
     /// Removes a removable media entry from the configuration.
     ///
     /// When `trashFile` is `true`, the underlying file at the item's

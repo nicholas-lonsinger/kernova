@@ -1,13 +1,14 @@
 import AppKit
 
-/// Popover content shown by the storage row's "Get Info" context-menu item.
+/// Popover content shown by an attachment row's "Get Info" context-menu item
+/// (storage disks and removable media alike).
 ///
 /// Built bottom-up in `loadView()` from `CalloutStyle` tokens and the callout
 /// atom factories — no shared container base class (mirrors
 /// ``MissingAttachmentPopoverContentViewController``). Takes a value snapshot,
 /// not the live `VMInstance`, so it stays dumb and is trivial to construct.
 @MainActor
-final class StorageDiskInfoPopoverContentViewController: NSViewController {
+final class AttachmentInfoPopoverContentViewController: NSViewController {
     private let label: String
     private let fileName: String
     private let fullPath: String
@@ -40,7 +41,7 @@ final class StorageDiskInfoPopoverContentViewController: NSViewController {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) {
-        fatalError("StorageDiskInfoPopoverContentViewController does not support NSCoder")
+        fatalError("AttachmentInfoPopoverContentViewController does not support NSCoder")
     }
 
     override func loadView() {

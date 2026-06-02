@@ -43,7 +43,7 @@ final class VMSettingsViewController: NSViewController {
 
     private let reorderSheetPresenter = SheetPresenter()
     private let micPermissionPresenter = PopoverPresenter()
-    private let storageInfoPresenter = PopoverPresenter()
+    private let attachmentInfoPresenter = PopoverPresenter()
     private lazy var storageDiskCoordinator = DiskSizePopoverCoordinator(
         headline: "Create New Disk",
         caption:
@@ -107,7 +107,7 @@ final class VMSettingsViewController: NSViewController {
     private var editBootOrderButton = NSButton()
     /// Live storage row views keyed by disk id, so the context-menu "Rename"
     /// item can start inline editing on the right row.
-    private var storageRowsByID: [UUID: StorageDiskRowView] = [:]
+    private var storageRowsByID: [UUID: AttachmentRowView] = [:]
     /// The disk being renamed inline, or `nil`.
     ///
     /// While set, `refreshStorageList` skips its rebuild so an async usage
@@ -117,6 +117,11 @@ final class VMSettingsViewController: NSViewController {
     // Removable Media
     private var removableListStack = NSStackView()
     private var createRemovableButton: NSButton?
+    /// Live removable-media row views keyed by item id (mirrors `storageRowsByID`).
+    private var removableRowsByID: [UUID: AttachmentRowView] = [:]
+    /// The removable medium being renamed inline, or `nil` (mirrors
+    /// `activeStorageRename`; suppresses `refreshRemovableList` mid-edit).
+    private var activeRemovableRename: UUID?
 
     // Shared Directories
     private var sharedListStack = NSStackView()
@@ -272,10 +277,11 @@ final class VMSettingsViewController: NSViewController {
             self, name: NSApplication.didBecomeActiveNotification, object: nil)
         if reorderSheetPresenter.isShown { reorderSheetPresenter.close() }
         if micPermissionPresenter.isShown { micPermissionPresenter.close() }
-        if storageInfoPresenter.isShown { storageInfoPresenter.close() }
-        // Drop any in-flight inline rename so the flag can't pin the list in a
+        if attachmentInfoPresenter.isShown { attachmentInfoPresenter.close() }
+        // Drop any in-flight inline rename so the flag can't pin a list in a
         // suppressed (never-rebuilds) state across an appear/disappear cycle.
         activeStorageRename = nil
+        activeRemovableRename = nil
     }
 
     /// Starts the per-instance side effects: seeding the file monitor with the
@@ -363,7 +369,9 @@ extension VMSettingsViewController {
         persistentLockableControls.removeAll()
         nameRowIsEditing = false
         activeStorageRename = nil
+        activeRemovableRename = nil
         storageRowsByID.removeAll()
+        removableRowsByID.removeAll()
         // The list stacks and audio-warning container are recreated below, so
         // invalidate the render snapshots that guard their refreshes.
         renderedStorageRows = nil
@@ -1128,8 +1136,8 @@ extension VMSettingsViewController {
                     else { return }
                     self.presentStorageInfoPopover(for: disk, from: anchor)
                 }
-                let row = StorageDiskRowView(
-                    diskID: model.id,
+                let row = AttachmentRowView(
+                    itemID: model.id,
                     title: model.title,
                     controlsEnabled: model.controlsEnabled,
                     icon: icon,
@@ -1137,10 +1145,7 @@ extension VMSettingsViewController {
                     readOnlyToggle: makeReadOnlySwitch(
                         id: model.id, isOn: model.readOnly, enabled: model.controlsEnabled,
                         action: #selector(storageReadOnlyToggled)),
-                    readOnlyCaption: makeReadOnlyCaption(),
-                    deleteButton: makeMinusButton(
-                        id: model.id, enabled: model.controlsEnabled,
-                        action: #selector(storageDeleteTapped)))
+                    readOnlyCaption: makeReadOnlyCaption())
                 row.onRenameBegan = { [weak self] id in self?.activeStorageRename = id }
                 row.onRenameCommitted = { [weak self] id, newLabel in
                     self?.commitStorageRename(id: id, newLabel: newLabel)
@@ -1206,38 +1211,122 @@ extension VMSettingsViewController {
     }
 
     private func refreshRemovableList() {
-        let models = currentRemovableMedia.map { item -> RenderedRow in
+        // While a row is being renamed inline, skip the refresh entirely so a
+        // rebuild can't tear down the editing field (mirrors refreshStorageList).
+        if activeRemovableRename != nil { return }
+
+        let items = currentRemovableMedia
+        let models = items.map { item -> RenderedRow in
             let isMissing = !fileMonitor.exists(item.path)
             return RenderedRow(
                 id: item.id,
                 iconSystemName: "opticaldisc",
                 title: item.label,
+                // Structural subtitle only — the live size is read off-main and
+                // filled in below, so it isn't part of the rebuild diff. Removable
+                // media is always external and hot-pluggable, so controls stay
+                // enabled even while the VM runs.
                 subtitle: item.path,
                 isMissing: isMissing,
                 missingPath: isMissing ? item.path : nil,
                 readOnly: item.readOnly,
                 controlsEnabled: true)
         }
-        guard models != renderedRemovableRows else { return }
+
+        let previousRows = renderedRemovableRows
         renderedRemovableRows = models
-        clear(removableListStack)
-        if models.isEmpty {
-            addFullWidth(makeSecondaryLabel("No removable media attached"), to: removableListStack)
+
+        // Structural change (items added/removed/reordered) rebuilds the stack;
+        // anything else (a rename, a Read Only toggle, a file going missing)
+        // updates the affected rows in place — keeping the subtitle fields so a
+        // rename neither re-reads nor flickers the sizes (mirrors storage).
+        guard previousRows?.map(\.id) == models.map(\.id) else {
+            clear(removableListStack)
+            removableRowsByID.removeAll(keepingCapacity: true)
+            guard !models.isEmpty else {
+                addFullWidth(
+                    makeSecondaryLabel("No removable media attached"), to: removableListStack)
+                return
+            }
+            for model in models {
+                let icon = AttachmentIconButton()
+                icon.configure(systemName: model.iconSystemName, missingPath: model.missingPath)
+                icon.onActivate = { [weak self] anchor in
+                    guard let self,
+                        let item = self.currentRemovableMedia.first(where: { $0.id == model.id })
+                    else { return }
+                    self.presentRemovableInfoPopover(for: item, from: anchor)
+                }
+                let row = AttachmentRowView(
+                    itemID: model.id,
+                    title: model.title,
+                    controlsEnabled: model.controlsEnabled,
+                    icon: icon,
+                    subtitle: makeAttachmentSubtitleLabel(path: "", isMissing: false),
+                    readOnlyToggle: makeReadOnlySwitch(
+                        id: model.id, isOn: model.readOnly, enabled: model.controlsEnabled,
+                        action: #selector(removableReadOnlyToggled)),
+                    readOnlyCaption: makeReadOnlyCaption())
+                row.onRenameBegan = { [weak self] id in self?.activeRemovableRename = id }
+                row.onRenameCommitted = { [weak self] id, newLabel in
+                    self?.commitRemovableRename(id: id, newLabel: newLabel)
+                }
+                row.onRenameCancelled = { [weak self] _ in
+                    self?.activeRemovableRename = nil
+                    self?.refreshRemovableList()
+                }
+                row.contextMenu = { [weak self] in
+                    self?.buildRemovableContextMenu(forItemID: model.id)
+                }
+                removableRowsByID[model.id] = row
+                addFullWidth(row, to: removableListStack)
+            }
+            // Freshly built rows start with an empty subtitle — read every size once.
+            for (item, model) in zip(items, models) {
+                if let field = removableRowsByID[item.id]?.subtitleField {
+                    populateDiskSubtitle(
+                        field, id: item.id, path: item.path, isInternal: false,
+                        bundleLayout: instance.bundleLayout, isMissing: model.isMissing)
+                }
+            }
             return
         }
-        for model in models {
-            let icon = AttachmentIconButton()
-            icon.configure(systemName: model.iconSystemName, missingPath: model.missingPath)
-            let row = makeListRow(
-                icon: icon,
-                title: model.title,
-                subtitle: makeAttachmentSubtitleLabel(path: model.subtitle, isMissing: model.isMissing),
-                id: model.id,
-                readOnly: model.readOnly,
-                controlsEnabled: model.controlsEnabled,
-                readOnlySelector: #selector(removableReadOnlyToggled),
-                deleteSelector: #selector(removableDeleteTapped))
-            addFullWidth(row, to: removableListStack)
+
+        // Same items in the same order: update only the rows whose display state
+        // changed, re-reading a subtitle only when the file's path or
+        // missing-state changed (mirrors the storage in-place path).
+        let previousByID = Dictionary(
+            (previousRows ?? []).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        for (item, model) in zip(items, models) {
+            guard let row = removableRowsByID[item.id], previousByID[model.id] != model else {
+                continue
+            }
+            row.update(
+                title: model.title, iconSystemName: model.iconSystemName,
+                missingPath: model.missingPath, readOnly: model.readOnly,
+                controlsEnabled: model.controlsEnabled)
+            let previous = previousByID[model.id]
+            if previous?.subtitle != model.subtitle || previous?.isMissing != model.isMissing {
+                populateDiskSubtitle(
+                    row.subtitleField, id: item.id, path: item.path, isInternal: false,
+                    bundleLayout: instance.bundleLayout, isMissing: model.isMissing)
+            }
+        }
+    }
+
+    /// Commits an inline removable-media rename, deferred to the next runloop
+    /// turn so the field editor's end-editing callback fully unwinds before the
+    /// config-change rebuild (mirrors ``commitStorageRename(id:newLabel:)``).
+    private func commitRemovableRename(id: UUID, newLabel: String) {
+        activeRemovableRename = nil
+        Task { [weak self] in
+            guard let self else { return }
+            if let item = self.currentRemovableMedia.first(where: { $0.id == id }) {
+                self.viewModel.renameRemovableMedia(item, newLabel: newLabel, on: self.instance)
+            }
+            // A no-op rename (empty / unchanged) fires no observation, so force a
+            // refresh to clear the suppression and repaint.
+            self.refreshRemovableList()
         }
     }
 
@@ -1407,11 +1496,6 @@ extension VMSettingsViewController {
         writeStorageDisks(disks)
     }
 
-    @objc private func storageDeleteTapped(_ sender: NSButton) {
-        guard let id = uuid(from: sender) else { return }
-        presentStorageDeleteConfirmation(forDiskID: id)
-    }
-
     private func presentStorageDeleteConfirmation(forDiskID id: UUID) {
         guard let window = view.window,
             let disk = currentStorageDisks.first(where: { $0.id == id })
@@ -1445,38 +1529,38 @@ extension VMSettingsViewController {
         menu.autoenablesItems = false
         let editable = !isReadOnly
 
-        let rename = storageMenuItem("Rename", #selector(menuStorageRename(_:)), id)
+        let rename = attachmentMenuItem("Rename", #selector(menuStorageRename(_:)), id)
         rename.isEnabled = editable
         menu.addItem(rename)
-        menu.addItem(storageMenuItem("Get Info", #selector(menuStorageGetInfo(_:)), id))
+        menu.addItem(attachmentMenuItem("Get Info", #selector(menuStorageGetInfo(_:)), id))
 
         menu.addItem(.separator())
 
-        let showInFinder = storageMenuItem(
+        let showInFinder = attachmentMenuItem(
             "Show in Finder", #selector(menuStorageShowInFinder(_:)), id)
         // Nothing to reveal when an external file is missing.
         showInFinder.isEnabled = disk.isInternal || fileMonitor.exists(disk.path)
         menu.addItem(showInFinder)
-        menu.addItem(storageMenuItem("Copy Path", #selector(menuStorageCopyPath(_:)), id))
-        menu.addItem(storageMenuItem("Copy File Name", #selector(menuStorageCopyFileName(_:)), id))
+        menu.addItem(attachmentMenuItem("Copy Path", #selector(menuStorageCopyPath(_:)), id))
+        menu.addItem(attachmentMenuItem("Copy File Name", #selector(menuStorageCopyFileName(_:)), id))
 
         menu.addItem(.separator())
 
-        let readOnly = storageMenuItem("Read Only", #selector(menuStorageToggleReadOnly(_:)), id)
+        let readOnly = attachmentMenuItem("Read Only", #selector(menuStorageToggleReadOnly(_:)), id)
         readOnly.state = disk.readOnly ? .on : .off
         readOnly.isEnabled = editable
         menu.addItem(readOnly)
-        let remove = storageMenuItem("Remove…", #selector(menuStorageRemove(_:)), id)
+        let remove = attachmentMenuItem("Remove…", #selector(menuStorageRemove(_:)), id)
         remove.isEnabled = editable
         menu.addItem(remove)
 
         return menu
     }
 
-    private func storageMenuItem(_ title: String, _ action: Selector, _ diskID: UUID) -> NSMenuItem {
+    private func attachmentMenuItem(_ title: String, _ action: Selector, _ id: UUID) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
         item.target = self
-        item.representedObject = diskID
+        item.representedObject = id
         return item
     }
 
@@ -1547,7 +1631,7 @@ extension VMSettingsViewController {
         let allocatedText =
             layout.diskCapacityBytes(forRelativePath: disk.path, isInternal: disk.isInternal)
             .map { DataFormatters.formatBytes($0) } ?? "Unknown"
-        let content = StorageDiskInfoPopoverContentViewController(
+        let content = AttachmentInfoPopoverContentViewController(
             label: disk.label,
             fileName: url.lastPathComponent,
             fullPath: url.path(percentEncoded: false),
@@ -1556,7 +1640,7 @@ extension VMSettingsViewController {
             readOnly: disk.readOnly,
             busText: disk.kind == .usbMassStorage ? "USB mass storage" : "Virtio block",
             createdText: storageDiskCreatedText(forFileAt: url))
-        storageInfoPresenter.show(content: content, from: anchor, preferredEdge: .minY)
+        attachmentInfoPresenter.show(content: content, from: anchor, preferredEdge: .minY)
     }
 
     /// Creation date for the Get Info popover, read live from the backing
@@ -1665,14 +1749,18 @@ extension VMSettingsViewController {
 
     @objc private func removableReadOnlyToggled(_ sender: NSSwitch) {
         guard let id = uuid(from: sender) else { return }
+        setRemovableReadOnly(sender.state == .on, forItemID: id)
+    }
+
+    private func setRemovableReadOnly(_ readOnly: Bool, forItemID id: UUID) {
         var items = currentRemovableMedia
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
-        items[index].readOnly = sender.state == .on
+        items[index].readOnly = readOnly
         writeRemovableMedia(items)
     }
 
-    @objc private func removableDeleteTapped(_ sender: NSButton) {
-        guard let id = uuid(from: sender), let window = view.window,
+    private func presentRemovableDeleteConfirmation(forItemID id: UUID) {
+        guard let window = view.window,
             let item = currentRemovableMedia.first(where: { $0.id == id })
         else { return }
         let isAgent = viewModel.isGuestAgentInstaller(item)
@@ -1689,6 +1777,106 @@ extension VMSettingsViewController {
                 _ = self.viewModel.removeRemovableMedia(item, from: self.instance, trashFile: trashFile)
             },
             in: window)
+    }
+
+    // MARK: Removable media context menu
+
+    /// Builds the removable-media row's right-click menu, lazily at click time.
+    ///
+    /// Reflects current state (the Read Only checkmark, missing-file disabling).
+    /// Mirrors ``buildStorageContextMenu(forDiskID:)``; removable media is always
+    /// external and hot-pluggable, so every item is editable.
+    private func buildRemovableContextMenu(forItemID id: UUID) -> NSMenu? {
+        guard let item = currentRemovableMedia.first(where: { $0.id == id }) else { return nil }
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+
+        menu.addItem(attachmentMenuItem("Rename", #selector(menuRemovableRename(_:)), id))
+        menu.addItem(attachmentMenuItem("Get Info", #selector(menuRemovableGetInfo(_:)), id))
+
+        menu.addItem(.separator())
+
+        let showInFinder = attachmentMenuItem(
+            "Show in Finder", #selector(menuRemovableShowInFinder(_:)), id)
+        showInFinder.isEnabled = fileMonitor.exists(item.path)
+        menu.addItem(showInFinder)
+        menu.addItem(attachmentMenuItem("Copy Path", #selector(menuRemovableCopyPath(_:)), id))
+        menu.addItem(
+            attachmentMenuItem("Copy File Name", #selector(menuRemovableCopyFileName(_:)), id))
+
+        menu.addItem(.separator())
+
+        let readOnly = attachmentMenuItem("Read Only", #selector(menuRemovableToggleReadOnly(_:)), id)
+        readOnly.state = item.readOnly ? .on : .off
+        menu.addItem(readOnly)
+        menu.addItem(attachmentMenuItem("Remove…", #selector(menuRemovableRemove(_:)), id))
+
+        return menu
+    }
+
+    private func removableMediaItem(from sender: NSMenuItem) -> RemovableMediaItem? {
+        guard let id = sender.representedObject as? UUID else { return nil }
+        return currentRemovableMedia.first(where: { $0.id == id })
+    }
+
+    @objc private func menuRemovableRename(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID else { return }
+        removableRowsByID[id]?.beginRename()
+    }
+
+    @objc private func menuRemovableShowInFinder(_ sender: NSMenuItem) {
+        guard let item = removableMediaItem(from: sender) else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: item.path)])
+    }
+
+    @objc private func menuRemovableCopyPath(_ sender: NSMenuItem) {
+        guard let item = removableMediaItem(from: sender) else { return }
+        copyToPasteboard(URL(fileURLWithPath: item.path).path(percentEncoded: false))
+    }
+
+    @objc private func menuRemovableCopyFileName(_ sender: NSMenuItem) {
+        guard let item = removableMediaItem(from: sender) else { return }
+        copyToPasteboard(URL(fileURLWithPath: item.path).lastPathComponent)
+    }
+
+    @objc private func menuRemovableToggleReadOnly(_ sender: NSMenuItem) {
+        guard let item = removableMediaItem(from: sender) else { return }
+        setRemovableReadOnly(!item.readOnly, forItemID: item.id)
+    }
+
+    @objc private func menuRemovableRemove(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID else { return }
+        presentRemovableDeleteConfirmation(forItemID: id)
+    }
+
+    @objc private func menuRemovableGetInfo(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID, let row = removableRowsByID[id],
+            let item = currentRemovableMedia.first(where: { $0.id == id })
+        else { return }
+        presentRemovableInfoPopover(for: item, from: row.infoAnchor)
+    }
+
+    private func presentRemovableInfoPopover(for item: RemovableMediaItem, from anchor: NSView) {
+        let url = URL(fileURLWithPath: item.path)
+        // Read both figures live from the file (same as the row subtitle), so
+        // Get Info reflects the medium's actual current state.
+        let layout = instance.bundleLayout
+        let onDiskText =
+            layout.diskOnDiskBytes(forRelativePath: item.path, isInternal: false)
+            .map { DataFormatters.formatBytes($0) } ?? "—"
+        let allocatedText =
+            layout.diskCapacityBytes(forRelativePath: item.path, isInternal: false)
+            .map { DataFormatters.formatBytes($0) } ?? "Unknown"
+        let content = AttachmentInfoPopoverContentViewController(
+            label: item.label,
+            fileName: url.lastPathComponent,
+            fullPath: url.path(percentEncoded: false),
+            onDiskText: onDiskText,
+            allocatedText: allocatedText,
+            readOnly: item.readOnly,
+            busText: "USB mass storage",
+            createdText: storageDiskCreatedText(forFileAt: url))
+        attachmentInfoPresenter.show(content: content, from: anchor, preferredEdge: .minY)
     }
 
     // MARK: Shared

@@ -11,29 +11,34 @@ func diskIconSystemName(for disk: StorageDisk) -> String {
     return disk.isInternal ? "internaldrive" : "externaldrive"
 }
 
-/// Human-readable subtitle for a storage disk row.
+/// Human-readable subtitle for a storage-disk row.
 ///
-/// Every disk — in-bundle or external, ASIF or a raw `.img`/`.iso`/`.dmg` —
-/// shows its real on-disk footprint and (when readable) virtual capacity, e.g.
+/// The `StorageDisk` convenience overload of
+/// ``diskSubtitle(path:isInternal:bundleLayout:)``.
+nonisolated func diskSubtitle(for disk: StorageDisk, bundleLayout: VMBundleLayout) -> String {
+    diskSubtitle(path: disk.path, isInternal: disk.isInternal, bundleLayout: bundleLayout)
+}
+
+/// Human-readable subtitle for any attachment row — a storage disk or a
+/// removable medium — backed by a file at `path`.
+///
+/// Every backing file — in-bundle or external, ASIF or a raw `.img`/`.iso`/`.dmg`
+/// — shows its real on-disk footprint and (when readable) virtual capacity, e.g.
 /// `"2.1 GB (on disk) / 100 GB (allocated)"`. Both figures are read **live**
 /// from the file — a stat plus, for ASIF, a 56-byte header read — so they
-/// reflect the disk's actual current state (including an external resize)
-/// rather than a stored snapshot. When neither figure is readable (an ejected
-/// or vanished external volume), it falls back to the disk's identity: the
+/// reflect the file's actual current state (including an external resize) rather
+/// than a stored snapshot. When neither figure is readable (an ejected or
+/// vanished external volume), it falls back to the file's identity: the
 /// in-bundle placeholder, or the external file's path.
 ///
 /// `nonisolated` and takes the `Sendable` `VMBundleLayout` (not the instance) so
 /// it can run on a detached task — the file reads happen off the main thread.
-/// Callers paint the result via ``populateDiskSubtitle(_:for:bundleLayout:isMissing:)``.
-nonisolated func diskSubtitle(for disk: StorageDisk, bundleLayout: VMBundleLayout) -> String {
-    let onDiskText = bundleLayout.diskOnDiskBytes(
-        forRelativePath: disk.path, isInternal: disk.isInternal
-    )
-    .map { DataFormatters.formatBytes($0) }
-    let allocatedText = bundleLayout.diskCapacityBytes(
-        forRelativePath: disk.path, isInternal: disk.isInternal
-    )
-    .map { DataFormatters.formatBytes($0) }
+/// Callers paint the result via ``populateDiskSubtitle(_:id:path:isInternal:bundleLayout:isMissing:)``.
+nonisolated func diskSubtitle(path: String, isInternal: Bool, bundleLayout: VMBundleLayout) -> String {
+    let onDiskText = bundleLayout.diskOnDiskBytes(forRelativePath: path, isInternal: isInternal)
+        .map { DataFormatters.formatBytes($0) }
+    let allocatedText = bundleLayout.diskCapacityBytes(forRelativePath: path, isInternal: isInternal)
+        .map { DataFormatters.formatBytes($0) }
 
     switch (onDiskText, allocatedText) {
     case let (.some(onDisk), .some(allocated)):
@@ -43,7 +48,7 @@ nonisolated func diskSubtitle(for disk: StorageDisk, bundleLayout: VMBundleLayou
     case let (.none, .some(allocated)):
         return "\(allocated) allocated"
     case (.none, .none):
-        return disk.isInternal ? "In-bundle disk image" : disk.path
+        return isInternal ? "In-bundle disk image" : path
     }
 }
 
@@ -76,23 +81,36 @@ private func fadeInDiskSubtitle(_ field: NSTextField, text: String) {
     }
 }
 
-/// Fills `field` with a disk's subtitle, reading its sizes **off the main
+/// Fills `field` with the subtitle for a `StorageDisk`.
+///
+/// The `StorageDisk` convenience overload of
+/// ``populateDiskSubtitle(_:id:path:isInternal:bundleLayout:isMissing:)``.
+@MainActor
+func populateDiskSubtitle(
+    _ field: NSTextField, for disk: StorageDisk, bundleLayout: VMBundleLayout, isMissing: Bool
+) {
+    populateDiskSubtitle(
+        field, id: disk.id, path: disk.path, isInternal: disk.isInternal,
+        bundleLayout: bundleLayout, isMissing: isMissing)
+}
+
+/// Fills `field` with an attachment's subtitle, reading its sizes **off the main
 /// thread**.
 ///
-/// Every disk — in-bundle or external — needs a file read for its
-/// on-disk/allocated figures, so this reads on a detached task and paints the
-/// result when it lands. The field is tagged with the disk id (via
-/// `identifier`) so a row reused for a different disk — the Boot Order table
-/// recycles cells — ignores a late result, and so a re-populate of the *same*
-/// disk (a settings-list refresh) updates in place.
+/// Every attachment — storage disk or removable medium, in-bundle or external —
+/// needs a file read for its on-disk/allocated figures, so this reads on a
+/// detached task and paints the result when it lands. The field is tagged with
+/// the item `id` (via `identifier`) so a row reused for a different item — the
+/// Boot Order table recycles cells — ignores a late result, and so a re-populate
+/// of the *same* item (a settings-list refresh) updates in place.
 ///
 /// A **missing** external file short-circuits to the red "Missing — path"
 /// state: there's nothing to measure, and the broken path is the useful thing
 /// to show.
 ///
-/// The holding value while the read is pending depends on the disk: an external
-/// disk seeds its **path** (instantly known, and also the graceful fallback if
-/// the volume is slow or unreadable), so it never flickers; an in-bundle disk
+/// The holding value while the read is pending depends on the file: an external
+/// file seeds its **path** (instantly known, and also the graceful fallback if
+/// the volume is slow or unreadable), so it never flickers; an in-bundle file
 /// clears to empty and, only if the read is still pending after
 /// ``diskSubtitlePlaceholderGrace``, shows the deferred "In-bundle disk image"
 /// placeholder — so the fast path never flickers it.
@@ -102,35 +120,38 @@ private func fadeInDiskSubtitle(_ field: NSTextField, text: String) {
 /// unchanged size doesn't animate.
 @MainActor
 func populateDiskSubtitle(
-    _ field: NSTextField, for disk: StorageDisk, bundleLayout: VMBundleLayout, isMissing: Bool
+    _ field: NSTextField, id: UUID, path: String, isInternal: Bool,
+    bundleLayout: VMBundleLayout, isMissing: Bool
 ) {
     guard !isMissing else {
         // A vanished external file has nothing to measure — show the red
         // "Missing — path" state and stop. Clearing the token also makes any
         // in-flight read from a prior binding ignore its late result.
         field.identifier = nil
-        applyAttachmentSubtitle(to: field, path: disk.path, isMissing: true)
+        applyAttachmentSubtitle(to: field, path: path, isMissing: true)
         return
     }
 
-    let token = NSUserInterfaceItemIdentifier(disk.id.uuidString)
+    let token = NSUserInterfaceItemIdentifier(id.uuidString)
     let isNewBinding = field.identifier != token
     field.identifier = token
     if isNewBinding {
         // Seed the best value known synchronously so a recycled cell never
-        // flashes a stale size: an external disk shows its path (also the
-        // fallback if the volume is slow/unreadable); an in-bundle disk clears
+        // flashes a stale size: an external file shows its path (also the
+        // fallback if the volume is slow/unreadable); an in-bundle file clears
         // to empty, invisible for the sub-ms read that follows.
-        applyAttachmentSubtitle(to: field, path: disk.isInternal ? "" : disk.path, isMissing: false)
+        applyAttachmentSubtitle(to: field, path: isInternal ? "" : path, isMissing: false)
     }
 
     Task { [weak field] in
-        let read = Task.detached { diskSubtitle(for: disk, bundleLayout: bundleLayout) }
+        let read = Task.detached {
+            diskSubtitle(path: path, isInternal: isInternal, bundleLayout: bundleLayout)
+        }
         // Defer the placeholder behind a grace period, cancelled the instant the
         // read lands — only a genuinely slow read ever surfaces it. External
-        // disks already hold their path, so they need no placeholder.
+        // files already hold their path, so they need no placeholder.
         let placeholder: Task<Void, Never>? =
-            (isNewBinding && disk.isInternal)
+            (isNewBinding && isInternal)
             ? Task { [weak field] in
                 do {
                     try await Task.sleep(for: diskSubtitlePlaceholderGrace)

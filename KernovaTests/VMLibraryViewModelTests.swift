@@ -515,6 +515,65 @@ struct VMLibraryViewModelTests {
         #expect(disks[1].isInternal)
     }
 
+    // MARK: - Removable media rename
+
+    @Test("renameRemovableMedia trims, persists the new label, and saves once")
+    func renameRemovableMediaPersists() {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        let item = RemovableMediaItem(path: "/tmp/installer.iso", readOnly: true, label: "Original")
+        instance.configuration.removableMedia = [item]
+
+        viewModel.renameRemovableMedia(item, newLabel: "  Renamed  ", on: instance)
+
+        #expect(instance.configuration.removableMedia?[0].label == "Renamed")
+        #expect(storage.bundles[instance.bundleURL]?.removableMedia?[0].label == "Renamed")
+        #expect(storage.saveConfigurationCallCount == 1)
+    }
+
+    @Test("renameRemovableMedia leaves path and readOnly untouched (stays mounted live)")
+    func renameRemovableMediaKeepsMountIdentity() {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        let item = RemovableMediaItem(path: "/tmp/installer.iso", readOnly: true, label: "Original")
+        instance.configuration.removableMedia = [item]
+
+        viewModel.renameRemovableMedia(item, newLabel: "Renamed", on: instance)
+
+        // A label-only edit must not change path/readOnly, or the live diff would
+        // detach and reattach the medium (ejecting it from the running guest).
+        #expect(instance.configuration.removableMedia?[0].path == "/tmp/installer.iso")
+        #expect(instance.configuration.removableMedia?[0].readOnly == true)
+    }
+
+    @Test("renameRemovableMedia ignores an empty / whitespace label and does not save")
+    func renameRemovableMediaEmptyGuard() {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        let item = RemovableMediaItem(path: "/tmp/installer.iso", readOnly: true, label: "Original")
+        instance.configuration.removableMedia = [item]
+
+        viewModel.renameRemovableMedia(item, newLabel: "   ", on: instance)
+
+        #expect(instance.configuration.removableMedia?[0].label == "Original")
+        #expect(storage.saveConfigurationCallCount == 0)
+    }
+
+    @Test("renameRemovableMedia is a no-op for an unknown item id")
+    func renameRemovableMediaUnknownID() {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        instance.configuration.removableMedia = [
+            RemovableMediaItem(path: "/tmp/installer.iso", readOnly: true, label: "Original")
+        ]
+        let unknown = RemovableMediaItem(path: "/tmp/other.iso", readOnly: true, label: "Other")
+
+        viewModel.renameRemovableMedia(unknown, newLabel: "New", on: instance)
+
+        #expect(instance.configuration.removableMedia?[0].label == "Original")
+        #expect(storage.saveConfigurationCallCount == 0)
+    }
+
     @Test("deleteConfirmed trashes the selected external disks and removable media")
     func deleteConfirmedTrashesExternals() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
