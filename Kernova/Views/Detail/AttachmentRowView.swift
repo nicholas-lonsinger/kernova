@@ -121,8 +121,11 @@ final class AttachmentRowView: NSView, NSTextFieldDelegate {
         if !isRenaming {
             originalTitle = title
             titleField.stringValue = title
+            // Guarded with the title writes: beginRename() deliberately disables
+            // the recognizer for the duration of an edit, so re-enabling it here
+            // mid-edit would re-arm the title click against the live field editor.
+            clickRecognizer.isEnabled = controlsEnabled
         }
-        clickRecognizer.isEnabled = controlsEnabled
         readOnlyToggle.state = readOnly ? .on : .off
         readOnlyToggle.isEnabled = controlsEnabled
         iconButton.configure(systemName: iconSystemName, missingPath: missingPath)

@@ -81,12 +81,7 @@ struct StorageDisk: Codable, Sendable, Equatable {
     /// box. Case-sensitive exact match; only machine-generated defaults are
     /// uniqued — explicit user renames are left exactly as typed.
     static func uniqueLabel(base: String, existingLabels: [String]) -> String {
-        guard existingLabels.contains(base) else { return base }
-        var counter = 2
-        while existingLabels.contains("\(base) \(counter)") {
-            counter += 1
-        }
-        return "\(base) \(counter)"
+        UniqueName.firstAvailable(prefix: base, existing: existingLabels)
     }
 
     /// Display string used in the UI subtitle.

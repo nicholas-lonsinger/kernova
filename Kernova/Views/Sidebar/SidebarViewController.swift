@@ -132,6 +132,7 @@ final class SidebarViewController: NSViewController {
     override func viewWillDisappear() {
         super.viewWillDisappear()
         stopObservations()
+        outlineView.cancelPendingRename()
     }
 
     // MARK: - Observation
@@ -174,6 +175,8 @@ final class SidebarViewController: NSViewController {
         if editingItemID != nil {
             view.window?.makeFirstResponder(outlineView)
         }
+        // A reload reshuffles rows, so drop any armed slow-second-click rename.
+        outlineView.cancelPendingRename()
         // Guard the reload so any selection churn it triggers isn't written
         // back into the model (every other selection-mutating call guards too).
         isUpdatingSelectionFromModel = true
@@ -256,13 +259,17 @@ final class SidebarViewController: NSViewController {
         guard let instance = viewModel.instances.first(where: { $0.id == id }) else { return }
         let row = outlineView.row(forItem: instance)
         guard row >= 0 else { return }
-        // Restore the emphasized (blue) selection before tearing the edit down.
-        setRowUnemphasized(false, atRow: row)
         if let cell = outlineView.view(atColumn: 0, row: row, makeIfNecessary: false)
             as? SidebarVMRowCellView
         {
             cell.setRenaming(false)
         }
+        // Settle the selection emphasis back to its natural state (blue if the
+        // sidebar still holds focus, grey otherwise) now that the edit is torn
+        // down. The keyboard/click commit paths additionally re-settle deferred
+        // via `restoreSidebarFocus`, once any commit-click has moved focus.
+        (outlineView.rowView(atRow: row, makeIfNecessary: false) as? SidebarTableRowView)?
+            .settleEmphasis()
     }
 
     /// Flips the row's selection between unemphasized grey and emphasized blue.
@@ -276,19 +283,24 @@ final class SidebarViewController: NSViewController {
         (rowView as? SidebarTableRowView)?.rendersUnemphasized = unemphasized
     }
 
-    /// Returns first-responder focus to the sidebar — and with it the emphasized
-    /// blue selection — after a keyboard-driven rename (Return/Escape).
+    /// Settles the edited row's selection emphasis after an edit ends, deferred
+    /// to the next main-actor turn so any commit-click has moved the first
+    /// responder before we read it.
     ///
-    /// Deferred to the next main-actor turn: on Return the field editor resigns
-    /// first responder *after* the end-editing notification fires, so an inline
-    /// `makeFirstResponder` would be overridden and the row would stay greyed.
-    private func restoreSidebarFocus() {
+    /// When `grabbingFocus` is true (a keyboard Return/Escape) focus is first
+    /// returned to the sidebar, so the row reads as the active blue selection —
+    /// the field editor resigns first responder *after* the end-editing
+    /// notification fires, so this must run on a later turn or it'd be overridden.
+    /// A click-commit passes false and lets focus follow the click: the row then
+    /// settles to blue (focus stayed in the sidebar) or grey (focus left) on its
+    /// own.
+    private func restoreSidebarFocus(grabbingFocus: Bool = true) {
         Task { @MainActor [weak self] in
             guard let self else { return }
-            self.view.window?.makeFirstResponder(self.outlineView)
+            if grabbingFocus { self.view.window?.makeFirstResponder(self.outlineView) }
             let row = self.outlineView.selectedRow
             (self.outlineView.rowView(atRow: row, makeIfNecessary: false)
-                as? SidebarTableRowView)?.restoreEmphasizedSelection()
+                as? SidebarTableRowView)?.settleEmphasis()
         }
     }
 
@@ -539,10 +551,10 @@ extension SidebarViewController: NSOutlineViewDelegate {
             onCommitRename: { [weak self, weak instance] newName, endedByReturn in
                 guard let self, let instance else { return }
                 self.viewModel.commitRename(for: instance, newName: newName)
-                // Return keeps focus in the sidebar, returning the row to the
-                // emphasized blue selection; a click-commit lets focus follow the
-                // click, so the sidebar greys out on its own.
-                if endedByReturn { self.restoreSidebarFocus() }
+                // Return keeps focus in the sidebar (the row settles back to the
+                // emphasized blue); a click-commit lets focus follow the click and
+                // the row settles to blue or grey depending on where it landed.
+                self.restoreSidebarFocus(grabbingFocus: endedByReturn)
             },
             onCancelRename: { [weak self] in
                 guard let self else { return }
@@ -576,6 +588,9 @@ extension SidebarViewController: NSOutlineViewDelegate {
     }
 
     func outlineViewSelectionDidChange(_ notification: Notification) {
+        // Any selection change invalidates a pending slow-second-click rename
+        // (which is only armed on a click of the already-selected row).
+        outlineView.cancelPendingRename()
         guard !isUpdatingSelectionFromModel else { return }
         let row = outlineView.selectedRow
         if row >= 0, let instance = outlineView.item(atRow: row) as? VMInstance {
@@ -797,7 +812,12 @@ final class SidebarOutlineView: NSOutlineView {
     /// inline edit.
     var beginRenameForRow: ((Int) -> Void)?
 
-    private var pendingRenameRow = -1
+    /// The item armed for a slow-second-click rename, captured by **identity**.
+    ///
+    /// Captured by identity (not row index) so a list mutation during the
+    /// double-click delay can't retarget the rename to whatever VM now sits at the
+    /// old index. Weak so a removed VM simply drops the pending rename.
+    private weak var pendingRenameItem: AnyObject?
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let point = convert(event.locationInWindow, from: nil)
@@ -829,12 +849,15 @@ final class SidebarOutlineView: NSOutlineView {
             window.map { convert($0.mouseLocationOutsideOfEventStream, from: nil) } ?? startPoint
         let moved = hypot(endPoint.x - startPoint.x, endPoint.y - startPoint.y) > 4
 
-        guard wasSelected, overName, !moved, clickedRow >= 0, selectedRow == clickedRow else {
+        guard wasSelected, overName, !moved, clickedRow >= 0, selectedRow == clickedRow,
+            let clickedItem = item(atRow: clickedRow) as AnyObject?
+        else {
             return
         }
         // Defer past the double-click window so a follow-up double-click (Start)
-        // cancels the rename instead of racing it.
-        pendingRenameRow = clickedRow
+        // cancels the rename instead of racing it. Captured by identity, so the
+        // deferred fire re-resolves the item's *current* row.
+        pendingRenameItem = clickedItem
         perform(
             #selector(firePendingRename), with: nil, afterDelay: NSEvent.doubleClickInterval)
     }
@@ -848,16 +871,24 @@ final class SidebarOutlineView: NSOutlineView {
     }
 
     @objc private func firePendingRename() {
-        let row = pendingRenameRow
-        pendingRenameRow = -1
-        guard row >= 0 else { return }
+        guard let item = pendingRenameItem else { return }
+        pendingRenameItem = nil
+        // Re-resolve the item's *current* row and only rename if it's still the
+        // selected row — so a list mutation or a single-click that moved the
+        // selection elsewhere during the delay can't rename the wrong VM.
+        let row = row(forItem: item)
+        guard row >= 0, row == selectedRow else { return }
         beginRenameForRow?(row)
     }
 
-    private func cancelPendingRename() {
+    /// Drops any armed slow-second-click rename.
+    ///
+    /// Called on double-click, selection change, and reload so a stale arm can't
+    /// fire later.
+    func cancelPendingRename() {
         NSObject.cancelPreviousPerformRequests(
             withTarget: self as Any, selector: #selector(firePendingRename), object: nil)
-        pendingRenameRow = -1
+        pendingRenameItem = nil
     }
 }
 
@@ -897,22 +928,40 @@ final class SidebarTableRowView: NSTableRowView {
         set { super.isEmphasized = newValue }
     }
 
-    /// Rebuilds the emphasized (blue) selection material after an edit ends and
-    /// focus has returned to the sidebar.
+    /// Rebuilds the cached selection material to the row's **natural** emphasis
+    /// after an edit ends: emphasized (blue) when the table is the focused first
+    /// responder in a key window, unemphasized (grey) otherwise — the standard
+    /// "selected but not focused" look.
     ///
-    /// The source-list selection material is cached and only rebuilds when the
-    /// `isEmphasized` setter sees a *changed* value. During the edit the table
-    /// already stored `true` (it contained the field editor), so a plain set to
-    /// `true` no-ops and leaves the stale grey material; toggling forces the
-    /// rebuild.
-    func restoreEmphasizedSelection() {
+    /// Called for *every* edit end (Return, Escape, and click-commit alike), so a
+    /// click that commits but leaves focus in the sidebar correctly returns to
+    /// blue instead of being stranded in the editing grey. The source-list
+    /// material only rebuilds on a *changed* `isEmphasized` set — during the edit
+    /// the stored value was forced `false` — so we toggle to force the rebuild.
+    func settleEmphasis() {
         rendersUnemphasized = false
-        // Toggle through the setter to force a rebuild to the real emphasis
-        // (emphasized when the window is key, now that focus is back in the
-        // sidebar; greyed otherwise).
-        let emphasized = window?.isKeyWindow ?? true
+        let emphasized = naturalEmphasis
         super.isEmphasized = !emphasized
         super.isEmphasized = emphasized
+    }
+
+    /// `true` when this row's enclosing table view is (or contains) the window's
+    /// first responder in a key window — i.e. the selection should read as the
+    /// active, emphasized blue.
+    private var naturalEmphasis: Bool {
+        guard let window, window.isKeyWindow, let table = enclosingTableView,
+            let responder = window.firstResponder as? NSView
+        else { return false }
+        return responder.isDescendant(of: table)
+    }
+
+    private var enclosingTableView: NSTableView? {
+        var candidate = superview
+        while let view = candidate {
+            if let table = view as? NSTableView { return table }
+            candidate = view.superview
+        }
+        return nil
     }
 
     override func prepareForReuse() {

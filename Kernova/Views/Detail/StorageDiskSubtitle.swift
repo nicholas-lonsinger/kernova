@@ -40,10 +40,10 @@ nonisolated func diskSubtitle(for disk: StorageDisk, bundleLayout: VMBundleLayou
 /// it can run on a detached task — the file reads happen off the main thread.
 /// Callers paint the result via ``populateDiskSubtitle(_:id:path:isInternal:bundleLayout:isMissing:)``.
 nonisolated func diskSubtitle(path: String, isInternal: Bool, bundleLayout: VMBundleLayout) -> String {
-    let onDiskText = bundleLayout.diskOnDiskBytes(forRelativePath: path, isInternal: isInternal)
-        .map { DataFormatters.formatBytes($0) }
-    let allocatedText = bundleLayout.diskCapacityBytes(forRelativePath: path, isInternal: isInternal)
-        .map { DataFormatters.formatBytes($0) }
+    // One coalesced read for both figures (rather than two separate stats).
+    let sizes = bundleLayout.diskSizes(forRelativePath: path, isInternal: isInternal)
+    let onDiskText = sizes.onDiskBytes.map { DataFormatters.formatBytes($0) }
+    let allocatedText = sizes.capacityBytes.map { DataFormatters.formatBytes($0) }
 
     switch (onDiskText, allocatedText) {
     case let (.some(onDisk), .some(allocated)):
@@ -73,10 +73,18 @@ private let diskSubtitleFadeDuration: TimeInterval = 0.2
 /// The in-bundle size figures arrive after an off-main read, so snapping them
 /// into the row reads as an abrupt pop; a quick alpha fade softens it. A repaint
 /// with the *same* string — the common case when a steady-state refresh re-reads
-/// an unchanged size — skips the animation so the row doesn't shimmer.
+/// an unchanged size — skips the animation so the row doesn't shimmer. When
+/// `animated` is `false` the value is painted directly with no fade — used by the
+/// Boot Order sheet, whose drag-drop `reloadData()` rebinds cells and would
+/// otherwise re-fade every crossed row on each reorder.
 @MainActor
-private func fadeInDiskSubtitle(_ field: NSTextField, text: String) {
+private func setDiskSubtitle(_ field: NSTextField, text: String, animated: Bool) {
     guard field.stringValue != text else { return }
+    guard animated else {
+        field.alphaValue = 1
+        applyAttachmentSubtitle(to: field, path: text, isMissing: false)
+        return
+    }
     field.alphaValue = 0
     applyAttachmentSubtitle(to: field, path: text, isMissing: false)
     NSAnimationContext.runAnimationGroup { context in
@@ -86,17 +94,45 @@ private func fadeInDiskSubtitle(_ field: NSTextField, text: String) {
     }
 }
 
+/// In-flight subtitle reads keyed by the painted field.
+///
+/// Re-binding a field (a settings-list refresh, a recycled Boot Order cell)
+/// cancels its prior read + deferred placeholder instead of letting them
+/// accumulate. The `generation` tags each read so a finishing task only clears
+/// its *own* entry, never one a newer bind installed.
+@MainActor
+private var diskSubtitleReads: [ObjectIdentifier: (generation: Int, task: Task<Void, Never>)] = [:]
+
+@MainActor
+private var diskSubtitleReadGeneration = 0
+
 /// Fills `field` with the subtitle for a `StorageDisk`.
 ///
 /// The `StorageDisk` convenience overload of
-/// ``populateDiskSubtitle(_:id:path:isInternal:bundleLayout:isMissing:)``.
+/// ``populateDiskSubtitle(_:id:path:isInternal:bundleLayout:isMissing:animated:)``.
 @MainActor
 func populateDiskSubtitle(
-    _ field: NSTextField, for disk: StorageDisk, bundleLayout: VMBundleLayout, isMissing: Bool
+    _ field: NSTextField, for disk: StorageDisk, bundleLayout: VMBundleLayout, isMissing: Bool,
+    animated: Bool = true
 ) {
     populateDiskSubtitle(
         field, id: disk.id, path: disk.path, isInternal: disk.isInternal,
-        bundleLayout: bundleLayout, isMissing: isMissing)
+        bundleLayout: bundleLayout, isMissing: isMissing, animated: animated)
+}
+
+/// Fills `field` with the subtitle for a `RemovableMediaItem` (always external).
+///
+/// The `RemovableMediaItem` convenience overload of
+/// ``populateDiskSubtitle(_:id:path:isInternal:bundleLayout:isMissing:animated:)``,
+/// so removable call sites don't hand-spell `isInternal: false`.
+@MainActor
+func populateDiskSubtitle(
+    _ field: NSTextField, for item: RemovableMediaItem, bundleLayout: VMBundleLayout,
+    isMissing: Bool, animated: Bool = true
+) {
+    populateDiskSubtitle(
+        field, id: item.id, path: item.path, isInternal: false,
+        bundleLayout: bundleLayout, isMissing: isMissing, animated: animated)
 }
 
 /// Fills `field` with an attachment's subtitle, reading its sizes **off the main
@@ -121,13 +157,18 @@ func populateDiskSubtitle(
 /// placeholder — so the fast path never flickers it.
 ///
 /// The async value (and the placeholder, if shown) eases in via
-/// ``fadeInDiskSubtitle(_:text:)`` so it doesn't pop; a no-op repaint with an
-/// unchanged size doesn't animate.
+/// ``setDiskSubtitle(_:text:animated:)`` so it doesn't pop (unless `animated` is
+/// `false`); a no-op repaint with an unchanged size doesn't animate. Re-binding a
+/// field cancels its prior in-flight read so reads don't accumulate under churn.
 @MainActor
 func populateDiskSubtitle(
     _ field: NSTextField, id: UUID, path: String, isInternal: Bool,
-    bundleLayout: VMBundleLayout, isMissing: Bool
+    bundleLayout: VMBundleLayout, isMissing: Bool, animated: Bool = true
 ) {
+    // Cancel any read still in flight for this field before re-binding it.
+    let fieldKey = ObjectIdentifier(field)
+    diskSubtitleReads.removeValue(forKey: fieldKey)?.task.cancel()
+
     guard !isMissing else {
         // A vanished external file has nothing to measure — show the red
         // "Missing — path" state and stop. Clearing the token also makes any
@@ -148,7 +189,9 @@ func populateDiskSubtitle(
         applyAttachmentSubtitle(to: field, path: isInternal ? "" : path, isMissing: false)
     }
 
-    Task { [weak field] in
+    diskSubtitleReadGeneration += 1
+    let generation = diskSubtitleReadGeneration
+    let task = Task { [weak field] in
         let read = Task.detached {
             diskSubtitle(path: path, isInternal: isInternal, bundleLayout: bundleLayout)
         }
@@ -166,13 +209,18 @@ func populateDiskSubtitle(
                 guard let field, field.identifier == token, field.stringValue.isEmpty else {
                     return
                 }
-                fadeInDiskSubtitle(field, text: "In-bundle disk image")
+                setDiskSubtitle(field, text: "In-bundle disk image", animated: animated)
             }
             : nil
 
         let text = await read.value
         placeholder?.cancel()
-        guard let field, field.identifier == token else { return }
-        fadeInDiskSubtitle(field, text: text)
+        // Clear our own entry only — a newer bind may have replaced it.
+        if diskSubtitleReads[fieldKey]?.generation == generation {
+            diskSubtitleReads.removeValue(forKey: fieldKey)
+        }
+        guard !Task.isCancelled, let field, field.identifier == token else { return }
+        setDiskSubtitle(field, text: text, animated: animated)
     }
+    diskSubtitleReads[fieldKey] = (generation, task)
 }

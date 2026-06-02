@@ -236,4 +236,46 @@ struct VMBundleLayoutTests {
             layout.diskCapacityBytes(
                 forRelativePath: layout.diskImageURL.lastPathComponent, isInternal: true) == nil)
     }
+
+    @Test("diskCapacityBytes rejects a sector count that overflows when ×512")
+    func diskCapacityBytesNilForOverflowingSectorCount() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let layout = VMBundleLayout(bundleURL: tempDir)
+        // A crafted sector count whose `× 512` overflows UInt64 and *wraps* back
+        // to exactly 1 GB — inside the sanity window. A wrapping multiply would
+        // report a fabricated 1 GB capacity; the checked multiply must reject it.
+        var header = Data(count: 0x38)
+        header.replaceSubrange(0..<4, with: Data("shdw".utf8))
+        var sectorsBE = UInt64(0x0080_0000_0020_0000).bigEndian
+        withUnsafeBytes(of: &sectorsBE) { header.replaceSubrange(0x30..<0x38, with: $0) }
+        try header.write(to: layout.diskImageURL)
+
+        #expect(
+            layout.diskCapacityBytes(
+                forRelativePath: layout.diskImageURL.lastPathComponent, isInternal: true) == nil)
+    }
+
+    // MARK: - diskSizes
+
+    @Test("diskSizes returns both figures in one read for a raw image")
+    func diskSizesReturnsBothFigures() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let layout = VMBundleLayout(bundleURL: tempDir)
+        try Data(repeating: 0xAB, count: 4096).write(to: layout.diskImageURL)
+
+        let sizes = layout.diskSizes(
+            forRelativePath: layout.diskImageURL.lastPathComponent, isInternal: true)
+        // Raw image: capacity is the apparent size; on-disk is the allocation.
+        #expect(sizes.capacityBytes == 4096)
+        #expect(sizes.onDiskBytes != nil)
+        #expect(sizes.onDiskBytes! >= 4096)
+    }
 }

@@ -49,55 +49,69 @@ struct VMBundleLayout: Sendable {
         FileManager.default.fileExists(atPath: saveFileURL.path(percentEncoded: false))
     }
 
-    /// Actual bytes consumed on disk by a disk image, or `nil` if the file
-    /// doesn't resolve.
+    /// Absolute URL backing a disk: bundle-relative `path`s resolve against
+    /// `bundleURL`, absolute paths are used as-is.
     ///
-    /// Resolves bundle-relative `path`s against `bundleURL` and absolute paths
-    /// as-is, so it serves both in-bundle and external disks. Uses
-    /// `totalFileAllocatedSizeKey` (`st_blocks * 512`) rather than logical file
-    /// size, so sparse ASIF images report their true on-disk footprint.
-    /// `VMBundleLayout` is `Sendable`, so callers can hop this onto a detached
-    /// task to keep the stat off the main thread.
-    func diskOnDiskBytes(forRelativePath path: String, isInternal: Bool) -> UInt64? {
-        let url =
-            isInternal ? bundleURL.appendingPathComponent(path) : URL(fileURLWithPath: path)
-        guard
-            let size = (try? url.resourceValues(forKeys: [.totalFileAllocatedSizeKey]))?
-                .totalFileAllocatedSize
-        else {
-            return nil
-        }
-        return UInt64(size)
+    /// The single source of truth for the internal-vs-external resolution rule,
+    /// shared by the size reads and the settings VC's Get Info / Show in Finder /
+    /// Copy Path actions so they never drift to a different file.
+    func diskURL(forRelativePath path: String, isInternal: Bool) -> URL {
+        isInternal ? bundleURL.appendingPathComponent(path) : URL(fileURLWithPath: path)
     }
 
-    /// Virtual capacity (bytes) of a disk image, or `nil` when it can't be read.
+    /// On-disk footprint and virtual capacity of a disk image.
+    struct DiskSizes: Sendable {
+        /// Actual bytes consumed on disk (`st_blocks * 512`), or `nil` if the
+        /// file doesn't resolve.
+        var onDiskBytes: UInt64?
+        /// Virtual capacity in bytes, or `nil` when it can't be read.
+        var capacityBytes: UInt64?
+    }
+
+    /// Reads a disk image's on-disk footprint and virtual capacity in one pass.
     ///
-    /// Sparse **ASIF** images record their capacity in the header — the apparent
-    /// file size tracks the *grown* footprint, not the capacity (a 100 GB disk
-    /// holding 27 GB has a ~27 GB apparent size) — so it's parsed out. Any other
-    /// format (a raw `.img`, an `.iso`, a `.dmg`) is *not* a sparse container, so
-    /// its apparent file size **is** its virtual capacity and is read directly.
-    /// Resolves bundle-relative `path`s against `bundleURL` and absolute paths
-    /// as-is, serving both in-bundle and external disks. `VMBundleLayout` is
-    /// `Sendable`, so callers can hop this onto a detached task.
-    func diskCapacityBytes(forRelativePath path: String, isInternal: Bool) -> UInt64? {
-        let url =
-            isInternal ? bundleURL.appendingPathComponent(path) : URL(fileURLWithPath: path)
+    /// Coalesces what would otherwise be two or three separate `stat`s into a
+    /// single `resourceValues` for both `totalFileAllocatedSizeKey` (the true
+    /// sparse footprint, not the grown apparent size) and `fileSizeKey` (the
+    /// apparent size, which *is* the capacity for a non-sparse format). Sparse
+    /// **ASIF** images instead record their capacity in the header — a 100 GB
+    /// disk holding 27 GB has a ~27 GB apparent size — so it's parsed out; any
+    /// other format (a raw `.img`, an `.iso`, a `.dmg`) uses the apparent size
+    /// directly. `VMBundleLayout` is `Sendable`, so callers can hop this onto a
+    /// detached task to keep the I/O off the main thread.
+    func diskSizes(forRelativePath path: String, isInternal: Bool) -> DiskSizes {
+        let url = diskURL(forRelativePath: path, isInternal: isInternal)
+        let values = try? url.resourceValues(forKeys: [.totalFileAllocatedSizeKey, .fileSizeKey])
+        let onDisk = values?.totalFileAllocatedSize.map(UInt64.init)
+        let capacity: UInt64?
         switch asifCapacity(at: url) {
         case .capacity(let bytes):
-            return bytes
+            capacity = bytes
         case .malformedASIF:
             // A recognizable-but-unparseable ASIF: do *not* guess from the
             // apparent size (it tracks the grown footprint, not capacity) —
             // report unknown so the row degrades to on-disk-only.
-            return nil
+            capacity = nil
         case .notASIF:
             // Raw `.img` / `.iso` / `.dmg`: apparent size *is* the capacity.
-            guard let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize else {
-                return nil
-            }
-            return UInt64(size)
+            capacity = values?.fileSize.map(UInt64.init)
         }
+        return DiskSizes(onDiskBytes: onDisk, capacityBytes: capacity)
+    }
+
+    /// Actual bytes consumed on disk by a disk image, or `nil` if the file
+    /// doesn't resolve.
+    ///
+    /// Thin accessor over ``diskSizes(forRelativePath:isInternal:)``.
+    func diskOnDiskBytes(forRelativePath path: String, isInternal: Bool) -> UInt64? {
+        diskSizes(forRelativePath: path, isInternal: isInternal).onDiskBytes
+    }
+
+    /// Virtual capacity (bytes) of a disk image, or `nil` when it can't be read.
+    ///
+    /// Thin accessor over ``diskSizes(forRelativePath:isInternal:)``.
+    func diskCapacityBytes(forRelativePath path: String, isInternal: Bool) -> UInt64? {
+        diskSizes(forRelativePath: path, isInternal: isInternal).capacityBytes
     }
 
     /// Outcome of inspecting a file's ASIF header for its virtual capacity.
@@ -133,9 +147,14 @@ struct VMBundleLayout: Sendable {
             return .notASIF
         }
         let sectors = header[0x30..<0x38].reduce(UInt64(0)) { ($0 << 8) | UInt64($1) }
-        let bytes = sectors &* 512
+        // Checked multiply: a corrupt/hostile header could otherwise wrap a huge
+        // sector count back into the sanity window and report a fabricated
+        // capacity — treat any overflow as malformed.
+        let (bytes, overflowed) = sectors.multipliedReportingOverflow(by: 512)
         // Sanity bounds: 1 MB … 1 PB.
-        guard (1_000_000...1_000_000_000_000_000).contains(bytes) else { return .malformedASIF }
+        guard !overflowed, (1_000_000...1_000_000_000_000_000).contains(bytes) else {
+            return .malformedASIF
+        }
         return .capacity(bytes)
     }
 }
