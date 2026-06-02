@@ -457,10 +457,9 @@ final class StorageDiskReorderRowCellView: NSTableCellView {
             missingPath: isMissing ? disk.path : nil
         )
         titleLabel.stringValue = disk.label
-        applyAttachmentSubtitle(
-            to: subtitleLabel,
-            path: diskSubtitle(for: disk, in: instance),
-            isMissing: isMissing
-        )
+        // Reads in-bundle sizes off-main; the `identifier` token guards against
+        // this reused cell being rebound to a different disk mid-read.
+        populateDiskSubtitle(
+            subtitleLabel, for: disk, bundleLayout: instance.bundleLayout, isMissing: isMissing)
     }
 }
