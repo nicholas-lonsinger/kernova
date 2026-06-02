@@ -247,6 +247,7 @@ final class SidebarViewController: NSViewController {
         {
             cell.setRenaming(true)
         }
+        setRowUnemphasized(true, atRow: row)
     }
 
     private func endActiveEditingIfNeeded() {
@@ -254,11 +255,41 @@ final class SidebarViewController: NSViewController {
         editingItemID = nil
         guard let instance = viewModel.instances.first(where: { $0.id == id }) else { return }
         let row = outlineView.row(forItem: instance)
-        guard row >= 0,
-            let cell = outlineView.view(atColumn: 0, row: row, makeIfNecessary: false)
-                as? SidebarVMRowCellView
-        else { return }
-        cell.setRenaming(false)
+        guard row >= 0 else { return }
+        // Restore the emphasized (blue) selection before tearing the edit down.
+        setRowUnemphasized(false, atRow: row)
+        if let cell = outlineView.view(atColumn: 0, row: row, makeIfNecessary: false)
+            as? SidebarVMRowCellView
+        {
+            cell.setRenaming(false)
+        }
+    }
+
+    /// Flips the row's selection between unemphasized grey and emphasized blue.
+    ///
+    /// Grey while the name is being edited (so the white edit box stands out),
+    /// blue otherwise. The table won't change this on its own: the field editor is
+    /// a descendant, so from the table's perspective the selection's emphasis
+    /// never changed.
+    private func setRowUnemphasized(_ unemphasized: Bool, atRow row: Int) {
+        let rowView = outlineView.rowView(atRow: row, makeIfNecessary: false)
+        (rowView as? SidebarTableRowView)?.rendersUnemphasized = unemphasized
+    }
+
+    /// Returns first-responder focus to the sidebar — and with it the emphasized
+    /// blue selection — after a keyboard-driven rename (Return/Escape).
+    ///
+    /// Deferred to the next main-actor turn: on Return the field editor resigns
+    /// first responder *after* the end-editing notification fires, so an inline
+    /// `makeFirstResponder` would be overridden and the row would stay greyed.
+    private func restoreSidebarFocus() {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.view.window?.makeFirstResponder(self.outlineView)
+            let row = self.outlineView.selectedRow
+            (self.outlineView.rowView(atRow: row, makeIfNecessary: false)
+                as? SidebarTableRowView)?.restoreEmphasizedSelection()
+        }
     }
 
     // MARK: - Double-click
@@ -505,12 +536,19 @@ extension SidebarViewController: NSOutlineViewDelegate {
             // Capture `instance` weakly: the cell stores these closures, so a
             // strong capture would keep a deleted VM alive until the cell is
             // recycled. A nil instance means the VM is gone — no-op.
-            onCommitRename: { [weak self, weak instance] newName in
+            onCommitRename: { [weak self, weak instance] newName, endedByReturn in
                 guard let self, let instance else { return }
                 self.viewModel.commitRename(for: instance, newName: newName)
+                // Return keeps focus in the sidebar, returning the row to the
+                // emphasized blue selection; a click-commit lets focus follow the
+                // click, so the sidebar greys out on its own.
+                if endedByReturn { self.restoreSidebarFocus() }
             },
             onCancelRename: { [weak self] in
-                self?.viewModel.cancelRename()
+                guard let self else { return }
+                self.viewModel.cancelRename()
+                // Escape returns focus to the sidebar (and the blue selection).
+                self.restoreSidebarFocus()
             },
             onMountAgent: { [weak self, weak instance] in
                 guard let self, let instance else { return }
@@ -522,6 +560,19 @@ extension SidebarViewController: NSOutlineViewDelegate {
             }
         )
         return cell
+    }
+
+    /// Provides the custom ``SidebarTableRowView`` so a row renders its selection
+    /// unemphasized (grey) while its name is being edited.
+    func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? {
+        if let reused = outlineView.makeView(
+            withIdentifier: SidebarTableRowView.reuseID, owner: self) as? SidebarTableRowView
+        {
+            return reused
+        }
+        let rowView = SidebarTableRowView()
+        rowView.identifier = SidebarTableRowView.reuseID
+        return rowView
     }
 
     func outlineViewSelectionDidChange(_ notification: Notification) {
@@ -807,5 +858,65 @@ final class SidebarOutlineView: NSOutlineView {
         NSObject.cancelPreviousPerformRequests(
             withTarget: self as Any, selector: #selector(firePendingRename), object: nil)
         pendingRenameRow = -1
+    }
+}
+
+// MARK: - Row view subclass
+
+/// Source-list row view that renders its selection *unemphasized* — the lighter
+/// "selected but not focused" grey — while the row's name is being edited, so
+/// the white rounded edit box stands out against it.
+///
+/// Without this the selection stays emphasized (accent blue) during editing: the
+/// field editor is a descendant of the table, and `NSTableRowView`'s emphasis
+/// reports `true` whenever the table *contains* the first responder, not only
+/// when the table itself is focused. Forcing the grey state for the duration of
+/// the edit gives the contrast; the row returns to blue when the edit ends and
+/// the outline view is first responder again.
+final class SidebarTableRowView: NSTableRowView {
+    static let reuseID = NSUserInterfaceItemIdentifier("SidebarTableRow")
+
+    /// Set while the row's name is being edited.
+    ///
+    /// Forces the selection to the unemphasized grey so the white edit box stands
+    /// out. The table won't change emphasis on its own here: the field editor is a
+    /// descendant, so from the table's perspective the selection still "contains"
+    /// the first responder and stays emphasized. Setting the stored `isEmphasized`
+    /// to `false` rebuilds the source-list selection material as grey now (a bare
+    /// `needsDisplay` doesn't refresh it); the getter override then keeps it grey
+    /// for the duration even if the table re-reads it.
+    var rendersUnemphasized = false {
+        didSet {
+            guard rendersUnemphasized != oldValue, rendersUnemphasized else { return }
+            super.isEmphasized = false
+        }
+    }
+
+    override var isEmphasized: Bool {
+        get { rendersUnemphasized ? false : super.isEmphasized }
+        set { super.isEmphasized = newValue }
+    }
+
+    /// Rebuilds the emphasized (blue) selection material after an edit ends and
+    /// focus has returned to the sidebar.
+    ///
+    /// The source-list selection material is cached and only rebuilds when the
+    /// `isEmphasized` setter sees a *changed* value. During the edit the table
+    /// already stored `true` (it contained the field editor), so a plain set to
+    /// `true` no-ops and leaves the stale grey material; toggling forces the
+    /// rebuild.
+    func restoreEmphasizedSelection() {
+        rendersUnemphasized = false
+        // Toggle through the setter to force a rebuild to the real emphasis
+        // (emphasized when the window is key, now that focus is back in the
+        // sidebar; greyed otherwise).
+        let emphasized = window?.isKeyWindow ?? true
+        super.isEmphasized = !emphasized
+        super.isEmphasized = emphasized
+    }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        rendersUnemphasized = false
     }
 }

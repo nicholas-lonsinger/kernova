@@ -31,7 +31,12 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
 
     private weak var instance: VMInstance?
     private var rowObservation: ObservationLoop?
-    private var onCommitRename: ((String) -> Void)?
+    /// Commits the edited name.
+    ///
+    /// The `Bool` is `true` when editing ended by Return, which the controller
+    /// uses to decide whether to restore sidebar focus (and the emphasized blue
+    /// selection).
+    private var onCommitRename: ((String, Bool) -> Void)?
     private var onCancelRename: (() -> Void)?
 
     /// `true` while the name field is in its editable rename state.
@@ -161,7 +166,7 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
     func configure(
         instance: VMInstance,
         isRenaming: Bool,
-        onCommitRename: @escaping (String) -> Void,
+        onCommitRename: @escaping (String, Bool) -> Void,
         onCancelRename: @escaping () -> Void,
         onMountAgent: @escaping () -> Void,
         onDismissAgentNudge: @escaping () -> Void
@@ -334,8 +339,15 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
     func controlTextDidEndEditing(_ obj: Notification) {
         guard isRenaming, !isCancellingRename else { return }
         let newName = nameField.stringValue
+        // Whether editing ended by Return (vs a click elsewhere). The controller
+        // restores sidebar focus — and the emphasized blue selection — only for
+        // Return; a click commits too but lets focus follow the click, so the
+        // sidebar greys out on its own (the standard "selected but not focused"
+        // look).
+        let endedByReturn =
+            (obj.userInfo?["NSTextMovement"] as? Int) == NSTextMovement.return.rawValue
         setRenaming(false)
-        onCommitRename?(newName)
+        onCommitRename?(newName, endedByReturn)
     }
 
     func control(
@@ -344,8 +356,9 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
         guard commandSelector == #selector(NSResponder.cancelOperation(_:)) else { return false }
         isCancellingRename = true
         // Revert the live buffer and resign so the field editor actually tears
-        // down — setting `isEditable = false` in `setRenaming(false)` alone
-        // leaves it active, so the box would stay in its editing state.
+        // down — setting `isEditable = false` in `setRenaming(false)` alone leaves
+        // it active, so the box would stay in its editing state. The controller
+        // restores focus (and the blue selection) once the cancel propagates.
         if let instance { nameField.currentEditor()?.string = instance.name }
         window?.makeFirstResponder(nil)
         setRenaming(false)
