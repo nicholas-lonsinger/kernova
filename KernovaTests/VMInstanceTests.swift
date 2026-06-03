@@ -549,11 +549,10 @@ struct VMInstanceTests {
         let instance = makeMacOSInstanceWithAgentInstalled()
         instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
 
-        // 5 s default deadline = 25× the grace; comfortable margin for CI
-        // MainActor jitter without hiding genuine bugs.
-        try await waitUntil {
-            instance.agentExpectedButMissing
-        }
+        // Await the watchdog task itself rather than polling the flag: the task
+        // completes exactly when the grace elapses and flips the flag, so there
+        // is no wall-clock deadline to lose under CI MainActor contention.
+        await instance.agentPostStartTaskForTesting?.value
         #expect(instance.agentExpectedButMissing == true)
         #expect(instance.agentStatus == .expectedMissing(expected: "0.9.2"))
     }
@@ -660,9 +659,8 @@ struct VMInstanceTests {
 
         instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
 
-        try await waitUntil {
-            instance.agentExpectedButMissing
-        }
+        await instance.agentPostStartTaskForTesting?.value
+        #expect(instance.agentExpectedButMissing == true)
         #expect(instance.configuration.agentInstallNudgeDismissed == false)
         #expect(persistCallCount == 1)
     }
@@ -679,9 +677,8 @@ struct VMInstanceTests {
 
         instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
 
-        try await waitUntil {
-            instance.agentExpectedButMissing
-        }
+        await instance.agentPostStartTaskForTesting?.value
+        #expect(instance.agentExpectedButMissing == true)
         #expect(persistCallCount == 0)
     }
 
@@ -698,9 +695,8 @@ struct VMInstanceTests {
         // Re-arming after teardown should now succeed — the prior task was
         // cancelled, so the idempotency guard does not block this.
         instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
-        try await waitUntil {
-            instance.agentExpectedButMissing
-        }
+        await instance.agentPostStartTaskForTesting?.value
+        #expect(instance.agentExpectedButMissing == true)
     }
 
     @Test("agentStatus surfaces .expectedMissing only when both the flag and persisted version are set")
@@ -783,8 +779,7 @@ struct VMInstanceTests {
         // Re-arming after the cancel must succeed (proves the prior task
         // was cancelled — the idempotency guard does not block this).
         instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
-        try await waitUntil {
-            instance.agentExpectedButMissing
-        }
+        await instance.agentPostStartTaskForTesting?.value
+        #expect(instance.agentExpectedButMissing == true)
     }
 }

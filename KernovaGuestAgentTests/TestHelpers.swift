@@ -35,14 +35,19 @@ func makeChannelPair() throws -> (VsockChannel, VsockChannel) {
 
 // MARK: - waitUntil
 
-/// Polls `predicate` every 10 ms until it returns `true` or `timeout` elapses.
+/// Polls `predicate` every 50 ms until it returns `true` or `timeout` elapses.
+///
+/// Prefer the event-driven `AsyncGate` below for new timing-sensitive waits —
+/// polling is retained for predicates with no underlying signal to await; the
+/// 50 ms tick (up from 10 ms) keeps idle pollers from adding avoidable
+/// executor churn under parallel CI load.
 func waitUntil(
     timeout: Duration = .seconds(5),
     _ predicate: @Sendable () -> Bool
 ) async throws {
     let deadline = ContinuousClock.now.advanced(by: timeout)
     while !predicate() && ContinuousClock.now < deadline {
-        try await Task.sleep(for: .milliseconds(10))
+        try await Task.sleep(for: .milliseconds(50))
     }
     guard predicate() else {
         throw TestFailure("Predicate did not become true within \(timeout)")
@@ -107,16 +112,24 @@ func awaitFirst<T: Sendable>(
 // MARK: - AtomicInt
 
 /// Lock-protected integer for use in non-async closures (e.g. socket providers).
+///
+/// Exposes a `changed` gate so tests can `await changed.wait { value >= n }`
+/// instead of polling — each `increment()` fires the gate.
 final class AtomicInt: @unchecked Sendable {
     private let lock = NSLock()
     private var storedValue: Int = 0
 
+    /// Fires on every `increment()`; await it instead of polling `value`.
+    let changed = AsyncGate()
+
     @discardableResult
     func increment() -> Int {
-        lock.withLock {
+        let newValue = lock.withLock { () -> Int in
             storedValue += 1
             return storedValue
         }
+        changed.notify()
+        return newValue
     }
 
     var value: Int {
@@ -158,4 +171,99 @@ func makeLogFrame(message: String) -> Frame {
         $0.message = message
     }
     return frame
+}
+
+// MARK: - AsyncGate
+
+/// Resumes its continuation at most once, regardless of how many racing paths
+/// (a `notify()` and the timeout backstop) try to fire it. `CheckedContinuation`
+/// traps on a second resume, so this guard makes the race safe.
+private final class ResumeOnce: @unchecked Sendable {
+    private let lock = NSLock()
+    private var fired = false
+    func fire(_ body: () -> Void) {
+        lock.lock()
+        let already = fired
+        fired = true
+        lock.unlock()
+        if !already { body() }
+    }
+}
+
+/// Event-driven replacement for `waitUntil` polling.
+///
+/// A producer calls `notify()` after each observable state change; the consumer
+/// awaits `wait(until:)`, which suspends until the predicate holds — re-checked
+/// on every `notify()` — or throws `TestFailure` after `timeout`.
+///
+/// Unlike the poll loop, an idle waiter adds **zero** wake-ups to the shared
+/// (and, on CI, contended) executor, and the `timeout` is a backstop the happy
+/// path never reaches rather than the success deadline — so a slow runner no
+/// longer fails the wait, only a genuinely stuck condition does. This is the
+/// fix for the timing-sensitive flakes documented in the flaky-CI
+/// investigation; keep it aligned with the KernovaTests bundle's copy.
+///
+/// `wait` is `nonisolated` with a `@Sendable` predicate to match this bundle's
+/// `waitUntil` (its suites are not `@MainActor`); predicates read `Sendable`
+/// boxes (`AtomicInt`, `PolicyBox`).
+final class AsyncGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var waiters: [UUID: () -> Void] = [:]
+
+    /// Wake every current waiter; call right after mutating observed state.
+    func notify() {
+        lock.lock()
+        let resumes = Array(waiters.values)
+        waiters.removeAll()
+        lock.unlock()
+        resumes.forEach { $0() }
+    }
+
+    /// Suspend until `predicate()` holds (re-checked on each `notify()`), or
+    /// throw `TestFailure` after `timeout`.
+    func wait(
+        timeout: Duration = .seconds(10),
+        until predicate: @Sendable () -> Bool
+    ) async throws {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while !predicate() {
+            if ContinuousClock.now >= deadline {
+                throw TestFailure("Condition not met within \(timeout)")
+            }
+            await armOnce(deadline: deadline, predicate: predicate)
+        }
+    }
+
+    /// Suspends until the next `notify()`, an immediate hit (the predicate
+    /// already holds at arm time, closing the arm-vs-notify race), or the
+    /// `deadline` backstop — whichever comes first.
+    private func armOnce(
+        deadline: ContinuousClock.Instant,
+        predicate: @Sendable () -> Bool
+    ) async {
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            let id = UUID()
+            let once = ResumeOnce()
+            lock.lock()
+            waiters[id] = { once.fire { cont.resume() } }
+            lock.unlock()
+            // Close the arm-vs-notify race: if the state already satisfies the
+            // predicate (a notify may have landed before we registered), resume
+            // now so the outer loop re-checks promptly instead of blocking.
+            if predicate() {
+                lock.lock()
+                waiters.removeValue(forKey: id)
+                lock.unlock()
+                once.fire { cont.resume() }
+                return
+            }
+            // Backstop: resume at the deadline even if no notify arrives, so a
+            // genuinely stuck condition fails the wait instead of hanging.
+            Task {
+                try? await Task.sleep(until: deadline, clock: ContinuousClock())
+                self.lock.withLock { _ = self.waiters.removeValue(forKey: id) }
+                once.fire { cont.resume() }
+            }
+        }
+    }
 }

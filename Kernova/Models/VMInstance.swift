@@ -716,6 +716,16 @@ final class VMInstance {
         agentPostStartTask = nil
     }
 
+    #if DEBUG
+    /// The in-flight post-start watchdog task, or `nil` when none is armed.
+    ///
+    /// Test-only seam: watchdog tests `await` this task's completion instead of
+    /// polling `agentExpectedButMissing`, so they depend on the task actually
+    /// finishing rather than on a wall-clock deadline — removing the MainActor
+    /// timing flake that polling exhibited under CI contention.
+    var agentPostStartTaskForTesting: Task<Void, Never>? { agentPostStartTask }
+    #endif
+
     /// Reacts to a fresh, non-empty `agent_version` reported by the guest:
     /// cancel the post-start watchdog, clear the expected-missing flag, and
     /// route the new value through the view model's centralized

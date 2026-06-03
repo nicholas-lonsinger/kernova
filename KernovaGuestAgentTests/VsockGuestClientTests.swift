@@ -414,7 +414,7 @@ struct ClassifySocketErrnoTests {
         // Wait for the provider to be entered, then pause while it's mid-sleep.
         // The lock check inside connectAndServe must observe paused=true when
         // the provider returns, and abort the publish.
-        try await waitUntil { providerEntered.value >= 1 }
+        try await providerEntered.changed.wait { providerEntered.value >= 1 }
         client.pause()
 
         // Wait past the provider's sleep so connectAndServe has returned.

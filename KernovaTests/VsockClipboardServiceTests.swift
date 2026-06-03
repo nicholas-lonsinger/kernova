@@ -32,11 +32,15 @@ struct VsockClipboardServiceTests {
         var frames: [Frame] = []
         private var consumeTask: Task<Void, Never>?
 
+        /// Fires on every recorded frame; await it instead of polling `frames`.
+        let recorded = AsyncGate()
+
         init(channel: VsockChannel) {
             consumeTask = Task { @MainActor [weak self] in
                 do {
                     for try await frame in channel.incoming {
                         self?.frames.append(frame)
+                        self?.recorded.notify()
                     }
                 } catch {
                     // Stream errored — recording stops. Tests that care
@@ -49,14 +53,16 @@ struct VsockClipboardServiceTests {
         deinit { consumeTask?.cancel() }
     }
 
-    /// Spins until `recorder.frames.count == expected`, or fails the test if
-    /// the deadline elapses.
+    /// Awaits the recorder's gate (fired per frame) until `frames.count ==
+    /// expected`.
+    ///
+    /// The `timeout` is a stuck-stream backstop, not the success deadline.
     private func waitForFrameCount(
         _ recorder: FrameRecorder,
         equals expected: Int,
-        timeout: Duration = .seconds(5)
+        timeout: Duration = .seconds(10)
     ) async throws {
-        try await waitUntil(timeout: timeout) {
+        try await recorder.recorded.wait(timeout: timeout) {
             recorder.frames.count == expected
         }
     }

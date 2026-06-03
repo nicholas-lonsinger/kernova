@@ -613,7 +613,7 @@ struct VsockControlServiceTests {
         // Service fires the closure verbatim each time. Suppressing duplicate
         // writes is `VMInstance`'s responsibility (it compares against the
         // persisted value before invoking onUpdateConfiguration).
-        try await waitUntil { observed.values.count == 2 }
+        try await observed.changed.wait { observed.values.count == 2 }
         #expect(observed.values == ["0.9.2", "0.9.2"])
     }
 
@@ -655,7 +655,11 @@ struct VsockControlServiceTests {
 private final class ObservedRecorder {
     private(set) var values: [String] = []
 
+    /// Fires on every `append`; await it instead of polling `values.count`.
+    let changed = AsyncGate()
+
     func append(_ value: String) {
         values.append(value)
+        changed.notify()
     }
 }
