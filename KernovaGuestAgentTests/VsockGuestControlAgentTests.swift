@@ -244,7 +244,12 @@ struct VsockGuestControlAgentTests {
     private final class PolicyBox: @unchecked Sendable {
         private let lock = NSLock()
         private var storedValue: Kernova_V1_PolicyUpdate?
-        func set(_ p: Kernova_V1_PolicyUpdate) { lock.withLock { storedValue = p } }
+        /// Fires on every `set`; await it instead of polling `value`.
+        let changed = AsyncGate()
+        func set(_ p: Kernova_V1_PolicyUpdate) {
+            lock.withLock { storedValue = p }
+            changed.notify()
+        }
         var value: Kernova_V1_PolicyUpdate? { lock.withLock { storedValue } }
     }
 
@@ -277,7 +282,7 @@ struct VsockGuestControlAgentTests {
         }
         try host.send(frame)
 
-        try await waitUntil { received.value != nil }
+        try await received.changed.wait { received.value != nil }
         let policy = try #require(received.value)
         #expect(policy.logForwardingEnabled == true)
         #expect(policy.clipboardSharingEnabled == false)
@@ -311,7 +316,7 @@ struct VsockGuestControlAgentTests {
             try host.send(frame)
         }
 
-        try await waitUntil { counts.value >= 3 }
+        try await counts.changed.wait { counts.value >= 3 }
     }
 
     @Test("stop() halts the connection without throwing")

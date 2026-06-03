@@ -14,17 +14,17 @@ struct VsockGuestLogServiceTests {
         return (VsockChannel(fileDescriptor: a), VsockChannel(fileDescriptor: b))
     }
 
-    // Generous default — multi-frame tests on slower CI runners were
-    // landing right around the prior 1-second deadline. Local runs
-    // typically finish well under a second; this is purely a ceiling.
+    // Event-driven: awaits the emitter's gate (fired on each `emit`) until at
+    // least `count` records have arrived. The `timeout` is a backstop for a
+    // genuinely stuck stream, not the success deadline — so a slow CI runner
+    // no longer trips it.
     private func waitForRecords(
         _ emitter: RecordingEmitter,
         count: Int,
-        timeout: Duration = .seconds(5)
+        timeout: Duration = .seconds(10)
     ) async throws {
-        let deadline = ContinuousClock.now.advanced(by: timeout)
-        while emitter.snapshot().count < count && ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(10))
+        try await emitter.recorded.wait(timeout: timeout) {
+            emitter.snapshot().count >= count
         }
     }
 
@@ -180,9 +180,14 @@ private final class RecordingEmitter: GuestLogEmitter, @unchecked Sendable {
     private let lock = NSLock()
     private var records: [Kernova_V1_LogRecord] = []
 
+    /// Fires on every `emit`; await it instead of polling `snapshot().count`.
+    let recorded = AsyncGate()
+
     func emit(_ record: Kernova_V1_LogRecord) {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
         records.append(record)
+        lock.unlock()
+        recorded.notify()
     }
 
     func snapshot() -> [Kernova_V1_LogRecord] {
