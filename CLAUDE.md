@@ -325,13 +325,21 @@ When merging PRs with `gh pr merge`, always squash-merge with `--squash --subjec
 
 #### Post-merge cleanup
 
-After a successful merge, run the following steps to clean up the local branch and sync:
+After a successful merge, confirm it landed, then tear down the branch and sync `main`:
 
-1. `gh pr view <N> --json state -q .state` — confirm `"MERGED"` before deleting anything
-2. If in a worktree: you're checked out on the merged branch (the clean `<type>/<short-description>` name it was pushed under). You can't switch to `main` — the primary checkout holds it — so detach to get off the branch before deleting it: `git checkout --detach`
-3. `git branch -D <merged-branch>`
-4. `git branch -d -r origin/<merged-branch>`
-5. `git pull`
+1. `gh pr view <N> --json state -q .state` — confirm `"MERGED"` before deleting anything.
+
+**In an `EnterWorktree` session** (the usual case), let the tool do the teardown, then sync:
+
+2. `ExitWorktree` with `action: "remove"`. Squash-merge leaves the worktree's commit off `main` by SHA, so the tool refuses unless you also pass `discard_changes: true` — that's expected and safe here, since the content already landed on `main` as the squash commit. This returns the session to the primary checkout and deletes the worktree and its scratch branch in one step.
+3. Now in the primary checkout: `git checkout main` (if not already on it), then `git pull --ff-only` to fast-forward onto the squash commit.
+
+**Working directly in a checkout** (no `EnterWorktree` session), delete the branch by hand instead:
+
+2. Get off the merged branch first: `git switch main`, or `git checkout --detach` in a manually-created worktree (you can't switch to `main` there — the primary checkout holds it).
+3. `git branch -D <merged-branch>` — force `-D`, since the squash commit makes `-d` reject the branch as "not fully merged".
+4. `git branch -d -r origin/<merged-branch>` — drop the stale remote-tracking ref (GitHub auto-deletes the remote branch on merge).
+5. `git pull --ff-only`.
 
 ### Post-Commit
 
