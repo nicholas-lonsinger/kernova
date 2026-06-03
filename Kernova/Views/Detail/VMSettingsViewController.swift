@@ -1259,6 +1259,16 @@ extension VMSettingsViewController {
             guard let self, let info = self.attachmentInfo(ref) else { return }
             self.presentAttachmentInfoPopover(info, from: anchor)
         }
+        // Removable media is hot-pluggable and swapped often, so it carries an
+        // inline Remove button in addition to the shared context-menu Remove;
+        // storage disks rely on the context menu alone (`kind` is the documented
+        // carrier for per-list differences).
+        let removeButton: NSButton? =
+            kind == .removable
+            ? makeMinusButton(
+                id: model.id, enabled: model.controlsEnabled,
+                action: #selector(removableDeleteTapped))
+            : nil
         let row = AttachmentRowView(
             itemID: model.id,
             title: model.title,
@@ -1268,7 +1278,8 @@ extension VMSettingsViewController {
             readOnlyToggle: makeReadOnlySwitch(
                 id: model.id, isOn: model.readOnly, enabled: model.controlsEnabled,
                 action: readOnlySelector),
-            readOnlyCaption: makeReadOnlyCaption())
+            readOnlyCaption: makeReadOnlyCaption(),
+            removeButton: removeButton)
         row.onRenameBegan = { [weak self] id in self?[keyPath: activeKP] = id }
         row.onRenameCommitted = { [weak self] _, newLabel in
             self?.commitAttachmentRename(ref, newLabel: newLabel)
@@ -1803,6 +1814,13 @@ extension VMSettingsViewController {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         items[index].readOnly = readOnly
         writeRemovableMedia(items)
+    }
+
+    /// Inline trailing-minus removal for a removable-media row; the context-menu
+    /// "Remove…" item routes through the same confirmation.
+    @objc private func removableDeleteTapped(_ sender: NSButton) {
+        guard let id = uuid(from: sender) else { return }
+        presentRemovableDeleteConfirmation(forItemID: id)
     }
 
     private func presentRemovableDeleteConfirmation(forItemID id: UUID) {

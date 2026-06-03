@@ -27,12 +27,15 @@ private final class RenameTitleField: NSTextField {
 /// mechanics mirror ``SidebarVMRowCellView``. The context menu is
 /// supplied lazily by the controller via ``contextMenu`` so it reflects current
 /// state (the Read Only checkmark, missing-file disabling) at click time, and is
-/// where Remove lives — these rows have no inline minus button.
+/// always where Remove lives. Removable-media rows additionally carry an inline
+/// trailing minus button (hot-pluggable media is swapped often, so quick removal
+/// is worth a dedicated control); storage-disk rows pass `removeButton: nil` and
+/// rely on the context menu alone.
 ///
-/// The icon, subtitle, and Read Only switch are built by the controller (so
-/// their target/action wiring stays in one place) and handed in; this view owns
-/// only the editable title and the rename state machine. The `itemID` is the
-/// backing model's id (a `StorageDisk` or `RemovableMediaItem`).
+/// The icon, subtitle, Read Only switch, and optional remove button are built by
+/// the controller (so their target/action wiring stays in one place) and handed
+/// in; this view owns only the editable title and the rename state machine. The
+/// `itemID` is the backing model's id (a `StorageDisk` or `RemovableMediaItem`).
 @MainActor
 final class AttachmentRowView: NSView, NSTextFieldDelegate {
     let itemID: UUID
@@ -46,6 +49,9 @@ final class AttachmentRowView: NSView, NSTextFieldDelegate {
     /// so a refresh that only changes display state doesn't tear the row down.
     private let iconButton: AttachmentIconButton
     private let readOnlyToggle: NSSwitch
+    /// Trailing inline Remove control, present only on removable-media rows; `nil`
+    /// for storage disks, which remove via the context menu alone.
+    private let removeButton: NSButton?
     private var controlsEnabled: Bool
     private var originalTitle: String
     private let titleField = RenameTitleField()
@@ -88,19 +94,21 @@ final class AttachmentRowView: NSView, NSTextFieldDelegate {
         icon: AttachmentIconButton,
         subtitle: NSTextField,
         readOnlyToggle: NSSwitch,
-        readOnlyCaption: NSView
+        readOnlyCaption: NSView,
+        removeButton: NSButton? = nil
     ) {
         self.itemID = itemID
         self.infoAnchor = icon
         self.iconButton = icon
         self.subtitleField = subtitle
         self.readOnlyToggle = readOnlyToggle
+        self.removeButton = removeButton
         self.controlsEnabled = controlsEnabled
         self.originalTitle = title
         super.init(frame: .zero)
         buildLayout(
             icon: icon, subtitle: subtitle, readOnlyToggle: readOnlyToggle,
-            readOnlyCaption: readOnlyCaption)
+            readOnlyCaption: readOnlyCaption, removeButton: removeButton)
     }
 
     /// Updates the row's display state in place, without a teardown/rebuild.
@@ -128,6 +136,7 @@ final class AttachmentRowView: NSView, NSTextFieldDelegate {
         }
         readOnlyToggle.state = readOnly ? .on : .off
         readOnlyToggle.isEnabled = controlsEnabled
+        removeButton?.isEnabled = controlsEnabled
         iconButton.configure(systemName: iconSystemName, missingPath: missingPath)
     }
 
@@ -137,7 +146,8 @@ final class AttachmentRowView: NSView, NSTextFieldDelegate {
     }
 
     private func buildLayout(
-        icon: NSView, subtitle: NSTextField, readOnlyToggle: NSView, readOnlyCaption: NSView
+        icon: NSView, subtitle: NSTextField, readOnlyToggle: NSView, readOnlyCaption: NSView,
+        removeButton: NSButton?
     ) {
         translatesAutoresizingMaskIntoConstraints = false
 
@@ -203,7 +213,7 @@ final class AttachmentRowView: NSView, NSTextFieldDelegate {
 
         // Keep the leading icon and trailing controls rigid so the text column
         // is the only view that stretches to absorb the row's spare width.
-        for accessory in [icon, readOnlyToggle] {
+        for accessory in [icon, readOnlyToggle, removeButton].compactMap({ $0 }) {
             accessory.setContentHuggingPriority(.required, for: .horizontal)
             accessory.setContentCompressionResistancePriority(.required, for: .horizontal)
         }
@@ -211,6 +221,7 @@ final class AttachmentRowView: NSView, NSTextFieldDelegate {
         let row = NSStackView(views: [
             icon, textStack, readOnlyToggle, readOnlyCaption,
         ])
+        if let removeButton { row.addArrangedSubview(removeButton) }
         row.orientation = .horizontal
         row.alignment = .centerY
         row.distribution = .fill
