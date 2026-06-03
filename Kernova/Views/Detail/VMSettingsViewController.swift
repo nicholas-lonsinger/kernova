@@ -905,12 +905,19 @@ extension VMSettingsViewController {
         return caption
     }
 
-    private func makeMinusButton(id: UUID, enabled: Bool, action: Selector) -> NSButton {
+    /// An inline trailing "eject" button for an attachment/share row.
+    ///
+    /// Tinted with the secondary label color rather than destructive red: on
+    /// removable media the button ejects (detach only, file untouched) and a
+    /// shared directory's button merely stops sharing — both non-destructive and
+    /// re-attachable — so the eject glyph and a neutral tint read truer than a
+    /// red minus.
+    private func makeEjectButton(id: UUID, enabled: Bool, action: Selector) -> NSButton {
         let button = NSButton()
-        button.image = .systemSymbol("minus.circle.fill", accessibilityDescription: "Remove")
+        button.image = .systemSymbol("eject.circle.fill", accessibilityDescription: "Eject")
         button.imagePosition = .imageOnly
         button.isBordered = false
-        button.contentTintColor = .systemRed
+        button.contentTintColor = .secondaryLabelColor
         button.isEnabled = enabled
         button.identifier = NSUserInterfaceItemIdentifier(id.uuidString)
         button.target = self
@@ -919,7 +926,8 @@ extension VMSettingsViewController {
     }
 
     /// Builds an attachment list row: leading icon, title + subtitle, a
-    /// read-only switch with its caption, and a destructive remove button.
+    /// read-only switch with its caption, and a trailing eject button wired to
+    /// `deleteSelector` (neutral-tinted; the row's removal is non-destructive).
     private func makeListRow(
         icon: NSView, title: String, subtitle: NSTextField, id: UUID, readOnly: Bool,
         controlsEnabled: Bool, readOnlySelector: Selector, deleteSelector: Selector
@@ -939,13 +947,13 @@ extension VMSettingsViewController {
             id: id, isOn: readOnly, enabled: controlsEnabled, action: readOnlySelector)
         let readOnlyCaption = makeReadOnlyCaption()
 
-        let delete = makeMinusButton(id: id, enabled: controlsEnabled, action: deleteSelector)
+        let eject = makeEjectButton(id: id, enabled: controlsEnabled, action: deleteSelector)
 
         let spacer = NSView()
         spacer.translatesAutoresizingMaskIntoConstraints = false
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        let row = NSStackView(views: [icon, textStack, spacer, readOnlyToggle, readOnlyCaption, delete])
+        let row = NSStackView(views: [icon, textStack, spacer, readOnlyToggle, readOnlyCaption, eject])
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = Spacing.standard
@@ -1259,6 +1267,17 @@ extension VMSettingsViewController {
             guard let self, let info = self.attachmentInfo(ref) else { return }
             self.presentAttachmentInfoPopover(info, from: anchor)
         }
+        // Removable media is hot-pluggable and swapped often, so it carries an
+        // inline one-click Eject button (detach only, no confirmation); the
+        // context menu still offers both Eject and the file-trashing Remove.
+        // Storage disks have no inline button (`kind` is the documented carrier
+        // for per-list differences).
+        let ejectButton: NSButton? =
+            kind == .removable
+            ? makeEjectButton(
+                id: model.id, enabled: model.controlsEnabled,
+                action: #selector(removableEjectTapped))
+            : nil
         let row = AttachmentRowView(
             itemID: model.id,
             title: model.title,
@@ -1268,7 +1287,8 @@ extension VMSettingsViewController {
             readOnlyToggle: makeReadOnlySwitch(
                 id: model.id, isOn: model.readOnly, enabled: model.controlsEnabled,
                 action: readOnlySelector),
-            readOnlyCaption: makeReadOnlyCaption())
+            readOnlyCaption: makeReadOnlyCaption(),
+            ejectButton: ejectButton)
         row.onRenameBegan = { [weak self] id in self?[keyPath: activeKP] = id }
         row.onRenameCommitted = { [weak self] _, newLabel in
             self?.commitAttachmentRename(ref, newLabel: newLabel)
@@ -1594,6 +1614,14 @@ extension VMSettingsViewController {
         readOnly.state = info.readOnly ? .on : .off
         readOnly.isEnabled = info.editable
         menu.addItem(readOnly)
+        // Removable media offers both: Eject detaches with no confirmation
+        // (file untouched); Remove… is the file-trashing path with its prompt.
+        // Storage disks get Remove… only.
+        if ref.kind == .removable {
+            let eject = attachmentMenuItem("Eject", #selector(menuAttachmentEject(_:)), ref)
+            eject.isEnabled = info.editable
+            menu.addItem(eject)
+        }
         let remove = attachmentMenuItem("Remove…", #selector(menuAttachmentRemove(_:)), ref)
         remove.isEnabled = info.editable
         menu.addItem(remove)
@@ -1646,6 +1674,13 @@ extension VMSettingsViewController {
         case .storage: setStorageReadOnly(!info.readOnly, forDiskID: ref.id)
         case .removable: setRemovableReadOnly(!info.readOnly, forItemID: ref.id)
         }
+    }
+
+    /// Context-menu "Eject" (removable media only): detach with no confirmation,
+    /// sharing the inline button's `ejectRemovableMedia` path.
+    @objc private func menuAttachmentEject(_ sender: NSMenuItem) {
+        guard let ref = attachmentRef(from: sender), ref.kind == .removable else { return }
+        ejectRemovableMedia(forItemID: ref.id)
     }
 
     @objc private func menuAttachmentRemove(_ sender: NSMenuItem) {
@@ -1803,6 +1838,27 @@ extension VMSettingsViewController {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         items[index].readOnly = readOnly
         writeRemovableMedia(items)
+    }
+
+    /// Ejects a removable medium from its inline trailing button.
+    ///
+    /// Detach only — no confirmation, backing file untouched. The file-trashing
+    /// path with its confirmation is the context menu's "Remove…"; see
+    /// ``presentRemovableDeleteConfirmation(forItemID:)``.
+    @objc private func removableEjectTapped(_ sender: NSButton) {
+        guard let id = uuid(from: sender) else { return }
+        ejectRemovableMedia(forItemID: id)
+    }
+
+    /// Detaches a removable medium (removes its config entry, keeping the file).
+    ///
+    /// `removeRemovableMedia(_:from:trashFile:)` with `trashFile: false` removes
+    /// the `removableMedia` entry — which the live reconcile hot-detaches from a
+    /// running VM — and never touches the file. No alert: ejecting is the safe,
+    /// reversible action (re-attach via "Attach Disc…").
+    private func ejectRemovableMedia(forItemID id: UUID) {
+        guard let item = currentRemovableMedia.first(where: { $0.id == id }) else { return }
+        _ = viewModel.removeRemovableMedia(item, from: instance, trashFile: false)
     }
 
     private func presentRemovableDeleteConfirmation(forItemID id: UUID) {
