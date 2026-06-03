@@ -926,7 +926,8 @@ extension VMSettingsViewController {
     }
 
     /// Builds an attachment list row: leading icon, title + subtitle, a
-    /// read-only switch with its caption, and a destructive remove button.
+    /// read-only switch with its caption, and a trailing eject button wired to
+    /// `deleteSelector` (neutral-tinted; the row's removal is non-destructive).
     private func makeListRow(
         icon: NSView, title: String, subtitle: NSTextField, id: UUID, readOnly: Bool,
         controlsEnabled: Bool, readOnlySelector: Selector, deleteSelector: Selector
@@ -946,13 +947,13 @@ extension VMSettingsViewController {
             id: id, isOn: readOnly, enabled: controlsEnabled, action: readOnlySelector)
         let readOnlyCaption = makeReadOnlyCaption()
 
-        let delete = makeEjectButton(id: id, enabled: controlsEnabled, action: deleteSelector)
+        let eject = makeEjectButton(id: id, enabled: controlsEnabled, action: deleteSelector)
 
         let spacer = NSView()
         spacer.translatesAutoresizingMaskIntoConstraints = false
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        let row = NSStackView(views: [icon, textStack, spacer, readOnlyToggle, readOnlyCaption, delete])
+        let row = NSStackView(views: [icon, textStack, spacer, readOnlyToggle, readOnlyCaption, eject])
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = Spacing.standard
