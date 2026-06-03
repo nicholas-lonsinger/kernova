@@ -905,12 +905,19 @@ extension VMSettingsViewController {
         return caption
     }
 
-    private func makeMinusButton(id: UUID, enabled: Bool, action: Selector) -> NSButton {
+    /// An inline trailing "eject" button for an attachment/share row.
+    ///
+    /// Tinted with the secondary label color rather than destructive red: on
+    /// removable media the button ejects (detach only, file untouched) and a
+    /// shared directory's button merely stops sharing — both non-destructive and
+    /// re-attachable — so the eject glyph and a neutral tint read truer than a
+    /// red minus.
+    private func makeEjectButton(id: UUID, enabled: Bool, action: Selector) -> NSButton {
         let button = NSButton()
-        button.image = .systemSymbol("minus.circle.fill", accessibilityDescription: "Remove")
+        button.image = .systemSymbol("eject.circle.fill", accessibilityDescription: "Eject")
         button.imagePosition = .imageOnly
         button.isBordered = false
-        button.contentTintColor = .systemRed
+        button.contentTintColor = .secondaryLabelColor
         button.isEnabled = enabled
         button.identifier = NSUserInterfaceItemIdentifier(id.uuidString)
         button.target = self
@@ -939,7 +946,7 @@ extension VMSettingsViewController {
             id: id, isOn: readOnly, enabled: controlsEnabled, action: readOnlySelector)
         let readOnlyCaption = makeReadOnlyCaption()
 
-        let delete = makeMinusButton(id: id, enabled: controlsEnabled, action: deleteSelector)
+        let delete = makeEjectButton(id: id, enabled: controlsEnabled, action: deleteSelector)
 
         let spacer = NSView()
         spacer.translatesAutoresizingMaskIntoConstraints = false
@@ -1265,7 +1272,7 @@ extension VMSettingsViewController {
         // carrier for per-list differences).
         let removeButton: NSButton? =
             kind == .removable
-            ? makeMinusButton(
+            ? makeEjectButton(
                 id: model.id, enabled: model.controlsEnabled,
                 action: #selector(removableDeleteTapped))
             : nil
