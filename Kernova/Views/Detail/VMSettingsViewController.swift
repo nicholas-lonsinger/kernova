@@ -1613,6 +1613,14 @@ extension VMSettingsViewController {
         readOnly.state = info.readOnly ? .on : .off
         readOnly.isEnabled = info.editable
         menu.addItem(readOnly)
+        // Removable media offers both: Eject detaches with no confirmation
+        // (file untouched); Remove… is the file-trashing path with its prompt.
+        // Storage disks get Remove… only.
+        if ref.kind == .removable {
+            let eject = attachmentMenuItem("Eject", #selector(menuAttachmentEject(_:)), ref)
+            eject.isEnabled = info.editable
+            menu.addItem(eject)
+        }
         let remove = attachmentMenuItem("Remove…", #selector(menuAttachmentRemove(_:)), ref)
         remove.isEnabled = info.editable
         menu.addItem(remove)
@@ -1665,6 +1673,13 @@ extension VMSettingsViewController {
         case .storage: setStorageReadOnly(!info.readOnly, forDiskID: ref.id)
         case .removable: setRemovableReadOnly(!info.readOnly, forItemID: ref.id)
         }
+    }
+
+    /// Context-menu "Eject" (removable media only): detach with no confirmation,
+    /// sharing the inline button's `ejectRemovableMedia` path.
+    @objc private func menuAttachmentEject(_ sender: NSMenuItem) {
+        guard let ref = attachmentRef(from: sender), ref.kind == .removable else { return }
+        ejectRemovableMedia(forItemID: ref.id)
     }
 
     @objc private func menuAttachmentRemove(_ sender: NSMenuItem) {
