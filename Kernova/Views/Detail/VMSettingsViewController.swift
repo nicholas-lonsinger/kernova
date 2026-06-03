@@ -1267,14 +1267,15 @@ extension VMSettingsViewController {
             self.presentAttachmentInfoPopover(info, from: anchor)
         }
         // Removable media is hot-pluggable and swapped often, so it carries an
-        // inline Remove button in addition to the shared context-menu Remove;
-        // storage disks rely on the context menu alone (`kind` is the documented
-        // carrier for per-list differences).
-        let removeButton: NSButton? =
+        // inline one-click Eject button (detach only, no confirmation); the
+        // context menu still offers both Eject and the file-trashing Remove.
+        // Storage disks have no inline button (`kind` is the documented carrier
+        // for per-list differences).
+        let ejectButton: NSButton? =
             kind == .removable
             ? makeEjectButton(
                 id: model.id, enabled: model.controlsEnabled,
-                action: #selector(removableDeleteTapped))
+                action: #selector(removableEjectTapped))
             : nil
         let row = AttachmentRowView(
             itemID: model.id,
@@ -1286,7 +1287,7 @@ extension VMSettingsViewController {
                 id: model.id, isOn: model.readOnly, enabled: model.controlsEnabled,
                 action: readOnlySelector),
             readOnlyCaption: makeReadOnlyCaption(),
-            removeButton: removeButton)
+            ejectButton: ejectButton)
         row.onRenameBegan = { [weak self] id in self?[keyPath: activeKP] = id }
         row.onRenameCommitted = { [weak self] _, newLabel in
             self?.commitAttachmentRename(ref, newLabel: newLabel)
@@ -1823,11 +1824,25 @@ extension VMSettingsViewController {
         writeRemovableMedia(items)
     }
 
-    /// Inline trailing-minus removal for a removable-media row; the context-menu
-    /// "Remove…" item routes through the same confirmation.
-    @objc private func removableDeleteTapped(_ sender: NSButton) {
+    /// Ejects a removable medium from its inline trailing button.
+    ///
+    /// Detach only — no confirmation, backing file untouched. The file-trashing
+    /// path with its confirmation is the context menu's "Remove…"; see
+    /// ``presentRemovableDeleteConfirmation(forItemID:)``.
+    @objc private func removableEjectTapped(_ sender: NSButton) {
         guard let id = uuid(from: sender) else { return }
-        presentRemovableDeleteConfirmation(forItemID: id)
+        ejectRemovableMedia(forItemID: id)
+    }
+
+    /// Detaches a removable medium (removes its config entry, keeping the file).
+    ///
+    /// `removeRemovableMedia(_:from:trashFile:)` with `trashFile: false` removes
+    /// the `removableMedia` entry — which the live reconcile hot-detaches from a
+    /// running VM — and never touches the file. No alert: ejecting is the safe,
+    /// reversible action (re-attach via "Attach Disc…").
+    private func ejectRemovableMedia(forItemID id: UUID) {
+        guard let item = currentRemovableMedia.first(where: { $0.id == id }) else { return }
+        _ = viewModel.removeRemovableMedia(item, from: instance, trashFile: false)
     }
 
     private func presentRemovableDeleteConfirmation(forItemID id: UUID) {
