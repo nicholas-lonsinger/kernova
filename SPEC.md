@@ -5,7 +5,8 @@ Design philosophy and guidelines for Kernova.
 ## Code Approach
 
 - Do not settle for workarounds or hacks. Fix root causes with proper refactors, even when the change is larger than a quick patch.
-- Aggressively identify code that looks like a shortcut or band-aid. Either fix it in scope or file a GitHub issue for a future pass.
+- Aggressively identify code that looks like a shortcut or band-aid. Prefer fixing it in the current scope — even when the fix is larger than the original task. File a GitHub issue only when the fix is genuinely out of scope (a different system, another change's responsibility), not as a soft landing for borderline findings.
+- The bar for acting on a finding is "does this make the code genuinely better today" — a real correctness issue, an observable perf problem, a readability win. Skip findings that only defend against unreachable scenarios, hypothetical future callers, or theoretical perf concerns at current scale.
 - GitHub issues serve as durable context — when a fix is deferred, the issue should capture enough detail to address it later without rediscovery.
 - Prefer the simpler path first. Always attempt or plan the straightforward solution before introducing complexity through flags, intercepts, overrides, special cases, shims, or conditional branching.
 - When working on window layout issues, verify that the implementation follows AppKit best practices. Cross-reference Apple documentation and well-known code examples where possible before settling on an approach.
