@@ -106,7 +106,8 @@ struct VMCreationWizardViewControllerTests {
         vm.currentStep = .review
         vm.vmName = "Retry VM"
         let wizard = VMCreationWizardViewController(creationVM: vm)
-        wizard.delegate = MockDelegate()
+        let delegate = MockDelegate()
+        wizard.delegate = delegate
         wizard.loadViewIfNeeded()
 
         // Clicking Create disables Cancel/Back/Create to block a duplicate.

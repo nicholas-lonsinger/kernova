@@ -246,11 +246,8 @@ struct StorageDiskReorderSheetContentViewControllerTests {
 ///
 /// AppKit's protocol surface is large, but `acceptDrop` /
 /// `validateDrop` in our data source only touch `draggingPasteboard`;
-/// every other member returns a neutral default. `@preconcurrency`
-/// silences the actor-isolation mismatch between this main-actor-safe
-/// stub (constructed and used from `@MainActor` test methods) and
-/// `NSDraggingInfo`'s nonisolated protocol requirements.
-private final class StubDraggingInfo: NSObject, @preconcurrency NSDraggingInfo {
+/// every other member returns a neutral default.
+private final class StubDraggingInfo: NSObject, NSDraggingInfo {
     let pasteboard: NSPasteboard
     init(pasteboard: NSPasteboard) {
         self.pasteboard = pasteboard
