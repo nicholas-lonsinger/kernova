@@ -9,6 +9,7 @@ Design philosophy and guidelines for Kernova.
 - The bar for acting on a finding is "does this make the code genuinely better today" — a real correctness issue, an observable perf problem, a readability win. Skip findings that only defend against unreachable scenarios, hypothetical future callers, or theoretical perf concerns at current scale.
 - GitHub issues serve as durable context — when a fix is deferred, the issue should capture enough detail to address it later without rediscovery.
 - Prefer the simpler path first. Always attempt or plan the straightforward solution before introducing complexity through flags, intercepts, overrides, special cases, shims, or conditional branching.
+- Prefer the framework's native event API (KVO, delegation, AsyncSequence) over polling/sleep loops. A polling loop is acceptable only when the framework genuinely exposes no event for the condition — and then the rationale comment must say why the canonical option was rejected.
 - When working on window layout issues, verify that the implementation follows AppKit best practices. Cross-reference Apple documentation and well-known code examples where possible before settling on an approach.
 
 ## GUI Design
@@ -22,6 +23,7 @@ Design philosophy and guidelines for Kernova.
 ### Layout
 
 - AppKit owns the entire view layer — `NSSplitViewController`, `NSToolbar`, `NSWindow`, and concrete `NSViewController`s render all content (no SwiftUI / `NSHostingController`).
+- New UI is designed AppKit-first: imperative construction in `loadView()`, target/action, delegation, Auto Layout in code. Never translate SwiftUI patterns line-by-line — visual consistency comes from shared design tokens and atom factories (`CalloutStyle`, `GroupedFormStyle`, `WizardStyle`), not container base classes or inheritance.
 - Main window: 1100×700 default, 800×500 minimum.
 - Sidebar: 200–350pt width.
 - Creation wizard sheet: 550×480.

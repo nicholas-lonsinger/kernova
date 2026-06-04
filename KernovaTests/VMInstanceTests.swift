@@ -535,7 +535,7 @@ struct VMInstanceTests {
         return instance
     }
 
-    // CI timing notes (memory: feedback_ci_test_timings):
+    // CI timing notes (see docs/testing.md, CI timing characteristics):
     //   - macos-26 GitHub Actions runners have substantial MainActor jitter
     //     compared to local hardware. Use cadences ≥100 ms and waitUntil
     //     deadlines ≥10× the cadence; end-state assertions, not per-iteration.

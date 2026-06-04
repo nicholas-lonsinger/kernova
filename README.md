@@ -69,7 +69,7 @@ The project has comprehensive test coverage using [Swift Testing](https://develo
 make test
 ```
 
-This runs all three test targets via the test plan; it wraps the canonical `xcodebuild` invocation documented in [CLAUDE.md](CLAUDE.md). See the test coverage section in [ARCHITECTURE.md](ARCHITECTURE.md) for details.
+This runs all three test targets via the test plan; it wraps the canonical `xcodebuild` invocation documented in [CLAUDE.md](CLAUDE.md). See [docs/testing.md](docs/testing.md) for test patterns and coverage details.
 
 ## Architecture
 

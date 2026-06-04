@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> Design philosophy and UI guidelines are in [SPEC.md](SPEC.md).
+> Design philosophy and UI guidelines are in [SPEC.md](SPEC.md). Architecture is in [ARCHITECTURE.md](ARCHITECTURE.md). Procedure references live in `docs/`: [testing](docs/testing.md), [review feedback handling](docs/reviewing.md), and [git workflow mechanics](docs/git-workflow.md) — read the relevant one before doing that kind of work.
 
 ## Build & Test
 
@@ -27,19 +27,19 @@ Run `make install-hooks` once after cloning to enable the pre-push `make lint` h
 xcodebuild -project Kernova.xcodeproj -scheme Kernova -destination 'platform=macOS' -derivedDataPath DerivedData -configuration Debug <build|test>
 ```
 
-A single `xcodebuild test -scheme Kernova` runs all three test targets (`KernovaTests`, `KernovaGuestAgentTests`, `KernovaProtocolTests`) via `Kernova.xctestplan`. This works because `KernovaProtocol` is referenced as a top-level peer in the project (a `PBXFileReference` in `Kernova.xcodeproj`'s main group) rather than as an `XCLocalSwiftPackageReference` under Package Dependencies. In the dependency form, Xcode treats the package as upstream and hides its `.testTarget`s from the test-plan picker; in the peer form, the package's tests appear in `Edit Scheme → Test → +` as first-class targets and can be added to the test plan. If `KernovaProtocol` ever needs to be re-added, drag the folder into the Project Navigator from Finder rather than using `Add Package Dependencies → Add Local`. `make test-package` exists as a focused shortcut for iterating on package tests in isolation.
+One `xcodebuild test` run covers all three test targets (`KernovaTests`, `KernovaGuestAgentTests`, `KernovaProtocolTests`) via `Kernova.xctestplan` — how that's wired, and how to re-add the `KernovaProtocol` package if it's ever removed, is in [docs/testing.md](docs/testing.md#test-targets-and-the-test-plan).
 
-The `-derivedDataPath DerivedData` flag ensures build output goes to a deterministic local `DerivedData/` directory (already gitignored) instead of the per-path-hashed `~/Library/Developer/Xcode/DerivedData/` location. This avoids glob ambiguity when worktrees or parallel builds create multiple DerivedData folders. Xcode itself still uses the per-user default — they don't need to share.
+The `-derivedDataPath DerivedData` flag keeps build output in a deterministic local `DerivedData/` directory (gitignored) instead of the per-path-hashed `~/Library/Developer/Xcode/DerivedData/` location, avoiding glob ambiguity when worktrees or parallel builds create multiple DerivedData folders. Xcode itself still uses the per-user default — they don't need to share.
 
 ### Build version
 
-`CFBundleVersion` is `git rev-list --count HEAD` (the total commit count), substituted into the source `Info.plist` via `INFOPLIST_PREPROCESS`. The `Set Build Number from Git` build phase generates `KernovaBuildNumber.h` with `#define KERNOVA_BUILD_NUMBER N`, and `Kernova/App/Info.plist` references the symbol directly (`<string>KERNOVA_BUILD_NUMBER</string>`). Substitution happens inside `ProcessInfoPlistFile` so build-graph reordering can't clobber it. The `KernovaGuestAgent` target uses the same pattern with its own `AGENT_BUILD_NUMBER` (scoped to `git rev-list --count HEAD -- KernovaGuestAgent/`). When adding a new top-level target that needs a dynamic build number, replicate this pattern instead of patching the built `Info.plist` after the fact.
+`CFBundleVersion` is `git rev-list --count HEAD` (the total commit count), substituted into the source `Info.plist` via `INFOPLIST_PREPROCESS`: the `Set Build Number from Git` build phase generates a header defining `KERNOVA_BUILD_NUMBER`, which `Kernova/App/Info.plist` references directly. Substitution happens inside `ProcessInfoPlistFile` so build-graph reordering can't clobber it. `KernovaGuestAgent` uses the same pattern with its own `AGENT_BUILD_NUMBER` (scoped to `git rev-list --count HEAD -- KernovaGuestAgent/`). When adding a new top-level target that needs a dynamic build number, replicate this pattern instead of patching the built `Info.plist` after the fact.
 
 Requires the toolchain listed under [Requirements](README.md#requirements) in the README (Apple Silicon is needed for macOS guest support). The app uses the `com.apple.security.virtualization` entitlement.
 
 ## Architecture
 
-> Full directory structure, component map, data flow diagrams, design decisions, and test coverage details are in [ARCHITECTURE.md](ARCHITECTURE.md). Consult it before making structural changes. The summary below is a quick reference; if it conflicts with ARCHITECTURE.md, ARCHITECTURE.md is authoritative.
+> Full directory structure, component map, data flow diagrams, and design decisions are in [ARCHITECTURE.md](ARCHITECTURE.md). Consult it before making structural changes. The summary below is a quick reference; if it conflicts with ARCHITECTURE.md, ARCHITECTURE.md is authoritative.
 
 Kernova is a pure-AppKit app that manages virtual machines via Apple's `Virtualization.framework`, supporting macOS and Linux guests.
 
@@ -53,27 +53,19 @@ Kernova is a pure-AppKit app that manages virtual machines via Apple's `Virtuali
 
 ### Unit Tests
 
-When adding new functionality or modifying existing behavior, include unit tests for the changes. Follow the existing patterns in `KernovaTests/`:
+When adding new functionality or modifying existing behavior, include unit tests for the changes. The essentials (full patterns, the test plan, and seam guidance in [docs/testing.md](docs/testing.md)):
 
 - Use Swift Testing (`@Suite`, `@Test`, `#expect`) — not XCTest
-- Create mock implementations using protocols (see `KernovaTests/Mocks/`)
+- Create mock implementations using protocols (see `KernovaTests/Mocks/`); inject errors via `throwError`
 - Test models, services, and view models — UI views don't need unit tests
-- Test both happy paths and error paths; use error injection in mocks (e.g., setting a `throwError` property)
-- Reuse shared test helpers and factories (e.g., `makeInstance()`) rather than duplicating setup logic across test files
-- Run the full test suite before committing to ensure nothing is broken
-
-#### Test-only seams
-
-When a test needs to observe state that is `private` in production, pick the tightest exposure that still works:
-
-1. **`private(set) var x`** — internal getter, private setter. The idiomatic choice when production code reading the state is harmless; tests reach it via `@testable import`, no extra accessor needed.
-2. **`#if DEBUG`-gated read accessor** — when the state is a test-only implementation detail that production code should *not* read. Keep the field `private` and add a `…ForTesting` computed getter wrapped in `#if DEBUG`, so the seam is physically absent from Release builds and test-only access becomes a compile-time guarantee rather than a naming convention. Place `#if DEBUG` before the doc comment and `#endif` after the accessor.
-
-`AttachmentFileMonitor.watchedParentsForTesting` is the canonical example; the `…ForTesting` accessors in `VsockClipboardService`, `VsockGuestClipboardAgent`, and `VsockHostConnection` follow the same pattern. Because this rationale is shared, the gate itself is the documentation — don't repeat a "DEBUG-only so it can't leak" note at each site.
+- Test both happy paths and error paths; reuse shared factories (`makeInstance()`, …) rather than duplicating setup
+- Timing-sensitive waits must be event-driven (`AsyncGate`, or `await` the production `Task` via a `#if DEBUG` seam) — never poll-with-timeout, and never fix a CI flake by raising a timeout. See [docs/testing.md](docs/testing.md#timing-sensitive-waits-event-driven-not-polling)
+- When a test needs `private` production state, pick the tightest seam: `private(set)`, or a `#if DEBUG`-gated `…ForTesting` accessor — decision rule and canonical examples in [docs/testing.md](docs/testing.md#test-only-seams)
+- Run the full test suite before committing
 
 ### Logging
 
-The app uses Apple's `os.Logger` (subsystem `com.kernova.app`) with per-component categories. Each service, view model, or model that logs declares a `private static let logger`. When adding or modifying functionality, include log calls at appropriate levels:
+The app uses Apple's `os.Logger` (subsystem `com.kernova.app`) with per-component categories. Each service, view model, or model that logs declares a `private static let logger = Logger(subsystem: "com.kernova.app", category: "ComponentName")`.
 
 | Level | When to use | Persistence |
 |-------|-------------|-------------|
@@ -84,11 +76,7 @@ The app uses Apple's `os.Logger` (subsystem `com.kernova.app`) with per-componen
 | `.error` | Failures: operations that did not complete, exceptions caught, error states entered. | Persisted to disk |
 | `.fault` | Programming errors: impossible states, compile-time-known inputs that failed lookup. Paired with `assertionFailure`. | Persisted to disk; always visible; never redacted |
 
-**Guidelines:**
-- Every new service or view model should declare its own `private static let logger = Logger(subsystem: "com.kernova.app", category: "ComponentName")`
-- State transitions and irreversible actions (creating/deleting bundles, starting/stopping VMs) should be `.notice`
-- Method entry points in complex flows should have `.debug` logs with relevant parameter values
-- Do not use `print()`, `NSLog()`, or file-based logging
+State transitions and irreversible actions (creating/deleting bundles, starting/stopping VMs) are `.notice`; method entry points in complex flows get `.debug` with relevant parameter values. Do not use `print()`, `NSLog()`, or file-based logging.
 
 ### Defensive Unwrapping
 
@@ -110,6 +98,10 @@ guard let value = knownGoodAPI("compile-time-constant") else {
 
 - When deleting files, prefer `trash` over `rm` whenever possible (moves to Trash instead of permanent deletion).
 
+### Localization
+
+The app ships English-only — there are no `.lproj` directories or `Localizable.strings` files. Don't wrap user-facing strings in `NSLocalizedString(...)` unless explicitly setting up localization; raw `String` literals are the convention. If real translations ever land, file `review-debt/refactor` issues for bulk-wrapping the existing strings.
+
 ### Review Feedback Handling
 
 When reviewing code — via review tools (`/simplify`, `/review-pr`, etc.), post-implementation review agents, external PR review feedback (bot or human), or while working on adjacent code — every finding must be triaged into one of four categories:
@@ -117,150 +109,28 @@ When reviewing code — via review tools (`/simplify`, `/review-pr`, etc.), post
 | Category | Action | When to use |
 |----------|--------|-------------|
 | **Fix now** | Apply the fix as part of the current work | Valid finding, in scope, reasonable effort |
-| **Fix later** | File a GitHub issue (see [Review Debt Tracking](#review-debt-tracking) below) | Valid finding, but out of scope or too large for the current task |
-| **Annotate** | Add a `RATIONALE:` comment (see [Intentional Pattern Annotations](#intentional-pattern-annotations)) for human/automated reviewer findings, or a `// periphery:ignore - <reason>` directive (see [Periphery Directives](#periphery-directives)) for dead-code scan false positives | Code looks wrong or unconventional but is correct for a project-specific reason |
+| **Fix later** | File a GitHub issue immediately — issue format and `review-debt/*` labels in [docs/reviewing.md](docs/reviewing.md#review-debt-tracking) | Valid finding, but out of scope or too large for the current task |
+| **Annotate** | `RATIONALE:` comment for human/automated reviewer findings, or `// periphery:ignore - <reason>` for dead-code scan false positives — formats in [docs/reviewing.md](docs/reviewing.md#intentional-pattern-annotations) | Code looks wrong or unconventional but is correct for a project-specific reason |
 | **Dismiss** | No action needed | Pure style nits, cosmetic preferences, trivial improvements with negligible impact |
 
-#### Review Debt Tracking
-
-Valid findings that are **out of scope** for the current task must be captured as GitHub issues rather than silently dropped.
-
-**What to capture** (important + moderate severity):
-- Bugs, correctness problems, or logic errors
-- Security concerns
-- Performance issues
-- Meaningful refactoring opportunities or non-trivial code smells
-- Missing test coverage for critical paths
-
-**Issue format:**
-
-~~~bash
-gh issue create \
-  --title "<concise description of the finding>" \
-  --label "<review-debt/label>" \
-  --body "$(cat <<'EOF'
-## Found during
-<PR #N / review of `FileName.swift` / context description>
-
-## Description
-<What the issue is and why it matters>
-
-## Location
-<File path(s) and line number(s) or function name(s)>
-
-## Suggested fix
-<Brief suggestion if one is obvious, otherwise omit this section>
-EOF
-)"
-~~~
-
-**Labels** — use the most specific match:
-
-| Label | When to use |
-|-------|-------------|
-| `review-debt/bug` | Correctness issues, logic errors, potential crashes |
-| `review-debt/security` | Security concerns, unsafe patterns |
-| `review-debt/performance` | Inefficient code paths, unnecessary allocations |
-| `review-debt/refactor` | Code smells, duplication, poor abstractions |
-| `review-debt/test-gap` | Missing or insufficient tests for critical code |
-
-**Guidelines:**
-- **File issues immediately** — do not list qualifying findings as "skipped" and wait for the user to ask. If a finding meets the severity criteria above, create the issue as part of the review flow before summarizing results.
-- Always check for existing issues before creating duplicates
-- Reference the source PR or file context in the issue body
-- Keep issue titles actionable and specific (e.g., "Add error handling for disk-full scenario in BundleManager" not "Improve error handling")
-- When multiple related findings exist, group them into a single issue if they share a root cause
-- After creating issues, mention them in the conversation so the user is aware
-
-#### Intentional Pattern Annotations
-
-When a review flags code that *looks* wrong or unconventional but is **intentionally correct** for a project-specific reason, add an inline comment with the `RATIONALE:` prefix explaining why. This prevents the same pattern from being re-flagged in future reviews.
-
-**When to annotate:**
-- The code contradicts a general best practice but is correct here due to framework constraints, performance requirements, or architectural decisions
-- A reviewer (human or automated) would reasonably flag this without project-specific context
-- The reason is not already documented in CLAUDE.md, ARCHITECTURE.md, or an adjacent comment
-
-**Format:**
-
-```swift
-// RATIONALE: VZVirtualMachine delegates are not actor-isolated by the framework,
-// so we use nonisolated(unsafe) and bridge back via MainActor.assumeIsolated.
-nonisolated(unsafe) func guestDidStop(_ virtualMachine: VZVirtualMachine) {
-```
-
-**Guidelines:**
-- Keep annotations concise — explain *why* the pattern is correct, not *what* the code does
-- If the same rationale applies project-wide (not just at one call site), consider adding it to CLAUDE.md or ARCHITECTURE.md instead of repeating the comment on every instance
-- `RATIONALE:` comments are greppable — use `grep -r "RATIONALE:"` to audit all intentional deviations
-- Do not use `RATIONALE:` for general explanatory comments — reserve it strictly for patterns that would otherwise be flagged as issues
-
-#### Periphery Directives
-
-When the dead-code scan flags a symbol that is alive through machinery Periphery's symbol graph cannot see — protocol witnesses invoked by Swift's compiler-emitted code (string interpolation, `Codable`), members reached through type inference on argument labels, declarations referenced only from a test target Periphery does not currently scan, or symbols intentionally retained for API symmetry — annotate the declaration with `// periphery:ignore - <reason>` instead of deleting it. This is the Periphery-specific counterpart to `RATIONALE:`: same spirit (silence a finding that would otherwise be re-raised every scan), different syntax that the tool itself recognizes.
-
-**When to annotate vs. fix vs. dismiss:**
-- **Annotate** when the symbol is genuinely used through one of the invisible paths above, OR when the surface is intentionally complete (e.g. all `os.Logger` levels exposed even if a particular call isn't used today).
-- **Fix** when the finding is real — delete the symbol, or demote `public` to `internal` if only the access level is redundant.
-- **Dismiss** does not apply: every annotation must include a reason, since silently retained symbols become a maintenance hazard.
-
-**Format:**
-
-```swift
-/// `true` when no buffered bytes remain.
-// periphery:ignore - Used by `VsockFrameTests` via `@testable import`,
-// which Periphery's scheme-based scan doesn't currently index for the
-// SwiftPM package test target.
-var isEmpty: Bool { buffer.count == readOffset }
-```
-
-Place the directive **between** the doc comment (`///`) and the declaration so DocC still associates the doc with the symbol.
-
-**Guidelines:**
-- Keep the rationale on the same comment block as the directive — multi-line if needed, but no blank line between `// periphery:ignore` and the reason text
-- Greppable via `grep -r "periphery:ignore"` for periodic auditing — when the underlying machinery becomes visible to Periphery (e.g. a scan-coverage gap is closed), revisit the annotations and remove any that are no longer needed
-- Prefer per-symbol annotations over re-toggling broad config flags like `retain_public` — see `.periphery.yml` for the project-level guidance
+File qualifying issues **immediately** as part of the review flow — do not list findings as "skipped" and wait for the user to ask — and mention created issues in the conversation so the user is aware.
 
 ## Git Workflow
 
 ### Branch Naming
 
-Worktrees start on an auto-generated `worktree-<name>` branch (the harness also
-mangles any `/` in the name to `+`). **Treat that as a throwaway scratch branch:
-do the work on it without renaming up front.** Don't try to pick a branch name
-before starting — the right name depends on the full scope of the work, which
-you only know once it's ready to push.
-
-When the work is ready to push to origin, rename the scratch branch to a clean
-`<type>/<short-description>`, where `<type>` matches the commit type prefixes
-(e.g., `feat`, `fix`, `refactor`), and push it under that same name so the local
-branch and the origin/PR branch match:
-
-```
-feat/vm-snapshot-support
-fix/display-sizing-on-switch
-refactor/extract-lifecycle-coordinator
-```
+Worktrees start on an auto-generated `worktree-<name>` scratch branch — work on it as-is, without picking a name up front. When the work is ready to push, rename it to a clean `<type>/<short-description>` (type matching the commit prefixes; 2-4 kebab-case words) and push under that same name:
 
 ```bash
 git branch -m <type>/<short-description>        # rename the scratch branch in place
 git push -u origin <type>/<short-description>   # local and remote now match
 ```
 
-Keep descriptions concise (2-4 words, kebab-case). The branch name should make
-the PR's purpose clear at a glance.
-
-**Never push the `worktree-`-prefixed scratch name to origin.** It is a local
-implementation detail; a PR's head branch must always be the clean
-`<type>/<short-description>` name. (Renaming a branch on GitHub *after* a PR
-exists does not retarget the PR — it closes it — so name it correctly at first
-push.)
+**Never push the `worktree-`-prefixed scratch name to origin** — a PR's head branch must be the clean name from the first push (renaming on GitHub after a PR exists closes the PR). Details: [docs/git-workflow.md](docs/git-workflow.md#worktree-scratch-branches).
 
 ### Commit Messages
 
 These conventions apply to **all** forms of committing: local commits, PR squash/merge commits, and any other git operations that produce commits.
-
-Use the following format for all commits:
 
 ```
 <type>: <concise subject line>
@@ -277,8 +147,6 @@ Use the following format for all commits:
 
 A `## Notes` section may be added optionally if there are caveats, follow-ups, or things reviewers should know.
 
-### Type prefixes
-
 | Prefix     | Usage                                      |
 |------------|--------------------------------------------|
 | `feat`     | New feature or capability                  |
@@ -289,57 +157,13 @@ A `## Notes` section may be added optionally if there are caveats, follow-ups, o
 | `chore`    | Build, CI, tooling, or dependency updates  |
 | `style`    | Formatting, whitespace, or cosmetic changes|
 
-### Example
-
-```
-feat: Add VM snapshot support
-
-## Summary
-- Add the ability to take and restore snapshots of running virtual machines
-- Enables users to save and revert VM state at any point
-
-## Changes
-- Add SnapshotService with create/restore/delete operations
-- Add snapshot UI to VMDetailView toolbar
-- Persist snapshot metadata in VMConfiguration
-
-## Test plan
-- [ ] Built successfully on macOS 26
-- [ ] Tested snapshot create/restore cycle with macOS and Linux guests
-- [ ] All existing tests pass
-```
-
-### Scoping the message
-
-Commit messages must reflect the full intent and scope of all changes, not just the last operation performed. Before writing a commit message, review both the conversation context (what the user asked for, the steps taken) and the staged diff holistically. Lead with the primary purpose; secondary details (naming conventions, formatting choices) belong in the body.
+Commit messages must reflect the full intent and scope of all changes, not just the last operation performed. Before writing one, review both the conversation context (what the user asked for, the steps taken) and the staged diff holistically. Lead with the primary purpose; secondary details (naming conventions, formatting choices) belong in the body.
 
 The `Co-Authored-By` trailer is automatically appended by Claude Code and should not be duplicated in the commit message body.
 
 ### Merging Pull Requests
 
-When merging PRs with `gh pr merge`, always squash-merge with `--squash --subject` using the PR title and appending the PR number in parentheses (e.g., `--squash --subject "fix: Title (#11)"`), matching the repo's existing convention.
-
-**Do not use `--delete-branch`.** The repo has `delete_branch_on_merge` enabled on GitHub, so remote branches are auto-deleted. The `--delete-branch` flag causes `gh` to run `git checkout main` locally, which fails in worktree contexts.
-
-**Linking issues for auto-close:** When a PR resolves GitHub issues, include `Closes #N` (or `Fixes #N`) in the PR body — not just a table reference like `| #N |`. GitHub only auto-closes issues when the merge commit or PR body contains the exact keywords `closes`, `fixes`, or `resolves` followed by `#N`. Place them in the summary section or as a standalone line (e.g., `Closes #12, #34, #56`).
-
-#### Post-merge cleanup
-
-After a successful merge, confirm it landed, then tear down the branch and sync `main`:
-
-1. `gh pr view <N> --json state -q .state` — confirm `"MERGED"` before deleting anything.
-
-**In an `EnterWorktree` session** (the usual case), let the tool do the teardown, then sync:
-
-2. `ExitWorktree` with `action: "remove"`. Squash-merge leaves the worktree's commit off `main` by SHA, so the tool refuses unless you also pass `discard_changes: true` — that's expected and safe here, since the content already landed on `main` as the squash commit. This returns the session to the primary checkout and deletes the worktree and its scratch branch in one step.
-3. Now in the primary checkout: `git checkout main` (if not already on it), then `git pull --ff-only` to fast-forward onto the squash commit.
-
-**Working directly in a checkout** (no `EnterWorktree` session), delete the branch by hand instead:
-
-2. Get off the merged branch first: `git switch main`, or `git checkout --detach` in a manually-created worktree (you can't switch to `main` there — the primary checkout holds it).
-3. `git branch -D <merged-branch>` — force `-D`, since the squash commit makes `-d` reject the branch as "not fully merged".
-4. `git branch -d -r origin/<merged-branch>` — drop the stale remote-tracking ref (GitHub auto-deletes the remote branch on merge).
-5. `git pull --ff-only`.
+Squash-merge with the PR title plus number: `gh pr merge <N> --squash --subject "<type>: Title (#N)"`. Do **not** pass `--delete-branch`. Auto-merge is disabled, the head branch must be up-to-date with `main`, three status checks are required, and issue auto-close needs a `Closes #N` keyword per issue in the PR body — the full merge procedure and the post-merge cleanup steps (worktree and plain-checkout variants) are in [docs/git-workflow.md](docs/git-workflow.md#merging-prs). Follow the cleanup steps there after every merge.
 
 ### Post-Commit
 
@@ -350,6 +174,7 @@ After a commit/push, if any new preferences or insights emerged during the work,
 After completing any task that hits one or more of the following triggers, suggest follow-up updates before considering the task complete.
 
 ### Triggers
+
 - Added, removed, renamed, or moved a file or directory
 - Changed how components communicate (new API surface, changed data flow, new service)
 - Added or removed a dependency or framework
@@ -359,13 +184,13 @@ After completing any task that hits one or more of the following triggers, sugge
 
 ### Required Follow-ups
 
-1. **[ARCHITECTURE.md](ARCHITECTURE.md)** — Read the relevant sections first, then propose specific, targeted updates to reflect the change. Update the directory structure, component map, design decisions, or test coverage sections as needed. Do not rewrite the entire file — make surgical edits.
+1. **[ARCHITECTURE.md](ARCHITECTURE.md)** — Read the relevant sections first, then propose specific, targeted updates to reflect the change. Update the directory structure, component map, or design decisions as needed. Do not rewrite the entire file — make surgical edits.
 
 2. **Testing** — For any new public function, type, or component:
-   - Write tests following the patterns in KernovaTests/ (Swift Testing, mocks, factories)
+   - Write tests following the patterns in [docs/testing.md](docs/testing.md)
    - If tests are deferred, explicitly state what's needed and why it was skipped
 
-3. **CLAUDE.md** — Update only if build commands, the concurrency model summary, or the data flow summary changed. Preserve commit message format and development guidelines as-is.
+3. **CLAUDE.md and docs/** — Update CLAUDE.md only if build commands, the concurrency model summary, or the data flow summary changed. Update the relevant `docs/` guide if testing patterns, review process, or git mechanics changed. Preserve the commit message format and development guidelines as-is.
 
 4. **Maintenance Notes** — At the end of your response, include a summary:
 
