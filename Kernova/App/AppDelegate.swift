@@ -858,7 +858,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let recoveryItem = vmMenu.addItem(
             withTitle: "Start in Recovery Mode", action: #selector(startVMInRecovery(_:)), keyEquivalent: "r")
         recoveryItem.keyEquivalentModifierMask = [.command, .option]
-        recoveryItem.isAlternate = true
+        // Initialize from the persisted preference so the item is correct from launch;
+        // `menuNeedsUpdate(_:)` keeps it in sync on each subsequent open.
+        recoveryItem.isAlternate = !AppPreferences.shared.alwaysShowAdvancedOptions
         self.recoveryMenuItem = recoveryItem
         let pauseItem = vmMenu.addItem(withTitle: "Pause", action: #selector(pauseVM(_:)), keyEquivalent: "p")
         pauseItem.keyEquivalentModifierMask = [.command, .option]

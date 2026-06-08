@@ -9,7 +9,7 @@ import AppKit
 /// change notification is needed here.
 @MainActor
 final class AdvancedSettingsViewController: NSViewController {
-    private var preferences: AppPreferences
+    private let preferences: AppPreferences
     private let alwaysShowSwitch = NSSwitch()
 
     init(preferences: AppPreferences = .shared) {

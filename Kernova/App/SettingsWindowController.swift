@@ -11,6 +11,9 @@ final class SettingsWindowController: NSWindowController {
         let window = NSWindow(contentViewController: SettingsTabViewController())
         window.title = "Settings"
         window.styleMask = [.titled, .closable, .miniaturizable]
+        // The controller is a singleton reused across opens, so the window must
+        // survive being closed (don't deallocate it out from under the reference).
+        window.isReleasedWhenClosed = false
         window.setFrameAutosaveName("KernovaSettings")
         self.init(window: window)
     }
