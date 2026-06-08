@@ -1225,7 +1225,7 @@ extension VMSettingsViewController {
             for model in models {
                 let row = makeAttachmentRow(
                     model: model, kind: kind, readOnlySelector: readOnlySelector,
-                    rowsByID: rowsKP, activeRename: activeKP)
+                    activeRename: activeKP)
                 self[keyPath: rowsKP][model.id] = row
                 addFullWidth(row, to: listStack)
                 // Freshly built rows start with an empty subtitle — read once.
@@ -1251,12 +1251,11 @@ extension VMSettingsViewController {
 
     /// Builds one attachment row, wiring its icon Get Info, rename closures, and
     /// context menu — shared by both lists (the per-list differences arrive via
-    /// `kind`, `readOnlySelector`, and the key paths).
+    /// `kind`, `readOnlySelector`, and the active-rename key path).
     private func makeAttachmentRow(
         model: RenderedRow,
         kind: AttachmentKind,
         readOnlySelector: Selector,
-        rowsByID rowsKP: ReferenceWritableKeyPath<VMSettingsViewController, [UUID: AttachmentRowView]>,
         activeRename activeKP: ReferenceWritableKeyPath<VMSettingsViewController, UUID?>
     ) -> AttachmentRowView {
         let ref = AttachmentRef(kind: kind, id: model.id)
@@ -1401,6 +1400,10 @@ extension VMSettingsViewController {
 
     /// Disables the name field's right-click "Rename" while the VM can't be
     /// renamed (e.g. while running), mirroring the disabled name button.
+    // periphery:ignore - AppKit's menu-validation machinery invokes this
+    // informal-protocol method on the name button's menu target (`self`)
+    // before showing the "Rename" item; that framework-driven call is
+    // invisible to Periphery's symbol graph.
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(startRename) {
             return instance.status.canRename
