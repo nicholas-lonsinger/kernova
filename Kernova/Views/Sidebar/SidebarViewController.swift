@@ -653,6 +653,18 @@ extension SidebarViewController {
         if status.canStart {
             menu.addItem(item(startButtonLabel(for: instance), #selector(menuStart(_:)), instance))
         }
+        if instance.canStartInRecovery {
+            // Advanced action: an Option-alternate of "Start" (revealed on ⌥-hold),
+            // or a plain always-visible item when "Always show advanced options" is on.
+            // `canStartInRecovery` implies `.stopped`, so "Start" was just added and
+            // this item immediately follows it (required for alternate pairing).
+            let recovery = item("Start in Recovery Mode", #selector(menuStartRecovery(_:)), instance)
+            if !AppPreferences.shared.alwaysShowAdvancedOptions {
+                recovery.isAlternate = true
+                recovery.keyEquivalentModifierMask = [.option]
+            }
+            menu.addItem(recovery)
+        }
         if status.canPause {
             menu.addItem(item("Pause", #selector(menuPause(_:)), instance))
         }
@@ -745,6 +757,11 @@ extension SidebarViewController {
     @objc private func menuStart(_ sender: NSMenuItem) {
         guard let instance = sender.representedObject as? VMInstance else { return }
         Task { await viewModel.start(instance) }
+    }
+
+    @objc private func menuStartRecovery(_ sender: NSMenuItem) {
+        guard let instance = sender.representedObject as? VMInstance else { return }
+        viewModel.confirmStartInRecovery(instance)
     }
 
     @objc private func menuPause(_ sender: NSMenuItem) {

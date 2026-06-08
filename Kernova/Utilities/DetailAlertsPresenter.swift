@@ -62,6 +62,10 @@ final class DetailAlertsPresenter: NSObject {
         enqueue { $0.present($0.forceStopConfig(instance)) }
     }
 
+    func presentRecoveryBoot(for instance: VMInstance) {
+        enqueue { $0.present($0.recoveryBootConfig(instance)) }
+    }
+
     func presentStopPaused(for instance: VMInstance) {
         enqueue { $0.present($0.stopPausedConfig(instance)) }
     }
@@ -150,6 +154,20 @@ final class DetailAlertsPresenter: NSObject {
                 ? "\"\(vm.name)\" has its state saved to disk. Discarding will permanently delete the saved state."
                 : "\"\(vm.name)\" will be immediately terminated. Any unsaved data inside the guest will be lost.",
             buttons: buttons)
+    }
+
+    private func recoveryBootConfig(_ vm: VMInstance) -> AlertConfiguration {
+        AlertConfiguration(
+            title: "Start “\(vm.name)” in Recovery Mode?",
+            message:
+                "The virtual machine will boot into the macOS Recovery environment for this launch only. Restart normally to return to macOS.",
+            buttons: [
+                AlertButton("Start in Recovery", role: .default) { [weak self] in
+                    guard let self else { return }
+                    Task { await self.viewModel.startInRecoveryConfirmed(vm) }
+                },
+                AlertButton("Cancel", role: .cancel),
+            ])
     }
 
     private func stopPausedConfig(_ vm: VMInstance) -> AlertConfiguration {

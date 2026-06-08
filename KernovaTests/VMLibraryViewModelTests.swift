@@ -827,6 +827,31 @@ struct VMLibraryViewModelTests {
 
         #expect(virtService.startCallCount == 1)
         #expect(instance.status == .running)
+        #expect(virtService.lastStartBootIntoRecovery == false)
+    }
+
+    @Test("confirmStartInRecovery routes to the presenter")
+    func confirmStartInRecoveryRoutesToPresenter() {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        viewModel.instances.append(instance)
+
+        viewModel.confirmStartInRecovery(instance)
+
+        #expect(presenter.showRecoveryBootConfirmation)
+        #expect(presenter.instanceToRecoveryBoot === instance)
+    }
+
+    @Test("startInRecoveryConfirmed starts with the recovery flag set")
+    func startInRecoveryConfirmedSetsFlag() async {
+        let (viewModel, _, _, virtService, _) = makeViewModel()
+        let instance = makeInstance()
+        viewModel.instances.append(instance)
+
+        await viewModel.startInRecoveryConfirmed(instance)
+
+        #expect(virtService.startCallCount == 1)
+        #expect(virtService.lastStartBootIntoRecovery == true)
     }
 
     @Test("stop delegates to lifecycle coordinator")

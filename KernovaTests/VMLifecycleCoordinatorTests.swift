@@ -60,6 +60,18 @@ struct VMLifecycleCoordinatorTests {
         try await coordinator.start(instance)
 
         #expect(virtService.startCallCount == 1)
+        #expect(virtService.lastStartBootIntoRecovery == false)
+    }
+
+    @Test("start forwards the bootIntoRecovery flag to the virtualization service")
+    func startForwardsBootIntoRecovery() async throws {
+        let (coordinator, virtService, _, _, _) = makeCoordinator()
+        let instance = makeInstance()
+
+        try await coordinator.start(instance, bootIntoRecovery: true)
+
+        #expect(virtService.startCallCount == 1)
+        #expect(virtService.lastStartBootIntoRecovery == true)
     }
 
     @Test("stop forwards to virtualization service")

@@ -287,6 +287,10 @@ extension DetailContainerViewController: VMLibraryPresenting {
         alertsPresenter.presentForceStop(for: instance)
     }
 
+    func presentRecoveryBoot(for instance: VMInstance) {
+        alertsPresenter.presentRecoveryBoot(for: instance)
+    }
+
     func presentStopPaused(for instance: VMInstance) {
         alertsPresenter.presentStopPaused(for: instance)
     }

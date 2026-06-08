@@ -18,6 +18,8 @@ protocol VMLibraryPresenting: AnyObject {
     func presentDeleteSheet(for instance: VMInstance)
     /// Show the force-stop / discard-saved-state confirmation.
     func presentForceStop(for instance: VMInstance)
+    /// Show the confirmation for booting a macOS guest into macOS Recovery.
+    func presentRecoveryBoot(for instance: VMInstance)
     /// Show the stop-paused confirmation (resume-and-shut-down vs. force stop).
     func presentStopPaused(for instance: VMInstance)
     /// Show the cancel-preparing (clone/import) confirmation.
