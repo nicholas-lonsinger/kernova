@@ -954,10 +954,9 @@ struct ConfigurationBuilderTests {
 
     /// Builds `config` and hands its audio-device stream summary to `assertions`.
     ///
-    /// On hosts where VZ validation is unavailable (CI runners without
-    /// virtualization) the build throws a `VZErrorDomain` error, which is
-    /// recorded as a known issue and the assertions are skipped — matching the
-    /// tolerance the other builder tests use.
+    /// Uses `assemble(validate: false)` so the assertions run even on CI runners
+    /// without virtualization (where `vzConfig.validate()` would throw); the
+    /// audio device is built in `assemble` regardless of the `validate` flag.
     private func withAudioStreams(
         _ config: VMConfiguration,
         _ assertions: (_ hasInput: Bool, _ hasOutput: Bool, _ deviceCount: Int) -> Void
@@ -965,73 +964,36 @@ struct ConfigurationBuilderTests {
         let bundleURL = try makeTempBundle(withDisk: true)
         defer { try? FileManager.default.removeItem(at: bundleURL) }
 
-        do {
-            let result = try ConfigurationBuilder().build(from: config, bundleURL: bundleURL)
-            let streams = result.configuration.audioDevices
-                .compactMap { $0 as? VZVirtioSoundDeviceConfiguration }
-                .flatMap(\.streams)
-            assertions(
-                streams.contains { $0 is VZVirtioSoundDeviceInputStreamConfiguration },
-                streams.contains { $0 is VZVirtioSoundDeviceOutputStreamConfiguration },
-                result.configuration.audioDevices.count
-            )
-        } catch {
-            let isVZError = (error as NSError).domain == "VZErrorDomain"
-            if isVZError {
-                withKnownIssue("VZ validation unavailable — assertions skipped") {
-                    Issue.record("\(error)")
-                }
-            } else {
-                Issue.record("Unexpected non-VZ error: \(error)")
-            }
-        }
+        let result = try ConfigurationBuilder().assemble(from: config, bundleURL: bundleURL, validate: false)
+        let streams = result.configuration.audioDevices
+            .compactMap { $0 as? VZVirtioSoundDeviceConfiguration }
+            .flatMap(\.streams)
+        assertions(
+            streams.contains { $0 is VZVirtioSoundDeviceInputStreamConfiguration },
+            streams.contains { $0 is VZVirtioSoundDeviceOutputStreamConfiguration },
+            result.configuration.audioDevices.count
+        )
     }
 
-    @Test("Audio device includes both streams when input and output are enabled")
-    func audioBothStreamsWhenBothEnabled() throws {
+    @Test(
+        "Audio streams match the input/output toggles; the device is omitted when both are off",
+        arguments: [
+            (input: true, output: true, hasInput: true, hasOutput: true, deviceCount: 1),
+            (input: true, output: false, hasInput: true, hasOutput: false, deviceCount: 1),
+            (input: false, output: true, hasInput: false, hasOutput: true, deviceCount: 1),
+            (input: false, output: false, hasInput: false, hasOutput: false, deviceCount: 0),
+        ]
+    )
+    func audioStreamsMatchToggles(
+        _ c: (input: Bool, output: Bool, hasInput: Bool, hasOutput: Bool, deviceCount: Int)
+    ) throws {
         var config = makeLinuxConfig()
-        config.audioInputEnabled = true
-        config.audioOutputEnabled = true
+        config.audioInputEnabled = c.input
+        config.audioOutputEnabled = c.output
         try withAudioStreams(config) { hasInput, hasOutput, deviceCount in
-            #expect(hasInput)
-            #expect(hasOutput)
-            #expect(deviceCount == 1)
-        }
-    }
-
-    @Test("Audio device has input-only streams when output is disabled")
-    func audioInputOnlyWhenOutputDisabled() throws {
-        var config = makeLinuxConfig()
-        config.audioInputEnabled = true
-        config.audioOutputEnabled = false
-        try withAudioStreams(config) { hasInput, hasOutput, deviceCount in
-            #expect(hasInput)
-            #expect(!hasOutput)
-            #expect(deviceCount == 1)
-        }
-    }
-
-    @Test("Audio device has output-only streams when input is disabled")
-    func audioOutputOnlyWhenInputDisabled() throws {
-        var config = makeLinuxConfig()
-        config.audioInputEnabled = false
-        config.audioOutputEnabled = true
-        try withAudioStreams(config) { hasInput, hasOutput, deviceCount in
-            #expect(!hasInput)
-            #expect(hasOutput)
-            #expect(deviceCount == 1)
-        }
-    }
-
-    @Test("No audio device is configured when both input and output are disabled")
-    func noAudioDeviceWhenBothDisabled() throws {
-        var config = makeLinuxConfig()
-        config.audioInputEnabled = false
-        config.audioOutputEnabled = false
-        try withAudioStreams(config) { hasInput, hasOutput, deviceCount in
-            #expect(!hasInput)
-            #expect(!hasOutput)
-            #expect(deviceCount == 0)
+            #expect(hasInput == c.hasInput)
+            #expect(hasOutput == c.hasOutput)
+            #expect(deviceCount == c.deviceCount)
         }
     }
 

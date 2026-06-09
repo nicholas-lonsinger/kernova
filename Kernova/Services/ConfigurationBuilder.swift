@@ -520,12 +520,9 @@ struct ConfigurationBuilder: Sendable {
             streams.append(outputStream)
         }
 
-        // A virtio sound device with no streams is pointless (and would attach an
-        // empty device to the VM), so omit it entirely when both directions are off.
-        guard !streams.isEmpty else {
-            vzConfig.audioDevices = []
-            return
-        }
+        // A virtio sound device with no streams is pointless, so omit it entirely
+        // when both directions are off, leaving VZ's default-empty `audioDevices`.
+        guard !streams.isEmpty else { return }
 
         let audioDevice = VZVirtioSoundDeviceConfiguration()
         audioDevice.streams = streams
