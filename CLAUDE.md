@@ -146,7 +146,7 @@ gh issue create \
 <What the issue is and why it matters>
 
 ## Location
-<File path(s) and line number(s) or function name(s)>
+<Symbol/function name(s) and file path(s) — prefer names over line numbers, which drift>
 
 ## Suggested fix
 <Brief suggestion if one is obvious, otherwise omit this section>
@@ -171,6 +171,16 @@ EOF
 - Keep issue titles actionable and specific (e.g., "Add error handling for disk-full scenario in BundleManager" not "Improve error handling")
 - When multiple related findings exist, group them into a single issue if they share a root cause
 - After creating issues, mention them in the conversation so the user is aware
+
+#### Issue Hygiene
+
+These rules apply to **all** issues you file — feature/enhancement as well as review-debt — so the body stays useful until the work is actually picked up:
+
+- **Keep it to what/why.** Summary, motivation, scope, considerations, open questions. Do **not** include a "Files likely involved" sketch or other forward-looking file/API/wiring plan — design that when the work starts, not at filing time.
+- **Never cite a line number.** They drift within an edit or two. Name the **symbol** instead (`startSerialReading()`, `capturesSystemKeys`) — it survives edits and is greppable.
+- **Expect your own type/file names to be renamed.** A 2026 audit found ~7 issues pointing at things that no longer existed after the SwiftUI→AppKit rename (`VMSettingsView` → `VMSettingsViewController`, and `VMDetailView`/`VMConsoleView`/`SidebarView`/`VMRowView` gone) and the SPICE→vsock clipboard migration (`GuestClipboardAgent.swift` → `VsockGuestClipboardAgent.swift`). Apple/framework type names (`VZ…`, `NSPasteboardItemDataProvider`) are stable and fine to cite as the *what*.
+- **Bug reports are the exception to "no file refs":** the `## Location` field above points at where the defect lives, which is the finding's evidence — keep it, but by symbol/method, not line number.
+- If you deliberately omit an implementation sketch, add a one-line note saying so ("design when picked up") so a future reader knows the omission was intentional.
 
 #### Intentional Pattern Annotations
 
