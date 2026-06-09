@@ -653,9 +653,21 @@ extension SidebarViewController {
         var startItem: NSMenuItem?
         if status.canStart {
             if instance.canStartInRecovery && !AppPreferences.shared.alwaysShowAdvancedOptions {
-                // Prepend a zero-height dummy item to prevent the context menu from shifting
-                // downward when the first visible item ("Start") is toggled on Option-hold.
-                // This pins the top of the menu layout so it never collapses.
+                // RATIONALE: Zero-height dummy item at index 0 anchors the context menu so it
+                // doesn't jump downward when "Start" collapses into its Recovery alternate on
+                // ⌥-hold. This is a known AppKit constraint, not a bug in our pairing:
+                //
+                // When an isAlternate pair sits at the very top of a context menu, hiding the
+                // primary (index 0) on Option-press collapses the visible top down to index 1,
+                // but AppKit's menu-positioning engine still anchors the window on index 0's
+                // original coordinates — so every visible row shifts down by one item's height.
+                //
+                // Finder sidesteps this entirely by never placing an alternate pair at the top:
+                // its alternates (e.g. Get Info / Show Inspector) live mid-menu, where a static
+                // top item ("Open") keeps the layout anchored. We can't do that here — "Start"
+                // must stay at the top for UX — so we reproduce Finder's layout stability the
+                // standard Cocoa way: a permanent, never-hidden top anchor at index 0 gives the
+                // pair below it the same physics as a mid-menu pair, and nothing shifts.
                 let dummy = NSMenuItem()
                 dummy.view = NSView(frame: .zero)
                 menu.addItem(dummy)
