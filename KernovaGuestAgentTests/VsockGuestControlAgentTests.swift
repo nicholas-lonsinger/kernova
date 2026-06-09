@@ -30,16 +30,36 @@ struct VsockGuestControlAgentTests {
         return frame
     }
 
-    /// Builds a single-fd-shot agent at small test cadences.
+    /// Default outbound-heartbeat cadence: small so `heartbeatOutboundCadence`
+    /// doesn't drag, and harmless to every other test (extra heartbeats only
+    /// keep the connection alive).
+    private static let testHeartbeat: Duration = .milliseconds(40)
+
+    /// Default liveness windows, set far beyond any test's wall-clock budget.
+    ///
+    /// The watchdog can't tear the channel down mid-test at these values. Tests
+    /// that *exercise* the watchdog pass explicit short windows to opt back in.
+    ///
+    /// The watchdog measures `ContinuousClock.now - lastInboundFrame`, which
+    /// keeps advancing while a contended CI MainActor stalls the test. With a
+    /// short default, any non-watchdog test that paused past the window saw the
+    /// channel closed out from under it — surfacing as an EOF / `.closed` flake.
+    /// Making the watchdog an explicit opt-in removes that coupling. Mirrors
+    /// `VsockControlServiceTests` / `makeService`. See `feedback_ci_test_timings`.
+    private static let watchdogDisabledUnresponsive: Duration = .seconds(3_600)
+    private static let watchdogDisabledTerminate: Duration = .seconds(7_200)
+
+    /// Builds a single-fd-shot agent with the liveness watchdog disabled by
+    /// default.
     ///
     /// The agent's
     /// `client` provider hands `agentFd` on the first call, transient failure
     /// after — so reconnect tests must use a multi-fd provider explicitly.
     private func makeAgent(
         agentFd: Int32,
-        heartbeatInterval: Duration = .milliseconds(40),
-        unresponsiveAfter: Duration = .milliseconds(160),
-        terminateAfter: Duration = .milliseconds(2_000),
+        heartbeatInterval: Duration? = nil,
+        unresponsiveAfter: Duration? = nil,
+        terminateAfter: Duration? = nil,
         onPolicy: (@Sendable (Kernova_V1_PolicyUpdate) -> Void)? = nil
     ) -> VsockGuestControlAgent {
         let provided = AtomicInt()
@@ -52,9 +72,9 @@ struct VsockGuestControlAgentTests {
         }
         return VsockGuestControlAgent(
             client: client,
-            heartbeatInterval: heartbeatInterval,
-            unresponsiveAfter: unresponsiveAfter,
-            terminateAfter: terminateAfter,
+            heartbeatInterval: heartbeatInterval ?? Self.testHeartbeat,
+            unresponsiveAfter: unresponsiveAfter ?? Self.watchdogDisabledUnresponsive,
+            terminateAfter: terminateAfter ?? Self.watchdogDisabledTerminate,
             onPolicy: onPolicy
         )
     }
