@@ -351,6 +351,17 @@ After a successful merge, confirm it landed, then tear down the branch and sync 
 4. `git branch -d -r origin/<merged-branch>` — drop the stale remote-tracking ref (GitHub auto-deletes the remote branch on merge).
 5. `git pull --ff-only`.
 
+#### Sweeping up branches that slipped through
+
+The steps above only delete the local branch when the merge and the cleanup happen in the **same** session. When a PR is merged from the primary checkout *after* its worktree is already gone, the renamed local branch survives — removing a worktree never deletes its branch, and GitHub's auto-delete plus `git fetch --prune` only touch the remote branch and the remote-tracking ref, never the local branch. Those strays accumulate silently. To clear any that built up:
+
+```bash
+git fetch --prune
+git branch -vv | awk '/: gone]/ {print $1}' | xargs -r git branch -D
+```
+
+A branch in the `: gone]` state has had its remote deleted; under this repo's squash-merge + auto-delete-on-merge convention that means it merged. `-D` is unconditional (the squash commit makes `-d` reject it as "not fully merged"), so if any branch's merge status is in doubt, confirm with `gh pr list --state merged` before running the sweep.
+
 ### Post-Commit
 
 After a commit/push, if any new preferences or insights emerged during the work, ask the user if they'd like to add them to memory.
