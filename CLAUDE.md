@@ -313,7 +313,7 @@ feat: Add VM snapshot support
 
 Commit messages must reflect the full intent and scope of all changes, not just the last operation performed. Before writing a commit message, review both the conversation context (what the user asked for, the steps taken) and the staged diff holistically. Lead with the primary purpose; secondary details (naming conventions, formatting choices) belong in the body.
 
-The `Co-Authored-By` trailer is automatically appended by Claude Code and should not be duplicated in the commit message body.
+End every commit message with the `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>` trailer. It is **not** appended automatically — add it explicitly (e.g. `git commit --trailer "Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"`). Include it exactly once; do not duplicate it in the message body.
 
 ### Merging Pull Requests
 
