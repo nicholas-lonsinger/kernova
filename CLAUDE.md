@@ -236,15 +236,19 @@ Place the directive **between** the doc comment (`///`) and the declaration so D
 ### Branch Naming
 
 Worktrees start on an auto-generated `worktree-<name>` branch (the harness also
-mangles any `/` in the name to `+`). **Treat that as a throwaway scratch branch:
-do the work on it without renaming up front.** Don't try to pick a branch name
-before starting — the right name depends on the full scope of the work, which
-you only know once it's ready to push.
+mangles any `/` in the name to `+`). **Leave that scratch branch named as-is —
+never `git branch -m` it.** `EnterWorktree` tracks the branch by the name it
+generated, and `ExitWorktree(remove)` only tears the local branch down while that
+name is intact; rename it and the removal silently orphans the branch, which is
+how merged local branches pile up. Don't try to pick a name before starting
+anyway — the right one depends on the full scope of the work, which you only know
+once it's ready to push.
 
-When the work is ready to push to origin, rename the scratch branch to a clean
-`<type>/<short-description>`, where `<type>` matches the commit type prefixes
-(e.g., `feat`, `fix`, `refactor`), and push it under that same name so the local
-branch and the origin/PR branch match:
+When the work is ready to push, give the **remote** branch a clean
+`<type>/<short-description>` name with an explicit refspec while the local branch
+keeps its `worktree-` name. `<type>` matches the commit type prefixes (e.g.,
+`feat`, `fix`, `refactor`); keep the description concise (2-4 words, kebab-case)
+so the PR's purpose is clear at a glance:
 
 ```
 feat/vm-snapshot-support
@@ -253,15 +257,22 @@ refactor/extract-lifecycle-coordinator
 ```
 
 ```bash
-git branch -m <type>/<short-description>        # rename the scratch branch in place
-git push -u origin <type>/<short-description>   # local and remote now match
+git push -u origin HEAD:<type>/<short-description>   # remote/PR gets the clean name; local stays worktree-…
+git push                                              # later pushes follow the upstream — no refspec needed
 ```
 
-Keep descriptions concise (2-4 words, kebab-case). The branch name should make
-the PR's purpose clear at a glance.
+The local↔remote name mismatch is deliberate: the local `worktree-` branch is a
+throwaway that `ExitWorktree` deletes on exit, so only the remote name — the one
+humans and GitHub see — has to be clean. After the first `-u` push sets the
+upstream to `origin/<type>/<short-description>`, plain `git push` and
+`git push -f` (after a rebase) follow it, so you spell the refspec out only once.
+**Always push before exiting the worktree** so the work is safe on origin:
+`ExitWorktree(remove)` discards the local commit, and it drops *unpushed* commits
+silently.
 
-**Never push the `worktree-`-prefixed scratch name to origin.** It is a local
-implementation detail; a PR's head branch must always be the clean
+**Never push the `worktree-`-prefixed scratch name to origin** — that means no
+bare `git push -u origin HEAD` on the first push; always name the clean remote
+ref in the refspec. A PR's head branch must always be the clean
 `<type>/<short-description>` name. (Renaming a branch on GitHub *after* a PR
 exists does not retarget the PR — it closes it — so name it correctly at first
 push.)
@@ -341,8 +352,8 @@ After a successful merge, confirm it landed, then tear down the branch and sync 
 
 **In an `EnterWorktree` session** (the usual case), let the tool do the teardown, then sync:
 
-2. `ExitWorktree` with `action: "remove"`. Squash-merge leaves the worktree's commit off `main` by SHA, so the tool refuses unless you also pass `discard_changes: true` — that's expected and safe here, since the content already landed on `main` as the squash commit. This returns the session to the primary checkout and deletes the worktree and its scratch branch in one step.
-3. Now in the primary checkout: `git checkout main` (if not already on it), then `git pull --ff-only` to fast-forward onto the squash commit.
+2. `ExitWorktree` with `action: "remove"`. Squash-merge leaves the worktree's commit off `main` by SHA, so the tool refuses unless you also pass `discard_changes: true` — that's expected and safe here, since the content already landed on `main` as the squash commit. This returns the session to the primary checkout and deletes the worktree and its scratch branch in one step (the branch deletion works because the scratch branch still carries its original `worktree-` name — see [Branch Naming](#branch-naming)).
+3. Now in the primary checkout: `git checkout main` (if not already on it), then `git pull --prune --ff-only` to fast-forward onto the squash commit and drop the now-stale `origin/<type>/<short-description>` remote-tracking ref.
 
 **Working directly in a checkout** (no `EnterWorktree` session), delete the branch by hand instead:
 
@@ -350,17 +361,6 @@ After a successful merge, confirm it landed, then tear down the branch and sync 
 3. `git branch -D <merged-branch>` — force `-D`, since the squash commit makes `-d` reject the branch as "not fully merged".
 4. `git branch -d -r origin/<merged-branch>` — drop the stale remote-tracking ref (GitHub auto-deletes the remote branch on merge).
 5. `git pull --ff-only`.
-
-#### Sweeping up branches that slipped through
-
-The steps above only delete the local branch when the merge and the cleanup happen in the **same** session. When a PR is merged from the primary checkout *after* its worktree is already gone, the renamed local branch survives — removing a worktree never deletes its branch, and GitHub's auto-delete plus `git fetch --prune` only touch the remote branch and the remote-tracking ref, never the local branch. Those strays accumulate silently. To clear any that built up:
-
-```bash
-git fetch --prune
-git branch -vv | awk '/: gone]/ {print $1}' | xargs -r git branch -D
-```
-
-A branch in the `: gone]` state has had its remote deleted; under this repo's squash-merge + auto-delete-on-merge convention that means it merged. `-D` is unconditional (the squash commit makes `-d` reject it as "not fully merged"), so if any branch's merge status is in doubt, confirm with `gh pr list --state merged` before running the sweep.
 
 ### Post-Commit
 
