@@ -57,15 +57,8 @@ nonisolated func diskSubtitle(path: String, isInternal: Bool, bundleLayout: VMBu
     }
 }
 
-/// Grace period before a still-pending in-bundle size read shows its placeholder.
-///
-/// The common read is sub-millisecond, so the placeholder is deferred past this
-/// window to avoid flickering it on the fast path; it only appears if a read is
-/// genuinely slow.
-private let diskSubtitlePlaceholderGrace: Duration = .milliseconds(100)
-
-/// Duration of the subtitle's fade-in when an async size read — or its deferred
-/// placeholder — lands, easing the value in instead of snapping it.
+/// Duration of the subtitle's fade-in when an async size read lands, easing the
+/// value in instead of snapping it.
 private let diskSubtitleFadeDuration: TimeInterval = 0.2
 
 /// Paints `text` into the subtitle field, fading it in when the content changes.
@@ -152,14 +145,17 @@ func populateDiskSubtitle(
 /// The holding value while the read is pending depends on the file: an external
 /// file seeds its **path** (instantly known, and also the graceful fallback if
 /// the volume is slow or unreadable), so it never flickers; an in-bundle file
-/// clears to empty and, only if the read is still pending after
-/// ``diskSubtitlePlaceholderGrace``, shows the deferred "In-bundle disk image"
-/// placeholder — so the fast path never flickers it.
+/// clears to empty, invisible for the sub-millisecond local read that follows.
+/// An in-bundle read is always local and tiny — a stat plus a 56-byte header —
+/// so it needs no slow-path placeholder; if it ever can't be read it lands on the
+/// synchronous "In-bundle disk image" fallback in
+/// ``diskSubtitle(path:isInternal:bundleLayout:)``. The robust off-main read is
+/// retained for *external* files, whose backing volume may be slow or asleep.
 ///
-/// The async value (and the placeholder, if shown) eases in via
-/// ``setDiskSubtitle(_:text:animated:)`` so it doesn't pop (unless `animated` is
-/// `false`); a no-op repaint with an unchanged size doesn't animate. Re-binding a
-/// field cancels its prior in-flight read so reads don't accumulate under churn.
+/// The async value eases in via ``setDiskSubtitle(_:text:animated:)`` so it
+/// doesn't pop (unless `animated` is `false`); a no-op repaint with an unchanged
+/// size doesn't animate. Re-binding a field cancels its prior in-flight read so
+/// reads don't accumulate under churn.
 @MainActor
 func populateDiskSubtitle(
     _ field: NSTextField, id: UUID, path: String, isInternal: Bool,
@@ -192,29 +188,12 @@ func populateDiskSubtitle(
     diskSubtitleReadGeneration += 1
     let generation = diskSubtitleReadGeneration
     let task = Task { [weak field] in
-        let read = Task.detached {
+        // The read is off-main for *both* kinds, but the latency it guards is an
+        // external file's slow/asleep volume — an in-bundle file is local and
+        // tiny, so the seeded-empty state is invisible until the value lands.
+        let text = await Task.detached {
             diskSubtitle(path: path, isInternal: isInternal, bundleLayout: bundleLayout)
-        }
-        // Defer the placeholder behind a grace period, cancelled the instant the
-        // read lands — only a genuinely slow read ever surfaces it. External
-        // files already hold their path, so they need no placeholder.
-        let placeholder: Task<Void, Never>? =
-            (isNewBinding && isInternal)
-            ? Task { [weak field] in
-                do {
-                    try await Task.sleep(for: diskSubtitlePlaceholderGrace)
-                } catch {
-                    return  // cancelled: the read finished within the grace window
-                }
-                guard let field, field.identifier == token, field.stringValue.isEmpty else {
-                    return
-                }
-                setDiskSubtitle(field, text: "In-bundle disk image", animated: animated)
-            }
-            : nil
-
-        let text = await read.value
-        placeholder?.cancel()
+        }.value
         // Clear our own entry only — a newer bind may have replaced it.
         if diskSubtitleReads[fieldKey]?.generation == generation {
             diskSubtitleReads.removeValue(forKey: fieldKey)

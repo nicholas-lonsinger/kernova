@@ -258,6 +258,13 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     // MARK: - Pasteboard polling (main queue)
 
     private func startPolling() {
+        // RATIONALE: A timer poll, not an event source, because macOS exposes no
+        // change notification for NSPasteboard — comparing `changeCount` on an
+        // interval is the only way to detect local clipboard writes. The handler
+        // reads just the integer `changeCount` first (see `checkClipboardChange`)
+        // and bails before any allocation when it's unchanged, so the 0.5 s tick
+        // is cheap. This is the canonical AppKit clipboard-watching pattern; an
+        // async/event-driven audit will flag it but there is no event to await.
         let timer = DispatchSource.makeTimerSource(queue: .main)
         timer.schedule(deadline: .now() + Self.pollingInterval, repeating: Self.pollingInterval)
         timer.setEventHandler { [weak self] in
