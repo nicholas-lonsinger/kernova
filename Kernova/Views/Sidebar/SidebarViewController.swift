@@ -652,6 +652,14 @@ extension SidebarViewController {
         // Lifecycle
         var startItem: NSMenuItem?
         if status.canStart {
+            if instance.canStartInRecovery && !AppPreferences.shared.alwaysShowAdvancedOptions {
+                // Prepend a zero-height dummy item to prevent the context menu from shifting
+                // downward when the first visible item ("Start") is toggled on Option-hold.
+                // This pins the top of the menu layout so it never collapses.
+                let dummy = NSMenuItem()
+                dummy.view = NSView(frame: .zero)
+                menu.addItem(dummy)
+            }
             let start = item(startButtonLabel(for: instance), #selector(menuStart(_:)), instance)
             menu.addItem(start)
             startItem = start
