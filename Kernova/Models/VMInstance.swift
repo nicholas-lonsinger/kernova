@@ -173,6 +173,16 @@ final class VMInstance {
     /// created without the view model).
     @ObservationIgnored var onUpdateConfiguration: (@MainActor ((inout VMConfiguration) -> Void) -> Void)?
 
+    /// Fired when the guest agent handshakes a *new* version that is current
+    /// (matches or exceeds what the host bundles) — i.e. an install/update just
+    /// completed.
+    ///
+    /// The host uses it to auto-eject the guest-agent installer disk. Wired by
+    /// `VMLibraryViewModel.wirePersistence(for:)`, mirroring `onUpdateConfiguration`.
+    /// Driven from `recordObservedAgentVersion`, so it fires regardless of which
+    /// (if any) window is open — unlike the former clipboard-window-bound auto-eject.
+    @ObservationIgnored var onAgentBecameCurrent: (@MainActor () -> Void)?
+
     /// Applies a configuration mutation.
     ///
     /// If `onUpdateConfiguration` is wired, the mutation flows through the
@@ -762,6 +772,14 @@ final class VMInstance {
         // reconcile on every Hello.
         guard configuration.lastSeenAgentVersion != reportedVersion else { return }
         performConfigurationMutation { $0.lastSeenAgentVersion = reportedVersion }
+        // A newly-observed version that matches (or exceeds) what the host
+        // bundles means an install/update just completed — let the host
+        // auto-eject the installer disk. Placed *after* the version-changed
+        // guard so a same-version reconnect (e.g. while the disk is mounted to
+        // run uninstall.command) never yanks the disk out from under the user.
+        if AgentStatus.isObservedVersionCurrent(reportedVersion, bundled: KernovaGuestAgentInfo.bundledVersion) {
+            onAgentBecameCurrent?()
+        }
     }
 
     /// Tears down all vsock listeners and any active services running on them.

@@ -22,11 +22,6 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     private var isUpdatingFromService = false
     private var serviceObservation: ObservationLoop?
 
-    /// Tracks whether we previously observed a non-`.current` state so we only
-    /// auto-eject after a real transition (avoiding redundant detach calls when
-    /// the controller observes other clipboard service state changes).
-    private var hasSeenNonCurrentStatus = false
-
     init(instance: VMInstance, viewModel: VMLibraryViewModel) {
         self.instance = instance
         self.viewModel = viewModel
@@ -185,7 +180,6 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         }
 
         applyStatus(status, canInstallKernovaAgent: canInstallKernovaAgent)
-        autoEjectIfJustBecameCurrent(status: status, canInstallKernovaAgent: canInstallKernovaAgent)
     }
 
     private func applyStatus(_ status: AgentStatus, canInstallKernovaAgent: Bool) {
@@ -221,17 +215,6 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             statusLabel.stringValue = "Didn't reconnect (was \(expected))"
             actionButton.isHidden = !canInstallKernovaAgent
             actionButton.title = "Reinstall Guest Agent…"
-        }
-    }
-
-    private func autoEjectIfJustBecameCurrent(status: AgentStatus, canInstallKernovaAgent: Bool) {
-        if case .current = status {
-            if hasSeenNonCurrentStatus, canInstallKernovaAgent {
-                viewModel?.unmountGuestAgentInstaller(from: instance)
-            }
-            hasSeenNonCurrentStatus = false
-        } else {
-            hasSeenNonCurrentStatus = true
         }
     }
 

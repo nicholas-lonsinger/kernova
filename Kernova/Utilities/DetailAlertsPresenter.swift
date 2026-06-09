@@ -74,8 +74,8 @@ final class DetailAlertsPresenter: NSObject {
         enqueue { $0.present($0.cancelPreparingConfig(instance)) }
     }
 
-    func presentInstallerMounted(vmName: String) {
-        enqueue { $0.present($0.installerMountedConfig(vmName)) }
+    func presentInstallerMounted(vmName: String, purpose: GuestAgentInstallerPurpose) {
+        enqueue { $0.present($0.installerMountedConfig(vmName, purpose: purpose)) }
     }
 
     // MARK: - Serialization queue
@@ -197,11 +197,24 @@ final class DetailAlertsPresenter: NSObject {
             title: "Error", message: message, buttons: [AlertButton("OK", role: .cancel)])
     }
 
-    private func installerMountedConfig(_ vmName: String) -> AlertConfiguration {
-        AlertConfiguration(
-            title: "Installer Mounted",
+    private func installerMountedConfig(
+        _ vmName: String, purpose: GuestAgentInstallerPurpose
+    ) -> AlertConfiguration {
+        let title: String
+        let nextStep: String
+        switch purpose {
+        case .install:
+            title = "Installer Mounted"
+            nextStep = "run install.command to complete setup."
+        case .manage:
+            title = "Guest Agent Disk Attached"
+            nextStep =
+                "run install.command to reinstall, or uninstall.command to remove the agent."
+        }
+        return AlertConfiguration(
+            title: title,
             message:
-                "The Kernova guest agent installer has been attached to \(vmName) as a USB disk. Inside the VM, open the “Kernova Guest Agent” disk in Finder and run install.command to complete setup.",
+                "The Kernova guest agent disk has been attached to \(vmName) as a USB disk. Inside the VM, open the “Kernova Guest Agent” disk in Finder and \(nextStep)",
             buttons: [AlertButton("OK", role: .cancel)])
     }
 }

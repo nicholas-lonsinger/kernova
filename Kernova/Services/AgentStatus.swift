@@ -123,4 +123,21 @@ enum AgentStatus: Equatable, Sendable {
         }
         return upstream
     }
+
+    /// Whether a freshly-observed agent `version` is at least the `bundled`
+    /// version — i.e. a handshake reporting it resolves to `.current` rather
+    /// than `.outdated`.
+    ///
+    /// A `nil` `bundled` (the host's version sidecar is missing — a build
+    /// regression) is treated as current, so the host doesn't fight the guest
+    /// with a spurious "outdated" prompt. The single source of truth for the
+    /// current-vs-outdated comparison, shared by `VsockControlService.agentStatus`
+    /// and `VMInstance.recordObservedAgentVersion`'s auto-eject decision.
+    static func isObservedVersionCurrent(_ version: String, bundled: String?) -> Bool {
+        guard let bundled else { return true }
+        // `.numeric` compares dotted decimals correctly ("0.9.0" < "0.10.0").
+        // Strictly-older is outdated; equal or newer (dev builds, downgraded
+        // host) is current.
+        return version.compare(bundled, options: .numeric) != .orderedAscending
+    }
 }

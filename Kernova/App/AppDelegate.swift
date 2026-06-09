@@ -500,13 +500,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         )
     }
 
-    @objc func attachGuestAgentDisk(_ sender: Any?) {
+    @objc func toggleGuestAgentDisk(_ sender: Any?) {
         guard let instance = activeInstance else { return }
-        // Route through mountGuestAgentInstaller so the post-mount instructions
-        // alert fires here too — same UX as the sidebar popover and clipboard
-        // window button. The viewModel already handles the missing-DMG case
-        // with a fault + assertionFailure.
-        viewModel.mountGuestAgentInstaller(on: instance)
+        // One item, two modes — mirrors the `validateMenuItem` branch. When the
+        // installer disk is already attached, eject it. Otherwise mount it, with
+        // a purpose that frames the post-attach instructions alert: `.manage`
+        // (reinstall or run uninstall.command) once the agent is installed,
+        // `.install` otherwise. The viewModel handles the missing-DMG case with
+        // a fault + assertionFailure.
+        if viewModel.isGuestAgentInstallerMounted(on: instance) {
+            viewModel.unmountGuestAgentInstaller(from: instance)
+            return
+        }
+        let purpose: GuestAgentInstallerPurpose
+        switch instance.agentStatus {
+        case .current, .unresponsive:
+            purpose = .manage
+        case .waiting, .outdated, .expectedMissing, .connecting:
+            purpose = .install
+        }
+        viewModel.mountGuestAgentInstaller(on: instance, purpose: purpose)
     }
 
     // MARK: - Display Window (Pop-Out / Fullscreen)
@@ -737,33 +750,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // shortcut validation, which still routes through validateMenuItem(_:).
         case #selector(showClipboard(_:)):
             return activeInstance?.canShowClipboard ?? false
-        case #selector(attachGuestAgentDisk(_:)):
+        case #selector(toggleGuestAgentDisk(_:)):
             guard let instance = activeInstance, instance.canAttachUSBDevices else { return false }
             guard Self.guestAgentDiskPath != nil else { return false }
-            // Mirror the sidebar popover and clipboard window button: title
-            // reflects whether the agent is missing (Install) or behind the
-            // bundled version (Update). Disabled only when the agent is
-            // .current — nothing to do. Stays enabled when the installer is
-            // already mounted so the user can re-trigger the instructions
-            // alert if they dismissed it before reading.
-            let status = instance.agentStatus
-            switch status {
+            // One item, two modes. When the installer disk is already attached
+            // the item ejects it (any status). Otherwise it attaches the disk,
+            // with a purpose-framed title hinting at why: Install/Update/Reinstall
+            // when the agent is absent or behind, "Manage" when it's present
+            // (re-mount to reinstall or run the bundled uninstall.command).
+            if viewModel.isGuestAgentInstallerMounted(on: instance) {
+                menuItem.title = "Eject Guest Agent Media"
+                return true
+            }
+            switch instance.agentStatus {
+            case .waiting:
+                menuItem.title = "Install Guest Agent…"
+                return true
             case .outdated:
                 menuItem.title = "Update Guest Agent…"
+                return true
             case .expectedMissing:
                 menuItem.title = "Reinstall Guest Agent…"
-            case .waiting, .current, .unresponsive, .connecting:
-                menuItem.title = "Install Guest Agent…"
-            }
-            switch status {
-            case .current, .unresponsive, .connecting:
-                // Agent is already installed; no install/update action helps.
-                // `.unresponsive` resets itself once the heartbeat timeout
-                // fires; `.connecting` resolves to `.current` or
-                // `.expectedMissing` on its own.
-                return false
-            case .waiting, .outdated, .expectedMissing:
                 return true
+            case .current, .unresponsive:
+                // `.unresponsive` is not reliably transient — it persists when
+                // the user disables/uninstalls/kills the agent inside the guest
+                // or switches login sessions, exactly when re-mounting (to
+                // reinstall or run uninstall.command) is wanted. Treat it like
+                // `.current`.
+                menuItem.title = "Manage Guest Agent…"
+                return true
+            case .connecting:
+                // Genuinely transient: self-resolves to `.current` or
+                // `.expectedMissing` as the agent (re)connects.
+                menuItem.title = "Install Guest Agent…"
+                return false
             }
         case #selector(togglePopOut(_:)):
             guard let instance = activeInstance else { return false }
@@ -891,10 +912,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             withTitle: "Move to Trash", action: #selector(deleteVM(_:)), keyEquivalent: "\u{08}")
         deleteItem.keyEquivalentModifierMask = [.command]
         vmMenu.addItem(.separator())
+        // Title is a placeholder — `validateMenuItem(_:)` retitles per agent
+        // status / attach state on every menu open (Install / Update / Reinstall
+        // / Manage / Eject Guest Agent Media).
         vmMenu.addItem(
             NSMenuItem(
                 title: "Install Guest Agent…",
-                action: #selector(attachGuestAgentDisk(_:)),
+                action: #selector(toggleGuestAgentDisk(_:)),
                 keyEquivalent: ""
             ))
         vmMenu.delegate = self

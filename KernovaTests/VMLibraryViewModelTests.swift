@@ -2452,6 +2452,7 @@ struct VMLibraryViewModelTests {
         // Alert is set synchronously; reconcile attach is async.
         #expect(presenter.showInstallerMountedAlert == true)
         #expect(presenter.installerMountedVMName == instance.name)
+        #expect(presenter.installerMountedPurpose == .install)
         #expect(instance.configuration.removableMedia?.count == 1)
         #expect(instance.configuration.removableMedia?.first?.path == installerURL.path(percentEncoded: false))
 
@@ -2519,6 +2520,64 @@ struct VMLibraryViewModelTests {
         while !instance.liveRemovableMedia.isEmpty { await Task.yield() }
 
         #expect(mock.detachCallCount == 1)
+        #expect(instance.configuration.removableMedia == nil)
+    }
+
+    @Test("mountGuestAgentInstaller forwards the .manage purpose to the alert")
+    func mountGuestAgentInstallerManagePurpose() throws {
+        _ = try #require(KernovaGuestAgentInfo.installerDiskImageURL)
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        instance.status = .running
+        viewModel.instances.append(instance)
+
+        viewModel.mountGuestAgentInstaller(on: instance, purpose: .manage)
+
+        #expect(presenter.installerMountedPurpose == .manage)
+    }
+
+    @Test("isGuestAgentInstallerMounted reflects whether the bundled DMG is attached")
+    func isGuestAgentInstallerMountedReflectsState() throws {
+        let installerURL = try #require(KernovaGuestAgentInfo.installerDiskImageURL)
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        viewModel.instances.append(instance)
+
+        #expect(!viewModel.isGuestAgentInstallerMounted(on: instance))
+
+        instance.configuration.removableMedia = [
+            RemovableMediaItem(path: installerURL.path(percentEncoded: false), readOnly: true)
+        ]
+        #expect(viewModel.isGuestAgentInstallerMounted(on: instance))
+
+        // An unrelated removable item must not count as the installer.
+        instance.configuration.removableMedia = [
+            RemovableMediaItem(path: "/some/other/disk.img", readOnly: false)
+        ]
+        #expect(!viewModel.isGuestAgentInstallerMounted(on: instance))
+    }
+
+    @Test("onAgentBecameCurrent (wired by loadVMs) auto-ejects the installer disk")
+    func onAgentBecameCurrentAutoEjectsInstaller() throws {
+        let installerURL = try #require(KernovaGuestAgentInfo.installerDiskImageURL)
+        let storage = MockVMStorageService()
+        var config = VMConfiguration(name: "Wired VM", guestOS: .linux, bootMode: .efi)
+        config.removableMedia = [
+            RemovableMediaItem(path: installerURL.path(percentEncoded: false), readOnly: true)
+        ]
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
+        storage.bundles[url] = config
+        let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
+        let instance = try #require(viewModel.instances.first)
+
+        #expect(viewModel.isGuestAgentInstallerMounted(on: instance))
+
+        // Fire the hook the view model wired in `wirePersistence(for:)` — it
+        // must detach the installer regardless of which window is open.
+        instance.onAgentBecameCurrent?()
+
+        #expect(!viewModel.isGuestAgentInstallerMounted(on: instance))
         #expect(instance.configuration.removableMedia == nil)
     }
 
