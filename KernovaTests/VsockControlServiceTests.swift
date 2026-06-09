@@ -40,13 +40,27 @@ struct VsockControlServiceTests {
         return frame
     }
 
-    /// Default test cadences.
-    ///
-    /// Small enough that liveness assertions don't
-    /// drag the suite, large enough to avoid scheduler-induced flakiness.
+    /// Default outbound-heartbeat cadence: small so `heartbeatOutboundCadence`
+    /// doesn't drag, and harmless to every other test (extra heartbeats only
+    /// keep the connection alive).
     private static let testHeartbeat: Duration = .milliseconds(40)
-    private static let testUnresponsive: Duration = .milliseconds(160)
-    private static let testTerminate: Duration = .milliseconds(400)
+
+    /// Default liveness windows, set far beyond any test's wall-clock budget.
+    ///
+    /// The watchdog can't tear the channel down mid-test at these values. Tests
+    /// that *exercise* the watchdog (silence/recovery/terminate) pass explicit
+    /// short windows to opt back in.
+    ///
+    /// The watchdog measures `ContinuousClock.now - lastInboundFrame`, which
+    /// keeps advancing while a contended CI MainActor stalls the test. With the
+    /// old 160 ms / 400 ms defaults, any non-watchdog test that paused past the
+    /// window (waiting on a frame, a `waitUntil`, or scheduler jitter) saw the
+    /// channel closed out from under it — surfacing as an EOF / `.closed` flake.
+    /// Sixteen tests inherited those defaults despite not testing liveness; this
+    /// makes the watchdog an explicit opt-in instead of an implicit deadline
+    /// coupled to every test's runtime. See `feedback_ci_test_timings`.
+    private static let watchdogDisabledUnresponsive: Duration = .seconds(3_600)
+    private static let watchdogDisabledTerminate: Duration = .seconds(7_200)
 
     /// Builds a service with the test cadences applied.
     ///
@@ -67,8 +81,8 @@ struct VsockControlServiceTests {
             label: "test",
             bundledAgentVersion: bundledAgentVersion,
             heartbeatInterval: heartbeatInterval ?? Self.testHeartbeat,
-            unresponsiveAfter: unresponsiveAfter ?? Self.testUnresponsive,
-            terminateAfter: terminateAfter ?? Self.testTerminate,
+            unresponsiveAfter: unresponsiveAfter ?? Self.watchdogDisabledUnresponsive,
+            terminateAfter: terminateAfter ?? Self.watchdogDisabledTerminate,
             policyProvider: policyProvider,
             onAgentVersionObserved: onAgentVersionObserved
         )
