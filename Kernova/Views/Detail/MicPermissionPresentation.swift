@@ -1,28 +1,28 @@
 import AVFoundation
 import Foundation
 
-/// What the Audio section should show beneath the microphone toggle, derived
-/// purely from the system permission status and whether the mic is enabled.
+/// What the Audio section should show beneath the Audio Input toggle, derived
+/// purely from the system permission status and whether audio input is enabled.
 ///
 /// Extracted from the settings view so the status→message mapping is
 /// unit-testable without an `NSViewController`.
 enum MicWarningState: Equatable {
-    /// No supplementary UI (mic disabled, or already authorized).
+    /// No supplementary UI (audio input disabled, or already authorized).
     case none
-    /// Mic enabled but permission not yet requested; macOS will prompt on first
-    /// use. Shown as a neutral hint.
+    /// Audio input enabled but permission not yet requested; macOS will prompt on
+    /// first use. Shown as a neutral hint.
     case willPrompt
-    /// Mic enabled but permission denied/restricted; shown as a warning with a
-    /// link to the permission instructions.
+    /// Audio input enabled but permission denied/restricted; shown as a warning
+    /// with a link to the permission instructions.
     case denied
 }
 
 /// Maps the microphone authorization status to the supplementary UI to display.
 ///
-/// The warning is only relevant when the mic is enabled; a disabled mic never
-/// shows a hint or warning regardless of the system status.
-func micPermissionPresentation(_ status: AVAuthorizationStatus, micEnabled: Bool) -> MicWarningState {
-    guard micEnabled else { return .none }
+/// The warning is only relevant when audio input is enabled; disabled audio
+/// input never shows a hint or warning regardless of the system status.
+func micPermissionPresentation(_ status: AVAuthorizationStatus, audioInputEnabled: Bool) -> MicWarningState {
+    guard audioInputEnabled else { return .none }
     switch status {
     case .notDetermined:
         return .willPrompt

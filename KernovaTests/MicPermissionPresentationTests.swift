@@ -4,25 +4,25 @@ import Testing
 
 @Suite("MicPermissionPresentation Tests")
 struct MicPermissionPresentationTests {
-    // MARK: - Mic disabled → never any supplementary UI
+    // MARK: - Audio input disabled → never any supplementary UI
 
-    @Test("A disabled mic shows nothing regardless of permission status")
-    func disabledMicShowsNothing() {
+    @Test("Disabled audio input shows nothing regardless of permission status")
+    func disabledAudioInputShowsNothing() {
         for status in [
             AVAuthorizationStatus.notDetermined, .denied, .restricted, .authorized,
         ] {
-            #expect(micPermissionPresentation(status, micEnabled: false) == .none)
+            #expect(micPermissionPresentation(status, audioInputEnabled: false) == .none)
         }
     }
 
-    // MARK: - Mic enabled → status-driven
+    // MARK: - Audio input enabled → status-driven
 
-    @Test("Enabled mic maps each status to the expected warning state")
-    func enabledMicMapping() {
-        #expect(micPermissionPresentation(.notDetermined, micEnabled: true) == .willPrompt)
-        #expect(micPermissionPresentation(.denied, micEnabled: true) == .denied)
-        #expect(micPermissionPresentation(.restricted, micEnabled: true) == .denied)
-        #expect(micPermissionPresentation(.authorized, micEnabled: true) == .none)
+    @Test("Enabled audio input maps each status to the expected warning state")
+    func enabledAudioInputMapping() {
+        #expect(micPermissionPresentation(.notDetermined, audioInputEnabled: true) == .willPrompt)
+        #expect(micPermissionPresentation(.denied, audioInputEnabled: true) == .denied)
+        #expect(micPermissionPresentation(.restricted, audioInputEnabled: true) == .denied)
+        #expect(micPermissionPresentation(.authorized, audioInputEnabled: true) == .none)
     }
 
     // MARK: - External attachment path derivation

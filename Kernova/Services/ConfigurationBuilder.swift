@@ -502,21 +502,29 @@ struct ConfigurationBuilder: Sendable {
     }
 
     private func configureAudio(_ vzConfig: VZVirtualMachineConfiguration, config: VMConfiguration) {
-        Self.logger.debug("Configuring audio: microphoneEnabled=\(config.microphoneEnabled, privacy: .public)")
-        let audioDevice = VZVirtioSoundDeviceConfiguration()
+        Self.logger.debug(
+            "Configuring audio: audioInputEnabled=\(config.audioInputEnabled, privacy: .public), audioOutputEnabled=\(config.audioOutputEnabled, privacy: .public)"
+        )
 
         var streams: [VZVirtioSoundDeviceStreamConfiguration] = []
 
-        if config.microphoneEnabled {
+        if config.audioInputEnabled {
             let inputStream = VZVirtioSoundDeviceInputStreamConfiguration()
             inputStream.source = VZHostAudioInputStreamSource()
             streams.append(inputStream)
         }
 
-        let outputStream = VZVirtioSoundDeviceOutputStreamConfiguration()
-        outputStream.sink = VZHostAudioOutputStreamSink()
-        streams.append(outputStream)
+        if config.audioOutputEnabled {
+            let outputStream = VZVirtioSoundDeviceOutputStreamConfiguration()
+            outputStream.sink = VZHostAudioOutputStreamSink()
+            streams.append(outputStream)
+        }
 
+        // A virtio sound device with no streams is pointless, so omit it entirely
+        // when both directions are off, leaving VZ's default-empty `audioDevices`.
+        guard !streams.isEmpty else { return }
+
+        let audioDevice = VZVirtioSoundDeviceConfiguration()
         audioDevice.streams = streams
         vzConfig.audioDevices = [audioDevice]
     }
