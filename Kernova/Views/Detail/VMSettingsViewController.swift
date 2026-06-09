@@ -17,7 +17,7 @@ import UniformTypeIdentifiers
 /// ``buildForm()``; switching VMs rebuilds the form (mirroring the SwiftUI
 /// `.id(selected.id)` reset). ``apply()`` only updates mutable state: control
 /// values, lock/enabled state, the dynamic attachment lists, and the microphone
-/// warning.
+/// permission warning.
 @MainActor
 final class VMSettingsViewController: NSViewController {
     private(set) var instance: VMInstance
@@ -130,7 +130,8 @@ final class VMSettingsViewController: NSViewController {
     private var networkSwitch = NSSwitch()
 
     // Audio
-    private var micSwitch = NSSwitch()
+    private var audioInputSwitch = NSSwitch()
+    private var audioOutputSwitch = NSSwitch()
     private var audioWarningContainer = NSStackView()
 
     // Guest Agent
@@ -691,8 +692,10 @@ extension VMSettingsViewController {
     // MARK: Audio
 
     private func buildAudioSection() -> NSView {
-        micSwitch = makeSwitch(action: #selector(micToggled))
-        persistentLockableControls.append(micSwitch)
+        audioInputSwitch = makeSwitch(action: #selector(audioInputToggled))
+        audioOutputSwitch = makeSwitch(action: #selector(audioOutputToggled))
+        persistentLockableControls.append(audioInputSwitch)
+        persistentLockableControls.append(audioOutputSwitch)
 
         audioWarningContainer = NSStackView()
         audioWarningContainer.orientation = .vertical
@@ -702,7 +705,7 @@ extension VMSettingsViewController {
 
         var paragraphs: [InfoPopoverParagraph] = [
             .body(
-                "Exposes a VirtioSound device. Speaker output is always enabled; toggle the microphone to grant the guest access to your host mic."
+                "Exposes a VirtioSound device with independent streams. Audio Input lets the guest capture from your Mac's audio input; Audio Output plays guest sound through your Mac."
             )
         ]
         if instance.configuration.guestOS == .linux {
@@ -710,7 +713,10 @@ extension VMSettingsViewController {
         }
         return makeSection([
             makeHeader("Audio", lockable: true, paragraphs: paragraphs),
-            makeGroupedFormCard(rows: [makeGroupedFormCardRow("Microphone", control: micSwitch)]),
+            makeGroupedFormCard(rows: [
+                makeGroupedFormCardRow("Audio Input", control: audioInputSwitch),
+                makeGroupedFormCardRow("Audio Output", control: audioOutputSwitch),
+            ]),
             audioWarningContainer,
         ])
     }
@@ -1058,9 +1064,10 @@ extension VMSettingsViewController {
     }
 
     private func refreshAudio() {
-        micSwitch.state = instance.configuration.microphoneEnabled ? .on : .off
+        audioInputSwitch.state = instance.configuration.audioInputEnabled ? .on : .off
+        audioOutputSwitch.state = instance.configuration.audioOutputEnabled ? .on : .off
         let warning = micPermissionPresentation(
-            micPermission, micEnabled: instance.configuration.microphoneEnabled)
+            micPermission, audioInputEnabled: instance.configuration.audioInputEnabled)
         guard warning != renderedAudioWarning else { return }
         renderedAudioWarning = warning
         audioWarningContainer.arrangedSubviews.forEach { $0.removeFromSuperview() }
@@ -1425,9 +1432,13 @@ extension VMSettingsViewController {
         writeConfig { $0.networkEnabled = networkSwitch.state == .on }
     }
 
-    @objc private func micToggled() {
+    @objc private func audioInputToggled() {
         refreshMicPermission()
-        writeConfig { $0.microphoneEnabled = micSwitch.state == .on }
+        writeConfig { $0.audioInputEnabled = audioInputSwitch.state == .on }
+    }
+
+    @objc private func audioOutputToggled() {
+        writeConfig { $0.audioOutputEnabled = audioOutputSwitch.state == .on }
     }
 
     @objc private func logForwardingToggled() {

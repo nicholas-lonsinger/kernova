@@ -27,7 +27,6 @@ struct VMConfigurationTests {
                 "displayPreference": "inline",
                 "networkEnabled": true,
                 "clipboardSharingEnabled": false,
-                "microphoneEnabled": false,
                 "createdAt": "2025-01-01T00:00:00Z"\(extra)
             }
             """
@@ -829,25 +828,27 @@ struct VMConfigurationTests {
         #expect(config.agentInstallNudgeDismissed == false)
     }
 
-    // MARK: - microphoneEnabled Tests
+    // MARK: - Audio Tests
 
-    @Test("Default microphoneEnabled is false")
-    func defaultMicrophoneEnabled() {
+    @Test("audioInputEnabled defaults to false and audioOutputEnabled defaults to true")
+    func audioDefaults() {
         let config = VMConfiguration(
             name: "Test VM",
             guestOS: .linux,
             bootMode: .efi
         )
-        #expect(config.microphoneEnabled == false)
+        #expect(config.audioInputEnabled == false)
+        #expect(config.audioOutputEnabled == true)
     }
 
-    @Test("Configuration preserves microphoneEnabled flag")
-    func microphoneEnabledRoundTrip() throws {
+    @Test("Configuration preserves audio input/output flags")
+    func audioFlagsRoundTrip() throws {
         let config = VMConfiguration(
-            name: "Mic VM",
+            name: "Audio VM",
             guestOS: .linux,
             bootMode: .efi,
-            microphoneEnabled: true
+            audioInputEnabled: true,
+            audioOutputEnabled: false
         )
 
         let encoder = JSONEncoder()
@@ -858,7 +859,21 @@ struct VMConfigurationTests {
         decoder.dateDecodingStrategy = .iso8601
         let decoded = try decoder.decode(VMConfiguration.self, from: data)
 
-        #expect(decoded.microphoneEnabled == true)
+        #expect(decoded.audioInputEnabled == true)
+        #expect(decoded.audioOutputEnabled == false)
+    }
+
+    @Test("Configs missing both audio keys default input off, output on")
+    func audioKeysMissingUseDefaults() throws {
+        // `makeBaseJSON` carries neither `audioInputEnabled` nor
+        // `audioOutputEnabled` — the shape of a config saved before the audio
+        // keys existed. Both must fall through to their defaults.
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
+
+        #expect(decoded.audioInputEnabled == false)
+        #expect(decoded.audioOutputEnabled == true)
     }
 
     // MARK: - Full-field round-trip
@@ -891,7 +906,8 @@ struct VMConfigurationTests {
             networkEnabled: false,
             macAddress: "aa:bb:cc:dd:ee:ff",
             clipboardSharingEnabled: true,
-            microphoneEnabled: true,
+            audioInputEnabled: true,
+            audioOutputEnabled: false,
             agentLogForwardingEnabled: true,
             lastSeenAgentVersion: "1.2.3",
             hardwareModelData: Data([0x01, 0x02, 0x03]),
@@ -956,8 +972,9 @@ struct VMConfigurationTests {
 
     @Test("Decoding JSON missing a required field throws DecodingError")
     func missingRequiredFieldThrows() {
-        // Intentionally omits: displayPreference, clipboardSharingEnabled,
-        // microphoneEnabled
+        // Intentionally omits the required fields displayPreference and
+        // clipboardSharingEnabled. (The audio keys are optional and default, so
+        // their absence alone would not throw.)
         let json = """
             {
                 "id": "12345678-1234-1234-1234-123456789012",

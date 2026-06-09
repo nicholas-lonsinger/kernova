@@ -60,12 +60,18 @@ struct VMConfiguration: Codable, Sendable, Equatable {
 
     // MARK: - Audio
 
-    /// When `true`, the host microphone is passed through to the guest as a
+    /// When `true`, the host's audio input is passed through to the guest as a
     /// virtio sound input stream.
     ///
-    /// Defaults to `false` so guests cannot silently
-    /// listen to the host. Speaker output is always enabled regardless of this flag.
-    var microphoneEnabled: Bool
+    /// Defaults to `false` so guests cannot silently listen to the host.
+    var audioInputEnabled: Bool
+
+    /// When `true`, guest audio is routed to the host's audio output as a virtio
+    /// sound output stream.
+    ///
+    /// Defaults to `true`. When both this and `audioInputEnabled` are `false`,
+    /// no virtio sound device is configured at all.
+    var audioOutputEnabled: Bool
 
     // MARK: - Guest Agent
 
@@ -184,7 +190,8 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         macAddress: String? = nil,
         clipboardSharingEnabled: Bool = false,
         serialSocketRelayEnabled: Bool = false,
-        microphoneEnabled: Bool = false,
+        audioInputEnabled: Bool = false,
+        audioOutputEnabled: Bool = true,
         agentLogForwardingEnabled: Bool = false,
         lastSeenAgentVersion: String? = nil,
         agentInstallNudgeDismissed: Bool = false,
@@ -216,7 +223,8 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.macAddress = macAddress
         self.clipboardSharingEnabled = clipboardSharingEnabled
         self.serialSocketRelayEnabled = serialSocketRelayEnabled
-        self.microphoneEnabled = microphoneEnabled
+        self.audioInputEnabled = audioInputEnabled
+        self.audioOutputEnabled = audioOutputEnabled
         self.agentLogForwardingEnabled = agentLogForwardingEnabled
         self.lastSeenAgentVersion = lastSeenAgentVersion
         self.agentInstallNudgeDismissed = agentInstallNudgeDismissed
@@ -258,7 +266,8 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.clipboardSharingEnabled = try c.decode(Bool.self, forKey: .clipboardSharingEnabled)
         self.serialSocketRelayEnabled =
             try c.decodeIfPresent(Bool.self, forKey: .serialSocketRelayEnabled) ?? false
-        self.microphoneEnabled = try c.decode(Bool.self, forKey: .microphoneEnabled)
+        self.audioInputEnabled = try c.decodeIfPresent(Bool.self, forKey: .audioInputEnabled) ?? false
+        self.audioOutputEnabled = try c.decodeIfPresent(Bool.self, forKey: .audioOutputEnabled) ?? true
         self.agentLogForwardingEnabled = try c.decodeIfPresent(Bool.self, forKey: .agentLogForwardingEnabled) ?? false
         self.lastSeenAgentVersion = try c.decodeIfPresent(String.self, forKey: .lastSeenAgentVersion)
         self.agentInstallNudgeDismissed = try c.decodeIfPresent(Bool.self, forKey: .agentInstallNudgeDismissed) ?? false
