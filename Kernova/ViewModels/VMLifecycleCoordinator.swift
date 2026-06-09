@@ -105,9 +105,9 @@ final class VMLifecycleCoordinator {
 
     // MARK: - Lifecycle
 
-    func start(_ instance: VMInstance) async throws {
+    func start(_ instance: VMInstance, bootIntoRecovery: Bool = false) async throws {
         try await serialized(instance, action: "start") {
-            try await virtualizationService.start(instance)
+            try await virtualizationService.start(instance, bootIntoRecovery: bootIntoRecovery)
         }
     }
 

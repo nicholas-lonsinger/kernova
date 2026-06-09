@@ -64,7 +64,7 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
 
     // MARK: - VirtualizationProviding
 
-    func start(_ instance: VMInstance) async throws {
+    func start(_ instance: VMInstance, bootIntoRecovery: Bool = false) async throws {
         if shouldSuspendOnStart {
             await suspendIfNeeded()
         }

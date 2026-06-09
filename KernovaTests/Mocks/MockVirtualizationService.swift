@@ -13,6 +13,9 @@ final class MockVirtualizationService: VirtualizationProviding {
     var resumeCallCount = 0
     var saveCallCount = 0
 
+    /// The `bootIntoRecovery` argument from the most recent `start` call.
+    var lastStartBootIntoRecovery = false
+
     // MARK: - Error Injection & Recovery
 
     var startError: (any Error)?
@@ -26,8 +29,9 @@ final class MockVirtualizationService: VirtualizationProviding {
 
     // MARK: - VirtualizationProviding
 
-    func start(_ instance: VMInstance) async throws {
+    func start(_ instance: VMInstance, bootIntoRecovery: Bool = false) async throws {
         startCallCount += 1
+        lastStartBootIntoRecovery = bootIntoRecovery
         if let error = startError {
             instance.tearDownSession()
             instance.status = startErrorRecoveryStatus

@@ -14,9 +14,14 @@ final class VirtualizationService {
     // MARK: - Start
 
     /// Starts a virtual machine, optionally restoring from a saved state.
-    func start(_ instance: VMInstance) async throws {
+    ///
+    /// When `bootIntoRecovery` is `true` and the guest is macOS, the cold-boot
+    /// path boots into macOS Recovery for this launch only. It has no effect on
+    /// Linux guests or on the restore-from-save path — a stopped VM eligible for
+    /// recovery never has a save file, so it always cold-boots.
+    func start(_ instance: VMInstance, bootIntoRecovery: Bool = false) async throws {
         Self.logger.debug(
-            "start: status=\(instance.status.displayName, privacy: .public), hasSaveFile=\(instance.hasSaveFile, privacy: .public)"
+            "start: status=\(instance.status.displayName, privacy: .public), hasSaveFile=\(instance.hasSaveFile, privacy: .public), bootIntoRecovery=\(bootIntoRecovery, privacy: .public)"
         )
         guard instance.status.canStart else {
             throw VirtualizationError.invalidStateTransition(from: instance.status, action: "start")
@@ -38,7 +43,13 @@ final class VirtualizationService {
                 instance.startSerialReading()
                 instance.startClipboardService()
                 instance.startVsockServices()
-                try await vm.start()
+                #if arch(arm64)
+                let startOptions = Self.recoveryStartOptions(
+                    bootIntoRecovery: bootIntoRecovery, guestOS: instance.configuration.guestOS)
+                #else
+                let startOptions: VZVirtualMachineStartOptions? = nil
+                #endif
+                try await startMachine(vm, options: startOptions)
             }
 
             instance.status = .running
@@ -49,7 +60,11 @@ final class VirtualizationService {
             // "didn't reconnect" badge instead of the generic install nudge.
             // No-op for fresh VMs (no `lastSeenAgentVersion`) and for Linux.
             instance.startAgentPostStartWatchdog()
-            Self.logger.notice("Started VM '\(instance.name, privacy: .public)'")
+            if bootIntoRecovery {
+                Self.logger.notice("Started VM '\(instance.name, privacy: .public)' in recovery mode")
+            } else {
+                Self.logger.notice("Started VM '\(instance.name, privacy: .public)'")
+            }
         } catch {
             Self.logger.error(
                 "Failed to start VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
@@ -60,6 +75,22 @@ final class VirtualizationService {
             throw error
         }
     }
+
+    #if arch(arm64)
+    /// Builds the one-shot start options for a recovery boot.
+    ///
+    /// Returns `nil` (i.e. a normal boot) unless a recovery boot is requested for
+    /// a macOS guest. Pure and side-effect free so it can be unit-tested without
+    /// a live VZ machine.
+    static func recoveryStartOptions(
+        bootIntoRecovery: Bool, guestOS: VMGuestOS
+    ) -> VZMacOSVirtualMachineStartOptions? {
+        guard bootIntoRecovery, guestOS == .macOS else { return nil }
+        let options = VZMacOSVirtualMachineStartOptions()
+        options.startUpFromMacOSRecovery = true
+        return options
+    }
+    #endif
 
     // MARK: - Stop
 
@@ -282,6 +313,27 @@ final class VirtualizationService {
     }
 
     // MARK: - Private Async Wrappers
+
+    /// Starts `vm`, using the options-aware overload only when `options` are
+    /// supplied. `VZVirtualMachine.start(options:completionHandler:)` has no
+    /// `async` variant, so it is bridged through a continuation; the plain
+    /// `start()` async overload handles the common no-options case.
+    private func startMachine(_ vm: VZVirtualMachine, options: VZVirtualMachineStartOptions?) async throws {
+        guard let options else {
+            try await vm.start()
+            return
+        }
+        nonisolated(unsafe) let vm = vm
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+            vm.start(options: options) { error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume()
+                }
+            }
+        }
+    }
 
     private func saveMachineState(_ vm: VZVirtualMachine, to url: URL) async throws {
         nonisolated(unsafe) let vm = vm

@@ -343,12 +343,14 @@ final class VMLibraryViewModel {
 
     // MARK: - Lifecycle
 
-    func start(_ instance: VMInstance) async {
+    func start(_ instance: VMInstance, bootIntoRecovery: Bool = false) async {
         #if arch(arm64)
         // VMs awaiting initial boot route through the install pipeline. The
         // pipeline clears installContext on success and chains an auto-boot;
         // failure leaves .error / .initialBoot, ready for the user to retry.
         // Check by installContext (not status) so .error retries also dispatch.
+        // Recovery boots never reach here — they're gated to stopped (installed)
+        // macOS guests, which have no installContext.
         if instance.configuration.installContext != nil {
             installAndAutoBoot(instance)
             return
@@ -359,7 +361,7 @@ final class VMLibraryViewModel {
             onOpenDisplayWindow?(instance)
         }
         do {
-            try await lifecycle.start(instance)
+            try await lifecycle.start(instance, bootIntoRecovery: bootIntoRecovery)
         } catch {
             Self.logger.error(
                 "Failed to start '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
@@ -431,6 +433,21 @@ final class VMLibraryViewModel {
 
     func forceStopConfirmed(_ instance: VMInstance) async {
         await forceStop(instance)
+    }
+
+    // MARK: - Recovery Boot
+
+    /// Presents the confirmation alert for booting a stopped macOS guest into
+    /// macOS Recovery.
+    ///
+    /// The affordance is gated in the UI by `VMInstance.canStartInRecovery`.
+    func confirmStartInRecovery(_ instance: VMInstance) {
+        presenter?.presentRecoveryBoot(for: instance)
+    }
+
+    /// Invoked from the recovery-boot confirmation alert's confirm button.
+    func startInRecoveryConfirmed(_ instance: VMInstance) async {
+        await start(instance, bootIntoRecovery: true)
     }
 
     func pause(_ instance: VMInstance) async {

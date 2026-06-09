@@ -12,6 +12,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private var displayWindowObservers: [UUID: Any] = [:]
     private var terminationObservation: ObservationLoop?
     private let clipboardMenuItem: NSMenuItem
+    /// The "Virtual Machine" menu, retained so `menuNeedsUpdate(_:)` can toggle
+    /// the recovery item between Option-alternate and always-visible per the
+    /// "Always show advanced options" preference.
+    private var vmMenu: NSMenu?
+    /// The "Start in Recovery Mode" item (advanced action), whose `isAlternate`
+    /// is flipped from the preference each time the VM menu opens.
+    private var recoveryMenuItem: NSMenuItem?
+    private var settingsWindowController: SettingsWindowController?
     /// Set in `applicationWillBecomeActive` and read in `applicationShouldHandleReopen`
     /// to distinguish a dock click that activates the app from one on an already-active app.
     ///
@@ -358,11 +366,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         #endif
     }
 
+    @objc func showSettings(_ sender: Any?) {
+        let controller = settingsWindowController ?? SettingsWindowController()
+        settingsWindowController = controller
+        NSApp.activate()
+        controller.showWindow(sender)
+        controller.window?.makeKeyAndOrderFront(sender)
+    }
+
     // MARK: - VM Actions
 
     @objc func startVM(_ sender: Any?) {
         guard let instance = activeInstance else { return }
         Task { await viewModel.start(instance) }
+    }
+
+    @objc func startVMInRecovery(_ sender: Any?) {
+        guard let instance = activeInstance else { return }
+        viewModel.confirmStartInRecovery(instance)
     }
 
     @objc func pauseVM(_ sender: Any?) {
@@ -691,6 +712,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         switch menuItem.action {
         case #selector(startVM(_:)):
             return activeInstance?.status.canStart ?? false
+        case #selector(startVMInRecovery(_:)):
+            return activeInstance?.canStartInRecovery ?? false
         case #selector(pauseVM(_:)):
             return activeInstance?.status.canPause ?? false
         case #selector(resumeVM(_:)):
@@ -762,6 +785,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         if menu === NSApp.windowsMenu {
             clipboardMenuItem.isEnabled = activeInstance?.canShowClipboard ?? false
         }
+        if menu === vmMenu {
+            // Off (default): the recovery item is an Option-alternate of "Start".
+            // On: it becomes a plain, always-visible item. Re-read fresh each open
+            // so a preference change takes effect without rebuilding the menu.
+            recoveryMenuItem?.isAlternate = !AppPreferences.shared.alwaysShowAdvancedOptions
+        }
     }
 
     // MARK: - Main Menu
@@ -773,6 +802,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let appMenuItem = NSMenuItem()
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "About Kernova", action: #selector(showAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(.separator())
+        let settingsItem = appMenu.addItem(
+            withTitle: "Settings…", action: #selector(showSettings(_:)), keyEquivalent: ",")
+        settingsItem.keyEquivalentModifierMask = [.command]
         appMenu.addItem(.separator())
         let servicesItem = NSMenuItem(title: "Services", action: nil, keyEquivalent: "")
         let servicesMenu = NSMenu(title: "Services")
@@ -817,6 +850,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let vmMenuItem = NSMenuItem()
         let vmMenu = NSMenu(title: "Virtual Machine")
         vmMenu.addItem(withTitle: "Start", action: #selector(startVM(_:)), keyEquivalent: "r")
+        // Advanced action: an Option-alternate of "Start". `menuNeedsUpdate(_:)`
+        // flips `isAlternate` to false when "Always show advanced options" is on,
+        // turning it into a plain, always-visible item. The ⌥⌘R shortcut is shared
+        // with "Resume" — unambiguous because a VM is never both stopped and paused,
+        // and recovery precedes Resume in menu order.
+        let recoveryItem = vmMenu.addItem(
+            withTitle: "Start in Recovery Mode", action: #selector(startVMInRecovery(_:)), keyEquivalent: "r")
+        recoveryItem.keyEquivalentModifierMask = [.command, .option]
+        // Initialize from the persisted preference so the item is correct from launch;
+        // `menuNeedsUpdate(_:)` keeps it in sync on each subsequent open.
+        recoveryItem.isAlternate = !AppPreferences.shared.alwaysShowAdvancedOptions
+        self.recoveryMenuItem = recoveryItem
         let pauseItem = vmMenu.addItem(withTitle: "Pause", action: #selector(pauseVM(_:)), keyEquivalent: "p")
         pauseItem.keyEquivalentModifierMask = [.command, .option]
         let resumeItem = vmMenu.addItem(withTitle: "Resume", action: #selector(resumeVM(_:)), keyEquivalent: "r")
@@ -852,6 +897,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 action: #selector(attachGuestAgentDisk(_:)),
                 keyEquivalent: ""
             ))
+        vmMenu.delegate = self
+        self.vmMenu = vmMenu
         vmMenuItem.submenu = vmMenu
         mainMenu.addItem(vmMenuItem)
 

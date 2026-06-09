@@ -13,6 +13,7 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     private(set) var errors: [String] = []
     private(set) var deleteSheetInstances: [VMInstance] = []
     private(set) var forceStopInstances: [VMInstance] = []
+    private(set) var recoveryBootInstances: [VMInstance] = []
     private(set) var stopPausedInstances: [VMInstance] = []
     private(set) var cancelPreparingInstances: [VMInstance] = []
     private(set) var installerMountedNames: [String] = []
@@ -21,6 +22,7 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     func presentError(_ message: String) { errors.append(message) }
     func presentDeleteSheet(for instance: VMInstance) { deleteSheetInstances.append(instance) }
     func presentForceStop(for instance: VMInstance) { forceStopInstances.append(instance) }
+    func presentRecoveryBoot(for instance: VMInstance) { recoveryBootInstances.append(instance) }
     func presentStopPaused(for instance: VMInstance) { stopPausedInstances.append(instance) }
     func presentCancelPreparing(for instance: VMInstance) { cancelPreparingInstances.append(instance) }
     func presentInstallerMounted(vmName: String) { installerMountedNames.append(vmName) }
@@ -34,6 +36,8 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     var instanceToDelete: VMInstance? { deleteSheetInstances.last }
     var showForceStopConfirmation: Bool { !forceStopInstances.isEmpty }
     var instanceToForceStop: VMInstance? { forceStopInstances.last }
+    var showRecoveryBootConfirmation: Bool { !recoveryBootInstances.isEmpty }
+    var instanceToRecoveryBoot: VMInstance? { recoveryBootInstances.last }
     var showStopPausedConfirmation: Bool { !stopPausedInstances.isEmpty }
     var instanceToStopPaused: VMInstance? { stopPausedInstances.last }
     var showCancelPreparingConfirmation: Bool { !cancelPreparingInstances.isEmpty }
@@ -47,6 +51,7 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
         errors.removeAll()
         deleteSheetInstances.removeAll()
         forceStopInstances.removeAll()
+        recoveryBootInstances.removeAll()
         stopPausedInstances.removeAll()
         cancelPreparingInstances.removeAll()
         installerMountedNames.removeAll()

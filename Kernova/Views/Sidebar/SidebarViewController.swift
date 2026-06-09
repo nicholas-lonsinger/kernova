@@ -650,8 +650,37 @@ extension SidebarViewController {
         let status = instance.status
 
         // Lifecycle
+        var startItem: NSMenuItem?
         if status.canStart {
-            menu.addItem(item(startButtonLabel(for: instance), #selector(menuStart(_:)), instance))
+            if instance.canStartInRecovery && !AppPreferences.shared.alwaysShowAdvancedOptions {
+                // Prepend a zero-height dummy item to prevent the context menu from shifting
+                // downward when the first visible item ("Start") is toggled on Option-hold.
+                // This pins the top of the menu layout so it never collapses.
+                let dummy = NSMenuItem()
+                dummy.view = NSView(frame: .zero)
+                menu.addItem(dummy)
+            }
+            let start = item(startButtonLabel(for: instance), #selector(menuStart(_:)), instance)
+            menu.addItem(start)
+            startItem = start
+        }
+        if instance.canStartInRecovery {
+            // Advanced action: an Option-alternate of "Start" (revealed on ⌥-hold),
+            // or a plain always-visible item when "Always show advanced options" is on.
+            // `canStartInRecovery` implies `.stopped`, so "Start" was just added and
+            // this item immediately precedes this one (required for alternate pairing).
+            let recovery = item("Start in Recovery Mode", #selector(menuStartRecovery(_:)), instance)
+            if !AppPreferences.shared.alwaysShowAdvancedOptions {
+                // Keyless Option-reveal: both items have an empty key equivalent, so the
+                // primary's modifier mask must be cleared to [] (its default is [.command])
+                // for AppKit to collapse the pair into ONE row. Otherwise [.command] is not
+                // a subset of the alternate's [.option], the pair doesn't merge, and the
+                // menu gains a row (and shifts position) when Option is held.
+                startItem?.keyEquivalentModifierMask = []
+                recovery.keyEquivalentModifierMask = [.option]
+                recovery.isAlternate = true
+            }
+            menu.addItem(recovery)
         }
         if status.canPause {
             menu.addItem(item("Pause", #selector(menuPause(_:)), instance))
@@ -745,6 +774,11 @@ extension SidebarViewController {
     @objc private func menuStart(_ sender: NSMenuItem) {
         guard let instance = sender.representedObject as? VMInstance else { return }
         Task { await viewModel.start(instance) }
+    }
+
+    @objc private func menuStartRecovery(_ sender: NSMenuItem) {
+        guard let instance = sender.representedObject as? VMInstance else { return }
+        viewModel.confirmStartInRecovery(instance)
     }
 
     @objc private func menuPause(_ sender: NSMenuItem) {

@@ -302,6 +302,16 @@ final class VMInstance {
         status.canSave && !isColdPaused
     }
 
+    /// `true` when the VM can be cold-booted into macOS Recovery.
+    ///
+    /// Limited to **stopped macOS guests** — a one-shot recovery boot only makes
+    /// sense for an already-installed macOS VM (a pending-install VM is
+    /// `.initialBoot`, not `.stopped`), and Virtualization.framework has no
+    /// recovery start option for Linux/EFI guests.
+    var canStartInRecovery: Bool {
+        status == .stopped && configuration.guestOS == .macOS
+    }
+
     /// `true` when the VM is eligible to pop out or enter fullscreen (active status + live VM).
     var canUseExternalDisplay: Bool {
         (status == .running || status == .paused) && virtualMachine != nil
