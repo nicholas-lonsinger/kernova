@@ -334,7 +334,7 @@ feat: Add VM snapshot support
 
 Commit messages must reflect the full intent and scope of all changes, not just the last operation performed. Before writing a commit message, review both the conversation context (what the user asked for, the steps taken) and the staged diff holistically. Lead with the primary purpose; secondary details (naming conventions, formatting choices) belong in the body.
 
-End every commit message with the `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>` trailer. It is **not** appended automatically — add it explicitly (e.g. `git commit --trailer "Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"`). Include it exactly once; do not duplicate it in the message body.
+End every commit message with a `Co-Authored-By: Claude <Model> <noreply@anthropic.com>` trailer, where `<Model>` is the model actually authoring the commit — Claude Code states the current model's exact trailer in each session (e.g. `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`); use that rather than copying a model name from documentation or earlier commits. It is **not** appended automatically — add it explicitly (e.g. `git commit --trailer "Co-Authored-By: Claude <Model> <noreply@anthropic.com>"`). Include it exactly once; do not duplicate it in the message body.
 
 ### Merging Pull Requests
 
