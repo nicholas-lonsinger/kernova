@@ -845,7 +845,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let resumeItem = vmMenu.addItem(withTitle: "Resume", action: #selector(resumeVM(_:)), keyEquivalent: "r")
         resumeItem.keyEquivalentModifierMask = [.command, .option]
         vmMenu.addItem(withTitle: "Stop", action: #selector(stopVM(_:)), keyEquivalent: "")
-        vmMenu.addItem(withTitle: "Force Stop", action: #selector(forceStopVM(_:)), keyEquivalent: "")
+        vmMenu.addItem(withTitle: "Force Stop…", action: #selector(forceStopVM(_:)), keyEquivalent: "")
         vmMenu.addItem(.separator())
         let saveItem = vmMenu.addItem(withTitle: "Suspend", action: #selector(saveVM(_:)), keyEquivalent: "s")
         saveItem.keyEquivalentModifierMask = [.command, .option]

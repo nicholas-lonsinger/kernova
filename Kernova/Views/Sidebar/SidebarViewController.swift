@@ -710,7 +710,7 @@ extension SidebarViewController {
             // is never at index 0 and the menu can't shift downward on ⌥-press. See the
             // Start/Recovery block above for the anchor rationale and the keyless-reveal
             // requirement that the primary's modifier mask be cleared to [].
-            let forceStop = item("Force Stop", #selector(menuForceStop(_:)), instance)
+            let forceStop = item("Force Stop…", #selector(menuForceStop(_:)), instance)
             if !AppPreferences.shared.alwaysShowAdvancedOptions {
                 stop.keyEquivalentModifierMask = []
                 forceStop.keyEquivalentModifierMask = [.option]
@@ -719,11 +719,11 @@ extension SidebarViewController {
             menu.addItem(forceStop)
         }
         if instance.isColdPaused {
-            menu.addItem(item("Discard Saved State", #selector(menuForceStop(_:)), instance))
+            menu.addItem(item("Discard Saved State…", #selector(menuForceStop(_:)), instance))
         } else if status.canForceStop && !status.canStop {
             // Transient states (starting/saving/restoring) where graceful stop isn't
-            // available: there's no "Stop" to pair with, so surface "Force Stop" plainly.
-            menu.addItem(item("Force Stop", #selector(menuForceStop(_:)), instance))
+            // available: there's no "Stop" to pair with, so surface "Force Stop…" plainly.
+            menu.addItem(item("Force Stop…", #selector(menuForceStop(_:)), instance))
         }
 
         // State

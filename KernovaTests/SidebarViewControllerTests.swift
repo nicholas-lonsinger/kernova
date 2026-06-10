@@ -185,9 +185,9 @@ struct SidebarViewControllerTests {
         let menu = controller.buildContextMenu(for: instance)
         let menuTitles = titles(of: menu)
 
-        #expect(menuTitles.contains("Discard Saved State"))
+        #expect(menuTitles.contains("Discard Saved State…"))
         #expect(menuTitles.contains("Resume"))
-        #expect(!menuTitles.contains("Force Stop"))
+        #expect(!menuTitles.contains("Force Stop…"))
         #expect(!menuTitles.contains("Stop"))
         #expect(!menuTitles.contains("Suspend"))
     }
@@ -205,7 +205,7 @@ struct SidebarViewControllerTests {
         // Both rows exist in the item array; AppKit collapses them into one visible
         // "Stop" row and swaps in "Force Stop" only while Option is held.
         let stop = menuItem("Stop", in: menu)
-        let forceStop = menuItem("Force Stop", in: menu)
+        let forceStop = menuItem("Force Stop…", in: menu)
         #expect(stop != nil)
         #expect(forceStop != nil)
         // Keyless Option-reveal: the alternate carries [.option] and isAlternate, and
@@ -226,7 +226,7 @@ struct SidebarViewControllerTests {
 
         let menu = controller.buildContextMenu(for: instance)
 
-        let forceStop = menuItem("Force Stop", in: menu)
+        let forceStop = menuItem("Force Stop…", in: menu)
         #expect(menuItem("Stop", in: menu) != nil)
         #expect(forceStop != nil)
         #expect(forceStop?.isAlternate == false)
@@ -246,7 +246,7 @@ struct SidebarViewControllerTests {
         // No graceful "Stop" to pair with, so "Force Stop" stands alone and stays
         // visible without holding Option.
         #expect(!menuTitles.contains("Stop"))
-        #expect(menuItem("Force Stop", in: menu)?.isAlternate == false)
+        #expect(menuItem("Force Stop…", in: menu)?.isAlternate == false)
     }
 
     @Test("Context menu for a preparing VM offers only Cancel and Show in Finder")
