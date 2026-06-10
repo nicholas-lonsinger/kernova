@@ -805,7 +805,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // File menu
         let fileMenuItem = NSMenuItem()
         let fileMenu = NSMenu(title: "File")
-        fileMenu.addItem(withTitle: "New Virtual Machine...", action: #selector(newVM(_:)), keyEquivalent: "n")
+        fileMenu.addItem(withTitle: "New Virtual Machine…", action: #selector(newVM(_:)), keyEquivalent: "n")
         fileMenu.addItem(.separator())
         fileMenu.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         fileMenuItem.submenu = fileMenu
@@ -863,7 +863,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         )
         fullscreenItem.keyEquivalentModifierMask = [.command, .shift]
         vmMenu.addItem(.separator())
-        vmMenu.addItem(withTitle: "Rename...", action: #selector(renameVM(_:)), keyEquivalent: "")
+        vmMenu.addItem(withTitle: "Rename…", action: #selector(renameVM(_:)), keyEquivalent: "")
         vmMenu.addItem(withTitle: "Clone", action: #selector(cloneVM(_:)), keyEquivalent: "d")
         let deleteItem = vmMenu.addItem(
             withTitle: "Move to Trash", action: #selector(deleteVM(_:)), keyEquivalent: "\u{08}")

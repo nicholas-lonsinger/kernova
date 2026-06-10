@@ -575,9 +575,9 @@ extension VMSettingsViewController {
 
     private func buildStorageSection() -> NSView {
         storageListStack = makeListStack()
-        attachStorageButton = makePushButton("Attach Disc...", action: #selector(attachStorageTapped))
-        createStorageButton = makePushButton("Create New Disk...", action: #selector(createStorageTapped))
-        editBootOrderButton = makePushButton("Edit Boot Order...", action: #selector(editBootOrderTapped))
+        attachStorageButton = makePushButton("Attach Disc…", action: #selector(attachStorageTapped))
+        createStorageButton = makePushButton("Create New Disk…", action: #selector(createStorageTapped))
+        editBootOrderButton = makePushButton("Edit Boot Order…", action: #selector(editBootOrderTapped))
         persistentLockableControls += [attachStorageButton, createStorageButton, editBootOrderButton]
 
         let buttonRow = makeButtonRow([attachStorageButton, createStorageButton, editBootOrderButton])
@@ -608,8 +608,8 @@ extension VMSettingsViewController {
 
     private func buildRemovableMediaSection() -> NSView {
         removableListStack = makeListStack()
-        let attach = makePushButton("Attach Disc...", action: #selector(attachRemovableTapped))
-        let create = makePushButton("Create New Disk...", action: #selector(createRemovableTapped))
+        let attach = makePushButton("Attach Disc…", action: #selector(attachRemovableTapped))
+        let create = makePushButton("Create New Disk…", action: #selector(createRemovableTapped))
         createRemovableButton = create
         // Not lockable — removable media is hot-pluggable.
         let buttonRow = makeButtonRow([attach, create])
@@ -637,7 +637,7 @@ extension VMSettingsViewController {
 
     private func buildSharedDirectoriesSection() -> NSView {
         sharedListStack = makeListStack()
-        let add = makePushButton("Add Shared Directory...", action: #selector(addSharedTapped))
+        let add = makePushButton("Add Shared Directory…", action: #selector(addSharedTapped))
         persistentLockableControls.append(add)
         let card = makeGroupedFormCard(rows: [sharedListStack, makeButtonRow([add])])
 

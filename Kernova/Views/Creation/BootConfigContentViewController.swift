@@ -123,7 +123,7 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
         pathLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         pathLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        let browse = NSButton(title: "Browse...", target: self, action: browseAction)
+        let browse = NSButton(title: "Browse…", target: self, action: browseAction)
         browse.bezelStyle = .rounded
         browse.controlSize = .small
         browse.setContentHuggingPriority(.required, for: .horizontal)
