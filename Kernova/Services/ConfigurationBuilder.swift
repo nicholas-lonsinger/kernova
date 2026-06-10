@@ -5,7 +5,7 @@ import os
 
 /// Translates a `VMConfiguration` into a `VZVirtualMachineConfiguration`.
 ///
-/// Resolves symlinks and validates all user-supplied file paths (kernel, initrd, disc image,
+/// Resolves symlinks and validates all user-supplied file paths (kernel, initrd, disk image,
 /// additional disks, shared directories) before passing them to Virtualization.framework.
 ///
 /// Supports three boot paths:

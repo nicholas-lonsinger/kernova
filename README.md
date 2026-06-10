@@ -16,7 +16,7 @@ A macOS GUI application for creating and managing virtual machines using Apple's
 
 - **Creation wizard** — Step-by-step VM creation with IPSW download for macOS guests
 - **Linux boot modes** — EFI/UEFI boot or direct kernel boot with kernel, initrd, and command-line args
-- **ISO attachment** — Mount disc images as USB drives for installation media, with boot priority support
+- **ISO attachment** — Mount disk images as USB drives for installation media, with boot priority support
 - **Shared directories** — Host-to-guest directory sharing via VirtioFS (read-only or read-write)
 - **Display settings** — Configurable resolution and DPI (width, height, PPI)
 - **Network** — MAC address management with persistent, stable addresses

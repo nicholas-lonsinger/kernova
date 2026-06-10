@@ -1079,7 +1079,7 @@ final class VMLibraryViewModel {
     /// to what is actually attached and the user sees an alert describing
     /// the failure. `deviceNotFound` and `noVirtualMachine` errors are
     /// handled as confirmed-gone / silent bail respectively (this is also
-    /// what covers the case where the user ejected the disc from inside
+    /// what covers the case where the user ejected the disk from inside
     /// the guest).
     private func applyLiveRemovableMediaChange(
         for instance: VMInstance,

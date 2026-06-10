@@ -618,7 +618,7 @@ struct ConfigurationBuilderTests {
         }
     }
 
-    // MARK: - Dangling Symlink Tests (Kernel / Initrd / Disc Image)
+    // MARK: - Dangling Symlink Tests (Kernel / Initrd / Disk Image)
 
     @Test("Builder throws for dangling symlink as kernel path")
     func builderThrowsForDanglingSymlinkKernelPath() throws {
@@ -694,7 +694,7 @@ struct ConfigurationBuilderTests {
         }
     }
 
-    // MARK: - Directory-as-File Tests (Kernel / Initrd / Disc Image)
+    // MARK: - Directory-as-File Tests (Kernel / Initrd / Disk Image)
 
     @Test("Builder throws for directory as kernel path")
     func builderThrowsForDirectoryAsKernelPath() throws {
@@ -769,7 +769,7 @@ struct ConfigurationBuilderTests {
         }
     }
 
-    // MARK: - Symlink-to-Directory Tests (Kernel / Initrd / Disc Image)
+    // MARK: - Symlink-to-Directory Tests (Kernel / Initrd / Disk Image)
 
     @Test("Builder throws for symlink to directory as kernel path")
     func builderThrowsForSymlinkToDirectoryAsKernelPath() throws {
