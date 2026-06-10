@@ -723,8 +723,7 @@ final class VMLibraryViewModel {
     /// delete (not gated on the "trash externals" toggle). The completed IPSW
     /// file at `downloadDestinationPath`, if present, lives at a user-known
     /// path and is intentionally left alone. No-op for VMs without a
-    /// `.downloadLatest` install context, and a no-op on non-arm64 builds
-    /// where IPSW machinery is compiled out.
+    /// `.downloadLatest` install context.
     private func cleanupInstallResumeData(for instance: VMInstance) {
         guard let context = instance.configuration.installContext,
             context.source == .downloadLatest,
