@@ -62,14 +62,11 @@ final class VsockControlService {
         guard let bundled = bundledAgentVersion else {
             return .current(version: installed)
         }
-        // `.numeric` compares dotted decimals correctly: "0.9.0" < "0.10.0".
-        // Only flag .outdated when installed is strictly older than bundled —
-        // newer-than-bundled (development builds, downgraded host) shows as
-        // .current.
-        if installed.compare(bundled, options: .numeric) == .orderedAscending {
-            return .outdated(installed: installed, bundled: bundled)
-        }
-        return .current(version: installed)
+        // Current-vs-outdated classification is shared with the host-side
+        // auto-eject decision (see `AgentStatus.isObservedVersionCurrent`).
+        return AgentStatus.isObservedVersionCurrent(installed, bundled: bundled)
+            ? .current(version: installed)
+            : .outdated(installed: installed, bundled: bundled)
     }
 
     // MARK: - Private state

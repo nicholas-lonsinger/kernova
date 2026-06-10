@@ -592,7 +592,7 @@ final class VMLibraryViewModel {
     ///
     /// The bundled Guest Agent installer DMG is deliberately excluded: it
     /// is mounted as a read-only `RemovableMediaItem` whose path points
-    /// *inside the app bundle* (see ``mountGuestAgentInstaller(on:)``), so
+    /// *inside the app bundle* (see ``mountGuestAgentInstaller(on:purpose:)``), so
     /// it is never a user-owned file. Surfacing it in the delete sheet is
     /// meaningless, and trashing it would corrupt the app bundle and break
     /// Guest Agent installation for every VM in the library. Identified by
@@ -691,7 +691,7 @@ final class VMLibraryViewModel {
     /// `true` when `item` is the bundled Guest Agent installer DMG.
     ///
     /// The installer lives *inside the app bundle* and is mounted read-only by
-    /// ``mountGuestAgentInstaller(on:)``; it is never a user-owned file, so a
+    /// ``mountGuestAgentInstaller(on:purpose:)``; it is never a user-owned file, so a
     /// "remove" of it must only detach the entry and never trash the file.
     /// Identified by path equality, the same mechanism the delete flow uses.
     func isGuestAgentInstaller(_ item: RemovableMediaItem) -> Bool {
@@ -705,9 +705,20 @@ final class VMLibraryViewModel {
     /// running app bundle's location. `nil` when the DMG is missing — in
     /// that case nothing is filtered, which is correct: there is no bundled
     /// resource to protect. Mirrors the path-equality identity used by
-    /// ``mountGuestAgentInstaller(on:)`` / ``unmountGuestAgentInstaller(from:)``.
+    /// ``mountGuestAgentInstaller(on:purpose:)`` / ``unmountGuestAgentInstaller(from:)``.
     private static var guestAgentInstallerPath: String? {
         KernovaGuestAgentInfo.installerDiskImageURL?.path(percentEncoded: false)
+    }
+
+    /// `true` when the bundled Guest Agent installer DMG is currently in this
+    /// VM's `removableMedia` list (live-attached, pending attach, or cold).
+    ///
+    /// Drives the menubar item's attach-vs-eject mode and is the shared
+    /// path-equality check used by ``mountGuestAgentInstaller(on:purpose:)`` /
+    /// ``unmountGuestAgentInstaller(from:)``.
+    func isGuestAgentInstallerMounted(on instance: VMInstance) -> Bool {
+        guard let path = Self.guestAgentInstallerPath else { return false }
+        return (instance.configuration.removableMedia ?? []).contains { $0.path == path }
     }
 
     /// Trashes any in-progress IPSW download bundle for a VM that's being deleted.
@@ -923,8 +934,22 @@ final class VMLibraryViewModel {
     ///
     /// Called at every `VMInstance` construction site in this view model.
     private func wirePersistence(for instance: VMInstance) {
-        instance.onUpdateConfiguration = { [weak self] mutate in
-            self?.updateConfiguration(of: instance, mutate: mutate)
+        // Both closures are stored *on* `instance`, so they capture it weakly:
+        // a strong capture forms a self-retain cycle that leaks the VMInstance
+        // after it's removed from `instances`. Each only ever fires through the
+        // instance (e.g. `performConfigurationMutation`, the vsock handshake),
+        // so the weak ref is always live at call time.
+        instance.onUpdateConfiguration = { [weak self, weak instance] mutate in
+            guard let self, let instance else { return }
+            self.updateConfiguration(of: instance, mutate: mutate)
+        }
+        // Auto-eject the installer disk once the agent handshakes a current
+        // version (install/update complete). Centralized here so it fires
+        // regardless of which window is open — replacing the former
+        // clipboard-window-bound auto-eject.
+        instance.onAgentBecameCurrent = { [weak self, weak instance] in
+            guard let self, let instance else { return }
+            self.unmountGuestAgentInstaller(from: instance)
         }
     }
 
@@ -1167,22 +1192,23 @@ final class VMLibraryViewModel {
     ///
     /// No-op if the bundled DMG is already present in this VM's
     /// `removableMedia` list — duplicate mounts don't help the user.
-    func mountGuestAgentInstaller(on instance: VMInstance) {
+    func mountGuestAgentInstaller(
+        on instance: VMInstance, purpose: GuestAgentInstallerPurpose = .install
+    ) {
         guard let url = KernovaGuestAgentInfo.installerDiskImageURL else {
             Self.logger.fault("Guest agent installer DMG missing from app bundle")
             assertionFailure("KernovaGuestAgent.dmg missing — check 'Package Guest Agent DMG' build phase outputs")
             return
         }
-        let path = url.path(percentEncoded: false)
-        let existing = instance.configuration.removableMedia ?? []
-        if existing.contains(where: { $0.path == path }) {
+        if isGuestAgentInstallerMounted(on: instance) {
             Self.logger.debug("Guest agent installer already mounted on '\(instance.name, privacy: .public)'")
             // Still surface the instructions — the user just clicked an
             // install/update affordance and is owed feedback even if the
             // disk happens to already be mounted from a prior click.
-            presenter?.presentInstallerMounted(vmName: instance.name)
+            presenter?.presentInstallerMounted(vmName: instance.name, purpose: purpose)
             return
         }
+        let path = url.path(percentEncoded: false)
         Self.logger.notice("Mounting guest agent installer on '\(instance.name, privacy: .public)'")
         updateConfiguration(of: instance) { config in
             config.removableMedia =
@@ -1194,7 +1220,7 @@ final class VMLibraryViewModel {
                     )
                 ]
         }
-        presenter?.presentInstallerMounted(vmName: instance.name)
+        presenter?.presentInstallerMounted(vmName: instance.name, purpose: purpose)
     }
 
     /// Marks this VM's `.waiting` install nudge as dismissed and persists the choice.
@@ -1213,11 +1239,13 @@ final class VMLibraryViewModel {
     ///
     /// Identified by path equality with
     /// `KernovaGuestAgentInfo.installerDiskImageURL`. The reconcile flow
-    /// performs the runtime detach.
+    /// performs the runtime detach. Reached three ways: the menubar item's
+    /// eject mode, the user-driven "Eject" in Settings, and the post-install
+    /// auto-eject wired in ``wirePersistence(for:)``.
     func unmountGuestAgentInstaller(from instance: VMInstance) {
         guard let url = KernovaGuestAgentInfo.installerDiskImageURL else { return }
+        guard isGuestAgentInstallerMounted(on: instance) else { return }
         let path = url.path(percentEncoded: false)
-        guard (instance.configuration.removableMedia ?? []).contains(where: { $0.path == path }) else { return }
         Self.logger.notice("Unmounting guest agent installer from '\(instance.name, privacy: .public)'")
         updateConfiguration(of: instance) { config in
             let pruned = (config.removableMedia ?? []).filter { $0.path != path }

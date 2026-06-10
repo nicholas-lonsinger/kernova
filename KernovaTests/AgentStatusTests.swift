@@ -195,4 +195,29 @@ struct AgentStatusTests {
         )
         #expect(result == .waiting)
     }
+
+    // MARK: - isObservedVersionCurrent
+
+    @Test("isObservedVersionCurrent: equal version is current")
+    func observedEqualIsCurrent() {
+        #expect(AgentStatus.isObservedVersionCurrent("0.9.2", bundled: "0.9.2"))
+    }
+
+    @Test("isObservedVersionCurrent: newer-than-bundled is current")
+    func observedNewerIsCurrent() {
+        // `.numeric` compare: 0.10.0 > 0.9.0 (not lexicographic).
+        #expect(AgentStatus.isObservedVersionCurrent("0.10.0", bundled: "0.9.0"))
+    }
+
+    @Test("isObservedVersionCurrent: older-than-bundled is not current")
+    func observedOlderIsNotCurrent() {
+        #expect(!AgentStatus.isObservedVersionCurrent("0.9.1", bundled: "0.9.2"))
+    }
+
+    @Test("isObservedVersionCurrent: nil bundled is treated as current")
+    func observedNilBundledIsCurrent() {
+        // A missing host sidecar (build regression) must not surface a spurious
+        // "outdated" prompt — accept whatever the guest reports.
+        #expect(AgentStatus.isObservedVersionCurrent("0.0.1", bundled: nil))
+    }
 }

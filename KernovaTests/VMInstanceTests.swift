@@ -767,6 +767,53 @@ struct VMInstanceTests {
         #expect(saveCount == 0)
     }
 
+    @Test("recordObservedAgentVersion fires onAgentBecameCurrent for a current version")
+    func recordObservedFiresBecameCurrentOnCurrentVersion() throws {
+        let bundled = try #require(KernovaGuestAgentInfo.bundledVersion)
+        // lastSeen must differ from the reported version so the persist guard
+        // doesn't short-circuit before the auto-eject hook.
+        let instance = makeMacOSInstanceWithAgentInstalled(lastSeen: "0.0.0")
+        instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
+        var fired = 0
+        instance.onAgentBecameCurrent = { fired += 1 }
+
+        instance.recordObservedAgentVersion(bundled)
+
+        #expect(fired == 1)
+    }
+
+    @Test("recordObservedAgentVersion does not fire onAgentBecameCurrent for an outdated version")
+    func recordObservedSkipsBecameCurrentOnOutdated() throws {
+        let bundled = try #require(KernovaGuestAgentInfo.bundledVersion)
+        // Only meaningful when the bundled version is strictly newer than the
+        // sentinel, so "0.0.1" genuinely classifies as outdated.
+        try #require(bundled.compare("0.0.1", options: .numeric) == .orderedDescending)
+        let instance = makeMacOSInstanceWithAgentInstalled(lastSeen: "0.0.0")
+        instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
+        var fired = 0
+        instance.onAgentBecameCurrent = { fired += 1 }
+
+        instance.recordObservedAgentVersion("0.0.1")
+
+        #expect(fired == 0)
+    }
+
+    @Test("recordObservedAgentVersion does not fire onAgentBecameCurrent on an unchanged-version reconnect")
+    func recordObservedSkipsBecameCurrentWhenUnchanged() throws {
+        let bundled = try #require(KernovaGuestAgentInfo.bundledVersion)
+        // Same version as last seen → the persist guard short-circuits, so a
+        // disk mounted to run uninstall.command is never yanked out by a
+        // same-version reconnect.
+        let instance = makeMacOSInstanceWithAgentInstalled(lastSeen: bundled)
+        instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
+        var fired = 0
+        instance.onAgentBecameCurrent = { fired += 1 }
+
+        instance.recordObservedAgentVersion(bundled)
+
+        #expect(fired == 0)
+    }
+
     @Test("recordObservedAgentVersion cancels the watchdog and clears expected-missing")
     func recordObservedClearsWatchdogState() async throws {
         let instance = makeMacOSInstanceWithAgentInstalled()

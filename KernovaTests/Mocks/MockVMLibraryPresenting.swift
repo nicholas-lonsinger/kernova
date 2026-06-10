@@ -17,6 +17,7 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     private(set) var stopPausedInstances: [VMInstance] = []
     private(set) var cancelPreparingInstances: [VMInstance] = []
     private(set) var installerMountedNames: [String] = []
+    private(set) var installerMountedPurposes: [GuestAgentInstallerPurpose] = []
     private(set) var creationWizardCount = 0
 
     func presentError(_ message: String) { errors.append(message) }
@@ -25,7 +26,10 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     func presentRecoveryBoot(for instance: VMInstance) { recoveryBootInstances.append(instance) }
     func presentStopPaused(for instance: VMInstance) { stopPausedInstances.append(instance) }
     func presentCancelPreparing(for instance: VMInstance) { cancelPreparingInstances.append(instance) }
-    func presentInstallerMounted(vmName: String) { installerMountedNames.append(vmName) }
+    func presentInstallerMounted(vmName: String, purpose: GuestAgentInstallerPurpose) {
+        installerMountedNames.append(vmName)
+        installerMountedPurposes.append(purpose)
+    }
     func presentCreationWizard() { creationWizardCount += 1 }
 
     // MARK: - Mirror accessors (read like the former VM flags)
@@ -44,6 +48,7 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     var preparingInstanceToCancel: VMInstance? { cancelPreparingInstances.last }
     var showInstallerMountedAlert: Bool { !installerMountedNames.isEmpty }
     var installerMountedVMName: String? { installerMountedNames.last }
+    var installerMountedPurpose: GuestAgentInstallerPurpose? { installerMountedPurposes.last }
     var showCreationWizard: Bool { creationWizardCount > 0 }
 
     /// Clears all recorded requests (mirrors resetting the former flags).
@@ -55,6 +60,7 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
         stopPausedInstances.removeAll()
         cancelPreparingInstances.removeAll()
         installerMountedNames.removeAll()
+        installerMountedPurposes.removeAll()
         creationWizardCount = 0
     }
 }
