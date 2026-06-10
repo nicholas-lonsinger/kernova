@@ -169,6 +169,77 @@ struct VirtualizationServiceTests {
         #expect(!VirtualizationService.isTransientStartError(error))
     }
 
+    // MARK: - File-Lock Contention Classification
+
+    /// Mirrors the error VZ throws when a dying VM still holds the advisory
+    /// lock on `AuxiliaryStorage` (captured from a live repro on macOS 26):
+    /// `.invalidVirtualMachineConfiguration` with POSIX `EAGAIN` underneath.
+    private func makeFileLockContentionError() -> NSError {
+        NSError(
+            domain: VZError.errorDomain,
+            code: VZError.Code.invalidVirtualMachineConfiguration.rawValue,
+            userInfo: [
+                NSLocalizedFailureReasonErrorKey: "Failed to lock auxiliary storage.",
+                NSUnderlyingErrorKey: NSError(domain: NSPOSIXErrorDomain, code: Int(EAGAIN)),
+            ])
+    }
+
+    @Test("invalid configuration with underlying EAGAIN is lock contention")
+    func eagainUnderInvalidConfigurationIsLockContention() {
+        #expect(VirtualizationService.isFileLockContention(makeFileLockContentionError()))
+    }
+
+    @Test("file-lock contention is a transient start error")
+    func fileLockContentionIsTransient() {
+        #expect(VirtualizationService.isTransientStartError(makeFileLockContentionError()))
+    }
+
+    @Test("invalid configuration without underlying error is not lock contention")
+    func invalidConfigurationAloneIsNotLockContention() {
+        let error = NSError(
+            domain: VZError.errorDomain,
+            code: VZError.Code.invalidVirtualMachineConfiguration.rawValue)
+        #expect(!VirtualizationService.isFileLockContention(error))
+    }
+
+    @Test("invalid configuration with non-EAGAIN underlying error is not lock contention")
+    func nonEAGAINUnderlyingIsNotLockContention() {
+        let error = NSError(
+            domain: VZError.errorDomain,
+            code: VZError.Code.invalidVirtualMachineConfiguration.rawValue,
+            userInfo: [
+                NSUnderlyingErrorKey: NSError(domain: NSPOSIXErrorDomain, code: Int(ENOENT))
+            ])
+        #expect(!VirtualizationService.isFileLockContention(error))
+        #expect(!VirtualizationService.isTransientStartError(error))
+    }
+
+    @Test("EAGAIN under a different VZ code is not lock contention")
+    func eagainUnderOtherVZCodeIsNotLockContention() {
+        let error = NSError(
+            domain: VZError.errorDomain,
+            code: VZError.Code.internalError.rawValue,
+            userInfo: [
+                NSUnderlyingErrorKey: NSError(domain: NSPOSIXErrorDomain, code: Int(EAGAIN))
+            ])
+        #expect(!VirtualizationService.isFileLockContention(error))
+    }
+
+    @Test("top-level POSIX EAGAIN is not lock contention")
+    func topLevelEAGAINIsNotLockContention() {
+        let error = NSError(domain: NSPOSIXErrorDomain, code: Int(EAGAIN))
+        #expect(!VirtualizationService.isFileLockContention(error))
+    }
+
+    @Test("file-lock retry delays escalate then exhaust")
+    func fileLockRetryDelaysEscalateThenExhaust() {
+        #expect(VirtualizationService.fileLockRetryDelay(forAttempt: 0) == .milliseconds(250))
+        #expect(VirtualizationService.fileLockRetryDelay(forAttempt: 1) == .milliseconds(500))
+        #expect(VirtualizationService.fileLockRetryDelay(forAttempt: 2) == .seconds(1))
+        #expect(VirtualizationService.fileLockRetryDelay(forAttempt: 3) == .seconds(2))
+        #expect(VirtualizationService.fileLockRetryDelay(forAttempt: 4) == nil)
+    }
+
     @Test("start sets error status for permanent config error")
     func startSetsErrorForPermanentConfigError() async throws {
         let instance = makeInstance(status: .stopped)

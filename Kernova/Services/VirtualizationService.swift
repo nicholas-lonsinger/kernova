@@ -33,23 +33,8 @@ final class VirtualizationService {
             if instance.hasSaveFile {
                 try await restoreOrColdBoot(instance)
             } else {
-                let result = try await buildConfiguration(for: instance)
-                instance.serialInputPipe = result.serialInputPipe
-                instance.serialOutputPipe = result.serialOutputPipe
-                instance.clipboardInputPipe = result.clipboardInputPipe
-                instance.clipboardOutputPipe = result.clipboardOutputPipe
-                instance.liveRemovableMedia = result.coldRemovableMedia
-                let vm = instance.attachVirtualMachine(from: result.configuration)
-                instance.startSerialReading()
-                instance.startClipboardService()
-                instance.startVsockServices()
-                #if arch(arm64)
-                let startOptions = Self.recoveryStartOptions(
-                    bootIntoRecovery: bootIntoRecovery, guestOS: instance.configuration.guestOS)
-                #else
-                let startOptions: VZVirtualMachineStartOptions? = nil
-                #endif
-                try await startMachine(vm, options: startOptions)
+                try await coldBootRetryingLockContention(
+                    instance, bootIntoRecovery: bootIntoRecovery)
             }
 
             instance.status = .running
@@ -66,14 +51,117 @@ final class VirtualizationService {
                 Self.logger.notice("Started VM '\(instance.name, privacy: .public)'")
             }
         } catch {
+            // Log the error's domain/code (and the underlying error's, when
+            // present) alongside the localized text: classification bugs are
+            // undiagnosable from `localizedDescription` alone.
+            let nsError = error as NSError
+            let underlying =
+                (nsError.userInfo[NSUnderlyingErrorKey] as? NSError)
+                .map { "\($0.domain) \($0.code)" } ?? "none"
             Self.logger.error(
-                "Failed to start VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                "Failed to start VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public) [\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public); underlying: \(underlying, privacy: .public)]"
             )
             instance.tearDownSession()
             instance.status = Self.isTransientStartError(error) ? .stopped : .error
             instance.errorMessage = error.localizedDescription
             throw error
         }
+    }
+
+    // MARK: - Cold Boot
+
+    /// Cold-boots `instance`, retrying with bounded backoff when the start
+    /// fails on VZ file-lock contention (see ``isFileLockContention(_:)``).
+    ///
+    /// A previous `VZVirtualMachine` on the same bundle — the install-time VM
+    /// during the post-install auto-boot, or a just-stopped VM on a rapid
+    /// stop→start — releases its advisory lock on the auxiliary-storage and
+    /// disk-image files only when it is fully *deallocated*, which lags
+    /// `vm.state == .stopped` by longer the more guest memory there is to tear
+    /// down. There is no public VZ API to observe the release, so gating on
+    /// state (as `MacOSInstallService.install` does) cannot be airtight; a
+    /// bounded retry against the ground-truth failure is.
+    private func coldBootRetryingLockContention(
+        _ instance: VMInstance, bootIntoRecovery: Bool
+    ) async throws {
+        var attempt = 0
+        while true {
+            do {
+                try await coldBoot(instance, bootIntoRecovery: bootIntoRecovery)
+                return
+            } catch let startError {
+                guard Self.isFileLockContention(startError),
+                    let delay = Self.fileLockRetryDelay(forAttempt: attempt)
+                else { throw startError }
+                attempt += 1
+                Self.logger.warning(
+                    "Cold boot of '\(instance.name, privacy: .public)' hit file-lock contention; retry \(attempt, privacy: .public) in \(String(describing: delay), privacy: .public)"
+                )
+                // Drop the failed VM and its session plumbing before rebuilding.
+                instance.tearDownSession()
+                do {
+                    try await Task.sleep(for: delay)
+                } catch {
+                    // Cancelled mid-backoff: surface the original lock failure
+                    // rather than leaking a `CancellationError` into the
+                    // status/alert classification paths, which aren't shaped
+                    // for it.
+                    throw startError
+                }
+            }
+        }
+    }
+
+    /// Builds a fresh configuration and `VZVirtualMachine`, wires the session
+    /// plumbing, and starts the machine — one cold-boot attempt.
+    private func coldBoot(_ instance: VMInstance, bootIntoRecovery: Bool) async throws {
+        let result = try await buildConfiguration(for: instance)
+        instance.serialInputPipe = result.serialInputPipe
+        instance.serialOutputPipe = result.serialOutputPipe
+        instance.clipboardInputPipe = result.clipboardInputPipe
+        instance.clipboardOutputPipe = result.clipboardOutputPipe
+        instance.liveRemovableMedia = result.coldRemovableMedia
+        let vm = instance.attachVirtualMachine(from: result.configuration)
+        instance.startSerialReading()
+        instance.startClipboardService()
+        instance.startVsockServices()
+        #if arch(arm64)
+        let startOptions = Self.recoveryStartOptions(
+            bootIntoRecovery: bootIntoRecovery, guestOS: instance.configuration.guestOS)
+        #else
+        let startOptions: VZVirtualMachineStartOptions? = nil
+        #endif
+        try await startMachine(vm, options: startOptions)
+    }
+
+    /// Detects VZ's advisory file-lock contention on a VM's backing files.
+    ///
+    /// Matches "Failed to lock auxiliary storage" (or the disk-image
+    /// equivalent): `.invalidVirtualMachineConfiguration` carrying a POSIX
+    /// `EAGAIN` underneath. The underlying error distinguishes it from a
+    /// genuinely invalid configuration (same VZ code, no `EAGAIN`); matching
+    /// on the localized text would be locale-fragile.
+    static func isFileLockContention(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        guard nsError.domain == VZError.errorDomain,
+            VZError.Code(rawValue: nsError.code) == .invalidVirtualMachineConfiguration,
+            let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError
+        else { return false }
+        return underlying.domain == NSPOSIXErrorDomain && underlying.code == Int(EAGAIN)
+    }
+
+    /// Backoff before file-lock-contention cold-boot retry number `attempt`.
+    ///
+    /// `attempt` is 0-based; returns `nil` once the ~3.75 s budget is
+    /// exhausted. Escalates because the holder's teardown time scales with
+    /// guest memory size (a 32 GB guest reliably needs more than one short
+    /// beat on Apple Silicon).
+    static func fileLockRetryDelay(forAttempt attempt: Int) -> Duration? {
+        let delays: [Duration] = [
+            .milliseconds(250), .milliseconds(500), .seconds(1), .seconds(2),
+        ]
+        guard delays.indices.contains(attempt) else { return nil }
+        return delays[attempt]
     }
 
     #if arch(arm64)
@@ -245,6 +333,12 @@ final class VirtualizationService {
     /// VM in `.stopped` so the indicator stays grey; permanent errors set `.error` (red).
     static func isTransientStartError(_ error: Error) -> Bool {
         if error is ConfigurationBuilderError { return false }
+
+        // Transient by construction: the lock holder is a dying
+        // VZVirtualMachine whose advisory lock is released at deallocation —
+        // even when the bounded retry budget didn't outlast the teardown, a
+        // manual retry will.
+        if isFileLockContention(error) { return true }
 
         let nsError = error as NSError
         guard nsError.domain == VZError.errorDomain else { return false }
