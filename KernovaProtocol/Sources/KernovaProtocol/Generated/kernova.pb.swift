@@ -260,7 +260,7 @@ public nonisolated struct Kernova_V1_LogRecord: Sendable {
 
   public var level: Kernova_V1_LogRecord.Level = .unspecified
 
-  /// Logger subsystem and category from the guest, e.g. "com.kernova.agent" /
+  /// Logger subsystem and category from the guest, e.g. "app.kernova.agent" /
   /// "GuestClipboardAgent". Treated as opaque labels by the host.
   public var subsystem: String = String()
 

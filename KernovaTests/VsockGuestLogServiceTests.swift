@@ -30,7 +30,7 @@ struct VsockGuestLogServiceTests {
 
     private func makeLogFrame(
         level: Kernova_V1_LogRecord.Level,
-        subsystem: String = "com.kernova.agent",
+        subsystem: String = "app.kernova.agent",
         category: String = "Test",
         message: String = "hello",
         timestampMs: Int64 = 1_700_000_000_000

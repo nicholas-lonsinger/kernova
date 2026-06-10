@@ -40,7 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         "com.apple.settings.PrivacySecurity.extension"
     ]
 
-    private static let logger = Logger(subsystem: "com.kernova.app", category: "AppDelegate")
+    private static let logger = Logger(subsystem: "app.kernova", category: "AppDelegate")
     private static let guestAgentDiskPath: String? = {
         guard
             let path = Bundle.main.url(forResource: "KernovaGuestAgent", withExtension: "dmg")?.path(

@@ -22,7 +22,7 @@ import os
 @MainActor
 final class VMSettingsViewController: NSViewController {
     private static let logger = Logger(
-        subsystem: "com.kernova.app", category: "VMSettingsViewController")
+        subsystem: "app.kernova", category: "VMSettingsViewController")
 
     private(set) var instance: VMInstance
     private var viewModel: VMLibraryViewModel
@@ -762,7 +762,7 @@ extension VMSettingsViewController {
                 "Forward guest logs", control: logForwardingSwitch,
                 paragraphs: [
                     .body(
-                        "Streams `os.Logger` records from the macOS guest agent to the host so they appear in Console.app under `com.kernova.guest`. Off by default; can be toggled while the VM is running."
+                        "Streams `os.Logger` records from the macOS guest agent to the host so they appear in Console.app under `app.kernova.guest`. Off by default; can be toggled while the VM is running."
                     )
                 ]),
             makeToggleRowWithInfo(

@@ -52,7 +52,7 @@ final class VMToolbarManager: NSObject {
     private let configuration: Configuration
     private let instanceProvider: () -> VMInstance?
 
-    private static let logger = Logger(subsystem: "com.kernova.app", category: "VMToolbarManager")
+    private static let logger = Logger(subsystem: "app.kernova", category: "VMToolbarManager")
 
     // MARK: - Tooltip Constants
 

@@ -40,7 +40,7 @@ final class DetailContainerViewController: NSViewController {
     /// `viewDidAppear` honors it once the window is available.
     private var pendingWizard = false
 
-    private static let logger = Logger(subsystem: "com.kernova.app", category: "DetailContainerVC")
+    private static let logger = Logger(subsystem: "app.kernova", category: "DetailContainerVC")
 
     // MARK: - Init
 

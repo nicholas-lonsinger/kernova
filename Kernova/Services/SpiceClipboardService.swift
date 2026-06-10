@@ -59,7 +59,7 @@ final class SpiceClipboardService: ClipboardServicing {
     /// instead of waiting for a REQUEST.
     private var guestSupportsByDemand = false
 
-    private static let logger = Logger(subsystem: "com.kernova.app", category: "SpiceClipboardService")
+    private static let logger = Logger(subsystem: "app.kernova", category: "SpiceClipboardService")
 
     // MARK: - Init
 

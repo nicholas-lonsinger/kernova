@@ -108,7 +108,7 @@ final class VsockControlService {
     /// peer does not respond to a specific nonce.
     private var nextHeartbeatNonce: UInt64 = 1
 
-    private static let logger = Logger(subsystem: "com.kernova.app", category: "VsockControlService")
+    private static let logger = Logger(subsystem: "app.kernova", category: "VsockControlService")
 
     // MARK: - Init
 

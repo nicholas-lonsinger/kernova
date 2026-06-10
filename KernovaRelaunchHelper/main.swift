@@ -9,7 +9,7 @@ import os
 //
 // Usage: KernovaRelaunchHelper <pid> <app-bundle-path>
 
-private let logger = Logger(subsystem: "com.kernova.app", category: "RelaunchHelper")
+private let logger = Logger(subsystem: "app.kernova", category: "RelaunchHelper")
 
 // MARK: - Argument parsing
 

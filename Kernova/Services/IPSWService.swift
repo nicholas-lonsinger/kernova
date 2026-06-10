@@ -8,7 +8,7 @@ import os
 /// can be invalidated in `deinit`. Per Apple's docs, a session retains itself
 /// until `finishTasksAndInvalidate()` or `invalidateAndCancel()` is called.
 final class IPSWService: Sendable {
-    private static let logger = Logger(subsystem: "com.kernova.app", category: "IPSWService")
+    private static let logger = Logger(subsystem: "app.kernova", category: "IPSWService")
 
     private let session: URLSession
 

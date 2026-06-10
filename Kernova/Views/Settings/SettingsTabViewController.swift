@@ -7,7 +7,7 @@ import os
 /// further panes can be added later as additional `NSTabViewItem`s.
 @MainActor
 final class SettingsTabViewController: NSTabViewController {
-    private static let logger = Logger(subsystem: "com.kernova.app", category: "SettingsTabViewController")
+    private static let logger = Logger(subsystem: "app.kernova", category: "SettingsTabViewController")
 
     override func viewDidLoad() {
         super.viewDidLoad()

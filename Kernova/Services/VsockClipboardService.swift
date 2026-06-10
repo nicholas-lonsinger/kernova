@@ -90,7 +90,7 @@ final class VsockClipboardService: ClipboardServicing {
     var pendingInboundGenerationForTesting: UInt64? { pendingInboundGeneration }
     #endif
 
-    private static let logger = Logger(subsystem: "com.kernova.app", category: "VsockClipboardService")
+    private static let logger = Logger(subsystem: "app.kernova", category: "VsockClipboardService")
 
     private static let errorCodeFormatUnavailable = "clipboard.format.unavailable"
     private static let errorCodeEncodingFailure = "clipboard.transfer.encoding.failure"

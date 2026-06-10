@@ -10,7 +10,7 @@ import os
 /// the VM stops or enters an error state.
 @MainActor
 final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
-    private static let logger = Logger(subsystem: "com.kernova.app", category: "ClipboardWindowController")
+    private static let logger = Logger(subsystem: "app.kernova", category: "ClipboardWindowController")
 
     let instance: VMInstance
     private var statusObservation: ObservationLoop?

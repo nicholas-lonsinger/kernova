@@ -9,14 +9,14 @@ echo ""
 echo "This will remove the Kernova guest agent from this Mac."
 echo ""
 echo "  Binary:      ~/Library/Application Support/Kernova/kernova-agent"
-echo "  LaunchAgent: ~/Library/LaunchAgents/com.kernova.agent.plist"
+echo "  LaunchAgent: ~/Library/LaunchAgents/app.kernova.agent.plist"
 echo ""
 read -p "Proceed with uninstall? [y/N] " choice
 if [[ "${choice}" =~ ^[Yy]$ ]]; then
     echo ""
     echo "----------------------------------------"
 
-    LABEL="com.kernova.agent"
+    LABEL="app.kernova.agent"
     INSTALL_DIR="${HOME}/Library/Application Support/Kernova"
     LAUNCHAGENTS_DIR="${HOME}/Library/LaunchAgents"
     BINARY_NAME="kernova-agent"

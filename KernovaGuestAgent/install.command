@@ -42,7 +42,7 @@ else
 fi
 echo ""
 echo "  Binary:      ~/Library/Application Support/Kernova/kernova-agent"
-echo "  LaunchAgent: ~/Library/LaunchAgents/com.kernova.agent.plist"
+echo "  LaunchAgent: ~/Library/LaunchAgents/app.kernova.agent.plist"
 echo ""
 echo "To uninstall later, run uninstall.command from this disk."
 echo ""
@@ -51,7 +51,7 @@ if [[ "${choice}" =~ ^[Yy]$ ]]; then
     echo ""
     echo "----------------------------------------"
 
-    LABEL="com.kernova.agent"
+    LABEL="app.kernova.agent"
     LAUNCHAGENTS_DIR="${HOME}/Library/LaunchAgents"
     PLIST_NAME="${LABEL}.plist"
 

@@ -143,7 +143,7 @@ KernovaGuestAgent/                      # Guest-side vsock agent for macOS VMs +
 ├── Info.plist                          # Explicit Info.plist with preprocessor macro for CFBundleVersion
 ├── install.command                     # Guest-side installer: copies binary, registers LaunchAgent
 ├── uninstall.command                   # Guest-side uninstaller: stops agent, removes files
-└── com.kernova.agent.plist             # LaunchAgent template (__INSTALL_DIR__ replaced at install time)
+└── app.kernova.agent.plist             # LaunchAgent template (__INSTALL_DIR__ replaced at install time)
 
 KernovaProtocol/                        # SPM package: extensible vsock wire protocol shared host <-> guest
 ├── Package.swift                       # Swift 6 package, depends on apple/swift-protobuf
@@ -297,7 +297,7 @@ Services are split by concurrency requirements:
 
 - **`VsockListenerHost`** — `@MainActor` wrapper around `VZVirtioSocketListener` bound to one vsock port. The nonisolated `VZVirtioSocketListenerDelegate` callback dups the connection's file descriptor and bridges back to MainActor before constructing a `VsockChannel` and handing it to a caller-supplied closure. One instance per service; multiple coexist on the same `VZVirtioSocketDevice`.
 
-- **`VsockGuestLogService`** — `@MainActor` consumer that owns one accepted `VsockChannel` for the lifetime of a guest connection. Forwards `LogRecord` frames through a `GuestLogEmitter` abstraction (default `OSLogGuestLogEmitter`, subsystem `com.kernova.guest`); guest log levels map 1:1 onto `os.Logger` methods. `Error` frames go to the host's own diagnostic logger; `Hello` / `Heartbeat` payloads on this port log a wrong-port warning (those belong on the control channel). The service self-terminates on EOF.
+- **`VsockGuestLogService`** — `@MainActor` consumer that owns one accepted `VsockChannel` for the lifetime of a guest connection. Forwards `LogRecord` frames through a `GuestLogEmitter` abstraction (default `OSLogGuestLogEmitter`, subsystem `app.kernova.guest`); guest log levels map 1:1 onto `os.Logger` methods. `Error` frames go to the host's own diagnostic logger; `Hello` / `Heartbeat` payloads on this port log a wrong-port warning (those belong on the control channel). The service self-terminates on EOF.
 
 - **`VsockPorts`** — Central registry of port assignments (`KernovaVsockPort.control = 49154`, `KernovaVsockPort.clipboard = 49152`, `KernovaVsockPort.log = 49153`) so each service gets its own listener on a distinct port instead of in-band multiplexing. The control listener is always installed for macOS guests with a `VZVirtioSocketDevice`; the log listener is gated on `configuration.agentLogForwardingEnabled`; the clipboard listener is gated on `configuration.clipboardSharingEnabled`. Both gates are also re-evaluated at runtime via `VMInstance.applyLivePolicy(oldConfig:newConfig:)` — flipping the toggle while a macOS VM is running installs or tears down the listener and pushes a fresh `PolicyUpdate` to the guest agent. Linux clipboard sharing is restart-only (the SPICE port must be declared at config-build time).
 

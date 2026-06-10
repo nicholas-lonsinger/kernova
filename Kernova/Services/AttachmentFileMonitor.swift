@@ -21,7 +21,7 @@ import os
 @MainActor
 @Observable
 final class AttachmentFileMonitor {
-    private static let logger = Logger(subsystem: "com.kernova.app", category: "AttachmentFileMonitor")
+    private static let logger = Logger(subsystem: "app.kernova", category: "AttachmentFileMonitor")
 
     /// Latest known existence flag for each watched path.
     ///

@@ -67,7 +67,7 @@ final class StorageDiskReorderSheetContentViewController: NSViewController {
     /// Scoped to this controller (`forLocal: true`) so other apps can't
     /// accept the drag and so we don't accept foreign drags.
     private static let rowPasteboardType = NSPasteboard.PasteboardType(
-        "com.kernova.storagedisk-row"
+        "app.kernova.storagedisk-row"
     )
 
     init(

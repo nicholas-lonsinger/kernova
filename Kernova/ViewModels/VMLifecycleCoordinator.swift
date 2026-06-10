@@ -19,7 +19,7 @@ import os
 /// clobber a subsequent operation's entry.
 @MainActor
 final class VMLifecycleCoordinator {
-    private static let logger = Logger(subsystem: "com.kernova.app", category: "VMLifecycleCoordinator")
+    private static let logger = Logger(subsystem: "app.kernova", category: "VMLifecycleCoordinator")
 
     let virtualizationService: any VirtualizationProviding
     let installService: any MacOSInstallProviding

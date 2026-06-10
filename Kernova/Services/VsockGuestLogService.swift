@@ -10,7 +10,7 @@ import os
 /// disconnect or local teardown).
 @MainActor
 final class VsockGuestLogService {
-    private static let logger = Logger(subsystem: "com.kernova.app", category: "VsockGuestLogService")
+    private static let logger = Logger(subsystem: "app.kernova", category: "VsockGuestLogService")
 
     private let channel: VsockChannel
     private let emitter: any GuestLogEmitter
@@ -26,7 +26,7 @@ final class VsockGuestLogService {
     ///   - emitter: where to publish translated guest log records.
     ///     When `nil` (the default), an `OSLogGuestLogEmitter` is built
     ///     using `label` so each VM's forwarded records appear under their
-    ///     own `com.kernova.guest:<vmName>` category.
+    ///     own `app.kernova.guest:<vmName>` category.
     init(
         channel: VsockChannel,
         label: String,
@@ -123,7 +123,7 @@ struct OSLogGuestLogEmitter: GuestLogEmitter {
     init(label: String) {
         // Use a distinct subsystem so guest logs are filterable separately
         // from host logs in Console.app and `log stream` queries.
-        self.logger = Logger(subsystem: "com.kernova.guest", category: label)
+        self.logger = Logger(subsystem: "app.kernova.guest", category: label)
     }
 
     func emit(_ record: Kernova_V1_LogRecord) {

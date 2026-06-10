@@ -30,7 +30,7 @@ struct ConfigurationBuilder: Sendable {
         let coldRemovableMedia: [USBDeviceInfo]
     }
 
-    private static let logger = Logger(subsystem: "com.kernova.app", category: "ConfigurationBuilder")
+    private static let logger = Logger(subsystem: "app.kernova", category: "ConfigurationBuilder")
 
     /// Builds a validated `VZVirtualMachineConfiguration` from the given VM configuration and bundle URL.
     func build(from config: VMConfiguration, bundleURL: URL) throws -> BuildResult {

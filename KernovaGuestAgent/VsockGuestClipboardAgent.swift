@@ -39,7 +39,7 @@ extension NSPasteboard: Pasteboard {}
 // used because @MainActor is impractical here — the entry point is
 // main.swift top-level code (nonisolated in Swift 6), not an @main app.
 final class VsockGuestClipboardAgent: @unchecked Sendable {
-    private static let logger = KernovaLogger(subsystem: "com.kernova.agent", category: "VsockGuestClipboardAgent")
+    private static let logger = KernovaLogger(subsystem: "app.kernova.agent", category: "VsockGuestClipboardAgent")
     private static let pollingInterval: TimeInterval = 0.5
 
     private static let errorCodeFormatUnavailable = "clipboard.format.unavailable"
