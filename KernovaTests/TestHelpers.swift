@@ -36,7 +36,7 @@ func makeRawSocketPair() throws -> (Int32, Int32) {
 /// Polls `predicate` every 50 ms until it returns `true` or `timeout` elapses.
 ///
 /// Default deadline is generous (5 s) to absorb MainActor scheduling jitter on
-/// CI runners. See feedback memory `feedback_ci_test_timings`. Prefer the
+/// CI runners. See memory `ci-test-timings`. Prefer the
 /// event-driven `AsyncGate` below for new timing-sensitive waits — polling is
 /// retained for predicates with no underlying signal to await; the 50 ms tick
 /// (up from 10 ms) keeps idle pollers from adding avoidable MainActor churn.

@@ -45,7 +45,7 @@ struct VsockGuestControlAgentTests {
     /// short default, any non-watchdog test that paused past the window saw the
     /// channel closed out from under it — surfacing as an EOF / `.closed` flake.
     /// Making the watchdog an explicit opt-in removes that coupling. Mirrors
-    /// `VsockControlServiceTests` / `makeService`. See `feedback_ci_test_timings`.
+    /// `VsockControlServiceTests` / `makeService`. See `ci-test-timings`.
     private static let watchdogDisabledUnresponsive: Duration = .seconds(3_600)
     private static let watchdogDisabledTerminate: Duration = .seconds(7_200)
 
