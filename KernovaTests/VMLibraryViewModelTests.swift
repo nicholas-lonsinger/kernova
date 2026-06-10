@@ -1753,13 +1753,13 @@ struct VMLibraryViewModelTests {
 
     // MARK: - Rename
 
-    @Test("renameVM sets activeRename to detail target")
-    func renameVMSetsDetailTarget() {
+    @Test("renameVMInDetail sets activeRename to detail target")
+    func renameVMInDetailSetsDetailTarget() {
         let (viewModel, _, _, _, _) = makeViewModel()
         let instance = makeInstance()
         viewModel.instances.append(instance)
 
-        viewModel.renameVM(instance)
+        viewModel.renameVMInDetail(instance)
 
         #expect(viewModel.activeRename == .detail(instance.id))
     }
@@ -1782,7 +1782,7 @@ struct VMLibraryViewModelTests {
         viewModel.instances.append(instance)
         viewModel.activeRename = .detail(instance.id)
 
-        viewModel.commitRename(for: instance, newName: "New Name", from: .detail(instance.id))
+        viewModel.commitRename(for: instance, newName: "New Name", from: .detail)
 
         #expect(instance.name == "New Name")
         #expect(viewModel.activeRename == nil)
@@ -1796,7 +1796,7 @@ struct VMLibraryViewModelTests {
         viewModel.instances.append(instance)
         viewModel.activeRename = .detail(instance.id)
 
-        viewModel.commitRename(for: instance, newName: "  Trimmed  ", from: .detail(instance.id))
+        viewModel.commitRename(for: instance, newName: "  Trimmed  ", from: .detail)
 
         #expect(instance.name == "Trimmed")
         #expect(viewModel.activeRename == nil)
@@ -1809,7 +1809,7 @@ struct VMLibraryViewModelTests {
         viewModel.instances.append(instance)
         viewModel.activeRename = .detail(instance.id)
 
-        viewModel.commitRename(for: instance, newName: "", from: .detail(instance.id))
+        viewModel.commitRename(for: instance, newName: "", from: .detail)
 
         #expect(instance.name == "Keep Me")
         #expect(viewModel.activeRename == nil)
@@ -1823,7 +1823,7 @@ struct VMLibraryViewModelTests {
         viewModel.instances.append(instance)
         viewModel.activeRename = .detail(instance.id)
 
-        viewModel.commitRename(for: instance, newName: "   ", from: .detail(instance.id))
+        viewModel.commitRename(for: instance, newName: "   ", from: .detail)
 
         #expect(instance.name == "Keep Me")
         #expect(viewModel.activeRename == nil)
@@ -1835,12 +1835,13 @@ struct VMLibraryViewModelTests {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = makeInstance(name: "Old Name")
         viewModel.instances.append(instance)
-        // The sidebar rename was superseded by a detail rename (menu-bar
-        // Rename… while the sidebar edit was pending); the sidebar field
-        // editor's deferred commit must not wipe the newer detail marker.
+        // The sidebar rename was superseded by a detail rename (clicking the
+        // settings pane's Name button while the sidebar edit was pending); the
+        // sidebar field editor's deferred commit must not wipe the newer
+        // detail marker.
         viewModel.activeRename = .detail(instance.id)
 
-        viewModel.commitRename(for: instance, newName: "New Name", from: .sidebar(instance.id))
+        viewModel.commitRename(for: instance, newName: "New Name", from: .sidebar)
 
         #expect(instance.name == "New Name")
         #expect(viewModel.activeRename == .detail(instance.id))
@@ -1854,7 +1855,7 @@ struct VMLibraryViewModelTests {
         viewModel.instances.append(instance)
         viewModel.activeRename = .sidebar(instance.id)
 
-        viewModel.cancelRename(from: .sidebar(instance.id))
+        viewModel.cancelRename(for: instance, from: .sidebar)
 
         #expect(viewModel.activeRename == nil)
         #expect(storage.saveConfigurationCallCount == 0)
@@ -1867,9 +1868,25 @@ struct VMLibraryViewModelTests {
         viewModel.instances.append(instance)
         viewModel.activeRename = .detail(instance.id)
 
-        viewModel.cancelRename(from: .sidebar(instance.id))
+        viewModel.cancelRename(for: instance, from: .sidebar)
 
         #expect(viewModel.activeRename == .detail(instance.id))
+    }
+
+    @Test("commitRename for one VM cannot clear another VM's rename marker")
+    func commitRenameForOtherVMKeepsMarker() {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let renamed = makeInstance(name: "Renamed VM")
+        let other = makeInstance(name: "Other VM")
+        viewModel.instances.append(contentsOf: [renamed, other])
+        // A rename-switch handoff: the marker already moved to the other VM's
+        // row when the first row's deferred commit lands.
+        viewModel.activeRename = .sidebar(other.id)
+
+        viewModel.commitRename(for: renamed, newName: "New Name", from: .sidebar)
+
+        #expect(renamed.name == "New Name")
+        #expect(viewModel.activeRename == .sidebar(other.id))
     }
 
     // MARK: - Sleep/Wake

@@ -307,6 +307,14 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
             updateRenameBoxWidth(for: nameField.stringValue)
             nameEditMaxWidth?.isActive = true
             window?.makeFirstResponder(nameField)
+            // Re-seed after taking focus: the makeFirstResponder above can
+            // synchronously commit the detail surface's pending rename
+            // (mid-handoff), changing the name after the seed above.
+            if let instance, nameField.stringValue != instance.name {
+                nameField.stringValue = instance.name
+                nameField.currentEditor()?.string = instance.name
+                updateRenameBoxWidth(for: instance.name)
+            }
             nameField.currentEditor()?.selectAll(nil)
         } else {
             nameField.isEditable = false
@@ -318,6 +326,18 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
             nameEditMaxWidth?.isActive = false
             if let instance { nameField.stringValue = instance.name }
         }
+    }
+
+    /// Ends a live edit session through the normal commit path.
+    ///
+    /// Resigns the field editor while `isRenaming` is still set, so
+    /// `controlTextDidEndEditing` commits the in-flight text. Callers tearing
+    /// down the row's rename state must use this BEFORE `setRenaming(false)`,
+    /// which flips the commit gate without resigning the editor — a later
+    /// resign would then silently drop the typed text.
+    func commitActiveRenameSession() {
+        guard isRenaming, nameField.currentEditor() != nil else { return }
+        window?.makeFirstResponder(nil)
     }
 
     /// Caps the rename box at the width of `text` so it hugs the name.
