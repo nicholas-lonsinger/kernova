@@ -883,26 +883,66 @@ final class VMLibraryViewModel {
         case detail(UUID)
     }
 
+    /// One of the two inline-rename surfaces, without the instance baked in.
+    ///
+    /// Commit/cancel call sites pass the surface and the instance separately so
+    /// an instance/target id mismatch is unrepresentable; the view model pairs
+    /// them into a ``RenameTarget`` itself.
+    enum RenameSurface {
+        case sidebar
+        case detail
+
+        fileprivate func target(for instance: VMInstance) -> RenameTarget {
+            switch self {
+            case .sidebar: .sidebar(instance.id)
+            case .detail: .detail(instance.id)
+            }
+        }
+    }
+
     func renameVMInSidebar(_ instance: VMInstance) {
+        Self.logger.debug("Starting sidebar rename for '\(instance.name, privacy: .public)'")
         activeRename = .sidebar(instance.id)
     }
 
-    func renameVM(_ instance: VMInstance) {
+    func renameVMInDetail(_ instance: VMInstance) {
+        Self.logger.debug("Starting detail rename for '\(instance.name, privacy: .public)'")
         activeRename = .detail(instance.id)
     }
 
-    func commitRename(for instance: VMInstance, newName: String) {
+    /// Commits the rename text from one of the two rename surfaces.
+    ///
+    /// The marker is only cleared while it still belongs to `surface`'s rename
+    /// of `instance`: a commit can fire from a field editor resigning *because*
+    /// a rename just started on the other surface (its `makeFirstResponder`
+    /// synchronously ends the pending session mid-handoff), and clearing
+    /// unconditionally would wipe the newer rename's marker before its UI ever
+    /// opened.
+    func commitRename(for instance: VMInstance, newName: String, from surface: RenameSurface) {
         let trimmed = newName.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else {
-            activeRename = nil
-            return
+        if !trimmed.isEmpty {
+            Self.logger.debug(
+                "Committing rename of '\(instance.name, privacy: .public)' to '\(trimmed, privacy: .public)'"
+            )
+            updateConfiguration(of: instance) { $0.name = trimmed }
         }
-        updateConfiguration(of: instance) { $0.name = trimmed }
-        activeRename = nil
+        clearRename(ifOwnedBy: surface.target(for: instance))
     }
 
-    func cancelRename() {
-        activeRename = nil
+    /// Cancels the rename that `surface` has open on `instance`.
+    ///
+    /// A rename that has since moved to the other surface is left untouched
+    /// (see ``commitRename(for:newName:from:)``).
+    func cancelRename(for instance: VMInstance, from surface: RenameSurface) {
+        clearRename(ifOwnedBy: surface.target(for: instance))
+    }
+
+    /// The single ownership rule shared by commit and cancel: the marker is
+    /// cleared only while it still points at the surface that is ending.
+    private func clearRename(ifOwnedBy target: RenameTarget) {
+        if activeRename == target {
+            activeRename = nil
+        }
     }
 
     // MARK: - Save Configuration

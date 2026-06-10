@@ -224,6 +224,10 @@ final class SidebarViewController: NSViewController {
             return
         }
         guard editingItemID != id else { return }
+        // Moving the rename to a different row: end the previous session first
+        // (committing its in-flight text and settling its row's emphasis) —
+        // the switch path below otherwise never tears the old row down.
+        endActiveEditingIfNeeded()
 
         if outlineView.row(forItem: instance) < 0, let section = sectionContaining(instance) {
             outlineView.expandItem(section)
@@ -262,6 +266,12 @@ final class SidebarViewController: NSViewController {
         if let cell = outlineView.view(atColumn: 0, row: row, makeIfNecessary: false)
             as? SidebarVMRowCellView
         {
+            // Commit a live session before flipping the cell's rename flag:
+            // `setRenaming(false)` alone gates off `controlTextDidEndEditing`
+            // without resigning the editor, so a later resign would silently
+            // drop the typed text (which ordering the observation loops fire
+            // in is unspecified).
+            cell.commitActiveRenameSession()
             cell.setRenaming(false)
         }
         // Settle the selection emphasis back to its natural state (blue if the
@@ -299,6 +309,16 @@ final class SidebarViewController: NSViewController {
             guard let self else { return }
             if grabbingFocus { self.view.window?.makeFirstResponder(self.outlineView) }
             let row = self.outlineView.selectedRow
+            // A row that has since started its own rename must stay
+            // unemphasized (grey) while its edit box is up — don't settle it
+            // back to blue (the rename-switch handoff lands here after the
+            // previous row's commit).
+            if let id = self.editingItemID,
+                let instance = self.outlineView.item(atRow: row) as? VMInstance,
+                instance.id == id
+            {
+                return
+            }
             (self.outlineView.rowView(atRow: row, makeIfNecessary: false)
                 as? SidebarTableRowView)?.settleEmphasis()
         }
@@ -550,15 +570,15 @@ extension SidebarViewController: NSOutlineViewDelegate {
             // recycled. A nil instance means the VM is gone — no-op.
             onCommitRename: { [weak self, weak instance] newName, endedByReturn in
                 guard let self, let instance else { return }
-                self.viewModel.commitRename(for: instance, newName: newName)
+                self.viewModel.commitRename(for: instance, newName: newName, from: .sidebar)
                 // Return keeps focus in the sidebar (the row settles back to the
                 // emphasized blue); a click-commit lets focus follow the click and
                 // the row settles to blue or grey depending on where it landed.
                 self.restoreSidebarFocus(grabbingFocus: endedByReturn)
             },
-            onCancelRename: { [weak self] in
-                guard let self else { return }
-                self.viewModel.cancelRename()
+            onCancelRename: { [weak self, weak instance] in
+                guard let self, let instance else { return }
+                self.viewModel.cancelRename(for: instance, from: .sidebar)
                 // Escape returns focus to the sidebar (and the blue selection).
                 self.restoreSidebarFocus()
             },

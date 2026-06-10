@@ -32,8 +32,15 @@ final class ObservationLoop {
         } onChange: {
             Task { @MainActor [weak self] in
                 guard let self, !self.isCancelled else { return }
-                self.apply()
+                // Re-arm BEFORE applying: `apply()` can synchronously mutate
+                // tracked state (e.g. a `makeFirstResponder` inside it forces
+                // another field's edit session to commit, writing the model),
+                // and re-arming afterwards would leave that mutation
+                // unobserved — a lost wakeup. Registering first turns it into
+                // one coalesced follow-up pass instead; `apply` closures are
+                // idempotent refreshes, so the loop quiesces.
                 self.register()
+                self.apply()
             }
         }
     }

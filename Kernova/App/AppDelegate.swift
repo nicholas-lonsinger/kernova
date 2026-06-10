@@ -418,7 +418,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     @objc func renameVM(_ sender: Any?) {
         guard let instance = activeInstance else { return }
-        viewModel.renameVM(instance)
+        // Reveal the sidebar surface first — front the library window and
+        // uncollapse the sidebar — then start its inline rename, so the
+        // command always lands on a visible row (see the "Rename…" routing
+        // rationale in ARCHITECTURE.md; #320).
+        showLibraryWindow(bringToFront: true)
+        mainWindowController?.revealSidebar()
+        viewModel.renameVMInSidebar(instance)
     }
 
     @objc func cloneVM(_ sender: Any?) {

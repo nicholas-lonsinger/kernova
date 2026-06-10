@@ -103,6 +103,13 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         window?.orderBack(nil)
     }
 
+    /// Uncollapses the sidebar so a command that targets it (the menu bar's
+    /// Rename…) lands on a visible surface.
+    func revealSidebar() {
+        guard sidebarItem.isCollapsed else { return }
+        sidebarItem.animator().isCollapsed = false
+    }
+
     // MARK: - Sidebar Collapse Observation
 
     private func observeSidebarCollapse() {
