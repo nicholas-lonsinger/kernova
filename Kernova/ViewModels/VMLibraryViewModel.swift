@@ -934,8 +934,14 @@ final class VMLibraryViewModel {
     ///
     /// Called at every `VMInstance` construction site in this view model.
     private func wirePersistence(for instance: VMInstance) {
-        instance.onUpdateConfiguration = { [weak self] mutate in
-            self?.updateConfiguration(of: instance, mutate: mutate)
+        // Both closures are stored *on* `instance`, so they capture it weakly:
+        // a strong capture forms a self-retain cycle that leaks the VMInstance
+        // after it's removed from `instances`. Each only ever fires through the
+        // instance (e.g. `performConfigurationMutation`, the vsock handshake),
+        // so the weak ref is always live at call time.
+        instance.onUpdateConfiguration = { [weak self, weak instance] mutate in
+            guard let self, let instance else { return }
+            self.updateConfiguration(of: instance, mutate: mutate)
         }
         // Auto-eject the installer disk once the agent handshakes a current
         // version (install/update complete). Centralized here so it fires

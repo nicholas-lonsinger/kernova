@@ -2,7 +2,7 @@ import Foundation
 
 /// Why the guest-agent installer disk was attached, so the post-mount alert can
 /// point the user at the right next step.
-enum GuestAgentInstallerPurpose {
+enum GuestAgentInstallerPurpose: Equatable {
     /// The agent is absent or behind the bundled version — a fresh install,
     /// update, or reinstall. The user runs `install.command`.
     case install

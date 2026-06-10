@@ -502,24 +502,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     @objc func toggleGuestAgentDisk(_ sender: Any?) {
         guard let instance = activeInstance else { return }
-        // One item, two modes — mirrors the `validateMenuItem` branch. When the
-        // installer disk is already attached, eject it. Otherwise mount it, with
-        // a purpose that frames the post-attach instructions alert: `.manage`
-        // (reinstall or run uninstall.command) once the agent is installed,
-        // `.install` otherwise. The viewModel handles the missing-DMG case with
-        // a fault + assertionFailure.
-        if viewModel.isGuestAgentInstallerMounted(on: instance) {
+        // Same single source of truth as `validateMenuItem`, so the action can
+        // never disagree with the title the user clicked. The viewModel handles
+        // the missing-DMG case with a fault + assertionFailure.
+        let model = GuestAgentDiskMenuItem.model(
+            status: instance.agentStatus,
+            isInstallerMounted: viewModel.isGuestAgentInstallerMounted(on: instance))
+        switch model.action {
+        case .eject:
             viewModel.unmountGuestAgentInstaller(from: instance)
-            return
+        case .mount(let purpose):
+            viewModel.mountGuestAgentInstaller(on: instance, purpose: purpose)
         }
-        let purpose: GuestAgentInstallerPurpose
-        switch instance.agentStatus {
-        case .current, .unresponsive:
-            purpose = .manage
-        case .waiting, .outdated, .expectedMissing, .connecting:
-            purpose = .install
-        }
-        viewModel.mountGuestAgentInstaller(on: instance, purpose: purpose)
     }
 
     // MARK: - Display Window (Pop-Out / Fullscreen)
@@ -751,41 +745,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         case #selector(showClipboard(_:)):
             return activeInstance?.canShowClipboard ?? false
         case #selector(toggleGuestAgentDisk(_:)):
+            // Hard gates (not status-derived): a live VM for USB hot-plug and a
+            // bundled DMG to attach. The status→title/enabled/action mapping is
+            // the single source of truth in `GuestAgentDiskMenuItem.model`,
+            // shared with `toggleGuestAgentDisk(_:)` so they never disagree.
             guard let instance = activeInstance, instance.canAttachUSBDevices else { return false }
             guard Self.guestAgentDiskPath != nil else { return false }
-            // One item, two modes. When the installer disk is already attached
-            // the item ejects it (any status). Otherwise it attaches the disk,
-            // with a purpose-framed title hinting at why: Install/Update/Reinstall
-            // when the agent is absent or behind, "Manage" when it's present
-            // (re-mount to reinstall or run the bundled uninstall.command).
-            if viewModel.isGuestAgentInstallerMounted(on: instance) {
-                menuItem.title = "Eject Guest Agent Media"
-                return true
-            }
-            switch instance.agentStatus {
-            case .waiting:
-                menuItem.title = "Install Guest Agent…"
-                return true
-            case .outdated:
-                menuItem.title = "Update Guest Agent…"
-                return true
-            case .expectedMissing:
-                menuItem.title = "Reinstall Guest Agent…"
-                return true
-            case .current, .unresponsive:
-                // `.unresponsive` is not reliably transient — it persists when
-                // the user disables/uninstalls/kills the agent inside the guest
-                // or switches login sessions, exactly when re-mounting (to
-                // reinstall or run uninstall.command) is wanted. Treat it like
-                // `.current`.
-                menuItem.title = "Manage Guest Agent…"
-                return true
-            case .connecting:
-                // Genuinely transient: self-resolves to `.current` or
-                // `.expectedMissing` as the agent (re)connects.
-                menuItem.title = "Install Guest Agent…"
-                return false
-            }
+            let model = GuestAgentDiskMenuItem.model(
+                status: instance.agentStatus,
+                isInstallerMounted: viewModel.isGuestAgentInstallerMounted(on: instance))
+            menuItem.title = model.title
+            return model.isEnabled
         case #selector(togglePopOut(_:)):
             guard let instance = activeInstance else { return false }
             let canUse = instance.canUseExternalDisplay
