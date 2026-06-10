@@ -62,6 +62,7 @@ final class VMToolbarManager: NSObject {
     private static let resumeInstallToolTip = "Resume the interrupted download and install macOS"
     private static let pauseToolTip = "Pause the virtual machine"
     private static let stopToolTip = "Stop the virtual machine"
+    private static let discardSavedStateToolTip = "Discard the virtual machine's saved state"
     private static let saveStateToolTip = "Suspend the virtual machine"
     private static let popOutToolTip = "Open display in a separate window"
     private static let popInToolTip = "Return display to the main window"
@@ -204,24 +205,24 @@ final class VMToolbarManager: NSObject {
         }
 
         let canResume = instance.status.canResume
-        // Trigger on installContext (not status) so .error retries — which
-        // happen when a previous install attempt failed — also get the
+        // `startAction` triggers on installContext (not status) so .error retries —
+        // which happen when a previous install attempt failed — also get the
         // install-flavored labels and reflect what Start will actually do.
-        let hasInstallIntent: Bool
-        let hasResumableDownload: Bool
-        hasInstallIntent = instance.configuration.installContext != nil
-        hasResumableDownload = hasInstallIntent && instance.hasResumableInstallDownload
-
+        let startAction = instance.startAction
         let playLabel: String
         let playToolTip: String
-        if hasInstallIntent {
-            playLabel = hasResumableDownload ? "Resume Install" : "Install"
-            playToolTip = hasResumableDownload ? Self.resumeInstallToolTip : Self.installToolTip
-        } else if canResume {
+        switch startAction {
+        case .install:
+            playLabel = startAction.label
+            playToolTip = Self.installToolTip
+        case .resumeInstall:
+            playLabel = startAction.label
+            playToolTip = Self.resumeInstallToolTip
+        case .start where canResume:
             playLabel = "Resume"
             playToolTip = Self.resumeToolTip
-        } else {
-            playLabel = "Start"
+        case .start:
+            playLabel = startAction.label
             playToolTip = Self.startToolTip
         }
 
@@ -234,8 +235,18 @@ final class VMToolbarManager: NSObject {
 
         play.isEnabled = instance.status.canStart || canResume
         group.subitems[LifecycleSegment.pause.rawValue].isEnabled = instance.status.canPause
-        // canStop excludes cold-paused (no graceful stop possible); isColdPaused enables the "discard saved state" path
-        group.subitems[LifecycleSegment.stop.rawValue].isEnabled = instance.canStop || instance.isColdPaused
+
+        // canStop excludes cold-paused (no graceful stop possible); isColdPaused enables
+        // the "discard saved state" path, and the label names that consequence
+        // (matching the menu bar and sidebar context menu).
+        let stop = group.subitems[LifecycleSegment.stop.rawValue]
+        let stopLabel = instance.stopActionToolbarLabel
+        if stop.label != stopLabel {
+            stop.label = stopLabel
+            stop.image = .systemSymbol("stop.fill", accessibilityDescription: stopLabel)
+            stop.toolTip = instance.isColdPaused ? Self.discardSavedStateToolTip : Self.stopToolTip
+        }
+        stop.isEnabled = instance.canStop || instance.isColdPaused
     }
 
     private func updateSaveStateItem(in toolbar: NSToolbar, instance: VMInstance?) {

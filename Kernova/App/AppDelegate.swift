@@ -420,7 +420,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         guard let instance = activeInstance else { return }
         // Reveal the sidebar surface first — front the library window and
         // uncollapse the sidebar — then start its inline rename, so the
-        // command always lands on a visible row (see the "Rename…" routing
+        // command always lands on a visible row (see the "Rename" routing
         // rationale in ARCHITECTURE.md; #320).
         showLibraryWindow(bringToFront: true)
         mainWindowController?.revealSidebar()
@@ -435,6 +435,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     @objc func deleteVM(_ sender: Any?) {
         guard let instance = activeInstance else { return }
         viewModel.confirmDelete(instance)
+    }
+
+    @objc func showVMInFinder(_ sender: Any?) {
+        guard let instance = activeInstance else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([instance.bundleURL])
     }
 
     // MARK: - Auxiliary Windows (Serial Console, Clipboard)
@@ -705,10 +710,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     // MARK: - Menu Validation
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        // Preparing instances disable all VM menu bar actions (cancel is only available via sidebar context menu)
+        // Preparing instances disable all VM menu bar actions (cancel is only available
+        // via sidebar context menu). Show in Finder stays available, matching the
+        // sidebar's preparing menu — the bundle already exists on disk.
         if let instance = activeInstance, instance.isPreparing {
             switch menuItem.action {
-            case #selector(showLibrary(_:)), #selector(newVM(_:)):
+            case #selector(showLibrary(_:)), #selector(newVM(_:)), #selector(showVMInFinder(_:)):
                 return true
             default:
                 return false
@@ -717,7 +724,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
         switch menuItem.action {
         case #selector(startVM(_:)):
-            return activeInstance?.status.canStart ?? false
+            guard let instance = activeInstance else { return false }
+            // Install-flavored title for pending-install VMs, matching the sidebar
+            // context menu and the toolbar's play segment.
+            menuItem.title = instance.startAction.label
+            return instance.status.canStart
         case #selector(startVMInRecovery(_:)):
             return activeInstance?.canStartInRecovery ?? false
         case #selector(pauseVM(_:)):
@@ -726,9 +737,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             return activeInstance?.status.canResume ?? false
         case #selector(stopVM(_:)):
             guard let instance = activeInstance else { return false }
+            // Cold-paused VMs have no live VM to stop — `stopVM(_:)` routes them to
+            // the discard-saved-state confirmation, and the title names that
+            // consequence (matching the sidebar context menu).
+            menuItem.title = instance.stopActionMenuTitle
             return instance.canStop || instance.isColdPaused
         case #selector(forceStopVM(_:)):
-            return activeInstance?.status.canForceStop ?? false
+            // Instance-level: cold-paused is excluded, where the retitled stop item
+            // ("Discard Saved State…") is the one surface for the same underlying
+            // action — two enabled items must not alias one action under two names.
+            return activeInstance?.canForceStop ?? false
         case #selector(saveVM(_:)):
             return activeInstance?.canSave ?? false
         case #selector(renameVM(_:)):
@@ -738,6 +756,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             return instance.status.canEditSettings && !viewModel.hasPreparing
         case #selector(deleteVM(_:)):
             return activeInstance?.status.canEditSettings ?? false
+        case #selector(showVMInFinder(_:)):
+            return activeInstance != nil
         // AppKit bypasses NSMenuItemValidation for windowsMenu items, so
         // menuNeedsUpdate(_:) handles visual state. This case covers keyboard
         // shortcut validation, which still routes through validateMenuItem(_:).
@@ -869,8 +889,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         )
         fullscreenItem.keyEquivalentModifierMask = [.command, .shift]
         vmMenu.addItem(.separator())
-        vmMenu.addItem(withTitle: "Rename…", action: #selector(renameVM(_:)), keyEquivalent: "")
+        // No ellipsis on "Rename": it starts an inline edit on the sidebar row (like
+        // Finder's single-item Rename), not a dialog — and matches the sidebar context
+        // menu's title.
+        vmMenu.addItem(withTitle: "Rename", action: #selector(renameVM(_:)), keyEquivalent: "")
         vmMenu.addItem(withTitle: "Clone", action: #selector(cloneVM(_:)), keyEquivalent: "d")
+        vmMenu.addItem(withTitle: "Show in Finder", action: #selector(showVMInFinder(_:)), keyEquivalent: "")
+        vmMenu.addItem(.separator())
         let deleteItem = vmMenu.addItem(
             withTitle: "Move to Trash", action: #selector(deleteVM(_:)), keyEquivalent: "\u{08}")
         deleteItem.keyEquivalentModifierMask = [.command]

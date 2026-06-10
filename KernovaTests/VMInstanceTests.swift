@@ -255,6 +255,31 @@ struct VMInstanceTests {
         #expect(instance.canSave == false)
     }
 
+    // MARK: - canForceStop
+
+    @Test("canForceStop is true when running or transitioning (without live VM, tests model logic)")
+    func canForceStopRunningAndTransitions() {
+        for status in [VMStatus.running, .starting, .saving, .restoring] {
+            let instance = makeInstance(status: status)
+            #expect(instance.canForceStop == true)
+        }
+    }
+
+    @Test("canForceStop is false for cold-paused VM (discard saved state is the only action)")
+    func canForceStopColdPaused() {
+        let instance = makeInstance(status: .paused)
+        #expect(instance.isColdPaused == true)
+        #expect(instance.canForceStop == false)
+    }
+
+    @Test("canForceStop is false when stopped or in error state")
+    func canForceStopStoppedOrError() {
+        for status in [VMStatus.stopped, .error, .initialBoot] {
+            let instance = makeInstance(status: status)
+            #expect(instance.canForceStop == false)
+        }
+    }
+
     // MARK: - Bundle Paths
 
     @Test("Bundle path URLs are correctly derived from bundleURL")
@@ -335,6 +360,48 @@ struct VMInstanceTests {
         for status in [VMStatus.stopped, .running, .starting, .saving, .restoring, .installing, .error] {
             let instance = makeInstance(status: status)
             #expect(instance.statusToolTip == nil)
+        }
+    }
+
+    // MARK: - Lifecycle Action Labels
+
+    @Test("startAction is .start without a pending install context")
+    func startActionDefault() {
+        let instance = makeInstance(status: .stopped)
+        #expect(instance.startAction == .start)
+        #expect(instance.startAction.label == "Start")
+    }
+
+    @Test("startAction is .install with a pending install context and no resumable download")
+    func startActionInstall() {
+        let instance = makeInstance(status: .stopped)
+        instance.configuration.installContext = MacOSInstallContext(source: .downloadLatest)
+        #expect(instance.hasResumableInstallDownload == false)
+        #expect(instance.startAction == .install)
+        #expect(instance.startAction.label == "Install")
+    }
+
+    @Test("StartAction labels match what each variant performs")
+    func startActionLabels() {
+        #expect(VMInstance.StartAction.start.label == "Start")
+        #expect(VMInstance.StartAction.install.label == "Install")
+        #expect(VMInstance.StartAction.resumeInstall.label == "Resume Install")
+    }
+
+    @Test("stopActionMenuTitle names the discard consequence when cold-paused")
+    func stopActionMenuTitleColdPaused() {
+        let instance = makeInstance(status: .paused)
+        #expect(instance.isColdPaused == true)
+        #expect(instance.stopActionMenuTitle == "Discard Saved State…")
+        #expect(instance.stopActionToolbarLabel == "Discard Saved State")
+    }
+
+    @Test("stopActionMenuTitle is Stop for non-cold-paused states")
+    func stopActionMenuTitleDefault() {
+        for status in [VMStatus.stopped, .running, .starting] {
+            let instance = makeInstance(status: status)
+            #expect(instance.stopActionMenuTitle == "Stop")
+            #expect(instance.stopActionToolbarLabel == "Stop")
         }
     }
 
