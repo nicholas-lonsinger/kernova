@@ -35,6 +35,45 @@ extension VMInstance {
             : "VM is paused in memory"
     }
 
+    /// The flavor of the Start control for this VM, shared by the menu bar, sidebar
+    /// context menu, and toolbar so every surface labels the action identically:
+    /// install-flavored when a macOS install is pending, reflecting what Start
+    /// will actually do.
+    enum StartAction {
+        case start
+        case install
+        case resumeInstall
+
+        var label: String {
+            switch self {
+            case .start: "Start"
+            case .install: "Install"
+            case .resumeInstall: "Resume Install"
+            }
+        }
+    }
+
+    /// The action the Start control performs for this VM's current install state.
+    var startAction: StartAction {
+        guard configuration.installContext != nil else { return .start }
+        return hasResumableInstallDownload ? .resumeInstall : .install
+    }
+
+    /// Menu item title for the stop slot, shared by the menu bar and sidebar context menu.
+    ///
+    /// A cold-paused VM has no live `VZVirtualMachine` to stop gracefully — the
+    /// action discards the on-disk saved state instead, and the title names that
+    /// consequence (with an ellipsis: the discard variant always confirms first).
+    var stopActionMenuTitle: String {
+        isColdPaused ? "Discard Saved State…" : "Stop"
+    }
+
+    /// Toolbar label for the stop segment — same wording as `stopActionMenuTitle`
+    /// without the trailing ellipsis, which is a menu-only convention.
+    var stopActionToolbarLabel: String {
+        isColdPaused ? "Discard Saved State" : "Stop"
+    }
+
     /// `true` when this VM has a `.downloadLatest` install context, a
     /// `.kernovadownload` in-progress bundle at the chosen path, and no
     /// completed IPSW yet at the same path.

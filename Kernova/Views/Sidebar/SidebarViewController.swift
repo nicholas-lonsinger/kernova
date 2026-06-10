@@ -692,7 +692,7 @@ extension SidebarViewController {
                 dummy.view = NSView(frame: .zero)
                 menu.addItem(dummy)
             }
-            let start = item(startButtonLabel(for: instance), #selector(menuStart(_:)), instance)
+            let start = item(instance.startAction.label, #selector(menuStart(_:)), instance)
             menu.addItem(start)
             startItem = start
         }
@@ -721,7 +721,7 @@ extension SidebarViewController {
             menu.addItem(item("Resume", #selector(menuResume(_:)), instance))
         }
         if instance.canStop {
-            let stop = item("Stop", #selector(menuStop(_:)), instance)
+            let stop = item(instance.stopActionMenuTitle, #selector(menuStop(_:)), instance)
             menu.addItem(stop)
             // Advanced action: an Option-alternate of "Stop" (revealed on ⌥-hold),
             // or a plain always-visible item when "Always show advanced options" is on.
@@ -739,8 +739,8 @@ extension SidebarViewController {
             menu.addItem(forceStop)
         }
         if instance.isColdPaused {
-            menu.addItem(item("Discard Saved State…", #selector(menuForceStop(_:)), instance))
-        } else if status.canForceStop && !status.canStop {
+            menu.addItem(item(instance.stopActionMenuTitle, #selector(menuForceStop(_:)), instance))
+        } else if instance.canForceStop && !instance.canStop {
             // Transient states (starting/saving/restoring) where graceful stop isn't
             // available: there's no "Stop" to pair with, so surface "Force Stop…" plainly.
             menu.addItem(item("Force Stop…", #selector(menuForceStop(_:)), instance))
@@ -788,13 +788,6 @@ extension SidebarViewController {
         menu.addItem(trash)
 
         return menu
-    }
-
-    /// Mirrors the former SwiftUI Start label: distinguishes install/boot for
-    /// macOS guests with a pending install context.
-    private func startButtonLabel(for instance: VMInstance) -> String {
-        guard instance.configuration.installContext != nil else { return "Start" }
-        return instance.hasResumableInstallDownload ? "Resume Install" : "Install"
     }
 
     private func item(_ title: String, _ action: Selector, _ instance: VMInstance) -> NSMenuItem {

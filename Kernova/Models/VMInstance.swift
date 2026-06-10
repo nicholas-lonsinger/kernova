@@ -312,6 +312,14 @@ final class VMInstance {
         status.canSave && !isColdPaused
     }
 
+    /// `true` when the VM is eligible for forceful termination.
+    ///
+    /// Cold-paused VMs are excluded — there is nothing in memory to terminate;
+    /// their equivalent action is discarding the on-disk saved state.
+    var canForceStop: Bool {
+        status.canForceStop && !isColdPaused
+    }
+
     /// `true` when the VM can be cold-booted into macOS Recovery.
     ///
     /// Limited to **stopped macOS guests** — a one-shot recovery boot only makes
