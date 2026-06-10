@@ -773,12 +773,8 @@ extension SidebarViewController {
     /// Mirrors the former SwiftUI Start label: distinguishes install/boot for
     /// macOS guests with a pending install context.
     private func startButtonLabel(for instance: VMInstance) -> String {
-        #if arch(arm64)
         guard instance.configuration.installContext != nil else { return "Start" }
         return instance.hasResumableInstallDownload ? "Resume Install" : "Install"
-        #else
-        return "Start"
-        #endif
     }
 
     private func item(_ title: String, _ action: Selector, _ instance: VMInstance) -> NSMenuItem {

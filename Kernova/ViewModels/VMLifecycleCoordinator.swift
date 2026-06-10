@@ -153,7 +153,6 @@ final class VMLifecycleCoordinator {
 
     // MARK: - macOS Installation
 
-    #if arch(arm64)
     func installMacOS(
         on instance: VMInstance,
         context: MacOSInstallContext
@@ -292,7 +291,6 @@ final class VMLifecycleCoordinator {
             // the coordinator just runs the install pipeline.
         }
     }
-    #endif
 
     // MARK: - USB Device Management
 

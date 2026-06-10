@@ -3,7 +3,6 @@ import Testing
 
 @testable import Kernova
 
-#if arch(arm64)
 @Suite("IPSWBundle Tests")
 struct IPSWBundleTests {
     /// Creates a unique temp directory for a single test and returns it.
@@ -270,4 +269,3 @@ struct DownloadSpeedSmootherTests {
         #expect(spiked < 10_000_000)
     }
 }
-#endif

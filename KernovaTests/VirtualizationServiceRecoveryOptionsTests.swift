@@ -1,4 +1,3 @@
-#if arch(arm64)
 import Testing
 import Virtualization
 @testable import Kernova
@@ -23,4 +22,3 @@ struct VirtualizationServiceRecoveryOptionsTests {
         #expect(VirtualizationService.recoveryStartOptions(bootIntoRecovery: false, guestOS: .macOS) == nil)
     }
 }
-#endif

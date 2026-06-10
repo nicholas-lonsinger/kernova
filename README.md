@@ -6,7 +6,7 @@ A macOS GUI application for creating and managing virtual machines using Apple's
 
 ### Virtual Machines
 
-- **macOS & Linux guests** — Run macOS virtual machines on Apple Silicon and Linux VMs with EFI or direct kernel boot
+- **macOS & Linux guests** — Run macOS virtual machines and Linux VMs with EFI or direct kernel boot
 - **Full VM lifecycle** — Start, stop, pause, resume, suspend, and restore
 - **VM cloning** — Clone existing VMs with automatic naming
 - **Bundle import** — Import VM bundles (`.kernova`) via double-click or drag-and-drop
@@ -37,7 +37,7 @@ A macOS GUI application for creating and managing virtual machines using Apple's
 ## Requirements
 
 - macOS 26 (Tahoe) or later
-- Apple Silicon (required for macOS guests)
+- Apple Silicon
 - Xcode 26 or later
 - Swift 6
 

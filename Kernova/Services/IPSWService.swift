@@ -10,7 +10,6 @@ import os
 final class IPSWService: Sendable {
     private static let logger = Logger(subsystem: "com.kernova.app", category: "IPSWService")
 
-    #if arch(arm64)
     private let session: URLSession
 
     /// Designated initializer.
@@ -25,13 +24,9 @@ final class IPSWService: Sendable {
     deinit {
         session.finishTasksAndInvalidate()
     }
-    #else
-    init(sessionConfiguration: URLSessionConfiguration? = nil) {}
-    #endif
 
     // MARK: - Protocol Methods
 
-    #if arch(arm64)
     /// Fetches the download URL for the latest supported macOS restore image.
     func fetchLatestRestoreImageURL() async throws -> URL {
         Self.logger.info("Fetching latest supported macOS restore image...")
@@ -502,7 +497,6 @@ final class IPSWService: Sendable {
         else { return nil }
         return total
     }
-    #endif
 }
 
 // MARK: - IPSWProviding
@@ -511,7 +505,6 @@ extension IPSWService: IPSWProviding {}
 
 // MARK: - Bundle Layout
 
-#if arch(arm64)
 /// Metadata serialized as `Info.plist` at the root of a `.kernovadownload` bundle.
 ///
 /// Only fields the server doesn't tell us each request are persisted. The total
@@ -610,11 +603,9 @@ struct IPSWBundle: Sendable {
         try fm.trashItem(at: url, resultingItemURL: nil)
     }
 }
-#endif
 
 // MARK: - URLSessionDataDelegate bridge
 
-#if arch(arm64)
 /// Bridges `URLSessionDataDelegate` callbacks to an `AsyncThrowingStream<Data, Error>`.
 ///
 /// We don't use `URLSession.bytes(for:)` because its `AsyncBytes` yields one
@@ -682,11 +673,9 @@ private final class StreamingDataTaskDelegate: NSObject, URLSessionDataDelegate,
         }
     }
 }
-#endif
 
 // MARK: - Progress Smoothing
 
-#if arch(arm64)
 /// EWMA-smoothed download speed calculator with a minimum reporting interval.
 ///
 /// Lifted from the previous `IPSWDownloadDelegate` so the streamed download
@@ -721,7 +710,6 @@ struct DownloadSpeedSmoother {
         return smoothed
     }
 }
-#endif
 
 // MARK: - Errors
 

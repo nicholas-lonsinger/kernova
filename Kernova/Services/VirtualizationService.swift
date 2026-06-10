@@ -125,12 +125,8 @@ final class VirtualizationService {
         instance.startSerialReading()
         instance.startClipboardService()
         instance.startVsockServices()
-        #if arch(arm64)
         let startOptions = Self.recoveryStartOptions(
             bootIntoRecovery: bootIntoRecovery, guestOS: instance.configuration.guestOS)
-        #else
-        let startOptions: VZVirtualMachineStartOptions? = nil
-        #endif
         try await startMachine(vm, options: startOptions)
     }
 
@@ -164,7 +160,6 @@ final class VirtualizationService {
         return delays[attempt]
     }
 
-    #if arch(arm64)
     /// Builds the one-shot start options for a recovery boot.
     ///
     /// Returns `nil` (i.e. a normal boot) unless a recovery boot is requested for
@@ -178,7 +173,6 @@ final class VirtualizationService {
         options.startUpFromMacOSRecovery = true
         return options
     }
-    #endif
 
     // MARK: - Stop
 

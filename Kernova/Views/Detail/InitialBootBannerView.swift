@@ -84,7 +84,6 @@ final class InitialBootBannerView: NSView {
 
     /// Install-context-aware subtitle, mirroring the SwiftUI predecessor.
     private static func subtitle(for instance: VMInstance) -> String {
-        #if arch(arm64)
         guard let context = instance.configuration.installContext else {
             return "Click Start to install macOS."
         }
@@ -98,8 +97,5 @@ final class InitialBootBannerView: NSView {
             let name = context.localIPSWURL?.lastPathComponent ?? "the selected IPSW"
             return "Click Start to install from \(name)."
         }
-        #else
-        return "Click Start to install macOS."
-        #endif
     }
 }

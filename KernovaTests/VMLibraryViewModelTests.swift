@@ -729,7 +729,6 @@ struct VMLibraryViewModelTests {
         #expect(bundled[0].isInternal)
     }
 
-    #if arch(arm64)
     /// Builds a `VMLibraryViewModel` wired to a caller-supplied `MockIPSWService`.
     ///
     /// The shared `makeViewModel` helper doesn't expose the IPSW service
@@ -792,7 +791,6 @@ struct VMLibraryViewModelTests {
 
         #expect(ipswService.discardResumeDataCallCount == 0)
     }
-    #endif
 
     @Test("deleteConfirmed swallows missing-file errors for a selected external")
     func deleteConfirmedSwallowsMissingExternals() async {
@@ -1261,7 +1259,6 @@ struct VMLibraryViewModelTests {
         #expect(virtService.startCallCount == 0)
     }
 
-    #if arch(arm64)
     @Test("createVM forwards requestedFreshDownload from a wizard that confirmed overwrite")
     func createVMForwardsRequestedFreshDownload() async throws {
         // End-to-end: wizard with macOS / downloadLatest / a destination that
@@ -1318,7 +1315,6 @@ struct VMLibraryViewModelTests {
         let context = try #require(instance.configuration.installContext)
         #expect(!context.requestedFreshDownload)
     }
-    #endif
 
     // MARK: - Reconcile With Disk
 
@@ -1554,7 +1550,6 @@ struct VMLibraryViewModelTests {
 
     // MARK: - Initial Boot status assignment
 
-    #if arch(arm64)
     @Test("loadVMs assigns .initialBoot when config has installContext")
     func loadVMsAssignsInitialBoot() {
         let storage = MockVMStorageService()
@@ -1638,11 +1633,9 @@ struct VMLibraryViewModelTests {
 
         #expect(viewModel.instances.isEmpty)
     }
-    #endif
 
     // MARK: - Cancel Installation
 
-    #if arch(arm64)
     @Test("cancelInstallation preserves bundle and instance (non-destructive)")
     func cancelInstallationPreservesBundle() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
@@ -1757,7 +1750,6 @@ struct VMLibraryViewModelTests {
         #expect(viewModel.instances.count == 2)
         #expect(viewModel.selectedID == installing.id)
     }
-    #endif
 
     // MARK: - Rename
 
@@ -3523,7 +3515,6 @@ struct VMLibraryViewModelTests {
 
 // MARK: - Test helpers
 
-#if arch(arm64)
 /// Drives the "cancel raced a non-cancellation error" path in
 /// `VMLibraryViewModel.installAndAutoBoot`.
 ///
@@ -3560,7 +3551,6 @@ private final class CancelRaceInstallService: MacOSInstallProviding {
         throw IPSWError.downloadFailed(URLError(.badServerResponse))
     }
 }
-#endif
 
 extension Result {
     fileprivate var isFailure: Bool {

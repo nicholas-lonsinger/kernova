@@ -8,7 +8,6 @@ final class MockIPSWService: IPSWProviding, @unchecked Sendable {
     var discardResumeDataCallCount = 0
     var lastDiscardResumeDataURL: URL?
 
-    #if arch(arm64)
     private static let mockRestoreImageURL: URL = {
         guard let url = URL(string: "https://example.com/restore.ipsw") else {
             assertionFailure("MockIPSWService: failed to construct mock restore image URL")
@@ -39,5 +38,4 @@ final class MockIPSWService: IPSWProviding, @unchecked Sendable {
         discardResumeDataCallCount += 1
         lastDiscardResumeDataURL = destinationURL
     }
-    #endif
 }

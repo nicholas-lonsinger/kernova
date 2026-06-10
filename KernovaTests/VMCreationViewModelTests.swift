@@ -609,7 +609,6 @@ struct VMCreationViewModelTests {
 
     // MARK: - buildInstallContext
 
-    #if arch(arm64)
     @Test("buildInstallContext snapshots downloadLatest with chosen path")
     func buildInstallContextDownloadLatest() {
         let vm = VMCreationViewModel()
@@ -675,7 +674,6 @@ struct VMCreationViewModelTests {
 
         #expect(!context.requestedFreshDownload)
     }
-    #endif
 
     // MARK: - Start After Create
 

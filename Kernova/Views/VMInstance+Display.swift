@@ -41,7 +41,6 @@ extension VMInstance {
     ///
     /// Drives the "Resume Install" label variant.
     var hasResumableInstallDownload: Bool {
-        #if arch(arm64)
         guard let context = configuration.installContext,
             context.source == .downloadLatest,
             let destinationURL = context.downloadDestinationURL
@@ -49,8 +48,5 @@ extension VMInstance {
         let bundle = IPSWBundle(url: IPSWService.resumeBundleURL(for: destinationURL))
         return bundle.exists
             && !FileManager.default.fileExists(atPath: destinationURL.path(percentEncoded: false))
-        #else
-        return false
-        #endif
     }
 }

@@ -209,13 +209,8 @@ final class VMToolbarManager: NSObject {
         // install-flavored labels and reflect what Start will actually do.
         let hasInstallIntent: Bool
         let hasResumableDownload: Bool
-        #if arch(arm64)
         hasInstallIntent = instance.configuration.installContext != nil
         hasResumableDownload = hasInstallIntent && instance.hasResumableInstallDownload
-        #else
-        hasInstallIntent = false
-        hasResumableDownload = false
-        #endif
 
         let playLabel: String
         let playToolTip: String
