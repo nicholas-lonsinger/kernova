@@ -21,7 +21,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
     private let backingView: VMDisplayBackingView
     private var instanceObservation: ObservationLoop?
 
-    private static let logger = Logger(subsystem: "com.kernova.app", category: "VMDisplayWindowController")
+    private static let logger = Logger(subsystem: "app.kernova", category: "VMDisplayWindowController")
 
     init(
         instance: VMInstance, enterFullscreen: Bool, onResume: @escaping () -> Void,

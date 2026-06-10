@@ -77,7 +77,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
 
     /// When `true`, the macOS guest agent forwards `os.Logger` records to the
     /// host over vsock so they appear in Console.app under
-    /// `com.kernova.guest`.
+    /// `app.kernova.guest`.
     ///
     /// Defaults to `false` for new and existing VMs:
     /// log forwarding is opt-in. Linux guests have no Kernova agent and ignore

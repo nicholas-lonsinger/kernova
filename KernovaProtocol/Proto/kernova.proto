@@ -89,7 +89,7 @@ message LogRecord {
 
   Level level = 2;
 
-  // Logger subsystem and category from the guest, e.g. "com.kernova.agent" /
+  // Logger subsystem and category from the guest, e.g. "app.kernova.agent" /
   // "GuestClipboardAgent". Treated as opaque labels by the host.
   string subsystem = 3;
   string category = 4;

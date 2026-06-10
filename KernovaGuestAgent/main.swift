@@ -12,7 +12,7 @@ import Foundation
 // Designed to run as a macOS LaunchAgent (auto-start on login,
 // auto-restart on crash).
 
-private let logger = KernovaLogger(subsystem: "com.kernova.agent", category: "GuestAgent")
+private let logger = KernovaLogger(subsystem: "app.kernova.agent", category: "GuestAgent")
 
 // MARK: - Version
 

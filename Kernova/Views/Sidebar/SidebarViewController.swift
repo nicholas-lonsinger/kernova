@@ -33,7 +33,7 @@ final class SidebarViewController: NSViewController {
     /// rename loop doesn't restart an in-flight edit.
     private var editingItemID: UUID?
 
-    private static let rowPasteboardType = NSPasteboard.PasteboardType("com.kernova.sidebar-vm-row")
+    private static let rowPasteboardType = NSPasteboard.PasteboardType("app.kernova.sidebar-vm-row")
     private static let groupCellID = NSUserInterfaceItemIdentifier("SidebarGroupHeaderCell")
     private static let mainColumnID = NSUserInterfaceItemIdentifier("main")
     private static let expandedSectionsKey = "KernovaSidebarExpandedSections"

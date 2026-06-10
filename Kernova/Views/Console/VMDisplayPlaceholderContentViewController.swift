@@ -18,7 +18,7 @@ final class VMDisplayPlaceholderContentViewController: NSViewController {
     private var observation: ObservationLoop?
 
     private static let logger = Logger(
-        subsystem: "com.kernova.app", category: "VMDisplayPlaceholderVC"
+        subsystem: "app.kernova", category: "VMDisplayPlaceholderVC"
     )
 
     init(instance: VMInstance) {

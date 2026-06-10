@@ -28,7 +28,7 @@
 	<array>
 		<dict>
 			<key>UTTypeIdentifier</key>
-			<string>com.kernova.vm</string>
+			<string>app.kernova.vm</string>
 			<key>UTTypeDescription</key>
 			<string>Kernova Virtual Machine</string>
 			<key>UTTypeConformsTo</key>
@@ -45,7 +45,7 @@
 		</dict>
 		<dict>
 			<key>UTTypeIdentifier</key>
-			<string>com.kernova.app.in-progress-download</string>
+			<string>app.kernova.in-progress-download</string>
 			<key>UTTypeDescription</key>
 			<string>Kernova In-Progress Download</string>
 			<key>UTTypeConformsTo</key>
@@ -74,7 +74,7 @@
 			<string>Owner</string>
 			<key>LSItemContentTypes</key>
 			<array>
-				<string>com.kernova.vm</string>
+				<string>app.kernova.vm</string>
 			</array>
 		</dict>
 	</array>

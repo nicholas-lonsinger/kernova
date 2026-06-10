@@ -7,7 +7,7 @@ import os
 /// with `nonisolated(unsafe)` for observer references needed in `deinit`.
 @MainActor
 final class SystemSleepWatcher {
-    private static let logger = Logger(subsystem: "com.kernova.app", category: "SystemSleepWatcher")
+    private static let logger = Logger(subsystem: "app.kernova", category: "SystemSleepWatcher")
 
     /// `nonisolated(unsafe)` because `NSObjectProtocol` observer tokens are not `Sendable`
     /// and we need to remove them in `deinit` (which is nonisolated).

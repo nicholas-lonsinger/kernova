@@ -52,7 +52,7 @@ final class SerialSocketRelay: @unchecked Sendable {
     private var clientFd: Int32 = -1
     private var clientSource: DispatchSourceRead?
 
-    private static let logger = Logger(subsystem: "com.kernova.app", category: "SerialSocketRelay")
+    private static let logger = Logger(subsystem: "app.kernova", category: "SerialSocketRelay")
 
     /// Process-wide `SIGPIPE` suppression so a write to a client whose read
     /// side has vanished surfaces as `EPIPE` from `write(2)` instead of killing
@@ -72,7 +72,7 @@ final class SerialSocketRelay: @unchecked Sendable {
         self.path = path
         self.guestInput = guestInputWriteHandle
         self.label = label
-        self.queue = DispatchQueue(label: "com.kernova.app.serial-relay")
+        self.queue = DispatchQueue(label: "app.kernova.serial-relay")
         _ = Self.suppressSIGPIPEOnce
     }
 

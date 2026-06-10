@@ -9,7 +9,7 @@ import os
 /// - macOS-specific files: `AuxiliaryStorage`, `HardwareModel`, `MachineIdentifier`
 /// - Optional: `SaveFile.vzvmsave`
 struct VMStorageService: Sendable {
-    private static let logger = Logger(subsystem: "com.kernova.app", category: "VMStorageService")
+    private static let logger = Logger(subsystem: "app.kernova", category: "VMStorageService")
 
     static let bundleExtension = "kernova"
 

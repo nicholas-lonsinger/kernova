@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>Label</key>
-	<string>com.kernova.agent</string>
+	<string>app.kernova.agent</string>
 	<key>ProgramArguments</key>
 	<array>
 		<string>__INSTALL_DIR__/kernova-agent</string>

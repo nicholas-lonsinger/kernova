@@ -7,7 +7,7 @@ import os
 /// All operations run on the main actor since `VZVirtualMachine` must be used on the main thread.
 @MainActor
 final class VirtualizationService {
-    private static let logger = Logger(subsystem: "com.kernova.app", category: "VirtualizationService")
+    private static let logger = Logger(subsystem: "app.kernova", category: "VirtualizationService")
 
     private let configBuilder = ConfigurationBuilder()
 

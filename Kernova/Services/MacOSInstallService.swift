@@ -11,7 +11,7 @@ import os
 /// 4. Run the installer with progress tracking via KVO
 @MainActor
 final class MacOSInstallService {
-    private static let logger = Logger(subsystem: "com.kernova.app", category: "MacOSInstallService")
+    private static let logger = Logger(subsystem: "app.kernova", category: "MacOSInstallService")
 
     private let configBuilder = ConfigurationBuilder()
     private let storageService = VMStorageService()

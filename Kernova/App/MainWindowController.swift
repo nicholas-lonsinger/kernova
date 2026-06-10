@@ -15,7 +15,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     private var sidebarCollapseObservation: NSKeyValueObservation?
     private var toolbarObservation: ObservationLoop?
 
-    private static let logger = Logger(subsystem: "com.kernova.app", category: "MainWindowController")
+    private static let logger = Logger(subsystem: "app.kernova", category: "MainWindowController")
     private static let toolbarNewVM = NSToolbarItem.Identifier("newVM")
 
     // MARK: - Init

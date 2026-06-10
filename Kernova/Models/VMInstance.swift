@@ -243,7 +243,7 @@ final class VMInstance {
     /// `serialSocketRelayEnabled` drives start/stop, including live hot-toggle.
     private var serialSocketRelay: SerialSocketRelay?
 
-    private static let logger = Logger(subsystem: "com.kernova.app", category: "VMInstance")
+    private static let logger = Logger(subsystem: "app.kernova", category: "VMInstance")
 
     nonisolated var id: UUID { instanceID }
     var name: String { configuration.name }
@@ -951,7 +951,7 @@ final class VMInstance {
 /// Bridges `VZVirtualMachineDelegate` callbacks to update the `VMInstance` status.
 @MainActor
 private final class VMDelegateAdapter: NSObject, VZVirtualMachineDelegate {
-    private static let logger = Logger(subsystem: "com.kernova.app", category: "VMDelegateAdapter")
+    private static let logger = Logger(subsystem: "app.kernova", category: "VMDelegateAdapter")
 
     weak var instance: VMInstance?
 
