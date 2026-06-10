@@ -1782,7 +1782,7 @@ struct VMLibraryViewModelTests {
         viewModel.instances.append(instance)
         viewModel.activeRename = .detail(instance.id)
 
-        viewModel.commitRename(for: instance, newName: "New Name")
+        viewModel.commitRename(for: instance, newName: "New Name", from: .detail(instance.id))
 
         #expect(instance.name == "New Name")
         #expect(viewModel.activeRename == nil)
@@ -1796,7 +1796,7 @@ struct VMLibraryViewModelTests {
         viewModel.instances.append(instance)
         viewModel.activeRename = .detail(instance.id)
 
-        viewModel.commitRename(for: instance, newName: "  Trimmed  ")
+        viewModel.commitRename(for: instance, newName: "  Trimmed  ", from: .detail(instance.id))
 
         #expect(instance.name == "Trimmed")
         #expect(viewModel.activeRename == nil)
@@ -1809,7 +1809,7 @@ struct VMLibraryViewModelTests {
         viewModel.instances.append(instance)
         viewModel.activeRename = .detail(instance.id)
 
-        viewModel.commitRename(for: instance, newName: "")
+        viewModel.commitRename(for: instance, newName: "", from: .detail(instance.id))
 
         #expect(instance.name == "Keep Me")
         #expect(viewModel.activeRename == nil)
@@ -1823,11 +1823,28 @@ struct VMLibraryViewModelTests {
         viewModel.instances.append(instance)
         viewModel.activeRename = .detail(instance.id)
 
-        viewModel.commitRename(for: instance, newName: "   ")
+        viewModel.commitRename(for: instance, newName: "   ", from: .detail(instance.id))
 
         #expect(instance.name == "Keep Me")
         #expect(viewModel.activeRename == nil)
         #expect(storage.saveConfigurationCallCount == 0)
+    }
+
+    @Test("commitRename from a superseded surface commits but keeps the newer rename active")
+    func commitRenameFromSupersededSurfaceKeepsNewerRename() {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let instance = makeInstance(name: "Old Name")
+        viewModel.instances.append(instance)
+        // The sidebar rename was superseded by a detail rename (menu-bar
+        // Rename… while the sidebar edit was pending); the sidebar field
+        // editor's deferred commit must not wipe the newer detail marker.
+        viewModel.activeRename = .detail(instance.id)
+
+        viewModel.commitRename(for: instance, newName: "New Name", from: .sidebar(instance.id))
+
+        #expect(instance.name == "New Name")
+        #expect(viewModel.activeRename == .detail(instance.id))
+        #expect(storage.saveConfigurationCallCount == 1)
     }
 
     @Test("cancelRename clears state without saving")
@@ -1837,10 +1854,22 @@ struct VMLibraryViewModelTests {
         viewModel.instances.append(instance)
         viewModel.activeRename = .sidebar(instance.id)
 
-        viewModel.cancelRename()
+        viewModel.cancelRename(from: .sidebar(instance.id))
 
         #expect(viewModel.activeRename == nil)
         #expect(storage.saveConfigurationCallCount == 0)
+    }
+
+    @Test("cancelRename from a superseded surface keeps the newer rename active")
+    func cancelRenameFromSupersededSurfaceKeepsNewerRename() {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        viewModel.instances.append(instance)
+        viewModel.activeRename = .detail(instance.id)
+
+        viewModel.cancelRename(from: .sidebar(instance.id))
+
+        #expect(viewModel.activeRename == .detail(instance.id))
     }
 
     // MARK: - Sleep/Wake

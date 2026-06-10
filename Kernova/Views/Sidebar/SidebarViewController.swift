@@ -550,15 +550,16 @@ extension SidebarViewController: NSOutlineViewDelegate {
             // recycled. A nil instance means the VM is gone — no-op.
             onCommitRename: { [weak self, weak instance] newName, endedByReturn in
                 guard let self, let instance else { return }
-                self.viewModel.commitRename(for: instance, newName: newName)
+                self.viewModel.commitRename(
+                    for: instance, newName: newName, from: .sidebar(instance.id))
                 // Return keeps focus in the sidebar (the row settles back to the
                 // emphasized blue); a click-commit lets focus follow the click and
                 // the row settles to blue or grey depending on where it landed.
                 self.restoreSidebarFocus(grabbingFocus: endedByReturn)
             },
-            onCancelRename: { [weak self] in
-                guard let self else { return }
-                self.viewModel.cancelRename()
+            onCancelRename: { [weak self, weak instance] in
+                guard let self, let instance else { return }
+                self.viewModel.cancelRename(from: .sidebar(instance.id))
                 // Escape returns focus to the sidebar (and the blue selection).
                 self.restoreSidebarFocus()
             },

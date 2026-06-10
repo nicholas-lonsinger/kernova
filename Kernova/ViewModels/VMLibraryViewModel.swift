@@ -884,25 +884,42 @@ final class VMLibraryViewModel {
     }
 
     func renameVMInSidebar(_ instance: VMInstance) {
+        Self.logger.debug("Starting sidebar rename for '\(instance.name, privacy: .public)'")
         activeRename = .sidebar(instance.id)
     }
 
     func renameVM(_ instance: VMInstance) {
+        Self.logger.debug("Starting detail rename for '\(instance.name, privacy: .public)'")
         activeRename = .detail(instance.id)
     }
 
-    func commitRename(for instance: VMInstance, newName: String) {
+    /// Commits the rename text from one of the two rename surfaces.
+    ///
+    /// `target` names the surface whose edit session is committing, and
+    /// `activeRename` is only cleared when it still belongs to that surface: a
+    /// commit can fire from a field editor resigning *because* a rename just
+    /// started on the other surface (its `makeFirstResponder` synchronously ends
+    /// the pending session mid-handoff), and clearing unconditionally would wipe
+    /// the newer rename's marker before its UI ever opened.
+    func commitRename(for instance: VMInstance, newName: String, from target: RenameTarget) {
         let trimmed = newName.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else {
-            activeRename = nil
-            return
+        if !trimmed.isEmpty {
+            Self.logger.debug(
+                "Committing rename of '\(instance.name, privacy: .public)' to '\(trimmed, privacy: .public)'"
+            )
+            updateConfiguration(of: instance) { $0.name = trimmed }
         }
-        updateConfiguration(of: instance) { $0.name = trimmed }
-        activeRename = nil
+        if activeRename == target {
+            activeRename = nil
+        }
     }
 
-    func cancelRename() {
-        activeRename = nil
+    /// Cancels the rename on `target`, leaving a rename that has since moved to
+    /// the other surface untouched (see ``commitRename(for:newName:from:)``).
+    func cancelRename(from target: RenameTarget) {
+        if activeRename == target {
+            activeRename = nil
+        }
     }
 
     // MARK: - Save Configuration

@@ -1,6 +1,7 @@
 import AVFoundation
 import AppKit
 import UniformTypeIdentifiers
+import os
 
 /// Pure-AppKit settings pane for editing a stopped VM's configuration, or
 /// viewing a running VM's configuration in read-only mode.
@@ -20,6 +21,9 @@ import UniformTypeIdentifiers
 /// permission warning.
 @MainActor
 final class VMSettingsViewController: NSViewController {
+    private static let logger = Logger(
+        subsystem: "com.kernova.app", category: "VMSettingsViewController")
+
     private(set) var instance: VMInstance
     private var viewModel: VMLibraryViewModel
     private var isReadOnly: Bool
@@ -85,7 +89,18 @@ final class VMSettingsViewController: NSViewController {
     /// A `<=` bound, not `==`, so a name wider than the form fills the available
     /// width and scrolls instead of the box stretching the window. Matches the
     /// storage-disk and sidebar rename boxes.
-    private var nameEditMaxWidth: NSLayoutConstraint?
+    ///
+    /// Created once for the lifetime of the reused `nameField`, *not* per
+    /// `buildForm()`: a width constraint lives on the field itself, so a copy
+    /// minted on every instance swap would outlive its build cycle — the `<=`
+    /// caps accumulate, the smallest constant wins, and a cycle whose rename
+    /// never ran pins the box at the initial 0 forever (#283's collapsed
+    /// single-character box).
+    private lazy var nameEditMaxWidth: NSLayoutConstraint = {
+        let constraint = nameField.widthAnchor.constraint(lessThanOrEqualToConstant: 0)
+        constraint.priority = .defaultHigh
+        return constraint
+    }()
     /// Active only while renaming: ends the edit on a click outside the name field.
     ///
     /// Resigns the field editor (committing the current text) — AppKit doesn't end
@@ -514,10 +529,7 @@ extension VMSettingsViewController {
         (nameEditRow as? NSStackView)?.distribution = .fill
         nameEditRow.isHidden = true
 
-        let nameMaxWidth = nameField.widthAnchor.constraint(lessThanOrEqualToConstant: 0)
-        nameMaxWidth.priority = .defaultHigh
-        nameMaxWidth.isActive = true
-        nameEditMaxWidth = nameMaxWidth
+        nameEditMaxWidth.isActive = true
 
         let nameRow = NSStackView(views: [nameDisplayRow, nameEditRow])
         nameRow.orientation = .vertical
@@ -1010,12 +1022,22 @@ extension VMSettingsViewController {
             nameEditRow.isHidden = !renaming
             if renaming {
                 nameField.stringValue = instance.name
-                nameEditMaxWidth?.constant = InlineRenameSizing.boxWidth(
+                nameEditMaxWidth.constant = InlineRenameSizing.boxWidth(
                     for: instance.name, font: Typography.body)
                 view.window?.makeFirstResponder(nameField)
                 installNameOutsideClickMonitor()
             } else {
                 removeNameOutsideClickMonitor()
+                // A rename can be torn down while the field editor is still
+                // installed (the model-side rename was superseded or cleared
+                // before any focus change). Hiding the row without resigning
+                // would orphan a focused, invisible editor that silently
+                // swallows keystrokes.
+                if nameField.currentEditor() != nil {
+                    Self.logger.warning(
+                        "Name rename ended with its field editor still active; resigning it")
+                    view.window?.makeFirstResponder(nil)
+                }
             }
         }
     }
@@ -1953,7 +1975,7 @@ extension VMSettingsViewController: NSTextFieldDelegate {
         // Grow/shrink the name box with the live text so it stays snug.
         guard (obj.object as? NSTextField) === nameField else { return }
         let live = nameField.currentEditor()?.string ?? nameField.stringValue
-        nameEditMaxWidth?.constant = InlineRenameSizing.boxWidth(for: live, font: Typography.body)
+        nameEditMaxWidth.constant = InlineRenameSizing.boxWidth(for: live, font: Typography.body)
     }
 
     func controlTextDidEndEditing(_ obj: Notification) {
@@ -1961,7 +1983,8 @@ extension VMSettingsViewController: NSTextFieldDelegate {
         switch field {
         case nameField:
             if isRenaming {
-                viewModel.commitRename(for: instance, newName: nameField.stringValue)
+                viewModel.commitRename(
+                    for: instance, newName: nameField.stringValue, from: .detail(instance.id))
             }
         case cpuField:
             applyCPUFieldEdit()
@@ -1975,13 +1998,14 @@ extension VMSettingsViewController: NSTextFieldDelegate {
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
         guard control === nameField else { return false }
         if commandSelector == #selector(NSResponder.insertNewline(_:)) {
-            viewModel.commitRename(for: instance, newName: nameField.stringValue)
+            viewModel.commitRename(
+                for: instance, newName: nameField.stringValue, from: .detail(instance.id))
             return true
         }
         if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
             // Clear the rename first (so the resign below can't commit), then end
             // the field editor so it doesn't linger on the now-hidden field.
-            viewModel.cancelRename()
+            viewModel.cancelRename(from: .detail(instance.id))
             view.window?.makeFirstResponder(nil)
             return true
         }

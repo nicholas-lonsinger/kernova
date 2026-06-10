@@ -418,7 +418,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     @objc func renameVM(_ sender: Any?) {
         guard let instance = activeInstance else { return }
-        viewModel.renameVM(instance)
+        // Always route the menu command to the sidebar's inline rename: the
+        // sidebar row is the one rename surface visible in every VM state,
+        // whereas the settings pane's Name field sits hidden behind the live
+        // display while the VM is running, so targeting it makes the command
+        // appear to do nothing (#320).
+        viewModel.renameVMInSidebar(instance)
     }
 
     @objc func cloneVM(_ sender: Any?) {
