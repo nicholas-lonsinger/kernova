@@ -192,6 +192,63 @@ struct SidebarViewControllerTests {
         #expect(!menuTitles.contains("Suspend"))
     }
 
+    @Test("Force Stop is the Option-alternate of Stop on a running VM (advanced options off)")
+    func contextMenuForceStopIsOptionAlternate() {
+        UserDefaults.standard.removeObject(forKey: "alwaysShowAdvancedOptions")
+        let viewModel = makeViewModel()
+        let instance = makeInstance(status: .running)
+        viewModel.instances.append(instance)
+        let controller = SidebarViewController(viewModel: viewModel)
+
+        let menu = controller.buildContextMenu(for: instance)
+
+        // Both rows exist in the item array; AppKit collapses them into one visible
+        // "Stop" row and swaps in "Force Stop" only while Option is held.
+        let stop = menuItem("Stop", in: menu)
+        let forceStop = menuItem("Force Stop", in: menu)
+        #expect(stop != nil)
+        #expect(forceStop != nil)
+        // Keyless Option-reveal: the alternate carries [.option] and isAlternate, and
+        // the primary's default [.command] mask is cleared so AppKit merges the pair.
+        #expect(forceStop?.isAlternate == true)
+        #expect(forceStop?.keyEquivalentModifierMask == [.option])
+        #expect(stop?.keyEquivalentModifierMask == [])
+    }
+
+    @Test("Force Stop is a plain always-visible item when advanced options are on")
+    func contextMenuForceStopVisibleWhenAdvanced() {
+        UserDefaults.standard.set(true, forKey: "alwaysShowAdvancedOptions")
+        defer { UserDefaults.standard.removeObject(forKey: "alwaysShowAdvancedOptions") }
+        let viewModel = makeViewModel()
+        let instance = makeInstance(status: .running)
+        viewModel.instances.append(instance)
+        let controller = SidebarViewController(viewModel: viewModel)
+
+        let menu = controller.buildContextMenu(for: instance)
+
+        let forceStop = menuItem("Force Stop", in: menu)
+        #expect(menuItem("Stop", in: menu) != nil)
+        #expect(forceStop != nil)
+        #expect(forceStop?.isAlternate == false)
+    }
+
+    @Test("Transient (starting) VM offers a standalone Force Stop, not an Option-alternate")
+    func contextMenuForceStopStandaloneDuringTransition() {
+        UserDefaults.standard.removeObject(forKey: "alwaysShowAdvancedOptions")
+        let viewModel = makeViewModel()
+        let instance = makeInstance(status: .starting)
+        viewModel.instances.append(instance)
+        let controller = SidebarViewController(viewModel: viewModel)
+
+        let menu = controller.buildContextMenu(for: instance)
+        let menuTitles = titles(of: menu)
+
+        // No graceful "Stop" to pair with, so "Force Stop" stands alone and stays
+        // visible without holding Option.
+        #expect(!menuTitles.contains("Stop"))
+        #expect(menuItem("Force Stop", in: menu)?.isAlternate == false)
+    }
+
     @Test("Context menu for a preparing VM offers only Cancel and Show in Finder")
     func contextMenuPreparing() {
         let viewModel = makeViewModel()
