@@ -605,7 +605,7 @@ extension VMSettingsViewController {
 
     private func buildStorageSection() -> NSView {
         storageListStack = makeListStack()
-        attachStorageButton = makePushButton("Attach Disc…", action: #selector(attachStorageTapped))
+        attachStorageButton = makePushButton("Attach Disk…", action: #selector(attachStorageTapped))
         createStorageButton = makePushButton("Create New Disk…", action: #selector(createStorageTapped))
         editBootOrderButton = makePushButton("Edit Boot Order…", action: #selector(editBootOrderTapped))
         persistentLockableControls += [attachStorageButton, createStorageButton, editBootOrderButton]
@@ -638,7 +638,7 @@ extension VMSettingsViewController {
 
     private func buildRemovableMediaSection() -> NSView {
         removableListStack = makeListStack()
-        let attach = makePushButton("Attach Disc…", action: #selector(attachRemovableTapped))
+        let attach = makePushButton("Attach Disk…", action: #selector(attachRemovableTapped))
         let create = makePushButton("Create New Disk…", action: #selector(createRemovableTapped))
         createRemovableButton = create
         // Not lockable — removable media is hot-pluggable.
@@ -1941,7 +1941,7 @@ extension VMSettingsViewController {
     /// `removeRemovableMedia(_:from:trashFile:)` with `trashFile: false` removes
     /// the `removableMedia` entry — which the live reconcile hot-detaches from a
     /// running VM — and never touches the file. No alert: ejecting is the safe,
-    /// reversible action (re-attach via "Attach Disc…").
+    /// reversible action (re-attach via "Attach Disk…").
     private func ejectRemovableMedia(forItemID id: UUID) {
         guard let item = currentRemovableMedia.first(where: { $0.id == id }) else { return }
         _ = viewModel.removeRemovableMedia(item, from: instance, trashFile: false)

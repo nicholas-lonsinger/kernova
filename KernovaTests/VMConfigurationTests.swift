@@ -937,7 +937,7 @@ struct VMConfigurationTests {
             removableMedia: [
                 RemovableMediaItem(
                     id: UUID(uuidString: "44444444-4444-4444-4444-444444444444")!,
-                    path: "/path/to/disc.iso",
+                    path: "/path/to/disk.iso",
                     readOnly: false,
                     label: "Installer"
                 )

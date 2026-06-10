@@ -22,7 +22,7 @@ final class MockUSBDeviceService: USBDeviceProviding {
         lastAttachedReadOnly = readOnly
         lastAttachedDesiredUUID = desiredUUID
         if let error = attachError { throw error }
-        // Honor the desired UUID so callers that pass one (e.g. the disc
+        // Honor the desired UUID so callers that pass one (e.g. the disk
         // image hot-swap flow) get back a USBDeviceInfo whose `id` matches
         // what they asked for. Falls back to a fresh UUID when nil.
         let id = desiredUUID ?? UUID()
