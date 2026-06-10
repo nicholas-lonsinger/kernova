@@ -701,12 +701,29 @@ extension SidebarViewController {
             menu.addItem(item("Resume", #selector(menuResume(_:)), instance))
         }
         if instance.canStop {
-            menu.addItem(item("Stop", #selector(menuStop(_:)), instance))
+            let stop = item("Stop", #selector(menuStop(_:)), instance)
+            menu.addItem(stop)
+            // Advanced action: an Option-alternate of "Stop" (revealed on ⌥-hold),
+            // or a plain always-visible item when "Always show advanced options" is on.
+            // Unlike the Start/Recovery pair this needs no zero-height top anchor: when
+            // `canStop` holds, a Pause or Resume item always precedes "Stop", so the pair
+            // is never at index 0 and the menu can't shift downward on ⌥-press. See the
+            // Start/Recovery block above for the anchor rationale and the keyless-reveal
+            // requirement that the primary's modifier mask be cleared to [].
+            let forceStop = item("Force Stop…", #selector(menuForceStop(_:)), instance)
+            if !AppPreferences.shared.alwaysShowAdvancedOptions {
+                stop.keyEquivalentModifierMask = []
+                forceStop.keyEquivalentModifierMask = [.option]
+                forceStop.isAlternate = true
+            }
+            menu.addItem(forceStop)
         }
         if instance.isColdPaused {
-            menu.addItem(item("Discard Saved State", #selector(menuForceStop(_:)), instance))
+            menu.addItem(item("Discard Saved State…", #selector(menuForceStop(_:)), instance))
         } else if status.canForceStop && !status.canStop {
-            menu.addItem(item("Force Stop", #selector(menuForceStop(_:)), instance))
+            // Transient states (starting/saving/restoring) where graceful stop isn't
+            // available: there's no "Stop" to pair with, so surface "Force Stop…" plainly.
+            menu.addItem(item("Force Stop…", #selector(menuForceStop(_:)), instance))
         }
 
         // State
