@@ -3,11 +3,9 @@ import Foundation
 /// Abstraction for macOS guest installation.
 @MainActor
 protocol MacOSInstallProviding: Sendable {
-    #if arch(arm64)
     func install(
         into instance: VMInstance,
         restoreImageURL: URL,
         progressHandler: @MainActor @Sendable @escaping (Double) -> Void
     ) async throws
-    #endif
 }

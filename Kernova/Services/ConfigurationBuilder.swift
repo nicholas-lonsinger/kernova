@@ -59,11 +59,7 @@ struct ConfigurationBuilder: Sendable {
         // Platform & boot loader
         switch config.bootMode {
         case .macOS:
-            #if arch(arm64)
             try configureMacOSBoot(vzConfig, config: config, bundleURL: bundleURL)
-            #else
-            throw ConfigurationBuilderError.macOSGuestRequiresAppleSilicon
-            #endif
 
         case .efi:
             try configureEFIBoot(vzConfig, config: config, bundleURL: bundleURL)
@@ -117,7 +113,6 @@ struct ConfigurationBuilder: Sendable {
 
     // MARK: - macOS Boot
 
-    #if arch(arm64)
     private func configureMacOSBoot(
         _ vzConfig: VZVirtualMachineConfiguration,
         config: VMConfiguration,
@@ -172,7 +167,6 @@ struct ConfigurationBuilder: Sendable {
         vzConfig.pointingDevices = [VZMacTrackpadConfiguration()]
         vzConfig.keyboards = [VZMacKeyboardConfiguration()]
     }
-    #endif
 
     // MARK: - EFI Boot
 
@@ -777,7 +771,6 @@ struct ConfigurationBuilder: Sendable {
 // MARK: - Errors
 
 enum ConfigurationBuilderError: LocalizedError {
-    case macOSGuestRequiresAppleSilicon
     case invalidHardwareModel
     case invalidMachineIdentifier
     case missingKernelPath
@@ -798,8 +791,6 @@ enum ConfigurationBuilderError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .macOSGuestRequiresAppleSilicon:
-            "macOS guests can only run on Apple Silicon."
         case .invalidHardwareModel:
             "The stored hardware model data is invalid."
         case .invalidMachineIdentifier:

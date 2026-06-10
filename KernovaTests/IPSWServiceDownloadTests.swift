@@ -3,7 +3,6 @@ import Testing
 
 @testable import Kernova
 
-#if arch(arm64)
 /// Integration tests for `IPSWService.downloadRestoreImage`.
 ///
 /// Drives the full HTTP flow against a stub `URLProtocol`. The stub returns
@@ -953,4 +952,3 @@ final class StubURLProtocol: URLProtocol, @unchecked Sendable {
 
     override func stopLoading() {}
 }
-#endif

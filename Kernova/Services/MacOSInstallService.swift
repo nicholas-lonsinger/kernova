@@ -19,7 +19,6 @@ final class MacOSInstallService {
 
     // MARK: - Installation
 
-    #if arch(arm64)
     /// Installs macOS from a restore image into the given VM instance.
     ///
     /// - Parameters:
@@ -279,7 +278,6 @@ final class MacOSInstallService {
     private func loadRestoreImage(from url: URL) async throws -> VZMacOSRestoreImage {
         try await VZMacOSRestoreImage.image(from: url)
     }
-    #endif
 }
 
 // MARK: - MacOSInstallProviding

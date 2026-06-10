@@ -64,7 +64,6 @@ struct ConfigurationBuilderTests {
         }
     }
 
-    #if arch(arm64)
     @Test("Builder throws for macOS boot without hardware model")
     func macOSBootWithoutHardwareModel() throws {
         let bundleURL = try makeTempBundle(withDisk: true)
@@ -76,7 +75,6 @@ struct ConfigurationBuilderTests {
             try builder.build(from: config, bundleURL: bundleURL)
         }
     }
-    #endif
 
     // MARK: - Shared Directory Validation
 
@@ -237,8 +235,7 @@ struct ConfigurationBuilderTests {
                 .removableMediaNotFound, .removableMediaPathIsDirectory, .removableMediaNotWritable:
                 Issue.record("Unexpected path validation error: \(error)")
             // Non-path-validation errors — tolerated if they occur:
-            case .macOSGuestRequiresAppleSilicon,
-                .invalidHardwareModel, .invalidMachineIdentifier,
+            case .invalidHardwareModel, .invalidMachineIdentifier,
                 .missingKernelPath:
                 break
             }
@@ -567,8 +564,7 @@ struct ConfigurationBuilderTests {
                 .storageDiskNotFound, .storageDiskPathIsDirectory, .storageDiskNotWritable,
                 .removableMediaNotFound, .removableMediaPathIsDirectory, .removableMediaNotWritable:
                 Issue.record("Unexpected path validation error: \(error)")
-            case .macOSGuestRequiresAppleSilicon,
-                .invalidHardwareModel, .invalidMachineIdentifier,
+            case .invalidHardwareModel, .invalidMachineIdentifier,
                 .missingKernelPath:
                 break
             }
@@ -612,8 +608,7 @@ struct ConfigurationBuilderTests {
                 .removableMediaNotFound, .removableMediaPathIsDirectory, .removableMediaNotWritable:
                 Issue.record("Unexpected path validation error: \(error)")
             // Non-path-validation errors — tolerated if they occur:
-            case .macOSGuestRequiresAppleSilicon,
-                .invalidHardwareModel, .invalidMachineIdentifier,
+            case .invalidHardwareModel, .invalidMachineIdentifier,
                 .missingKernelPath:
                 break
             }
@@ -888,8 +883,7 @@ struct ConfigurationBuilderTests {
                 .removableMediaNotFound, .removableMediaPathIsDirectory, .removableMediaNotWritable:
                 Issue.record("Unexpected path validation error: \(error)")
             // Non-path-validation errors — tolerated if they occur:
-            case .macOSGuestRequiresAppleSilicon,
-                .invalidHardwareModel, .invalidMachineIdentifier,
+            case .invalidHardwareModel, .invalidMachineIdentifier,
                 .missingKernelPath:
                 break
             }

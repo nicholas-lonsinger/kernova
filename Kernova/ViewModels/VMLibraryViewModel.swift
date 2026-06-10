@@ -206,11 +206,9 @@ final class VMLibraryViewModel {
             // For macOS guests, persist the install intent so the next Start
             // can drive the install pipeline (and download resume) without
             // the wizard. Linux guests have no Kernova-managed install step.
-            #if arch(arm64)
             if config.guestOS == .macOS {
                 config.installContext = wizard.buildInstallContext()
             }
-            #endif
 
             let bundleURL = try storageService.createVMBundle(for: config)
             let layout = VMBundleLayout(bundleURL: bundleURL)
@@ -253,7 +251,6 @@ final class VMLibraryViewModel {
 
     // MARK: - macOS Installation
 
-    #if arch(arm64)
     /// Drives the install pipeline for an `.initialBoot` (or `.error` with
     /// `installContext`) VM and, on success, chains an auto-boot.
     ///
@@ -339,12 +336,10 @@ final class VMLibraryViewModel {
         // transition to .initialBoot and installState cleanup. Don't duplicate
         // that work here, and don't trash the bundle — non-destructive cancel.
     }
-    #endif
 
     // MARK: - Lifecycle
 
     func start(_ instance: VMInstance, bootIntoRecovery: Bool = false) async {
-        #if arch(arm64)
         // VMs awaiting initial boot route through the install pipeline. The
         // pipeline clears installContext on success and chains an auto-boot;
         // failure leaves .error / .initialBoot, ready for the user to retry.
@@ -355,7 +350,6 @@ final class VMLibraryViewModel {
             installAndAutoBoot(instance)
             return
         }
-        #endif
 
         if instance.configuration.displayPreference != .inline {
             onOpenDisplayWindow?(instance)
@@ -729,10 +723,8 @@ final class VMLibraryViewModel {
     /// delete (not gated on the "trash externals" toggle). The completed IPSW
     /// file at `downloadDestinationPath`, if present, lives at a user-known
     /// path and is intentionally left alone. No-op for VMs without a
-    /// `.downloadLatest` install context, and a no-op on non-arm64 builds
-    /// where IPSW machinery is compiled out.
+    /// `.downloadLatest` install context.
     private func cleanupInstallResumeData(for instance: VMInstance) {
-        #if arch(arm64)
         guard let context = instance.configuration.installContext,
             context.source == .downloadLatest,
             let destinationURL = context.downloadDestinationURL
@@ -741,7 +733,6 @@ final class VMLibraryViewModel {
         Self.logger.notice(
             "Trashed in-progress download bundle for deleted VM '\(instance.name, privacy: .public)'"
         )
-        #endif
     }
 
     /// Detached trash for a single external attachment.
@@ -1577,11 +1568,9 @@ final class VMLibraryViewModel {
         // Regenerate platform identity fields
         clonedConfig.macAddress = VZMACAddress.randomLocallyAdministered().string
 
-        #if arch(arm64)
         if clonedConfig.guestOS == .macOS {
             clonedConfig.machineIdentifierData = VZMacMachineIdentifier().dataRepresentation
         }
-        #endif
 
         if clonedConfig.bootMode == .efi || clonedConfig.bootMode == .linuxKernel {
             clonedConfig.genericMachineIdentifierData = VZGenericMachineIdentifier().dataRepresentation
@@ -1644,12 +1633,10 @@ final class VMLibraryViewModel {
                         from: sourceBundleURL, newConfiguration: config, filesToCopy: bundleFilesToCopy)
 
                     // Write regenerated MachineIdentifier file for macOS clones (off main thread)
-                    #if arch(arm64)
                     if let machineIDData = config.machineIdentifierData, config.guestOS == .macOS {
                         let layout = VMBundleLayout(bundleURL: resultURL)
                         try machineIDData.write(to: layout.machineIdentifierURL, options: .atomic)
                     }
-                    #endif
 
                     // Copy internal additional disk files and track any missing sources
                     var skipped: Set<UUID> = []

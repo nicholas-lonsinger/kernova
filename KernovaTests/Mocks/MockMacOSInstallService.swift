@@ -6,7 +6,6 @@ import Foundation
 final class MockMacOSInstallService: MacOSInstallProviding {
     var installCallCount = 0
 
-    #if arch(arm64)
     var installError: (any Error)?
 
     func install(
@@ -23,5 +22,4 @@ final class MockMacOSInstallService: MacOSInstallProviding {
         // path with no stale refs.
         instance.resetToStopped()
     }
-    #endif
 }

@@ -366,7 +366,6 @@ struct VMLifecycleCoordinatorTests {
 
     // MARK: - macOS Installation
 
-    #if arch(arm64)
     @Test("installMacOS with localFile context sets hasDownloadStep to false")
     func installMacOSLocalFile() async throws {
         let (coordinator, _, installService, _, _) = makeCoordinator()
@@ -649,7 +648,6 @@ struct VMLifecycleCoordinatorTests {
             #expect(instance.configuration.installContext == originalContext)
         }
     }
-    #endif
 
     // MARK: - USB Device Pass-Through
 

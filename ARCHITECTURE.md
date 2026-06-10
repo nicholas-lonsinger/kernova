@@ -458,6 +458,14 @@ SystemSleepWatcher ──sleep/wake──→ VMLibraryViewModel ──pause/resu
 
 **Alternatives:** SwiftUI `.toolbar` modifiers on a hosting controller — simpler declarative API but caused persistent layout issues with grouped items and sidebar tracking.
 
+### 8. Apple Silicon-only (arm64)
+
+**What:** The project sets `ARCHS = arm64` at the project level — no Intel (x86_64) slice is built, and the codebase contains no `#if arch(arm64)` conditionals.
+
+**Why:** Virtualization.framework gates the macOS-guest APIs (`VZMacOSInstaller`, `VZMacOSRestoreImage`, `VZMacAuxiliaryStorage`, recovery start options) and VM save/restore (`saveMachineStateTo`/`restoreMachineStateFrom`) to Apple Silicon, so an Intel build would lose macOS guests *and* suspend/restore — and with a macOS 26 deployment target (the final Intel macOS release), the addressable Intel hardware is a handful of models on their last OS. The guards previously kept for a hypothetical Intel slice were never compiled (all dev and CI is arm64 Debug with `ONLY_ACTIVE_ARCH`), and the slice had silently stopped building.
+
+**Alternatives:** Keep standard architectures with `#if arch(arm64)` guards and ship a Linux-guests-only Intel app — rejected as untested, already broken, and not worth ~38 conditional-compilation sites.
+
 ## Helper Targets
 
 Three standalone targets are built alongside the main app — two CLI tools and one unit-test bundle:

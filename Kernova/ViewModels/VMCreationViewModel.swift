@@ -200,7 +200,6 @@ final class VMCreationViewModel {
 
     // MARK: - Install Context
 
-    #if arch(arm64)
     /// Snapshots the wizard's macOS install choice into a persistable
     /// `MacOSInstallContext`.
     ///
@@ -228,7 +227,6 @@ final class VMCreationViewModel {
             )
         }
     }
-    #endif
 
     // MARK: - Resume Detection
 
@@ -239,16 +237,12 @@ final class VMCreationViewModel {
     /// A completed file takes priority — the overwrite warning flow handles that
     /// case instead.
     var hasResumableDownload: Bool {
-        #if arch(arm64)
         guard ipswSource == .downloadLatest,
             let path = ipswDownloadPath,
             !ipswDownloadPathFileExists
         else { return false }
         let bundleURL = IPSWService.resumeBundleURL(for: URL(fileURLWithPath: path))
         return IPSWBundle(url: bundleURL).exists
-        #else
-        return false
-        #endif
     }
 
     func confirmOverwrite() {
