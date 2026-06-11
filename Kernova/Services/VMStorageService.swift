@@ -55,27 +55,20 @@ struct VMStorageService: Sendable {
             options: [.skipsHiddenFiles]
         )
         return contents.filter { url in
-            let configFile = url.appendingPathComponent("config.json")
+            let configFile = VMBundleLayout(bundleURL: url).configURL
             return FileManager.default.fileExists(atPath: configFile.path(percentEncoded: false))
         }
     }
 
     /// Loads a `VMConfiguration` from a bundle directory.
     func loadConfiguration(from bundleURL: URL) throws -> VMConfiguration {
-        let configURL = bundleURL.appendingPathComponent("config.json")
-        let data = try Data(contentsOf: configURL)
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return try decoder.decode(VMConfiguration.self, from: data)
+        try VMConfiguration.load(fromBundle: bundleURL)
     }
 
     /// Saves a `VMConfiguration` to a bundle directory.
     func saveConfiguration(_ configuration: VMConfiguration, to bundleURL: URL) throws {
-        let configURL = bundleURL.appendingPathComponent("config.json")
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let data = try encoder.encode(configuration)
+        let configURL = VMBundleLayout(bundleURL: bundleURL).configURL
+        let data = try VMConfiguration.makeJSONEncoder().encode(configuration)
         try data.write(to: configURL, options: .atomic)
         Self.logger.info(
             "Saved configuration for VM '\(configuration.name, privacy: .public)' to \(bundleURL.lastPathComponent, privacy: .public)"

@@ -8,6 +8,11 @@ import Foundation
 struct VMBundleLayout: Sendable {
     let bundleURL: URL
 
+    /// The serialized `VMConfiguration` (read via `VMConfiguration.load(fromBundle:)`).
+    var configURL: URL {
+        bundleURL.appendingPathComponent("config.json")
+    }
+
     var diskImageURL: URL {
         bundleURL.appendingPathComponent("Disk.asif")
     }

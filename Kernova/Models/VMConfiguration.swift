@@ -284,6 +284,34 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.createdAt = try c.decode(Date.self, forKey: .createdAt)
     }
 
+    // MARK: - Persistence Coding
+
+    /// Decoder configured for `config.json` (ISO-8601 dates).
+    ///
+    /// The single coding configuration shared by the app's `VMStorageService`
+    /// and the Quick Look extension's read-only preview, so the two can never
+    /// drift.
+    static func makeJSONDecoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
+    }
+
+    /// Encoder configured for `config.json` (ISO-8601 dates, pretty-printed,
+    /// stable key order).
+    static func makeJSONEncoder() -> JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return encoder
+    }
+
+    /// Reads and decodes `config.json` from a VM bundle directory.
+    static func load(fromBundle bundleURL: URL) throws -> VMConfiguration {
+        let data = try Data(contentsOf: VMBundleLayout(bundleURL: bundleURL).configURL)
+        return try makeJSONDecoder().decode(VMConfiguration.self, from: data)
+    }
+
     // MARK: - Cloning
 
     /// Returns a new configuration suitable for a cloned VM instance.
