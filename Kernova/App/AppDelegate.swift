@@ -323,6 +323,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         viewModel.presenter?.presentCreationWizard()
     }
 
+    @objc func openVMsFolder(_ sender: Any?) {
+        do {
+            // Resolving `vmsDirectory` creates the folder when missing, so the
+            // command also works on a fresh install with an empty library.
+            NSWorkspace.shared.open(try viewModel.storageService.vmsDirectory)
+        } catch {
+            Self.logger.error(
+                "openVMsFolder: failed to resolve VMs directory: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
     @objc func showLibrary(_ sender: Any?) {
         showLibraryWindow(bringToFront: true)
     }
@@ -715,7 +726,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // sidebar's preparing menu — the bundle already exists on disk.
         if let instance = activeInstance, instance.isPreparing {
             switch menuItem.action {
-            case #selector(showLibrary(_:)), #selector(newVM(_:)), #selector(showVMInFinder(_:)):
+            case #selector(showLibrary(_:)), #selector(newVM(_:)), #selector(openVMsFolder(_:)),
+                #selector(showVMInFinder(_:)):
                 return true
             default:
                 return false
@@ -832,6 +844,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let fileMenuItem = NSMenuItem()
         let fileMenu = NSMenu(title: "File")
         fileMenu.addItem(withTitle: "New Virtual Machine…", action: #selector(newVM(_:)), keyEquivalent: "n")
+        fileMenu.addItem(.separator())
+        // "Open … Folder" (a Finder window of the folder's contents, like the Script
+        // menu's "Open Scripts Folder"), not "Show in Finder", which reveals an item
+        // selected in its parent folder. And "VMs Folder", not "Library" — the Window
+        // menu already uses Library for the main window (#333).
+        fileMenu.addItem(withTitle: "Open VMs Folder", action: #selector(openVMsFolder(_:)), keyEquivalent: "")
         fileMenu.addItem(.separator())
         fileMenu.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         fileMenuItem.submenu = fileMenu
