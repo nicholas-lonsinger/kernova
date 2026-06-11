@@ -23,7 +23,7 @@ XCODEBUILD_FLAGS := -project $(PROJECT) \
 # swift-format ships with the Xcode toolchain (Xcode 26+); use xcrun so the
 # command resolves the same binary in CI and locally without a brew install.
 SWIFT_FORMAT      := xcrun swift-format
-SWIFT_SOURCE_DIRS := Kernova KernovaTests KernovaGuestAgent KernovaGuestAgentTests KernovaProtocol KernovaRelaunchHelper
+SWIFT_SOURCE_DIRS := Kernova KernovaTests KernovaGuestAgent KernovaGuestAgentTests KernovaProtocol KernovaQuickLook KernovaRelaunchHelper
 
 .DEFAULT_GOAL := help
 .PHONY: help build test test-suite test-package clean format lint install-hooks check-hooks
