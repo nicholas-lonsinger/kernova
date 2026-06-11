@@ -350,7 +350,7 @@ After a successful merge, confirm it landed, then tear down the branch and sync 
 
 1. `gh pr view <N> --json state -q .state` — confirm `"MERGED"` before deleting anything.
 
-**Before removing any worktree in which the app was built or launched** (e.g. for verification — this applies to abandoned worktrees too, not just merged ones), unregister its build products from LaunchServices. Otherwise LS keeps a ghost registration for the deleted path that can outrank the primary checkout's build and silently break `.kernova` UTI resolution (Quick Look previews) and app-name resolution (TCC/screen-capture grants) system-wide:
+**Before removing any worktree in which the app was built or launched** (e.g. for verification — this applies to abandoned worktrees too, not just merged ones), unregister its build products from LaunchServices. Otherwise LS keeps a ghost registration for the deleted path that can outrank the primary checkout's build and silently break `.kernova` UTI resolution (Quick Look previews) and app-name resolution (TCC/screen-capture grants) system-wide. From the worktree root:
 
 ```bash
 /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister \
