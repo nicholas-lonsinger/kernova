@@ -17,12 +17,22 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         static let usageBarWidth: CGFloat = 240
         static let usageBarHeight: CGFloat = 5
         static let minPanelWidth: CGFloat = 500
+
+        /// The measured size of the common rendered card (8 detail rows, no
+        /// badge).
+        ///
+        /// Reported from `loadView()` — before the bundle is read — so the
+        /// panel opens at the right size instead of visibly resizing once the
+        /// content lands; `render(_:)` then corrects outliers (badge,
+        /// additional-disks row) by at most a row's height.
+        static let initialPanelSize = NSSize(width: minPanelWidth, height: 369)
     }
 
     // Nib-less: the extension ships no storyboard, so `loadView` must not fall
     // through to NSViewController's nib lookup.
     override func loadView() {
         view = NSView()
+        preferredContentSize = Metrics.initialPanelSize
     }
 
     func preparePreviewOfFile(at url: URL) async throws {
@@ -87,6 +97,9 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         preferredContentSize = NSSize(
             width: max(Metrics.minPanelWidth, fitting.width + Metrics.contentInset * 2),
             height: fitting.height + Metrics.contentInset * 2)
+        Self.logger.debug(
+            "Rendered card, preferredContentSize: \(self.preferredContentSize.width, privacy: .public) × \(self.preferredContentSize.height, privacy: .public)"
+        )
     }
 
     private func makeHeader(_ model: VMPreviewModel) -> NSView {
