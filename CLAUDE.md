@@ -350,6 +350,15 @@ After a successful merge, confirm it landed, then tear down the branch and sync 
 
 1. `gh pr view <N> --json state -q .state` — confirm `"MERGED"` before deleting anything.
 
+**Before removing any worktree in which the app was built or launched** (e.g. for verification — this applies to abandoned worktrees too, not just merged ones), unregister its build products from LaunchServices. Otherwise LS keeps a ghost registration for the deleted path that can outrank the primary checkout's build and silently break `.kernova` UTI resolution (Quick Look previews) and app-name resolution (TCC/screen-capture grants) system-wide:
+
+```bash
+/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister \
+  -u "$PWD/DerivedData/Build/Products/Debug/Kernova.app"
+```
+
+`-u` is harmless if the path was never registered, so always run it. If Xcode built the worktree directly (rather than `make build`), also trash the worktree's per-user `~/Library/Developer/Xcode/DerivedData/Kernova-<hash>/` folder — it holds another registered copy that outlives the worktree (check `WorkspacePath` in each `Kernova-<hash>/info.plist` to find the right one).
+
 **In an `EnterWorktree` session** (the usual case), let the tool do the teardown, then sync:
 
 2. `ExitWorktree` with `action: "remove"`. Squash-merge leaves the worktree's commit off `main` by SHA, so the tool refuses unless you also pass `discard_changes: true` — that's expected and safe here, since the content already landed on `main` as the squash commit. This returns the session to the primary checkout and deletes the worktree and its scratch branch in one step (the branch deletion works because the scratch branch still carries its original `worktree-` name — see [Branch Naming](#branch-naming)).
