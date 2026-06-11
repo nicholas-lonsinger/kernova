@@ -928,11 +928,11 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = KernovaQuickLook/KernovaQuickLook.entitlements;
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
-				ENABLE_DEBUG_DYLIB = NO;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 8MT4P4GZL2;
+				ENABLE_DEBUG_DYLIB = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = KernovaQuickLook/Info.plist;
 				INFOPLIST_PREFIX_HEADER = "$(DERIVED_FILE_DIR)/KernovaBuildNumber.h";
@@ -956,11 +956,11 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = KernovaQuickLook/KernovaQuickLook.entitlements;
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
-				ENABLE_DEBUG_DYLIB = NO;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 8MT4P4GZL2;
+				ENABLE_DEBUG_DYLIB = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = KernovaQuickLook/Info.plist;
 				INFOPLIST_PREFIX_HEADER = "$(DERIVED_FILE_DIR)/KernovaBuildNumber.h";
