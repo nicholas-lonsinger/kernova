@@ -66,13 +66,21 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         content.addArrangedSubview(footer)
 
         view.addSubview(content)
+        let trailing = content.trailingAnchor.constraint(
+            lessThanOrEqualTo: view.trailingAnchor, constant: -Metrics.contentInset)
+        let bottom = content.bottomAnchor.constraint(
+            lessThanOrEqualTo: view.bottomAnchor, constant: -Metrics.contentInset)
+        // The Quick Look host hands the root view a transient zero-size
+        // autoresizing frame before sizing the panel; non-required far edges
+        // let that first layout pass resolve without breaking the card's
+        // fixed-width constraints (tile, usage bar).
+        trailing.priority = NSLayoutConstraint.Priority(999)
+        bottom.priority = NSLayoutConstraint.Priority(999)
         NSLayoutConstraint.activate([
             content.topAnchor.constraint(equalTo: view.topAnchor, constant: Metrics.contentInset),
             content.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: Metrics.contentInset),
-            content.trailingAnchor.constraint(
-                lessThanOrEqualTo: view.trailingAnchor, constant: -Metrics.contentInset),
-            content.bottomAnchor.constraint(
-                lessThanOrEqualTo: view.bottomAnchor, constant: -Metrics.contentInset),
+            trailing,
+            bottom,
         ])
 
         let fitting = content.fittingSize
