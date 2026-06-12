@@ -65,7 +65,12 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
         let toolbar = NSToolbar(identifier: "KernovaMainToolbar")
         toolbar.delegate = self
+        // First-run default; once customization autosave kicks in, the saved
+        // configuration (restored when the toolbar is attached to the window)
+        // overrides this, so all properties must be set before the attach below.
         toolbar.displayMode = .iconOnly
+        toolbar.allowsUserCustomization = true
+        toolbar.autosavesConfiguration = true
         window.toolbar = toolbar
         window.toolbarStyle = .unified
 
@@ -126,15 +131,16 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             Self.logger.warning("updateNewVMToolbarVisibility: window or toolbar is nil — skipping update")
             return
         }
-        let isCollapsed = sidebarItem.isCollapsed
-        let currentIndex = toolbar.items.firstIndex { $0.itemIdentifier == Self.toolbarNewVM }
-
-        if isCollapsed, let index = currentIndex {
-            toolbar.removeItem(at: index)
-        } else if !isCollapsed, currentIndex == nil {
-            // Insert after the leading flexible space
-            toolbar.insertItem(withItemIdentifier: Self.toolbarNewVM, at: 1)
+        // RATIONALE: isHidden rather than insertItem/removeItem — programmatic
+        // structural edits would be captured by the toolbar's autosaved
+        // configuration and would fight a user-customized layout (the old code
+        // re-inserted at a hardcoded index). A hidden item stays in the user's
+        // layout untouched; if the user removed New VM via customization the
+        // lookup misses and there is nothing to do.
+        guard let item = toolbar.items.first(where: { $0.itemIdentifier == Self.toolbarNewVM }) else {
+            return
         }
+        item.isHidden = sidebarItem.isCollapsed
     }
 
     // MARK: - Toolbar State Observation
@@ -182,8 +188,26 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             Self.toolbarNewVM,
             .toggleSidebar,
             .sidebarTrackingSeparator,
+            .space,
             .flexibleSpace,
         ] + toolbarManager.sharedItemIdentifiers
+    }
+
+    /// Pins the sidebar region — toggle and tracking separator — the way Mail and
+    /// Notes do; everything else is user-customizable.
+    func toolbarImmovableItemIdentifiers(_ toolbar: NSToolbar) -> Set<NSToolbarItem.Identifier> {
+        [.toggleSidebar, .sidebarTrackingSeparator]
+    }
+
+    func toolbarWillAddItem(_ notification: Notification) {
+        // A palette-added item is born with factory-default labels and enablement
+        // (autovalidates is false on the shared items), and during will-add it is
+        // not yet in toolbar.items — refresh one runloop turn later so it
+        // immediately reflects VM state and sidebar collapse.
+        Task { @MainActor [weak self] in
+            self?.updateToolbarItems()
+            self?.updateNewVMToolbarVisibility()
+        }
     }
 
     func toolbar(

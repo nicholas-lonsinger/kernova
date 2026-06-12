@@ -161,6 +161,9 @@ final class VMToolbarManager: NSObject {
         case configuration.settingsToggleID:
             let item = NSToolbarItem(itemIdentifier: identifier)
             item.label = "Show Settings"
+            // The runtime label flips between Show/Hide Settings; the customize
+            // palette needs a stable name.
+            item.paletteLabel = "Settings"
             item.image = .systemSymbol("gearshape", accessibilityDescription: "Show Settings")
             item.action = #selector(AppDelegate.toggleSettingsPane(_:))
             item.toolTip = Self.showSettingsToolTip
@@ -190,12 +193,13 @@ final class VMToolbarManager: NSObject {
     }
 
     private func updateLifecycleGroup(in toolbar: NSToolbar, instance: VMInstance?) {
-        guard
-            let group = toolbar.items.first(where: { $0.itemIdentifier == configuration.lifecycleID })
-                as? NSToolbarItemGroup,
-            group.subitems.count == 3
-        else {
-            Self.logger.warning("updateLifecycleGroup: lifecycle group missing or has unexpected subitem count")
+        // Absence is legitimate — the user may have removed the item via toolbar
+        // customization (matching the silent skips in updateClipboardItem and
+        // updateSettingsToggleItem).
+        guard let item = toolbar.items.first(where: { $0.itemIdentifier == configuration.lifecycleID })
+        else { return }
+        guard let group = item as? NSToolbarItemGroup, group.subitems.count == 3 else {
+            Self.logger.warning("updateLifecycleGroup: lifecycle group malformed — wrong type or subitem count")
             return
         }
 
@@ -250,12 +254,11 @@ final class VMToolbarManager: NSObject {
     }
 
     private func updateSaveStateItem(in toolbar: NSToolbar, instance: VMInstance?) {
-        guard
-            let group = toolbar.items.first(where: { $0.itemIdentifier == configuration.saveStateID })
-                as? NSToolbarItemGroup,
-            let subitem = group.subitems.first
-        else {
-            Self.logger.warning("updateSaveStateItem: save state group missing or empty")
+        // Absence is legitimate under user customization — skip silently.
+        guard let item = toolbar.items.first(where: { $0.itemIdentifier == configuration.saveStateID })
+        else { return }
+        guard let group = item as? NSToolbarItemGroup, let subitem = group.subitems.first else {
+            Self.logger.warning("updateSaveStateItem: save state group malformed — wrong type or empty")
             return
         }
 
@@ -309,12 +312,11 @@ final class VMToolbarManager: NSObject {
     }
 
     private func updateDisplayGroup(in toolbar: NSToolbar, instance: VMInstance?) {
-        guard
-            let group = toolbar.items.first(where: { $0.itemIdentifier == configuration.displayID })
-                as? NSToolbarItemGroup,
-            group.subitems.count == 2
-        else {
-            Self.logger.warning("updateDisplayGroup: display group missing or has unexpected subitem count")
+        // Absence is legitimate under user customization — skip silently.
+        guard let item = toolbar.items.first(where: { $0.itemIdentifier == configuration.displayID })
+        else { return }
+        guard let group = item as? NSToolbarItemGroup, group.subitems.count == 2 else {
+            Self.logger.warning("updateDisplayGroup: display group malformed — wrong type or subitem count")
             return
         }
 
