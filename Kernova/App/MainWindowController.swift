@@ -13,6 +13,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     private let sidebarViewController: SidebarViewController
     private let sidebarItem: NSSplitViewItem
     private var windowStateObservation: ObservationLoop?
+    private var sheetIsCustomizationPalette = false
 
     private static let logger = Logger(subsystem: "app.kernova", category: "MainWindowController")
     private static let toolbarNewVM = NSToolbarItem.Identifier("newVM")
@@ -195,6 +196,41 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         Task { @MainActor [weak self] in
             self?.updateToolbarItems()
         }
+    }
+
+    // MARK: - Customize Sheet Cleanup
+
+    func windowWillBeginSheet(_ notification: Notification) {
+        // The window hosts other sheets too (alerts, the creation wizard);
+        // remember whether this one is the customize palette so the recreate
+        // below only runs when the layout could actually have changed.
+        sheetIsCustomizationPalette = window?.toolbar?.customizationPaletteIsRunning ?? false
+    }
+
+    /// Recreates the app's custom toolbar items when the customize sheet closes.
+    ///
+    /// RATIONALE: AppKit bakes the section-specific glass treatment (flat in the
+    /// sidebar section, bordered capsule in the content section) into a bordered
+    /// item's view when the item is created, and a customization drag across the
+    /// sidebar tracking separator reuses the existing instance without firing
+    /// toolbarWillAddItem/toolbarDidRemoveItem (verified empirically) — so a
+    /// moved item keeps the wrong treatment until it is recreated. Removing and
+    /// reinserting at the same index routes through the delegate factory, giving
+    /// the fresh instance the treatment of the section it now lives in, while
+    /// leaving the autosaved layout untouched (same identifiers, same order).
+    /// Applies to every custom item (New VM and the manager's groups can all be
+    /// dragged across the separator); AppKit's own items handle this themselves.
+    func windowDidEndSheet(_ notification: Notification) {
+        guard sheetIsCustomizationPalette, let toolbar = window?.toolbar else { return }
+        sheetIsCustomizationPalette = false
+
+        let customIdentifiers = Set([Self.toolbarNewVM] + toolbarManager.sharedItemIdentifiers)
+        let identifiers = toolbar.items.map(\.itemIdentifier)
+        for (index, identifier) in identifiers.enumerated() where customIdentifiers.contains(identifier) {
+            toolbar.removeItem(at: index)
+            toolbar.insertItem(withItemIdentifier: identifier, at: index)
+        }
+        updateToolbarItems()
     }
 
     func toolbar(
