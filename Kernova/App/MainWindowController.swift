@@ -13,7 +13,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     private let sidebarViewController: SidebarViewController
     private let sidebarItem: NSSplitViewItem
     private var sidebarCollapseObservation: NSKeyValueObservation?
-    private var toolbarObservation: ObservationLoop?
+    private var windowStateObservation: ObservationLoop?
 
     private static let logger = Logger(subsystem: "app.kernova", category: "MainWindowController")
     private static let toolbarNewVM = NSToolbarItem.Identifier("newVM")
@@ -94,7 +94,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         }
 
         updateToolbarItems()
-        observeToolbarState()
+        updateWindowTitle()
+        observeWindowState()
         observeSidebarCollapse()
         Self.logger.notice("Main window controller initialized")
     }
@@ -143,13 +144,16 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         item.isHidden = sidebarItem.isCollapsed
     }
 
-    // MARK: - Toolbar State Observation
+    // MARK: - Window State Observation
 
-    private func observeToolbarState() {
-        toolbarObservation = observeRecurring(
+    /// Observes the selection and the selected VM's state to keep the toolbar
+    /// items and the window title in sync.
+    private func observeWindowState() {
+        windowStateObservation = observeRecurring(
             track: { [weak self] in
                 guard let self else { return }
                 _ = self.viewModel.selectedID
+                _ = self.viewModel.selectedInstance?.name
                 _ = self.viewModel.selectedInstance?.status
                 _ = self.viewModel.selectedInstance?.isPreparing
                 _ = self.viewModel.selectedInstance?.displayMode
@@ -159,8 +163,17 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             },
             apply: { [weak self] in
                 self?.updateToolbarItems()
+                self?.updateWindowTitle()
             }
         )
+    }
+
+    /// Titles the window after the selected VM ("Kernova — <name>", plain
+    /// "Kernova" with no selection) so the active VM stays identifiable when
+    /// the sidebar is collapsed.
+    private func updateWindowTitle() {
+        let name = viewModel.selectedInstance?.name
+        window?.title = name.map { "Kernova — \($0)" } ?? "Kernova"
     }
 
     private func updateToolbarItems() {
