@@ -158,16 +158,21 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     // MARK: - NSToolbarDelegate
 
-    // RATIONALE: toggle first and no leading flexible space, matching Mail/Notes.
-    // A space item ahead of the sidebar section — and any hidden item, which
-    // still reserves its slot's width — pushes the inline window title away
-    // from the toggle when the sidebar is collapsed, leaving a dead gap. For
-    // the same reason New VM stays visible when the sidebar collapses (as
-    // Mail's Compose does) instead of being hidden or removed.
+    // The leading flexible space right-aligns New VM and the toggle against the
+    // sidebar's trailing edge; verified gap-free in the collapsed state, where
+    // the space compresses to nothing and the title sits right after the
+    // toggle.
+    //
+    // RATIONALE: New VM must stay visible when the sidebar collapses (as
+    // Mail's Compose does) — a hidden toolbar item still reserves its slot's
+    // width, which pushes the inline window title away from the leading
+    // controls and leaves a dead gap. Don't reintroduce collapse-driven
+    // hiding or removal here.
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [
-            .toggleSidebar,
+            .flexibleSpace,
             Self.toolbarNewVM,
+            .toggleSidebar,
             .sidebarTrackingSeparator,
         ] + toolbarManager.sharedItemIdentifiers
     }
