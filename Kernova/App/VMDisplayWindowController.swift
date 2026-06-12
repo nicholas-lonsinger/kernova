@@ -33,7 +33,10 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
             configuration: .init(
                 lifecycleID: NSToolbarItem.Identifier("displayLifecycle"),
                 saveStateID: NSToolbarItem.Identifier("displaySaveState"),
-                clipboardID: nil,
+                // Targets this window's VM: the nil-target showClipboard action
+                // resolves through AppDelegate.activeInstance, which prefers the
+                // key display window's instance over the sidebar selection.
+                clipboardID: NSToolbarItem.Identifier("displayClipboard"),
                 displayID: NSToolbarItem.Identifier("displayDisplay"),
                 settingsToggleID: nil,
                 checksPreparing: false,
@@ -154,6 +157,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
                 _ = self.instance.status
                 _ = self.instance.virtualMachine
                 _ = self.instance.displayMode
+                _ = self.instance.configuration.clipboardSharingEnabled
             },
             apply: { [weak self] in
                 guard let self else { return }

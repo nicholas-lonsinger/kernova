@@ -18,6 +18,14 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     private static let logger = Logger(subsystem: "app.kernova", category: "MainWindowController")
     private static let toolbarNewVM = NSToolbarItem.Identifier("newVM")
 
+    // Palette-only items (offered in the customize sheet, not in the default
+    // set). Enablement mirrors the menu bar's validateMenuItem gating for the
+    // same actions, via validateToolbarItem below.
+    private static let toolbarClone = NSToolbarItem.Identifier("cloneVM")
+    private static let toolbarShowInFinder = NSToolbarItem.Identifier("showInFinder")
+    private static let toolbarMoveToTrash = NSToolbarItem.Identifier("moveToTrash")
+    private static let toolbarOpenVMsFolder = NSToolbarItem.Identifier("openVMsFolder")
+
     // MARK: - Init
 
     init(viewModel: VMLibraryViewModel) {
@@ -184,7 +192,12 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             .sidebarTrackingSeparator,
             .space,
             .flexibleSpace,
-        ] + toolbarManager.sharedItemIdentifiers
+        ] + toolbarManager.sharedItemIdentifiers + [
+            Self.toolbarClone,
+            Self.toolbarShowInFinder,
+            Self.toolbarMoveToTrash,
+            Self.toolbarOpenVMsFolder,
+        ]
     }
 
     /// Pins the sidebar region — toggle and tracking separator — the way Mail and
@@ -229,7 +242,14 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         guard sheetIsCustomizationPalette, let toolbar = window?.toolbar else { return }
         sheetIsCustomizationPalette = false
 
-        let customIdentifiers = Set([Self.toolbarNewVM] + toolbarManager.sharedItemIdentifiers)
+        let customIdentifiers = Set(
+            [
+                Self.toolbarNewVM,
+                Self.toolbarClone,
+                Self.toolbarShowInFinder,
+                Self.toolbarMoveToTrash,
+                Self.toolbarOpenVMsFolder,
+            ] + toolbarManager.sharedItemIdentifiers)
         let identifiers = toolbar.items.map(\.itemIdentifier)
         for (index, identifier) in identifiers.enumerated() where customIdentifiers.contains(identifier) {
             toolbar.removeItem(at: index)
@@ -255,6 +275,38 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
                 symbol: "plus",
                 action: #selector(AppDelegate.newVM(_:)),
                 toolTip: "Create a new virtual machine"
+            )
+        case Self.toolbarClone:
+            return makeToolbarItem(
+                identifier: itemIdentifier,
+                label: "Clone",
+                symbol: "plus.square.on.square",
+                action: #selector(AppDelegate.cloneVM(_:)),
+                toolTip: "Clone the selected virtual machine"
+            )
+        case Self.toolbarShowInFinder:
+            return makeToolbarItem(
+                identifier: itemIdentifier,
+                label: "Show in Finder",
+                symbol: "magnifyingglass",
+                action: #selector(AppDelegate.showVMInFinder(_:)),
+                toolTip: "Reveal the virtual machine bundle in Finder"
+            )
+        case Self.toolbarMoveToTrash:
+            return makeToolbarItem(
+                identifier: itemIdentifier,
+                label: "Move to Trash",
+                symbol: "trash",
+                action: #selector(AppDelegate.deleteVM(_:)),
+                toolTip: "Move the selected virtual machine to the Trash"
+            )
+        case Self.toolbarOpenVMsFolder:
+            return makeToolbarItem(
+                identifier: itemIdentifier,
+                label: "VMs Folder",
+                symbol: "folder",
+                action: #selector(AppDelegate.openVMsFolder(_:)),
+                toolTip: "Open the VMs storage folder in Finder"
             )
         default:
             return nil
@@ -283,21 +335,35 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 // MARK: - NSToolbarItemValidation
 
 extension MainWindowController: NSToolbarItemValidation {
+    /// The palette-only items mirror the menu bar's `validateMenuItem(_:)`
+    /// predicates for the same actions, so the two surfaces never disagree.
     func validateToolbarItem(_ item: NSToolbarItem) -> Bool {
-        guard let instance = viewModel.selectedInstance, !instance.isPreparing else {
-            return item.itemIdentifier == Self.toolbarNewVM
-        }
+        let instance = viewModel.selectedInstance
 
-        if item.itemIdentifier == Self.toolbarNewVM
-            || toolbarManager.sharedItemIdentifiers.contains(item.itemIdentifier)
-        {
-            // Group subitems are enabled/disabled directly in updateToolbarItems()
+        switch item.itemIdentifier {
+        case Self.toolbarNewVM, Self.toolbarOpenVMsFolder:
+            // VM-independent; always available.
+            return true
+        case Self.toolbarShowInFinder:
+            // Enabled even while preparing — the bundle already exists on disk.
+            return instance != nil
+        case Self.toolbarClone:
+            guard let instance else { return false }
+            return instance.status.canEditSettings && !viewModel.hasPreparing
+        case Self.toolbarMoveToTrash:
+            return instance?.status.canEditSettings ?? false
+        default:
+            guard let instance, !instance.isPreparing else { return false }
+
+            if toolbarManager.sharedItemIdentifiers.contains(item.itemIdentifier) {
+                // Group subitems are enabled/disabled directly in updateToolbarItems()
+                return true
+            }
+
+            Self.logger.debug(
+                "validateToolbarItem: unrecognized identifier '\(item.itemIdentifier.rawValue, privacy: .public)'")
             return true
         }
-
-        Self.logger.debug(
-            "validateToolbarItem: unrecognized identifier '\(item.itemIdentifier.rawValue, privacy: .public)'")
-        return true
     }
 }
 
