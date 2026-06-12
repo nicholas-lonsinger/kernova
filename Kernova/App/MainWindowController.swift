@@ -20,11 +20,11 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     // Palette-only items (offered in the customize sheet, not in the default
     // set). Enablement mirrors the menu bar's validateMenuItem gating for the
-    // same actions, via validateToolbarItem below.
+    // same actions, via validateToolbarItem below. VM-scoped verbs only —
+    // app-global commands like "Open VMs Folder" stay menu-bar-only.
     private static let toolbarClone = NSToolbarItem.Identifier("cloneVM")
     private static let toolbarShowInFinder = NSToolbarItem.Identifier("showInFinder")
     private static let toolbarMoveToTrash = NSToolbarItem.Identifier("moveToTrash")
-    private static let toolbarOpenVMsFolder = NSToolbarItem.Identifier("openVMsFolder")
 
     // MARK: - Init
 
@@ -196,7 +196,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             Self.toolbarClone,
             Self.toolbarShowInFinder,
             Self.toolbarMoveToTrash,
-            Self.toolbarOpenVMsFolder,
         ]
     }
 
@@ -251,7 +250,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
                 Self.toolbarClone,
                 Self.toolbarShowInFinder,
                 Self.toolbarMoveToTrash,
-                Self.toolbarOpenVMsFolder,
             ] + toolbarManager.sharedItemIdentifiers)
         let identifiers = toolbar.items.map(\.itemIdentifier)
         for (index, identifier) in identifiers.enumerated() where customIdentifiers.contains(identifier) {
@@ -310,14 +308,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
                 action: #selector(AppDelegate.deleteVM(_:)),
                 toolTip: "Move the selected virtual machine to the Trash"
             )
-        case Self.toolbarOpenVMsFolder:
-            return makeToolbarItem(
-                identifier: itemIdentifier,
-                label: "VMs Folder",
-                symbol: "folder",
-                action: #selector(AppDelegate.openVMsFolder(_:)),
-                toolTip: "Open the VMs storage folder in Finder"
-            )
         default:
             return nil
         }
@@ -351,7 +341,7 @@ extension MainWindowController: NSToolbarItemValidation {
         let instance = viewModel.selectedInstance
 
         switch item.itemIdentifier {
-        case Self.toolbarNewVM, Self.toolbarOpenVMsFolder:
+        case Self.toolbarNewVM:
             // VM-independent; always available.
             return true
         case Self.toolbarShowInFinder:
