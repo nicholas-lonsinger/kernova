@@ -872,10 +872,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // Nil-target standard NSWindow actions resolve against the key window's
         // responder chain: AppKit retitles Show/Hide Toolbar, disables both items
         // for windows without a toolbar, and disables Customize Toolbar… when the
-        // key window's toolbar doesn't allow customization. AppKit also
-        // auto-inserts "Enter Full Screen" into a menu titled "View" — expected,
-        // and distinct from the VM menu's "Fullscreen Display" (⇧⌘F), which
-        // targets the guest display rather than the key window.
+        // key window's toolbar doesn't allow customization. AppKit augments this
+        // menu automatically with window-tabbing items (Show Tab Bar / Show All
+        // Tabs); fullscreen and tiling commands live in the AppKit-populated
+        // section of the Window menu, separate from the VM menu's "Fullscreen
+        // Display" (⇧⌘F), which targets the guest display rather than the key
+        // window.
         let viewMenuItem = NSMenuItem()
         let viewMenu = NSMenu(title: "View")
         let toggleToolbarItem = viewMenu.addItem(
