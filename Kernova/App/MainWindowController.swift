@@ -12,7 +12,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     private let splitViewController = SnapToFitSplitViewController()
     private let sidebarViewController: SidebarViewController
     private let sidebarItem: NSSplitViewItem
-    private var sidebarCollapseObservation: NSKeyValueObservation?
     private var windowStateObservation: ObservationLoop?
 
     private static let logger = Logger(subsystem: "app.kernova", category: "MainWindowController")
@@ -96,7 +95,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         updateToolbarItems()
         updateWindowTitle()
         observeWindowState()
-        observeSidebarCollapse()
         Self.logger.notice("Main window controller initialized")
     }
 
@@ -114,34 +112,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     func revealSidebar() {
         guard sidebarItem.isCollapsed else { return }
         sidebarItem.animator().isCollapsed = false
-    }
-
-    // MARK: - Sidebar Collapse Observation
-
-    private func observeSidebarCollapse() {
-        let sidebarItem = sidebarItem
-        sidebarCollapseObservation = sidebarItem.observe(\.isCollapsed, options: [.initial, .new]) { [weak self] _, _ in
-            Task { @MainActor [weak self] in
-                self?.updateNewVMToolbarVisibility()
-            }
-        }
-    }
-
-    private func updateNewVMToolbarVisibility() {
-        guard let toolbar = window?.toolbar else {
-            Self.logger.warning("updateNewVMToolbarVisibility: window or toolbar is nil — skipping update")
-            return
-        }
-        // RATIONALE: isHidden rather than insertItem/removeItem — programmatic
-        // structural edits would be captured by the toolbar's autosaved
-        // configuration and would fight a user-customized layout (the old code
-        // re-inserted at a hardcoded index). A hidden item stays in the user's
-        // layout untouched; if the user removed New VM via customization the
-        // lookup misses and there is nothing to do.
-        guard let item = toolbar.items.first(where: { $0.itemIdentifier == Self.toolbarNewVM }) else {
-            return
-        }
-        item.isHidden = sidebarItem.isCollapsed
     }
 
     // MARK: - Window State Observation
@@ -187,11 +157,16 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     // MARK: - NSToolbarDelegate
 
+    // RATIONALE: toggle first and no leading flexible space, matching Mail/Notes.
+    // A space item ahead of the sidebar section — and any hidden item, which
+    // still reserves its slot's width — pushes the inline window title away
+    // from the toggle when the sidebar is collapsed, leaving a dead gap. For
+    // the same reason New VM stays visible when the sidebar collapses (as
+    // Mail's Compose does) instead of being hidden or removed.
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [
-            .flexibleSpace,
-            Self.toolbarNewVM,
             .toggleSidebar,
+            Self.toolbarNewVM,
             .sidebarTrackingSeparator,
         ] + toolbarManager.sharedItemIdentifiers
     }
@@ -216,10 +191,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         // A palette-added item is born with factory-default labels and enablement
         // (autovalidates is false on the shared items), and during will-add it is
         // not yet in toolbar.items — refresh one runloop turn later so it
-        // immediately reflects VM state and sidebar collapse.
+        // immediately reflects VM state.
         Task { @MainActor [weak self] in
             self?.updateToolbarItems()
-            self?.updateNewVMToolbarVisibility()
         }
     }
 
