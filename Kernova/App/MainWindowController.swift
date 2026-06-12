@@ -12,11 +12,19 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     private let splitViewController = SnapToFitSplitViewController()
     private let sidebarViewController: SidebarViewController
     private let sidebarItem: NSSplitViewItem
-    private var sidebarCollapseObservation: NSKeyValueObservation?
-    private var toolbarObservation: ObservationLoop?
+    private var windowStateObservation: ObservationLoop?
+    private var sheetIsCustomizationPalette = false
 
     private static let logger = Logger(subsystem: "app.kernova", category: "MainWindowController")
     private static let toolbarNewVM = NSToolbarItem.Identifier("newVM")
+
+    // Palette-only items (offered in the customize sheet, not in the default
+    // set). Enablement mirrors the menu bar's validateMenuItem gating for the
+    // same actions, via validateToolbarItem below. VM-scoped verbs only —
+    // app-global commands like "Open VMs Folder" stay menu-bar-only.
+    private static let toolbarClone = NSToolbarItem.Identifier("cloneVM")
+    private static let toolbarShowInFinder = NSToolbarItem.Identifier("showInFinder")
+    private static let toolbarMoveToTrash = NSToolbarItem.Identifier("moveToTrash")
 
     // MARK: - Init
 
@@ -65,7 +73,12 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
         let toolbar = NSToolbar(identifier: "KernovaMainToolbar")
         toolbar.delegate = self
+        // First-run default; once customization autosave kicks in, the saved
+        // configuration (restored when the toolbar is attached to the window)
+        // overrides this, so all properties must be set before the attach below.
         toolbar.displayMode = .iconOnly
+        toolbar.allowsUserCustomization = true
+        toolbar.autosavesConfiguration = true
         window.toolbar = toolbar
         window.toolbarStyle = .unified
 
@@ -89,8 +102,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         }
 
         updateToolbarItems()
-        observeToolbarState()
-        observeSidebarCollapse()
+        updateWindowTitle()
+        observeWindowState()
         Self.logger.notice("Main window controller initialized")
     }
 
@@ -110,40 +123,16 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         sidebarItem.animator().isCollapsed = false
     }
 
-    // MARK: - Sidebar Collapse Observation
+    // MARK: - Window State Observation
 
-    private func observeSidebarCollapse() {
-        let sidebarItem = sidebarItem
-        sidebarCollapseObservation = sidebarItem.observe(\.isCollapsed, options: [.initial, .new]) { [weak self] _, _ in
-            Task { @MainActor [weak self] in
-                self?.updateNewVMToolbarVisibility()
-            }
-        }
-    }
-
-    private func updateNewVMToolbarVisibility() {
-        guard let toolbar = window?.toolbar else {
-            Self.logger.warning("updateNewVMToolbarVisibility: window or toolbar is nil — skipping update")
-            return
-        }
-        let isCollapsed = sidebarItem.isCollapsed
-        let currentIndex = toolbar.items.firstIndex { $0.itemIdentifier == Self.toolbarNewVM }
-
-        if isCollapsed, let index = currentIndex {
-            toolbar.removeItem(at: index)
-        } else if !isCollapsed, currentIndex == nil {
-            // Insert after the leading flexible space
-            toolbar.insertItem(withItemIdentifier: Self.toolbarNewVM, at: 1)
-        }
-    }
-
-    // MARK: - Toolbar State Observation
-
-    private func observeToolbarState() {
-        toolbarObservation = observeRecurring(
+    /// Observes the selection and the selected VM's state to keep the toolbar
+    /// items and the window title in sync.
+    private func observeWindowState() {
+        windowStateObservation = observeRecurring(
             track: { [weak self] in
                 guard let self else { return }
                 _ = self.viewModel.selectedID
+                _ = self.viewModel.selectedInstance?.name
                 _ = self.viewModel.selectedInstance?.status
                 _ = self.viewModel.selectedInstance?.isPreparing
                 _ = self.viewModel.selectedInstance?.displayMode
@@ -153,8 +142,17 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             },
             apply: { [weak self] in
                 self?.updateToolbarItems()
+                self?.updateWindowTitle()
             }
         )
+    }
+
+    /// Titles the window after the selected VM ("Kernova — <name>", plain
+    /// "Kernova" with no selection) so the active VM stays identifiable when
+    /// the sidebar is collapsed.
+    private func updateWindowTitle() {
+        let name = viewModel.selectedInstance?.name
+        window?.title = name.map { "Kernova — \($0)" } ?? "Kernova"
     }
 
     private func updateToolbarItems() {
@@ -168,6 +166,16 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     // MARK: - NSToolbarDelegate
 
+    // The leading flexible space right-aligns New VM and the toggle against the
+    // sidebar's trailing edge; verified gap-free in the collapsed state, where
+    // the space compresses to nothing and the title sits right after the
+    // toggle.
+    //
+    // RATIONALE: New VM must stay visible when the sidebar collapses (as
+    // Mail's Compose does) — a hidden toolbar item still reserves its slot's
+    // width, which pushes the inline window title away from the leading
+    // controls and leaves a dead gap. Don't reintroduce collapse-driven
+    // hiding or removal here.
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [
             .flexibleSpace,
@@ -182,8 +190,80 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             Self.toolbarNewVM,
             .toggleSidebar,
             .sidebarTrackingSeparator,
+            .space,
             .flexibleSpace,
-        ] + toolbarManager.sharedItemIdentifiers
+        ] + toolbarManager.sharedItemIdentifiers + [
+            Self.toolbarClone,
+            Self.toolbarShowInFinder,
+            Self.toolbarMoveToTrash,
+        ]
+    }
+
+    /// Pins the sidebar region — toggle and tracking separator — the way Mail and
+    /// Notes do; everything else is user-customizable.
+    func toolbarImmovableItemIdentifiers(_ toolbar: NSToolbar) -> Set<NSToolbarItem.Identifier> {
+        [.toggleSidebar, .sidebarTrackingSeparator]
+    }
+
+    func toolbarWillAddItem(_ notification: Notification) {
+        // A palette-added item is born with factory-default labels and enablement
+        // (autovalidates is false on the shared items), and during will-add it is
+        // not yet in toolbar.items — refresh one runloop turn later so it
+        // immediately reflects VM state.
+        Task { @MainActor [weak self] in
+            self?.updateToolbarItems()
+        }
+    }
+
+    // MARK: - Customize Sheet Cleanup
+
+    func windowWillBeginSheet(_ notification: Notification) {
+        // The window hosts other sheets too (alerts, the creation wizard);
+        // remember whether this one is the customize palette so the recreate
+        // below only runs when the layout could actually have changed.
+        sheetIsCustomizationPalette = window?.toolbar?.customizationPaletteIsRunning ?? false
+    }
+
+    /// Recreates the app's custom toolbar items when the customize sheet closes.
+    ///
+    /// RATIONALE: AppKit bakes the section-specific glass treatment (flat in the
+    /// sidebar section, bordered capsule in the content section) into a bordered
+    /// item's view when the item is created, and a customization drag across the
+    /// sidebar tracking separator reuses the existing instance without firing
+    /// toolbarWillAddItem/toolbarDidRemoveItem (verified empirically) — so a
+    /// moved item keeps the wrong treatment until it is recreated. Removing and
+    /// reinserting at the same index routes through the delegate factory, giving
+    /// the fresh instance the treatment of the section it now lives in, while
+    /// leaving the autosaved layout untouched (same identifiers, same order).
+    /// Applies to every custom item (New VM and the manager's groups can all be
+    /// dragged across the separator); AppKit's own items handle this themselves.
+    /// Known limitation: a ⌘-drag move across the separator outside the sheet
+    /// has no AppKit hook, so its stale treatment persists until the next
+    /// sheet close or relaunch.
+    func windowDidEndSheet(_ notification: Notification) {
+        guard sheetIsCustomizationPalette, let toolbar = window?.toolbar else { return }
+        sheetIsCustomizationPalette = false
+
+        let customIdentifiers = Set(
+            [
+                Self.toolbarNewVM,
+                Self.toolbarClone,
+                Self.toolbarShowInFinder,
+                Self.toolbarMoveToTrash,
+            ] + toolbarManager.sharedItemIdentifiers)
+        let identifiers = toolbar.items.map(\.itemIdentifier)
+        for (index, identifier) in identifiers.enumerated() where customIdentifiers.contains(identifier) {
+            // The snapshot indices stay valid only while every removal is paired
+            // with a successful reinsert; bail out if the toolbar ever disagrees.
+            guard index < toolbar.items.count else {
+                Self.logger.fault("windowDidEndSheet: toolbar item count drifted during recreate")
+                assertionFailure("Toolbar item count drifted during recreate")
+                break
+            }
+            toolbar.removeItem(at: index)
+            toolbar.insertItem(withItemIdentifier: identifier, at: index)
+        }
+        updateToolbarItems()
     }
 
     func toolbar(
@@ -203,6 +283,30 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
                 symbol: "plus",
                 action: #selector(AppDelegate.newVM(_:)),
                 toolTip: "Create a new virtual machine"
+            )
+        case Self.toolbarClone:
+            return makeToolbarItem(
+                identifier: itemIdentifier,
+                label: "Clone",
+                symbol: "plus.square.on.square",
+                action: #selector(AppDelegate.cloneVM(_:)),
+                toolTip: "Clone the selected virtual machine"
+            )
+        case Self.toolbarShowInFinder:
+            return makeToolbarItem(
+                identifier: itemIdentifier,
+                label: "Show in Finder",
+                symbol: "magnifyingglass",
+                action: #selector(AppDelegate.showVMInFinder(_:)),
+                toolTip: "Reveal the virtual machine bundle in Finder"
+            )
+        case Self.toolbarMoveToTrash:
+            return makeToolbarItem(
+                identifier: itemIdentifier,
+                label: "Move to Trash",
+                symbol: "trash",
+                action: #selector(AppDelegate.deleteVM(_:)),
+                toolTip: "Move the selected virtual machine to the Trash"
             )
         default:
             return nil
@@ -231,21 +335,35 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 // MARK: - NSToolbarItemValidation
 
 extension MainWindowController: NSToolbarItemValidation {
+    /// The palette-only items mirror the menu bar's `validateMenuItem(_:)`
+    /// predicates for the same actions, so the two surfaces never disagree.
     func validateToolbarItem(_ item: NSToolbarItem) -> Bool {
-        guard let instance = viewModel.selectedInstance, !instance.isPreparing else {
-            return item.itemIdentifier == Self.toolbarNewVM
-        }
+        let instance = viewModel.selectedInstance
 
-        if item.itemIdentifier == Self.toolbarNewVM
-            || toolbarManager.sharedItemIdentifiers.contains(item.itemIdentifier)
-        {
-            // Group subitems are enabled/disabled directly in updateToolbarItems()
+        switch item.itemIdentifier {
+        case Self.toolbarNewVM:
+            // VM-independent; always available.
+            return true
+        case Self.toolbarShowInFinder:
+            // Enabled even while preparing — the bundle already exists on disk.
+            return instance != nil
+        case Self.toolbarClone:
+            guard let instance else { return false }
+            return instance.status.canEditSettings && !viewModel.hasPreparing
+        case Self.toolbarMoveToTrash:
+            return instance?.status.canEditSettings ?? false
+        default:
+            guard let instance, !instance.isPreparing else { return false }
+
+            if toolbarManager.sharedItemIdentifiers.contains(item.itemIdentifier) {
+                // Group subitems are enabled/disabled directly in updateToolbarItems()
+                return true
+            }
+
+            Self.logger.debug(
+                "validateToolbarItem: unrecognized identifier '\(item.itemIdentifier.rawValue, privacy: .public)'")
             return true
         }
-
-        Self.logger.debug(
-            "validateToolbarItem: unrecognized identifier '\(item.itemIdentifier.rawValue, privacy: .public)'")
-        return true
     }
 }
 

@@ -868,6 +868,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         editMenuItem.submenu = editMenu
         mainMenu.addItem(editMenuItem)
 
+        // View menu
+        // Nil-target standard NSWindow actions resolve against the key window's
+        // responder chain: AppKit retitles Show/Hide Toolbar, disables both items
+        // for windows without a toolbar, and disables Customize Toolbar… when the
+        // key window's toolbar doesn't allow customization. AppKit augments this
+        // menu automatically with window-tabbing items (Show Tab Bar / Show All
+        // Tabs); fullscreen and tiling commands live in the AppKit-populated
+        // section of the Window menu, separate from the VM menu's "Fullscreen
+        // Display" (⇧⌘F), which targets the guest display rather than the key
+        // window.
+        let viewMenuItem = NSMenuItem()
+        let viewMenu = NSMenu(title: "View")
+        let toggleToolbarItem = viewMenu.addItem(
+            withTitle: "Show Toolbar",
+            action: #selector(NSWindow.toggleToolbarShown(_:)),
+            keyEquivalent: "t"
+        )
+        toggleToolbarItem.keyEquivalentModifierMask = [.command, .option]
+        viewMenu.addItem(
+            withTitle: "Customize Toolbar…",
+            action: #selector(NSWindow.runToolbarCustomizationPalette(_:)),
+            keyEquivalent: ""
+        )
+        viewMenuItem.submenu = viewMenu
+        mainMenu.addItem(viewMenuItem)
+
         // Virtual Machine menu
         let vmMenuItem = NSMenuItem()
         let vmMenu = NSMenu(title: "Virtual Machine")

@@ -33,7 +33,10 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
             configuration: .init(
                 lifecycleID: NSToolbarItem.Identifier("displayLifecycle"),
                 saveStateID: NSToolbarItem.Identifier("displaySaveState"),
-                clipboardID: nil,
+                // Targets this window's VM: the nil-target showClipboard action
+                // resolves through AppDelegate.activeInstance, which prefers the
+                // key display window's instance over the sidebar selection.
+                clipboardID: NSToolbarItem.Identifier("displayClipboard"),
                 displayID: NSToolbarItem.Identifier("displayDisplay"),
                 settingsToggleID: nil,
                 checksPreparing: false,
@@ -68,9 +71,19 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         window.delegate = self
         window.setFrameAutosaveName("VMDisplay-\(instance.instanceID)")
 
-        let toolbar = NSToolbar(identifier: "VMDisplayToolbar-\(instance.instanceID)")
+        // RATIONALE: one shared toolbar identifier for every VM's display window
+        // (unlike the per-VM frame autosave name above, which is intentionally
+        // per-VM) — AppKit synchronizes same-identifier toolbars, so a customized
+        // layout applies to all display windows and persists as a single
+        // configuration, the way Finder windows share theirs.
+        let toolbar = NSToolbar(identifier: "KernovaVMDisplayToolbar")
         toolbar.delegate = self
+        // First-run default; the autosaved configuration (restored when the
+        // toolbar is attached to the window) overrides this, so all properties
+        // must be set before the attach below.
         toolbar.displayMode = .iconOnly
+        toolbar.allowsUserCustomization = true
+        toolbar.autosavesConfiguration = true
         window.toolbar = toolbar
         window.toolbarStyle = .unified
     }
@@ -100,20 +113,31 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         }
         instanceObservation?.cancel()
         instanceObservation = nil
-        window?.toolbar?.isVisible = true
         instance.displayMode = .inline
+    }
+
+    func window(
+        _ window: NSWindow,
+        willUseFullScreenPresentationOptions proposedOptions: NSApplication.PresentationOptions
+    ) -> NSApplication.PresentationOptions {
+        // RATIONALE: .autoHideToolbar replaces the manual toolbar?.isVisible
+        // toggling this controller used to do on fullscreen enter/exit, which
+        // contaminated the autosaved toolbar configuration (quitting while
+        // fullscreen persisted "hidden"). The toolbar now slides in with the menu
+        // bar on hover, keeping lifecycle controls reachable in fullscreen.
+        // .autoHideToolbar requires .autoHideMenuBar, which requires .autoHideDock
+        // (both are the system fullscreen defaults anyway).
+        [.fullScreen, .autoHideMenuBar, .autoHideDock, .autoHideToolbar]
     }
 
     func windowDidEnterFullScreen(_ notification: Notification) {
         instance.displayMode = .fullscreen
-        window?.toolbar?.isVisible = false
         onUpdateConfiguration { $0.displayPreference = .fullscreen }
     }
 
     func windowDidExitFullScreen(_ notification: Notification) {
         guard instance.displayMode == .fullscreen else { return }
         instance.displayMode = .popOut
-        window?.toolbar?.isVisible = true
         // Only update the persisted preference for user-initiated exits.
         // During programmatic close (VM stopped/errored/cold-paused), the
         // preference should remain .fullscreen so it restores correctly
@@ -133,6 +157,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
                 _ = self.instance.status
                 _ = self.instance.virtualMachine
                 _ = self.instance.displayMode
+                _ = self.instance.configuration.clipboardSharingEnabled
             },
             apply: { [weak self] in
                 guard let self else { return }
@@ -172,7 +197,17 @@ extension VMDisplayWindowController: NSToolbarDelegate {
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.flexibleSpace] + toolbarManager.sharedItemIdentifiers
+        [.space, .flexibleSpace] + toolbarManager.sharedItemIdentifiers
+    }
+
+    func toolbarWillAddItem(_ notification: Notification) {
+        // A palette-added item is born with factory-default labels and enablement
+        // (autovalidates is false on the shared items), and during will-add it is
+        // not yet in toolbar.items — refresh one runloop turn later so it
+        // immediately reflects VM state.
+        Task { @MainActor [weak self] in
+            self?.updateToolbarItems()
+        }
     }
 
     func toolbar(

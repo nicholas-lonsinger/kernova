@@ -39,8 +39,14 @@ struct VMToolbarManagerTests {
     }
 
     /// Creates an NSToolbar attached to a window so `toolbar.items` is populated via delegate callbacks.
-    private func makeToolbar(manager: VMToolbarManager) -> (NSToolbar, NSWindow, ToolbarTestDelegate) {
-        let delegate = ToolbarTestDelegate(manager: manager)
+    ///
+    /// Pass `defaultItems` to populate only a subset of the manager's items, simulating a
+    /// user-customized layout.
+    private func makeToolbar(
+        manager: VMToolbarManager,
+        defaultItems: [NSToolbarItem.Identifier]? = nil
+    ) -> (NSToolbar, NSWindow, ToolbarTestDelegate) {
+        let delegate = ToolbarTestDelegate(manager: manager, defaultItems: defaultItems)
         let toolbar = NSToolbar(identifier: "test-\(UUID().uuidString)")
         toolbar.delegate = delegate
         let window = NSWindow(
@@ -429,6 +435,43 @@ struct VMToolbarManagerTests {
         let item = toolbar.items.first { $0.itemIdentifier.rawValue == "testSettingsToggle" }
         #expect(item?.isEnabled == false)
     }
+
+    @Test("Settings toggle has a stable palette label")
+    func settingsTogglePaletteLabel() {
+        let manager = makeManager()
+        let item = manager.makeToolbarItem(for: NSToolbarItem.Identifier("testSettingsToggle"))
+        #expect(item?.paletteLabel == "Settings")
+    }
+
+    // MARK: - User-Customized Layouts
+
+    @Test("updateToolbarItems tolerates a toolbar with no shared items")
+    func updateWithAllItemsRemoved() {
+        let instance = makeInstance(status: .running)
+        let manager = makeManager(instance: instance)
+        let (toolbar, _, _) = makeToolbar(manager: manager, defaultItems: [])
+
+        manager.updateToolbarItems(in: toolbar)
+
+        #expect(toolbar.items.isEmpty)
+    }
+
+    @Test("updateToolbarItems still updates present items when others were removed")
+    func updateWithPartialItemSet() {
+        let instance = makeInstance(status: .running)
+        let manager = makeManager(instance: instance)
+        let (toolbar, _, _) = makeToolbar(
+            manager: manager,
+            defaultItems: [NSToolbarItem.Identifier("testLifecycle")]
+        )
+
+        manager.updateToolbarItems(in: toolbar)
+
+        let lifecycle = toolbar.items.first { $0.itemIdentifier.rawValue == "testLifecycle" } as? NSToolbarItemGroup
+        #expect(toolbar.items.count == 1)
+        #expect(lifecycle?.subitems[1].isEnabled == true)  // pause (running)
+        #expect(lifecycle?.subitems[2].isEnabled == true)  // stop (running)
+    }
 }
 
 // MARK: - Test Helper
@@ -437,13 +480,16 @@ struct VMToolbarManagerTests {
 @MainActor
 private final class ToolbarTestDelegate: NSObject, NSToolbarDelegate {
     let manager: VMToolbarManager
+    /// When non-nil, overrides the default item set (simulates a user-customized layout).
+    let defaultItems: [NSToolbarItem.Identifier]?
 
-    init(manager: VMToolbarManager) {
+    init(manager: VMToolbarManager, defaultItems: [NSToolbarItem.Identifier]? = nil) {
         self.manager = manager
+        self.defaultItems = defaultItems
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        manager.sharedItemIdentifiers
+        defaultItems ?? manager.sharedItemIdentifiers
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
