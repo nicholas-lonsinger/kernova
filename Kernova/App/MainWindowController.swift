@@ -238,6 +238,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     /// leaving the autosaved layout untouched (same identifiers, same order).
     /// Applies to every custom item (New VM and the manager's groups can all be
     /// dragged across the separator); AppKit's own items handle this themselves.
+    /// Known limitation: a ⌘-drag move across the separator outside the sheet
+    /// has no AppKit hook, so its stale treatment persists until the next
+    /// sheet close or relaunch.
     func windowDidEndSheet(_ notification: Notification) {
         guard sheetIsCustomizationPalette, let toolbar = window?.toolbar else { return }
         sheetIsCustomizationPalette = false
@@ -252,6 +255,13 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             ] + toolbarManager.sharedItemIdentifiers)
         let identifiers = toolbar.items.map(\.itemIdentifier)
         for (index, identifier) in identifiers.enumerated() where customIdentifiers.contains(identifier) {
+            // The snapshot indices stay valid only while every removal is paired
+            // with a successful reinsert; bail out if the toolbar ever disagrees.
+            guard index < toolbar.items.count else {
+                Self.logger.fault("windowDidEndSheet: toolbar item count drifted during recreate")
+                assertionFailure("Toolbar item count drifted during recreate")
+                break
+            }
             toolbar.removeItem(at: index)
             toolbar.insertItem(withItemIdentifier: identifier, at: index)
         }
