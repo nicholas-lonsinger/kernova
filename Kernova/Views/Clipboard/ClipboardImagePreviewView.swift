@@ -25,18 +25,25 @@ final class ClipboardImagePreviewView: NSView {
         super.init(frame: .zero)
         wantsLayer = true
 
+        // The preview must never dictate the window's size: NSImageView's
+        // intrinsic size is the (thumbnail) image size, and required
+        // compression resistance would force the window to grow to fit a
+        // large paste through Auto Layout. Floor the priorities and pin the
+        // image view to the container instead — `scaleProportionallyDown`
+        // then aspect-fits the displayed image into whatever space the
+        // window currently has (and never upscales).
+        imageView.setContentCompressionResistancePriority(.init(1), for: .horizontal)
+        imageView.setContentCompressionResistancePriority(.init(1), for: .vertical)
+        imageView.setContentHuggingPriority(.init(1), for: .horizontal)
+        imageView.setContentHuggingPriority(.init(1), for: .vertical)
+
         imageView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(imageView)
         NSLayoutConstraint.activate([
-            imageView.centerXAnchor.constraint(equalTo: centerXAnchor),
-            imageView.centerYAnchor.constraint(equalTo: centerYAnchor),
-            imageView.leadingAnchor.constraint(
-                greaterThanOrEqualTo: leadingAnchor, constant: Spacing.medium),
-            imageView.trailingAnchor.constraint(
-                lessThanOrEqualTo: trailingAnchor, constant: -Spacing.medium),
-            imageView.topAnchor.constraint(greaterThanOrEqualTo: topAnchor, constant: Spacing.medium),
-            imageView.bottomAnchor.constraint(
-                lessThanOrEqualTo: bottomAnchor, constant: -Spacing.medium),
+            imageView.topAnchor.constraint(equalTo: topAnchor, constant: Spacing.medium),
+            imageView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Spacing.medium),
+            imageView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Spacing.medium),
+            imageView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Spacing.medium),
         ])
     }
 

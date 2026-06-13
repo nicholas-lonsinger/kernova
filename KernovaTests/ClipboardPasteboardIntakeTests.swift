@@ -230,6 +230,35 @@ struct ClipboardPasteboardIntakeTests {
         }
     }
 
+    @Test("read(fileAt:) expands an image file directly — the promise-receipt path")
+    func directFileReadImage() throws {
+        let png = try makePNG()
+        let url = try makeTempFile(name: "promised.png", contents: png)
+
+        guard
+            case .content(let content, _) = ClipboardPasteboardIntake.read(
+                fileAt: url, allowsBinary: true)
+        else {
+            Issue.record("Expected content")
+            return
+        }
+        #expect(content.representations.count == 1)
+        #expect(content.representations[0].data == png)
+    }
+
+    @Test("read(fileAt:) rejects an oversized file before reading it")
+    func directFileReadOversizedRejected() throws {
+        let url = try makeTempFile(
+            name: "huge.png",
+            contents: Data(count: ClipboardSnapshotPolicy.maxRepresentationByteCount + 1))
+
+        guard case .rejected = ClipboardPasteboardIntake.read(fileAt: url, allowsBinary: true)
+        else {
+            Issue.record("Expected rejection")
+            return
+        }
+    }
+
     @Test("dragged image file on a text-only transport is rejected")
     func imageFileTextOnlyRejected() throws {
         let url = try makeTempFile(name: "image.png", contents: try makePNG())

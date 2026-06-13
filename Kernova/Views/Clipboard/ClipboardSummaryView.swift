@@ -25,6 +25,8 @@ final class ClipboardSummaryView: NSView {
         headline.textColor = .secondaryLabelColor
         headline.alignment = .center
         headline.lineBreakMode = .byTruncatingMiddle
+        // Truncate rather than dictate window width through Auto Layout.
+        headline.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         self.headlineLabel = headline
 
         let rowsStack = NSStackView()
@@ -73,6 +75,7 @@ final class ClipboardSummaryView: NSView {
             label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
             label.textColor = .tertiaryLabelColor
             label.lineBreakMode = .byTruncatingMiddle
+            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             rowsStack.addArrangedSubview(label)
         }
     }

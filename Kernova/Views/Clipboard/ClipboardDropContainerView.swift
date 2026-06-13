@@ -10,18 +10,21 @@ import AppKit
 final class ClipboardDropContainerView: NSView {
     /// Pasteboard types that light up the drop highlight.
     ///
-    /// Anything the intake path can use — files, images, rich text, plain
-    /// text.
-    static let acceptedDragTypes: [NSPasteboard.PasteboardType] = [
-        .fileURL, .png, .tiff, .pdf, .rtf, .html, .string,
-    ]
+    /// Anything the intake path can use — files, file *promises* (what the
+    /// screenshot thumbnail, Photos, and browsers drag), images, rich text,
+    /// plain text. Promise types must be registered explicitly or
+    /// promise-only drags never even reach `draggingEntered`.
+    static let acceptedDragTypes: [NSPasteboard.PasteboardType] =
+        [.fileURL, .png, .tiff, .pdf, .rtf, .html, .string]
+        + NSFilePromiseReceiver.readableDraggedTypes.map(NSPasteboard.PasteboardType.init(_:))
 
     /// Whether a drop would currently be accepted (e.g. `false` while the
     /// clipboard service is not connected).
     var canAcceptDrop: () -> Bool = { false }
 
-    /// Handles a performed drop; returns `true` when the content was taken.
-    var onDrop: (NSPasteboard) -> Bool = { _ in false }
+    /// Handles a performed drop; returns `true` when the content was taken
+    /// (or its asynchronous receipt began, for file promises).
+    var onDrop: (NSDraggingInfo) -> Bool = { _ in false }
 
     private var isDropTargeted = false {
         didSet { applyHighlight() }
@@ -63,7 +66,7 @@ final class ClipboardDropContainerView: NSView {
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         isDropTargeted = false
-        return onDrop(sender.draggingPasteboard)
+        return onDrop(sender)
     }
 
     // MARK: - Highlight

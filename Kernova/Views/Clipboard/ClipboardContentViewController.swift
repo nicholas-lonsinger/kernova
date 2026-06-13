@@ -61,6 +61,10 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
     private var serviceObservation: ObservationLoop?
 
+    /// Queue handed to `NSFilePromiseReceiver` for writing promised files;
+    /// the completion hops back to the main actor before touching state.
+    private let promiseQueue = OperationQueue()
+
     init(instance: VMInstance, viewModel: VMLibraryViewModel) {
         self.instance = instance
         self.viewModel = viewModel
@@ -135,8 +139,8 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         container.canAcceptDrop = { [weak self] in
             self?.instance.clipboardService != nil
         }
-        container.onDrop = { [weak self] pasteboard in
-            self?.takeIn(pasteboard: pasteboard) ?? false
+        container.onDrop = { [weak self] draggingInfo in
+            self?.handleDrop(draggingInfo) ?? false
         }
 
         // All three content views are installed once and toggled via
@@ -370,11 +374,20 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     /// immediately, unlike typed edits which send on window blur.
     private func takeIn(pasteboard: NSPasteboard) -> Bool {
         guard let service = instance.clipboardService else { return false }
+        return apply(
+            intake: ClipboardPasteboardIntake.read(
+                from: pasteboard,
+                allowsBinary: service.supportsBinaryRepresentations
+            )
+        )
+    }
 
-        switch ClipboardPasteboardIntake.read(
-            from: pasteboard,
-            allowsBinary: service.supportsBinaryRepresentations
-        ) {
+    /// Commits an intake result to the buffer (and the guest) or surfaces
+    /// the rejection.
+    private func apply(intake: ClipboardIntakeResult) -> Bool {
+        guard let service = instance.clipboardService else { return false }
+
+        switch intake {
         case .content(let content, let note):
             service.clipboardContent = content
             service.grabIfChanged()
@@ -389,6 +402,67 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             commandBar.showTransientMessage(message, style: .warning)
             Self.logger.info("Pasteboard intake rejected: \(message, privacy: .public)")
             return false
+        }
+    }
+
+    // MARK: - Drag-and-drop
+
+    /// Routes a performed drop by what the dragging pasteboard actually
+    /// carries: a real file URL or regular content goes through the normal
+    /// intake; a file *promise* (screenshot thumbnail, Photos, browsers —
+    /// where the only directly-readable representation is often just a URL
+    /// string) is received asynchronously and then fed through the same
+    /// file intake.
+    private func handleDrop(_ draggingInfo: NSDraggingInfo) -> Bool {
+        let pasteboard = draggingInfo.draggingPasteboard
+
+        if let item = pasteboard.pasteboardItems?.first, item.types.contains(.fileURL) {
+            return takeIn(pasteboard: pasteboard)
+        }
+        if let receiver = pasteboard.readObjects(forClasses: [NSFilePromiseReceiver.self])?
+            .compactMap({ $0 as? NSFilePromiseReceiver }).first
+        {
+            receivePromisedFile(receiver)
+            return true
+        }
+        return takeIn(pasteboard: pasteboard)
+    }
+
+    /// Receives a promised file into a scratch directory, runs it through
+    /// the shared file intake, and cleans the scratch copy up (the buffer
+    /// keeps the bytes, not the file).
+    private func receivePromisedFile(_ receiver: NSFilePromiseReceiver) {
+        guard let service = instance.clipboardService else { return }
+        let allowsBinary = service.supportsBinaryRepresentations
+
+        commandBar.showTransientMessage("Receiving dropped file…", style: .info)
+
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("KernovaClipboardDrops-\(UUID().uuidString)", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+        } catch {
+            commandBar.showTransientMessage("Couldn't receive the dropped file", style: .error)
+            Self.logger.error(
+                "Failed to create promise scratch directory: \(error.localizedDescription, privacy: .public)"
+            )
+            return
+        }
+
+        receiver.receivePromisedFiles(atDestination: destination, options: [:], operationQueue: promiseQueue) {
+            url, error in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                defer { try? FileManager.default.removeItem(at: destination) }
+                if let error {
+                    self.commandBar.showTransientMessage("Couldn't receive the dropped file", style: .error)
+                    Self.logger.error(
+                        "File promise receipt failed: \(error.localizedDescription, privacy: .public)"
+                    )
+                    return
+                }
+                _ = self.apply(intake: ClipboardPasteboardIntake.read(fileAt: url, allowsBinary: allowsBinary))
+            }
         }
     }
 

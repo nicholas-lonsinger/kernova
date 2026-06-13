@@ -43,7 +43,7 @@ enum ClipboardPasteboardIntake {
             let urlString = item.string(forType: .fileURL),
             let url = URL(string: urlString)
         {
-            return readFile(at: url, allowsBinary: allowsBinary)
+            return read(fileAt: url, allowsBinary: allowsBinary)
         }
 
         guard allowsBinary else {
@@ -96,7 +96,13 @@ enum ClipboardPasteboardIntake {
         return .content(outcome.content, note: note)
     }
 
-    private static func readFile(at url: URL, allowsBinary: Bool) -> ClipboardIntakeResult {
+    /// Reads a single file into clipboard content — the expansion used for
+    /// dragged/copied `public.file-url` items and for files received from
+    /// drag-and-drop file promises (screenshot thumbnail, Photos, browsers).
+    ///
+    /// Image files become one image representation, text files become text;
+    /// other types are rejected (generic file transfer is out of scope).
+    static func read(fileAt url: URL, allowsBinary: Bool) -> ClipboardIntakeResult {
         guard
             let values = try? url.resourceValues(forKeys: [.contentTypeKey, .fileSizeKey]),
             let type = values.contentType
