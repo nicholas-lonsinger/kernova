@@ -19,7 +19,10 @@ final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
         self.instance = instance
 
         let viewController = ClipboardContentViewController(instance: instance, viewModel: viewModel)
-        let initialSize = NSSize(width: 480, height: 300)
+        // Tall enough for the content area plus the command bar and the
+        // agent status bar; the min keeps both bars and a few text lines
+        // visible. Autosave name is unchanged so existing saved frames win.
+        let initialSize = NSSize(width: 480, height: 320)
 
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: initialSize),
@@ -33,7 +36,7 @@ final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
         // Re-establish the intended initial size before setFrameAutosaveName.
         window.setContentSize(initialSize)
         window.title = "\(instance.name) — Clipboard"
-        window.minSize = NSSize(width: 320, height: 250)
+        window.minSize = NSSize(width: 360, height: 280)
         super.init(window: window)
         window.delegate = self
         window.setFrameAutosaveName("Clipboard-\(instance.instanceID.uuidString)")

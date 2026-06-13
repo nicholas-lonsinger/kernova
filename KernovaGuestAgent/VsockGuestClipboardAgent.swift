@@ -11,12 +11,39 @@ import KernovaProtocol
 /// without touching the developer's real clipboard.
 protocol Pasteboard: AnyObject {
     var changeCount: Int { get }
-    func string(forType type: NSPasteboard.PasteboardType) -> String?
+
+    /// Types of the **first** pasteboard item, in fidelity order; empty when
+    /// the pasteboard holds nothing. The agent models one logical item — see
+    /// `ClipboardContent`.
+    var firstItemTypes: [NSPasteboard.PasteboardType] { get }
+
+    func data(forType type: NSPasteboard.PasteboardType) -> Data?
+
     @discardableResult func clearContents() -> Int
-    @discardableResult func setString(_ string: String, forType type: NSPasteboard.PasteboardType) -> Bool
+
+    /// Writes a single pasteboard item carrying every representation.
+    @discardableResult
+    func writeItem(representations: [(type: NSPasteboard.PasteboardType, data: Data)]) -> Bool
 }
 
-extension NSPasteboard: Pasteboard {}
+extension NSPasteboard: Pasteboard {
+    var firstItemTypes: [NSPasteboard.PasteboardType] {
+        pasteboardItems?.first?.types ?? []
+    }
+
+    // RATIONALE: NSPasteboard's own `data(forType:)` reads from "the first
+    // pasteboard item that contains the type". The agent only queries types
+    // reported by `firstItemTypes` (item 0), so the existing method satisfies
+    // the protocol requirement with the intended item-0 semantics.
+
+    func writeItem(representations: [(type: NSPasteboard.PasteboardType, data: Data)]) -> Bool {
+        let item = NSPasteboardItem()
+        for representation in representations {
+            item.setData(representation.data, forType: representation.type)
+        }
+        return writeObjects([item])
+    }
+}
 
 // MARK: - VsockGuestClipboardAgent
 
@@ -24,12 +51,18 @@ extension NSPasteboard: Pasteboard {}
 /// on `KernovaVsockPort.clipboard` (49152).
 ///
 /// Runs the offer/request/data state machine symmetrically:
-/// - Outbound: a 0.5 s `NSPasteboard` poll detects local clipboard changes
-///   and announces them via `ClipboardOffer` with a monotonically increasing
-///   generation, then answers the host's `ClipboardRequest` with the bytes.
+/// - Outbound: a 0.5 s `NSPasteboard` poll detects local clipboard changes,
+///   snapshots the first item's UTI-tagged representations (filtered and
+///   size-capped by `ClipboardSnapshotPolicy`), and announces them via
+///   `ClipboardOffer` with a monotonically increasing generation, then
+///   answers the host's `ClipboardRequest` with the bytes.
 /// - Inbound: when the host sends an offer the agent immediately requests
-///   the bytes; on `ClipboardData` it writes the text to the guest's
-///   `NSPasteboard.general`.
+///   the bytes; on `ClipboardData` it writes one pasteboard item carrying
+///   every representation to the guest's `NSPasteboard.general`.
+///
+/// Offers advertise UTIs plus — when a plain-text representation exists —
+/// the legacy `TEXT_UTF8` format, so hosts that predate UTI support still
+/// interop text-only (see `VsockClipboardService` for the mirror-image rule).
 ///
 /// Connection lifecycle (connect, retry on failure, EOF handling) is owned by
 /// `VsockGuestClient`. This class layers the protocol on top.
@@ -43,8 +76,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     private static let pollingInterval: TimeInterval = 0.5
 
     private static let errorCodeFormatUnavailable = "clipboard.format.unavailable"
-    private static let errorCodeEncodingFailure = "clipboard.transfer.encoding.failure"
     private static let errorCodeTransferFailure = "clipboard.transfer.send.failure"
+    private static let errorCodeTooLarge = "clipboard.transfer.too.large"
 
     private let client: VsockGuestClient
     private let pasteboard: Pasteboard
@@ -83,7 +116,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
 
     /// The most recent offer we sent the host; held until the host responds
     /// with a request (or supersedes it with a newer offer of our own).
-    private var pendingOutbound: (generation: UInt64, text: String)?
+    private var pendingOutbound: (generation: UInt64, content: ClipboardContent)?
 
     /// Last inbound offer we requested data for.
     ///
@@ -98,12 +131,14 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// content.
     private var lastPasteboardChangeCount: Int
 
-    /// The most recent text we sent or wrote.
+    /// Digest of the most recent content we sent or wrote.
     ///
     /// Suppresses re-offering after
     /// a host-driven write and avoids redundant offers when the user
-    /// touches the clipboard without changing the contents.
-    private var lastSeenText: String?
+    /// touches the clipboard without changing the contents. A 32-byte
+    /// digest rather than the content itself, so suppression state never
+    /// retains a second multi-megabyte copy.
+    private var lastSeenDigest: Data?
 
     private var pollingTimer: DispatchSourceTimer?
 
@@ -221,7 +256,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             // of prior offers. Clear the dedup state so the next poll
             // cycle re-announces the current clipboard rather than
             // assuming the host already has it.
-            self.lastSeenText = nil
+            self.lastSeenDigest = nil
             self.lastPasteboardChangeCount = -1
         }
         Self.logger.notice("Vsock clipboard connected to host")
@@ -280,12 +315,34 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         let currentCount = pasteboard.changeCount
         guard currentCount != lastPasteboardChangeCount else { return }
 
-        guard let text = pasteboard.string(forType: .string), !text.isEmpty else {
+        // Identity-based skips run before any data is read so transient
+        // markers and file references cost nothing per poll.
+        let raw: [(uti: String, data: Data)] = pasteboard.firstItemTypes.compactMap { type in
+            guard !ClipboardSnapshotPolicy.shouldSkipBeforeReading(uti: type.rawValue) else {
+                return nil
+            }
+            guard let data = pasteboard.data(forType: type) else { return nil }
+            return (uti: type.rawValue, data: data)
+        }
+        let outcome = ClipboardSnapshotPolicy.evaluate(raw)
+
+        if !outcome.skipped.isEmpty {
+            // Never a silent empty/partial snapshot — say what was dropped.
+            let summary = outcome.skipped
+                .map { "\($0.uti): \(String(describing: $0.reason))" }
+                .joined(separator: ", ")
+            Self.logger.notice(
+                "Clipboard snapshot skipped \(outcome.skipped.count, privacy: .public) representation(s): \(summary, privacy: .public)"
+            )
+        }
+
+        let content = outcome.content
+        guard !content.isEmpty else {
             lastPasteboardChangeCount = currentCount
             return
         }
-        // Don't echo back text we just wrote from the host.
-        guard text != lastSeenText else {
+        // Don't echo back content we just wrote from the host.
+        guard content.digest != lastSeenDigest else {
             lastPasteboardChangeCount = currentCount
             return
         }
@@ -296,7 +353,9 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         offer.protocolVersion = 1
         offer.clipboardOffer = Kernova_V1_ClipboardOffer.with {
             $0.generation = generation
-            $0.formats = [.textUtf8]
+            $0.utis = content.representations.map(\.uti)
+            // Legacy field: lets pre-UTI hosts pull the text representation.
+            $0.formats = content.text != nil ? [.textUtf8] : []
         }
         do {
             try channel.send(offer)
@@ -304,16 +363,16 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             // which the inbound side uses as a "no pending offer" sentinel.
             // UInt64.max is unreachable in practice.
             nextLocalGeneration += 1
-            pendingOutbound = (generation: generation, text: text)
-            lastSeenText = text
+            pendingOutbound = (generation: generation, content: content)
+            lastSeenDigest = content.digest
             lastPasteboardChangeCount = currentCount
             Self.logger.notice(
-                "Sent clipboard offer (gen=\(generation, privacy: .public), \(text.utf8.count, privacy: .public) bytes)"
+                "Sent clipboard offer (gen=\(generation, privacy: .public), \(content.representations.count, privacy: .public) reps, \(content.totalByteCount, privacy: .public) bytes)"
             )
         } catch {
-            // State left untouched: lastSeenText still differs from `text`,
-            // changeCount still old, generation still unconsumed — the next
-            // poll cycle will re-attempt the same offer.
+            // State left untouched: lastSeenDigest still differs from the
+            // content's digest, changeCount still old, generation still
+            // unconsumed — the next poll cycle will re-attempt the same offer.
             Self.logger.warning(
                 "Failed to send clipboard offer: \(error.localizedDescription, privacy: .public)"
             )
@@ -348,18 +407,29 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     }
 
     private func handleOffer(_ offer: Kernova_V1_ClipboardOffer, channel: VsockChannel) {
-        guard offer.formats.contains(.textUtf8) else {
+        var request = Frame()
+        request.protocolVersion = 1
+
+        if !offer.utis.isEmpty {
+            // UTI-capable host: pull every advertised representation (the
+            // sender already applied ClipboardSnapshotPolicy's caps).
+            request.clipboardRequest = Kernova_V1_ClipboardRequest.with {
+                $0.generation = offer.generation
+                $0.utis = offer.utis
+            }
+        } else if offer.formats.contains(.textUtf8) {
+            // Legacy host: text is all it can serve.
+            request.clipboardRequest = Kernova_V1_ClipboardRequest.with {
+                $0.generation = offer.generation
+                $0.format = .textUtf8
+            }
+        } else {
             Self.logger.debug(
-                "Host offer omits TEXT_UTF8 (formats=\(offer.formats.map(\.rawValue), privacy: .public))"
+                "Host offer carries no usable format (formats=\(offer.formats.map(\.rawValue), privacy: .public))"
             )
             return
         }
-        var request = Frame()
-        request.protocolVersion = 1
-        request.clipboardRequest = Kernova_V1_ClipboardRequest.with {
-            $0.generation = offer.generation
-            $0.format = .textUtf8
-        }
+
         do {
             try channel.send(request)
             pendingInboundGeneration = offer.generation
@@ -380,57 +450,104 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             )
             return
         }
-        guard request.format == .textUtf8 else {
-            Self.logger.warning(
-                "Unsupported clipboard format requested gen=\(request.generation, privacy: .public) format=\(request.format.rawValue, privacy: .public)"
-            )
-            sendErrorFrame(
-                on: channel,
-                code: Self.errorCodeFormatUnavailable,
-                message:
-                    "Guest agent only carries TEXT_UTF8 (gen=\(request.generation), requested format=\(request.format.rawValue))",
-                inReplyTo: "clipboard.request"
-            )
-            return
-        }
-        guard let bytes = pending.text.data(using: .utf8) else {
-            Self.logger.warning(
-                "Failed to encode clipboard text as UTF-8 gen=\(pending.generation, privacy: .public) chars=\(pending.text.count, privacy: .public)"
-            )
-            sendErrorFrame(
-                on: channel,
-                code: Self.errorCodeEncodingFailure,
-                message:
-                    "Guest agent could not encode \(pending.text.count) characters as UTF-8 (gen=\(pending.generation))",
-                inReplyTo: "clipboard.request"
-            )
-            return
-        }
-
         var dataFrame = Frame()
         dataFrame.protocolVersion = 1
-        dataFrame.clipboardData = Kernova_V1_ClipboardData.with {
-            $0.generation = pending.generation
-            $0.format = .textUtf8
-            $0.data = bytes
+
+        if !request.utis.isEmpty {
+            let requested = Set(request.utis)
+            let representations = pending.content.representations.filter {
+                requested.contains($0.uti)
+            }
+            guard !representations.isEmpty else {
+                Self.logger.warning(
+                    "Requested UTIs not in pending offer gen=\(request.generation, privacy: .public)"
+                )
+                sendErrorFrame(
+                    on: channel,
+                    code: Self.errorCodeFormatUnavailable,
+                    message:
+                        "Guest agent has none of the requested representations (gen=\(request.generation))",
+                    inReplyTo: "clipboard.request"
+                )
+                return
+            }
+            dataFrame.clipboardData = Kernova_V1_ClipboardData.with {
+                $0.generation = pending.generation
+                $0.representations = representations.map { representation in
+                    Kernova_V1_ClipboardRepresentation.with {
+                        $0.uti = representation.uti
+                        $0.data = representation.data
+                    }
+                }
+            }
+        } else {
+            guard request.format == .textUtf8 else {
+                Self.logger.warning(
+                    "Unsupported clipboard format requested gen=\(request.generation, privacy: .public) format=\(request.format.rawValue, privacy: .public)"
+                )
+                sendErrorFrame(
+                    on: channel,
+                    code: Self.errorCodeFormatUnavailable,
+                    message:
+                        "Guest agent only carries TEXT_UTF8 on the legacy path (gen=\(request.generation), requested format=\(request.format.rawValue))",
+                    inReplyTo: "clipboard.request"
+                )
+                return
+            }
+            guard let text = pending.content.text else {
+                Self.logger.warning(
+                    "Legacy text request but pending content has no text representation gen=\(pending.generation, privacy: .public)"
+                )
+                sendErrorFrame(
+                    on: channel,
+                    code: Self.errorCodeFormatUnavailable,
+                    message:
+                        "Guest agent content has no text representation (gen=\(pending.generation))",
+                    inReplyTo: "clipboard.request"
+                )
+                return
+            }
+            dataFrame.clipboardData = Kernova_V1_ClipboardData.with {
+                $0.generation = pending.generation
+                $0.format = .textUtf8
+                $0.data = Data(text.utf8)
+            }
         }
+
+        let byteCount = pending.content.totalByteCount
         do {
             try channel.send(dataFrame)
             Self.logger.debug(
-                "Sent clipboard data (gen=\(pending.generation, privacy: .public), \(bytes.count, privacy: .public) bytes)"
+                "Sent clipboard data (gen=\(pending.generation, privacy: .public), \(byteCount, privacy: .public) bytes)"
+            )
+        } catch VsockFrameError.frameTooLarge(let declaredSize, let maxAllowed) {
+            // Encoding failed before any bytes hit the wire; the channel is
+            // still healthy. ClipboardSnapshotPolicy's caps make this
+            // unreachable for poll-produced content; it exists so a cap
+            // regression degrades to an error message instead of a silent
+            // paste failure.
+            Self.logger.error(
+                "Clipboard data exceeds frame limit gen=\(pending.generation, privacy: .public) frame=\(declaredSize, privacy: .public) max=\(maxAllowed, privacy: .public)"
+            )
+            sendErrorFrame(
+                on: channel,
+                code: Self.errorCodeTooLarge,
+                message:
+                    "Guest clipboard content exceeds the transfer limit (gen=\(pending.generation), \(byteCount) bytes)",
+                inReplyTo: "clipboard.request"
             )
         } catch {
             // Logged at .error: this failure is user-visible (paste produces nothing).
             // Include gen + size so post-mortems can pair this with the peer's "request sent" log.
             Self.logger.error(
-                "Failed to send clipboard data gen=\(pending.generation, privacy: .public) bytes=\(bytes.count, privacy: .public): \(error.localizedDescription, privacy: .public)"
+                "Failed to send clipboard data gen=\(pending.generation, privacy: .public) bytes=\(byteCount, privacy: .public): \(error.localizedDescription, privacy: .public)"
             )
             // If the channel is dead, the peer will learn via EOF — no further fallback needed.
             sendErrorFrame(
                 on: channel,
                 code: Self.errorCodeTransferFailure,
                 message:
-                    "Guest agent failed to deliver clipboard data (gen=\(pending.generation), \(bytes.count) bytes): \(error.localizedDescription)",
+                    "Guest agent failed to deliver clipboard data (gen=\(pending.generation), \(byteCount) bytes): \(error.localizedDescription)",
                 inReplyTo: "clipboard.request"
             )
         }
@@ -443,28 +560,47 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             )
             return
         }
-        guard data.format == .textUtf8 else { return }
-        guard let text = String(data: data.data, encoding: .utf8) else {
-            Self.logger.warning(
-                "Host clipboard data not valid UTF-8 (\(data.data.count, privacy: .public) bytes)"
+        let content: ClipboardContent
+        if !data.representations.isEmpty {
+            content = ClipboardContent(protoRepresentations: data.representations)
+        } else if data.format == .textUtf8 {
+            guard let text = String(data: data.data, encoding: .utf8) else {
+                Self.logger.warning(
+                    "Host clipboard data not valid UTF-8 (\(data.data.count, privacy: .public) bytes)"
+                )
+                return
+            }
+            content = ClipboardContent(text: text)
+        } else {
+            Self.logger.debug(
+                "Host clipboard data carries no usable payload (format=\(data.format.rawValue, privacy: .public))"
             )
             return
         }
+        guard !content.isEmpty else { return }
 
         pasteboard.clearContents()
-        guard pasteboard.setString(text, forType: .string) else {
+        let written = pasteboard.writeItem(
+            representations: content.representations.map { representation in
+                (
+                    type: NSPasteboard.PasteboardType(rawValue: representation.uti),
+                    data: representation.data
+                )
+            }
+        )
+        guard written else {
             Self.logger.warning(
-                "Failed to write host clipboard to pasteboard (gen=\(data.generation, privacy: .public), \(text.count, privacy: .public) chars). Echo-suppression state preserved; next user clipboard change will offer normally."
+                "Failed to write host clipboard to pasteboard (gen=\(data.generation, privacy: .public), \(content.totalByteCount, privacy: .public) bytes). Echo-suppression state preserved; next user clipboard change will offer normally."
             )
             return
         }
         // Record so the polling timer doesn't echo this back to the host
         // on the next change-count tick.
         lastPasteboardChangeCount = pasteboard.changeCount
-        lastSeenText = text
+        lastSeenDigest = content.digest
         pendingInboundGeneration = nil
         Self.logger.notice(
-            "Wrote host clipboard to pasteboard (\(text.count, privacy: .public) chars)"
+            "Wrote host clipboard to pasteboard (\(content.representations.count, privacy: .public) reps, \(content.totalByteCount, privacy: .public) bytes)"
         )
     }
 

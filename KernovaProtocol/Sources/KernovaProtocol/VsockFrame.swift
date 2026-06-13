@@ -41,10 +41,15 @@ enum VsockFrame {
 }
 
 /// Errors thrown by the framing layer.
-enum VsockFrameError: Error, Sendable, Equatable {
+///
+/// Public because it escapes the module through `VsockChannel.send(_:)`:
+/// an oversized frame fails encoding *before* any bytes hit the wire (the
+/// channel stays open), and callers need to discriminate that case from a
+/// transport failure by type.
+public enum VsockFrameError: Error, Sendable, Equatable {
     /// A frame's declared payload size exceeds `VsockFrame.maxPayloadSize`.
-    /// The stream is unrecoverable at this point and the caller should close
-    /// the connection.
+    /// On the decode side the stream is unrecoverable at this point and the
+    /// caller should close the connection.
     case frameTooLarge(declaredSize: Int, maxAllowed: Int)
 }
 

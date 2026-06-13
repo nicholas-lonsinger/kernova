@@ -1,4 +1,5 @@
 import Foundation
+import KernovaProtocol
 import os
 
 /// Manages SPICE clipboard sharing between the host and a single guest VM.
@@ -19,16 +20,28 @@ import os
 final class SpiceClipboardService: ClipboardServicing {
     // MARK: - Observable State
 
-    /// Unified clipboard text buffer shared between guest and host.
+    /// Unified clipboard buffer shared between guest and host.
     ///
     /// - Set by the guest agent when the guest copies text (via `handleClipboardData`)
-    /// - Editable by the user in the clipboard window's `TextEditor`
+    /// - Editable by the user in the clipboard window
     /// - Announced to the guest (via `CLIPBOARD_GRAB`) when the clipboard window loses
     ///   focus; the guest then requests the actual data via `CLIPBOARD_REQUEST`
-    var clipboardText: String = ""
+    ///
+    /// Only the UTF-8 text representation crosses this transport; content
+    /// without one makes `grabIfChanged()` a no-op (see the rich-format
+    /// follow-up to issue #112).
+    var clipboardContent: ClipboardContent = .empty
 
     /// `true` once the guest agent has completed the capabilities handshake.
     private(set) var isConnected: Bool = false
+
+    /// Always `nil` — the SPICE path keeps its log-only error handling.
+    ///
+    /// Computed (not stored) so it costs nothing.
+    var lastTransferIssue: ClipboardTransferIssue? { nil }
+
+    /// Text-only until the SPICE rich-format follow-up to issue #112.
+    var supportsBinaryRepresentations: Bool { false }
 
     /// SPICE agents (e.g. `spice-vdagent` on Linux) are user-installed and
     /// version-tracked by the guest's package manager — Kernova does not bundle
@@ -88,36 +101,44 @@ final class SpiceClipboardService: ClipboardServicing {
 
     // MARK: - Public API
 
-    /// Sends a `CLIPBOARD_GRAB` to the guest if `clipboardText` has been edited
-    /// since the last grab (or since the guest last sent us data).
+    /// Sends a `CLIPBOARD_GRAB` to the guest if the text representation of
+    /// `clipboardContent` was edited since the last grab (or since the guest
+    /// last sent us data).
     ///
     /// Called by `ClipboardWindowController` when the clipboard window loses focus.
     /// - **By-demand guests** (modern): the guest sends a `CLIPBOARD_REQUEST` when
-    ///   something pastes, and we respond with `clipboardText` at that point.
+    ///   something pastes, and we respond with the pending text at that point.
     /// - **Legacy guests**: we send `CLIPBOARD` data immediately after the GRAB.
     func grabIfChanged() {
         guard isConnected else { return }
-        guard !clipboardText.isEmpty else { return }
-        guard clipboardText != lastGrabbedText else { return }
+        guard let text = clipboardContent.text, !text.isEmpty else {
+            if !clipboardContent.isEmpty {
+                Self.logger.debug(
+                    "Clipboard content has no text representation — SPICE transport is text-only (issue #112 follow-up)"
+                )
+            }
+            return
+        }
+        guard text != lastGrabbedText else { return }
 
         let grabMessage = SpiceMessageBuilder.buildClipboardGrab(types: [.utf8Text])
         guard writeToGuest(grabMessage) else { return }
 
         // Only update state after successful write — otherwise a failed grab
-        // would permanently prevent retries (clipboardText == lastGrabbedText).
-        lastGrabbedText = clipboardText
-        pendingOutboundText = clipboardText
+        // would permanently prevent retries (text == lastGrabbedText).
+        lastGrabbedText = text
+        pendingOutboundText = text
 
         if !guestSupportsByDemand {
             // Legacy mode: guest won't send REQUEST, deliver data immediately.
             // Reset lastGrabbedText on failure so the next call retries.
-            if !sendClipboardText(clipboardText) {
+            if !sendClipboardText(text) {
                 lastGrabbedText = nil
             }
         }
 
         Self.logger.notice(
-            "Sent clipboard grab (\(self.clipboardText.utf8.count, privacy: .public) bytes pending, byDemand: \(self.guestSupportsByDemand, privacy: .public))"
+            "Sent clipboard grab (\(text.utf8.count, privacy: .public) bytes pending, byDemand: \(self.guestSupportsByDemand, privacy: .public))"
         )
     }
 
@@ -257,7 +278,7 @@ final class SpiceClipboardService: ClipboardServicing {
             return
         }
 
-        clipboardText = text
+        clipboardContent = ClipboardContent(text: text)
         lastGrabbedText = nil  // New text is from the guest, not us
         Self.logger.debug("Received guest clipboard text (\(text.count, privacy: .public) characters)")
     }

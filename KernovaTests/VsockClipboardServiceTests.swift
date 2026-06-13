@@ -85,6 +85,7 @@ struct VsockClipboardServiceTests {
         }
     }
 
+    /// Legacy-shaped offer: `formats` only, no `utis` — what a pre-UTI peer sends.
     private func makeOffer(generation: UInt64) -> Frame {
         var frame = Frame()
         frame.protocolVersion = 1
@@ -95,6 +96,18 @@ struct VsockClipboardServiceTests {
         return frame
     }
 
+    /// UTI-capable offer.
+    private func makeOffer(generation: UInt64, utis: [String]) -> Frame {
+        var frame = Frame()
+        frame.protocolVersion = 1
+        frame.clipboardOffer = Kernova_V1_ClipboardOffer.with {
+            $0.generation = generation
+            $0.utis = utis
+        }
+        return frame
+    }
+
+    /// Legacy-shaped data: `format` + `data`, no `representations`.
     private func makeData(generation: UInt64, text: String) -> Frame {
         var frame = Frame()
         frame.protocolVersion = 1
@@ -106,12 +119,42 @@ struct VsockClipboardServiceTests {
         return frame
     }
 
+    /// UTI-tagged data.
+    private func makeData(
+        generation: UInt64, representations: [(uti: String, data: Data)]
+    ) -> Frame {
+        var frame = Frame()
+        frame.protocolVersion = 1
+        frame.clipboardData = Kernova_V1_ClipboardData.with {
+            $0.generation = generation
+            $0.representations = representations.map { representation in
+                Kernova_V1_ClipboardRepresentation.with {
+                    $0.uti = representation.uti
+                    $0.data = representation.data
+                }
+            }
+        }
+        return frame
+    }
+
+    /// Legacy-shaped request: `format` only, no `utis` — what a pre-UTI peer sends.
     private func makeRequest(generation: UInt64) -> Frame {
         var frame = Frame()
         frame.protocolVersion = 1
         frame.clipboardRequest = Kernova_V1_ClipboardRequest.with {
             $0.generation = generation
             $0.format = .textUtf8
+        }
+        return frame
+    }
+
+    /// UTI-capable request.
+    private func makeRequest(generation: UInt64, utis: [String]) -> Frame {
+        var frame = Frame()
+        frame.protocolVersion = 1
+        frame.clipboardRequest = Kernova_V1_ClipboardRequest.with {
+            $0.generation = generation
+            $0.utis = utis
         }
         return frame
     }
@@ -133,7 +176,7 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        service.clipboardText = "first"
+        service.clipboardContent = ClipboardContent(text: "first")
         service.grabIfChanged()
 
         let received = try await nextFrame(from: guest)
@@ -171,7 +214,7 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        service.clipboardText = "first"
+        service.clipboardContent = ClipboardContent(text: "first")
         service.grabIfChanged()
         let firstOffer = try await nextFrame(from: guest)
         guard case .clipboardOffer(let offerA) = firstOffer.payload else {
@@ -179,8 +222,9 @@ struct VsockClipboardServiceTests {
             return
         }
         #expect(offerA.formats.contains(.textUtf8))
+        #expect(offerA.utis == [ClipboardContent.utf8TextUTI])
 
-        service.clipboardText = "second"
+        service.clipboardContent = ClipboardContent(text: "second")
         service.grabIfChanged()
         let secondOffer = try await nextFrame(from: guest)
         guard case .clipboardOffer(let offerB) = secondOffer.payload else {
@@ -213,7 +257,7 @@ struct VsockClipboardServiceTests {
         try await expectNoNewFrames(on: recorder, sinceCount: snapshot)
 
         // First non-empty text → exactly one offer.
-        service.clipboardText = "alpha"
+        service.clipboardContent = ClipboardContent(text: "alpha")
         service.grabIfChanged()
         try await waitForFrameCount(recorder, equals: snapshot + 1)
         let alphaFrame = recorder.frames[snapshot]
@@ -228,7 +272,7 @@ struct VsockClipboardServiceTests {
         try await expectNoNewFrames(on: recorder, sinceCount: snapshot)
 
         // Fresh text → another offer.
-        service.clipboardText = "beta"
+        service.clipboardContent = ClipboardContent(text: "beta")
         service.grabIfChanged()
         try await waitForFrameCount(recorder, equals: snapshot + 1)
         let betaFrame = recorder.frames[snapshot]
@@ -249,7 +293,7 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        service.clipboardText = "payload"
+        service.clipboardContent = ClipboardContent(text: "payload")
         service.grabIfChanged()
         let offerFrame = try await nextFrame(from: guest)
         guard case .clipboardOffer(let offer) = offerFrame.payload else {
@@ -279,7 +323,7 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        service.clipboardText = "payload"
+        service.clipboardContent = ClipboardContent(text: "payload")
         service.grabIfChanged()
         let offerFrame = try await nextFrame(from: guest)
         guard case .clipboardOffer(let offer) = offerFrame.payload else {
@@ -313,7 +357,7 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        service.clipboardText = "host content"
+        service.clipboardContent = ClipboardContent(text: "host content")
         service.grabIfChanged()
         let offerFrame = try await nextFrame(from: guest)
         guard case .clipboardOffer(let offer) = offerFrame.payload else {
@@ -355,7 +399,7 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        service.clipboardText = "host data"
+        service.clipboardContent = ClipboardContent(text: "host data")
         service.grabIfChanged()
         let offerFrame = try await nextFrame(from: guest)
         guard case .clipboardOffer(let offer) = offerFrame.payload else {
@@ -376,7 +420,7 @@ struct VsockClipboardServiceTests {
         #expect(service.isConnected, "isConnected should remain true — only stop() clears it")
     }
 
-    @Test("Inbound offer triggers a request and incoming data updates clipboardText")
+    @Test("Legacy inbound offer triggers a legacy request and incoming data updates clipboardContent")
     func inboundFlowPopulatesClipboard() async throws {
         let (guest, host) = try makePair()
         guest.start()
@@ -394,10 +438,14 @@ struct VsockClipboardServiceTests {
             return
         }
         #expect(req.generation == 42)
+        // A legacy offer must be answered with a legacy-shaped request so the
+        // pre-UTI peer understands it.
+        #expect(req.utis.isEmpty)
+        #expect(req.format == .textUtf8)
 
         try guest.send(makeData(generation: 42, text: "from guest"))
-        try await waitUntil { service.clipboardText == "from guest" }
-        #expect(service.clipboardText == "from guest")
+        try await waitUntil { service.clipboardContent.text == "from guest" }
+        #expect(service.clipboardContent.text == "from guest")
     }
 
     @Test("Frames with unsupported protocol version are dropped before payload dispatch")
@@ -512,7 +560,222 @@ struct VsockClipboardServiceTests {
         // Then deliver the real one.
         try guest.send(makeData(generation: 2, text: "fresh"))
 
-        try await waitUntil { service.clipboardText == "fresh" }
-        #expect(service.clipboardText == "fresh")
+        try await waitUntil { service.clipboardContent.text == "fresh" }
+        #expect(service.clipboardContent.text == "fresh")
+    }
+
+    // MARK: - UTI representations
+
+    @Test("Multi-representation grab offers ordered UTIs plus the legacy text format")
+    func multiRepGrabOffersUTIsAndLegacyFormat() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test")
+        service.start()
+        defer { service.stop() }
+
+        service.clipboardContent = ClipboardContent(representations: [
+            .init(uti: "public.rtf", data: Data("{\\rtf1}".utf8)),
+            .init(uti: ClipboardContent.utf8TextUTI, data: Data("plain".utf8)),
+        ])
+        service.grabIfChanged()
+
+        let frame = try await nextFrame(from: guest)
+        guard case .clipboardOffer(let offer) = frame.payload else {
+            Issue.record("Expected clipboardOffer, got \(String(describing: frame.payload))")
+            return
+        }
+        #expect(offer.utis == ["public.rtf", ClipboardContent.utf8TextUTI])
+        #expect(offer.formats == [.textUtf8])
+    }
+
+    @Test("Image-only grab offers UTIs without the legacy text format")
+    func imageOnlyGrabOmitsLegacyFormat() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test")
+        service.start()
+        defer { service.stop() }
+
+        service.clipboardContent = ClipboardContent(representations: [
+            .init(uti: "public.png", data: Data([0x89, 0x50, 0x4E, 0x47]))
+        ])
+        service.grabIfChanged()
+
+        let frame = try await nextFrame(from: guest)
+        guard case .clipboardOffer(let offer) = frame.payload else {
+            Issue.record("Expected clipboardOffer, got \(String(describing: frame.payload))")
+            return
+        }
+        #expect(offer.utis == ["public.png"])
+        #expect(offer.formats.isEmpty)
+    }
+
+    @Test("UTI request returns the requested representations in content order")
+    func utiRequestReturnsRepresentations() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test")
+        service.start()
+        defer { service.stop() }
+
+        let pngBytes = Data([0x89, 0x50, 0x4E, 0x47])
+        service.clipboardContent = ClipboardContent(representations: [
+            .init(uti: "public.rtf", data: Data("{\\rtf1}".utf8)),
+            .init(uti: ClipboardContent.utf8TextUTI, data: Data("plain".utf8)),
+            .init(uti: "public.png", data: pngBytes),
+        ])
+        service.grabIfChanged()
+
+        let offerFrame = try await nextFrame(from: guest)
+        guard case .clipboardOffer(let offer) = offerFrame.payload else {
+            Issue.record("Expected clipboardOffer, got \(String(describing: offerFrame.payload))")
+            return
+        }
+
+        // Request a subset, deliberately in reverse order — the reply must
+        // preserve *content* order, not request order.
+        try guest.send(makeRequest(generation: offer.generation, utis: ["public.png", "public.rtf"]))
+
+        let dataFrame = try await nextFrame(from: guest)
+        guard case .clipboardData(let data) = dataFrame.payload else {
+            Issue.record("Expected clipboardData, got \(String(describing: dataFrame.payload))")
+            return
+        }
+        #expect(data.generation == offer.generation)
+        #expect(data.representations.map(\.uti) == ["public.rtf", "public.png"])
+        #expect(data.representations.last?.data == pngBytes)
+        // The legacy pair stays empty on the UTI path.
+        #expect(data.data.isEmpty)
+    }
+
+    @Test("UTI-capable inbound offer is requested by UTIs and representations populate clipboardContent")
+    func utiInboundFlowPopulatesClipboard() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test")
+        service.start()
+        defer { service.stop() }
+
+        try guest.send(makeOffer(generation: 7, utis: ["public.png", ClipboardContent.utf8TextUTI]))
+        let request = try await nextFrame(from: guest)
+        guard case .clipboardRequest(let req) = request.payload else {
+            Issue.record("Expected clipboardRequest, got \(String(describing: request.payload))")
+            return
+        }
+        #expect(req.generation == 7)
+        #expect(req.utis == ["public.png", ClipboardContent.utf8TextUTI])
+
+        let pngBytes = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A])
+        try guest.send(
+            makeData(
+                generation: 7,
+                representations: [
+                    (uti: "public.png", data: pngBytes),
+                    (uti: ClipboardContent.utf8TextUTI, data: Data("caption".utf8)),
+                ]))
+
+        try await waitUntil { !service.clipboardContent.isEmpty }
+        #expect(
+            service.clipboardContent.representations.map(\.uti) == [
+                "public.png", ClipboardContent.utf8TextUTI,
+            ])
+        #expect(service.clipboardContent.representations.first?.data == pngBytes)
+        #expect(service.clipboardContent.text == "caption")
+    }
+
+    @Test("Inbound data resets dedup so re-grabbing the same content re-offers")
+    func inboundDataResetsDedup() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test")
+        service.start()
+        defer { service.stop() }
+
+        try guest.send(makeOffer(generation: 1))
+        _ = try await nextFrame(from: guest)  // request for gen=1
+        try guest.send(makeData(generation: 1, text: "round-trip"))
+        try await waitUntil { service.clipboardContent.text == "round-trip" }
+
+        // Content unchanged since the inbound update; a grab must still offer
+        // (otherwise round-tripped content silently stops syncing back).
+        service.grabIfChanged()
+        let frame = try await nextFrame(from: guest)
+        guard case .clipboardOffer = frame.payload else {
+            Issue.record("Expected clipboardOffer after round-trip, got \(String(describing: frame.payload))")
+            return
+        }
+    }
+
+    @Test("Oversized content refuses the offer and surfaces a contentTooLarge issue")
+    func oversizedContentSurfacesIssue() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test")
+        service.start()
+        defer { service.stop() }
+
+        let recorder = FrameRecorder(channel: guest)
+        defer { recorder.cancel() }
+
+        let oversize = ClipboardSnapshotPolicy.maxTotalByteCount + 1
+        service.clipboardContent = ClipboardContent(representations: [
+            .init(uti: "public.tiff", data: Data(count: oversize))
+        ])
+        service.grabIfChanged()
+
+        try await expectNoNewFrames(on: recorder, sinceCount: 0)
+        guard case .contentTooLarge(let byteCount, let limit) = service.lastTransferIssue?.kind
+        else {
+            Issue.record("Expected contentTooLarge issue, got \(String(describing: service.lastTransferIssue))")
+            return
+        }
+        #expect(byteCount == oversize)
+        #expect(limit == ClipboardSnapshotPolicy.maxTotalByteCount)
+    }
+
+    @Test("Peer clipboard error frame surfaces as a peerReportedError issue")
+    func peerErrorSurfacesAsIssue() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test")
+        service.start()
+        defer { service.stop() }
+
+        try guest.sendErrorFrame(
+            code: "clipboard.transfer.send.failure",
+            message: "guest could not deliver",
+            inReplyTo: "clipboard.request"
+        )
+
+        try await waitUntil { service.lastTransferIssue != nil }
+        guard case .peerReportedError(let code, let message) = service.lastTransferIssue?.kind
+        else {
+            Issue.record("Expected peerReportedError issue, got \(String(describing: service.lastTransferIssue))")
+            return
+        }
+        #expect(code == "clipboard.transfer.send.failure")
+        #expect(message == "guest could not deliver")
     }
 }

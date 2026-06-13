@@ -139,6 +139,7 @@ final class AtomicInt: @unchecked Sendable {
 
 // MARK: - Frame factories
 
+/// Legacy-shaped offer: `formats` only, no `utis` — what a pre-UTI host sends.
 func makeOfferFrame(generation: UInt64) -> Frame {
     var frame = Frame()
     frame.protocolVersion = 1
@@ -149,6 +150,18 @@ func makeOfferFrame(generation: UInt64) -> Frame {
     return frame
 }
 
+/// UTI-capable offer.
+func makeOfferFrame(generation: UInt64, utis: [String]) -> Frame {
+    var frame = Frame()
+    frame.protocolVersion = 1
+    frame.clipboardOffer = Kernova_V1_ClipboardOffer.with {
+        $0.generation = generation
+        $0.utis = utis
+    }
+    return frame
+}
+
+/// Legacy-shaped data: `format` + `data`, no `representations`.
 func makeDataFrame(generation: UInt64, text: String) -> Frame {
     var frame = Frame()
     frame.protocolVersion = 1
@@ -156,6 +169,22 @@ func makeDataFrame(generation: UInt64, text: String) -> Frame {
         $0.generation = generation
         $0.format = .textUtf8
         $0.data = Data(text.utf8)
+    }
+    return frame
+}
+
+/// UTI-tagged data.
+func makeDataFrame(generation: UInt64, representations: [(uti: String, data: Data)]) -> Frame {
+    var frame = Frame()
+    frame.protocolVersion = 1
+    frame.clipboardData = Kernova_V1_ClipboardData.with {
+        $0.generation = generation
+        $0.representations = representations.map { representation in
+            Kernova_V1_ClipboardRepresentation.with {
+                $0.uti = representation.uti
+                $0.data = representation.data
+            }
+        }
     }
     return frame
 }

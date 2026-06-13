@@ -1,0 +1,481 @@
+import Cocoa
+import KernovaProtocol
+import os
+
+/// Pure AppKit view controller for the clipboard sharing window content.
+///
+/// The content area renders the buffer per `ClipboardPreviewPolicy`: an
+/// editable `NSTextView` for text (and the empty buffer), an image preview,
+/// or a generic per-representation summary. Below it, a command bar offers
+/// explicit host-pasteboard transfer ("Paste from Mac" / "Copy to Mac",
+/// also reachable through the responder chain as `paste:`/`copy:` outside
+/// the editor) plus a content-type indicator that doubles as the transient
+/// status surface; drag-and-drop into the window feeds the same intake path
+/// as the Paste button. The bottom status bar shows the guest agent
+/// connection state and surfaces the install/update affordance for macOS
+/// guests (Linux guests use `spice-vdagent` from their package manager —
+/// the affordance is hidden for them).
+///
+/// Conflict policy is last-writer-wins: every keystroke pushes the edit into
+/// `clipboardService.clipboardContent`, so "unsent edits" are model state and
+/// a guest update that lands mid-edit is simply a newer writer. Echo
+/// suppression is digest-based — `lastAppliedDigest` is set *before* writing
+/// the model, so the resulting observation pass recognizes the content as
+/// already displayed instead of re-applying it (this replaces the fragile
+/// reentrancy flag the previous implementation used).
+@MainActor
+final class ClipboardContentViewController: NSViewController, NSTextViewDelegate,
+    NSUserInterfaceValidations
+{
+    private static let logger = Logger(subsystem: "app.kernova", category: "ClipboardContentViewController")
+
+    private let instance: VMInstance
+    private weak var viewModel: VMLibraryViewModel?
+
+    // MARK: - Views
+
+    private let dropContainer = ClipboardDropContainerView()
+    private let textView: NSTextView
+    private let scrollView: NSScrollView
+    private let imagePreview = ClipboardImagePreviewView()
+    private let summaryView = ClipboardSummaryView()
+    private let commandBar = ClipboardCommandBarView()
+    private let statusCircle: NSView
+    private let statusLabel: NSTextField
+    private let actionButton: NSButton
+
+    // MARK: - State
+
+    /// Digest of the content currently rendered in the content area.
+    ///
+    /// When the observed model digest matches, the content rebuild is
+    /// skipped — both for cheap no-op passes and for the echo of our own
+    /// writes.
+    private var lastAppliedDigest: Data?
+
+    /// Last transfer issue already shown as a transient.
+    ///
+    /// Tracked so re-observation doesn't re-show it; compared by value
+    /// (`date` is the re-fire identity).
+    private var lastShownIssue: ClipboardTransferIssue?
+
+    private var serviceObservation: ObservationLoop?
+
+    init(instance: VMInstance, viewModel: VMLibraryViewModel) {
+        self.instance = instance
+        self.viewModel = viewModel
+
+        let textView = NSTextView()
+        textView.isEditable = true
+        textView.isSelectable = true
+        textView.isRichText = false
+        textView.allowsUndo = true
+        textView.usesFindPanel = true
+        textView.font = .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        textView.textContainerInset = NSSize(width: 4, height: 8)
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.containerSize = NSSize(
+            width: 0,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        self.textView = textView
+
+        let scrollView = NSScrollView()
+        scrollView.documentView = textView
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.drawsBackground = false
+        self.scrollView = scrollView
+
+        let circle = NSView()
+        circle.wantsLayer = true
+        circle.layer?.cornerRadius = 4
+        circle.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            circle.widthAnchor.constraint(equalToConstant: 8),
+            circle.heightAnchor.constraint(equalToConstant: 8),
+        ])
+        self.statusCircle = circle
+
+        let label = NSTextField(labelWithString: "")
+        label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        label.textColor = .secondaryLabelColor
+        label.lineBreakMode = .byTruncatingTail
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        self.statusLabel = label
+
+        let button = NSButton(title: "", target: nil, action: nil)
+        button.bezelStyle = .accessoryBarAction
+        button.controlSize = .small
+        button.isHidden = true
+        self.actionButton = button
+
+        super.init(nibName: nil, bundle: nil)
+
+        textView.delegate = self
+        button.target = self
+        button.action = #selector(actionButtonClicked(_:))
+        commandBar.pasteButton.target = self
+        commandBar.pasteButton.action = #selector(pasteFromMac(_:))
+        commandBar.copyButton.target = self
+        commandBar.copyButton.action = #selector(copyToMac(_:))
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    // MARK: - View Lifecycle
+
+    override func loadView() {
+        let container = dropContainer
+        container.canAcceptDrop = { [weak self] in
+            self?.instance.clipboardService != nil
+        }
+        container.onDrop = { [weak self] pasteboard in
+            self?.takeIn(pasteboard: pasteboard) ?? false
+        }
+
+        // All three content views are installed once and toggled via
+        // isHidden — no add/remove churn when the preview mode changes.
+        for contentView in [scrollView, imagePreview, summaryView] {
+            contentView.translatesAutoresizingMaskIntoConstraints = false
+            container.addSubview(contentView)
+        }
+        imagePreview.isHidden = true
+        summaryView.isHidden = true
+
+        let commandDivider = NSBox()
+        commandDivider.boxType = .separator
+        commandDivider.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(commandDivider)
+
+        commandBar.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(commandBar)
+
+        let statusDivider = NSBox()
+        statusDivider.boxType = .separator
+        statusDivider.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(statusDivider)
+
+        let statusBar = makeStatusBar()
+        statusBar.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(statusBar)
+
+        var constraints: [NSLayoutConstraint] = []
+        for contentView in [scrollView, imagePreview, summaryView] {
+            constraints += [
+                contentView.topAnchor.constraint(equalTo: container.topAnchor),
+                contentView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+                contentView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+                contentView.bottomAnchor.constraint(equalTo: commandDivider.topAnchor),
+            ]
+        }
+        constraints += [
+            commandDivider.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            commandDivider.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+
+            commandBar.topAnchor.constraint(equalTo: commandDivider.bottomAnchor),
+            commandBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            commandBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+
+            statusDivider.topAnchor.constraint(equalTo: commandBar.bottomAnchor),
+            statusDivider.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            statusDivider.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+
+            statusBar.topAnchor.constraint(equalTo: statusDivider.bottomAnchor),
+            statusBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            statusBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            statusBar.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ]
+        NSLayoutConstraint.activate(constraints)
+
+        // Lower content hugging so the content area yields space to the bars.
+        scrollView.setContentHuggingPriority(.defaultLow, for: .vertical)
+        scrollView.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+
+        self.view = container
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        updateUI()
+        observeServiceChanges()
+    }
+
+    // MARK: - NSTextViewDelegate
+
+    func textDidChange(_ notification: Notification) {
+        guard let service = instance.clipboardService else {
+            Self.logger.warning(
+                "Clipboard edit ignored — clipboardService is nil for VM '\(self.instance.name, privacy: .public)'")
+            return
+        }
+        let edited = ClipboardContent(text: textView.string)
+        // Pre-set the digest so the observation pass triggered by the model
+        // write recognizes the content as already displayed (the editor IS
+        // the source) and doesn't rebuild the view out from under the user.
+        lastAppliedDigest = edited.digest
+        service.clipboardContent = edited
+        commandBar.setIndicatorText(ClipboardContentDescriber.indicatorText(for: edited))
+        commandBar.copyButton.isEnabled = !edited.isEmpty
+    }
+
+    // MARK: - Observation
+
+    private func observeServiceChanges() {
+        serviceObservation = observeRecurring(
+            track: { [weak self] in
+                guard let self else { return }
+                // Read each property so observation re-fires when any of them
+                // transitions: clipboardService (nil → non-nil on connect),
+                // vsockControlService (drives agentStatus for macOS guests),
+                // and the per-property fields the UI mirrors.
+                let clipService = self.instance.clipboardService
+                _ = clipService?.clipboardContent
+                _ = clipService?.isConnected
+                _ = clipService?.lastTransferIssue
+                _ = self.instance.vsockControlService?.agentStatus
+                _ = self.instance.agentStatus
+            },
+            apply: { [weak self] in
+                self?.updateUI()
+            }
+        )
+    }
+
+    private func updateUI() {
+        let service = instance.clipboardService
+        let status = instance.agentStatus
+        let canInstallKernovaAgent = instance.configuration.guestOS == .macOS
+
+        textView.isEditable = service != nil
+        commandBar.pasteButton.isEnabled = service != nil
+        commandBar.copyButton.isEnabled = service != nil && !(service?.clipboardContent.isEmpty ?? true)
+
+        if let service {
+            let content = service.clipboardContent
+            if content.digest != lastAppliedDigest {
+                lastAppliedDigest = content.digest
+                apply(content: content)
+                commandBar.setIndicatorText(ClipboardContentDescriber.indicatorText(for: content))
+            }
+            if let issue = service.lastTransferIssue, issue != lastShownIssue {
+                lastShownIssue = issue
+                commandBar.showTransientMessage(message(for: issue), style: .error)
+            }
+        }
+
+        applyStatus(status, canInstallKernovaAgent: canInstallKernovaAgent)
+    }
+
+    // MARK: - Content rendering
+
+    private func apply(content: ClipboardContent) {
+        switch ClipboardPreviewPolicy.mode(for: content) {
+        case .empty:
+            showTextEditor(text: "")
+        case .text(let text):
+            showTextEditor(text: text)
+        case .image(let data, let uti):
+            if imagePreview.configure(data: data, uti: uti) {
+                show(contentView: imagePreview)
+            } else {
+                // Undecodable image bytes degrade to the summary.
+                summaryView.configure(content: content)
+                show(contentView: summaryView)
+            }
+        case .summary:
+            summaryView.configure(content: content)
+            show(contentView: summaryView)
+        }
+    }
+
+    private func showTextEditor(text: String) {
+        if textView.string != text {
+            // Replacing the buffer invalidates the editor's undo history —
+            // undo must not resurrect superseded clipboard states.
+            textView.breakUndoCoalescing()
+            textView.string = text
+            textView.undoManager?.removeAllActions()
+        }
+        show(contentView: scrollView)
+    }
+
+    private func show(contentView: NSView) {
+        // Move focus off the editor before hiding it; a hidden first
+        // responder leaves the window without a sane key view.
+        if contentView !== scrollView, view.window?.firstResponder === textView {
+            view.window?.makeFirstResponder(dropContainer)
+        }
+        scrollView.isHidden = contentView !== scrollView
+        imagePreview.isHidden = contentView !== imagePreview
+        summaryView.isHidden = contentView !== summaryView
+    }
+
+    private func message(for issue: ClipboardTransferIssue) -> String {
+        switch issue.kind {
+        case .contentTooLarge(let byteCount, let limit):
+            return
+                "Content is too large to send (\(DataFormatters.formatBytes(UInt64(byteCount))) — limit \(DataFormatters.formatBytes(UInt64(limit))))"
+        case .peerReportedError(let code, _):
+            switch code {
+            case "clipboard.transfer.too.large":
+                return "The guest rejected the transfer as too large"
+            case "clipboard.format.unavailable":
+                return "The guest couldn't provide the requested format"
+            default:
+                return "Clipboard transfer failed on the guest side"
+            }
+        }
+    }
+
+    // MARK: - Actions
+
+    @objc private func pasteFromMac(_ sender: Any?) {
+        _ = takeIn(pasteboard: .general)
+    }
+
+    @objc private func copyToMac(_ sender: Any?) {
+        guard let service = instance.clipboardService else { return }
+        let content = service.clipboardContent
+        guard !content.isEmpty else { return }
+
+        let item = NSPasteboardItem()
+        for representation in content.representations {
+            item.setData(
+                representation.data,
+                forType: NSPasteboard.PasteboardType(rawValue: representation.uti)
+            )
+        }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        if pasteboard.writeObjects([item]) {
+            commandBar.showTransientMessage("Copied to Mac clipboard", style: .info)
+            Self.logger.info(
+                "Copied clipboard buffer to host pasteboard (\(content.representations.count, privacy: .public) reps)"
+            )
+        } else {
+            commandBar.showTransientMessage("Couldn't write to the Mac clipboard", style: .error)
+            Self.logger.error("NSPasteboard.writeObjects failed for clipboard buffer")
+        }
+    }
+
+    /// Shared intake for the Paste button, responder-chain `paste:`, and drag-and-drop.
+    ///
+    /// Paste/drop are complete gestures — the content is sent to the guest
+    /// immediately, unlike typed edits which send on window blur.
+    private func takeIn(pasteboard: NSPasteboard) -> Bool {
+        guard let service = instance.clipboardService else { return false }
+
+        switch ClipboardPasteboardIntake.read(
+            from: pasteboard,
+            allowsBinary: service.supportsBinaryRepresentations
+        ) {
+        case .content(let content, let note):
+            service.clipboardContent = content
+            service.grabIfChanged()
+            if let note {
+                commandBar.showTransientMessage(note, style: .warning)
+            }
+            Self.logger.info(
+                "Took in pasteboard content (\(content.representations.count, privacy: .public) reps, \(content.totalByteCount, privacy: .public) bytes)"
+            )
+            return true
+        case .rejected(let message):
+            commandBar.showTransientMessage(message, style: .warning)
+            Self.logger.info("Pasteboard intake rejected: \(message, privacy: .public)")
+            return false
+        }
+    }
+
+    // MARK: - Responder-chain edit actions
+
+    // Cover image/summary/empty-unfocused modes; in text mode the focused
+    // NSTextView handles Cmd+V/Cmd+C natively (and pasting an image with the
+    // editor focused does nothing — the Paste button is the affordance).
+    @objc func paste(_ sender: Any?) {
+        _ = takeIn(pasteboard: .general)
+    }
+
+    @objc func copy(_ sender: Any?) {
+        copyToMac(sender)
+    }
+
+    func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        switch item.action {
+        case #selector(paste(_:)):
+            return instance.clipboardService != nil
+        case #selector(copy(_:)):
+            guard let service = instance.clipboardService else { return false }
+            return !service.clipboardContent.isEmpty
+        default:
+            return true
+        }
+    }
+
+    @objc private func actionButtonClicked(_: Any?) {
+        viewModel?.mountGuestAgentInstaller(on: instance)
+    }
+
+    // MARK: - Agent status bar
+
+    private func applyStatus(_ status: AgentStatus, canInstallKernovaAgent: Bool) {
+        switch status {
+        case .waiting:
+            statusCircle.layer?.backgroundColor = StatusColor.inactive.cgColor
+            statusLabel.stringValue = "Waiting for guest agent"
+            actionButton.isHidden = !canInstallKernovaAgent
+            actionButton.title = "Install Guest Agent…"
+        case .outdated(let installed, let bundled):
+            statusCircle.layer?.backgroundColor = StatusColor.warning.cgColor
+            statusLabel.stringValue = "Update available (\(installed) → \(bundled))"
+            actionButton.isHidden = !canInstallKernovaAgent
+            actionButton.title = "Update Guest Agent…"
+        case .connecting(let expected):
+            // Live session for a previously-installed agent that hasn't
+            // said Hello yet. No install/reinstall affordance — the agent
+            // is expected to reconnect; the watchdog will surface
+            // `.expectedMissing` if it doesn't.
+            statusCircle.layer?.backgroundColor = StatusColor.inactive.cgColor
+            statusLabel.stringValue = "Connecting (was \(expected))"
+            actionButton.isHidden = true
+        case .current(let version):
+            statusCircle.layer?.backgroundColor = StatusColor.running.cgColor
+            statusLabel.stringValue = "Connected (\(version))"
+            actionButton.isHidden = true
+        case .unresponsive(let version):
+            statusCircle.layer?.backgroundColor = StatusColor.warning.cgColor
+            statusLabel.stringValue = "Unresponsive (\(version))"
+            actionButton.isHidden = true
+        case .expectedMissing(let expected):
+            statusCircle.layer?.backgroundColor = StatusColor.warning.cgColor
+            statusLabel.stringValue = "Didn't reconnect (was \(expected))"
+            actionButton.isHidden = !canInstallKernovaAgent
+            actionButton.title = "Reinstall Guest Agent…"
+        }
+    }
+
+    // MARK: - View Construction
+
+    private func makeStatusBar() -> NSView {
+        // Spacer needs an explicit low horizontal hugging priority to actually
+        // expand inside the NSStackView. NSView's default hugging priority is
+        // 250 — same as the label's — so without this, the stack view has no
+        // signal to grow the spacer rather than the label, and the button
+        // wouldn't reliably end up flush against the trailing edge.
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        let stack = NSStackView(views: [statusCircle, statusLabel, spacer, actionButton])
+        stack.orientation = .horizontal
+        stack.spacing = Spacing.small
+        stack.edgeInsets = NSEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
+        stack.alignment = .centerY
+
+        return stack
+    }
+}
