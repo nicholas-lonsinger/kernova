@@ -65,6 +65,13 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     /// the completion hops back to the main actor before touching state.
     private let promiseQueue = OperationQueue()
 
+    /// First-file-wins gate shared by one promise receipt's per-file
+    /// completions (the buffer models a single pasteboard item).
+    @MainActor
+    private final class PromiseFirstFileGate {
+        var taken = false
+    }
+
     init(instance: VMInstance, viewModel: VMLibraryViewModel) {
         self.instance = instance
         self.viewModel = viewModel
@@ -449,11 +456,28 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             return
         }
 
+        // The reader block runs once per promised file. The buffer models a
+        // single item, so the first successfully received file wins; the
+        // gate is @MainActor state shared by the per-file completions.
+        let firstFileGate = PromiseFirstFileGate()
+
         receiver.receivePromisedFiles(atDestination: destination, options: [:], operationQueue: promiseQueue) {
             url, error in
             Task { @MainActor [weak self] in
+                // Per-file cleanup happens even if the window closed before
+                // the promise resolved (self gone). Removing the directory
+                // is best-effort and only when it has drained — removeItem
+                // on a directory is recursive and must not race files still
+                // being written by a multi-file promise.
+                defer {
+                    try? FileManager.default.removeItem(at: url)
+                    if let remaining = try? FileManager.default.contentsOfDirectory(atPath: destination.path),
+                        remaining.isEmpty
+                    {
+                        try? FileManager.default.removeItem(at: destination)
+                    }
+                }
                 guard let self else { return }
-                defer { try? FileManager.default.removeItem(at: destination) }
                 if let error {
                     self.commandBar.showTransientMessage("Couldn't receive the dropped file", style: .error)
                     Self.logger.error(
@@ -461,6 +485,8 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                     )
                     return
                 }
+                guard !firstFileGate.taken else { return }
+                firstFileGate.taken = true
                 _ = self.apply(intake: ClipboardPasteboardIntake.read(fileAt: url, allowsBinary: allowsBinary))
             }
         }

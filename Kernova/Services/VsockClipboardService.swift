@@ -165,6 +165,11 @@ final class VsockClipboardService: ClipboardServicing {
                 ),
                 date: Date()
             )
+            // Oversized content can never be offered, so mark it handled —
+            // otherwise every window blur re-enters this guard and re-fires
+            // the same transient message. A subsequent content change has a
+            // different digest and is re-evaluated normally.
+            lastGrabbedDigest = clipboardContent.digest
             Self.logger.warning(
                 "Clipboard content too large to offer (\(totalByteCount, privacy: .public) bytes > \(ClipboardSnapshotPolicy.maxTotalByteCount, privacy: .public)) for '\(self.label, privacy: .public)'"
             )
@@ -442,12 +447,30 @@ final class VsockClipboardService: ClipboardServicing {
 
         let content: ClipboardContent
         if !data.representations.isEmpty {
-            content = ClipboardContent(protoRepresentations: data.representations)
+            // Receive-side sanitization: never apply file references or
+            // transient markers, no matter what the peer sent.
+            let sanitized = ClipboardSnapshotPolicy.sanitizedForApply(
+                data.representations.map {
+                    ClipboardContent.Representation(uti: $0.uti, data: $0.data)
+                }
+            )
+            if sanitized.count != data.representations.count {
+                Self.logger.warning(
+                    "Dropped \(data.representations.count - sanitized.count, privacy: .public) forbidden representation(s) from guest clipboard data gen=\(data.generation, privacy: .public)"
+                )
+            }
+            guard !sanitized.isEmpty else {
+                // The generation was consumed even though nothing was usable.
+                pendingInboundGeneration = nil
+                return
+            }
+            content = ClipboardContent(representations: sanitized)
         } else if data.format == .textUtf8 {
             guard let text = String(data: data.data, encoding: .utf8) else {
                 Self.logger.warning(
                     "Guest clipboard data not valid UTF-8 (\(data.data.count, privacy: .public) bytes)"
                 )
+                pendingInboundGeneration = nil
                 return
             }
             content = ClipboardContent(text: text)
@@ -455,6 +478,7 @@ final class VsockClipboardService: ClipboardServicing {
             Self.logger.debug(
                 "Guest clipboard data carries no usable payload (format=\(data.format.rawValue, privacy: .public))"
             )
+            pendingInboundGeneration = nil
             return
         }
 

@@ -696,6 +696,87 @@ struct VsockClipboardServiceTests {
         #expect(service.clipboardContent.text == "caption")
     }
 
+    @Test("Inbound representations are sanitized — file references never reach the buffer")
+    func inboundRepresentationsSanitized() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test")
+        service.start()
+        defer { service.stop() }
+
+        try guest.send(makeOffer(generation: 5, utis: ["public.png", "public.file-url"]))
+        _ = try await nextFrame(from: guest)  // request
+
+        let pngBytes = Data([0x89, 0x50])
+        try guest.send(
+            makeData(
+                generation: 5,
+                representations: [
+                    (uti: "public.file-url", data: Data("file:///etc/passwd".utf8)),
+                    (uti: "public.png", data: pngBytes),
+                ]))
+
+        try await waitUntil { !service.clipboardContent.isEmpty }
+        #expect(service.clipboardContent.representations.map(\.uti) == ["public.png"])
+    }
+
+    @Test("Inbound data with only forbidden representations is ignored and consumes the generation")
+    func inboundAllForbiddenIgnored() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test")
+        service.start()
+        defer { service.stop() }
+
+        try guest.send(makeOffer(generation: 6, utis: ["public.file-url"]))
+        _ = try await nextFrame(from: guest)  // request
+
+        try guest.send(
+            makeData(
+                generation: 6,
+                representations: [
+                    (uti: "public.file-url", data: Data("file:///x".utf8))
+                ]))
+
+        // The unusable payload must not land in the buffer, and the pending
+        // generation must be consumed rather than left latched.
+        try await waitUntil { service.pendingInboundGenerationForTesting == nil }
+        #expect(service.clipboardContent.isEmpty)
+    }
+
+    @Test("Oversized content surfaces the issue once, not on every grab")
+    func oversizedIssueFiresOnce() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test")
+        service.start()
+        defer { service.stop() }
+
+        let recorder = FrameRecorder(channel: guest)
+        defer { recorder.cancel() }
+
+        service.clipboardContent = ClipboardContent(representations: [
+            .init(uti: "public.tiff", data: Data(count: ClipboardSnapshotPolicy.maxTotalByteCount + 1))
+        ])
+        service.grabIfChanged()
+        let firstIssue = service.lastTransferIssue
+        #expect(firstIssue != nil)
+
+        // Same content re-grabbed (window blur) — no new frame, no re-fired issue.
+        service.grabIfChanged()
+        try await expectNoNewFrames(on: recorder, sinceCount: 0)
+        #expect(service.lastTransferIssue == firstIssue)
+    }
+
     @Test("Inbound data resets dedup so re-grabbing the same content re-offers")
     func inboundDataResetsDedup() async throws {
         let (guest, host) = try makePair()

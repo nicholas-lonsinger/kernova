@@ -562,12 +562,30 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         }
         let content: ClipboardContent
         if !data.representations.isEmpty {
-            content = ClipboardContent(protoRepresentations: data.representations)
+            // Receive-side sanitization: never apply file references or
+            // transient markers, no matter what the peer sent.
+            let sanitized = ClipboardSnapshotPolicy.sanitizedForApply(
+                data.representations.map {
+                    ClipboardContent.Representation(uti: $0.uti, data: $0.data)
+                }
+            )
+            if sanitized.count != data.representations.count {
+                Self.logger.warning(
+                    "Dropped \(data.representations.count - sanitized.count, privacy: .public) forbidden representation(s) from host clipboard data gen=\(data.generation, privacy: .public)"
+                )
+            }
+            guard !sanitized.isEmpty else {
+                // The generation was consumed even though nothing was usable.
+                pendingInboundGeneration = nil
+                return
+            }
+            content = ClipboardContent(representations: sanitized)
         } else if data.format == .textUtf8 {
             guard let text = String(data: data.data, encoding: .utf8) else {
                 Self.logger.warning(
                     "Host clipboard data not valid UTF-8 (\(data.data.count, privacy: .public) bytes)"
                 )
+                pendingInboundGeneration = nil
                 return
             }
             content = ClipboardContent(text: text)
@@ -575,9 +593,13 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             Self.logger.debug(
                 "Host clipboard data carries no usable payload (format=\(data.format.rawValue, privacy: .public))"
             )
+            pendingInboundGeneration = nil
             return
         }
-        guard !content.isEmpty else { return }
+        guard !content.isEmpty else {
+            pendingInboundGeneration = nil
+            return
+        }
 
         pasteboard.clearContents()
         let written = pasteboard.writeItem(

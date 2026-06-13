@@ -740,6 +740,37 @@ struct VsockGuestClipboardAgentTests {
         }
     }
 
+    @Test("inbound representations are sanitized before reaching the pasteboard")
+    func inboundRepresentationsSanitized() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        try hostChannel.send(makeOfferFrame(generation: 11, utis: ["public.png", "public.file-url"]))
+        _ = try await nextFrame(from: hostChannel)  // request
+
+        let pngBytes = Data([0x89, 0x50])
+        try hostChannel.send(
+            makeDataFrame(
+                generation: 11,
+                representations: [
+                    (uti: "public.file-url", data: Data("file:///etc/hosts".utf8)),
+                    (uti: "public.png", data: pngBytes),
+                ]))
+
+        try await waitUntil {
+            pasteboard.data(forType: NSPasteboard.PasteboardType("public.png")) == pngBytes
+        }
+        #expect(pasteboard.firstItemTypes.map(\.rawValue) == ["public.png"])
+    }
+
     @Test("UTI request returns the requested representations from the pending offer")
     func utiRequestServesRepresentations() async throws {
         let pasteboard = FakePasteboard()
