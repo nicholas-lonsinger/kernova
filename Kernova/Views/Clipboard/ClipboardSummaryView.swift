@@ -18,6 +18,9 @@ final class ClipboardSummaryView: NSView {
         )
         iconView.symbolConfiguration = .init(pointSize: 36, weight: .regular)
         iconView.contentTintColor = .tertiaryLabelColor
+        // See ClipboardImagePreviewView: keep this read-only view's image view
+        // from intercepting drags so the whole area bubbles to the container.
+        iconView.unregisterDraggedTypes()
         self.iconView = iconView
 
         let headline = NSTextField(labelWithString: "")

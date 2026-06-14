@@ -37,6 +37,13 @@ final class ClipboardImagePreviewView: NSView {
         imageView.setContentHuggingPriority(.init(1), for: .horizontal)
         imageView.setContentHuggingPriority(.init(1), for: .vertical)
 
+        // NSImageView registers itself as a drag destination, so a drag over
+        // the image is consumed here (and silently rejected, since it isn't
+        // editable) instead of bubbling to the window's drop container. This
+        // read-only preview has no drag behavior of its own — unregister it so
+        // the whole content area, image included, is one drop target.
+        imageView.unregisterDraggedTypes()
+
         imageView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(imageView)
         NSLayoutConstraint.activate([
