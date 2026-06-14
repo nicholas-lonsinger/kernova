@@ -1,4 +1,5 @@
 import Cocoa
+import KernovaProtocol
 import os
 
 @main
@@ -97,6 +98,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupMainMenu()
+
+        // Reclaim orphaned host-side clipboard staging files from a previous
+        // run or crash. The staging supersedes per copy and the staged file URL
+        // must outlive the clipboard window (paste-after-close), so it never
+        // sweeps on close; a one-time sweep at launch — before any clipboard
+        // window opens — clears prior-session orphans, mirroring the guest
+        // agent's sweep-on-start.
+        ClipboardFileStaging(label: ClipboardContentViewController.stagingLabel).sweep()
 
         let windowController = MainWindowController(viewModel: viewModel)
         windowController.showWindow(nil)

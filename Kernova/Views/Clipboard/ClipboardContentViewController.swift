@@ -73,10 +73,19 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     /// the completion hops back to the main actor before touching state.
     private let promiseQueue = OperationQueue()
 
+    /// Label for the host-side clipboard staging root.
+    ///
+    /// Shared so `AppDelegate`'s launch-time orphan sweep targets the same temp
+    /// directory this controller stages into (the staging never sweeps on
+    /// window close — that would invalidate a just-copied file URL still on the
+    /// pasteboard — so orphans are reclaimed at launch instead, mirroring how
+    /// the guest agent sweeps on start).
+    static let stagingLabel = "host"
+
     /// Materializes file payloads to local temp files for "Copy to Mac" so a
     /// Finder paste creates the file (bounded to one payload; superseded each
     /// copy).
-    private let staging = ClipboardFileStaging(label: "host")
+    private let staging = ClipboardFileStaging(label: ClipboardContentViewController.stagingLabel)
 
     /// First-file-wins gate shared by one promise receipt's per-file
     /// completions (the buffer models a single pasteboard item).
@@ -398,6 +407,14 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         // Finder paste creates the file (alongside any inline image data).
         for staged in staging.stage(content.representations) {
             item.setData(Data(staged.url.absoluteString.utf8), forType: .fileURL)
+        }
+        // A non-image file payload contributes no inline data; if staging also
+        // failed, the item is empty. Don't clear the Mac clipboard to write
+        // nothing — surface the failure instead.
+        guard !item.types.isEmpty else {
+            commandBar.showTransientMessage("Couldn't prepare the clipboard content to copy", style: .error)
+            Self.logger.error("copyToMac produced no pasteboard representations (staging failed)")
+            return
         }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()

@@ -302,4 +302,26 @@ struct ClipboardSnapshotPolicyTests {
         ])
         #expect(sanitized.map(\.uti) == ["public.png", ClipboardContent.utf8TextUTI])
     }
+
+    @Test("sanitizedForApply re-enforces the per-representation size cap on receive")
+    func sanitizedForApplyDropsOversized() {
+        // A non-conformant peer can ignore the send-side caps; the receive path
+        // must still drop an over-cap representation while keeping its sibling.
+        let oversize = ClipboardSnapshotPolicy.maxRepresentationByteCount + 1
+        let sanitized = ClipboardSnapshotPolicy.sanitizedForApply([
+            .init(uti: "public.tiff", data: Data(count: oversize)),
+            .init(uti: ClipboardContent.utf8TextUTI, data: Data("small".utf8)),
+        ])
+        #expect(sanitized.map(\.uti) == [ClipboardContent.utf8TextUTI])
+    }
+
+    @Test("sanitizedForApply enforces the total budget greedily on receive")
+    func sanitizedForApplyEnforcesTotalBudget() {
+        let big = ClipboardSnapshotPolicy.maxRepresentationByteCount  // 10 MiB, fits alone
+        let sanitized = ClipboardSnapshotPolicy.sanitizedForApply([
+            .init(uti: "public.tiff", data: Data(count: big)),
+            .init(uti: "public.png", data: Data(count: big)),  // would push past the 12 MiB total
+        ])
+        #expect(sanitized.map(\.uti) == ["public.tiff"])
+    }
 }

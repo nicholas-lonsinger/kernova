@@ -71,4 +71,22 @@ struct ClipboardFileStagingTests {
         #expect(url.lastPathComponent == "escape.png")
         #expect(url.deletingLastPathComponent().lastPathComponent != "..")
     }
+
+    @Test(
+        "a dot-only filename falls back to a safe name",
+        arguments: ["..", "."])
+    func sanitizesDotOnlyNames(_ name: String) throws {
+        // (An empty filename is filtered out before sanitize — it means "not a
+        // file payload" — so the reachable fallback cases are the dot-only
+        // names, which `lastPathComponent` leaves intact.)
+        let staging = ClipboardFileStaging(label: "test-\(UUID().uuidString)")
+        defer { staging.sweep() }
+
+        let staged = staging.stage([.init(uti: "public.data", data: Data([1]), filename: name)])
+        let url = try #require(staged.first?.url)
+        // The dot-only component must not reach appendingPathComponent; it's
+        // replaced with the literal fallback inside the generation dir.
+        #expect(url.lastPathComponent == "clipboard-file")
+        #expect(FileManager.default.fileExists(atPath: url.path))
+    }
 }

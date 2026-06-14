@@ -16,11 +16,6 @@ extension ClipboardContent.Representation {
         if filename.isEmpty { return true }
         return UTType(uti)?.conforms(to: .image) == true
     }
-
-    /// Whether this representation conforms to `public.image`.
-    var isImage: Bool {
-        UTType(uti)?.conforms(to: .image) == true
-    }
 }
 
 extension ClipboardContent {

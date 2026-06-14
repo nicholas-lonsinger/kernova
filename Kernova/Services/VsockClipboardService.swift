@@ -484,6 +484,14 @@ final class VsockClipboardService: ClipboardServicing {
             return
         }
 
+        guard !content.isEmpty else {
+            // Mirror the guest agent's guard: an empty payload (e.g. empty
+            // legacy text bytes from a non-conformant peer) must not wipe the
+            // buffer. The generation is still consumed.
+            pendingInboundGeneration = nil
+            return
+        }
+
         clipboardContent = content
         // Reset the dedup so a subsequent grab from the host side actually
         // re-offers — otherwise round-tripping the same content would silently

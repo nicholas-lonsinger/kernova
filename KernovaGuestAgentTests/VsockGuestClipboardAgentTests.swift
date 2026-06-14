@@ -1080,6 +1080,43 @@ struct VsockGuestClipboardAgentTests {
         #expect(data.representations.first?.filename == "notes.txt")
     }
 
+    @Test("a copied file over the per-representation cap produces no offer")
+    func copiedOverCapFileProducesNoOffer() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        // A copied file just over the per-rep cap: expandedFileContent logs and
+        // returns nil, and the snapshot then filters the file URL — so nothing
+        // crosses (the over-cap bytes never become an offer).
+        let url = try writeTempFile(
+            name: "huge.bin",
+            data: Data(count: ClipboardSnapshotPolicy.maxRepresentationByteCount + 1))
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        pasteboard.writeItem(representations: [
+            (type: .fileURL, data: Data(url.absoluteString.utf8))
+        ])
+        await MainActor.run { agent.checkClipboardChange() }
+
+        let extraTask = Task<Frame?, Never> {
+            try? await Task.sleep(for: .milliseconds(50))
+            var iterator = hostChannel.incoming.makeAsyncIterator()
+            return try? await iterator.next()
+        }
+        try await Task.sleep(for: .milliseconds(200))
+        extraTask.cancel()
+        if let frame = await extraTask.value, case .clipboardOffer = frame.payload {
+            throw TestFailure("Agent offered an over-cap copied file that should have been skipped")
+        }
+    }
+
     // MARK: - Image-file test helpers
 
     private func makeTestPNG() throws -> Data {

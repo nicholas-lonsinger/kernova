@@ -215,9 +215,10 @@ KernovaTests/
 ├── SpiceAgentProtocolTests.swift       # SPICE wire format serialization/deserialization tests
 ├── SpiceClipboardServiceTests.swift    # SPICE service: handshake, grab guards/modes (incl. non-text no-op), failure recovery, inbound handling
 ├── VsockClipboardServiceTests.swift    # Vsock service: UTI + legacy offers/requests/data, interop both directions, digest dedup, transfer issues
-├── ClipboardPreviewPolicyTests.swift   # Preview-mode decision table (text/image/summary priority, size limits)
-├── ClipboardContentDescriberTests.swift # Indicator/summary string formats, display-name fallback, pixel dimensions
-├── ClipboardPasteboardIntakeTests.swift # Scratch-pasteboard intake: multi-rep reads, image-file→image / other-file→name expansion, text-only transport, rejections
+├── ClipboardPreviewPolicyTests.swift   # Preview-mode decision table (file-payload / image / rich-text / text / summary priority, size limits)
+├── ClipboardContentDescriberTests.swift # Indicator/summary string formats (incl. file chip + rich-text), display-name fallback, pixel dimensions
+├── ClipboardPasteboardIntakeTests.swift # Scratch-pasteboard intake: multi-rep reads, any-file→file expansion (image also inlines), text-only transport, rejections
+├── ClipboardContentAppKitTests.swift   # Representation.shouldInlineOnPasteboard (inline vs file-only), filePayload, richTextRepresentation
 ├── DataFormattersTests.swift           # Formatting utility tests
 ├── NSImageExtensionsTests.swift        # SF Symbol loading utility tests
 ├── PopoverPresenterTests.swift         # Lifecycle (initial state, idempotent close, onClose-on-delegate)

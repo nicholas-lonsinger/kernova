@@ -700,6 +700,17 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                 "Staged clipboard file \(staged.url.lastPathComponent, privacy: .public)"
             )
         }
+        // A non-image file payload contributes no inline pair; if staging also
+        // failed (e.g. disk full), `pairs` is empty. Writing an empty item would
+        // wipe the pasteboard yet still report success — treat it as a failed
+        // apply so handleData preserves echo state and logs, rather than
+        // silently emptying the clipboard.
+        guard !pairs.isEmpty else {
+            Self.logger.warning(
+                "Clipboard apply produced no pasteboard representations (staging failed for \(content.representations.count, privacy: .public) file payload(s)); leaving the pasteboard untouched"
+            )
+            return false
+        }
         pasteboard.clearContents()
         return pasteboard.writeItem(representations: pairs)
     }
@@ -709,7 +720,9 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     ///
     /// Non-file content (no filename) and image file payloads inline; every
     /// other file payload is file-only so it attaches rather than inserting its
-    /// contents. Mirrors `ClipboardContentViewController.copyToMac`.
+    /// contents. Mirrors the host's canonical rule,
+    /// `ClipboardContent.Representation.shouldInlineOnPasteboard` (a separate
+    /// target can't share that extension).
     static func shouldInline(_ representation: ClipboardContent.Representation) -> Bool {
         if representation.filename.isEmpty { return true }
         return UTType(representation.uti)?.conforms(to: .image) == true

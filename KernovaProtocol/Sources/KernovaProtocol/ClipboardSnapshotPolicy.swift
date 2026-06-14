@@ -82,17 +82,31 @@ public enum ClipboardSnapshotPolicy {
         skipReasonBeforeReading(uti: uti) != nil
     }
 
-    /// Strips representations whose types must never be applied to a pasteboard.
+    /// Returns only the representations that are safe to apply to a pasteboard.
     ///
-    /// Receive-side enforcement of the identity skips: compliant peers
-    /// already filter at snapshot time, so anything caught here came from a
-    /// buggy or malicious peer — without it, a crafted `ClipboardData`
-    /// could smuggle e.g. a `public.file-url` onto the receiving pasteboard
-    /// behind a visible image representation.
+    /// Receive-side enforcement, symmetric with the send-side `evaluate(_:)`:
+    /// compliant peers already filter and cap at snapshot time, so anything
+    /// caught here came from a buggy or malicious peer. It (1) drops the
+    /// identity skips — without it a crafted `ClipboardData` could smuggle e.g.
+    /// a `public.file-url` onto the receiving pasteboard behind a visible image
+    /// representation — and (2) re-applies the size caps (per-representation and
+    /// the greedy total budget, in order), so the receive path can't be made to
+    /// land an over-cap blob on the pasteboard just because the sender ignored
+    /// the limits. The 16 MiB frame ceiling already bounds the input; this keeps
+    /// the documented caps in one place on both ends.
     public static func sanitizedForApply(
         _ representations: [ClipboardContent.Representation]
     ) -> [ClipboardContent.Representation] {
-        representations.filter { !shouldSkipBeforeReading(uti: $0.uti) }
+        var kept: [ClipboardContent.Representation] = []
+        var remainingBudget = maxTotalByteCount
+        for representation in representations {
+            if shouldSkipBeforeReading(uti: representation.uti) { continue }
+            if representation.data.count > maxRepresentationByteCount { continue }
+            if representation.data.count > remainingBudget { continue }
+            kept.append(representation)
+            remainingBudget -= representation.data.count
+        }
+        return kept
     }
 
     /// Applies every rule, in order, over (uti, data) pairs read from one pasteboard item.
