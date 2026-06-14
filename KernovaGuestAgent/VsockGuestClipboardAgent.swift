@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import KernovaProtocol
+import UniformTypeIdentifiers
 
 // MARK: - Pasteboard protocol
 
@@ -315,28 +316,38 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         let currentCount = pasteboard.changeCount
         guard currentCount != lastPasteboardChangeCount else { return }
 
-        // Identity-based skips run before any data is read so transient
-        // markers and file references cost nothing per poll.
-        let raw: [(uti: String, data: Data)] = pasteboard.firstItemTypes.compactMap { type in
-            guard !ClipboardSnapshotPolicy.shouldSkipBeforeReading(uti: type.rawValue) else {
-                return nil
+        // A copied image *file* (Finder ⌘C) puts only a file URL and its name
+        // on the pasteboard — not the pixels. Expand it to the image itself so
+        // it pastes as an image on the host, matching how macOS pastes a copied
+        // image file. Non-image files fall through to the normal snapshot, where
+        // the file reference is filtered and only the name survives.
+        let content: ClipboardContent
+        if let imageFileContent = expandedImageFileContent() {
+            content = imageFileContent
+        } else {
+            // Identity-based skips run before any data is read so transient
+            // markers and file references cost nothing per poll.
+            let raw: [(uti: String, data: Data)] = pasteboard.firstItemTypes.compactMap { type in
+                guard !ClipboardSnapshotPolicy.shouldSkipBeforeReading(uti: type.rawValue) else {
+                    return nil
+                }
+                guard let data = pasteboard.data(forType: type) else { return nil }
+                return (uti: type.rawValue, data: data)
             }
-            guard let data = pasteboard.data(forType: type) else { return nil }
-            return (uti: type.rawValue, data: data)
-        }
-        let outcome = ClipboardSnapshotPolicy.evaluate(raw)
+            let outcome = ClipboardSnapshotPolicy.evaluate(raw)
 
-        if !outcome.skipped.isEmpty {
-            // Never a silent empty/partial snapshot — say what was dropped.
-            let summary = outcome.skipped
-                .map { "\($0.uti): \(String(describing: $0.reason))" }
-                .joined(separator: ", ")
-            Self.logger.notice(
-                "Clipboard snapshot skipped \(outcome.skipped.count, privacy: .public) representation(s): \(summary, privacy: .public)"
-            )
+            if !outcome.skipped.isEmpty {
+                // Never a silent empty/partial snapshot — say what was dropped.
+                let summary = outcome.skipped
+                    .map { "\($0.uti): \(String(describing: $0.reason))" }
+                    .joined(separator: ", ")
+                Self.logger.notice(
+                    "Clipboard snapshot skipped \(outcome.skipped.count, privacy: .public) representation(s): \(summary, privacy: .public)"
+                )
+            }
+            content = outcome.content
         }
 
-        let content = outcome.content
         guard !content.isEmpty else {
             lastPasteboardChangeCount = currentCount
             return
@@ -377,6 +388,40 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                 "Failed to send clipboard offer: \(error.localizedDescription, privacy: .public)"
             )
         }
+    }
+
+    /// When the first pasteboard item is a single copied image *file*,
+    /// returns the image's bytes as one representation.
+    ///
+    /// Finder's ⌘C on a file puts a `public.file-url` (and the name) on the
+    /// pasteboard, not the pixels; this reads the file so the image itself
+    /// crosses — the guest-side mirror of the host window's file-drop image
+    /// expansion. Returns nil for non-file or non-image clipboards (and for
+    /// files over the per-representation cap, after logging), so the normal
+    /// snapshot runs instead and the file's name survives.
+    private func expandedImageFileContent() -> ClipboardContent? {
+        guard pasteboard.firstItemTypes.contains(.fileURL),
+            let urlData = pasteboard.data(forType: .fileURL),
+            let urlString = String(data: urlData, encoding: .utf8),
+            let url = URL(string: urlString), url.isFileURL
+        else { return nil }
+
+        guard let values = try? url.resourceValues(forKeys: [.contentTypeKey, .fileSizeKey]),
+            let type = values.contentType, type.conforms(to: .image)
+        else { return nil }
+
+        let size = values.fileSize ?? 0
+        guard size > 0 else { return nil }
+        guard size <= ClipboardSnapshotPolicy.maxRepresentationByteCount else {
+            Self.logger.notice(
+                "Copied image file too large to expand (\(size, privacy: .public) bytes) — sending its name instead"
+            )
+            return nil
+        }
+        guard let data = try? Data(contentsOf: url), !data.isEmpty else { return nil }
+        return ClipboardContent(representations: [
+            ClipboardContent.Representation(uti: type.identifier, data: data)
+        ])
     }
 
     // MARK: - Frame handlers (main queue)

@@ -100,8 +100,11 @@ enum ClipboardPasteboardIntake {
     /// dragged/copied `public.file-url` items and for files received from
     /// drag-and-drop file promises (screenshot thumbnail, Photos, browsers).
     ///
-    /// Image files become one image representation, text files become text;
-    /// other types are rejected (generic file transfer is out of scope).
+    /// An image file becomes the image itself (so it pastes as an image on
+    /// the other side, matching how macOS pastes a copied image file). Every
+    /// other file type can't cross the VM boundary as a file, so only its
+    /// name is conveyed — its contents are never inlined (a copied `.txt`
+    /// behaves like the file, not its text).
     static func read(fileAt url: URL, allowsBinary: Bool) -> ClipboardIntakeResult {
         guard
             let values = try? url.resourceValues(forKeys: [.contentTypeKey, .fileSizeKey]),
@@ -110,24 +113,16 @@ enum ClipboardPasteboardIntake {
             return .rejected(message: "Couldn't read the dropped file")
         }
 
-        let fileSize = values.fileSize ?? 0
-        guard fileSize <= ClipboardSnapshotPolicy.maxRepresentationByteCount else {
-            return .rejected(
-                message:
-                    "File is too large to share (over \(DataFormatters.formatBytes(UInt64(ClipboardSnapshotPolicy.maxRepresentationByteCount))))"
-            )
-        }
-
-        if type.conforms(to: .plainText) {
-            guard let text = try? String(contentsOf: url, encoding: .utf8), !text.isEmpty else {
-                return .rejected(message: "Couldn't read the dropped file as text")
-            }
-            return .content(ClipboardContent(text: text), note: nil)
-        }
-
         if type.conforms(to: .image) {
             guard allowsBinary else {
                 return .rejected(message: Self.textOnlyTransportMessage)
+            }
+            let fileSize = values.fileSize ?? 0
+            guard fileSize <= ClipboardSnapshotPolicy.maxRepresentationByteCount else {
+                return .rejected(
+                    message:
+                        "File is too large to share (over \(DataFormatters.formatBytes(UInt64(ClipboardSnapshotPolicy.maxRepresentationByteCount))))"
+                )
             }
             guard let data = try? Data(contentsOf: url), !data.isEmpty else {
                 return .rejected(message: "Couldn't read the dropped file")
@@ -140,6 +135,11 @@ enum ClipboardPasteboardIntake {
             )
         }
 
-        return .rejected(message: "Only image and text files can be shared")
+        // Non-image file: convey its name, not its contents.
+        let name = url.lastPathComponent
+        guard !name.isEmpty else {
+            return .rejected(message: "Couldn't read the dropped file")
+        }
+        return .content(ClipboardContent(text: name), note: nil)
     }
 }

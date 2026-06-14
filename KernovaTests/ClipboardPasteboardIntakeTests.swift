@@ -173,8 +173,10 @@ struct ClipboardPasteboardIntakeTests {
 
     // MARK: - File URL expansion
 
-    @Test("dragged text file becomes text content")
+    @Test("dragged text file conveys its name, not its contents")
     func textFileIntake() throws {
+        // A copied/dragged .txt is "the file" — only its name crosses, never
+        // its inlined text (matching how macOS treats a copied text file).
         let url = try makeTempFile(name: "note.txt", contents: Data("file text".utf8))
         let pasteboard = makeScratchPasteboard()
         pasteboard.clearContents()
@@ -189,7 +191,7 @@ struct ClipboardPasteboardIntakeTests {
             Issue.record("Expected content")
             return
         }
-        #expect(content.text == "file text")
+        #expect(content.text == "note.txt")
     }
 
     @Test("dragged image file becomes an image representation")
@@ -214,8 +216,8 @@ struct ClipboardPasteboardIntakeTests {
         #expect(content.representations[0].data == png)
     }
 
-    @Test("dragged file of an unsupported type is rejected")
-    func unsupportedFileRejected() throws {
+    @Test("dragged non-image file conveys its name, not its contents")
+    func nonImageFileConveysName() throws {
         let url = try makeTempFile(name: "blob.bin", contents: Data([0x00, 0x01]))
         let pasteboard = makeScratchPasteboard()
         pasteboard.clearContents()
@@ -223,11 +225,14 @@ struct ClipboardPasteboardIntakeTests {
         item.setString(url.absoluteString, forType: .fileURL)
         pasteboard.writeObjects([item])
 
-        guard case .rejected = ClipboardPasteboardIntake.read(from: pasteboard, allowsBinary: true)
+        guard
+            case .content(let content, _) = ClipboardPasteboardIntake.read(
+                from: pasteboard, allowsBinary: true)
         else {
-            Issue.record("Expected rejection")
+            Issue.record("Expected content")
             return
         }
+        #expect(content.text == "blob.bin")
     }
 
     @Test("read(fileAt:) expands an image file directly — the promise-receipt path")

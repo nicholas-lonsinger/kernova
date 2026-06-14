@@ -3,6 +3,7 @@ import Foundation
 import AppKit
 import Darwin
 import KernovaProtocol
+import UniformTypeIdentifiers
 
 // MARK: - Fake Pasteboard
 
@@ -841,6 +842,108 @@ struct VsockGuestClipboardAgentTests {
             throw TestFailure("Expected ClipboardOffer, got \(String(describing: frame.payload))")
         }
         #expect(offer.utis == [NSPasteboard.PasteboardType.string.rawValue])
+    }
+
+    // MARK: - Copied image files
+
+    @Test("a copied image file is expanded to the image itself")
+    func copiedImageFileExpandsToImage() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        // Exactly what Finder ⌘C on an image file produces: a file URL plus
+        // the name, no pixels.
+        let png = try makeTestPNG()
+        let url = try writeTempFile(name: "picture.png", data: png)
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        pasteboard.writeItem(representations: [
+            (type: .fileURL, data: Data(url.absoluteString.utf8)),
+            (type: .string, data: Data("picture".utf8)),
+        ])
+        await MainActor.run { agent.checkClipboardChange() }
+
+        let offerFrame = try await nextFrame(from: hostChannel)
+        guard case .clipboardOffer(let offer) = offerFrame.payload else {
+            throw TestFailure("Expected ClipboardOffer, got \(String(describing: offerFrame.payload))")
+        }
+        // The image won — not the filename text.
+        #expect(offer.utis == [UTType.png.identifier])
+        #expect(offer.formats.isEmpty)
+
+        // And the bytes that cross are the file's bytes.
+        var request = Frame()
+        request.protocolVersion = 1
+        request.clipboardRequest = Kernova_V1_ClipboardRequest.with {
+            $0.generation = offer.generation
+            $0.utis = [UTType.png.identifier]
+        }
+        try hostChannel.send(request)
+        let dataFrame = try await nextFrame(from: hostChannel)
+        guard case .clipboardData(let data) = dataFrame.payload else {
+            throw TestFailure("Expected ClipboardData, got \(String(describing: dataFrame.payload))")
+        }
+        #expect(data.representations.first?.data == png)
+    }
+
+    @Test("a copied non-image file falls through to its name")
+    func copiedNonImageFileSendsName() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        let url = try writeTempFile(name: "notes.txt", data: Data("contents".utf8))
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        // A copied text file: the OS leaves the file URL (filtered) and the
+        // name as plain text. No image expansion — only the name crosses, and
+        // the file's contents are never inlined.
+        pasteboard.writeItem(representations: [
+            (type: .fileURL, data: Data(url.absoluteString.utf8)),
+            (type: .string, data: Data("notes.txt".utf8)),
+        ])
+        await MainActor.run { agent.checkClipboardChange() }
+
+        let offerFrame = try await nextFrame(from: hostChannel)
+        guard case .clipboardOffer(let offer) = offerFrame.payload else {
+            throw TestFailure("Expected ClipboardOffer, got \(String(describing: offerFrame.payload))")
+        }
+        #expect(offer.utis == [NSPasteboard.PasteboardType.string.rawValue])
+        #expect(offer.formats == [.textUtf8])
+    }
+
+    // MARK: - Image-file test helpers
+
+    private func makeTestPNG() throws -> Data {
+        let rep = try #require(
+            NSBitmapImageRep(
+                bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 2,
+                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+            ))
+        return try #require(rep.representation(using: .png, properties: [:]))
+    }
+
+    private func writeTempFile(name: String, data: Data) throws -> URL {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("KernovaAgentClip-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent(name)
+        try data.write(to: url)
+        return url
     }
 
     // MARK: - Policy enforcement
