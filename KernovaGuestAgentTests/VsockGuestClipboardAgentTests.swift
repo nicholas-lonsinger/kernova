@@ -30,6 +30,16 @@ final class FakePasteboard: Pasteboard, @unchecked Sendable {
         lock.withLock { storedRepresentations.first(where: { $0.type == type })?.data }
     }
 
+    /// File URLs the last `writeItem` placed on the pasteboard (decoded from
+    /// any `.fileURL` representations) — for asserting the staged-file paste path.
+    var writtenFileURLs: [URL] {
+        lock.withLock {
+            storedRepresentations
+                .filter { $0.type == .fileURL }
+                .compactMap { String(data: $0.data, encoding: .utf8).flatMap(URL.init(string:)) }
+        }
+    }
+
     /// Make the next `n` `writeItem` calls return `false` and skip storage
     /// updates.
     ///
@@ -891,6 +901,92 @@ struct VsockGuestClipboardAgentTests {
             throw TestFailure("Expected ClipboardData, got \(String(describing: dataFrame.payload))")
         }
         #expect(data.representations.first?.data == png)
+        // The filename rides along so the host can paste it as a file.
+        #expect(data.representations.first?.filename == "picture.png")
+    }
+
+    @Test("an inbound file representation is staged and a file URL is written alongside the image")
+    func inboundFileStagesAndWritesFileURL() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        let png = try makeTestPNG()
+        try hostChannel.send(makeOfferFrame(generation: 5, utis: [UTType.png.identifier]))
+        _ = try await nextFrame(from: hostChannel)  // request
+
+        var data = Frame()
+        data.protocolVersion = 1
+        data.clipboardData = Kernova_V1_ClipboardData.with {
+            $0.generation = 5
+            $0.representations = [
+                Kernova_V1_ClipboardRepresentation.with {
+                    $0.uti = UTType.png.identifier
+                    $0.data = png
+                    $0.filename = "shot.png"
+                }
+            ]
+        }
+        try hostChannel.send(data)
+
+        // The inline image AND a staged file URL land on the pasteboard.
+        try await waitUntil {
+            pasteboard.data(forType: NSPasteboard.PasteboardType(UTType.png.identifier)) == png
+        }
+        #expect(pasteboard.firstItemTypes.contains(.fileURL))
+        let staged = try #require(pasteboard.writtenFileURLs.first)
+        #expect(FileManager.default.fileExists(atPath: staged.path))
+        #expect(staged.lastPathComponent == "shot.png")
+        #expect(try Data(contentsOf: staged) == png)
+
+        // Echo suppression holds even with the .fileURL on the pasteboard: the
+        // poll re-expands the staged file to the same digest and does not
+        // re-offer it.
+        await MainActor.run { agent.checkClipboardChange() }
+        let extraTask = Task<Frame?, Never> {
+            try? await Task.sleep(for: .milliseconds(50))
+            var iterator = hostChannel.incoming.makeAsyncIterator()
+            return try? await iterator.next()
+        }
+        try await Task.sleep(for: .milliseconds(200))
+        extraTask.cancel()
+        if let frame = await extraTask.value, case .clipboardOffer = frame.payload {
+            throw TestFailure("Echo suppression failed: re-offered the staged file it just received")
+        }
+    }
+
+    @Test("an inbound representation without a filename writes inline only (old-agent interop)")
+    func inboundWithoutFilenameNoStaging() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        let png = try makeTestPNG()
+        try hostChannel.send(makeOfferFrame(generation: 7, utis: [UTType.png.identifier]))
+        _ = try await nextFrame(from: hostChannel)  // request
+        // No filename — as an old agent (pre-filename field) would send.
+        try hostChannel.send(
+            makeDataFrame(generation: 7, representations: [(uti: UTType.png.identifier, data: png)]))
+
+        try await waitUntil {
+            pasteboard.data(forType: NSPasteboard.PasteboardType(UTType.png.identifier)) == png
+        }
+        #expect(!pasteboard.firstItemTypes.contains(.fileURL))
+        #expect(pasteboard.writtenFileURLs.isEmpty)
     }
 
     @Test("a copied non-image file falls through to its name")

@@ -696,6 +696,40 @@ struct VsockClipboardServiceTests {
         #expect(service.clipboardContent.text == "caption")
     }
 
+    @Test("Inbound representation filename is buffered for a later Copy to Mac")
+    func inboundFilenameBuffered() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test")
+        service.start()
+        defer { service.stop() }
+
+        try guest.send(makeOffer(generation: 9, utis: ["public.png"]))
+        _ = try await nextFrame(from: guest)  // request
+
+        var data = Frame()
+        data.protocolVersion = 1
+        data.clipboardData = Kernova_V1_ClipboardData.with {
+            $0.generation = 9
+            $0.representations = [
+                Kernova_V1_ClipboardRepresentation.with {
+                    $0.uti = "public.png"
+                    $0.data = Data([0x89, 0x50])
+                    $0.filename = "from-guest.png"
+                }
+            ]
+        }
+        try guest.send(data)
+
+        try await waitUntil { !service.clipboardContent.isEmpty }
+        // The host doesn't write the pasteboard here (that's "Copy to Mac"),
+        // but the filename must survive in the buffer so copyToMac can stage it.
+        #expect(service.clipboardContent.representations.first?.filename == "from-guest.png")
+    }
+
     @Test("Inbound representations are sanitized — file references never reach the buffer")
     func inboundRepresentationsSanitized() async throws {
         let (guest, host) = try makePair()

@@ -160,6 +160,27 @@ struct ClipboardContentTests {
         #expect(payload.count <= VsockFrame.maxPayloadSize)
         #expect(throws: Never.self) { try VsockFrame.encode(payload) }
     }
+
+    @Test("filename round-trips through proto but stays out of the digest")
+    func filenameRoundTripNotInDigest() throws {
+        let withName = ClipboardContent(representations: [
+            .init(uti: "public.png", data: Data([1, 2, 3]), filename: "photo.png")
+        ])
+        let withoutName = ClipboardContent(representations: [
+            .init(uti: "public.png", data: Data([1, 2, 3]))
+        ])
+        // Filename must not change the digest (load-bearing for echo suppression).
+        #expect(withName.digest == withoutName.digest)
+
+        // …but it must survive a proto round-trip.
+        var data = Kernova_V1_ClipboardData()
+        data.representations = withName.protoRepresentations
+        let bytes = try data.serializedData()
+        let decoded = try Kernova_V1_ClipboardData(serializedData: bytes)
+        let roundTripped = ClipboardContent(protoRepresentations: decoded.representations)
+        #expect(roundTripped.representations.first?.filename == "photo.png")
+        #expect(roundTripped.representations.first?.data == Data([1, 2, 3]))
+    }
 }
 
 @Suite("ClipboardSnapshotPolicy")

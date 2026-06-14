@@ -25,10 +25,20 @@ public struct ClipboardContent: Equatable, Sendable {
         /// The representation's raw bytes.
         public let data: Data
 
-        /// Creates a representation from a UTI and its raw bytes.
-        public init(uti: String, data: Data) {
+        /// Suggested filename when this representation is a file payload.
+        ///
+        /// A copied/dragged image file → `"photo.png"`; `""` for inline-only
+        /// content. A receiver with a non-empty filename materializes the bytes
+        /// to a local temp file and offers its file URL so a Finder paste
+        /// creates the file. Deliberately **not** part of the digest.
+        public let filename: String
+
+        /// Creates a representation from a UTI and its raw bytes, optionally
+        /// tagged with a suggested filename for file payloads.
+        public init(uti: String, data: Data, filename: String = "") {
             self.uti = uti
             self.data = data
+            self.filename = filename
         }
     }
 
@@ -125,7 +135,7 @@ extension ClipboardContent {
     public init(protoRepresentations: [Kernova_V1_ClipboardRepresentation]) {
         self.init(
             representations: protoRepresentations.map {
-                Representation(uti: $0.uti, data: $0.data)
+                Representation(uti: $0.uti, data: $0.data, filename: $0.filename)
             }
         )
     }
@@ -137,6 +147,7 @@ extension ClipboardContent {
             Kernova_V1_ClipboardRepresentation.with {
                 $0.uti = representation.uti
                 $0.data = representation.data
+                $0.filename = representation.filename
             }
         }
     }

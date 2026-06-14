@@ -343,6 +343,14 @@ public nonisolated struct Kernova_V1_ClipboardRepresentation: Sendable {
 
   public var data: Data = Data()
 
+  /// Suggested filename when this representation is a file payload (e.g. a
+  /// copied image file → "photo.png"). Empty means inline-only: the receiver
+  /// renders the bytes but does not materialize a file. When set, the receiver
+  /// stages the bytes to a local temp file and also offers its file URL so a
+  /// Finder paste creates the file. Deliberately excluded from the content
+  /// digest so the round-tripped name can't disturb echo suppression.
+  public var filename: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -857,7 +865,7 @@ nonisolated extension Kernova_V1_LogRecord.Level: SwiftProtobuf._ProtoNameProvid
 
 nonisolated extension Kernova_V1_ClipboardRepresentation: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ClipboardRepresentation"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}uti\0\u{1}data\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}uti\0\u{1}data\0\u{1}filename\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -867,6 +875,7 @@ nonisolated extension Kernova_V1_ClipboardRepresentation: SwiftProtobuf.Message,
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.uti) }()
       case 2: try { try decoder.decodeSingularBytesField(value: &self.data) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.filename) }()
       default: break
       }
     }
@@ -879,12 +888,16 @@ nonisolated extension Kernova_V1_ClipboardRepresentation: SwiftProtobuf.Message,
     if !self.data.isEmpty {
       try visitor.visitSingularBytesField(value: self.data, fieldNumber: 2)
     }
+    if !self.filename.isEmpty {
+      try visitor.visitSingularStringField(value: self.filename, fieldNumber: 3)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Kernova_V1_ClipboardRepresentation, rhs: Kernova_V1_ClipboardRepresentation) -> Bool {
     if lhs.uti != rhs.uti {return false}
     if lhs.data != rhs.data {return false}
+    if lhs.filename != rhs.filename {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

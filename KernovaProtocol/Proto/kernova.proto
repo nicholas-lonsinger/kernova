@@ -114,6 +114,14 @@ enum ClipboardFormat {
 message ClipboardRepresentation {
   string uti = 1;  // e.g. "public.utf8-plain-text", "public.png"
   bytes data = 2;
+
+  // Suggested filename when this representation is a file payload (e.g. a
+  // copied image file → "photo.png"). Empty means inline-only: the receiver
+  // renders the bytes but does not materialize a file. When set, the receiver
+  // stages the bytes to a local temp file and also offers its file URL so a
+  // Finder paste creates the file. Deliberately excluded from the content
+  // digest so the round-tripped name can't disturb echo suppression.
+  string filename = 3;
 }
 
 // Sent by either side to advertise that fresh clipboard content is available

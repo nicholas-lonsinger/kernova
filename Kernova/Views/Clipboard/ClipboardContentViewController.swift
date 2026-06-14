@@ -65,6 +65,11 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     /// the completion hops back to the main actor before touching state.
     private let promiseQueue = OperationQueue()
 
+    /// Materializes file payloads to local temp files for "Copy to Mac" so a
+    /// Finder paste creates the file (bounded to one payload; superseded each
+    /// copy).
+    private let staging = ClipboardFileStaging(label: "host")
+
     /// First-file-wins gate shared by one promise receipt's per-file
     /// completions (the buffer models a single pasteboard item).
     @MainActor
@@ -365,6 +370,11 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 representation.data,
                 forType: NSPasteboard.PasteboardType(rawValue: representation.uti)
             )
+        }
+        // For file payloads, also stage a local temp file and offer its URL so
+        // a Finder paste creates the file (alongside the inline image data).
+        for staged in staging.stage(content.representations) {
+            item.setData(Data(staged.url.absoluteString.utf8), forType: .fileURL)
         }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()

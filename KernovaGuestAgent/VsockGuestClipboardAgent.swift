@@ -141,6 +141,11 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// retains a second multi-megabyte copy.
     private var lastSeenDigest: Data?
 
+    /// Materializes received file payloads to local temp files.
+    ///
+    /// Lets a Finder paste create them; swept on connect/teardown/disable.
+    private let staging = ClipboardFileStaging(label: "agent")
+
     private var pollingTimer: DispatchSourceTimer?
 
     /// Whether clipboard sync is currently allowed by host policy.
@@ -182,6 +187,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// The pasteboard poll is started when
     /// host policy enables clipboard sharing — see `setEnabled(_:)`.
     func start() {
+        // Clear any staging orphans left by a previous run/crash.
+        staging.sweep()
         client.start { [weak self] channel in
             await self?.serve(channel: channel)
         }
@@ -218,6 +225,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             liveChannel = nil
             pendingOutbound = nil
             pendingInboundGeneration = nil
+            staging.sweep()
             Self.logger.notice("Clipboard sharing disabled by host policy")
         }
     }
@@ -231,6 +239,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             self?.liveChannel = nil
             self?.pendingOutbound = nil
             self?.pendingInboundGeneration = nil
+            self?.staging.sweep()
         }
         Self.logger.notice("Vsock clipboard agent stopped")
     }
@@ -419,8 +428,11 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             return nil
         }
         guard let data = try? Data(contentsOf: url), !data.isEmpty else { return nil }
+        // Carry the filename so the host can paste it as a file (only the name
+        // crosses, never the guest path).
         return ClipboardContent(representations: [
-            ClipboardContent.Representation(uti: type.identifier, data: data)
+            ClipboardContent.Representation(
+                uti: type.identifier, data: data, filename: url.lastPathComponent)
         ])
     }
 
@@ -522,6 +534,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                     Kernova_V1_ClipboardRepresentation.with {
                         $0.uti = representation.uti
                         $0.data = representation.data
+                        $0.filename = representation.filename
                     }
                 }
             }
@@ -611,7 +624,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             // transient markers, no matter what the peer sent.
             let sanitized = ClipboardSnapshotPolicy.sanitizedForApply(
                 data.representations.map {
-                    ClipboardContent.Representation(uti: $0.uti, data: $0.data)
+                    ClipboardContent.Representation(
+                        uti: $0.uti, data: $0.data, filename: $0.filename)
                 }
             )
             if sanitized.count != data.representations.count {
@@ -646,15 +660,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             return
         }
 
-        pasteboard.clearContents()
-        let written = pasteboard.writeItem(
-            representations: content.representations.map { representation in
-                (
-                    type: NSPasteboard.PasteboardType(rawValue: representation.uti),
-                    data: representation.data
-                )
-            }
-        )
+        let written = applyToPasteboard(content)
         guard written else {
             Self.logger.warning(
                 "Failed to write host clipboard to pasteboard (gen=\(data.generation, privacy: .public), \(content.totalByteCount, privacy: .public) bytes). Echo-suppression state preserved; next user clipboard change will offer normally."
@@ -669,6 +675,26 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         Self.logger.notice(
             "Wrote host clipboard to pasteboard (\(content.representations.count, privacy: .public) reps, \(content.totalByteCount, privacy: .public) bytes)"
         )
+    }
+
+    /// Writes `content` to the pasteboard as one item: every inline (uti, data)
+    /// representation plus, for each representation tagged with a filename, a
+    /// `public.file-url` pointing at a freshly-materialized local temp file —
+    /// so a Finder paste creates the file while data readers (Notes/TextEdit)
+    /// still see the inline image.
+    private func applyToPasteboard(_ content: ClipboardContent) -> Bool {
+        var pairs: [(type: NSPasteboard.PasteboardType, data: Data)] =
+            content.representations.map {
+                (type: NSPasteboard.PasteboardType(rawValue: $0.uti), data: $0.data)
+            }
+        for staged in staging.stage(content.representations) {
+            pairs.append((type: .fileURL, data: Data(staged.url.absoluteString.utf8)))
+            Self.logger.debug(
+                "Staged clipboard file \(staged.url.lastPathComponent, privacy: .public)"
+            )
+        }
+        pasteboard.clearContents()
+        return pasteboard.writeItem(representations: pairs)
     }
 
     private func handleRelease(_ release: Kernova_V1_ClipboardRelease) {

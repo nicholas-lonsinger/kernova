@@ -175,9 +175,11 @@ enum ClipboardPasteboardIntake {
             guard let data = try? Data(contentsOf: url), !data.isEmpty else {
                 return .rejected(message: "Couldn't read the dropped file")
             }
+            // Carry the filename so the other side can paste it as a file
+            // (the file's path never crosses — only the name).
             return .content(
                 ClipboardContent(representations: [
-                    .init(uti: type.identifier, data: data)
+                    .init(uti: type.identifier, data: data, filename: url.lastPathComponent)
                 ]),
                 note: nil
             )

@@ -214,6 +214,8 @@ struct ClipboardPasteboardIntakeTests {
         #expect(content.representations.count == 1)
         #expect(UTType(content.representations[0].uti)?.conforms(to: .image) == true)
         #expect(content.representations[0].data == png)
+        // The filename is carried so the guest can paste it as a file.
+        #expect(content.representations[0].filename == "image.png")
     }
 
     @Test("dragged non-image file conveys its name, not its contents")

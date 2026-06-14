@@ -362,6 +362,7 @@ final class VsockClipboardService: ClipboardServicing {
                     Kernova_V1_ClipboardRepresentation.with {
                         $0.uti = representation.uti
                         $0.data = representation.data
+                        $0.filename = representation.filename
                     }
                 }
             }
@@ -451,7 +452,8 @@ final class VsockClipboardService: ClipboardServicing {
             // transient markers, no matter what the peer sent.
             let sanitized = ClipboardSnapshotPolicy.sanitizedForApply(
                 data.representations.map {
-                    ClipboardContent.Representation(uti: $0.uti, data: $0.data)
+                    ClipboardContent.Representation(
+                        uti: $0.uti, data: $0.data, filename: $0.filename)
                 }
             )
             if sanitized.count != data.representations.count {
