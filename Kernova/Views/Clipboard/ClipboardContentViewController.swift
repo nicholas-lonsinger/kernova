@@ -35,7 +35,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     // MARK: - Views
 
     private let dropContainer = ClipboardDropContainerView()
-    private let textView: NSTextView
+    private let textView: ClipboardEditorTextView
     private let scrollView: NSScrollView
     private let imagePreview = ClipboardImagePreviewView()
     private let summaryView = ClipboardSummaryView()
@@ -76,7 +76,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         self.instance = instance
         self.viewModel = viewModel
 
-        let textView = NSTextView()
+        let textView = ClipboardEditorTextView()
         textView.isEditable = true
         textView.isSelectable = true
         textView.isRichText = false
@@ -127,6 +127,10 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         super.init(nibName: nil, bundle: nil)
 
         textView.delegate = self
+        // An editable text view would otherwise swallow a file/image/screenshot
+        // drop and insert the file's path as text — divert those to the same
+        // image-aware intake as a drop on the container.
+        textView.onDivertedDrop = { [weak self] in self?.handleDrop($0) ?? false }
         button.target = self
         button.action = #selector(actionButtonClicked(_:))
         commandBar.pasteButton.target = self
