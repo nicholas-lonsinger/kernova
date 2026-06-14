@@ -18,14 +18,53 @@ struct ClipboardPreviewPolicyTests {
         #expect(mode == .text("hello"))
     }
 
-    @Test("text wins over coexisting richer representations")
-    func textWinsOverRicher() {
+    @Test("inline rich text renders styled instead of plain")
+    func richTextWinsOverPlain() {
+        // A TextEdit rich copy carries RTF + a plain-text sibling; the styled
+        // RTF should be shown, not the flattened plain text.
+        let rtf = Data("{\\rtf1}".utf8)
         let content = ClipboardContent(representations: [
-            .init(uti: UTType.rtf.identifier, data: Data("{\\rtf1}".utf8)),
+            .init(uti: UTType.rtf.identifier, data: rtf),
             .init(uti: ClipboardContent.utf8TextUTI, data: Data("plain".utf8)),
-            .init(uti: UTType.png.identifier, data: Data([0x89])),
         ])
-        #expect(ClipboardPreviewPolicy.mode(for: content) == .text("plain"))
+        #expect(
+            ClipboardPreviewPolicy.mode(for: content)
+                == .richText(data: rtf, uti: UTType.rtf.identifier))
+    }
+
+    @Test("a non-image file payload renders the file chip")
+    func nonImageFilePayloadShowsChip() {
+        let bytes = Data("hello".utf8)
+        let content = ClipboardContent(representations: [
+            .init(uti: UTType.plainText.identifier, data: bytes, filename: "note.txt")
+        ])
+        #expect(
+            ClipboardPreviewPolicy.mode(for: content)
+                == .file(filename: "note.txt", uti: UTType.plainText.identifier, byteCount: bytes.count))
+    }
+
+    @Test("an image file payload still renders the image preview")
+    func imageFilePayloadShowsImage() {
+        let png = Data([0x89, 0x50])
+        let content = ClipboardContent(representations: [
+            .init(uti: UTType.png.identifier, data: png, filename: "photo.png")
+        ])
+        #expect(
+            ClipboardPreviewPolicy.mode(for: content)
+                == .image(data: png, uti: UTType.png.identifier))
+    }
+
+    @Test("a copied .rtf file attaches as a file, not inline rich text")
+    func rtfFilePayloadShowsChip() {
+        // The file-payload rule must beat the rich-text rule: a copied .rtf
+        // file is a file attachment, not styled inline content.
+        let rtf = Data("{\\rtf1}".utf8)
+        let content = ClipboardContent(representations: [
+            .init(uti: UTType.rtf.identifier, data: rtf, filename: "styled.rtf")
+        ])
+        #expect(
+            ClipboardPreviewPolicy.mode(for: content)
+                == .file(filename: "styled.rtf", uti: UTType.rtf.identifier, byteCount: rtf.count))
     }
 
     @Test("an image alongside a URL/path descriptor shows the image, not the URL")

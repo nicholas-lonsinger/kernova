@@ -21,12 +21,18 @@ enum ClipboardContentDescriber {
             return "Empty"
         case .text:
             primary = "Plain text"
+        case .richText(_, let uti):
+            primary = displayName(forUTI: uti)
         case .image(let data, let uti):
             if let size = imagePixelSize(data: data) {
                 primary = "\(displayName(forUTI: uti)) · \(Int(size.width)) × \(Int(size.height))"
             } else {
                 primary = displayName(forUTI: uti)
             }
+        case .file(let filename, let uti, _):
+            // Name · type, e.g. "notes.txt · Plain Text Document" — the size is
+            // appended below like every other mode.
+            primary = "\(filename) · \(displayName(forUTI: uti))"
         case .summary(let representations):
             guard let first = representations.first else { return "Empty" }
             primary = displayName(forUTI: first.uti)

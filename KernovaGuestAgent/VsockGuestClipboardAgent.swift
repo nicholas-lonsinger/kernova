@@ -325,14 +325,15 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         let currentCount = pasteboard.changeCount
         guard currentCount != lastPasteboardChangeCount else { return }
 
-        // A copied image *file* (Finder ⌘C) puts only a file URL and its name
-        // on the pasteboard — not the pixels. Expand it to the image itself so
-        // it pastes as an image on the host, matching how macOS pastes a copied
-        // image file. Non-image files fall through to the normal snapshot, where
-        // the file reference is filtered and only the name survives.
+        // A copied *file* (Finder ⌘C) puts only a file URL and its name on the
+        // pasteboard — not the bytes. Expand it to the file's bytes so it
+        // crosses as a real file the host can paste (an image also pastes
+        // inline), matching how macOS pastes a copied file. A clipboard that
+        // isn't a single file — or a file over the size cap — falls through to
+        // the normal snapshot, where the file reference is filtered out.
         let content: ClipboardContent
-        if let imageFileContent = expandedImageFileContent() {
-            content = imageFileContent
+        if let fileContent = expandedFileContent() {
+            content = fileContent
         } else {
             // Identity-based skips run before any data is read so transient
             // markers and file references cost nothing per poll.
@@ -399,16 +400,17 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         }
     }
 
-    /// When the first pasteboard item is a single copied image *file*,
-    /// returns the image's bytes as one representation.
+    /// When the first pasteboard item is a single copied *file*, returns the
+    /// file's bytes as one representation tagged with its content UTI and name.
     ///
     /// Finder's ⌘C on a file puts a `public.file-url` (and the name) on the
-    /// pasteboard, not the pixels; this reads the file so the image itself
-    /// crosses — the guest-side mirror of the host window's file-drop image
-    /// expansion. Returns nil for non-file or non-image clipboards (and for
-    /// files over the per-representation cap, after logging), so the normal
-    /// snapshot runs instead and the file's name survives.
-    private func expandedImageFileContent() -> ClipboardContent? {
+    /// pasteboard, not the bytes; this reads the file so the file itself
+    /// crosses — the guest-side mirror of the host window's file-drop
+    /// expansion. The host materializes it as a real file (and pastes an image
+    /// inline). Returns nil for non-file clipboards and for files over the
+    /// per-representation cap (after logging), so the normal snapshot runs
+    /// instead.
+    private func expandedFileContent() -> ClipboardContent? {
         guard pasteboard.firstItemTypes.contains(.fileURL),
             let urlData = pasteboard.data(forType: .fileURL),
             let urlString = String(data: urlData, encoding: .utf8),
@@ -416,20 +418,20 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         else { return nil }
 
         guard let values = try? url.resourceValues(forKeys: [.contentTypeKey, .fileSizeKey]),
-            let type = values.contentType, type.conforms(to: .image)
+            let type = values.contentType
         else { return nil }
 
         let size = values.fileSize ?? 0
         guard size > 0 else { return nil }
         guard size <= ClipboardSnapshotPolicy.maxRepresentationByteCount else {
             Self.logger.notice(
-                "Copied image file too large to expand (\(size, privacy: .public) bytes) — sending its name instead"
+                "Copied file too large to expand (\(size, privacy: .public) bytes, type=\(type.identifier, privacy: .public)) — skipping"
             )
             return nil
         }
         guard let data = try? Data(contentsOf: url), !data.isEmpty else { return nil }
-        // Carry the filename so the host can paste it as a file (only the name
-        // crosses, never the guest path).
+        // Carry the filename so the host can materialize it as a file (only the
+        // name crosses, never the guest path).
         return ClipboardContent(representations: [
             ClipboardContent.Representation(
                 uti: type.identifier, data: data, filename: url.lastPathComponent)
@@ -677,16 +679,21 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         )
     }
 
-    /// Writes `content` to the pasteboard as one item: every inline (uti, data)
-    /// representation plus, for each representation tagged with a filename, a
-    /// `public.file-url` pointing at a freshly-materialized local temp file —
-    /// so a Finder paste creates the file while data readers (Notes/TextEdit)
-    /// still see the inline image.
+    /// Writes `content` to the pasteboard as one item.
+    ///
+    /// Inline (uti, data) pairs are written for non-file content and for image
+    /// file payloads (so Notes shows the image in place). A non-image file
+    /// payload is written as a `public.file-url` only — its bytes are
+    /// materialized to a local temp file and *not* inlined, so a Finder paste
+    /// creates the file and Notes attaches it instead of inserting its
+    /// contents. Each filename-tagged representation is materialized and offered
+    /// as a file URL regardless.
     private func applyToPasteboard(_ content: ClipboardContent) -> Bool {
-        var pairs: [(type: NSPasteboard.PasteboardType, data: Data)] =
-            content.representations.map {
-                (type: NSPasteboard.PasteboardType(rawValue: $0.uti), data: $0.data)
-            }
+        var pairs: [(type: NSPasteboard.PasteboardType, data: Data)] = []
+        for representation in content.representations where Self.shouldInline(representation) {
+            pairs.append(
+                (type: NSPasteboard.PasteboardType(rawValue: representation.uti), data: representation.data))
+        }
         for staged in staging.stage(content.representations) {
             pairs.append((type: .fileURL, data: Data(staged.url.absoluteString.utf8)))
             Self.logger.debug(
@@ -695,6 +702,17 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         }
         pasteboard.clearContents()
         return pasteboard.writeItem(representations: pairs)
+    }
+
+    /// Whether a representation's bytes should be written inline (vs. carried
+    /// only as a materialized file URL).
+    ///
+    /// Non-file content (no filename) and image file payloads inline; every
+    /// other file payload is file-only so it attaches rather than inserting its
+    /// contents. Mirrors `ClipboardContentViewController.copyToMac`.
+    static func shouldInline(_ representation: ClipboardContent.Representation) -> Bool {
+        if representation.filename.isEmpty { return true }
+        return UTType(representation.uti)?.conforms(to: .image) == true
     }
 
     private func handleRelease(_ release: Kernova_V1_ClipboardRelease) {

@@ -173,11 +173,13 @@ struct ClipboardPasteboardIntakeTests {
 
     // MARK: - File URL expansion
 
-    @Test("dragged text file conveys its name, not its contents")
+    @Test("dragged text file crosses as the file itself (bytes + name)")
     func textFileIntake() throws {
-        // A copied/dragged .txt is "the file" — only its name crosses, never
-        // its inlined text (matching how macOS treats a copied text file).
-        let url = try makeTempFile(name: "note.txt", contents: Data("file text".utf8))
+        // A copied/dragged .txt is "the file" — its bytes cross tagged with the
+        // content UTI and name so the other side materializes a real file
+        // (matching how macOS pastes a copied text file).
+        let contents = Data("file text".utf8)
+        let url = try makeTempFile(name: "note.txt", contents: contents)
         let pasteboard = makeScratchPasteboard()
         pasteboard.clearContents()
         let item = NSPasteboardItem()
@@ -191,7 +193,9 @@ struct ClipboardPasteboardIntakeTests {
             Issue.record("Expected content")
             return
         }
-        #expect(content.text == "note.txt")
+        #expect(content.representations.count == 1)
+        #expect(content.representations[0].filename == "note.txt")
+        #expect(content.representations[0].data == contents)
     }
 
     @Test("dragged image file becomes an image representation")
@@ -218,9 +222,10 @@ struct ClipboardPasteboardIntakeTests {
         #expect(content.representations[0].filename == "image.png")
     }
 
-    @Test("dragged non-image file conveys its name, not its contents")
-    func nonImageFileConveysName() throws {
-        let url = try makeTempFile(name: "blob.bin", contents: Data([0x00, 0x01]))
+    @Test("dragged non-image file crosses as the file itself (bytes + name)")
+    func nonImageFileCrossesAsFile() throws {
+        let contents = Data([0x00, 0x01])
+        let url = try makeTempFile(name: "blob.bin", contents: contents)
         let pasteboard = makeScratchPasteboard()
         pasteboard.clearContents()
         let item = NSPasteboardItem()
@@ -234,7 +239,9 @@ struct ClipboardPasteboardIntakeTests {
             Issue.record("Expected content")
             return
         }
-        #expect(content.text == "blob.bin")
+        #expect(content.representations.count == 1)
+        #expect(content.representations[0].filename == "blob.bin")
+        #expect(content.representations[0].data == contents)
     }
 
     @Test("read(fileAt:) expands an image file directly — the promise-receipt path")

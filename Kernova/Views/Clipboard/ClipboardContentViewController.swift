@@ -37,9 +37,17 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     private let dropContainer = ClipboardDropContainerView()
     private let textView: ClipboardEditorTextView
     private let scrollView: NSScrollView
+    private let richTextPreview = ClipboardRichTextPreviewView()
     private let imagePreview = ClipboardImagePreviewView()
+    private let filePreview = ClipboardFilePreviewView()
     private let summaryView = ClipboardSummaryView()
     private let commandBar = ClipboardCommandBarView()
+
+    /// Every content view stacked in the content area; exactly one is visible.
+    /// `scrollView` (the editable plain-text editor) is first — the default.
+    private var contentViews: [NSView] {
+        [scrollView, richTextPreview, imagePreview, filePreview, summaryView]
+    }
     private let statusCircle: NSView
     private let statusLabel: NSTextField
     private let actionButton: NSButton
@@ -159,14 +167,14 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             self?.handleDrop(draggingInfo) ?? false
         }
 
-        // All three content views are installed once and toggled via
-        // isHidden — no add/remove churn when the preview mode changes.
-        for contentView in [scrollView, imagePreview, summaryView] {
+        // All content views are installed once and toggled via isHidden — no
+        // add/remove churn when the preview mode changes. The editor leads
+        // (the default visible view); the rest start hidden.
+        for contentView in contentViews {
             contentView.translatesAutoresizingMaskIntoConstraints = false
+            contentView.isHidden = contentView !== scrollView
             container.addSubview(contentView)
         }
-        imagePreview.isHidden = true
-        summaryView.isHidden = true
 
         let commandDivider = NSBox()
         commandDivider.boxType = .separator
@@ -186,7 +194,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         container.addSubview(statusBar)
 
         var constraints: [NSLayoutConstraint] = []
-        for contentView in [scrollView, imagePreview, summaryView] {
+        for contentView in contentViews {
             constraints += [
                 contentView.topAnchor.constraint(equalTo: container.topAnchor),
                 contentView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
@@ -300,6 +308,14 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             showTextEditor(text: "")
         case .text(let text):
             showTextEditor(text: text)
+        case .richText(let data, let uti):
+            if richTextPreview.configure(data: data, uti: uti) {
+                show(contentView: richTextPreview)
+            } else {
+                // Undecodable RTF degrades to the summary.
+                summaryView.configure(content: content)
+                show(contentView: summaryView)
+            }
         case .image(let data, let uti):
             if imagePreview.configure(data: data, uti: uti) {
                 show(contentView: imagePreview)
@@ -308,6 +324,9 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 summaryView.configure(content: content)
                 show(contentView: summaryView)
             }
+        case .file(let filename, let uti, let byteCount):
+            filePreview.configure(filename: filename, uti: uti, byteCount: byteCount)
+            show(contentView: filePreview)
         case .summary:
             summaryView.configure(content: content)
             show(contentView: summaryView)
@@ -331,9 +350,9 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         if contentView !== scrollView, view.window?.firstResponder === textView {
             view.window?.makeFirstResponder(dropContainer)
         }
-        scrollView.isHidden = contentView !== scrollView
-        imagePreview.isHidden = contentView !== imagePreview
-        summaryView.isHidden = contentView !== summaryView
+        for view in contentViews {
+            view.isHidden = view !== contentView
+        }
     }
 
     private func message(for issue: ClipboardTransferIssue) -> String {
@@ -365,14 +384,18 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         guard !content.isEmpty else { return }
 
         let item = NSPasteboardItem()
-        for representation in content.representations {
+        // Non-file content and image file payloads are inlined (Notes shows
+        // them in place); a non-image file payload is carried only as the
+        // staged file URL below, so it attaches as a file rather than inserting
+        // its contents. See `ClipboardContent.Representation.shouldInlineOnPasteboard`.
+        for representation in content.representations where representation.shouldInlineOnPasteboard {
             item.setData(
                 representation.data,
                 forType: NSPasteboard.PasteboardType(rawValue: representation.uti)
             )
         }
-        // For file payloads, also stage a local temp file and offer its URL so
-        // a Finder paste creates the file (alongside the inline image data).
+        // For file payloads, stage a local temp file and offer its URL so a
+        // Finder paste creates the file (alongside any inline image data).
         for staged in staging.stage(content.representations) {
             item.setData(Data(staged.url.absoluteString.utf8), forType: .fileURL)
         }

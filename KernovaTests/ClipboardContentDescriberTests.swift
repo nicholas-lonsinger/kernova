@@ -33,15 +33,44 @@ struct ClipboardContentDescriberTests {
 
     @Test("extra representations are disclosed in the indicator")
     func extraRepsDisclosed() {
+        // Plain text wins the preview; the two non-rich siblings are disclosed
+        // as "+ 2 more" (custom blobs, so the rich-text rule doesn't fire).
         let content = ClipboardContent(representations: [
             .init(uti: ClipboardContent.utf8TextUTI, data: Data("plain".utf8)),
-            .init(uti: UTType.rtf.identifier, data: Data("{\\rtf1}".utf8)),
-            .init(uti: UTType.html.identifier, data: Data("<b>x</b>".utf8)),
+            .init(uti: "com.example.a", data: Data([1, 2])),
+            .init(uti: "com.example.b", data: Data([3, 4])),
         ])
         let size = DataFormatters.formatBytes(UInt64(content.totalByteCount))
         #expect(
             ClipboardContentDescriber.indicatorText(for: content)
                 == "Plain text + 2 more · \(size)")
+    }
+
+    @Test("rich text indicator uses the RTF type name")
+    func richTextIndicator() {
+        let rtf = Data("{\\rtf1}".utf8)
+        let content = ClipboardContent(representations: [
+            .init(uti: UTType.rtf.identifier, data: rtf),
+            .init(uti: ClipboardContent.utf8TextUTI, data: Data("plain".utf8)),
+        ])
+        let name = ClipboardContentDescriber.displayName(forUTI: UTType.rtf.identifier)
+        let size = DataFormatters.formatBytes(UInt64(content.totalByteCount))
+        // RTF + a coexisting plain-text sibling → "<RTF name> + 1 more · size".
+        #expect(
+            ClipboardContentDescriber.indicatorText(for: content) == "\(name) + 1 more · \(size)")
+    }
+
+    @Test("file indicator is name · type · size")
+    func fileIndicator() {
+        let bytes = Data("hello".utf8)
+        let content = ClipboardContent(representations: [
+            .init(uti: UTType.plainText.identifier, data: bytes, filename: "note.txt")
+        ])
+        let typeName = ClipboardContentDescriber.displayName(forUTI: UTType.plainText.identifier)
+        let size = DataFormatters.formatBytes(UInt64(content.totalByteCount))
+        #expect(
+            ClipboardContentDescriber.indicatorText(for: content)
+                == "note.txt · \(typeName) · \(size)")
     }
 
     @Test("image indicator includes pixel dimensions")

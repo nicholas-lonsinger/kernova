@@ -854,7 +854,7 @@ struct VsockGuestClipboardAgentTests {
         #expect(offer.utis == [NSPasteboard.PasteboardType.string.rawValue])
     }
 
-    // MARK: - Copied image files
+    // MARK: - Copied files
 
     @Test("a copied image file is expanded to the image itself")
     func copiedImageFileExpandsToImage() async throws {
@@ -989,8 +989,8 @@ struct VsockGuestClipboardAgentTests {
         #expect(pasteboard.writtenFileURLs.isEmpty)
     }
 
-    @Test("a copied non-image file falls through to its name")
-    func copiedNonImageFileSendsName() async throws {
+    @Test("an inbound non-image file is written as a file URL only, not inlined")
+    func inboundNonImageFileWritesFileURLOnly() async throws {
         let pasteboard = FakePasteboard()
         let (agentFd, remoteFd) = try makeRawSocketPair()
         let hostChannel = VsockChannel(fileDescriptor: remoteFd)
@@ -1002,11 +1002,53 @@ struct VsockGuestClipboardAgentTests {
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
-        let url = try writeTempFile(name: "notes.txt", data: Data("contents".utf8))
+        let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
+        let contents = Data("file contents".utf8)
+        try hostChannel.send(makeOfferFrame(generation: 8, utis: [txtUTI]))
+        _ = try await nextFrame(from: hostChannel)  // request
+
+        var data = Frame()
+        data.protocolVersion = 1
+        data.clipboardData = Kernova_V1_ClipboardData.with {
+            $0.generation = 8
+            $0.representations = [
+                Kernova_V1_ClipboardRepresentation.with {
+                    $0.uti = txtUTI
+                    $0.data = contents
+                    $0.filename = "notes.txt"
+                }
+            ]
+        }
+        try hostChannel.send(data)
+
+        // The file URL lands; the contents are NOT inlined under the text UTI,
+        // so the receiver attaches the file rather than inserting its text.
+        try await waitUntil { pasteboard.firstItemTypes.contains(.fileURL) }
+        #expect(!pasteboard.firstItemTypes.contains(NSPasteboard.PasteboardType(txtUTI)))
+        let staged = try #require(pasteboard.writtenFileURLs.first)
+        #expect(staged.lastPathComponent == "notes.txt")
+        #expect(try Data(contentsOf: staged) == contents)
+    }
+
+    @Test("a copied non-image file crosses as the file itself (bytes + name)")
+    func copiedNonImageFileExpandsToFile() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        let contents = Data("contents".utf8)
+        let url = try writeTempFile(name: "notes.txt", data: contents)
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
-        // A copied text file: the OS leaves the file URL (filtered) and the
-        // name as plain text. No image expansion — only the name crosses, and
-        // the file's contents are never inlined.
+        // A copied text file: the OS leaves the file URL and the name as plain
+        // text. The agent reads the file so its bytes cross tagged with the
+        // file's content UTI and name (the host materializes a real file).
         pasteboard.writeItem(representations: [
             (type: .fileURL, data: Data(url.absoluteString.utf8)),
             (type: .string, data: Data("notes.txt".utf8)),
@@ -1017,8 +1059,25 @@ struct VsockGuestClipboardAgentTests {
         guard case .clipboardOffer(let offer) = offerFrame.payload else {
             throw TestFailure("Expected ClipboardOffer, got \(String(describing: offerFrame.payload))")
         }
-        #expect(offer.utis == [NSPasteboard.PasteboardType.string.rawValue])
-        #expect(offer.formats == [.textUtf8])
+        let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
+        // The file crossed, not the name-as-text: a single file rep, no legacy
+        // text format (its UTI is public.plain-text, not utf8-plain-text).
+        #expect(offer.utis == [txtUTI])
+        #expect(offer.formats.isEmpty)
+
+        var request = Frame()
+        request.protocolVersion = 1
+        request.clipboardRequest = Kernova_V1_ClipboardRequest.with {
+            $0.generation = offer.generation
+            $0.utis = [txtUTI]
+        }
+        try hostChannel.send(request)
+        let dataFrame = try await nextFrame(from: hostChannel)
+        guard case .clipboardData(let data) = dataFrame.payload else {
+            throw TestFailure("Expected ClipboardData, got \(String(describing: dataFrame.payload))")
+        }
+        #expect(data.representations.first?.data == contents)
+        #expect(data.representations.first?.filename == "notes.txt")
     }
 
     // MARK: - Image-file test helpers
