@@ -24,12 +24,18 @@ enum ClipboardPreviewPolicy {
     /// `NSTextView` freezes the UI laying out multi-megabyte strings.
     static let maxEditableTextBytes = 2_000_000
 
-    /// Priority: text wins over coexisting richer representations (the
-    /// common RTF + plain-text copy lands in the editor; the command bar's
-    /// indicator discloses the extras), then image, then summary.
+    /// Priority: an image beats a coexisting path/URL *descriptor* text (so a
+    /// dragged image whose pasteboard also carried its path shows the image,
+    /// not the path); otherwise text wins over coexisting richer
+    /// representations (the common RTF + plain-text copy lands in the editor;
+    /// the command bar's indicator discloses the extras), then image, then
+    /// summary.
     static func mode(for content: ClipboardContent) -> ClipboardPreviewMode {
         if content.isEmpty {
             return .empty
+        }
+        if let image = content.imageRepresentation, content.textIsPathOrURLOnly {
+            return .image(data: image.data, uti: image.uti)
         }
         if let text = content.text, text.utf8.count <= maxEditableTextBytes {
             return .text(text)

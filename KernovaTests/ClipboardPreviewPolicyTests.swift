@@ -28,6 +28,45 @@ struct ClipboardPreviewPolicyTests {
         #expect(ClipboardPreviewPolicy.mode(for: content) == .text("plain"))
     }
 
+    @Test("an image alongside a URL/path descriptor shows the image, not the URL")
+    func imageBeatsURLDescriptor() {
+        // A dragged image whose pasteboard also carried its http(s) URL (e.g.
+        // a Safari image) — the image must win over the descriptor text.
+        let pngData = Data([0x89, 0x50])
+        let content = ClipboardContent(representations: [
+            .init(uti: UTType.png.identifier, data: pngData),
+            .init(uti: ClipboardContent.utf8TextUTI, data: Data("https://example.com/cat.png".utf8)),
+        ])
+        #expect(
+            ClipboardPreviewPolicy.mode(for: content)
+                == .image(data: pngData, uti: UTType.png.identifier))
+    }
+
+    @Test("an image alongside a standalone public.url rep shows the image")
+    func imageBeatsStandaloneURLRep() {
+        let pngData = Data([0x89, 0x50])
+        let content = ClipboardContent(representations: [
+            .init(uti: UTType.png.identifier, data: pngData),
+            .init(uti: "public.url", data: Data("https://example.com/cat.png".utf8)),
+        ])
+        #expect(
+            ClipboardPreviewPolicy.mode(for: content)
+                == .image(data: pngData, uti: UTType.png.identifier))
+    }
+
+    @Test("an image alongside genuine prose still shows the text")
+    func proseBeatsImage() {
+        // The descriptor guard must NOT fire for real text: a caption is prose,
+        // not a path/URL, so text-wins still holds (RTF+plain-text behavior).
+        let content = ClipboardContent(representations: [
+            .init(uti: UTType.png.identifier, data: Data([0x89])),
+            .init(uti: ClipboardContent.utf8TextUTI, data: Data("Here is a caption for the photo".utf8)),
+        ])
+        #expect(
+            ClipboardPreviewPolicy.mode(for: content)
+                == .text("Here is a caption for the photo"))
+    }
+
     @Test("image-only content renders the image preview with the preferred UTI")
     func imagePreferredUTI() {
         let pngData = Data([0x89, 0x50])

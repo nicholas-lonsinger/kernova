@@ -9,10 +9,10 @@
 /* Begin PBXBuildFile section */
 		A10000F1 /* DiskTemplates in Resources */ = {isa = PBXBuildFile; fileRef = A10000F0 /* DiskTemplates */; };
 		A100010B /* KernovaRelaunchHelper in Embed Helpers */ = {isa = PBXBuildFile; fileRef = A1000100 /* KernovaRelaunchHelper */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		A100040D /* KernovaQuickLook.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = A1000400 /* KernovaQuickLook.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		A2000001 /* KernovaProtocol in Frameworks */ = {isa = PBXBuildFile; productRef = A2000002 /* KernovaProtocol */; };
 		A2000004 /* KernovaProtocol in Frameworks */ = {isa = PBXBuildFile; productRef = A2000005 /* KernovaProtocol */; };
 		A2000006 /* KernovaProtocol in Frameworks */ = {isa = PBXBuildFile; productRef = A2000007 /* KernovaProtocol */; };
-		A100040D /* KernovaQuickLook.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = A1000400 /* KernovaQuickLook.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -85,8 +85,8 @@
 		A1000100 /* KernovaRelaunchHelper */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = KernovaRelaunchHelper; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000200 /* KernovaGuestAgent */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = KernovaGuestAgent; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000300 /* KernovaGuestAgentTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KernovaGuestAgentTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		B62FC33F2FAFDBB1003775B7 /* KernovaProtocol */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = KernovaProtocol; sourceTree = "<group>"; };
 		A1000400 /* KernovaQuickLook.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = KernovaQuickLook.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		B62FC33F2FAFDBB1003775B7 /* KernovaProtocol */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = KernovaProtocol; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -107,13 +107,6 @@
 				uninstall.command,
 			);
 			target = A1000303 /* KernovaGuestAgentTests */;
-		};
-		A1000408 /* Exceptions for "KernovaQuickLook" folder in "KernovaQuickLook" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				Info.plist,
-			);
-			target = A1000404 /* KernovaQuickLook */;
 		};
 		A1000409 /* Exceptions for "KernovaQuickLook" folder in "Kernova" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
@@ -175,7 +168,6 @@
 		A1000401 /* KernovaQuickLook */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				A1000408 /* Exceptions for "KernovaQuickLook" folder in "KernovaQuickLook" target */,
 				A1000409 /* Exceptions for "KernovaQuickLook" folder in "Kernova" target */,
 			);
 			path = KernovaQuickLook;
@@ -360,28 +352,6 @@
 			productReference = A1000200 /* KernovaGuestAgent */;
 			productType = "com.apple.product-type.tool";
 		};
-		A1000404 /* KernovaQuickLook */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = A1000407 /* Build configuration list for PBXNativeTarget "KernovaQuickLook" */;
-			buildPhases = (
-				A100040F /* Set Build Number from Git */,
-				A1000402 /* Sources */,
-				A1000403 /* Frameworks */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-			);
-			fileSystemSynchronizedGroups = (
-				A1000401 /* KernovaQuickLook */,
-			);
-			name = KernovaQuickLook;
-			packageProductDependencies = (
-			);
-			productName = KernovaQuickLook;
-			productReference = A1000400 /* KernovaQuickLook.appex */;
-			productType = "com.apple.product-type.app-extension";
-		};
 		A1000303 /* KernovaGuestAgentTests */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = A1000309 /* Build configuration list for PBXNativeTarget "KernovaGuestAgentTests" */;
@@ -406,6 +376,28 @@
 			productName = KernovaGuestAgentTests;
 			productReference = A1000300 /* KernovaGuestAgentTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		A1000404 /* KernovaQuickLook */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A1000407 /* Build configuration list for PBXNativeTarget "KernovaQuickLook" */;
+			buildPhases = (
+				A100040F /* Set Build Number from Git */,
+				A1000402 /* Sources */,
+				A1000403 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				A1000401 /* KernovaQuickLook */,
+			);
+			name = KernovaQuickLook;
+			packageProductDependencies = (
+			);
+			productName = KernovaQuickLook;
+			productReference = A1000400 /* KernovaQuickLook.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -923,6 +915,36 @@
 			};
 			name = Release;
 		};
+		A100030A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 0.9.0;
+				PRODUCT_BUNDLE_IDENTIFIER = app.kernova.agent.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		A100030B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 0.9.0;
+				PRODUCT_BUNDLE_IDENTIFIER = app.kernova.agent.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
 		A1000405 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -975,36 +997,6 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_VERSION = 6.0;
-			};
-			name = Release;
-		};
-		A100030A /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEAD_CODE_STRIPPING = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 0.9.0;
-				PRODUCT_BUNDLE_IDENTIFIER = app.kernova.agent.tests;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_VERSION = 6.0;
-			};
-			name = Debug;
-		};
-		A100030B /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEAD_CODE_STRIPPING = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 0.9.0;
-				PRODUCT_BUNDLE_IDENTIFIER = app.kernova.agent.tests;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 6.0;
 			};
 			name = Release;

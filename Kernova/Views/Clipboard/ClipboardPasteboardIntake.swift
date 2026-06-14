@@ -27,22 +27,26 @@ enum ClipboardPasteboardIntake {
 
     /// Reads the first item of `pasteboard` into clipboard content.
     ///
-    /// A single dragged file (`public.file-url`) is expanded: image files
-    /// become an image representation, text files become text; other file
-    /// types are rejected (generic file transfer is out of scope). With
+    /// A file already on disk — whether a concrete `public.file-url` (Finder
+    /// drag/copy) or a `promised-file-url` whose file the source has already
+    /// written (the floating screenshot thumbnail) — is expanded: image files
+    /// become an image representation, other files become their name. With
     /// `allowsBinary == false` (text-only transports) only the plain-text
     /// representation is taken.
+    ///
+    /// When the drag is clearly a file/image (a file URL or file promise is
+    /// present) but no file is readable, the URL/path text representations are
+    /// just the file's descriptor and are never returned as content — the
+    /// caller falls through to asynchronous promise receipt instead of showing
+    /// a path string.
     static func read(from pasteboard: NSPasteboard, allowsBinary: Bool) -> ClipboardIntakeResult {
         guard let item = pasteboard.pasteboardItems?.first else {
             return .rejected(message: "The Mac clipboard is empty")
         }
 
-        // A Finder file drag/copy carries a file URL, not the file's bytes —
-        // expand it before the generic path (whose policy skips file URLs).
-        if item.types.contains(.fileURL),
-            let urlString = item.string(forType: .fileURL),
-            let url = URL(string: urlString)
-        {
+        // A concrete-or-promised file already on disk carries a URL, not the
+        // file's bytes — expand it before the generic path.
+        if let url = existingFileURL(in: item) {
             return read(fileAt: url, allowsBinary: allowsBinary)
         }
 
@@ -53,10 +57,17 @@ enum ClipboardPasteboardIntake {
             return .content(ClipboardContent(text: text), note: nil)
         }
 
+        let isFileOrPromiseDrag = item.types.contains { isFileOrPromiseType($0.rawValue) }
+
         // Identity-based skips run before any data is read, mirroring the
-        // guest agent's poll.
+        // guest agent's poll. For a file/promise drag we additionally drop the
+        // URL/path text fallbacks so a screenshot thumbnail (or any file drag)
+        // can never surface its path as text content.
         let raw: [(uti: String, data: Data)] = item.types.compactMap { type in
             guard !ClipboardSnapshotPolicy.shouldSkipBeforeReading(uti: type.rawValue) else {
+                return nil
+            }
+            if isFileOrPromiseDrag && isPathFallbackType(type.rawValue) {
                 return nil
             }
             guard let data = item.data(forType: type) else { return nil }
@@ -94,6 +105,43 @@ enum ClipboardPasteboardIntake {
             ? "Some formats were too large to include" : nil
 
         return .content(outcome.content, note: note)
+    }
+
+    /// A concrete `public.file-url` or a `promised-file-url` that already
+    /// points at an on-disk file.
+    ///
+    /// Returns nil when neither resolves to an existing file (e.g. a promise
+    /// whose file hasn't been written yet — the caller receives it
+    /// asynchronously instead). The floating screenshot thumbnail's temp file
+    /// *is* already on disk during the drag, so its `promised-file-url`
+    /// resolves here and is read as an image.
+    private static func existingFileURL(in item: NSPasteboardItem) -> URL? {
+        let candidates: [NSPasteboard.PasteboardType] = [
+            .fileURL,
+            NSPasteboard.PasteboardType("com.apple.pasteboard.promised-file-url"),
+        ]
+        for type in candidates {
+            guard let string = item.string(forType: type),
+                let url = URL(string: string), url.isFileURL,
+                FileManager.default.fileExists(atPath: url.path)
+            else { continue }
+            return url
+        }
+        return nil
+    }
+
+    /// `true` for the types that mark a drag as a file or file promise.
+    private static func isFileOrPromiseType(_ uti: String) -> Bool {
+        uti == "public.file-url" || uti == "NSFilenamesPboardType"
+            || uti.hasPrefix("com.apple.pasteboard.promised-file")
+            || uti.hasPrefix("com.apple.NSFilePromise")
+    }
+
+    /// `true` for text/URL types that, in a file/promise drag, merely describe
+    /// the file's path or name rather than being real content.
+    private static func isPathFallbackType(_ uti: String) -> Bool {
+        uti == "public.url" || uti == "public.utf8-plain-text"
+            || uti == "Apple URL pasteboard type"
     }
 
     /// Reads a single file into clipboard content — the expansion used for

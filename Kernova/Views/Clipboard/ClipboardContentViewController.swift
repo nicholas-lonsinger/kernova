@@ -414,25 +414,41 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
     // MARK: - Drag-and-drop
 
-    /// Routes a performed drop by what the dragging pasteboard actually
-    /// carries: a real file URL or regular content goes through the normal
-    /// intake; a file *promise* (screenshot thumbnail, Photos, browsers —
-    /// where the only directly-readable representation is often just a URL
-    /// string) is received asynchronously and then fed through the same
-    /// file intake.
+    /// Routes a performed drop, image-first, so a dragged screenshot shows the
+    /// image like other Mac apps.
+    ///
+    /// Synchronous intake (`read(from:)`) handles inline image data, a
+    /// concrete-or-promised file already on disk (incl. the floating
+    /// screenshot thumbnail, whose temp file screencaptureui has already
+    /// written), and plain/rich text — and never surfaces a path string for a
+    /// file/promise drag. Only when nothing usable resolves synchronously, and
+    /// a modern file promise is present (Photos, browsers, or a screenshot
+    /// whose file isn't on disk yet), is the file received asynchronously.
     private func handleDrop(_ draggingInfo: NSDraggingInfo) -> Bool {
+        guard let service = instance.clipboardService else { return false }
         let pasteboard = draggingInfo.draggingPasteboard
 
-        if let item = pasteboard.pasteboardItems?.first, item.types.contains(.fileURL) {
-            return takeIn(pasteboard: pasteboard)
+        Self.logger.debug(
+            "Clipboard drop types: \(pasteboard.pasteboardItems?.first?.types.map(\.rawValue).joined(separator: ", ") ?? "none", privacy: .public)"
+        )
+
+        let result = ClipboardPasteboardIntake.read(
+            from: pasteboard,
+            allowsBinary: service.supportsBinaryRepresentations
+        )
+        if case .content = result {
+            return apply(intake: result)
         }
+
+        // Nothing usable synchronously. Receive a modern file promise async.
         if let receiver = pasteboard.readObjects(forClasses: [NSFilePromiseReceiver.self])?
             .compactMap({ $0 as? NSFilePromiseReceiver }).first
         {
             receivePromisedFile(receiver)
             return true
         }
-        return takeIn(pasteboard: pasteboard)
+        // Surface the rejection (never a path string for a file/promise drag).
+        return apply(intake: result)
     }
 
     /// Receives a promised file into a scratch directory, runs it through

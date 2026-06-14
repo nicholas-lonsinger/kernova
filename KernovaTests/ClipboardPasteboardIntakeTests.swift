@@ -282,4 +282,79 @@ struct ClipboardPasteboardIntakeTests {
         }
         #expect(message == ClipboardPasteboardIntake.textOnlyTransportMessage)
     }
+
+    // MARK: - Screenshot thumbnail (promised file URL)
+
+    @Test("a promised-file-url on disk is read as the image — the screenshot thumbnail mechanism")
+    func promisedFileURLImage() throws {
+        // The floating screenshot thumbnail is a promise drag: NO concrete
+        // public.file-url, NO inline image bytes — only a promised-file-url
+        // pointing at the temp file screencaptureui has already written, plus
+        // a path-text fallback. The temp file exists during the drag.
+        let png = try makePNG()
+        let url = try makeTempFile(name: "Screenshot 2026 at 6.57.png", contents: png)
+        let pasteboard = makeScratchPasteboard()
+        pasteboard.clearContents()
+        let item = NSPasteboardItem()
+        item.setString(
+            url.absoluteString,
+            forType: NSPasteboard.PasteboardType("com.apple.pasteboard.promised-file-url"))
+        item.setString(url.path, forType: .string)  // the path-text fallback
+        pasteboard.writeObjects([item])
+
+        guard
+            case .content(let content, _) = ClipboardPasteboardIntake.read(
+                from: pasteboard, allowsBinary: true)
+        else {
+            Issue.record("Expected image content")
+            return
+        }
+        #expect(content.representations.count == 1)
+        #expect(content.representations[0].data == png)
+        // The decisive assertion: the path text must NOT leak as content.
+        #expect(content.text == nil)
+    }
+
+    @Test("a promise drag with no on-disk file never leaks the path as text")
+    func promiseWithoutFileNoPathLeak() {
+        // Promise present, but the file isn't on disk and there's no inline
+        // image — the path/url text reps are descriptors and must be dropped,
+        // so the caller falls through to async promise receipt (a rejection
+        // here), never showing the path string.
+        let missing = "/var/folders/zz/missing-\(UUID().uuidString)/Screenshot.png"
+        let pasteboard = makeScratchPasteboard()
+        pasteboard.clearContents()
+        let item = NSPasteboardItem()
+        item.setString(
+            "file://" + missing,
+            forType: NSPasteboard.PasteboardType("com.apple.pasteboard.promised-file-url"))
+        item.setData(
+            Data("public.png".utf8),
+            forType: NSPasteboard.PasteboardType("com.apple.pasteboard.promised-file-content-type"))
+        item.setString(missing, forType: .string)
+        pasteboard.writeObjects([item])
+
+        guard case .rejected = ClipboardPasteboardIntake.read(from: pasteboard, allowsBinary: true)
+        else {
+            Issue.record("Expected rejection — the path must not leak as text content")
+            return
+        }
+    }
+
+    @Test("a plain text drag (no file/promise) still becomes text")
+    func plainTextDragStillText() {
+        // Guard against over-reaching the file-context skip: a genuine text
+        // drag has no file/promise types, so the text survives.
+        let pasteboard = makeScratchPasteboard()
+        write([(uti: ClipboardContent.utf8TextUTI, data: Data("just some text".utf8))], to: pasteboard)
+
+        guard
+            case .content(let content, _) = ClipboardPasteboardIntake.read(
+                from: pasteboard, allowsBinary: true)
+        else {
+            Issue.record("Expected text content")
+            return
+        }
+        #expect(content.text == "just some text")
+    }
 }

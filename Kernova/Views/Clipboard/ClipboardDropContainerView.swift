@@ -16,6 +16,7 @@ final class ClipboardDropContainerView: NSView {
     /// promise-only drags never even reach `draggingEntered`.
     static let acceptedDragTypes: [NSPasteboard.PasteboardType] =
         [.fileURL, .png, .tiff, .pdf, .rtf, .html, .string]
+        + NSImage.imageTypes.map(NSPasteboard.PasteboardType.init(_:))
         + NSFilePromiseReceiver.readableDraggedTypes.map(NSPasteboard.PasteboardType.init(_:))
 
     /// Whether a drop would currently be accepted (e.g. `false` while the
