@@ -1,70 +1,41 @@
 import AppKit
 
-/// The clipboard window's command row.
+/// The clipboard window's command row: icon buttons for host-pasteboard
+/// transfers and clearing the buffer.
 ///
-/// Explicit host-pasteboard transfer buttons sit on the leading edge and a
-/// content-type indicator on the trailing edge. The indicator doubles as the
-/// surface for transient status messages (send failures, size-cap skips,
-/// copy confirmations).
+/// Leading-aligned `Paste from Mac` / `Copy to Mac` / `Clear` buttons, each an
+/// SF Symbol plus a short label and a tooltip. The content-type indicator and
+/// transient-status surface live in the status row (`ClipboardIndicatorView`),
+/// so this row is actions only.
 @MainActor
 final class ClipboardCommandBarView: NSView {
-    enum TransientStyle {
-        case info
-        case warning
-        case error
-
-        var color: NSColor {
-            switch self {
-            case .info: return .secondaryLabelColor
-            case .warning: return .systemOrange
-            case .error: return .systemRed
-            }
-        }
-    }
-
-    private static let transientDuration: Duration = .seconds(4)
-
-    // RATIONALE: No keyEquivalent on either button — a Cmd+V equivalent
+    // RATIONALE: No keyEquivalent on any button — a Cmd+V / Cmd+C equivalent
     // would intercept performKeyEquivalent before a focused NSTextView ever
-    // sees the keystroke, breaking normal text editing. Keyboard access
-    // flows through the responder chain (`paste(_:)`/`copy(_:)` on the view
-    // controller) instead.
+    // sees the keystroke, breaking normal text editing. Keyboard access flows
+    // through the responder chain (`paste(_:)` / `copy(_:)`) instead.
     let pasteButton: NSButton
     let copyButton: NSButton
-
-    private let indicatorLabel: NSTextField
-
-    /// The persistent indicator text a transient message reverts to.
-    private var indicatorText = ""
-    private var revertTask: Task<Void, Never>?
+    let clearButton: NSButton
 
     init() {
-        let pasteButton = NSButton(title: "Paste from Mac", target: nil, action: nil)
-        pasteButton.bezelStyle = .accessoryBarAction
-        pasteButton.controlSize = .small
-        self.pasteButton = pasteButton
-
-        let copyButton = NSButton(title: "Copy to Mac", target: nil, action: nil)
-        copyButton.bezelStyle = .accessoryBarAction
-        copyButton.controlSize = .small
-        self.copyButton = copyButton
-
-        let label = NSTextField(labelWithString: "")
-        label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        label.textColor = .secondaryLabelColor
-        label.lineBreakMode = .byTruncatingTail
-        label.alignment = .right
-        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        self.indicatorLabel = label
+        pasteButton = Self.makeButton(
+            title: "Paste from Mac", symbol: "square.and.arrow.down",
+            tooltip: "Paste the Mac clipboard into the buffer")
+        copyButton = Self.makeButton(
+            title: "Copy to Mac", symbol: "square.and.arrow.up",
+            tooltip: "Copy the buffer to the Mac clipboard")
+        clearButton = Self.makeButton(
+            title: "Clear", symbol: "trash",
+            tooltip: "Empty the clipboard buffer")
 
         super.init(frame: .zero)
 
-        // Spacer with explicit low hugging so the stack grows it rather than
-        // the label — same trick as the agent status bar.
+        // Trailing spacer with low hugging so the stack grows it rather than a
+        // button — keeps the buttons leading-aligned.
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        let stack = NSStackView(views: [pasteButton, copyButton, spacer, label])
+        let stack = NSStackView(views: [pasteButton, copyButton, clearButton, spacer])
         stack.orientation = .horizontal
         stack.spacing = Spacing.small
         stack.edgeInsets = NSEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
@@ -83,38 +54,13 @@ final class ClipboardCommandBarView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    /// Updates the persistent content-type indicator.
-    ///
-    /// While a transient message is showing, the new text takes over once
-    /// the transient reverts.
-    func setIndicatorText(_ text: String) {
-        indicatorText = text
-        guard revertTask == nil else { return }
-        indicatorLabel.stringValue = text
-        indicatorLabel.textColor = .secondaryLabelColor
-    }
-
-    /// Shows `text` in the indicator slot for a few seconds.
-    ///
-    /// Reverts to the persistent indicator text afterwards. A newer message
-    /// replaces the current one and restarts the clock.
-    func showTransientMessage(_ text: String, style: TransientStyle) {
-        revertTask?.cancel()
-        indicatorLabel.stringValue = text
-        indicatorLabel.textColor = style.color
-        revertTask = Task { [weak self] in
-            do {
-                try await Task.sleep(for: Self.transientDuration)
-            } catch {
-                return  // superseded by a newer message
-            }
-            self?.revertToIndicator()
-        }
-    }
-
-    private func revertToIndicator() {
-        revertTask = nil
-        indicatorLabel.stringValue = indicatorText
-        indicatorLabel.textColor = .secondaryLabelColor
+    private static func makeButton(title: String, symbol: String, tooltip: String) -> NSButton {
+        let button = NSButton(title: title, target: nil, action: nil)
+        button.bezelStyle = .accessoryBarAction
+        button.controlSize = .small
+        button.image = .systemSymbol(symbol, accessibilityDescription: title)
+        button.imagePosition = .imageLeading
+        button.toolTip = tooltip
+        return button
     }
 }

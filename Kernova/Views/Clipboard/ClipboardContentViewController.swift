@@ -42,6 +42,9 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     private let filePreview = ClipboardFilePreviewView()
     private let summaryView = ClipboardSummaryView()
     private let commandBar = ClipboardCommandBarView()
+    /// Content-type indicator + transient-status surface, placed in the status
+    /// row (right-aligned) so the command row stays a clean set of buttons.
+    private let indicatorView = ClipboardIndicatorView()
 
     /// Every content view stacked in the content area; exactly one is visible.
     /// `scrollView` (the editable plain-text editor) is first — the default.
@@ -159,6 +162,8 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         commandBar.pasteButton.action = #selector(pasteFromMac(_:))
         commandBar.copyButton.target = self
         commandBar.copyButton.action = #selector(copyToMac(_:))
+        commandBar.clearButton.target = self
+        commandBar.clearButton.action = #selector(clearClipboard(_:))
     }
 
     required init?(coder: NSCoder) {
@@ -257,8 +262,9 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         // the source) and doesn't rebuild the view out from under the user.
         lastAppliedDigest = edited.digest
         service.clipboardContent = edited
-        commandBar.setIndicatorText(ClipboardContentDescriber.indicatorText(for: edited))
+        indicatorView.setText(ClipboardContentDescriber.indicatorText(for: edited))
         commandBar.copyButton.isEnabled = !edited.isEmpty
+        commandBar.clearButton.isEnabled = !edited.isEmpty
     }
 
     // MARK: - Observation
@@ -289,20 +295,22 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         let status = instance.agentStatus
         let canInstallKernovaAgent = instance.configuration.guestOS == .macOS
 
+        let hasContent = service != nil && !(service?.clipboardContent.isEmpty ?? true)
         textView.isEditable = service != nil
         commandBar.pasteButton.isEnabled = service != nil
-        commandBar.copyButton.isEnabled = service != nil && !(service?.clipboardContent.isEmpty ?? true)
+        commandBar.copyButton.isEnabled = hasContent
+        commandBar.clearButton.isEnabled = hasContent
 
         if let service {
             let content = service.clipboardContent
             if content.digest != lastAppliedDigest {
                 lastAppliedDigest = content.digest
                 apply(content: content)
-                commandBar.setIndicatorText(ClipboardContentDescriber.indicatorText(for: content))
+                indicatorView.setText(ClipboardContentDescriber.indicatorText(for: content))
             }
             if let issue = service.lastTransferIssue, issue != lastShownIssue {
                 lastShownIssue = issue
-                commandBar.showTransientMessage(message(for: issue), style: .error)
+                indicatorView.showTransientMessage(message(for: issue), style: .error)
             }
         }
 
@@ -387,6 +395,20 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         _ = takeIn(pasteboard: .general)
     }
 
+    /// Empties the window's clipboard buffer.
+    ///
+    /// Clears only the gated buffer/preview — the host and guest pasteboards
+    /// are the user's real clipboards and are left untouched. The observation
+    /// pass resets the editor to empty and the indicator to "Empty".
+    @objc private func clearClipboard(_ sender: Any?) {
+        guard let service = instance.clipboardService, !service.clipboardContent.isEmpty else {
+            return
+        }
+        service.clipboardContent = .empty
+        Self.logger.notice(
+            "Cleared clipboard buffer for VM '\(self.instance.name, privacy: .public)'")
+    }
+
     @objc private func copyToMac(_ sender: Any?) {
         guard let service = instance.clipboardService else { return }
         let content = service.clipboardContent
@@ -412,19 +434,19 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         // failed, the item is empty. Don't clear the Mac clipboard to write
         // nothing — surface the failure instead.
         guard !item.types.isEmpty else {
-            commandBar.showTransientMessage("Couldn't prepare the clipboard content to copy", style: .error)
+            indicatorView.showTransientMessage("Couldn't prepare the clipboard content to copy", style: .error)
             Self.logger.error("copyToMac produced no pasteboard representations (staging failed)")
             return
         }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         if pasteboard.writeObjects([item]) {
-            commandBar.showTransientMessage("Copied to Mac clipboard", style: .info)
+            indicatorView.showTransientMessage("Copied to Mac clipboard", style: .info)
             Self.logger.info(
                 "Copied clipboard buffer to host pasteboard (\(content.representations.count, privacy: .public) reps)"
             )
         } else {
-            commandBar.showTransientMessage("Couldn't write to the Mac clipboard", style: .error)
+            indicatorView.showTransientMessage("Couldn't write to the Mac clipboard", style: .error)
             Self.logger.error("NSPasteboard.writeObjects failed for clipboard buffer")
         }
     }
@@ -453,14 +475,14 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             service.clipboardContent = content
             service.grabIfChanged()
             if let note {
-                commandBar.showTransientMessage(note, style: .warning)
+                indicatorView.showTransientMessage(note, style: .warning)
             }
             Self.logger.info(
                 "Took in pasteboard content (\(content.representations.count, privacy: .public) reps, \(content.totalByteCount, privacy: .public) bytes)"
             )
             return true
         case .rejected(let message):
-            commandBar.showTransientMessage(message, style: .warning)
+            indicatorView.showTransientMessage(message, style: .warning)
             Self.logger.info("Pasteboard intake rejected: \(message, privacy: .public)")
             return false
         }
@@ -512,14 +534,14 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         guard let service = instance.clipboardService else { return }
         let allowsBinary = service.supportsBinaryRepresentations
 
-        commandBar.showTransientMessage("Receiving dropped file…", style: .info)
+        indicatorView.showTransientMessage("Receiving dropped file…", style: .info)
 
         let destination = FileManager.default.temporaryDirectory
             .appendingPathComponent("KernovaClipboardDrops-\(UUID().uuidString)", isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
         } catch {
-            commandBar.showTransientMessage("Couldn't receive the dropped file", style: .error)
+            indicatorView.showTransientMessage("Couldn't receive the dropped file", style: .error)
             Self.logger.error(
                 "Failed to create promise scratch directory: \(error.localizedDescription, privacy: .public)"
             )
@@ -549,7 +571,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 }
                 guard let self else { return }
                 if let error {
-                    self.commandBar.showTransientMessage("Couldn't receive the dropped file", style: .error)
+                    self.indicatorView.showTransientMessage("Couldn't receive the dropped file", style: .error)
                     Self.logger.error(
                         "File promise receipt failed: \(error.localizedDescription, privacy: .public)"
                     )
@@ -640,7 +662,10 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        let stack = NSStackView(views: [statusCircle, statusLabel, spacer, actionButton])
+        // Connection status leads; the content-type indicator is right-aligned
+        // (flush right in the common case where the agent-action button is
+        // hidden, sliding just left of it when an install/update prompt shows).
+        let stack = NSStackView(views: [statusCircle, statusLabel, spacer, indicatorView, actionButton])
         stack.orientation = .horizontal
         stack.spacing = Spacing.small
         stack.edgeInsets = NSEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
