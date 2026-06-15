@@ -126,7 +126,7 @@ final class VMToolbarManager: NSObject {
             return makeSingleItemGroup(
                 identifier: identifier,
                 label: "Suspend",
-                symbol: "square.and.arrow.down",
+                symbol: "moon.zzz",
                 action: #selector(AppDelegate.saveVM(_:)),
                 toolTip: Self.saveStateToolTip
             )
