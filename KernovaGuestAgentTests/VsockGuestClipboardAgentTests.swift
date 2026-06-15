@@ -1093,9 +1093,9 @@ struct VsockGuestClipboardAgentTests {
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
-        // A copied file just over the per-rep cap: expandedFileContent logs and
-        // returns nil, and the snapshot then filters the file URL — so nothing
-        // crosses (the over-cap bytes never become an offer).
+        // A copied file just over the per-rep cap: fileExpansionCandidate logs
+        // and returns nil, and the snapshot then filters the file URL — so
+        // nothing crosses (the over-cap bytes never become an offer).
         let url = try writeTempFile(
             name: "huge.bin",
             data: Data(count: ClipboardSnapshotPolicy.maxRepresentationByteCount + 1))
@@ -1114,6 +1114,50 @@ struct VsockGuestClipboardAgentTests {
         extraTask.cancel()
         if let frame = await extraTask.value, case .clipboardOffer = frame.payload {
             throw TestFailure("Agent offered an over-cap copied file that should have been skipped")
+        }
+    }
+
+    @Test("overlapping polls during an in-flight file expansion produce exactly one offer")
+    func concurrentPollsDuringFileExpansionOfferOnce() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        let url = try writeTempFile(name: "doc.bin", data: Data(count: 64 * 1024))
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        pasteboard.writeItem(representations: [
+            (type: .fileURL, data: Data(url.absoluteString.utf8))
+        ])
+        // Two rapid polls: the first starts an off-main read and sets the
+        // in-flight flag; the second must no-op rather than start a second read
+        // and emit a duplicate offer for the same change.
+        await MainActor.run {
+            agent.checkClipboardChange()
+            agent.checkClipboardChange()
+        }
+
+        let offerFrame = try await nextFrame(from: hostChannel)
+        guard case .clipboardOffer = offerFrame.payload else {
+            throw TestFailure("Expected ClipboardOffer, got \(String(describing: offerFrame.payload))")
+        }
+
+        // No second offer should arrive for the same in-flight expansion.
+        let extraTask = Task<Frame?, Never> {
+            try? await Task.sleep(for: .milliseconds(50))
+            var iterator = hostChannel.incoming.makeAsyncIterator()
+            return try? await iterator.next()
+        }
+        try await Task.sleep(for: .milliseconds(200))
+        extraTask.cancel()
+        if let frame = await extraTask.value, case .clipboardOffer = frame.payload {
+            throw TestFailure("Re-entrant poll produced a duplicate offer for the in-flight file expansion")
         }
     }
 

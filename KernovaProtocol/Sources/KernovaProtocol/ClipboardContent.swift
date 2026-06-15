@@ -68,6 +68,34 @@ public struct ClipboardContent: Equatable, Sendable {
         self.digest = Self.computeDigest(of: representations)
     }
 
+    /// Creates content with an already-computed digest.
+    ///
+    /// Backs `makeOffActor(representations:)` so the O(payload) hash can run on
+    /// a background executor; the result is assembled here without re-hashing.
+    private init(representations: [Representation], precomputedDigest: Data) {
+        self.representations = representations
+        self.digest = precomputedDigest
+    }
+
+    /// Creates content from ordered representations off the caller's actor.
+    ///
+    /// The synchronous `init` computes the SHA-256 `digest` over every byte of
+    /// every representation — fine for small payloads, but a multi-hundred-
+    /// millisecond stall on the `@MainActor` (host) or the guest agent's main
+    /// run loop for a 100 MiB clipboard file. This `async` factory is not
+    /// actor-isolated, so awaiting it from those contexts runs the hash on the
+    /// cooperative executor and resumes with the finished, `Sendable` value.
+    /// Use it on the large-payload create/receive paths; keep the synchronous
+    /// `init` for small, latency-insensitive content.
+    public static func makeOffActor(
+        representations: [Representation]
+    ) async -> ClipboardContent {
+        ClipboardContent(
+            representations: representations,
+            precomputedDigest: computeDigest(of: representations)
+        )
+    }
+
     /// Content holding a single UTF-8 plain-text representation.
     ///
     /// The empty string normalizes to `.empty` — "empty text" and "no

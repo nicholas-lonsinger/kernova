@@ -18,7 +18,17 @@ enum VsockFrame {
     /// A peer that announces a larger frame is treated as protocol-violating —
     /// `VsockFrameDecoder.nextFrame()` throws `VsockFrameError.frameTooLarge`
     /// rather than buffer unboundedly.
-    static let maxPayloadSize: Int = 16 * 1024 * 1024
+    ///
+    /// Sized to clear `ClipboardSnapshotPolicy.maxTotalByteCount` (104 MiB) plus
+    /// protobuf/framing overhead — one `ClipboardData` frame carries an entire
+    /// clipboard generation. 128 MiB leaves ~23% headroom; the overhead on a
+    /// handful of representations is kilobytes, not megabytes.
+    ///
+    /// DoS note: this is also the ceiling on how much a single peer-declared
+    /// frame length can make the receiver buffer before the frame is parsed.
+    /// Raising it widens that envelope; untrusted-guest hardening is tracked in
+    /// issue #145 and true streaming in #348.
+    static let maxPayloadSize: Int = 128 * 1024 * 1024
 
     /// Number of bytes occupied by the length prefix.
     static let lengthPrefixSize: Int = 4

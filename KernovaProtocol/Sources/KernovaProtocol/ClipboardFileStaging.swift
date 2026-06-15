@@ -82,6 +82,19 @@ public final class ClipboardFileStaging: @unchecked Sendable {
         return staged
     }
 
+    /// Off-actor variant of `stage(_:)` for large payloads.
+    ///
+    /// `stage` writes every filename-bearing representation to disk on the
+    /// calling actor/queue — a multi-hundred-millisecond stall for a 100 MiB
+    /// file on the `@MainActor` or the guest run loop. This `async` wrapper is
+    /// not actor-isolated, so awaiting it runs the writes on the cooperative
+    /// executor. Identical best-effort semantics and generation supersession.
+    public func stageAsync(
+        _ representations: [ClipboardContent.Representation]
+    ) async -> [Staged] {
+        stage(representations)
+    }
+
     /// Removes the entire staging root — crash orphans and the current generation.
     ///
     /// Call on agent start/stop and capability disable.

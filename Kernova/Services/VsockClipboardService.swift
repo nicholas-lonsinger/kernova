@@ -128,7 +128,7 @@ final class VsockClipboardService: ClipboardServicing {
         let label = self.label
         consumeTask = Task { [weak self] in
             await Self.consume(channel: channel, label: label) { @MainActor frame in
-                self?.handle(frame: frame)
+                await self?.handle(frame: frame)
             }
         }
 
@@ -237,11 +237,15 @@ final class VsockClipboardService: ClipboardServicing {
     private static func consume(
         channel: VsockChannel,
         label: String,
-        dispatch: @MainActor @escaping (Frame) -> Void
+        dispatch: @MainActor @escaping (Frame) async -> Void
     ) async {
         do {
+            // Awaited sequentially: each handler fully completes (including its
+            // off-actor digest/serialize hops) before the next frame, preserving
+            // strict in-order processing while freeing the main actor during the
+            // off-main work.
             for try await frame in channel.incoming {
-                dispatch(frame)
+                await dispatch(frame)
             }
             logger.info("Vsock clipboard channel closed for '\(label, privacy: .public)'")
         } catch {
@@ -251,7 +255,7 @@ final class VsockClipboardService: ClipboardServicing {
         }
     }
 
-    private func handle(frame: Frame) {
+    private func handle(frame: Frame) async {
         guard frame.protocolVersion == 1 else {
             Self.logger.warning(
                 "Dropping frame with unsupported protocol version \(frame.protocolVersion, privacy: .public) for '\(self.label, privacy: .public)'"
@@ -262,9 +266,9 @@ final class VsockClipboardService: ClipboardServicing {
         case .clipboardOffer(let offer):
             handleOffer(offer)
         case .clipboardRequest(let request):
-            handleRequest(request)
+            await handleRequest(request)
         case .clipboardData(let data):
-            handleData(data)
+            await handleData(data)
         case .clipboardRelease(let release):
             handleRelease(release)
         case .error(let error):
@@ -333,7 +337,7 @@ final class VsockClipboardService: ClipboardServicing {
         }
     }
 
-    private func handleRequest(_ request: Kernova_V1_ClipboardRequest) {
+    private func handleRequest(_ request: Kernova_V1_ClipboardRequest) async {
         guard let pending = pendingOutbound, pending.generation == request.generation else {
             // Stale: the guest has already replaced or dropped the offer this targets.
             // Don't burden it with an error — silence is correct here.
@@ -406,7 +410,9 @@ final class VsockClipboardService: ClipboardServicing {
 
         let byteCount = pending.content.totalByteCount
         do {
-            try channel.send(dataFrame)
+            // Serialize + frame + write off the main actor so a large payload
+            // doesn't block the UI; errors surface back here through the await.
+            try await channel.sendOffActor(dataFrame)
             Self.logger.debug(
                 "Sent clipboard data to '\(self.label, privacy: .public)' (gen=\(pending.generation, privacy: .public), \(byteCount, privacy: .public) bytes)"
             )
@@ -445,7 +451,7 @@ final class VsockClipboardService: ClipboardServicing {
         }
     }
 
-    private func handleData(_ data: Kernova_V1_ClipboardData) {
+    private func handleData(_ data: Kernova_V1_ClipboardData) async {
         guard data.generation == pendingInboundGeneration else {
             Self.logger.debug(
                 "Stale clipboard data gen=\(data.generation, privacy: .public) (pending=\(self.pendingInboundGeneration ?? 0, privacy: .public))"
@@ -473,7 +479,16 @@ final class VsockClipboardService: ClipboardServicing {
                 pendingInboundGeneration = nil
                 return
             }
-            content = ClipboardContent(representations: sanitized)
+            // Off-actor digest: a large inbound payload's SHA-256 runs on the
+            // cooperative executor instead of stalling the UI. The await frees
+            // the main actor, so re-validate the generation before committing.
+            content = await ClipboardContent.makeOffActor(representations: sanitized)
+            guard data.generation == pendingInboundGeneration else {
+                Self.logger.debug(
+                    "Clipboard data superseded during digest gen=\(data.generation, privacy: .public)"
+                )
+                return
+            }
         } else if data.format == .textUtf8 {
             guard let text = String(data: data.data, encoding: .utf8) else {
                 Self.logger.warning(

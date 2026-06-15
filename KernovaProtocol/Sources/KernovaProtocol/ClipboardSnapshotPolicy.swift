@@ -10,16 +10,18 @@ public enum ClipboardSnapshotPolicy {
     /// Maximum size of a single representation, in bytes.
     ///
     /// Larger representations are dropped individually while their smaller
-    /// siblings survive (a 50 MB screenshot TIFF drops; the few-MB PNG of the
-    /// same image stays).
-    public static let maxRepresentationByteCount = 10 * 1024 * 1024
+    /// siblings survive (a 150 MB screenshot TIFF drops; the smaller PNG of the
+    /// same image stays). This is also the effective per-file cap — a copied or
+    /// dragged file crosses as a single representation.
+    public static let maxRepresentationByteCount = 100 * 1024 * 1024
 
     /// Maximum combined size of all kept representations, in bytes.
     ///
-    /// One `ClipboardData` frame carries every representation of a
-    /// generation, so the total must clear `VsockFrame.maxPayloadSize`
-    /// (16 MiB) with headroom for protobuf framing; 12 MiB leaves 25%.
-    public static let maxTotalByteCount = 12 * 1024 * 1024
+    /// One `ClipboardData` frame carries every representation of a generation,
+    /// so the total must clear `VsockFrame.maxPayloadSize` (128 MiB) with
+    /// headroom for protobuf framing. 104 MiB admits a max-size file plus a few
+    /// MiB of co-resident representations while leaving ~23% frame headroom.
+    public static let maxTotalByteCount = 104 * 1024 * 1024
 
     /// Why a representation was excluded from a snapshot.
     public enum SkipReason: Equatable, Sendable {

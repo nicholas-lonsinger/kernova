@@ -161,6 +161,22 @@ struct ClipboardContentTests {
         #expect(throws: Never.self) { try VsockFrame.encode(payload) }
     }
 
+    @Test("makeOffActor yields the same digest and representations as the sync init")
+    func makeOffActorMatchesSyncInit() async {
+        let reps: [ClipboardContent.Representation] = [
+            .init(uti: "public.tiff", data: Data(count: 4096), filename: "a.tiff"),
+            .init(uti: ClipboardContent.utf8TextUTI, data: Data("hello".utf8)),
+        ]
+        let sync = ClipboardContent(representations: reps)
+        let offMain = await ClipboardContent.makeOffActor(representations: reps)
+
+        #expect(offMain.digest == sync.digest)
+        #expect(offMain == sync)  // digest-based equality
+        #expect(offMain.representations.map(\.uti) == sync.representations.map(\.uti))
+        #expect(offMain.representations.map(\.data) == sync.representations.map(\.data))
+        #expect(offMain.representations.map(\.filename) == sync.representations.map(\.filename))
+    }
+
     @Test("filename round-trips through proto but stays out of the digest")
     func filenameRoundTripNotInDigest() throws {
         let withName = ClipboardContent(representations: [
@@ -251,7 +267,7 @@ struct ClipboardSnapshotPolicyTests {
 
     @Test("total budget is enforced greedily in input order")
     func totalBudgetGreedy() {
-        let big = ClipboardSnapshotPolicy.maxRepresentationByteCount  // 10 MiB, fits alone
+        let big = ClipboardSnapshotPolicy.maxRepresentationByteCount  // 100 MiB, fits alone
         let medium = ClipboardSnapshotPolicy.maxTotalByteCount - big + 1  // tips the total
         let outcome = ClipboardSnapshotPolicy.evaluate([
             (uti: "public.rtf", data: Data(count: big)),
@@ -317,10 +333,10 @@ struct ClipboardSnapshotPolicyTests {
 
     @Test("sanitizedForApply enforces the total budget greedily on receive")
     func sanitizedForApplyEnforcesTotalBudget() {
-        let big = ClipboardSnapshotPolicy.maxRepresentationByteCount  // 10 MiB, fits alone
+        let big = ClipboardSnapshotPolicy.maxRepresentationByteCount  // 100 MiB, fits alone
         let sanitized = ClipboardSnapshotPolicy.sanitizedForApply([
             .init(uti: "public.tiff", data: Data(count: big)),
-            .init(uti: "public.png", data: Data(count: big)),  // would push past the 12 MiB total
+            .init(uti: "public.png", data: Data(count: big)),  // would push past the 104 MiB total
         ])
         #expect(sanitized.map(\.uti) == ["public.tiff"])
     }

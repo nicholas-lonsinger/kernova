@@ -24,6 +24,31 @@ struct ClipboardFileStagingTests {
         #expect(try Data(contentsOf: only.url) == bytes)
     }
 
+    @Test("stageAsync writes the same files as the synchronous stage")
+    func stageAsyncMatchesStage() async throws {
+        let reps: [ClipboardContent.Representation] = [
+            .init(uti: "public.png", data: Data([1, 2, 3]), filename: "a.png"),
+            .init(uti: "public.plain-text", data: Data("hi".utf8), filename: "b.txt"),
+            .init(uti: "public.utf8-plain-text", data: Data("inline".utf8)),  // no filename → not staged
+        ]
+        let syncStaging = ClipboardFileStaging(label: "parity-sync-\(UUID().uuidString)")
+        defer { syncStaging.sweep() }
+        let asyncStaging = ClipboardFileStaging(label: "parity-async-\(UUID().uuidString)")
+        defer { asyncStaging.sweep() }
+
+        let syncStaged = syncStaging.stage(reps)
+        let asyncStaged = await asyncStaging.stageAsync(reps)
+
+        #expect(asyncStaged.map(\.uti) == syncStaged.map(\.uti))
+        #expect(
+            asyncStaged.map { $0.url.lastPathComponent } == syncStaged.map { $0.url.lastPathComponent })
+        // The same bytes landed on disk for each staged representation.
+        for staged in asyncStaged {
+            let written = try Data(contentsOf: staged.url)
+            #expect(written == reps.first { $0.uti == staged.uti }?.data)
+        }
+    }
+
     @Test("a fresh generation supersedes (deletes) the previous one")
     func supersedesPreviousGeneration() {
         let staging = ClipboardFileStaging(label: "test-\(UUID().uuidString)")

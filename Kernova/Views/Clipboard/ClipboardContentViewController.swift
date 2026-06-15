@@ -430,11 +430,24 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 forType: NSPasteboard.PasteboardType(rawValue: representation.uti)
             )
         }
-        // For file payloads, stage a local temp file and offer its URL so a
-        // Finder paste creates the file (alongside any inline image data).
-        for staged in staging.stage(content.representations) {
-            item.setData(Data(staged.url.absoluteString.utf8), forType: .fileURL)
+        // For file payloads, stage a local temp file off the main actor (a large
+        // file's write mustn't block the UI) and offer its URL so a Finder paste
+        // creates the file, then finish the pasteboard write back on the main actor.
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            for staged in await self.staging.stageAsync(content.representations) {
+                item.setData(Data(staged.url.absoluteString.utf8), forType: .fileURL)
+            }
+            self.finishCopyToMac(item: item, representationCount: content.representations.count)
         }
+    }
+
+    /// Writes the prepared pasteboard item to the Mac clipboard, surfacing
+    /// success/failure.
+    ///
+    /// Split from `copyToMac(_:)` so the file-staging step can run off the main
+    /// actor in between.
+    private func finishCopyToMac(item: NSPasteboardItem, representationCount: Int) {
         // A non-image file payload contributes no inline data; if staging also
         // failed, the item is empty. Don't clear the Mac clipboard to write
         // nothing — surface the failure instead.
@@ -448,7 +461,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         if pasteboard.writeObjects([item]) {
             indicatorView.showTransientMessage("Copied to Mac clipboard", style: .info)
             Self.logger.info(
-                "Copied clipboard buffer to host pasteboard (\(content.representations.count, privacy: .public) reps)"
+                "Copied clipboard buffer to host pasteboard (\(representationCount, privacy: .public) reps)"
             )
         } else {
             indicatorView.showTransientMessage("Couldn't write to the Mac clipboard", style: .error)

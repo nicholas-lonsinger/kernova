@@ -185,8 +185,11 @@ enum ClipboardPasteboardIntake {
         guard let data = await readFileBytes(at: url), !data.isEmpty else {
             return .rejected(message: "Couldn't read the dropped file")
         }
+        // Build the content (and its SHA-256 digest over up to the
+        // per-representation cap) off the main actor — `read(fileAt:)` is
+        // already async, so this keeps a large file's hash off the UI thread.
         return .content(
-            ClipboardContent(representations: [
+            await ClipboardContent.makeOffActor(representations: [
                 .init(uti: type.identifier, data: data, filename: url.lastPathComponent)
             ]),
             note: nil
