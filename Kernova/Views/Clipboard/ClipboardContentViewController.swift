@@ -395,7 +395,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     // MARK: - Actions
 
     @objc private func pasteFromMac(_ sender: Any?) {
-        _ = takeIn(pasteboard: .general)
+        takeIn(pasteboard: .general)
     }
 
     /// Empties the window's clipboard buffer.
@@ -458,14 +458,20 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     ///
     /// Paste/drop are complete gestures — the content is sent to the guest
     /// immediately, unlike typed edits which send on window blur.
-    private func takeIn(pasteboard: NSPasteboard) -> Bool {
-        guard let service = instance.clipboardService else { return false }
-        return apply(
-            intake: ClipboardPasteboardIntake.read(
-                from: pasteboard,
-                allowsBinary: service.supportsBinaryRepresentations
-            )
-        )
+    private func takeIn(pasteboard: NSPasteboard) {
+        guard let service = instance.clipboardService else { return }
+        let allowsBinary = service.supportsBinaryRepresentations
+        let result = ClipboardPasteboardIntake.read(from: pasteboard, allowsBinary: allowsBinary)
+        if case .pendingFile(let url) = result {
+            // Read the file's bytes off the main actor, then apply on the way back.
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                _ = self.apply(
+                    intake: await ClipboardPasteboardIntake.read(fileAt: url, allowsBinary: allowsBinary))
+            }
+        } else {
+            _ = apply(intake: result)
+        }
     }
 
     /// Commits an intake result to the buffer (and the guest) or surfaces
@@ -487,6 +493,12 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         case .rejected(let message):
             indicatorView.showTransientMessage(message, style: .warning)
             Self.logger.info("Pasteboard intake rejected: \(message, privacy: .public)")
+            return false
+        case .pendingFile:
+            // A pending file must be resolved via read(fileAt:) (off the main
+            // actor) before apply — reaching here is a programming error.
+            Self.logger.fault("apply(intake:) received .pendingFile — resolve it via read(fileAt:) first")
+            assertionFailure("apply(intake:) received .pendingFile")
             return false
         }
     }
@@ -511,23 +523,31 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             "Clipboard drop types: \(pasteboard.pasteboardItems?.first?.types.map(\.rawValue).joined(separator: ", ") ?? "none", privacy: .public)"
         )
 
-        let result = ClipboardPasteboardIntake.read(
-            from: pasteboard,
-            allowsBinary: service.supportsBinaryRepresentations
-        )
-        if case .content = result {
+        let allowsBinary = service.supportsBinaryRepresentations
+        let result = ClipboardPasteboardIntake.read(from: pasteboard, allowsBinary: allowsBinary)
+        switch result {
+        case .content:
+            return apply(intake: result)
+        case .pendingFile(let url):
+            // Accept the drop now; read the file's bytes off the main actor
+            // (the dragging pasteboard was already consumed synchronously above).
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                _ = self.apply(
+                    intake: await ClipboardPasteboardIntake.read(fileAt: url, allowsBinary: allowsBinary))
+            }
+            return true
+        case .rejected:
+            // Nothing usable synchronously. Receive a modern file promise async.
+            if let receiver = pasteboard.readObjects(forClasses: [NSFilePromiseReceiver.self])?
+                .compactMap({ $0 as? NSFilePromiseReceiver }).first
+            {
+                receivePromisedFile(receiver)
+                return true
+            }
+            // Surface the rejection (never a path string for a file/promise drag).
             return apply(intake: result)
         }
-
-        // Nothing usable synchronously. Receive a modern file promise async.
-        if let receiver = pasteboard.readObjects(forClasses: [NSFilePromiseReceiver.self])?
-            .compactMap({ $0 as? NSFilePromiseReceiver }).first
-        {
-            receivePromisedFile(receiver)
-            return true
-        }
-        // Surface the rejection (never a path string for a file/promise drag).
-        return apply(intake: result)
     }
 
     /// Receives a promised file into a scratch directory, runs it through
@@ -582,7 +602,8 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 }
                 guard !firstFileGate.taken else { return }
                 firstFileGate.taken = true
-                _ = self.apply(intake: ClipboardPasteboardIntake.read(fileAt: url, allowsBinary: allowsBinary))
+                _ = self.apply(
+                    intake: await ClipboardPasteboardIntake.read(fileAt: url, allowsBinary: allowsBinary))
             }
         }
     }
@@ -593,7 +614,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     // NSTextView handles Cmd+V/Cmd+C natively (and pasting an image with the
     // editor focused does nothing — the Paste button is the affordance).
     @objc func paste(_ sender: Any?) {
-        _ = takeIn(pasteboard: .general)
+        takeIn(pasteboard: .general)
     }
 
     @objc func copy(_ sender: Any?) {

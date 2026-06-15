@@ -11,6 +11,11 @@ enum ClipboardIntakeResult: Equatable {
     case content(ClipboardContent, note: String?)
     /// Nothing usable; `message` says why in user-facing terms.
     case rejected(message: String)
+    /// A file resolved on disk whose bytes still have to be read — `read(from:)`
+    /// returns this so the caller can read them asynchronously (off the main
+    /// actor) via `read(fileAt:)` before they become `.content`. Never applied
+    /// directly.
+    case pendingFile(URL)
 }
 
 /// The single intake path for every host-side gesture that feeds the
@@ -45,9 +50,10 @@ enum ClipboardPasteboardIntake {
         }
 
         // A concrete-or-promised file already on disk carries a URL, not the
-        // file's bytes — expand it before the generic path.
+        // file's bytes. Defer it: the caller reads the bytes off the main actor
+        // via `read(fileAt:)` (a large file mustn't block the UI here).
         if let url = existingFileURL(in: item) {
-            return read(fileAt: url, allowsBinary: allowsBinary)
+            return .pendingFile(url)
         }
 
         guard allowsBinary else {
@@ -156,7 +162,7 @@ enum ClipboardPasteboardIntake {
     /// over the cap can't cross as bytes and is rejected rather than degraded
     /// to a confusing name-as-text. Text-only transports (Linux/SPICE) can't
     /// carry files at all.
-    static func read(fileAt url: URL, allowsBinary: Bool) -> ClipboardIntakeResult {
+    static func read(fileAt url: URL, allowsBinary: Bool) async -> ClipboardIntakeResult {
         guard
             let values = try? url.resourceValues(forKeys: [.contentTypeKey, .fileSizeKey]),
             let type = values.contentType
@@ -174,7 +180,9 @@ enum ClipboardPasteboardIntake {
                     "File is too large to share (over \(DataFormatters.formatBytes(UInt64(ClipboardSnapshotPolicy.maxRepresentationByteCount))))"
             )
         }
-        guard let data = try? Data(contentsOf: url), !data.isEmpty else {
+        // The byte read — up to the per-representation cap — runs off the main
+        // actor so a large file can't hitch the UI during a paste/drop gesture.
+        guard let data = await readFileBytes(at: url), !data.isEmpty else {
             return .rejected(message: "Couldn't read the dropped file")
         }
         return .content(
@@ -183,5 +191,14 @@ enum ClipboardPasteboardIntake {
             ]),
             note: nil
         )
+    }
+
+    /// Reads a file's bytes off the main actor.
+    ///
+    /// `nonisolated async`, so awaiting it from the `@MainActor` `read(fileAt:)`
+    /// runs the (potentially multi-megabyte) read on the global executor and
+    /// resumes on the main actor with the result.
+    nonisolated private static func readFileBytes(at url: URL) async -> Data? {
+        try? Data(contentsOf: url)
     }
 }

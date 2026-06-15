@@ -46,6 +46,17 @@ struct ClipboardPasteboardIntakeTests {
         return try #require(rep.representation(using: .png, properties: [:]))
     }
 
+    /// Resolves a `.pendingFile` outcome by performing the async file read.
+    ///
+    /// Lets a file-URL intake test read the same as before the byte read moved
+    /// off the main actor; non-file results pass through unchanged.
+    private func resolve(
+        _ result: ClipboardIntakeResult, allowsBinary: Bool
+    ) async -> ClipboardIntakeResult {
+        guard case .pendingFile(let url) = result else { return result }
+        return await ClipboardPasteboardIntake.read(fileAt: url, allowsBinary: allowsBinary)
+    }
+
     // MARK: - Generic pasteboard reads
 
     @Test("text on the pasteboard becomes text content")
@@ -173,8 +184,29 @@ struct ClipboardPasteboardIntakeTests {
 
     // MARK: - File URL expansion
 
+    @Test("read(from:) defers a file URL to .pendingFile so the bytes read off-actor")
+    func readFromDefersFileToPendingFile() throws {
+        let url = try makeTempFile(name: "deferred.txt", contents: Data("x".utf8))
+        let pasteboard = makeScratchPasteboard()
+        pasteboard.clearContents()
+        let item = NSPasteboardItem()
+        item.setString(url.absoluteString, forType: .fileURL)
+        pasteboard.writeObjects([item])
+
+        // The bytes are NOT read synchronously: read(from:) returns the URL for
+        // the caller to read off the main actor via read(fileAt:).
+        guard
+            case .pendingFile(let pending) = ClipboardPasteboardIntake.read(
+                from: pasteboard, allowsBinary: true)
+        else {
+            Issue.record("Expected .pendingFile")
+            return
+        }
+        #expect(pending.path == url.path)
+    }
+
     @Test("dragged text file crosses as the file itself (bytes + name)")
-    func textFileIntake() throws {
+    func textFileIntake() async throws {
         // A copied/dragged .txt is "the file" — its bytes cross tagged with the
         // content UTI and name so the other side materializes a real file
         // (matching how macOS pastes a copied text file).
@@ -187,8 +219,9 @@ struct ClipboardPasteboardIntakeTests {
         pasteboard.writeObjects([item])
 
         guard
-            case .content(let content, _) = ClipboardPasteboardIntake.read(
-                from: pasteboard, allowsBinary: true)
+            case .content(let content, _) = await resolve(
+                ClipboardPasteboardIntake.read(from: pasteboard, allowsBinary: true),
+                allowsBinary: true)
         else {
             Issue.record("Expected content")
             return
@@ -199,7 +232,7 @@ struct ClipboardPasteboardIntakeTests {
     }
 
     @Test("dragged image file becomes an image representation")
-    func imageFileIntake() throws {
+    func imageFileIntake() async throws {
         let png = try makePNG()
         let url = try makeTempFile(name: "image.png", contents: png)
         let pasteboard = makeScratchPasteboard()
@@ -209,8 +242,9 @@ struct ClipboardPasteboardIntakeTests {
         pasteboard.writeObjects([item])
 
         guard
-            case .content(let content, _) = ClipboardPasteboardIntake.read(
-                from: pasteboard, allowsBinary: true)
+            case .content(let content, _) = await resolve(
+                ClipboardPasteboardIntake.read(from: pasteboard, allowsBinary: true),
+                allowsBinary: true)
         else {
             Issue.record("Expected content")
             return
@@ -223,7 +257,7 @@ struct ClipboardPasteboardIntakeTests {
     }
 
     @Test("dragged non-image file crosses as the file itself (bytes + name)")
-    func nonImageFileCrossesAsFile() throws {
+    func nonImageFileCrossesAsFile() async throws {
         let contents = Data([0x00, 0x01])
         let url = try makeTempFile(name: "blob.bin", contents: contents)
         let pasteboard = makeScratchPasteboard()
@@ -233,8 +267,9 @@ struct ClipboardPasteboardIntakeTests {
         pasteboard.writeObjects([item])
 
         guard
-            case .content(let content, _) = ClipboardPasteboardIntake.read(
-                from: pasteboard, allowsBinary: true)
+            case .content(let content, _) = await resolve(
+                ClipboardPasteboardIntake.read(from: pasteboard, allowsBinary: true),
+                allowsBinary: true)
         else {
             Issue.record("Expected content")
             return
@@ -245,12 +280,12 @@ struct ClipboardPasteboardIntakeTests {
     }
 
     @Test("read(fileAt:) expands an image file directly — the promise-receipt path")
-    func directFileReadImage() throws {
+    func directFileReadImage() async throws {
         let png = try makePNG()
         let url = try makeTempFile(name: "promised.png", contents: png)
 
         guard
-            case .content(let content, _) = ClipboardPasteboardIntake.read(
+            case .content(let content, _) = await ClipboardPasteboardIntake.read(
                 fileAt: url, allowsBinary: true)
         else {
             Issue.record("Expected content")
@@ -261,12 +296,12 @@ struct ClipboardPasteboardIntakeTests {
     }
 
     @Test("read(fileAt:) rejects an oversized file before reading it")
-    func directFileReadOversizedRejected() throws {
+    func directFileReadOversizedRejected() async throws {
         let url = try makeTempFile(
             name: "huge.png",
             contents: Data(count: ClipboardSnapshotPolicy.maxRepresentationByteCount + 1))
 
-        guard case .rejected = ClipboardPasteboardIntake.read(fileAt: url, allowsBinary: true)
+        guard case .rejected = await ClipboardPasteboardIntake.read(fileAt: url, allowsBinary: true)
         else {
             Issue.record("Expected rejection")
             return
@@ -274,7 +309,7 @@ struct ClipboardPasteboardIntakeTests {
     }
 
     @Test("dragged image file on a text-only transport is rejected")
-    func imageFileTextOnlyRejected() throws {
+    func imageFileTextOnlyRejected() async throws {
         let url = try makeTempFile(name: "image.png", contents: try makePNG())
         let pasteboard = makeScratchPasteboard()
         pasteboard.clearContents()
@@ -283,8 +318,9 @@ struct ClipboardPasteboardIntakeTests {
         pasteboard.writeObjects([item])
 
         guard
-            case .rejected(let message) = ClipboardPasteboardIntake.read(
-                from: pasteboard, allowsBinary: false)
+            case .rejected(let message) = await resolve(
+                ClipboardPasteboardIntake.read(from: pasteboard, allowsBinary: false),
+                allowsBinary: false)
         else {
             Issue.record("Expected rejection")
             return
@@ -295,7 +331,7 @@ struct ClipboardPasteboardIntakeTests {
     // MARK: - Screenshot thumbnail (promised file URL)
 
     @Test("a promised-file-url on disk is read as the image — the screenshot thumbnail mechanism")
-    func promisedFileURLImage() throws {
+    func promisedFileURLImage() async throws {
         // The floating screenshot thumbnail is a promise drag: NO concrete
         // public.file-url, NO inline image bytes — only a promised-file-url
         // pointing at the temp file screencaptureui has already written, plus
@@ -312,8 +348,9 @@ struct ClipboardPasteboardIntakeTests {
         pasteboard.writeObjects([item])
 
         guard
-            case .content(let content, _) = ClipboardPasteboardIntake.read(
-                from: pasteboard, allowsBinary: true)
+            case .content(let content, _) = await resolve(
+                ClipboardPasteboardIntake.read(from: pasteboard, allowsBinary: true),
+                allowsBinary: true)
         else {
             Issue.record("Expected image content")
             return
