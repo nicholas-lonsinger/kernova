@@ -4,17 +4,18 @@ import os
 
 /// Pure AppKit view controller for the clipboard sharing window content.
 ///
-/// The content area renders the buffer per `ClipboardPreviewPolicy`: an
-/// editable `NSTextView` for text (and the empty buffer), an image preview,
-/// or a generic per-representation summary. Below it, a command bar offers
-/// explicit host-pasteboard transfer ("Paste from Mac" / "Copy to Mac",
-/// also reachable through the responder chain as `paste:`/`copy:` outside
-/// the editor) plus a content-type indicator that doubles as the transient
-/// status surface; drag-and-drop into the window feeds the same intake path
-/// as the Paste button. The bottom status bar shows the guest agent
-/// connection state and surfaces the install/update affordance for macOS
-/// guests (Linux guests use `spice-vdagent` from their package manager —
-/// the affordance is hidden for them).
+/// A command bar tops the window: explicit host-pasteboard actions
+/// ("Paste from Mac" / "Copy to Mac", also reachable through the responder
+/// chain as `paste:`/`copy:` outside the editor) plus "Clear" to empty the
+/// buffer. Below it the content area renders the buffer per
+/// `ClipboardPreviewPolicy`: an editable `NSTextView` for text (and the empty
+/// buffer), a styled-RTF / image / file-chip preview, or a generic
+/// per-representation summary; drag-and-drop anywhere in the window feeds the
+/// same intake path as the Paste button. The bottom status bar shows the guest
+/// agent connection state (and the install/update affordance for macOS guests —
+/// Linux guests use `spice-vdagent`, so it's hidden for them) on the left and
+/// the content-type indicator — which doubles as the transient status surface —
+/// right-aligned.
 ///
 /// Conflict policy is last-writer-wins: every keystroke pushes the edit into
 /// `clipboardService.clipboardContent`, so "unsent edits" are model state and
@@ -207,24 +208,26 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         statusBar.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(statusBar)
 
-        var constraints: [NSLayoutConstraint] = []
-        for contentView in contentViews {
-            constraints += [
-                contentView.topAnchor.constraint(equalTo: container.topAnchor),
-                contentView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-                contentView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-                contentView.bottomAnchor.constraint(equalTo: commandDivider.topAnchor),
-            ]
-        }
-        constraints += [
-            commandDivider.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            commandDivider.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-
-            commandBar.topAnchor.constraint(equalTo: commandDivider.bottomAnchor),
+        // Vertical order: command bar (top) → divider → content → divider →
+        // status row (bottom).
+        var constraints: [NSLayoutConstraint] = [
+            commandBar.topAnchor.constraint(equalTo: container.topAnchor),
             commandBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             commandBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
 
-            statusDivider.topAnchor.constraint(equalTo: commandBar.bottomAnchor),
+            commandDivider.topAnchor.constraint(equalTo: commandBar.bottomAnchor),
+            commandDivider.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            commandDivider.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+        ]
+        for contentView in contentViews {
+            constraints += [
+                contentView.topAnchor.constraint(equalTo: commandDivider.bottomAnchor),
+                contentView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+                contentView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+                contentView.bottomAnchor.constraint(equalTo: statusDivider.topAnchor),
+            ]
+        }
+        constraints += [
             statusDivider.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             statusDivider.trailingAnchor.constraint(equalTo: container.trailingAnchor),
 
