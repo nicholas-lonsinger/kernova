@@ -8,7 +8,7 @@ import AppKit
 /// what to do with the dragged pasteboard.
 @MainActor
 final class ClipboardDropContainerView: NSView {
-    /// Pasteboard types that light up the drop highlight.
+    /// Pasteboard types the window accepts as a drop.
     ///
     /// Anything the intake path can use — files, file *promises* (what the
     /// screenshot thumbnail, Photos, and browsers drag), images, rich text,
@@ -27,13 +27,8 @@ final class ClipboardDropContainerView: NSView {
     /// (or its asynchronous receipt began, for file promises).
     var onDrop: (NSDraggingInfo) -> Bool = { _ in false }
 
-    private var isDropTargeted = false {
-        didSet { applyHighlight() }
-    }
-
     init() {
         super.init(frame: .zero)
-        wantsLayer = true
         registerForDraggedTypes(Self.acceptedDragTypes)
     }
 
@@ -53,34 +48,10 @@ final class ClipboardDropContainerView: NSView {
         guard canAcceptDrop(),
             sender.draggingPasteboard.availableType(from: Self.acceptedDragTypes) != nil
         else { return [] }
-        isDropTargeted = true
         return .copy
     }
 
-    override func draggingExited(_ sender: NSDraggingInfo?) {
-        isDropTargeted = false
-    }
-
-    override func draggingEnded(_ sender: NSDraggingInfo) {
-        isDropTargeted = false
-    }
-
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        isDropTargeted = false
-        return onDrop(sender)
-    }
-
-    // MARK: - Highlight
-
-    private func applyHighlight() {
-        // CGColor doesn't track appearance changes, but the highlight only
-        // exists for the duration of a hover — it is reapplied from scratch
-        // on every drag entry.
-        layer?.borderWidth = isDropTargeted ? 2 : 0
-        layer?.borderColor = isDropTargeted ? NSColor.controlAccentColor.cgColor : nil
-        layer?.backgroundColor =
-            isDropTargeted
-            ? NSColor.controlAccentColor.withAlphaComponent(0.08).cgColor
-            : nil
+        onDrop(sender)
     }
 }

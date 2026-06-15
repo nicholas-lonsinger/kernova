@@ -99,7 +99,7 @@ Kernova/
 │   │   ├── ClipboardPreviewMode.swift  # Pure preview policy (unit-tested): a *file payload* (a filename-tagged rep) shows as the file — image file inline, any other file as a chip — before any inline rule; then inline image-over-URL-descriptor, then inline RTF (styled), then text ≤ 2 MB, then bare image, then per-representation summary
 │   │   ├── ClipboardContentDescriber.swift # Pure indicator/summary string derivation: type display names, pixel dimensions (header-only read), sizes
 │   │   ├── ClipboardPasteboardIntake.swift # Single intake path for Paste button / paste: / drag-drop — any copied/dragged file (under the per-rep cap) transfers as the file itself (bytes + name; an image also inlines), over-cap files rejected + ClipboardSnapshotPolicy filtering, user-facing rejection messages
-│   │   ├── ClipboardDropContainerView.swift # Root view: NSDraggingDestination with accent-highlight, closure-driven accept/drop, responder-chain anchor
+│   │   ├── ClipboardDropContainerView.swift # Root view: NSDraggingDestination (closure-driven accept/drop, no custom highlight — the macOS drag badge is the only feedback), responder-chain anchor
 │   │   ├── ClipboardImagePreviewView.swift # Centered aspect-fit preview decoded via CGImageSource thumbnail (2048 px cap — a 100-megapixel paste can't balloon memory)
 │   │   ├── ClipboardRichTextPreviewView.swift # Read-only styled preview of inline RTF (HTML deliberately not rendered — NSAttributedString HTML import can fetch remote resources / block the main thread)
 │   │   ├── ClipboardFilePreviewView.swift # File "chip" (type icon + name + "type · size") for a non-image file payload
