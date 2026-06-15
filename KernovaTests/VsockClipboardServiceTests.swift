@@ -837,6 +837,60 @@ struct VsockClipboardServiceTests {
         }
     }
 
+    @Test("clearBuffer empties and resets dedup so re-grabbing the same content re-offers")
+    func clearBufferResetsDedup() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test")
+        service.start()
+        defer { service.stop() }
+
+        // Grab X — latches the send-dedup digest.
+        service.clipboardContent = ClipboardContent(text: "keep me")
+        service.grabIfChanged()
+        _ = try await nextFrame(from: guest)  // first offer
+
+        service.clearBuffer()
+        #expect(service.clipboardContent.isEmpty)
+
+        // Re-setting the SAME content and grabbing must still offer — without
+        // the dedup reset the unchanged digest would silently suppress it.
+        service.clipboardContent = ClipboardContent(text: "keep me")
+        service.grabIfChanged()
+        let frame = try await nextFrame(from: guest)
+        guard case .clipboardOffer = frame.payload else {
+            Issue.record("Expected clipboardOffer after clear + re-set, got \(String(describing: frame.payload))")
+            return
+        }
+    }
+
+    @Test("Inbound empty legacy text is dropped without wiping the buffer")
+    func inboundEmptyLegacyTextPreservesBuffer() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test")
+        service.start()
+        defer { service.stop() }
+
+        // Seed a non-empty buffer that a malformed inbound frame must not wipe.
+        service.clipboardContent = ClipboardContent(text: "existing")
+
+        try guest.send(makeOffer(generation: 7))
+        _ = try await nextFrame(from: guest)  // request for gen=7
+        // A non-conformant peer sends an empty legacy-text payload.
+        try guest.send(makeData(generation: 7, text: ""))
+
+        // The generation is consumed, but the buffer is preserved (not wiped).
+        try await waitUntil { service.pendingInboundGenerationForTesting == nil }
+        #expect(service.clipboardContent.text == "existing")
+    }
+
     @Test("Oversized content refuses the offer and surfaces a contentTooLarge issue")
     func oversizedContentSurfacesIssue() async throws {
         let (guest, host) = try makePair()

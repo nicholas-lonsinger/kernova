@@ -89,11 +89,12 @@ public enum ClipboardSnapshotPolicy {
     /// caught here came from a buggy or malicious peer. It (1) drops the
     /// identity skips — without it a crafted `ClipboardData` could smuggle e.g.
     /// a `public.file-url` onto the receiving pasteboard behind a visible image
-    /// representation — and (2) re-applies the size caps (per-representation and
-    /// the greedy total budget, in order), so the receive path can't be made to
-    /// land an over-cap blob on the pasteboard just because the sender ignored
-    /// the limits. The 16 MiB frame ceiling already bounds the input; this keeps
-    /// the documented caps in one place on both ends.
+    /// representation — (2) drops zero-byte reps, and (3) re-applies the size
+    /// caps (per-representation and the greedy total budget, in order), so the
+    /// receive path can't be made to land an empty or over-cap blob on the
+    /// pasteboard just because the sender ignored the limits. The 16 MiB frame
+    /// ceiling already bounds the input; this keeps the documented caps in one
+    /// place on both ends.
     public static func sanitizedForApply(
         _ representations: [ClipboardContent.Representation]
     ) -> [ClipboardContent.Representation] {
@@ -101,6 +102,7 @@ public enum ClipboardSnapshotPolicy {
         var remainingBudget = maxTotalByteCount
         for representation in representations {
             if shouldSkipBeforeReading(uti: representation.uti) { continue }
+            if representation.data.isEmpty { continue }
             if representation.data.count > maxRepresentationByteCount { continue }
             if representation.data.count > remainingBudget { continue }
             kept.append(representation)

@@ -101,6 +101,13 @@ final class SpiceClipboardService: ClipboardServicing {
 
     // MARK: - Public API
 
+    func clearBuffer() {
+        clipboardContent = .empty
+        // Reset send-dedup so re-copying the just-cleared content re-grabs
+        // (otherwise the unchanged text would suppress the next grab).
+        lastGrabbedText = nil
+    }
+
     /// Sends a `CLIPBOARD_GRAB` to the guest if the text representation of
     /// `clipboardContent` was edited since the last grab (or since the guest
     /// last sent us data).

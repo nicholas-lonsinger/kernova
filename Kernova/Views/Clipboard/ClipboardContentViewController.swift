@@ -407,7 +407,9 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         guard let service = instance.clipboardService, !service.clipboardContent.isEmpty else {
             return
         }
-        service.clipboardContent = .empty
+        // clearBuffer (not `clipboardContent = .empty`) also resets the send
+        // dedup, so re-copying the just-cleared content still reaches the guest.
+        service.clearBuffer()
         Self.logger.notice(
             "Cleared clipboard buffer for VM '\(self.instance.name, privacy: .public)'")
     }

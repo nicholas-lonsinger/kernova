@@ -147,6 +147,13 @@ final class VsockClipboardService: ClipboardServicing {
 
     // MARK: - Public API
 
+    func clearBuffer() {
+        clipboardContent = .empty
+        // Reset send-dedup so re-copying the just-cleared content re-offers
+        // (otherwise the unchanged digest would suppress the next grab).
+        lastGrabbedDigest = nil
+    }
+
     func grabIfChanged() {
         guard isConnected else { return }
         guard !clipboardContent.isEmpty else { return }

@@ -53,4 +53,14 @@ protocol ClipboardServicing: AnyObject {
     /// since the last successful announcement. Called by the clipboard window
     /// when it loses focus, and immediately after a paste/drop gesture.
     func grabIfChanged()
+
+    /// Empties the buffer (the window's "Clear" gesture) and resets the
+    /// outbound dedup state.
+    ///
+    /// Resetting the dedup is the reason this isn't just `clipboardContent =
+    /// .empty`: otherwise re-copying the just-cleared content would be
+    /// suppressed by `grabIfChanged()` as "unchanged" and silently never reach
+    /// the guest — mirrors the `lastGrabbedDigest`/`lastGrabbedText` reset the
+    /// inbound path already performs after a round-trip.
+    func clearBuffer()
 }

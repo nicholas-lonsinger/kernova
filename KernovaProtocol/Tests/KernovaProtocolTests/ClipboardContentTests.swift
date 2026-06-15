@@ -324,4 +324,13 @@ struct ClipboardSnapshotPolicyTests {
         ])
         #expect(sanitized.map(\.uti) == ["public.tiff"])
     }
+
+    @Test("sanitizedForApply drops empty-data reps (symmetric with evaluate)")
+    func sanitizedForApplyDropsEmptyData() {
+        let sanitized = ClipboardSnapshotPolicy.sanitizedForApply([
+            .init(uti: "public.png", data: Data()),
+            .init(uti: ClipboardContent.utf8TextUTI, data: Data("keep".utf8)),
+        ])
+        #expect(sanitized.map(\.uti) == [ClipboardContent.utf8TextUTI])
+    }
 }
