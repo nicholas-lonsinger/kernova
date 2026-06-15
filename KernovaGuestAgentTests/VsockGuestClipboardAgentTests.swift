@@ -1143,6 +1143,12 @@ struct VsockGuestClipboardAgentTests {
             agent.checkClipboardChange()
         }
 
+        // The in-flight guard's real effect is skipping the second large-file
+        // READ — assert that directly. A duplicate *offer* alone wouldn't isolate
+        // the guard, since digest echo-suppression independently collapses it.
+        let expansionsStarted = await MainActor.run { agent.fileExpansionsStartedForTesting }
+        #expect(expansionsStarted == 1)
+
         let offerFrame = try await nextFrame(from: hostChannel)
         guard case .clipboardOffer = offerFrame.payload else {
             throw TestFailure("Expected ClipboardOffer, got \(String(describing: offerFrame.payload))")

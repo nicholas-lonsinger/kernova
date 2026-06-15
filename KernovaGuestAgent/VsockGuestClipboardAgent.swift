@@ -146,7 +146,30 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// Lets a Finder paste create them; swept on connect/teardown/disable.
     private let staging = ClipboardFileStaging(label: "agent")
 
+    // RATIONALE: a *serial* queue (not `DispatchQueue.global`) is required for
+    // inbound staging. `ClipboardFileStaging.stage` supersedes by call order —
+    // it deletes the previous generation's directory whenever a new `stage()`
+    // succeeds. Two pipelined inbound generations dispatched off-main could
+    // otherwise run out of order on a concurrent queue, letting an older
+    // generation's late `stage()` delete the newer (winning) generation's live
+    // directory and leave its pasteboard file URL dangling. Serial submission
+    // (in main-queue FIFO generation order) keeps the last `stage()` the latest
+    // generation, so its directory survives. Do not change this to a concurrent
+    // queue.
+    private let inboundStagingQueue = DispatchQueue(
+        label: "app.kernova.agent.clipboard-inbound", qos: .userInitiated)
+
     private var pollingTimer: DispatchSourceTimer?
+
+    #if DEBUG
+    /// Counts off-main file expansions started, so a test can assert the
+    /// in-flight guard actually prevents a redundant read of the same file.
+    ///
+    /// The offer count alone can't isolate the guard — digest echo-suppression
+    /// independently collapses a duplicate offer — so the guard's real effect
+    /// (skipping the second large file read) is observable only here.
+    private(set) var fileExpansionsStartedForTesting = 0
+    #endif
 
     /// `true` while an outbound copied-file expansion (its bytes read + digest)
     /// is running off the main queue.
@@ -347,6 +370,9 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         // metadata check here (type/size/cap) is cheap and stays on main.
         if let candidate = fileExpansionCandidate() {
             pasteboardExpansionInFlight = true
+            #if DEBUG
+            fileExpansionsStartedForTesting += 1
+            #endif
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 let content: ClipboardContent?
                 if let data = try? Data(contentsOf: candidate.url), !data.isEmpty {
@@ -506,7 +532,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         case .clipboardRequest(let req):
             handleRequest(req, channel: channel)
         case .clipboardData(let data):
-            handleData(data)
+            handleData(data, channel: channel)
         case .clipboardRelease(let release):
             handleRelease(release)
         case .error(let error):
@@ -678,7 +704,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         }
     }
 
-    private func handleData(_ data: Kernova_V1_ClipboardData) {
+    private func handleData(_ data: Kernova_V1_ClipboardData, channel: VsockChannel) {
         guard data.generation == pendingInboundGeneration else {
             Self.logger.debug(
                 "Stale clipboard data gen=\(data.generation, privacy: .public) (pending=\(self.pendingInboundGeneration ?? 0, privacy: .public))"
@@ -706,14 +732,17 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             }
             // Build the digest and stage file payloads off the main run loop so a
             // large inbound file doesn't stall the agent; apply back on main.
+            // The staging hop runs on the *serial* inboundStagingQueue so two
+            // pipelined generations stage in order (see the queue's RATIONALE).
             let generation = data.generation
             let staging = self.staging
-            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            inboundStagingQueue.async { [weak self] in
                 let content = ClipboardContent(representations: sanitized)
                 let stagedFiles = staging.stage(content.representations)
                 DispatchQueue.main.async {
                     self?.finishInboundApply(
-                        content: content, stagedFiles: stagedFiles, generation: generation)
+                        content: content, stagedFiles: stagedFiles, generation: generation,
+                        channel: channel)
                 }
             }
             return
@@ -741,20 +770,29 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         // Text is small — stage (a no-op for text) and apply on the main queue.
         finishInboundApply(
             content: content, stagedFiles: staging.stage(content.representations),
-            generation: data.generation)
+            generation: data.generation, channel: channel)
     }
 
     /// Applies inbound content (with its already-staged file payloads) to the
     /// pasteboard and records dedup/change-count state.
     ///
-    /// Runs on the main queue. Re-validates the generation first: the digest +
-    /// staging hop suspends, and during it a reconnect or a newer inbound offer
-    /// may have superseded this.
+    /// Runs on the main queue. Re-validates against both the connection and the
+    /// generation first: the digest + staging hop suspends, and during it the
+    /// connection may have dropped (a fresh one restarts generations at 1, so a
+    /// generation number alone can collide) or a newer inbound offer may have
+    /// superseded this one.
     private func finishInboundApply(
         content: ClipboardContent,
         stagedFiles: [ClipboardFileStaging.Staged],
-        generation: UInt64
+        generation: UInt64,
+        channel: VsockChannel
     ) {
+        guard liveChannel === channel else {
+            Self.logger.debug(
+                "Inbound clipboard dropped — connection changed during apply gen=\(generation, privacy: .public)"
+            )
+            return
+        }
         guard pendingInboundGeneration == generation else {
             Self.logger.debug(
                 "Inbound clipboard superseded during apply gen=\(generation, privacy: .public)"
