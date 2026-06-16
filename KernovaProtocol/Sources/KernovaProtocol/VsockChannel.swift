@@ -163,7 +163,7 @@ public final class VsockChannel: @unchecked Sendable {
     ///
     /// `serializeFramed(_:)` (protobuf encode + framing copy) and the socket
     /// write both run on the cooperative executor, so awaiting this from the
-    /// `@MainActor` keeps a large `ClipboardData` send from blocking the UI.
+    /// `@MainActor` keeps a large frame send from blocking the UI.
     /// Throws the same errors as `send(_:)`.
     public func sendOffActor(_ frame: Frame) async throws {
         try writeFramed(Self.serializeFramed(frame))

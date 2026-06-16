@@ -55,6 +55,69 @@ struct ClipboardContentTests {
         #expect(a.digest != b.digest)
     }
 
+    @Test("filename stays out of the digest (load-bearing for echo suppression)")
+    func filenameNotInDigest() {
+        let withName = ClipboardContent(representations: [
+            .init(uti: "public.png", data: Data([1, 2, 3]), filename: "photo.png")
+        ])
+        let withoutName = ClipboardContent(representations: [
+            .init(uti: "public.png", data: Data([1, 2, 3]))
+        ])
+        #expect(withName.digest == withoutName.digest)
+    }
+
+    // MARK: - Disk-backed (.file) source
+
+    @Test("byteCount and inMemoryData reflect the representation source")
+    func sourceAccessors() {
+        let inline = ClipboardContent.Representation(uti: "public.png", data: Data([1, 2, 3]))
+        #expect(inline.byteCount == 3)
+        #expect(inline.inMemoryData == Data([1, 2, 3]))
+        #expect(inline.fileURL == nil)
+
+        let url = URL(fileURLWithPath: "/tmp/x.bin")
+        let file = ClipboardContent.Representation(
+            uti: "public.data", fileURL: url, byteCount: 9_000_000_000, filename: "x.bin")
+        #expect(file.byteCount == 9_000_000_000)  // multi-GB without loading
+        #expect(file.inMemoryData == nil)
+        #expect(file.fileURL == url)
+    }
+
+    @Test("a file representation's digest uses its streamed sha256, not its path")
+    func fileDigestUsesSha256NotPath() {
+        let sha = Data(repeating: 0xAB, count: 32)
+        let a = ClipboardContent(representations: [
+            .init(
+                uti: "public.data", fileURL: URL(fileURLWithPath: "/tmp/host.bin"),
+                byteCount: 1024, sha256: sha, filename: "a.bin")
+        ])
+        let b = ClipboardContent(representations: [
+            .init(
+                uti: "public.data", fileURL: URL(fileURLWithPath: "/var/guest.bin"),
+                byteCount: 1024, sha256: sha, filename: "b.bin")
+        ])
+        // Same bytes (same sha256), different path/name → same digest.
+        #expect(a.digest == b.digest)
+
+        let differentBytes = ClipboardContent(representations: [
+            .init(
+                uti: "public.data", fileURL: URL(fileURLWithPath: "/tmp/host.bin"),
+                byteCount: 1024, sha256: Data(repeating: 0xCD, count: 32), filename: "a.bin")
+        ])
+        #expect(a.digest != differentBytes.digest)
+    }
+
+    @Test("totalByteCount sums file and inline representations without loading")
+    func totalByteCountMixed() {
+        let content = ClipboardContent(representations: [
+            .init(uti: "a", data: Data(count: 10)),
+            .init(
+                uti: "b", fileURL: URL(fileURLWithPath: "/tmp/x"), byteCount: 5_000_000_000,
+                filename: "x"),
+        ])
+        #expect(content.totalByteCount == 5_000_000_010)
+    }
+
     // MARK: - Text
 
     @Test("empty string normalizes to .empty")
@@ -106,61 +169,6 @@ struct ClipboardContentTests {
         #expect(content.totalByteCount == 42)
     }
 
-    // MARK: - Proto bridging
-
-    @Test("proto round-trip preserves order, UTIs, and bytes")
-    func protoRoundTrip() throws {
-        let original = ClipboardContent(representations: [
-            .init(uti: "public.png", data: Data([0x89, 0x50, 0x4E, 0x47])),
-            .init(uti: ClipboardContent.utf8TextUTI, data: Data("hello".utf8)),
-            .init(uti: "dyn.ah62d4rv4gu8y6y4grf0gn5xbrzw1gydcr7u1e3cytf2gn", data: Data([7])),
-        ])
-
-        var frame = Frame()
-        frame.protocolVersion = 1
-        frame.clipboardData = Kernova_V1_ClipboardData.with {
-            $0.generation = 3
-            $0.representations = original.protoRepresentations
-        }
-
-        let bytes = try frame.serializedData()
-        let decoded = try Frame(serializedBytes: bytes)
-        let roundTripped = ClipboardContent(
-            protoRepresentations: decoded.clipboardData.representations
-        )
-
-        #expect(roundTripped == original)
-        #expect(roundTripped.representations.map(\.uti) == original.representations.map(\.uti))
-        #expect(roundTripped.representations.map(\.data) == original.representations.map(\.data))
-    }
-
-    @Test("ClipboardData at the policy's total cap encodes under the frame limit")
-    func policyCapFitsFrameLimit() throws {
-        // One frame carries every representation of a generation; the
-        // policy's total cap must clear VsockFrame.maxPayloadSize with the
-        // protobuf envelope included. Validates the headroom math.
-        let half = ClipboardSnapshotPolicy.maxTotalByteCount / 2
-        var frame = Frame()
-        frame.protocolVersion = 1
-        frame.clipboardData = Kernova_V1_ClipboardData.with {
-            $0.generation = UInt64.max
-            $0.representations = [
-                Kernova_V1_ClipboardRepresentation.with {
-                    $0.uti = "public.tiff"
-                    $0.data = Data(count: half)
-                },
-                Kernova_V1_ClipboardRepresentation.with {
-                    $0.uti = "public.png"
-                    $0.data = Data(count: ClipboardSnapshotPolicy.maxTotalByteCount - half)
-                },
-            ]
-        }
-
-        let payload = try frame.serializedData()
-        #expect(payload.count <= VsockFrame.maxPayloadSize)
-        #expect(throws: Never.self) { try VsockFrame.encode(payload) }
-    }
-
     @Test("makeOffActor yields the same digest and representations as the sync init")
     func makeOffActorMatchesSyncInit() async {
         let reps: [ClipboardContent.Representation] = [
@@ -173,29 +181,8 @@ struct ClipboardContentTests {
         #expect(offMain.digest == sync.digest)
         #expect(offMain == sync)  // digest-based equality
         #expect(offMain.representations.map(\.uti) == sync.representations.map(\.uti))
-        #expect(offMain.representations.map(\.data) == sync.representations.map(\.data))
+        #expect(offMain.representations.map(\.inMemoryData) == sync.representations.map(\.inMemoryData))
         #expect(offMain.representations.map(\.filename) == sync.representations.map(\.filename))
-    }
-
-    @Test("filename round-trips through proto but stays out of the digest")
-    func filenameRoundTripNotInDigest() throws {
-        let withName = ClipboardContent(representations: [
-            .init(uti: "public.png", data: Data([1, 2, 3]), filename: "photo.png")
-        ])
-        let withoutName = ClipboardContent(representations: [
-            .init(uti: "public.png", data: Data([1, 2, 3]))
-        ])
-        // Filename must not change the digest (load-bearing for echo suppression).
-        #expect(withName.digest == withoutName.digest)
-
-        // …but it must survive a proto round-trip.
-        var data = Kernova_V1_ClipboardData()
-        data.representations = withName.protoRepresentations
-        let bytes = try data.serializedData()
-        let decoded = try Kernova_V1_ClipboardData(serializedData: bytes)
-        let roundTripped = ClipboardContent(protoRepresentations: decoded.representations)
-        #expect(roundTripped.representations.first?.filename == "photo.png")
-        #expect(roundTripped.representations.first?.data == Data([1, 2, 3]))
     }
 }
 
@@ -251,44 +238,20 @@ struct ClipboardSnapshotPolicyTests {
         #expect(outcome.skipped == [.init(uti: "public.png", reason: .emptyData)])
     }
 
-    @Test("oversized representation is dropped while siblings survive")
-    func oversizedDropped() {
-        let oversize = ClipboardSnapshotPolicy.maxRepresentationByteCount + 1
+    @Test("a representation far larger than the old 104 MiB cap is kept (no size limit)")
+    func noSizeCap() {
+        // The greedy budget and per-rep cap are gone — streaming bounds size by
+        // free disk, not a fixed limit. A 200 MiB inline rep survives evaluate.
+        let huge = 200 * 1024 * 1024
         let outcome = ClipboardSnapshotPolicy.evaluate([
-            (uti: "public.tiff", data: Data(count: oversize)),
-            (uti: "public.png", data: Data(count: 1024)),
+            (uti: "public.tiff", data: Data(count: huge)),
+            (uti: ClipboardContent.utf8TextUTI, data: Data("also kept".utf8)),
         ])
-        #expect(outcome.content.representations.map(\.uti) == ["public.png"])
-        #expect(
-            outcome.skipped == [
-                .init(uti: "public.tiff", reason: .oversized(byteCount: oversize))
-            ])
-    }
-
-    @Test("total budget is enforced greedily in input order")
-    func totalBudgetGreedy() {
-        let big = ClipboardSnapshotPolicy.maxRepresentationByteCount  // 100 MiB, fits alone
-        let medium = ClipboardSnapshotPolicy.maxTotalByteCount - big + 1  // tips the total
-        let outcome = ClipboardSnapshotPolicy.evaluate([
-            (uti: "public.rtf", data: Data(count: big)),
-            (uti: "public.tiff", data: Data(count: medium)),
-            (uti: ClipboardContent.utf8TextUTI, data: Data("still fits".utf8)),
-        ])
-        // The medium rep exceeds the remaining budget; the small text rep
-        // after it still fits.
         #expect(
             outcome.content.representations.map(\.uti) == [
-                "public.rtf", ClipboardContent.utf8TextUTI,
+                "public.tiff", ClipboardContent.utf8TextUTI,
             ])
-        #expect(
-            outcome.skipped == [
-                .init(
-                    uti: "public.tiff",
-                    reason: .totalBudgetExceeded(
-                        byteCount: medium,
-                        remaining: ClipboardSnapshotPolicy.maxTotalByteCount - big
-                    ))
-            ])
+        #expect(outcome.skipped.isEmpty)
     }
 
     @Test("all-skipped input yields empty content with populated skip report")
@@ -319,29 +282,16 @@ struct ClipboardSnapshotPolicyTests {
         #expect(sanitized.map(\.uti) == ["public.png", ClipboardContent.utf8TextUTI])
     }
 
-    @Test("sanitizedForApply re-enforces the per-representation size cap on receive")
-    func sanitizedForApplyDropsOversized() {
-        // A non-conformant peer can ignore the send-side caps; the receive path
-        // must still drop an over-cap representation while keeping its sibling.
-        let oversize = ClipboardSnapshotPolicy.maxRepresentationByteCount + 1
+    @Test("sanitizedForApply keeps an arbitrarily large representation (no size cap)")
+    func sanitizedForApplyNoSizeCap() {
         let sanitized = ClipboardSnapshotPolicy.sanitizedForApply([
-            .init(uti: "public.tiff", data: Data(count: oversize)),
+            .init(uti: "public.tiff", data: Data(count: 200 * 1024 * 1024)),
             .init(uti: ClipboardContent.utf8TextUTI, data: Data("small".utf8)),
         ])
-        #expect(sanitized.map(\.uti) == [ClipboardContent.utf8TextUTI])
+        #expect(sanitized.map(\.uti) == ["public.tiff", ClipboardContent.utf8TextUTI])
     }
 
-    @Test("sanitizedForApply enforces the total budget greedily on receive")
-    func sanitizedForApplyEnforcesTotalBudget() {
-        let big = ClipboardSnapshotPolicy.maxRepresentationByteCount  // 100 MiB, fits alone
-        let sanitized = ClipboardSnapshotPolicy.sanitizedForApply([
-            .init(uti: "public.tiff", data: Data(count: big)),
-            .init(uti: "public.png", data: Data(count: big)),  // would push past the 104 MiB total
-        ])
-        #expect(sanitized.map(\.uti) == ["public.tiff"])
-    }
-
-    @Test("sanitizedForApply drops empty-data reps (symmetric with evaluate)")
+    @Test("sanitizedForApply drops empty reps (symmetric with evaluate)")
     func sanitizedForApplyDropsEmptyData() {
         let sanitized = ClipboardSnapshotPolicy.sanitizedForApply([
             .init(uti: "public.png", data: Data()),

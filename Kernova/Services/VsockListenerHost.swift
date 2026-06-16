@@ -70,10 +70,40 @@ final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate {
             return false
         }
 
+        applySendTimeout(fd)
+
         let channel = VsockChannel(fileDescriptor: fd)
         channel.start()
         Self.logger.notice("Accepted vsock connection on port \(self.port, privacy: .public)")
         onConnect(channel)
         return true
     }
+
+    /// Bounds a host write to a stalled guest defensively.
+    ///
+    /// RATIONALE: the host previously built the channel from the duped fd with no
+    /// send timeout, so a guest that stops draining could hang a `writeFramed`
+    /// (under the channel lock) forever. The *real* bound is the clipboard
+    /// streaming engine's credit window — the host holds at most one window
+    /// (≤ the socket send buffer) of un-acked bytes, so it never tries to write
+    /// past what the buffer can hold — plus the engine's per-transfer no-ack
+    /// deadline. `SO_SNDTIMEO` is a belt-and-suspenders backstop; Apple does not
+    /// document whether it is honoured on a vsock fd (it may be a no-op, hence
+    /// the credit window doing the real work). The `setsockopt` return is
+    /// checked and logged so an ineffective option is visible; if it proves
+    /// ineffective in practice the streaming write path can move to a
+    /// non-blocking fd + `poll(POLLOUT)` (vsock(4)'s canonical approach).
+    private func applySendTimeout(_ fd: Int32) {
+        var timeout = timeval(tv_sec: Self.sendTimeoutSeconds, tv_usec: 0)
+        let rc = setsockopt(
+            fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        if rc != 0 {
+            Self.logger.warning(
+                "setsockopt(SO_SNDTIMEO) failed on vsock port \(self.port, privacy: .public): errno=\(errno, privacy: .public) — relying on the streaming credit window for write bounding"
+            )
+        }
+    }
+
+    /// Defensive host-side send timeout, matching the guest's socket timeout.
+    private static let sendTimeoutSeconds = 30
 }

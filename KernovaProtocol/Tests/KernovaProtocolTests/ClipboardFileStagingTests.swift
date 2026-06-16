@@ -5,94 +5,118 @@ import Testing
 
 @Suite("ClipboardFileStaging")
 struct ClipboardFileStagingTests {
-    @Test("stages filename-bearing reps to real files with the right name and bytes")
-    func stagesFiles() throws {
-        let staging = ClipboardFileStaging(label: "test-\(UUID().uuidString)")
-        defer { staging.sweep() }
-
-        let bytes = Data([0x89, 0x50, 0x4E, 0x47])
-        let staged = staging.stage([
-            .init(uti: "public.png", data: bytes, filename: "photo.png"),
-            .init(uti: "public.utf8-plain-text", data: Data("hi".utf8)),  // no filename → not staged
-        ])
-
-        #expect(staged.count == 1)
-        let only = try #require(staged.first)
-        #expect(only.uti == "public.png")
-        #expect(only.url.lastPathComponent == "photo.png")
-        #expect(FileManager.default.fileExists(atPath: only.url.path))
-        #expect(try Data(contentsOf: only.url) == bytes)
+    /// A fresh staging instance rooted in a unique temp directory.
+    private func makeStaging(
+        freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil
+    ) -> ClipboardFileStaging {
+        ClipboardFileStaging(
+            label: "test-\(UUID().uuidString)",
+            tempRoot: FileManager.default.temporaryDirectory.appendingPathComponent(
+                UUID().uuidString, isDirectory: true),
+            freeSpaceProvider: freeSpaceProvider
+        )
     }
 
-    @Test("stageAsync writes the same files as the synchronous stage")
-    func stageAsyncMatchesStage() async throws {
-        let reps: [ClipboardContent.Representation] = [
-            .init(uti: "public.png", data: Data([1, 2, 3]), filename: "a.png"),
-            .init(uti: "public.plain-text", data: Data("hi".utf8), filename: "b.txt"),
-            .init(uti: "public.utf8-plain-text", data: Data("inline".utf8)),  // no filename → not staged
-        ]
-        let syncStaging = ClipboardFileStaging(label: "parity-sync-\(UUID().uuidString)")
-        defer { syncStaging.sweep() }
-        let asyncStaging = ClipboardFileStaging(label: "parity-async-\(UUID().uuidString)")
-        defer { asyncStaging.sweep() }
+    @Test("a sink writes streamed chunks and commit keeps the file with the right name")
+    func sinkWritesAndCommits() throws {
+        let staging = makeStaging()
+        defer { staging.sweep() }
 
-        let syncStaged = syncStaging.stage(reps)
-        let asyncStaged = await asyncStaging.stageAsync(reps)
+        let sink = try staging.makeSink(generation: 1, filename: "photo.png")
+        try sink.write(Data([0x89, 0x50]))
+        try sink.write(Data([0x4E, 0x47]))
+        let url = sink.commit()
 
-        #expect(asyncStaged.map(\.uti) == syncStaged.map(\.uti))
-        #expect(
-            asyncStaged.map { $0.url.lastPathComponent } == syncStaged.map { $0.url.lastPathComponent })
-        // The same bytes landed on disk for each staged representation.
-        for staged in asyncStaged {
-            let written = try Data(contentsOf: staged.url)
-            #expect(written == reps.first { $0.uti == staged.uti }?.data)
+        #expect(url.lastPathComponent == "photo.png")
+        #expect(FileManager.default.fileExists(atPath: url.path))
+        #expect(try Data(contentsOf: url) == Data([0x89, 0x50, 0x4E, 0x47]))
+    }
+
+    @Test("abort deletes the partial file")
+    func abortDeletesPartial() throws {
+        let staging = makeStaging()
+        defer { staging.sweep() }
+
+        let sink = try staging.makeSink(generation: 1, filename: "partial.bin")
+        try sink.write(Data([1, 2, 3]))
+        let url = sink.url
+        #expect(FileManager.default.fileExists(atPath: url.path))
+
+        sink.abort()
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+    }
+
+    @Test("the last 3 generations survive; a 4th evicts only the oldest")
+    func keepsGenerationHistory() throws {
+        let staging = makeStaging()
+        defer { staging.sweep() }
+
+        var dirs: [URL] = []
+        for generation in 1...4 {
+            let sink = try staging.makeSink(
+                generation: UInt64(generation), filename: "g\(generation).bin")
+            try sink.write(Data([UInt8(generation)]))
+            sink.commit()
+            dirs.append(sink.url.deletingLastPathComponent())
         }
+
+        // Generation 1's directory was evicted when generation 4 arrived; 2–4 survive.
+        #expect(!FileManager.default.fileExists(atPath: dirs[0].path))
+        #expect(FileManager.default.fileExists(atPath: dirs[1].path))
+        #expect(FileManager.default.fileExists(atPath: dirs[2].path))
+        #expect(FileManager.default.fileExists(atPath: dirs[3].path))
     }
 
-    @Test("a fresh generation supersedes (deletes) the previous one")
-    func supersedesPreviousGeneration() {
-        let staging = ClipboardFileStaging(label: "test-\(UUID().uuidString)")
+    @Test("sinks for the same generation share one directory")
+    func sameGenerationSharesDirectory() throws {
+        let staging = makeStaging()
         defer { staging.sweep() }
 
-        let first = staging.stage([.init(uti: "public.png", data: Data([1]), filename: "a.png")])
-        let firstDir = first.first?.url.deletingLastPathComponent()
-        #expect(firstDir.map { FileManager.default.fileExists(atPath: $0.path) } == true)
-
-        let second = staging.stage([.init(uti: "public.png", data: Data([2]), filename: "b.png")])
-        // The previous generation directory is gone; the new one exists.
-        #expect(firstDir.map { FileManager.default.fileExists(atPath: $0.path) } == false)
-        #expect(second.first.map { FileManager.default.fileExists(atPath: $0.url.path) } == true)
-    }
-
-    @Test("content with no filename'd reps stages nothing")
-    func nothingToStage() {
-        let staging = ClipboardFileStaging(label: "test-\(UUID().uuidString)")
-        defer { staging.sweep() }
-        let staged = staging.stage([.init(uti: "public.png", data: Data([1]))])
-        #expect(staged.isEmpty)
+        let a = try staging.makeSink(generation: 7, filename: "a.bin")
+        let b = try staging.makeSink(generation: 7, filename: "b.bin")
+        a.commit()
+        b.commit()
+        #expect(a.url.deletingLastPathComponent() == b.url.deletingLastPathComponent())
     }
 
     @Test("sweep removes the staging root")
-    func sweepRemovesRoot() {
-        let staging = ClipboardFileStaging(label: "test-\(UUID().uuidString)")
-        let staged = staging.stage([.init(uti: "public.png", data: Data([1]), filename: "x.png")])
-        let dir = staged.first?.url.deletingLastPathComponent()
-        #expect(dir.map { FileManager.default.fileExists(atPath: $0.path) } == true)
+    func sweepRemovesRoot() throws {
+        let staging = makeStaging()
+        let sink = try staging.makeSink(generation: 1, filename: "x.bin")
+        sink.commit()
+        let dir = sink.url.deletingLastPathComponent()
+        #expect(FileManager.default.fileExists(atPath: dir.path))
 
         staging.sweep()
-        #expect(dir.map { FileManager.default.fileExists(atPath: $0.path) } == false)
+        #expect(!FileManager.default.fileExists(atPath: dir.path))
+    }
+
+    @Test("hasCapacity reflects the injected free-space provider")
+    func freeSpaceGuard() {
+        let tightStaging = makeStaging(freeSpaceProvider: { _ in 10 * 1024 * 1024 })  // 10 MiB
+        defer { tightStaging.sweep() }
+        // 1 MiB + the default 64 MiB margin exceeds 10 MiB → no capacity.
+        #expect(!tightStaging.hasCapacity(forByteCount: 1 * 1024 * 1024))
+        // With no margin, 1 MiB fits in 10 MiB.
+        #expect(tightStaging.hasCapacity(forByteCount: 1 * 1024 * 1024, margin: 0))
+
+        let roomyStaging = makeStaging(freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })  // 100 GiB
+        defer { roomyStaging.sweep() }
+        #expect(roomyStaging.hasCapacity(forByteCount: 1 * 1024 * 1024 * 1024))  // 1 GiB fits
+
+        let unknownStaging = makeStaging(freeSpaceProvider: { _ in nil })
+        defer { unknownStaging.sweep() }
+        // Unknown capacity is treated as "fits" — never block on a failed query.
+        #expect(unknownStaging.hasCapacity(forByteCount: Int.max - ClipboardStreamTuning.freeSpaceMargin))
     }
 
     @Test("a crafted filename can't escape the generation directory")
     func sanitizesPathTraversal() throws {
-        let staging = ClipboardFileStaging(label: "test-\(UUID().uuidString)")
+        let staging = makeStaging()
         defer { staging.sweep() }
 
-        let staged = staging.stage([
-            .init(uti: "public.png", data: Data([1]), filename: "../../escape.png")
-        ])
-        let url = try #require(staged.first?.url)
-        // Reduced to a single component inside the generation dir.
+        let sink = try staging.makeSink(generation: 1, filename: "../../escape.png")
+        let url = sink.url
         #expect(url.lastPathComponent == "escape.png")
         #expect(url.deletingLastPathComponent().lastPathComponent != "..")
     }
@@ -101,17 +125,13 @@ struct ClipboardFileStagingTests {
         "a dot-only filename falls back to a safe name",
         arguments: ["..", "."])
     func sanitizesDotOnlyNames(_ name: String) throws {
-        // (An empty filename is filtered out before sanitize — it means "not a
-        // file payload" — so the reachable fallback cases are the dot-only
-        // names, which `lastPathComponent` leaves intact.)
-        let staging = ClipboardFileStaging(label: "test-\(UUID().uuidString)")
+        let staging = makeStaging()
         defer { staging.sweep() }
 
-        let staged = staging.stage([.init(uti: "public.data", data: Data([1]), filename: name)])
-        let url = try #require(staged.first?.url)
-        // The dot-only component must not reach appendingPathComponent; it's
-        // replaced with the literal fallback inside the generation dir.
-        #expect(url.lastPathComponent == "clipboard-file")
-        #expect(FileManager.default.fileExists(atPath: url.path))
+        let sink = try staging.makeSink(generation: 1, filename: name)
+        try sink.write(Data([1]))
+        sink.commit()
+        #expect(sink.url.lastPathComponent == "clipboard-file")
+        #expect(FileManager.default.fileExists(atPath: sink.url.path))
     }
 }

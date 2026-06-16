@@ -1,28 +1,17 @@
 import Foundation
 
 /// The single policy deciding which pasteboard representations may cross the
-/// clipboard channel, and at what size.
+/// clipboard channel.
 ///
 /// Shared by every intake site — the guest agent's pasteboard poll and the
 /// host window's Paste/drag gestures — so both ends of the channel apply
-/// identical filtering and the caps stay in one place.
+/// identical filtering and the rules stay in one place.
+///
+/// There is **no size cap**: every transfer is chunk-streamed to/from disk, so
+/// a representation's size no longer gates whether it can cross. What remains
+/// are identity skips — representation types that must never be sent or applied
+/// regardless of size — and the empty-payload skip.
 public enum ClipboardSnapshotPolicy {
-    /// Maximum size of a single representation, in bytes.
-    ///
-    /// Larger representations are dropped individually while their smaller
-    /// siblings survive (a 150 MB screenshot TIFF drops; the smaller PNG of the
-    /// same image stays). This is also the effective per-file cap — a copied or
-    /// dragged file crosses as a single representation.
-    public static let maxRepresentationByteCount = 100 * 1024 * 1024
-
-    /// Maximum combined size of all kept representations, in bytes.
-    ///
-    /// One `ClipboardData` frame carries every representation of a generation,
-    /// so the total must clear `VsockFrame.maxPayloadSize` (128 MiB) with
-    /// headroom for protobuf framing. 104 MiB admits a max-size file plus a few
-    /// MiB of co-resident representations while leaving ~23% frame headroom.
-    public static let maxTotalByteCount = 104 * 1024 * 1024
-
     /// Why a representation was excluded from a snapshot.
     public enum SkipReason: Equatable, Sendable {
         /// `org.nspasteboard.*` marker types (TransientType, ConcealedType,
@@ -37,14 +26,6 @@ public enum ClipboardSnapshotPolicy {
 
         /// Zero-byte representations carry no information.
         case emptyData
-
-        /// The representation alone exceeds `maxRepresentationByteCount`.
-        case oversized(byteCount: Int)
-
-        /// The representation did not fit the remaining
-        /// `maxTotalByteCount` budget (consumed greedily in fidelity
-        /// order).
-        case totalBudgetExceeded(byteCount: Int, remaining: Int)
     }
 
     /// One excluded representation and the rule that excluded it.
@@ -87,44 +68,32 @@ public enum ClipboardSnapshotPolicy {
     /// Returns only the representations that are safe to apply to a pasteboard.
     ///
     /// Receive-side enforcement, symmetric with the send-side `evaluate(_:)`:
-    /// compliant peers already filter and cap at snapshot time, so anything
-    /// caught here came from a buggy or malicious peer. It (1) drops the
-    /// identity skips — without it a crafted `ClipboardData` could smuggle e.g.
-    /// a `public.file-url` onto the receiving pasteboard behind a visible image
-    /// representation — (2) drops zero-byte reps, and (3) re-applies the size
-    /// caps (per-representation and the greedy total budget, in order), so the
-    /// receive path can't be made to land an empty or over-cap blob on the
-    /// pasteboard just because the sender ignored the limits. The
-    /// `VsockFrame.maxPayloadSize` frame ceiling already bounds the input; this
-    /// keeps the documented caps in one place on both ends.
+    /// compliant peers already filter at snapshot time, so anything caught here
+    /// came from a buggy or malicious peer. It (1) drops the identity skips —
+    /// without it a crafted payload could smuggle e.g. a `public.file-url` onto
+    /// the receiving pasteboard behind a visible image representation — and
+    /// (2) drops empty representations. Sizes are no longer gated: a streamed
+    /// representation is bounded by free disk space, not a fixed cap.
     public static func sanitizedForApply(
         _ representations: [ClipboardContent.Representation]
     ) -> [ClipboardContent.Representation] {
-        var kept: [ClipboardContent.Representation] = []
-        var remainingBudget = maxTotalByteCount
-        for representation in representations {
-            if shouldSkipBeforeReading(uti: representation.uti) { continue }
-            if representation.data.isEmpty { continue }
-            if representation.data.count > maxRepresentationByteCount { continue }
-            if representation.data.count > remainingBudget { continue }
-            kept.append(representation)
-            remainingBudget -= representation.data.count
+        representations.filter { representation in
+            if shouldSkipBeforeReading(uti: representation.uti) { return false }
+            if representation.byteCount == 0 { return false }
+            return true
         }
-        return kept
     }
 
     /// Applies every rule, in order, over (uti, data) pairs read from one pasteboard item.
     ///
-    /// Keeps representations greedily in input (fidelity) order until the
-    /// total budget runs out.
-    ///
-    /// Dynamic (`dyn.*`) UTIs are deliberately kept: the encoding is a
-    /// deterministic function of the original legacy type, so macOS↔macOS
+    /// Operates on in-memory (uti, data) pairs read from a non-file pasteboard
+    /// item — copied *files* take the disk-backed `.file` path and never pass
+    /// through here. Dynamic (`dyn.*`) UTIs are deliberately kept: the encoding
+    /// is a deterministic function of the original legacy type, so macOS↔macOS
     /// round-trips reproduce the exact type.
     public static func evaluate(_ raw: [(uti: String, data: Data)]) -> Outcome {
         var kept: [ClipboardContent.Representation] = []
         var skipped: [Skipped] = []
-        var remainingBudget = maxTotalByteCount
 
         for (uti, data) in raw {
             if let reason = skipReasonBeforeReading(uti: uti) {
@@ -135,24 +104,7 @@ public enum ClipboardSnapshotPolicy {
                 skipped.append(Skipped(uti: uti, reason: .emptyData))
                 continue
             }
-            if data.count > maxRepresentationByteCount {
-                skipped.append(Skipped(uti: uti, reason: .oversized(byteCount: data.count)))
-                continue
-            }
-            if data.count > remainingBudget {
-                skipped.append(
-                    Skipped(
-                        uti: uti,
-                        reason: .totalBudgetExceeded(
-                            byteCount: data.count,
-                            remaining: remainingBudget
-                        )
-                    )
-                )
-                continue
-            }
             kept.append(ClipboardContent.Representation(uti: uti, data: data))
-            remainingBudget -= data.count
         }
 
         return Outcome(content: ClipboardContent(representations: kept), skipped: skipped)

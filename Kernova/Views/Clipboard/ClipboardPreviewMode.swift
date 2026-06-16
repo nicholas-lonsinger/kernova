@@ -37,27 +37,33 @@ enum ClipboardPreviewPolicy {
     /// 2. Inline content: an image beats a coexisting path/URL *descriptor*
     ///    text; then inline RTF renders styled; then plain text lands in the
     ///    editor; then a bare image; else a summary.
+    /// A file-backed representation (no resident bytes) renders as a file chip
+    /// rather than decoding an inline image preview — its bytes live on disk and
+    /// stream on demand. (Rich previews rendered from offer metadata are a
+    /// later, lazy-mode change.)
     static func mode(for content: ClipboardContent) -> ClipboardPreviewMode {
         if content.isEmpty {
             return .empty
         }
         if let file = content.filePayload {
-            if let image = content.imageRepresentation {
-                return .image(data: image.data, uti: image.uti)
+            if let image = content.imageRepresentation, let data = image.inMemoryData {
+                return .image(data: data, uti: image.uti)
             }
-            return .file(filename: file.filename, uti: file.uti, byteCount: file.data.count)
+            return .file(filename: file.filename, uti: file.uti, byteCount: file.byteCount)
         }
-        if let image = content.imageRepresentation, content.textIsPathOrURLOnly {
-            return .image(data: image.data, uti: image.uti)
+        if let image = content.imageRepresentation, let data = image.inMemoryData,
+            content.textIsPathOrURLOnly
+        {
+            return .image(data: data, uti: image.uti)
         }
-        if let rich = content.richTextRepresentation {
-            return .richText(data: rich.data, uti: rich.uti)
+        if let rich = content.richTextRepresentation, let data = rich.inMemoryData {
+            return .richText(data: data, uti: rich.uti)
         }
         if let text = content.text, text.utf8.count <= maxEditableTextBytes {
             return .text(text)
         }
-        if let image = content.imageRepresentation {
-            return .image(data: image.data, uti: image.uti)
+        if let image = content.imageRepresentation, let data = image.inMemoryData {
+            return .image(data: data, uti: image.uti)
         }
         return .summary(content.representations)
     }

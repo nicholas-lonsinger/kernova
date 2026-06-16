@@ -53,7 +53,7 @@ struct ClipboardContentAppKitTests {
             .init(uti: UTType.rtf.identifier, data: rtf),
             .init(uti: ClipboardContent.utf8TextUTI, data: Data("plain".utf8)),
         ])
-        #expect(content.richTextRepresentation?.data == rtf)
+        #expect(content.richTextRepresentation?.inMemoryData == rtf)
     }
 
     @Test("a copied .rtf file is not treated as inline rich text")

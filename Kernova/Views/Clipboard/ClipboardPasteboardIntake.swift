@@ -20,10 +20,11 @@ enum ClipboardIntakeResult: Equatable {
 
 /// The single intake path for every host-side gesture that feeds the
 /// clipboard buffer — the Paste button, responder-chain `paste:`, and
-/// drag-and-drop — so all of them filter, cap, and reject identically.
+/// drag-and-drop — so all of them filter and reject identically.
 ///
-/// Filtering and size caps come from `ClipboardSnapshotPolicy`, the same
-/// policy the guest agent applies to its pasteboard poll.
+/// Filtering comes from `ClipboardSnapshotPolicy`, the same policy the guest
+/// agent applies to its pasteboard poll. There is no size cap: a copied file
+/// becomes a disk-backed representation whose bytes stream on demand.
 @MainActor
 enum ClipboardPasteboardIntake {
     private static let logger = Logger(subsystem: "app.kernova", category: "ClipboardPasteboardIntake")
@@ -89,28 +90,10 @@ enum ClipboardPasteboardIntake {
         }
 
         guard !outcome.content.isEmpty else {
-            if outcome.skipped.contains(where: {
-                if case .oversized = $0.reason { return true }
-                if case .totalBudgetExceeded = $0.reason { return true }
-                return false
-            }) {
-                return .rejected(
-                    message:
-                        "Clipboard content is too large to share (over \(DataFormatters.formatBytes(UInt64(ClipboardSnapshotPolicy.maxTotalByteCount))))"
-                )
-            }
             return .rejected(message: "The Mac clipboard has no shareable content")
         }
 
-        let note: String? =
-            outcome.skipped.contains(where: {
-                if case .oversized = $0.reason { return true }
-                if case .totalBudgetExceeded = $0.reason { return true }
-                return false
-            })
-            ? "Some formats were too large to include" : nil
-
-        return .content(outcome.content, note: note)
+        return .content(outcome.content, note: nil)
     }
 
     /// A concrete `public.file-url` or a `promised-file-url` that already
@@ -150,19 +133,20 @@ enum ClipboardPasteboardIntake {
             || uti == "Apple URL pasteboard type"
     }
 
-    /// Reads a single file into clipboard content — the expansion used for
-    /// dragged/copied `public.file-url` items and for files received from
-    /// drag-and-drop file promises (screenshot thumbnail, Photos, browsers).
+    /// Resolves a single dropped/copied file into a disk-backed representation —
+    /// the expansion used for dragged/copied `public.file-url` items and for
+    /// files received from drag-and-drop file promises (screenshot thumbnail,
+    /// Photos, browsers).
     ///
-    /// Any file (under the per-representation size cap) crosses as its own
-    /// bytes tagged with its content UTI and name, so the other side can
-    /// materialize a real file — a Finder paste creates it, matching how macOS
-    /// pastes a copied file. An image additionally pastes inline (the receiver
-    /// decides per UTI); the file's path never crosses, only its name. A file
-    /// over the cap can't cross as bytes and is rejected rather than degraded
-    /// to a confusing name-as-text. Text-only transports (Linux/SPICE) can't
-    /// carry files at all.
-    static func read(fileAt url: URL, allowsBinary: Bool) async -> ClipboardIntakeResult {
+    /// The file crosses as a disk-backed `.file` representation: only a stat
+    /// runs here (name + size + content UTI), and the bytes stream on demand
+    /// when the guest requests them, so there is no size cap and the UI never
+    /// blocks on a read. The other side materializes a real file — a Finder
+    /// paste creates it, matching how macOS pastes a copied file — and an image
+    /// additionally pastes inline (the receiver decides per UTI). The file's
+    /// path never crosses, only its name. Text-only transports (Linux/SPICE)
+    /// can't carry files at all.
+    static func read(fileAt url: URL, allowsBinary: Bool) -> ClipboardIntakeResult {
         guard
             let values = try? url.resourceValues(forKeys: [.contentTypeKey, .fileSizeKey]),
             let type = values.contentType
@@ -174,34 +158,16 @@ enum ClipboardPasteboardIntake {
             return .rejected(message: Self.textOnlyTransportMessage)
         }
         let fileSize = values.fileSize ?? 0
-        guard fileSize <= ClipboardSnapshotPolicy.maxRepresentationByteCount else {
-            return .rejected(
-                message:
-                    "File is too large to share (over \(DataFormatters.formatBytes(UInt64(ClipboardSnapshotPolicy.maxRepresentationByteCount))))"
-            )
-        }
-        // The byte read — up to the per-representation cap — runs off the main
-        // actor so a large file can't hitch the UI during a paste/drop gesture.
-        guard let data = await readFileBytes(at: url), !data.isEmpty else {
+        guard fileSize > 0 else {
             return .rejected(message: "Couldn't read the dropped file")
         }
-        // Build the content (and its SHA-256 digest over up to the
-        // per-representation cap) off the main actor — `read(fileAt:)` is
-        // already async, so this keeps a large file's hash off the UI thread.
         return .content(
-            await ClipboardContent.makeOffActor(representations: [
-                .init(uti: type.identifier, data: data, filename: url.lastPathComponent)
+            ClipboardContent(representations: [
+                .init(
+                    uti: type.identifier, fileURL: url, byteCount: fileSize,
+                    filename: url.lastPathComponent)
             ]),
             note: nil
         )
-    }
-
-    /// Reads a file's bytes off the main actor.
-    ///
-    /// `nonisolated async`, so awaiting it from the `@MainActor` `read(fileAt:)`
-    /// runs the (potentially multi-megabyte) read on the global executor and
-    /// resumes on the main actor with the result.
-    nonisolated private static func readFileBytes(at url: URL) async -> Data? {
-        try? Data(contentsOf: url)
     }
 }

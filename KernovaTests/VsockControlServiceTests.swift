@@ -18,12 +18,15 @@ struct VsockControlServiceTests {
     ///
     /// Tests use
     /// this to drive the `agentStatus` numeric-comparison matrix.
-    private func makeGuestHello(agentVersion: String) -> Frame {
+    private func makeGuestHello(agentVersion: String, streamingCapable: Bool = true) -> Frame {
         var frame = Frame()
         frame.protocolVersion = 1
         frame.hello = Kernova_V1_Hello.with {
             $0.serviceVersion = 1
-            $0.capabilities = ["control.v1", "control.heartbeat.v1"]
+            $0.capabilities =
+                streamingCapable
+                ? KernovaCapability.controlChannelDefaults
+                : [KernovaCapability.controlV1, KernovaCapability.controlHeartbeatV1]
             $0.agentInfo = Kernova_V1_AgentInfo.with {
                 $0.os = "macOS"
                 $0.osVersion = "26.0"
@@ -108,6 +111,9 @@ struct VsockControlServiceTests {
         }
         #expect(hello.capabilities.contains("control.v1"))
         #expect(hello.capabilities.contains("control.heartbeat.v1"))
+        // The host advertises streaming-clipboard support so the guest can
+        // symmetrically gate clipboard on it.
+        #expect(hello.capabilities.contains(KernovaCapability.clipboardStreamV1))
     }
 
     @Test("Guest hello flips isConnected and populates agentVersion")
@@ -643,6 +649,11 @@ struct VsockControlServiceTests {
         defer { service.stop() }
 
         _ = try await nextFrame(from: guest)  // host hello
+        // The clipboard bit is gated on the guest advertising streaming, so the
+        // guest must Hello with the capability before a clipboard=true policy
+        // survives the gate — and the service must have *observed* that Hello.
+        try guest.send(makeGuestHello(agentVersion: "0.16.0"))
+        try await waitUntil { service.guestSupportsClipboardStreamingForTesting }
 
         service.sendPolicyUpdate(
             AgentPolicySnapshot(logForwardingEnabled: false, clipboardSharingEnabled: true)
@@ -658,6 +669,71 @@ struct VsockControlServiceTests {
         let received = try #require(policy)
         #expect(received.logForwardingEnabled == false)
         #expect(received.clipboardSharingEnabled == true)
+    }
+
+    // MARK: - Streaming capability gate
+
+    @Test("clipboard stays disabled when the guest lacks the streaming capability")
+    func clipboardGatedWithoutCapability() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = makeService(channel: host)
+        service.start()
+        defer { service.stop() }
+
+        _ = try await nextFrame(from: guest)  // host hello
+        // Guest that predates streaming: no clipboard.stream.v1.
+        try guest.send(makeGuestHello(agentVersion: "0.15.0", streamingCapable: false))
+
+        service.sendPolicyUpdate(
+            AgentPolicySnapshot(logForwardingEnabled: true, clipboardSharingEnabled: true)
+        )
+
+        var policy: Kernova_V1_PolicyUpdate?
+        for _ in 0..<6 where policy == nil {
+            let next = try await nextFrame(from: guest)
+            if case .policyUpdate(let p) = next.payload {
+                policy = p
+            }
+        }
+        let received = try #require(policy)
+        // Log forwarding passes through; clipboard is forced off by the gate.
+        #expect(received.logForwardingEnabled == true)
+        #expect(received.clipboardSharingEnabled == false)
+        #expect(service.guestSupportsClipboardStreamingForTesting == false)
+    }
+
+    @Test("clipboard is enabled when the guest advertises the streaming capability")
+    func clipboardEnabledWithCapability() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = makeService(
+            channel: host,
+            policyProvider: {
+                AgentPolicySnapshot(logForwardingEnabled: false, clipboardSharingEnabled: true)
+            })
+        service.start()
+        defer { service.stop() }
+
+        _ = try await nextFrame(from: guest)  // host hello
+        try guest.send(makeGuestHello(agentVersion: "0.16.0", streamingCapable: true))
+
+        var policy: Kernova_V1_PolicyUpdate?
+        for _ in 0..<6 where policy == nil {
+            let next = try await nextFrame(from: guest)
+            if case .policyUpdate(let p) = next.payload {
+                policy = p
+            }
+        }
+        let received = try #require(policy)
+        #expect(received.clipboardSharingEnabled == true)
+        #expect(service.guestSupportsClipboardStreamingForTesting == true)
     }
 }
 
