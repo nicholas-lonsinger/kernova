@@ -32,9 +32,10 @@ fileprivate nonisolated struct _GeneratedWithProtocGenSwiftVersion: SwiftProtobu
   typealias Version = _2
 }
 
-/// Clipboard data formats the channel can carry. Only TEXT_UTF8 is wired up
-/// for the initial release; the enum scaffold is reserved so adding richer
-/// formats later (image, RTF, file lists) doesn't reshape the messages.
+/// LEGACY clipboard format enum, superseded by UTI-tagged representations
+/// (`ClipboardOffer.utis` / `ClipboardData.representations`). Retained for wire
+/// compatibility with peers that predate UTI support. Do not add new values —
+/// new formats are expressed as UTIs.
 public nonisolated enum Kernova_V1_ClipboardFormat: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
@@ -328,8 +329,35 @@ public nonisolated struct Kernova_V1_LogRecord: Sendable {
   public init() {}
 }
 
+/// One clipboard representation: a Uniform Type Identifier naming the format
+/// plus the raw bytes, mirroring one (type, data) pair of an NSPasteboardItem.
+/// Order within `ClipboardData.representations` matches the sender's fidelity
+/// order (richest first).
+public nonisolated struct Kernova_V1_ClipboardRepresentation: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// e.g. "public.utf8-plain-text", "public.png"
+  public var uti: String = String()
+
+  public var data: Data = Data()
+
+  /// Suggested filename when this representation is a file payload (e.g. a
+  /// copied image file → "photo.png"). Empty means inline-only: the receiver
+  /// renders the bytes but does not materialize a file. When set, the receiver
+  /// stages the bytes to a local temp file and also offers its file URL so a
+  /// Finder paste creates the file. Deliberately excluded from the content
+  /// digest so the round-tripped name can't disturb echo suppression.
+  public var filename: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 /// Sent by either side to advertise that fresh clipboard content is available
-/// in one or more formats. The receiver picks a supported format and replies
+/// in one or more formats. The receiver picks the supported formats and replies
 /// with `ClipboardRequest` to pull the actual bytes.
 ///
 /// The `generation` field is a monotonically increasing counter scoped to the
@@ -342,7 +370,13 @@ public nonisolated struct Kernova_V1_ClipboardOffer: Sendable {
 
   public var generation: UInt64 = 0
 
+  /// LEGACY: contains CLIPBOARD_FORMAT_TEXT_UTF8 when `utis` includes
+  /// public.utf8-plain-text, so pre-UTI peers can still pull the text.
   public var formats: [Kernova_V1_ClipboardFormat] = []
+
+  /// Ordered UTIs of the available representations (first = richest).
+  /// Empty when the sender predates UTI support.
+  public var utis: [String] = []
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -358,7 +392,13 @@ public nonisolated struct Kernova_V1_ClipboardRequest: Sendable {
 
   public var generation: UInt64 = 0
 
+  /// LEGACY: CLIPBOARD_FORMAT_TEXT_UTF8 when requesting from a pre-UTI peer.
   public var format: Kernova_V1_ClipboardFormat = .unspecified
+
+  /// UTIs the receiver wants, normally echoing the offer's. Non-empty marks
+  /// the requester as UTI-capable; the responder replies with
+  /// `ClipboardData.representations`.
+  public var utis: [String] = []
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -366,7 +406,7 @@ public nonisolated struct Kernova_V1_ClipboardRequest: Sendable {
 }
 
 /// Carries the bytes of the clipboard content named by an earlier offer.
-/// The `format` and `generation` fields must echo the matching request.
+/// The `generation` field must echo the matching request.
 public nonisolated struct Kernova_V1_ClipboardData: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -374,9 +414,13 @@ public nonisolated struct Kernova_V1_ClipboardData: Sendable {
 
   public var generation: UInt64 = 0
 
+  /// LEGACY pair: populated only when answering a `format`-based request.
   public var format: Kernova_V1_ClipboardFormat = .unspecified
 
   public var data: Data = Data()
+
+  /// UTI-tagged payload: populated when answering a `utis`-based request.
+  public var representations: [Kernova_V1_ClipboardRepresentation] = []
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -819,9 +863,49 @@ nonisolated extension Kernova_V1_LogRecord.Level: SwiftProtobuf._ProtoNameProvid
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0LEVEL_UNSPECIFIED\0\u{1}LEVEL_DEBUG\0\u{1}LEVEL_INFO\0\u{1}LEVEL_NOTICE\0\u{1}LEVEL_WARNING\0\u{1}LEVEL_ERROR\0\u{1}LEVEL_FAULT\0")
 }
 
+nonisolated extension Kernova_V1_ClipboardRepresentation: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ClipboardRepresentation"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}uti\0\u{1}data\0\u{1}filename\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.uti) }()
+      case 2: try { try decoder.decodeSingularBytesField(value: &self.data) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.filename) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.uti.isEmpty {
+      try visitor.visitSingularStringField(value: self.uti, fieldNumber: 1)
+    }
+    if !self.data.isEmpty {
+      try visitor.visitSingularBytesField(value: self.data, fieldNumber: 2)
+    }
+    if !self.filename.isEmpty {
+      try visitor.visitSingularStringField(value: self.filename, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Kernova_V1_ClipboardRepresentation, rhs: Kernova_V1_ClipboardRepresentation) -> Bool {
+    if lhs.uti != rhs.uti {return false}
+    if lhs.data != rhs.data {return false}
+    if lhs.filename != rhs.filename {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
 nonisolated extension Kernova_V1_ClipboardOffer: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ClipboardOffer"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}generation\0\u{1}formats\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}generation\0\u{1}formats\0\u{1}utis\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -831,6 +915,7 @@ nonisolated extension Kernova_V1_ClipboardOffer: SwiftProtobuf.Message, SwiftPro
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularUInt64Field(value: &self.generation) }()
       case 2: try { try decoder.decodeRepeatedEnumField(value: &self.formats) }()
+      case 3: try { try decoder.decodeRepeatedStringField(value: &self.utis) }()
       default: break
       }
     }
@@ -843,12 +928,16 @@ nonisolated extension Kernova_V1_ClipboardOffer: SwiftProtobuf.Message, SwiftPro
     if !self.formats.isEmpty {
       try visitor.visitPackedEnumField(value: self.formats, fieldNumber: 2)
     }
+    if !self.utis.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.utis, fieldNumber: 3)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Kernova_V1_ClipboardOffer, rhs: Kernova_V1_ClipboardOffer) -> Bool {
     if lhs.generation != rhs.generation {return false}
     if lhs.formats != rhs.formats {return false}
+    if lhs.utis != rhs.utis {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -856,7 +945,7 @@ nonisolated extension Kernova_V1_ClipboardOffer: SwiftProtobuf.Message, SwiftPro
 
 nonisolated extension Kernova_V1_ClipboardRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ClipboardRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}generation\0\u{1}format\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}generation\0\u{1}format\0\u{1}utis\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -866,6 +955,7 @@ nonisolated extension Kernova_V1_ClipboardRequest: SwiftProtobuf.Message, SwiftP
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularUInt64Field(value: &self.generation) }()
       case 2: try { try decoder.decodeSingularEnumField(value: &self.format) }()
+      case 3: try { try decoder.decodeRepeatedStringField(value: &self.utis) }()
       default: break
       }
     }
@@ -878,12 +968,16 @@ nonisolated extension Kernova_V1_ClipboardRequest: SwiftProtobuf.Message, SwiftP
     if self.format != .unspecified {
       try visitor.visitSingularEnumField(value: self.format, fieldNumber: 2)
     }
+    if !self.utis.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.utis, fieldNumber: 3)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Kernova_V1_ClipboardRequest, rhs: Kernova_V1_ClipboardRequest) -> Bool {
     if lhs.generation != rhs.generation {return false}
     if lhs.format != rhs.format {return false}
+    if lhs.utis != rhs.utis {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -891,7 +985,7 @@ nonisolated extension Kernova_V1_ClipboardRequest: SwiftProtobuf.Message, SwiftP
 
 nonisolated extension Kernova_V1_ClipboardData: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ClipboardData"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}generation\0\u{1}format\0\u{1}data\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}generation\0\u{1}format\0\u{1}data\0\u{1}representations\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -902,6 +996,7 @@ nonisolated extension Kernova_V1_ClipboardData: SwiftProtobuf.Message, SwiftProt
       case 1: try { try decoder.decodeSingularUInt64Field(value: &self.generation) }()
       case 2: try { try decoder.decodeSingularEnumField(value: &self.format) }()
       case 3: try { try decoder.decodeSingularBytesField(value: &self.data) }()
+      case 4: try { try decoder.decodeRepeatedMessageField(value: &self.representations) }()
       default: break
       }
     }
@@ -917,6 +1012,9 @@ nonisolated extension Kernova_V1_ClipboardData: SwiftProtobuf.Message, SwiftProt
     if !self.data.isEmpty {
       try visitor.visitSingularBytesField(value: self.data, fieldNumber: 3)
     }
+    if !self.representations.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.representations, fieldNumber: 4)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -924,6 +1022,7 @@ nonisolated extension Kernova_V1_ClipboardData: SwiftProtobuf.Message, SwiftProt
     if lhs.generation != rhs.generation {return false}
     if lhs.format != rhs.format {return false}
     if lhs.data != rhs.data {return false}
+    if lhs.representations != rhs.representations {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

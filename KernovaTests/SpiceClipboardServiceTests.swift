@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import KernovaProtocol
 @testable import Kernova
 
 @Suite("SpiceClipboardService Tests")
@@ -127,7 +128,7 @@ struct SpiceClipboardServiceTests {
     @Test("grabIfChanged does nothing when disconnected")
     func grabWhileDisconnected() {
         let (service, inputPipe, _) = makeService()
-        service.clipboardText = "Hello"
+        service.clipboardContent = ClipboardContent(text: "Hello")
         service.grabIfChanged()
         #expect(drainPipe(inputPipe).isEmpty)
     }
@@ -142,12 +143,27 @@ struct SpiceClipboardServiceTests {
         #expect(drainPipe(inputPipe).isEmpty)
     }
 
+    @Test("grabIfChanged is a no-op for content without a text representation")
+    func grabWithNonTextContent() {
+        let (service, inputPipe, _) = makeService()
+        connect(service)
+        drainPipe(inputPipe)
+
+        // SPICE transport is text-only until the issue #112 follow-up; an
+        // image-only buffer must produce no GRAB on the pipe.
+        service.clipboardContent = ClipboardContent(representations: [
+            .init(uti: "public.png", data: Data([0x89, 0x50, 0x4E, 0x47]))
+        ])
+        service.grabIfChanged()
+        #expect(drainPipe(inputPipe).isEmpty)
+    }
+
     @Test("grabIfChanged skips duplicate grab for unchanged text")
     func grabDeduplication() {
         let (service, inputPipe, _) = makeService()
         connect(service)
 
-        service.clipboardText = "Hello"
+        service.clipboardContent = ClipboardContent(text: "Hello")
         service.grabIfChanged()
         drainPipe(inputPipe)
 
@@ -163,7 +179,7 @@ struct SpiceClipboardServiceTests {
         connect(service, byDemand: true)
         drainPipe(inputPipe)
 
-        service.clipboardText = "Hello"
+        service.clipboardContent = ClipboardContent(text: "Hello")
         service.grabIfChanged()
 
         let types = messageTypes(in: drainPipe(inputPipe))
@@ -176,7 +192,7 @@ struct SpiceClipboardServiceTests {
         connect(service, byDemand: false)
         drainPipe(inputPipe)
 
-        service.clipboardText = "Hello"
+        service.clipboardContent = ClipboardContent(text: "Hello")
         service.grabIfChanged()
 
         let types = messageTypes(in: drainPipe(inputPipe))
@@ -193,7 +209,7 @@ struct SpiceClipboardServiceTests {
 
         try inputPipe.fileHandleForWriting.close()
 
-        service.clipboardText = "Hello"
+        service.clipboardContent = ClipboardContent(text: "Hello")
         service.grabIfChanged()
 
         #expect(!service.isConnected)
@@ -223,7 +239,7 @@ struct SpiceClipboardServiceTests {
         drainPipe(inputPipe)
 
         // Grab "Hello" — sets lastGrabbedText
-        service.clipboardText = "Hello"
+        service.clipboardContent = ClipboardContent(text: "Hello")
         service.grabIfChanged()
         drainPipe(inputPipe)
 
@@ -233,10 +249,10 @@ struct SpiceClipboardServiceTests {
         payload.append(Data("From guest".utf8))
         service.handleIncomingData(buildGuestMessage(type: .clipboard, payload: payload))
 
-        #expect(service.clipboardText == "From guest")
+        #expect(service.clipboardContent.text == "From guest")
 
         // Re-grabbing "Hello" should succeed because lastGrabbedText was reset
-        service.clipboardText = "Hello"
+        service.clipboardContent = ClipboardContent(text: "Hello")
         service.grabIfChanged()
         let types = messageTypes(in: drainPipe(inputPipe))
         #expect(types.contains(.clipboardGrab))
@@ -249,7 +265,7 @@ struct SpiceClipboardServiceTests {
         drainPipe(inputPipe)
 
         // Grab sets pendingOutboundText
-        service.clipboardText = "Hello"
+        service.clipboardContent = ClipboardContent(text: "Hello")
         service.grabIfChanged()
         drainPipe(inputPipe)
 

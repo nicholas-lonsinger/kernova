@@ -120,9 +120,33 @@ public final class VsockChannel: @unchecked Sendable {
     ///   if the frame itself is unencodable; in that case the channel
     ///   stays open
     public func send(_ frame: Frame) throws {
-        let payload = try frame.serializedData()
-        let framed = try VsockFrame.encode(payload)
+        try writeFramed(Self.serializeFramed(frame))
+    }
 
+    /// Serializes and length-prefixes a frame into wire-ready bytes.
+    ///
+    /// Pure and not actor-isolated, so a caller with a large payload can run
+    /// this O(payload) work — the protobuf encode plus the `VsockFrame.encode`
+    /// copy — on a background executor before handing the result to
+    /// `writeFramed(_:)`. The channel is untouched.
+    ///
+    /// - Throws: a serialization error from `Frame.serializedData()`, or
+    ///   `VsockFrameError.frameTooLarge` if the encoded payload exceeds
+    ///   `VsockFrame.maxPayloadSize`.
+    public static func serializeFramed(_ frame: Frame) throws -> Data {
+        try VsockFrame.encode(frame.serializedData())
+    }
+
+    /// Writes already-framed bytes to the wire under the channel lock.
+    ///
+    /// The write counterpart of `serializeFramed(_:)` — callers that serialized
+    /// off-actor finish the send here. Like `send`, concurrent calls serialize
+    /// on the internal lock and cannot interleave on the wire.
+    ///
+    /// - Throws: `VsockChannelError.closed` if the channel is closed, or
+    ///   `VsockChannelError.write(_)` if the underlying `FileHandle.write`
+    ///   failed (the channel is torn down before the error reaches the caller).
+    public func writeFramed(_ framed: Data) throws {
         lock.lock()
         defer { lock.unlock() }
         guard !closed else { throw VsockChannelError.closed }
@@ -133,6 +157,16 @@ public final class VsockChannel: @unchecked Sendable {
             tearDownLocked(finishWith: error)
             throw VsockChannelError.write(error)
         }
+    }
+
+    /// Sends a frame with every O(payload) step off the caller's actor.
+    ///
+    /// `serializeFramed(_:)` (protobuf encode + framing copy) and the socket
+    /// write both run on the cooperative executor, so awaiting this from the
+    /// `@MainActor` keeps a large `ClipboardData` send from blocking the UI.
+    /// Throws the same errors as `send(_:)`.
+    public func sendOffActor(_ frame: Frame) async throws {
+        try writeFramed(Self.serializeFramed(frame))
     }
 
     /// Tears down the channel.

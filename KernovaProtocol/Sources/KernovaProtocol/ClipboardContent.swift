@@ -1,0 +1,182 @@
+import CryptoKit
+import Foundation
+
+/// One logical clipboard payload: an ordered list of UTI-tagged
+/// representations, mirroring the (type, data) pairs of a single
+/// `NSPasteboardItem`.
+///
+/// Order is meaningful — it matches the source pasteboard's fidelity order
+/// (richest representation first) and is preserved across the wire.
+///
+/// Equality is digest-based: a SHA-256 over a length-prefixed canonical
+/// encoding of every (uti, data) pair, computed once at init. Dedup and
+/// echo-suppression state can therefore retain the 32-byte `digest` instead
+/// of a second copy of multi-megabyte payloads.
+public struct ClipboardContent: Equatable, Sendable {
+    /// One (type, data) pair of the payload.
+    public struct Representation: Equatable, Sendable {
+        /// Uniform Type Identifier naming the format.
+        ///
+        /// For example `"public.utf8-plain-text"` or `"public.png"`.
+        /// Dynamic (`dyn.*`) identifiers pass through untouched so legacy
+        /// pasteboard types round-trip exactly.
+        public let uti: String
+
+        /// The representation's raw bytes.
+        public let data: Data
+
+        /// Suggested filename when this representation is a file payload.
+        ///
+        /// A copied/dragged image file → `"photo.png"`; `""` for inline-only
+        /// content. A receiver with a non-empty filename materializes the bytes
+        /// to a local temp file and offers its file URL so a Finder paste
+        /// creates the file. Deliberately **not** part of the digest.
+        public let filename: String
+
+        /// Creates a representation from a UTI and its raw bytes, optionally
+        /// tagged with a suggested filename for file payloads.
+        public init(uti: String, data: Data, filename: String = "") {
+            self.uti = uti
+            self.data = data
+            self.filename = filename
+        }
+    }
+
+    /// The UTI of UTF-8 plain text.
+    ///
+    /// The format shared with peers that predate UTI support; matches the
+    /// raw value of `NSPasteboard.PasteboardType.string`.
+    public static let utf8TextUTI = "public.utf8-plain-text"
+
+    /// Content carrying no representations.
+    ///
+    /// Never offered to a peer.
+    public static let empty = ClipboardContent(representations: [])
+
+    /// Ordered representations, richest first.
+    public let representations: [Representation]
+
+    /// SHA-256 over a length-prefixed canonical encoding of `representations`.
+    ///
+    /// Stable across processes (used for echo suppression on both ends of
+    /// the clipboard channel).
+    public let digest: Data
+
+    /// Creates content from ordered representations, computing the digest.
+    public init(representations: [Representation]) {
+        self.representations = representations
+        self.digest = Self.computeDigest(of: representations)
+    }
+
+    /// Creates content with an already-computed digest.
+    ///
+    /// Backs `makeOffActor(representations:)` so the O(payload) hash can run on
+    /// a background executor; the result is assembled here without re-hashing.
+    private init(representations: [Representation], precomputedDigest: Data) {
+        self.representations = representations
+        self.digest = precomputedDigest
+    }
+
+    /// Creates content from ordered representations off the caller's actor.
+    ///
+    /// The synchronous `init` computes the SHA-256 `digest` over every byte of
+    /// every representation — fine for small payloads, but a multi-hundred-
+    /// millisecond stall on the `@MainActor` (host) or the guest agent's main
+    /// run loop for a 100 MiB clipboard file. This `async` factory is not
+    /// actor-isolated, so awaiting it from those contexts runs the hash on the
+    /// cooperative executor and resumes with the finished, `Sendable` value.
+    /// Use it on the large-payload create/receive paths; keep the synchronous
+    /// `init` for small, latency-insensitive content.
+    public static func makeOffActor(
+        representations: [Representation]
+    ) async -> ClipboardContent {
+        ClipboardContent(
+            representations: representations,
+            precomputedDigest: computeDigest(of: representations)
+        )
+    }
+
+    /// Content holding a single UTF-8 plain-text representation.
+    ///
+    /// The empty string normalizes to `.empty` — "empty text" and "no
+    /// content" are deliberately the same non-offerable value, resolved here
+    /// once rather than at every call site.
+    public init(text: String) {
+        if text.isEmpty {
+            self = .empty
+        } else {
+            self.init(representations: [
+                Representation(uti: Self.utf8TextUTI, data: Data(text.utf8))
+            ])
+        }
+    }
+
+    /// `true` when there are no representations.
+    public var isEmpty: Bool { representations.isEmpty }
+
+    /// The UTF-8 plain-text representation decoded as a string, or `nil`
+    /// when no such representation exists or its bytes are not valid UTF-8.
+    public var text: String? {
+        guard let representation = representations.first(where: { $0.uti == Self.utf8TextUTI })
+        else { return nil }
+        return String(data: representation.data, encoding: .utf8)
+    }
+
+    /// Sum of all representations' payload sizes in bytes.
+    public var totalByteCount: Int {
+        representations.reduce(0) { $0 + $1.data.count }
+    }
+
+    /// Digest comparison — equivalent to full structural equality (SHA-256
+    /// collision resistance) at a constant 32-byte cost.
+    public static func == (lhs: ClipboardContent, rhs: ClipboardContent) -> Bool {
+        lhs.digest == rhs.digest
+    }
+
+    /// Hashes the representations with a length-prefixed canonical encoding.
+    ///
+    /// For each representation: the big-endian `UInt64` byte count of the
+    /// UTI, the UTI bytes, the big-endian `UInt64` byte count of the data,
+    /// then the data bytes. Length prefixes prevent collisions from shifting
+    /// bytes across the uti/data or representation boundaries.
+    private static func computeDigest(of representations: [Representation]) -> Data {
+        var hasher = SHA256()
+        for representation in representations {
+            withUnsafeBytes(of: UInt64(representation.uti.utf8.count).bigEndian) {
+                hasher.update(bufferPointer: $0)
+            }
+            hasher.update(data: Data(representation.uti.utf8))
+            withUnsafeBytes(of: UInt64(representation.data.count).bigEndian) {
+                hasher.update(bufferPointer: $0)
+            }
+            hasher.update(data: representation.data)
+        }
+        return Data(hasher.finalize())
+    }
+}
+
+// MARK: - Proto bridging
+
+extension ClipboardContent {
+    /// Builds content from the representations of an inbound
+    /// `ClipboardData` frame, preserving order.
+    public init(protoRepresentations: [Kernova_V1_ClipboardRepresentation]) {
+        self.init(
+            representations: protoRepresentations.map {
+                Representation(uti: $0.uti, data: $0.data, filename: $0.filename)
+            }
+        )
+    }
+
+    /// The representations encoded for an outbound `ClipboardData` frame,
+    /// preserving order.
+    public var protoRepresentations: [Kernova_V1_ClipboardRepresentation] {
+        representations.map { representation in
+            Kernova_V1_ClipboardRepresentation.with {
+                $0.uti = representation.uti
+                $0.data = representation.data
+                $0.filename = representation.filename
+            }
+        }
+    }
+}

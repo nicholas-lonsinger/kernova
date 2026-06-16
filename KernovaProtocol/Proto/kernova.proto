@@ -98,16 +98,34 @@ message LogRecord {
   string message = 5;
 }
 
-// Clipboard data formats the channel can carry. Only TEXT_UTF8 is wired up
-// for the initial release; the enum scaffold is reserved so adding richer
-// formats later (image, RTF, file lists) doesn't reshape the messages.
+// LEGACY clipboard format enum, superseded by UTI-tagged representations
+// (`ClipboardOffer.utis` / `ClipboardData.representations`). Retained for wire
+// compatibility with peers that predate UTI support. Do not add new values —
+// new formats are expressed as UTIs.
 enum ClipboardFormat {
   CLIPBOARD_FORMAT_UNSPECIFIED = 0;
   CLIPBOARD_FORMAT_TEXT_UTF8 = 1;
 }
 
+// One clipboard representation: a Uniform Type Identifier naming the format
+// plus the raw bytes, mirroring one (type, data) pair of an NSPasteboardItem.
+// Order within `ClipboardData.representations` matches the sender's fidelity
+// order (richest first).
+message ClipboardRepresentation {
+  string uti = 1;  // e.g. "public.utf8-plain-text", "public.png"
+  bytes data = 2;
+
+  // Suggested filename when this representation is a file payload (e.g. a
+  // copied image file → "photo.png"). Empty means inline-only: the receiver
+  // renders the bytes but does not materialize a file. When set, the receiver
+  // stages the bytes to a local temp file and also offers its file URL so a
+  // Finder paste creates the file. Deliberately excluded from the content
+  // digest so the round-tripped name can't disturb echo suppression.
+  string filename = 3;
+}
+
 // Sent by either side to advertise that fresh clipboard content is available
-// in one or more formats. The receiver picks a supported format and replies
+// in one or more formats. The receiver picks the supported formats and replies
 // with `ClipboardRequest` to pull the actual bytes.
 //
 // The `generation` field is a monotonically increasing counter scoped to the
@@ -115,22 +133,41 @@ enum ClipboardFormat {
 // race a newer offer.
 message ClipboardOffer {
   uint64 generation = 1;
+
+  // LEGACY: contains CLIPBOARD_FORMAT_TEXT_UTF8 when `utis` includes
+  // public.utf8-plain-text, so pre-UTI peers can still pull the text.
   repeated ClipboardFormat formats = 2;
+
+  // Ordered UTIs of the available representations (first = richest).
+  // Empty when the sender predates UTI support.
+  repeated string utis = 3;
 }
 
 // Sent in response to a `ClipboardOffer` to pull the actual clipboard bytes.
 // `generation` must echo the offer being requested.
 message ClipboardRequest {
   uint64 generation = 1;
+
+  // LEGACY: CLIPBOARD_FORMAT_TEXT_UTF8 when requesting from a pre-UTI peer.
   ClipboardFormat format = 2;
+
+  // UTIs the receiver wants, normally echoing the offer's. Non-empty marks
+  // the requester as UTI-capable; the responder replies with
+  // `ClipboardData.representations`.
+  repeated string utis = 3;
 }
 
 // Carries the bytes of the clipboard content named by an earlier offer.
-// The `format` and `generation` fields must echo the matching request.
+// The `generation` field must echo the matching request.
 message ClipboardData {
   uint64 generation = 1;
+
+  // LEGACY pair: populated only when answering a `format`-based request.
   ClipboardFormat format = 2;
   bytes data = 3;
+
+  // UTI-tagged payload: populated when answering a `utis`-based request.
+  repeated ClipboardRepresentation representations = 4;
 }
 
 // Sent by the offerer when an offer is no longer valid (e.g. the user copied
