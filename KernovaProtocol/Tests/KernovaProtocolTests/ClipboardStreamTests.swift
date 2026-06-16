@@ -240,6 +240,41 @@ struct ClipboardStreamTests {
         #expect(harness.collector.abortInfos.contains { $0.code == "offset.gap" })
     }
 
+    @Test("cancelling a generation deletes the in-flight partial temp file")
+    func cancelDeletesPartial() async throws {
+        let harness = try roomyHarness()
+        defer { harness.tearDown() }
+
+        harness.receiver.handleBegin(
+            .with {
+                $0.generation = 1
+                $0.transferID = 1
+                $0.uti = "public.data"
+                $0.totalBytes = 1_000_000
+                $0.isInline = false
+                $0.filename = "partial.bin"
+            })
+        harness.receiver.handleChunk(
+            .with {
+                $0.transferID = 1; $0.offset = 0; $0.data = Data(count: Self.chunk)
+            })
+
+        // The partial temp file is created off the transfer queue.
+        try await pollUntil {
+            materializedFiles(under: harness.stagingTempRoot).contains {
+                $0.lastPathComponent == "partial.bin"
+            }
+        }
+        // A superseding cancel deletes the partial rather than leaking it.
+        harness.receiver.cancel(generation: 1)
+        try await pollUntil {
+            !materializedFiles(under: harness.stagingTempRoot).contains {
+                $0.lastPathComponent == "partial.bin"
+            }
+        }
+        #expect(harness.collector.representation(1) == nil)
+    }
+
     @Test("an orphan chunk for an unknown transfer is ignored")
     func orphanChunkIgnored() async throws {
         let harness = try roomyHarness()

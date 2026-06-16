@@ -129,9 +129,9 @@ final class VsockClipboardService: ClipboardServicing {
         let channel = self.channel
         let label = self.label
         consumeTask = Task { [weak self] in
-            await Self.consume(channel: channel, label: label) { @MainActor frame in
-                self?.handle(frame: frame)
-            }
+            await Self.consume(
+                channel: channel, label: label, sender: sender, receiver: receiver,
+                onControlFrame: { @MainActor frame in self?.handleControlFrame(frame) })
         }
         Self.logger.info("Vsock clipboard service started for '\(self.label, privacy: .public)'")
     }
@@ -195,14 +195,41 @@ final class VsockClipboardService: ClipboardServicing {
 
     // MARK: - Frame consumer
 
+    /// Drains the channel, routing high-frequency stream frames off the main
+    /// actor.
+    ///
+    /// Stream frames (begin/chunk/end/ack/abort) go straight to the thread-safe
+    /// engine; only the low-frequency control frames (offer/request/release/
+    /// error) hop to main. This keeps a multi-GB transfer's tens of thousands of
+    /// chunk/ack frames off the main actor entirely.
     private static func consume(
         channel: VsockChannel,
         label: String,
-        dispatch: @MainActor @escaping (Frame) -> Void
+        sender: ClipboardStreamSender,
+        receiver: ClipboardStreamReceiver,
+        onControlFrame: @MainActor @escaping (Frame) -> Void
     ) async {
         do {
-            for try await frame in channel.incoming {
-                dispatch(frame)
+            for try await frame in channel.incoming where frame.protocolVersion == 1 {
+                switch frame.payload {
+                case .clipboardStreamBegin(let begin):
+                    receiver.handleBegin(begin)
+                case .clipboardChunk(let chunk):
+                    receiver.handleChunk(chunk)
+                case .clipboardStreamEnd(let end):
+                    receiver.handleEnd(end)
+                case .clipboardStreamAck(let ack):
+                    sender.handleAck(
+                        transferID: ack.transferID, bytesConsumed: ack.bytesConsumed,
+                        windowBytes: ack.windowBytes)
+                case .clipboardStreamAbort(let abort):
+                    // A transfer_id is inbound xor outbound; each engine ignores
+                    // an id it doesn't own, so routing to both is safe.
+                    receiver.handleAbort(abort)
+                    sender.handleAbort(transferID: abort.transferID)
+                default:
+                    await onControlFrame(frame)
+                }
             }
             logger.info("Vsock clipboard channel closed for '\(label, privacy: .public)'")
         } catch {
@@ -212,30 +239,13 @@ final class VsockClipboardService: ClipboardServicing {
         }
     }
 
-    private func handle(frame: Frame) {
-        guard frame.protocolVersion == 1 else {
-            Self.logger.warning(
-                "Dropping frame with unsupported protocol version \(frame.protocolVersion, privacy: .public) for '\(self.label, privacy: .public)'"
-            )
-            return
-        }
+    /// Handles the control frames the consume loop hops to the main actor for.
+    private func handleControlFrame(_ frame: Frame) {
         switch frame.payload {
         case .clipboardOffer(let offer):
             handleOffer(offer)
         case .clipboardRequest(let request):
             handleRequest(request)
-        case .clipboardStreamBegin(let begin):
-            receiver?.handleBegin(begin)
-        case .clipboardChunk(let chunk):
-            receiver?.handleChunk(chunk)
-        case .clipboardStreamEnd(let end):
-            receiver?.handleEnd(end)
-        case .clipboardStreamAck(let ack):
-            sender?.handleAck(
-                transferID: ack.transferID, bytesConsumed: ack.bytesConsumed,
-                windowBytes: ack.windowBytes)
-        case .clipboardStreamAbort(let abort):
-            handleInboundAbort(abort)
         case .clipboardRelease(let release):
             handleRelease(release)
         case .error(let error):
@@ -247,6 +257,10 @@ final class VsockClipboardService: ClipboardServicing {
                     kind: .peerReportedError(code: error.code, message: error.message),
                     date: Date())
             }
+        case .clipboardStreamBegin, .clipboardChunk, .clipboardStreamEnd, .clipboardStreamAck,
+            .clipboardStreamAbort:
+            // Routed off-main by the consume loop; never reaches here.
+            break
         case .hello, .heartbeat, .policyUpdate, .logRecord, .none:
             Self.logger.warning(
                 "Unexpected payload on clipboard channel for '\(self.label, privacy: .public)' — wrong port"
@@ -294,6 +308,11 @@ final class VsockClipboardService: ClipboardServicing {
     // MARK: - Inbound (we are the receiver)
 
     private func handleOffer(_ offer: Kernova_V1_ClipboardOffer) {
+        // A newer offer supersedes the previous one: cancel its in-flight
+        // inbound transfers so their partial temp files are deleted rather than
+        // leaked.
+        if let previous = pendingInbound { receiver?.cancel(generation: previous.generation) }
+
         // Eager pull: request every representation now. A file rep gets a
         // free-space pre-flight first (Review Safeguard 4) so an over-budget
         // transfer never starts.
@@ -372,19 +391,6 @@ final class VsockClipboardService: ClipboardServicing {
             "Clipboard transfer \(info.transferID, privacy: .public) aborted (\(info.code, privacy: .public)) for '\(self.label, privacy: .public)'"
         )
         if collection.pending.isEmpty { commitInbound(collection) }
-    }
-
-    /// Routes a peer-initiated abort.
-    ///
-    /// A transfer we requested (inbound) is
-    /// handled by the receiver and surfaced; anything else aborts our matching
-    /// outbound transfer.
-    private func handleInboundAbort(_ abort: Kernova_V1_ClipboardStreamAbort) {
-        if let collection = pendingInbound, collection.pending.contains(abort.transferID) {
-            receiver?.handleAbort(abort)
-        } else {
-            sender?.handleAbort(transferID: abort.transferID)
-        }
     }
 
     /// Assembles the collected representations (in offer order) and publishes

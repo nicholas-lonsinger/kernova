@@ -285,7 +285,11 @@ struct CollectedTransfer {
 /// Reads `Begin`→`Chunk`(s)→`End` for `transferID` off `channel`, acking as it
 /// goes.
 ///
-/// Assumes the go-signal ack has already been sent by the caller.
+/// Sends the go-signal ack itself, on receipt of `Begin` — mirroring the real
+/// receiver, which acks in response to `Begin`. (The caller must not pre-send an
+/// ack: the agent's consume loop processes stream frames off-main, so an ack
+/// sent before the `ClipboardRequest` is handled could overtake it and be
+/// dropped before the transfer is registered.)
 func collectOutboundTransfer(
     transferID: UInt64, from channel: VsockChannel, timeout: Duration = .seconds(5)
 ) async throws -> CollectedTransfer {
@@ -297,6 +301,8 @@ func collectOutboundTransfer(
         switch frame.payload {
         case .clipboardStreamBegin(let b) where b.transferID == transferID:
             begin = b
+            // Go-signal: release the sender now that Begin has arrived.
+            try channel.send(makeAckFrame(transferID: transferID, bytesConsumed: 0))
         case .clipboardChunk(let c) where c.transferID == transferID:
             assembled.append(c.data)
             // Re-ack cumulative progress so a small window keeps advancing.

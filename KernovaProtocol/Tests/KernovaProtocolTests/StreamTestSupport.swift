@@ -96,6 +96,32 @@ func makeStartedChannelPair() throws -> (a: VsockChannel, b: VsockChannel) {
     return (a, b)
 }
 
+// MARK: - File helpers
+
+/// Every regular file anywhere under `directory` (recursive).
+func materializedFiles(under directory: URL) -> [URL] {
+    guard
+        let enumerator = FileManager.default.enumerator(
+            at: directory, includingPropertiesForKeys: [.isRegularFileKey])
+    else { return [] }
+    return enumerator.compactMap { $0 as? URL }.filter {
+        (try? $0.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true
+    }
+}
+
+/// Polls `predicate` until it holds or `timeout` elapses.
+func pollUntil(
+    timeout: Duration = .seconds(5), _ predicate: @Sendable () -> Bool
+) async throws {
+    let deadline = ContinuousClock.now.advanced(by: timeout)
+    while !predicate() {
+        if ContinuousClock.now >= deadline {
+            throw StreamTestFailure("Condition not met within \(timeout)")
+        }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+}
+
 // MARK: - Collector
 
 /// Gathers the completed representations and aborts a receiver delivers.
@@ -132,6 +158,8 @@ final class StreamHarness: @unchecked Sendable {
     let sender: ClipboardStreamSender
     let receiver: ClipboardStreamReceiver
     let staging: ClipboardFileStaging
+    /// Parent of the staging root; tests scan it for materialized temp files.
+    let stagingTempRoot: URL
     let collector = StreamCollector()
 
     private let a: VsockChannel
@@ -145,10 +173,11 @@ final class StreamHarness: @unchecked Sendable {
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil
     ) throws {
         (a, b) = try makeStartedChannelPair()
+        stagingTempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString, isDirectory: true)
         staging = ClipboardFileStaging(
             label: "harness-\(UUID().uuidString)",
-            tempRoot: FileManager.default.temporaryDirectory.appendingPathComponent(
-                UUID().uuidString, isDirectory: true),
+            tempRoot: stagingTempRoot,
             freeSpaceProvider: freeSpaceProvider)
         sender = ClipboardStreamSender(
             channel: a, chunkSize: chunkSize, windowBytes: windowBytes, noAckTimeout: noAckTimeout)

@@ -169,9 +169,7 @@ struct VsockGuestClipboardAgentTests {
         try hostChannel.send(
             makeRequestFrame(
                 generation: offer.generation, transferID: transferID, uti: info.uti))
-        // Release the sender's go-signal, then collect Begin→Chunk(s)→End.
-        try hostChannel.send(makeAckFrame(transferID: transferID))
-
+        // Collect Begin→Chunk(s)→End; the collector sends the go-signal on Begin.
         let transfer = try await collectOutboundTransfer(transferID: transferID, from: hostChannel)
         #expect(transfer.begin.uti == ClipboardContent.utf8TextUTI)
         #expect(transfer.begin.isInline)
@@ -224,7 +222,6 @@ struct VsockGuestClipboardAgentTests {
         try hostChannel.send(
             makeRequestFrame(
                 generation: offer.generation, transferID: transferID, uti: info.uti))
-        try hostChannel.send(makeAckFrame(transferID: transferID))
 
         let transfer = try await collectOutboundTransfer(
             transferID: transferID, from: hostChannel, timeout: .seconds(10))
@@ -271,7 +268,6 @@ struct VsockGuestClipboardAgentTests {
         try hostChannel.send(
             makeRequestFrame(
                 generation: offer.generation, transferID: transferID, uti: info.uti))
-        try hostChannel.send(makeAckFrame(transferID: transferID))
         let transfer = try await collectOutboundTransfer(transferID: transferID, from: hostChannel)
         #expect(transfer.bytes == png)
     }

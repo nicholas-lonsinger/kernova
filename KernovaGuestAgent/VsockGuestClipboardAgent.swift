@@ -244,19 +244,23 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     // MARK: - Per-connection serve
 
     private func serve(channel: VsockChannel) async {
+        // The engine is created off-main (its callbacks hop to main themselves);
+        // only the published references are assigned on the main queue.
+        let sender = ClipboardStreamSender(channel: channel)
+        let receiver = ClipboardStreamReceiver(
+            channel: channel, staging: self.staging,
+            onComplete: { [weak self] transferID, representation in
+                DispatchQueue.main.async {
+                    self?.onTransferComplete(transferID, representation, channel: channel)
+                }
+            },
+            onAbort: { [weak self] info in
+                DispatchQueue.main.async { self?.onTransferAbort(info) }
+            })
         await MainActor.run {
             self.liveChannel = channel
-            self.sender = ClipboardStreamSender(channel: channel)
-            self.receiver = ClipboardStreamReceiver(
-                channel: channel, staging: self.staging,
-                onComplete: { [weak self] transferID, representation in
-                    DispatchQueue.main.async {
-                        self?.onTransferComplete(transferID, representation, channel: channel)
-                    }
-                },
-                onAbort: { [weak self] info in
-                    DispatchQueue.main.async { self?.onTransferAbort(info) }
-                })
+            self.sender = sender
+            self.receiver = receiver
             self.pendingOutbound = nil
             self.currentOutboundGeneration.set(0)
             self.pendingInbound = nil
@@ -267,9 +271,27 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         Self.logger.notice("Vsock clipboard connected to host")
 
         do {
-            for try await frame in channel.incoming {
-                DispatchQueue.main.async { [weak self] in
-                    self?.handle(frame: frame, channel: channel)
+            for try await frame in channel.incoming where frame.protocolVersion == 1 {
+                // High-frequency stream frames go straight to the thread-safe
+                // engine off the main queue; only control frames hop to main.
+                switch frame.payload {
+                case .clipboardStreamBegin(let begin):
+                    receiver.handleBegin(begin)
+                case .clipboardChunk(let chunk):
+                    receiver.handleChunk(chunk)
+                case .clipboardStreamEnd(let end):
+                    receiver.handleEnd(end)
+                case .clipboardStreamAck(let ack):
+                    sender.handleAck(
+                        transferID: ack.transferID, bytesConsumed: ack.bytesConsumed,
+                        windowBytes: ack.windowBytes)
+                case .clipboardStreamAbort(let abort):
+                    receiver.handleAbort(abort)
+                    sender.handleAbort(transferID: abort.transferID)
+                default:
+                    DispatchQueue.main.async { [weak self] in
+                        self?.handleControlFrame(frame, channel: channel)
+                    }
                 }
             }
             Self.logger.notice("Vsock clipboard channel closed by host")
@@ -403,36 +425,24 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
 
     // MARK: - Frame handlers (main queue)
 
-    private func handle(frame: Frame, channel: VsockChannel) {
-        guard frame.protocolVersion == 1 else {
-            Self.logger.warning(
-                "Dropping frame with unsupported protocol version \(frame.protocolVersion, privacy: .public)"
-            )
-            return
-        }
+    /// Handles the control frames the consume loop hops to the main queue for
+    /// (stream frames are routed off-main directly to the engine).
+    private func handleControlFrame(_ frame: Frame, channel: VsockChannel) {
         switch frame.payload {
         case .clipboardOffer(let offer):
             handleOffer(offer, channel: channel)
         case .clipboardRequest(let request):
             handleRequest(request)
-        case .clipboardStreamBegin(let begin):
-            receiver?.handleBegin(begin)
-        case .clipboardChunk(let chunk):
-            receiver?.handleChunk(chunk)
-        case .clipboardStreamEnd(let end):
-            receiver?.handleEnd(end)
-        case .clipboardStreamAck(let ack):
-            sender?.handleAck(
-                transferID: ack.transferID, bytesConsumed: ack.bytesConsumed,
-                windowBytes: ack.windowBytes)
-        case .clipboardStreamAbort(let abort):
-            handleInboundAbort(abort)
         case .clipboardRelease(let release):
             handleRelease(release)
         case .error(let error):
             Self.logger.warning(
                 "Host clipboard error: \(error.code, privacy: .public) — \(error.message, privacy: .public)"
             )
+        case .clipboardStreamBegin, .clipboardChunk, .clipboardStreamEnd, .clipboardStreamAck,
+            .clipboardStreamAbort:
+            // Routed off-main by the consume loop; never reaches here.
+            break
         case .hello, .heartbeat, .policyUpdate, .logRecord, .none:
             Self.logger.warning("Unexpected payload on clipboard channel — wrong port")
         }
@@ -477,6 +487,10 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     // MARK: - Inbound (we are the receiver)
 
     private func handleOffer(_ offer: Kernova_V1_ClipboardOffer, channel: VsockChannel) {
+        // A newer offer supersedes the previous one: cancel its in-flight inbound
+        // transfers so their partial temp files are deleted rather than leaked.
+        if let previous = pendingInbound { receiver?.cancel(generation: previous.generation) }
+
         var pending: Set<UInt64> = []
         let maxAccept = UInt64(staging.availableCapacity() ?? 0)
         for (index, info) in offer.repInfo.enumerated() {
@@ -537,14 +551,6 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         )
         if collection.pending.isEmpty {
             if let channel = liveChannel { finishInbound(collection, channel: channel) }
-        }
-    }
-
-    private func handleInboundAbort(_ abort: Kernova_V1_ClipboardStreamAbort) {
-        if let collection = pendingInbound, collection.pending.contains(abort.transferID) {
-            receiver?.handleAbort(abort)
-        } else {
-            sender?.handleAbort(transferID: abort.transferID)
         }
     }
 

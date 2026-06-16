@@ -27,11 +27,17 @@ public enum ClipboardStreamTuning {
     /// Default per-chunk payload size: 64 KiB (the shared vsock packet cap).
     public static let defaultChunkPayloadSize = 64 * 1024
 
-    /// Default in-flight credit window: 256 KiB (four chunks).
-    public static let defaultWindowBytes = 256 * 1024
+    /// Default in-flight credit window: 1 MiB (16 chunks).
+    ///
+    /// Larger than the native 256 KiB default: on a same-host vsock the limiter
+    /// is per-chunk round-trip latency, not bandwidth, so a deeper window keeps
+    /// the pipe full across the ack round-trip (the un-acked RAM cost is a few
+    /// MiB per transfer, negligible). Stream frames are processed off the owning
+    /// actor, so the receiver can drain at full rate.
+    public static let defaultWindowBytes = 1024 * 1024
 
-    /// Hard cap on the credit window: 512 KiB.
-    public static let maxWindowBytes = 512 * 1024
+    /// Hard cap on the credit window: 2 MiB.
+    public static let maxWindowBytes = 2 * 1024 * 1024
 
     /// Margin kept free above a transfer's size when checking disk space, so a
     /// transfer never fills the staging volume to the last byte.
