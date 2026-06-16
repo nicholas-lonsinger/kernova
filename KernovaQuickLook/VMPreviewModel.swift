@@ -7,10 +7,6 @@ import Foundation
 /// Compiled into the `KernovaQuickLook` extension (its production consumer)
 /// and into the app target, where `KernovaTests` reaches it via
 /// `@testable import Kernova`.
-// periphery:ignore - The production consumer is the KernovaQuickLook extension
-// target; the app-target membership exists only so KernovaTests can reach the
-// type via `@testable import Kernova`, neither of which the app-scheme scan
-// credits as usage.
 struct VMPreviewModel: Equatable, Sendable {
     /// One label/value row in the details grid.
     struct Field: Equatable, Sendable {
