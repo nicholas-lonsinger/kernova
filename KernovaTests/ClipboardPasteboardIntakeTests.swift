@@ -99,6 +99,36 @@ struct ClipboardPasteboardIntakeTests {
         #expect(content.representations.first?.inMemoryData == png)
     }
 
+    @Test("flat-RTFD is captured alongside plain RTF and preferred for rich text")
+    func flatRTFDCapturedAndPreferred() throws {
+        // A TextEdit rich copy with an inline image carries both flat-RTFD (the
+        // image-bearing flavor) and a text-only plain RTF. Intake must keep
+        // flat-RTFD (it is not a skipped/file-reference type) and order it ahead
+        // of plain RTF so the richer flavor wins downstream.
+        let pasteboard = makeScratchPasteboard()
+        let rtfd = Data("rtfd-with-image".utf8)
+        write(
+            [
+                (uti: UTType.flatRTFD.identifier, data: rtfd),
+                (uti: UTType.rtf.identifier, data: Data("{\\rtf1}".utf8)),
+                (uti: ClipboardContent.utf8TextUTI, data: Data("plain".utf8)),
+            ], to: pasteboard)
+
+        guard
+            case .content(let content, _) = ClipboardPasteboardIntake.read(
+                from: pasteboard, allowsBinary: true)
+        else {
+            Issue.record("Expected content")
+            return
+        }
+        let utis = content.representations.map(\.uti)
+        let flatIndex = try #require(utis.firstIndex(of: UTType.flatRTFD.identifier))
+        let rtfIndex = try #require(utis.firstIndex(of: UTType.rtf.identifier))
+        #expect(flatIndex < rtfIndex)
+        #expect(content.richTextRepresentation?.uti == UTType.flatRTFD.identifier)
+        #expect(content.richTextRepresentation?.inMemoryData == rtfd)
+    }
+
     @Test("empty pasteboard is rejected")
     func emptyPasteboardRejected() {
         let pasteboard = makeScratchPasteboard()

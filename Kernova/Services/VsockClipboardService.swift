@@ -646,8 +646,8 @@ final class VsockClipboardService: ClipboardServicing {
     }
 
     /// Whether the window renders this rep richly, so it's worth pulling for the
-    /// preview: text within the editor limit, inline RTF, or an image up to the
-    /// preview limit.
+    /// preview: text within the editor limit, inline rich text (RTF/RTFD), or an
+    /// image up to the preview limit.
     ///
     /// Files (non-image) and over-limit payloads stay placeholders.
     private static func isEagerPreviewable(_ info: Kernova_V1_ClipboardRepresentationInfo) -> Bool {
@@ -657,7 +657,10 @@ final class VsockClipboardService: ClipboardServicing {
         }
         // A non-image file renders as a chip from metadata — no pull needed.
         guard info.filename.isEmpty else { return false }
-        if type?.conforms(to: .rtf) == true {
+        // Any RTF-family flavor, including flat-RTFD — which carries the inline
+        // image and does not conform to `.rtf`, so it must be pulled here to
+        // preview richly instead of falling back to the text-only flavor.
+        if type?.conformsToRTFFamily == true {
             return info.byteCount <= UInt64(ClipboardPreviewPolicy.maxEagerPreviewBytes)
         }
         if info.uti == ClipboardContent.utf8TextUTI || type?.conforms(to: .text) == true {
