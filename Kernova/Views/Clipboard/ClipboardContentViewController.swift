@@ -258,6 +258,13 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         observeServiceChanges()
     }
 
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        // The window is now visible — pull the representations it renders richly
+        // for a guest offer that arrived (or stayed a placeholder) while hidden.
+        triggerPreviewMaterialization()
+    }
+
     // MARK: - NSTextViewDelegate
 
     func textDidChange(_ notification: Notification) {
@@ -325,6 +332,17 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         }
 
         applyStatus(status, canInstallKernovaAgent: canInstallKernovaAgent)
+        triggerPreviewMaterialization()
+    }
+
+    /// Pulls the representations the window renders richly for the current guest
+    /// offer, when the window is visible — the lazy "pull on display" trigger.
+    ///
+    /// The service guards against re-pulling per generation, so calling this on
+    /// every appear/update is cheap.
+    private func triggerPreviewMaterialization() {
+        guard let service = instance.clipboardService, view.window?.isVisible == true else { return }
+        Task { await service.materializeForPreview() }
     }
 
     // MARK: - Content rendering
@@ -430,24 +448,34 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
     @objc private func copyToMac(_ sender: Any?) {
         guard let service = instance.clipboardService else { return }
-        let content = service.clipboardContent
-        guard !content.isEmpty else { return }
+        guard !service.clipboardContent.isEmpty else { return }
 
         let staging = self.staging
         let generation = copyToMacGeneration
         copyToMacGeneration += 1
-        // Build the pasteboard pairs off the main actor: a streamed `.file`
-        // payload's temp URL is used as-is; an inline payload's bytes are written
-        // inline (read from disk if file-backed); an inline-and-named payload
-        // (image file) is also staged to a temp file so a Finder paste creates
-        // it. A large read/stage mustn't block the UI.
+        // Pull any not-yet-fetched representations first (lazy mode), then build
+        // the pasteboard pairs off the main actor: a streamed `.file` payload's
+        // temp URL is used as-is; an inline payload's bytes are written inline
+        // (read from disk if file-backed); an inline-and-named payload (image
+        // file) is also staged to a temp file so a Finder paste creates it. A
+        // large read/stage/pull mustn't block the UI, so disable the button until
+        // it resolves.
+        commandBar.copyButton.isEnabled = false
         Task { @MainActor [weak self] in
             guard let self else { return }
+            let content = await service.materializeForCopy()
+            guard !content.isEmpty else {
+                self.commandBar.copyButton.isEnabled = !service.clipboardContent.isEmpty
+                self.indicatorView.showTransientMessage(
+                    "Couldn't fetch the clipboard content to copy", style: .error)
+                return
+            }
             let pairs = await Self.hostPasteboardPairs(
                 for: content, generation: generation, staging: staging)
             let item = NSPasteboardItem()
             for pair in pairs { item.setData(pair.data, forType: pair.type) }
             self.finishCopyToMac(item: item, representationCount: content.representations.count)
+            self.commandBar.copyButton.isEnabled = !service.clipboardContent.isEmpty
         }
     }
 

@@ -66,6 +66,88 @@ struct ClipboardContentTests {
         #expect(withName.digest == withoutName.digest)
     }
 
+    // MARK: - .pendingRemote (lazy-receive placeholder) digest
+
+    @Test(".pendingRemote digest is deterministic for equal (uti, byteCount)")
+    func pendingRemoteDigestDeterministic() {
+        let make = {
+            ClipboardContent(representations: [
+                .init(pendingRemoteUTI: "public.png", byteCount: 4096, filename: "photo.png")
+            ])
+        }
+        #expect(make().digest == make().digest)
+        #expect(make() == make())
+
+        // Filename is out of the digest here too — only (uti, byteCount) matter.
+        let withoutName = ClipboardContent(representations: [
+            .init(pendingRemoteUTI: "public.png", byteCount: 4096)
+        ])
+        #expect(make().digest == withoutName.digest)
+
+        // A different advertised byteCount changes the placeholder's identity.
+        let differentSize = ClipboardContent(representations: [
+            .init(pendingRemoteUTI: "public.png", byteCount: 4097)
+        ])
+        #expect(make().digest != differentSize.digest)
+    }
+
+    @Test(".pendingRemote is never digest-equal to the same rep materialized as .inMemory")
+    func pendingRemoteDistinctFromInMemory() {
+        // A 3-byte inline payload under the same UTI must not alias the
+        // metadata-only placeholder advertising 3 bytes — the domain tag (3 vs
+        // the inline tag 0) keeps them apart so a pulled rep is a real change.
+        let bytes = Data([1, 2, 3])
+        let placeholder = ClipboardContent(representations: [
+            .init(pendingRemoteUTI: "public.png", byteCount: bytes.count)
+        ])
+        let materialized = ClipboardContent(representations: [
+            .init(uti: "public.png", data: bytes)
+        ])
+        #expect(placeholder.digest != materialized.digest)
+    }
+
+    @Test(".pendingRemote is never digest-equal to the same rep materialized as .file")
+    func pendingRemoteDistinctFromFile() {
+        let sha = Data(repeating: 0xAB, count: 32)
+        let placeholder = ClipboardContent(representations: [
+            .init(pendingRemoteUTI: "public.data", byteCount: 1024, filename: "x.bin")
+        ])
+        let materializedFile = ClipboardContent(representations: [
+            .init(
+                uti: "public.data", fileURL: URL(fileURLWithPath: "/tmp/x.bin"),
+                byteCount: 1024, sha256: sha, filename: "x.bin")
+        ])
+        #expect(placeholder.digest != materializedFile.digest)
+    }
+
+    @Test(".pendingRemote is distinct from a .file placeholder with no streamed sha256 (tag 2 vs 3)")
+    func pendingRemoteDistinctFromUnhashedFilePlaceholder() {
+        // A `.file` rep whose bytes haven't streamed yet folds in only its byte
+        // count under tag 2; a `.pendingRemote` rep folds in its byte count under
+        // tag 3. Same UTI and byte count, but the domain tags keep them apart.
+        let pendingRemote = ClipboardContent(representations: [
+            .init(pendingRemoteUTI: "public.data", byteCount: 1024)
+        ])
+        let unhashedFile = ClipboardContent(representations: [
+            .init(
+                uti: "public.data", fileURL: URL(fileURLWithPath: "/tmp/x.bin"),
+                byteCount: 1024, sha256: nil, filename: "x.bin")
+        ])
+        #expect(pendingRemote.digest != unhashedFile.digest)
+    }
+
+    @Test(".pendingRemote accessors expose metadata only — no resident bytes or file URL")
+    func pendingRemoteAccessors() {
+        let rep = ClipboardContent.Representation(
+            pendingRemoteUTI: "public.png", byteCount: 9_000_000_000, filename: "huge.png")
+        #expect(rep.isPendingRemote)
+        #expect(rep.byteCount == 9_000_000_000)  // advertised, never loaded
+        #expect(rep.inMemoryData == nil)
+        #expect(rep.fileURL == nil)
+        #expect(rep.uti == "public.png")
+        #expect(rep.filename == "huge.png")
+    }
+
     // MARK: - Disk-backed (.file) source
 
     @Test("byteCount and inMemoryData reflect the representation source")

@@ -72,6 +72,18 @@ public enum ClipboardStreamTuning {
     /// 10 s no-ack timeout so a slow-but-live transfer is never killed.
     public static let inboundStallTimeout: Duration = .seconds(30)
 
+    /// Backstop ceiling on how long a lazy pull blocks the consuming thread
+    /// waiting for a representation: 120 s.
+    ///
+    /// This is **not** the primary liveness guard — the receiver's
+    /// `inboundStallTimeout` (30 s of no chunk) already aborts a dead transfer
+    /// and wakes the blocked pull, and channel teardown unblocks it immediately.
+    /// A legitimate large transfer makes steady progress and completes well
+    /// inside this window; it only fires if neither the receiver nor teardown
+    /// delivers an outcome (a coordinator/receiver bug), so the consuming app's
+    /// paste can't hang forever. Tests inject a tiny value to exercise it.
+    public static let lazyPullTimeout: Duration = .seconds(120)
+
     /// Sentinel `maxAcceptByteCount` meaning "no explicit ceiling" — the
     /// requester could not measure its free space, so it relies on the receiver's
     /// mid-stream disk guard and the write-failure backstop instead.

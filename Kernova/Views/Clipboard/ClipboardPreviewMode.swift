@@ -28,6 +28,14 @@ enum ClipboardPreviewPolicy {
     /// `NSTextView` freezes the UI laying out multi-megabyte strings.
     static let maxEditableTextBytes = 2_000_000
 
+    /// An image or inline rich-text representation up to this size is eagerly
+    /// pulled (lazy mode) so the window shows a real preview rather than a chip;
+    /// a larger payload stays a metadata placeholder until "Copy to Mac".
+    ///
+    /// A generous bound that covers typical screenshots/photos while capping a
+    /// pathological auto-pull; tunable.
+    static let maxEagerPreviewBytes = 32 * 1024 * 1024
+
     /// Chooses the preview for a buffer, in priority order.
     ///
     /// 1. A *file payload* (a representation tagged with a filename) shows as

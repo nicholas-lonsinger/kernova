@@ -228,6 +228,40 @@ struct VsockClipboardServiceTests {
         try guest.send(endFrame)
     }
 
+    /// Streams `ClipboardChunk`(s) → `ClipboardStreamEnd` for `transferID` from
+    /// the guest end, **without** a preceding `Begin`.
+    ///
+    /// Used to complete a transfer whose `Begin` the responder already sent
+    /// (`beginOnly`), so a host pull parked on it resolves with the bytes.
+    private func sendChunkAndEnd(
+        from guest: VsockChannel,
+        transferID: UInt64,
+        bytes: Data,
+        chunkSize: Int = 64 * 1024
+    ) throws {
+        var offset = 0
+        while offset < bytes.count {
+            let end = min(offset + chunkSize, bytes.count)
+            var chunkFrame = Frame()
+            chunkFrame.protocolVersion = 1
+            chunkFrame.clipboardChunk = Kernova_V1_ClipboardChunk.with {
+                $0.transferID = transferID
+                $0.offset = UInt64(offset)
+                $0.data = bytes.subdata(in: offset..<end)
+            }
+            try guest.send(chunkFrame)
+            offset = end
+        }
+        var endFrame = Frame()
+        endFrame.protocolVersion = 1
+        endFrame.clipboardStreamEnd = Kernova_V1_ClipboardStreamEnd.with {
+            $0.transferID = transferID
+            $0.totalBytes = UInt64(bytes.count)
+            $0.sha256 = Data(SHA256.hash(data: bytes))
+        }
+        try guest.send(endFrame)
+    }
+
     /// Acknowledges the service's outbound transfer so its sender (which waits
     /// for the first ack before chunking) makes progress.
     ///
@@ -654,7 +688,168 @@ struct VsockClipboardServiceTests {
         #expect(service.isConnected, "isConnected should remain true — only stop() clears it")
     }
 
-    // MARK: - Inbound (eager pull: service requests, we stream)
+    // MARK: - Inbound (lazy pull: an offer publishes placeholders; the window
+    // pulls reps for preview, and Copy-to-Mac pulls the rest)
+
+    /// Background task that plays the guest end of the channel.
+    ///
+    /// For every `ClipboardRequest` the host sends, it streams back the bytes
+    /// registered for that `(generation, repIndex)`. Lets a test drive
+    /// `materializeForPreview()` / `materializeForCopy()` — which block on the
+    /// host's pull continuations — without hand-sequencing each request.
+    ///
+    /// Reps are keyed by `(generation, repIndex)`; the responder mints the host
+    /// transfer id [H3] itself so the test only supplies the payload. Requests
+    /// for an unregistered rep are ignored (the host's continuation stays parked
+    /// until the test tears down or supersedes).
+    @MainActor
+    private final class FakeGuestResponder {
+        struct Reply {
+            let uti: String
+            let bytes: Data
+            let filename: String
+            let isInline: Bool
+            /// When `true`, only `Begin` is streamed — no chunks, no `End`.
+            ///
+            /// Used to create a live receiver-side transfer that a later
+            /// supersession/release can cancel while the host's pull is parked.
+            let beginOnly: Bool
+        }
+
+        private let guest: VsockChannel
+        private var replies: [UInt64: Reply] = [:]
+        private var consumeTask: Task<Void, Never>?
+
+        /// Fires after each request is answered; await it to observe progress.
+        let answered = AsyncGate()
+        /// Every `ClipboardRequest` the host sent, in arrival order.
+        private(set) var requests: [Kernova_V1_ClipboardRequest] = []
+
+        init(guest: VsockChannel) {
+            self.guest = guest
+        }
+
+        /// Registers the payload to stream when the host requests
+        /// `(generation, repIndex)`.
+        func register(
+            generation: UInt64, repIndex: UInt64, uti: String, bytes: Data,
+            filename: String = "", isInline: Bool, beginOnly: Bool = false
+        ) {
+            let xid = ClipboardTransferID.make(
+                generation: generation, repIndex: Int(repIndex), hostMinted: true)
+            replies[xid] = Reply(
+                uti: uti, bytes: bytes, filename: filename, isInline: isInline, beginOnly: beginOnly)
+        }
+
+        /// Starts draining the channel and answering requests.
+        ///
+        /// The closure runs off-actor on the channel iterator but hops back to
+        /// `@MainActor` to touch `replies`/`requests`, matching this suite's
+        /// isolation.
+        func start() {
+            consumeTask = Task { @MainActor [weak self] in
+                guard let self else { return }
+                do {
+                    for try await frame in self.guest.incoming {
+                        guard case .clipboardRequest(let req) = frame.payload else { continue }
+                        self.requests.append(req)
+                        if let reply = self.replies[req.transferID] {
+                            try self.stream(req: req, reply: reply)
+                        }
+                        self.answered.notify()
+                    }
+                } catch {
+                    // Channel closed — stop answering.
+                }
+            }
+        }
+
+        func cancel() { consumeTask?.cancel() }
+        deinit { consumeTask?.cancel() }
+
+        /// Streams Begin → Chunk(s) → End for one request's registered reply.
+        private func stream(req: Kernova_V1_ClipboardRequest, reply: Reply) throws {
+            var begin = Frame()
+            begin.protocolVersion = 1
+            begin.clipboardStreamBegin = Kernova_V1_ClipboardStreamBegin.with {
+                $0.generation = req.generation
+                $0.transferID = req.transferID
+                $0.uti = reply.uti
+                $0.totalBytes = UInt64(reply.bytes.count)
+                $0.filename = reply.filename
+                $0.isInline = reply.isInline
+            }
+            try guest.send(begin)
+            // Begin-only: leave the transfer live so a supersede/release can
+            // cancel it; never send chunks or End.
+            if reply.beginOnly { return }
+
+            var offset = 0
+            let chunkSize = 64 * 1024
+            while offset < reply.bytes.count {
+                let end = min(offset + chunkSize, reply.bytes.count)
+                var chunkFrame = Frame()
+                chunkFrame.protocolVersion = 1
+                chunkFrame.clipboardChunk = Kernova_V1_ClipboardChunk.with {
+                    $0.transferID = req.transferID
+                    $0.offset = UInt64(offset)
+                    $0.data = reply.bytes.subdata(in: offset..<end)
+                }
+                try guest.send(chunkFrame)
+                offset = end
+            }
+
+            var endFrame = Frame()
+            endFrame.protocolVersion = 1
+            endFrame.clipboardStreamEnd = Kernova_V1_ClipboardStreamEnd.with {
+                $0.transferID = req.transferID
+                $0.totalBytes = UInt64(reply.bytes.count)
+                $0.sha256 = Data(SHA256.hash(data: reply.bytes))
+            }
+            try guest.send(endFrame)
+        }
+    }
+
+    @Test("An offer publishes metadata-only .pendingRemote placeholders and sends no request")
+    func offerPublishesPlaceholdersWithoutRequesting() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        service.start()
+        defer { service.stop() }
+
+        // Record outbound frames so we can prove the offer drew no request.
+        let recorder = FrameRecorder(channel: guest)
+        defer { recorder.cancel() }
+
+        let textBytes = Data("hi".utf8)
+        let fileBytes = 4_000
+        try guest.send(
+            makeOffer(
+                generation: 7,
+                reps: [
+                    (uti: ClipboardContent.utf8TextUTI, byteCount: textBytes.count, filename: "", isInline: true),
+                    (uti: "public.data", byteCount: fileBytes, filename: "doc.bin", isInline: false),
+                ]))
+
+        try await waitUntil { service.clipboardContent.representations.count == 2 }
+        let reps = service.clipboardContent.representations
+        // Both reps are placeholders, in the guest's offer order.
+        #expect(reps.allSatisfy { $0.isPendingRemote })
+        #expect(reps.map(\.uti) == [ClipboardContent.utf8TextUTI, "public.data"])
+        #expect(reps.map(\.byteCount) == [textBytes.count, fileBytes])
+        #expect(reps.map(\.filename) == ["", "doc.bin"])
+
+        // No ClipboardRequest is sent at offer time — pulling is lazy.
+        try await expectNoNewFrames(on: recorder, sinceCount: 0, for: .milliseconds(150))
+        #expect(
+            recorder.first {
+                if case .clipboardRequest = $0.payload { return true }; return false
+            } == nil, "Offer must not trigger a ClipboardRequest")
+    }
 
     @Test("Frames with an unsupported protocol version are dropped before dispatch")
     func dropsUnsupportedProtocolVersion() async throws {
@@ -668,25 +863,28 @@ struct VsockClipboardServiceTests {
         defer { service.stop() }
 
         // A v99 offer must be dropped; if the version check is missing the
-        // service would request gen=1.
+        // service would publish a gen=1 placeholder.
         var offerV99 = makeTextOffer(generation: 1, text: "ignored")
         offerV99.protocolVersion = 99
         try guest.send(offerV99)
 
-        // A valid v1 offer for a different generation. The first request that
-        // arrives must be for gen=2 — proof that gen=1 was dropped.
-        try guest.send(makeTextOffer(generation: 2, text: "kept"))
+        // A valid v1 offer for a different generation. Its placeholder must be
+        // the one published — proof that the v99 offer was dropped.
+        try guest.send(
+            makeOffer(
+                generation: 2,
+                reps: [(uti: "public.png", byteCount: 99, filename: "kept.png", isInline: false)]))
 
-        let request = try await nextFrame(from: guest)
-        guard case .clipboardRequest(let req) = request.payload else {
-            Issue.record("Expected clipboardRequest, got \(String(describing: request.payload))")
-            return
+        try await waitUntil {
+            service.clipboardContent.representations.first?.filename == "kept.png"
         }
-        #expect(req.generation == 2)
+        let rep = try #require(service.clipboardContent.representations.first)
+        #expect(rep.isPendingRemote)
+        #expect(rep.uti == "public.png")
     }
 
-    @Test("An inbound text offer is pulled and the streamed bytes populate clipboardContent")
-    func inboundTextOfferPopulatesClipboard() async throws {
+    @Test("materializeForPreview pulls a small inline text rep into clipboardContent")
+    func previewMaterializesInlineText() async throws {
         let (guest, host) = try makePair()
         guest.start()
         host.start()
@@ -696,35 +894,37 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
         let text = "from guest"
         let bytes = Data(text.utf8)
+        responder.register(
+            generation: 42, repIndex: 0, uti: ClipboardContent.utf8TextUTI, bytes: bytes,
+            isInline: true)
+        responder.start()
+
         try guest.send(
             makeOffer(
                 generation: 42,
                 reps: [(uti: ClipboardContent.utf8TextUTI, byteCount: bytes.count, filename: "", isInline: true)]))
+        try await waitUntil { service.clipboardContent.representations.first?.isPendingRemote == true }
 
-        // The service eagerly requests rep 0.
-        let request = try await nextFrame(from: guest)
-        guard case .clipboardRequest(let req) = request.payload else {
-            Issue.record("Expected clipboardRequest, got \(String(describing: request.payload))")
-            return
-        }
-        let xid = inboundTransferID(generation: 42, repIndex: 0)
-        #expect(req.generation == 42)
-        #expect(req.transferID == xid)
-        #expect(req.uti == ClipboardContent.utf8TextUTI)
+        await service.materializeForPreview()
 
-        // Act as the sender: stream the bytes back for that transfer.
-        try streamPayload(
-            from: guest, transferID: xid, generation: 42, uti: ClipboardContent.utf8TextUTI,
-            bytes: bytes, isInline: true)
-
-        try await waitUntil { service.clipboardContent.text == text }
+        // The placeholder upgrades to the materialized inline rep.
         #expect(service.clipboardContent.text == text)
+        let rep = try #require(service.clipboardContent.representations.first)
+        #expect(!rep.isPendingRemote)
+        #expect(rep.inMemoryData == bytes)
+        // The host minted a request for the host-receives transfer id.
+        let req = try #require(responder.requests.first)
+        #expect(req.generation == 42)
+        #expect(req.transferID == inboundTransferID(generation: 42, repIndex: 0))
+        #expect(req.uti == ClipboardContent.utf8TextUTI)
     }
 
-    @Test("A large multi-chunk inbound inline payload reassembles correctly")
-    func inboundLargeInlineReassembles() async throws {
+    @Test("materializeForPreview leaves non-image file and over-limit image reps as placeholders")
+    func previewLeavesFileAndOversizeImagePlaceholders() async throws {
         let (guest, host) = try makePair()
         guest.start()
         host.start()
@@ -734,32 +934,113 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        // > 64 KiB so we feed several chunks.
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        // rep 0: a small inline text → eagerly previewable, will be pulled.
+        let text = "caption"
+        responder.register(
+            generation: 11, repIndex: 0, uti: ClipboardContent.utf8TextUTI, bytes: Data(text.utf8),
+            isInline: true)
+        // rep 1 (non-image file) and rep 2 (over-limit image) are registered but
+        // must NOT be requested by preview; register them so an erroneous pull
+        // would still resolve (and thus be detectable as a non-placeholder).
+        responder.register(
+            generation: 11, repIndex: 1, uti: "public.data", bytes: Data(count: 4096),
+            filename: "doc.bin", isInline: false)
+        responder.register(
+            generation: 11, repIndex: 2, uti: "public.png", bytes: Data(count: 8192),
+            isInline: true)
+        responder.start()
+
+        let oversizeImage = ClipboardPreviewPolicy.maxEagerPreviewBytes + 1
+        try guest.send(
+            makeOffer(
+                generation: 11,
+                reps: [
+                    (uti: ClipboardContent.utf8TextUTI, byteCount: text.utf8.count, filename: "", isInline: true),
+                    (uti: "public.data", byteCount: 4096, filename: "doc.bin", isInline: false),
+                    (uti: "public.png", byteCount: oversizeImage, filename: "", isInline: true),
+                ]))
+        try await waitUntil { service.clipboardContent.representations.count == 3 }
+
+        await service.materializeForPreview()
+
+        let reps = service.clipboardContent.representations
+        #expect(!reps[0].isPendingRemote)  // small text pulled
+        #expect(reps[0].inMemoryData == Data(text.utf8))
+        #expect(reps[1].isPendingRemote)  // non-image file stays a placeholder
+        #expect(reps[2].isPendingRemote)  // over-limit image stays a placeholder
+
+        // Only rep 0 was ever requested.
+        #expect(responder.requests.count == 1)
+        #expect(responder.requests.first?.transferID == inboundTransferID(generation: 11, repIndex: 0))
+    }
+
+    @Test("materializeForPreview is idempotent per generation — a second call pulls nothing new")
+    func previewMaterializationIsIdempotent() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        service.start()
+        defer { service.stop() }
+
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        responder.register(
+            generation: 4, repIndex: 0, uti: ClipboardContent.utf8TextUTI, bytes: Data("x".utf8),
+            isInline: true)
+        responder.start()
+
+        try guest.send(makeTextOffer(generation: 4, text: "x"))
+        try await waitUntil { service.clipboardContent.representations.first?.isPendingRemote == true }
+
+        await service.materializeForPreview()
+        #expect(service.clipboardContent.text == "x")
+        let afterFirst = responder.requests.count
+        #expect(afterFirst == 1)
+
+        // A second call for the same offer pulls nothing (guarded by
+        // previewMaterializationStarted).
+        await service.materializeForPreview()
+        #expect(responder.requests.count == afterFirst)
+    }
+
+    @Test("A large multi-chunk inline preview rep reassembles correctly")
+    func previewLargeInlineReassembles() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        service.start()
+        defer { service.stop() }
+
+        // > 64 KiB inline text so the responder emits several chunks; still well
+        // under maxEditableTextBytes so preview pulls it.
         let bytes = Data((0..<(200 * 1024)).map { UInt8(truncatingIfNeeded: $0 &* 53 &+ 7) })
+        let textUTI = ClipboardContent.utf8TextUTI
+
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        responder.register(generation: 3, repIndex: 0, uti: textUTI, bytes: bytes, isInline: true)
+        responder.start()
+
         try guest.send(
             makeOffer(
                 generation: 3,
-                reps: [(uti: "public.data", byteCount: bytes.count, filename: "", isInline: true)]))
+                reps: [(uti: textUTI, byteCount: bytes.count, filename: "", isInline: true)]))
+        try await waitUntil { service.clipboardContent.representations.first?.isPendingRemote == true }
 
-        let request = try await nextFrame(from: guest)
-        guard case .clipboardRequest(let req) = request.payload else {
-            Issue.record("Expected clipboardRequest, got \(String(describing: request.payload))")
-            return
-        }
-        let xid = inboundTransferID(generation: 3, repIndex: 0)
-        #expect(req.transferID == xid)
-
-        // Feed many small chunks (32 KiB) to exercise the reassembly path.
-        try streamPayload(
-            from: guest, transferID: xid, generation: 3, uti: "public.data",
-            bytes: bytes, isInline: true, chunkSize: 32 * 1024)
-
-        try await waitUntil { !service.clipboardContent.isEmpty }
+        await service.materializeForPreview()
         #expect(service.clipboardContent.representations.first?.inMemoryData == bytes)
     }
 
-    @Test("An inbound file offer streams to a temp file whose bytes match")
-    func inboundFileOfferStagesToTempFile() async throws {
+    @Test("materializeForCopy pulls every remaining rep — files become .file, inline become .inMemory")
+    func copyMaterializesEveryRep() async throws {
         let (guest, host) = try makePair()
         guest.start()
         host.start()
@@ -769,34 +1050,47 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        let bytes = Data((0..<(150 * 1024)).map { UInt8(truncatingIfNeeded: $0 &* 11 &+ 3) })
+        let inlineBytes = Data("inline payload".utf8)
+        let fileBytes = Data((0..<(150 * 1024)).map { UInt8(truncatingIfNeeded: $0 &* 11 &+ 3) })
+
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        responder.register(
+            generation: 9, repIndex: 0, uti: ClipboardContent.utf8TextUTI, bytes: inlineBytes,
+            isInline: true)
+        responder.register(
+            generation: 9, repIndex: 1, uti: "public.data", bytes: fileBytes,
+            filename: "from-guest.bin", isInline: false)
+        responder.start()
+
         try guest.send(
             makeOffer(
                 generation: 9,
-                reps: [(uti: "public.data", byteCount: bytes.count, filename: "from-guest.bin", isInline: false)]))
+                reps: [
+                    (uti: ClipboardContent.utf8TextUTI, byteCount: inlineBytes.count, filename: "", isInline: true),
+                    (uti: "public.data", byteCount: fileBytes.count, filename: "from-guest.bin", isInline: false),
+                ]))
+        try await waitUntil { service.clipboardContent.representations.count == 2 }
 
-        let request = try await nextFrame(from: guest)
-        guard case .clipboardRequest(let req) = request.payload else {
-            Issue.record("Expected clipboardRequest, got \(String(describing: request.payload))")
-            return
-        }
-        let xid = inboundTransferID(generation: 9, repIndex: 0)
-        #expect(req.transferID == xid)
+        let resolved = await service.materializeForCopy()
 
-        // Stream it as a file rep (isInline=false, filename set).
-        try streamPayload(
-            from: guest, transferID: xid, generation: 9, uti: "public.data",
-            bytes: bytes, filename: "from-guest.bin", isInline: false, chunkSize: 32 * 1024)
+        // The returned content is fully materialized, in offer order.
+        #expect(resolved.representations.count == 2)
+        let inline = resolved.representations[0]
+        #expect(!inline.isPendingRemote)
+        #expect(inline.inMemoryData == inlineBytes)
 
-        try await waitUntil { !service.clipboardContent.isEmpty }
-        let rep = try #require(service.clipboardContent.representations.first)
-        #expect(rep.filename == "from-guest.bin")
-        let url = try #require(rep.fileURL, "Expected a file-backed representation")
-        #expect(try Data(contentsOf: url) == bytes)
+        let file = resolved.representations[1]
+        #expect(!file.isPendingRemote)
+        #expect(file.filename == "from-guest.bin")
+        let url = try #require(file.fileURL, "Expected a file-backed representation")
+        #expect(try Data(contentsOf: url) == fileBytes)
+        // The observable buffer mirrors the resolved content.
+        #expect(service.clipboardContent.representations.allSatisfy { !$0.isPendingRemote })
     }
 
-    @Test("Inbound representations are sanitized — file references never reach the buffer")
-    func inboundRepresentationsSanitized() async throws {
+    @Test("materializeForCopy resolves preview-pulled reps without re-requesting them")
+    func copyReusesPreviewMaterializedReps() async throws {
         let (guest, host) = try makePair()
         guest.start()
         host.start()
@@ -806,39 +1100,45 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        let pngBytes = Data((0..<2048).map { UInt8(truncatingIfNeeded: $0) })
-        let fileURLBytes = Data("file:///etc/passwd".utf8)
+        let inlineBytes = Data("preview me".utf8)
+        let fileBytes = Data((0..<(80 * 1024)).map { UInt8(truncatingIfNeeded: $0) })
+
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        responder.register(
+            generation: 6, repIndex: 0, uti: ClipboardContent.utf8TextUTI, bytes: inlineBytes,
+            isInline: true)
+        responder.register(
+            generation: 6, repIndex: 1, uti: "public.data", bytes: fileBytes,
+            filename: "doc.bin", isInline: false)
+        responder.start()
+
         try guest.send(
             makeOffer(
-                generation: 5,
+                generation: 6,
                 reps: [
-                    (uti: "public.file-url", byteCount: fileURLBytes.count, filename: "", isInline: true),
-                    (uti: "public.png", byteCount: pngBytes.count, filename: "", isInline: true),
+                    (uti: ClipboardContent.utf8TextUTI, byteCount: inlineBytes.count, filename: "", isInline: true),
+                    (uti: "public.data", byteCount: fileBytes.count, filename: "doc.bin", isInline: false),
                 ]))
+        try await waitUntil { service.clipboardContent.representations.count == 2 }
 
-        // The service requests both reps; collect the two requests.
-        let r0 = try await nextFrame(from: guest)
-        let r1 = try await nextFrame(from: guest)
-        let requests = [r0, r1].compactMap { frame -> Kernova_V1_ClipboardRequest? in
-            if case .clipboardRequest(let req) = frame.payload { return req }
-            return nil
-        }
-        #expect(requests.count == 2)
+        // Preview pulls only rep 0 (the inline text); the file rep stays pending.
+        await service.materializeForPreview()
+        #expect(responder.requests.count == 1)
 
-        // Stream both back; the forbidden public.file-url rep must be dropped at commit.
-        try streamPayload(
-            from: guest, transferID: inboundTransferID(generation: 5, repIndex: 0), generation: 5,
-            uti: "public.file-url", bytes: fileURLBytes, isInline: true)
-        try streamPayload(
-            from: guest, transferID: inboundTransferID(generation: 5, repIndex: 1), generation: 5,
-            uti: "public.png", bytes: pngBytes, isInline: true)
-
-        try await waitUntil { !service.clipboardContent.isEmpty }
-        #expect(service.clipboardContent.representations.map(\.uti) == ["public.png"])
+        // Copy pulls the remaining file rep only — rep 0 is reused from preview.
+        let resolved = await service.materializeForCopy()
+        #expect(responder.requests.count == 2)
+        // No rep was requested twice.
+        #expect(Set(responder.requests.map(\.transferID)).count == 2)
+        #expect(resolved.representations.count == 2)
+        #expect(resolved.representations[0].inMemoryData == inlineBytes)
+        let copiedFileURL = try #require(resolved.representations[1].fileURL)
+        #expect(try Data(contentsOf: copiedFileURL) == fileBytes)
     }
 
-    @Test("Inbound content resets dedup so re-grabbing the round-tripped content re-offers")
-    func inboundDataResetsDedup() async throws {
+    @Test("A newer offer supersedes an in-flight pull — the pull resolves to nothing, new placeholders publish")
+    func newerOfferSupersedesInFlightPull() async throws {
         let (guest, host) = try makePair()
         guest.start()
         host.start()
@@ -848,23 +1148,127 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        let text = "round-trip"
-        let bytes = Data(text.utf8)
-        try guest.send(makeTextOffer(generation: 1, text: text))
-        let request = try await nextFrame(from: guest)
-        guard case .clipboardRequest(let req) = request.payload else {
-            Issue.record("Expected clipboardRequest, got \(String(describing: request.payload))")
-            return
-        }
-        try streamPayload(
-            from: guest, transferID: req.transferID, generation: 1, uti: ClipboardContent.utf8TextUTI,
-            bytes: bytes, isInline: true)
-        try await waitUntil { service.clipboardContent.text == text }
+        // The responder answers gen=1's request with a Begin **only** (no End):
+        // that registers a live transfer in the host's receiver table, so the
+        // gen=2 supersede's `cancel(generation: 1)` has something to tear down,
+        // which resolves the host's parked pull continuation to nil. The single
+        // channel preserves order — the Begin is processed by the receiver before
+        // the gen=2 offer reaches handleOffer.
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        responder.register(
+            generation: 1, repIndex: 0, uti: "public.data", bytes: Data(count: 4096),
+            filename: "stale.bin", isInline: false, beginOnly: true)
+        responder.start()
 
-        // Content unchanged since the inbound update; a grab must still offer
-        // (otherwise round-tripped content silently stops syncing back).
+        // First offer (gen=1) — a single non-inline file rep.
+        try guest.send(
+            makeOffer(
+                generation: 1,
+                reps: [(uti: "public.data", byteCount: 4096, filename: "stale.bin", isInline: false)]))
+        try await waitUntil { service.clipboardContent.representations.first?.isPendingRemote == true }
+
+        // Start a copy that issues the gen=1 pull and parks (no End ever arrives).
+        let copyTask = Task { await service.materializeForCopy() }
+        // Wait until the host has actually sent the pull request — that's the
+        // in-flight window we want to interrupt.
+        try await responder.answered.wait(timeout: .seconds(5)) {
+            responder.requests.contains { $0.generation == 1 }
+        }
+
+        // A newer offer (gen=2) supersedes gen=1: handleOffer cancels the
+        // in-flight receiver transfer, which resolves the parked pull to nil.
+        try guest.send(
+            makeOffer(
+                generation: 2,
+                reps: [(uti: "public.png", byteCount: 64, filename: "new.png", isInline: false)]))
+
+        // The superseded copy resolves to nothing materialized for the abandoned
+        // offer — every returned rep is still a placeholder (or the result is
+        // empty), and no rep was committed.
+        let resolved = await copyTask.value
+        #expect(resolved.representations.allSatisfy { $0.isPendingRemote })
+
+        // The new offer's placeholder is what's published.
+        try await waitUntil {
+            service.clipboardContent.representations.first?.filename == "new.png"
+        }
+        let rep = try #require(service.clipboardContent.representations.first)
+        #expect(rep.isPendingRemote)
+        #expect(rep.uti == "public.png")
+    }
+
+    @Test("handleRelease drops the promise — a later Copy-to-Mac resolves nothing")
+    func releaseDropsPromise() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        service.start()
+        defer { service.stop() }
+
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        responder.register(
+            generation: 8, repIndex: 0, uti: ClipboardContent.utf8TextUTI, bytes: Data("x".utf8),
+            isInline: true)
+        responder.start()
+
+        try guest.send(makeTextOffer(generation: 8, text: "x"))
+        try await waitUntil { service.clipboardContent.representations.first?.isPendingRemote == true }
+
+        // The guest releases the offer before the host pulls anything.
+        var release = Frame()
+        release.protocolVersion = 1
+        release.clipboardRelease = Kernova_V1_ClipboardRelease.with { $0.generation = 8 }
+        try guest.send(release)
+
+        // Barrier: send a clipboard error frame *after* the release. Both are
+        // control frames on the single channel, processed in order, so once the
+        // error has surfaced as `lastTransferIssue`, `handleRelease(gen=8)` has
+        // already run and dropped the promise — making the copy below race-free.
+        try guest.sendErrorFrame(
+            code: "clipboard.barrier", message: "release processed",
+            inReplyTo: "clipboard.release")
+        try await waitUntil { service.lastTransferIssue != nil }
+
+        // After release, the promise is gone: materializeForCopy resolves nothing
+        // new and never requests the rep.
+        let resolved = await service.materializeForCopy()
+        #expect(resolved.representations.allSatisfy { $0.isPendingRemote })
+        #expect(responder.requests.isEmpty, "No rep should be requested after release")
+    }
+
+    @Test("grabIfChanged does NOT offer placeholder content; it offers once the user replaces it")
+    func grabSuppressedWhileContentIsPlaceholder() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        service.start()
+        defer { service.stop() }
+
         let recorder = FrameRecorder(channel: guest)
         defer { recorder.cancel() }
+
+        // A guest offer leaves clipboardContent holding placeholders.
+        try guest.send(
+            makeOffer(
+                generation: 1,
+                reps: [(uti: "public.png", byteCount: 1024, filename: "p.png", isInline: false)]))
+        try await waitUntil { service.clipboardContent.representations.first?.isPendingRemote == true }
+
+        // grabIfChanged must NOT echo placeholder content back to the guest.
+        let before = recorder.frames.count
+        service.grabIfChanged()
+        try await expectNoNewFrames(on: recorder, sinceCount: before, for: .milliseconds(150))
+
+        // The user replaces the buffer with their own bytes → a grab now offers.
+        service.clipboardContent = ClipboardContent(text: "my own text")
         service.grabIfChanged()
         try await waitForFrames(recorder) {
             recorder.first {
@@ -903,8 +1307,8 @@ struct VsockClipboardServiceTests {
         }
     }
 
-    @Test("A stale inbound offer is superseded — only the newest generation commits")
-    func staleInboundOfferSuperseded() async throws {
+    @Test("Concurrent preview + Copy-to-Mac pulls for the same rep send ONE request and both resolve")
+    func concurrentPullsForSameRepDedup() async throws {
         let (guest, host) = try makePair()
         guest.start()
         host.start()
@@ -914,38 +1318,138 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        // Two offers in quick succession; the service requests each.
-        try guest.send(makeTextOffer(generation: 1, text: "stale"))
-        let r1 = try await nextFrame(from: guest)
-        guard case .clipboardRequest = r1.payload else {
-            Issue.record("Expected request for gen=1, got \(String(describing: r1.payload))")
-            return
-        }
-        try guest.send(makeTextOffer(generation: 2, text: "fresh"))
-        let r2 = try await nextFrame(from: guest)
-        guard case .clipboardRequest = r2.payload else {
-            Issue.record("Expected request for gen=2, got \(String(describing: r2.payload))")
-            return
-        }
+        // A single small inline-text rep: eagerly previewable AND pulled by
+        // Copy-to-Mac, so both materialize paths target the same rep index.
+        let payload = Data("shared payload".utf8)
+        let textUTI = ClipboardContent.utf8TextUTI
+        let generation: UInt64 = 17
 
-        // Stream the *fresh* (gen=2) transfer to completion. The gen=1 transfer
-        // is never streamed — its collection was replaced when gen=2 arrived.
-        let fresh = Data("fresh".utf8)
-        try streamPayload(
-            from: guest, transferID: inboundTransferID(generation: 2, repIndex: 0), generation: 2,
-            uti: ClipboardContent.utf8TextUTI, bytes: fresh, isInline: true)
+        // Register the rep as Begin-ONLY: the responder opens the receiver
+        // transfer (Begin) but never streams chunks/End, so the host's first
+        // pull parks. That parked window is exactly when the second (Copy)
+        // caller must coalesce onto the in-flight pull instead of minting a
+        // second same-transfer_id request.
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        responder.register(
+            generation: generation, repIndex: 0, uti: textUTI, bytes: payload,
+            isInline: true, beginOnly: true)
+        responder.start()
 
-        try await waitUntil { service.clipboardContent.text == "fresh" }
-        #expect(service.clipboardContent.text == "fresh")
+        try guest.send(
+            makeOffer(
+                generation: generation,
+                reps: [(uti: textUTI, byteCount: payload.count, filename: "", isInline: true)]))
+        try await waitUntil { service.clipboardContent.representations.first?.isPendingRemote == true }
+
+        // First caller: preview pull for rep 0. It sends one request and parks
+        // (no End arrives). Run it detached so the test keeps driving.
+        let previewTask = Task { await service.materializeForPreview() }
+
+        // Wait until EXACTLY one request for rep 0 has been recorded — the
+        // in-flight window we want the Copy caller to coalesce into.
+        let rep0XID = inboundTransferID(generation: generation, repIndex: 0)
+        try await responder.answered.wait(timeout: .seconds(5)) {
+            responder.requests.contains { $0.transferID == rep0XID }
+        }
+        #expect(responder.requests.filter { $0.transferID == rep0XID }.count == 1)
+
+        // Second caller: Copy-to-Mac, while the preview pull is still parked.
+        let copyTask = Task { await service.materializeForCopy() }
+
+        // The dedup means NO second request for rep 0 is minted: Copy awaits the
+        // in-flight preview pull. Give the Copy task a beat to reach `materialize`
+        // and observe `inFlight[0]`, then assert the request count is unchanged.
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(
+            responder.requests.filter { $0.transferID == rep0XID }.count == 1,
+            "A concurrent Copy pull must coalesce onto the in-flight preview pull, not mint a second request")
+
+        // Now complete the parked transfer: the Begin was already sent by the
+        // responder, so stream the chunks + End directly for that transfer id.
+        // Both parked pulls resolve off the single resolved continuation — proving
+        // the coalesced caller didn't orphan a continuation or hang.
+        try sendChunkAndEnd(from: guest, transferID: rep0XID, bytes: payload)
+
+        // Both callers complete (no hang). `copyContent` is the Copy-to-Mac
+        // result captured *during* the concurrent pull.
+        await previewTask.value
+        let copyContent = await copyTask.value
+
+        // The rep was pulled exactly once across both callers: still only one
+        // request for rep 0 ever went out, and the single shared pull's bytes are
+        // committed to the cache (republished to the observable buffer).
+        #expect(responder.requests.filter { $0.transferID == rep0XID }.count == 1)
+        #expect(service.clipboardContent.text == "shared payload")
+        let rep = try #require(service.clipboardContent.representations.first)
+        #expect(!rep.isPendingRemote)
+        #expect(rep.inMemoryData == payload)
+
+        // Regression guard for #355: the Copy-to-Mac result captured *during* the
+        // concurrent pull must include the coalesced rep. `materializeForCopy`
+        // collects each pull's return value rather than rebuilding from the cache,
+        // so a caller that coalesces onto an in-flight pull (and resumes before the
+        // owning call commits the cache) no longer silently drops the rep.
+        #expect(copyContent.representations.count == 1)
+        #expect(copyContent.representations.first?.inMemoryData == payload)
+
+        // With the cache now settled (no in-flight pull), a fresh Copy-to-Mac
+        // resolves the rep from the cache without re-requesting it.
+        let settledCopy = await service.materializeForCopy()
+        #expect(responder.requests.filter { $0.transferID == rep0XID }.count == 1)
+        #expect(settledCopy.representations.count == 1)
+        #expect(settledCopy.representations.first?.inMemoryData == payload)
     }
 
-    // NOTE: Disk-full at the service level is not exercised here. The service
-    // constructs its own `ClipboardFileStaging(label:)` with no injectable
-    // free-space seam, so a full-disk condition can't be forced cleanly from a
-    // test without fabricating one. The disk-full path is covered at the engine
-    // level by `ClipboardStreamTests.diskFullRejected` (a file rep exceeding
-    // free space aborts with `disk.full`), which is what the service routes into
-    // `lastTransferIssue.kind == .diskFull`.
+    // MARK: - Receive-side sanitization
+
+    @Test("An offer carrying a transient-marker and a raw file-url rep filters them from the published placeholders")
+    func offerSanitizesTransientAndFileURLReps() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        service.start()
+        defer { service.stop() }
+
+        // An offer mixing a legit content rep with two identity-skip reps that a
+        // buggy/malicious peer might smuggle: a transient marker and a raw
+        // `public.file-url`. Only the legit rep should reach `clipboardContent`.
+        try guest.send(
+            makeOffer(
+                generation: 31,
+                reps: [
+                    (uti: "org.nspasteboard.TransientType", byteCount: 4, filename: "", isInline: true),
+                    (uti: "public.png", byteCount: 1024, filename: "shot.png", isInline: false),
+                    (uti: "public.file-url", byteCount: 32, filename: "smuggled", isInline: true),
+                ]))
+
+        // The published placeholders exclude both identity-skip reps — only the
+        // legit PNG file rep survives.
+        try await waitUntil {
+            service.clipboardContent.representations.map(\.uti) == ["public.png"]
+        }
+        let reps = service.clipboardContent.representations
+        #expect(reps.count == 1)
+        #expect(reps.first?.uti == "public.png")
+        #expect(reps.first?.filename == "shot.png")
+        #expect(reps.first?.isPendingRemote == true)
+        // Neither smuggled type appears, regardless of position.
+        #expect(!reps.contains { $0.uti == "org.nspasteboard.TransientType" })
+        #expect(!reps.contains { $0.uti == "public.file-url" })
+    }
+
+    // NOTE: Disk-full at the service level (`pull`'s free-space pre-flight) is
+    // not exercised here. The free-space provider is injectable on the service's
+    // staging (`freeSpaceProvider:`), but the host pull's pre-flight reaches it
+    // through `ClipboardFileStaging.hasCapacity`, covered at the engine level by
+    // `ClipboardStreamTests`. A service-level disk-full test would duplicate that
+    // coverage without exercising new host logic; the host's behavior on a failed
+    // pull (the rep stays a placeholder, `lastTransferIssue == .diskFull`) is the
+    // same as on any aborted pull, which `releaseDropsPromise` and
+    // `newerOfferSupersedesInFlightPull` already cover via the abort path.
 
     // MARK: - Peer errors
 

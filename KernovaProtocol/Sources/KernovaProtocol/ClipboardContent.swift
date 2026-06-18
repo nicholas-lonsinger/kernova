@@ -32,6 +32,15 @@ public struct ClipboardContent: Equatable, Sendable {
             /// `nil` before a transfer has produced one (e.g. offer-time on the
             /// sender side, where the file is named but not yet read).
             case file(url: URL, byteCount: Int, sha256: Data?)
+
+            /// A representation a peer has offered but whose bytes have not been
+            /// pulled — the lazy-receive placeholder. Carries only the advertised
+            /// `byteCount`; `inMemoryData` and `fileURL` are `nil` until a
+            /// `ClipboardRequest` streams the bytes and the rep is replaced by
+            /// `.inMemory`/`.file`. Used host-side to render a metadata-only
+            /// preview (type · size · filename) without pulling, and is never
+            /// handed to the sender.
+            case pendingRemote(byteCount: Int)
         }
 
         /// Uniform Type Identifier naming the format.
@@ -83,13 +92,28 @@ public struct ClipboardContent: Equatable, Sendable {
             )
         }
 
+        /// Creates a metadata-only placeholder for a peer-offered representation
+        /// whose bytes have not been pulled — the lazy-receive preview, replaced
+        /// by `.inMemory`/`.file` once a `ClipboardRequest` streams the bytes.
+        public init(pendingRemoteUTI uti: String, byteCount: Int, filename: String = "") {
+            self.init(uti: uti, source: .pendingRemote(byteCount: byteCount), filename: filename)
+        }
+
         /// Size of the representation's bytes, without loading a file-backed
         /// payload.
         public var byteCount: Int {
             switch source {
             case .inMemory(let data): return data.count
             case .file(_, let byteCount, _): return byteCount
+            case .pendingRemote(let byteCount): return byteCount
             }
+        }
+
+        /// `true` for a not-yet-pulled remote representation — no resident bytes
+        /// and no on-disk file, only advertised metadata.
+        public var isPendingRemote: Bool {
+            if case .pendingRemote = source { return true }
+            return false
         }
 
         /// The in-memory bytes, or `nil` for a file-backed representation
@@ -250,6 +274,15 @@ public struct ClipboardContent: Equatable, Sendable {
                     withUnsafeBytes(of: UInt64(byteCount).bigEndian) {
                         hasher.update(bufferPointer: $0)
                     }
+                }
+            case .pendingRemote(let byteCount):
+                // Distinct domain tag (3) so a metadata-only placeholder hashes
+                // deterministically AND is never digest-equal to its eventual
+                // materialized (.inMemory/.file) form. Echo suppression for these
+                // relies on change-count/identity guards, not digest equality.
+                hasher.update(data: Data([3]))
+                withUnsafeBytes(of: UInt64(byteCount).bigEndian) {
+                    hasher.update(bufferPointer: $0)
                 }
             }
         }
