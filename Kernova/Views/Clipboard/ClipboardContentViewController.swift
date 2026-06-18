@@ -98,6 +98,13 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     /// older staged files instead of accumulating.
     private var copyToMacGeneration: UInt64 = 1
 
+    /// `true` while a "Copy to Mac" is materializing/writing.
+    ///
+    /// The async pull republishes `clipboardContent`, which re-fires the
+    /// observation pass and would re-enable the Copy button mid-copy; this flag is
+    /// the real re-entrancy guard, not the button's enabled state.
+    private var isCopyingToMac = false
+
     /// First-file-wins gate shared by one promise receipt's per-file
     /// completions (the buffer models a single pasteboard item).
     @MainActor
@@ -280,7 +287,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         lastAppliedDigest = edited.digest
         service.clipboardContent = edited
         indicatorView.setText(ClipboardContentDescriber.indicatorText(for: edited))
-        commandBar.copyButton.isEnabled = !edited.isEmpty
+        commandBar.copyButton.isEnabled = !edited.isEmpty && !isCopyingToMac
         commandBar.clearButton.isEnabled = !edited.isEmpty
     }
 
@@ -315,7 +322,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         let hasContent = service != nil && !(service?.clipboardContent.isEmpty ?? true)
         textView.isEditable = service != nil
         commandBar.pasteButton.isEnabled = service != nil
-        commandBar.copyButton.isEnabled = hasContent
+        commandBar.copyButton.isEnabled = hasContent && !isCopyingToMac
         commandBar.clearButton.isEnabled = hasContent
 
         if let service {
@@ -461,6 +468,13 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     @objc private func copyToMac(_ sender: Any?) {
         guard let service = instance.clipboardService else { return }
         guard !service.clipboardContent.isEmpty else { return }
+        // A pull landing mid-copy republishes clipboardContent, firing the
+        // observation pass that re-enables the Copy button (updateUI) while this
+        // copy is still in flight. Guard re-entry explicitly so a second click
+        // can't launch a concurrent materialize + last-writer-wins pasteboard
+        // write; the disabled button is only cosmetic.
+        guard !isCopyingToMac else { return }
+        isCopyingToMac = true
 
         let staging = self.staging
         let generation = copyToMacGeneration
@@ -475,9 +489,12 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         commandBar.copyButton.isEnabled = false
         Task { @MainActor [weak self] in
             guard let self else { return }
+            defer {
+                self.isCopyingToMac = false
+                self.commandBar.copyButton.isEnabled = !service.clipboardContent.isEmpty
+            }
             let content = await service.materializeForCopy()
             guard !content.isEmpty else {
-                self.commandBar.copyButton.isEnabled = !service.clipboardContent.isEmpty
                 self.indicatorView.showTransientMessage(
                     "Couldn't fetch the clipboard content to copy", style: .error)
                 return
@@ -487,7 +504,6 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             let item = NSPasteboardItem()
             for pair in pairs { item.setData(pair.data, forType: pair.type) }
             self.finishCopyToMac(item: item, representationCount: content.representations.count)
-            self.commandBar.copyButton.isEnabled = !service.clipboardContent.isEmpty
         }
     }
 
@@ -535,8 +551,14 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 let sink = try? staging.makeSink(
                     generation: generation, filename: representation.filename)
             {
-                try? sink.write(data)
-                fileURL = try? sink.commit()
+                do {
+                    try sink.write(data)
+                    fileURL = try sink.commit()
+                } catch {
+                    // Don't offer a truncated file — abort the partial stage.
+                    sink.abort()
+                    fileURL = nil
+                }
             } else {
                 fileURL = nil
             }
@@ -747,7 +769,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             return instance.clipboardService != nil
         case #selector(copy(_:)):
             guard let service = instance.clipboardService else { return false }
-            return !service.clipboardContent.isEmpty
+            return !service.clipboardContent.isEmpty && !isCopyingToMac
         default:
             return true
         }

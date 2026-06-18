@@ -138,8 +138,13 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// every host write so we don't echo our own content.
     private var lastPasteboardChangeCount: Int
 
-    /// Digest of the most recent content we sent or wrote; suppresses re-offering
-    /// after a host-driven write and redundant offers on an unchanged clipboard.
+    /// Digest of the most recent content we offered the host; suppresses
+    /// redundant outbound offers on an unchanged clipboard.
+    ///
+    /// In the lazy model the immediate echo of a host-driven write is suppressed
+    /// by the `changeCount` captured in `handleOffer`, not by this digest (the
+    /// guest holds no resident bytes at offer time to digest); it is written only
+    /// by the outbound `sendOfferIfNeeded` and reset on reconnect.
     private var lastSeenDigest: Data?
 
     /// Materializes streamed file payloads to local temp files; swept on
@@ -325,6 +330,13 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                         receiver.handleAbort(abort)
                     }
                 default:
+                    // RATIONALE: clipboard control frames (offer/request/release/
+                    // error) are intentionally serialized on the main queue, so
+                    // while a synchronous `provideData` pull blocks main they queue
+                    // behind it. The blocking pull is bounded by `lazyPullTimeout`,
+                    // so a no-Begin host can't freeze the guest indefinitely; a
+                    // follow-up issue tracks bounding the pre-Begin case below that
+                    // 120 s ceiling.
                     DispatchQueue.main.async { [weak self] in
                         self?.handleControlFrame(frame, channel: channel)
                     }
@@ -704,14 +716,32 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             let sink = try? staging.makeSink(
                 generation: generation, filename: representation.filename)
         else { return nil }
-        try? sink.write(data)
-        guard let url = try? sink.commit() else { return nil }
-        return Data(url.absoluteString.utf8)
+        do {
+            try sink.write(data)
+            let url = try sink.commit()
+            return Data(url.absoluteString.utf8)
+        } catch {
+            // A truncated file must not reach the pasteboard — abort the stage.
+            sink.abort()
+            return nil
+        }
     }
 
     /// Drops the strong reference to a provider the pasteboard no longer needs.
     private func providerFinished(_ provider: LazyClipboardDataProvider) {
         liveProviders.remove(provider)
+    }
+
+    /// Whether an offered rep may be promised and pulled — the receive-side
+    /// sanitization gate.
+    ///
+    /// An identity-skip type (transient marker, raw `public.file-url` smuggle) or
+    /// an empty rep is never surfaced. `promisedTypes` and `repIndex(for:)` MUST
+    /// share this gate: if `repIndex` searched the unfiltered reps, a `.fileURL`
+    /// (or inline) request could resolve to a rep `promisedTypes` dropped — the
+    /// very smuggle this sanitization exists to block.
+    private static func isPromisable(_ info: Kernova_V1_ClipboardRepresentationInfo) -> Bool {
+        info.byteCount != 0 && !ClipboardSnapshotPolicy.shouldSkipBeforeReading(uti: info.uti)
     }
 
     /// The pasteboard types to promise for an offer, applying the same
@@ -722,13 +752,10 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     ) -> [NSPasteboard.PasteboardType] {
         var types: [NSPasteboard.PasteboardType] = []
         var seen: Set<String> = []
-        for info in reps {
-            // Receive-side sanitization: never promise an identity-skip type (a
-            // transient marker, a raw public.file-url smuggle) or an empty rep —
-            // the lazy counterpart of ClipboardSnapshotPolicy.sanitizedForApply.
-            if info.byteCount == 0 || ClipboardSnapshotPolicy.shouldSkipBeforeReading(uti: info.uti) {
-                continue
-            }
+        // Receive-side sanitization (the lazy counterpart of
+        // ClipboardSnapshotPolicy.sanitizedForApply): never promise an
+        // identity-skip type or an empty rep.
+        for info in reps where isPromisable(info) {
             if info.isInline, seen.insert(info.uti).inserted {
                 types.append(NSPasteboard.PasteboardType(info.uti))
             }
@@ -747,10 +774,16 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     private static func repIndex(
         for type: NSPasteboard.PasteboardType, in reps: [Kernova_V1_ClipboardRepresentationInfo]
     ) -> Int? {
+        // Resolve only to a rep that was actually promised (`isPromisable`), so a
+        // request can't reach a rep `promisedTypes` sanitized away.
+        // RATIONALE: `.fileURL` collapses to the FIRST promisable file rep —
+        // NSPasteboard's single-item promise model carries only one
+        // `public.file-url`, and current intake (host and guest) never offers more
+        // than one file rep per item, so this is lossless today.
         if type == .fileURL {
-            return reps.firstIndex { !$0.filename.isEmpty }
+            return reps.firstIndex { isPromisable($0) && !$0.filename.isEmpty }
         }
-        return reps.firstIndex { $0.isInline && $0.uti == type.rawValue }
+        return reps.firstIndex { isPromisable($0) && $0.isInline && $0.uti == type.rawValue }
     }
 
     /// Whether a representation's bytes should be written inline (vs. carried

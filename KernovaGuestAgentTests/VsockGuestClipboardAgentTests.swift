@@ -771,6 +771,57 @@ struct VsockGuestClipboardAgentTests {
 
     // MARK: - Receive-side sanitization
 
+    @Test("a `.fileURL` pull never resolves to a sanitized-away (smuggled) rep")
+    func inboundFileURLPullSkipsSmuggledRep() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        let png = try makeTestPNG()
+        let pngType = NSPasteboard.PasteboardType(UTType.png.identifier)
+        // A hostile/buggy offer: a raw `public.file-url` smuggle rep (filename-
+        // bearing, so it would be the FIRST file rep) ahead of the legit PNG file
+        // rep. `promisedTypes` drops the smuggle and promises `.fileURL` for the
+        // PNG; the `.fileURL` pull MUST resolve to the PNG (index 1), not the
+        // smuggle (index 0) — `repIndex(for:)` shares the same sanitization gate.
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 7,
+                reps: [
+                    RepInfo(
+                        uti: "public.file-url", byteCount: 32, filename: "smuggled", isInline: true),
+                    RepInfo(
+                        uti: UTType.png.identifier, byteCount: UInt64(png.count),
+                        filename: "shot.png", isInline: true),
+                ]))
+        // Exactly the PNG's image UTI + `.fileURL` are promised (the smuggle rep
+        // adds nothing); `.fileURL`'s rawValue IS "public.file-url", which is the
+        // legit file-url promise for the PNG — distinct from the smuggled content
+        // rep that shares that UTI. The discriminating check is the request's UTI.
+        try await waitUntil { Set(pasteboard.promisedTypesForTesting) == [pngType, .fileURL] }
+
+        let pull = lazyPull(pasteboard, forType: .fileURL)
+        try await driveInboundStream(
+            generation: 7, uti: UTType.png.identifier, filename: "shot.png", payload: png,
+            isInline: true, on: hostChannel
+        ) { req in
+            // The request must target the legit PNG rep, never the smuggled file-url
+            // rep (whose UTI would be "public.file-url" if repIndex skipped the gate).
+            #expect(req.uti == UTType.png.identifier)
+        }
+        let urlData = try await pull.value
+        let staged = try #require(
+            urlData.flatMap { String(data: $0, encoding: .utf8) }.flatMap(URL.init(string:)))
+        #expect(staged.lastPathComponent == "shot.png")
+        #expect(try Data(contentsOf: staged) == png)
+    }
+
     @Test("an inbound offer never promises a transient-marker or raw file-url rep, only legit content")
     func inboundOfferSanitizesPromisedTypes() async throws {
         let pasteboard = FakePasteboard()

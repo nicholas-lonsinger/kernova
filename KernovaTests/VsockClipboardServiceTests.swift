@@ -1443,6 +1443,158 @@ struct VsockClipboardServiceTests {
         #expect(service.clipboardContent.representations.first?.isPendingRemote == true)
     }
 
+    @Test("A local edit after a guest offer wins — Copy-to-Mac copies the edit, not the stale promise")
+    func localEditSupersedesInboundPromise() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        service.start()
+        defer { service.stop() }
+
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        responder.register(
+            generation: 3, repIndex: 0, uti: ClipboardContent.utf8TextUTI,
+            bytes: Data("from guest".utf8), isInline: true)
+        responder.start()
+
+        try guest.send(makeTextOffer(generation: 3, text: "from guest"))
+        try await waitUntil { service.clipboardContent.representations.first?.isPendingRemote == true }
+        await service.materializeForPreview()
+        #expect(service.clipboardContent.text == "from guest")
+
+        // The user edits the guest-offered text in place (the window writes the
+        // edit into the buffer). The inbound promise is now stale.
+        service.clipboardContent = ClipboardContent(text: "my edit")
+
+        // Copy-to-Mac must copy the edit, never resurrect the guest's offered rep.
+        let resolved = await service.materializeForCopy()
+        #expect(resolved.text == "my edit")
+        #expect(resolved.representations.allSatisfy { !$0.isPendingRemote })
+    }
+
+    @Test("A failed preview pull is retried on the next call — the generation latch isn't set on failure")
+    func previewRetriesAfterFailedPull() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        // Tiny backstop so the first (unanswered) pull fails fast.
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", lazyPullTimeout: .milliseconds(150))
+        service.start()
+        defer { service.stop() }
+
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        // No reply registered yet → the first pull times out.
+        responder.start()
+
+        try guest.send(makeTextOffer(generation: 2, text: "retry me"))
+        try await waitUntil { service.clipboardContent.representations.first?.isPendingRemote == true }
+
+        // First attempt: the pull times out, the rep stays a placeholder.
+        await service.materializeForPreview()
+        #expect(service.clipboardContent.representations.first?.isPendingRemote == true)
+
+        // The guest can now answer; a second attempt must retry (not be blocked by
+        // a generation latch) and upgrade the placeholder.
+        responder.register(
+            generation: 2, repIndex: 0, uti: ClipboardContent.utf8TextUTI,
+            bytes: Data("retry me".utf8), isInline: true)
+        await service.materializeForPreview()
+        #expect(service.clipboardContent.text == "retry me")
+    }
+
+    @Test("An all-identity-skip offer publishes nothing and holds no promise")
+    func allSkipOfferHoldsNoPromise() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        service.start()
+        defer { service.stop() }
+
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        responder.start()
+
+        // Every rep is an identity-skip (transient marker / raw file-url).
+        try guest.send(
+            makeOffer(
+                generation: 4,
+                reps: [
+                    (uti: "org.nspasteboard.TransientType", byteCount: 4, filename: "", isInline: true),
+                    (uti: "public.file-url", byteCount: 8, filename: "x", isInline: true),
+                ]))
+        // Barrier: an error frame after the offer; once it surfaces, handleOffer ran.
+        try guest.sendErrorFrame(
+            code: "clipboard.barrier", message: "offer processed", inReplyTo: "clipboard.offer")
+        try await waitUntil { service.lastTransferIssue != nil }
+
+        #expect(service.clipboardContent.isEmpty)
+        // No promise is held: Copy-to-Mac resolves nothing and sends no request
+        // (mirrors the guest agent's all-skip handling, not a dangling promise).
+        let resolved = await service.materializeForCopy()
+        #expect(resolved.isEmpty)
+        #expect(responder.requests.isEmpty)
+    }
+
+    @Test("A disk-full abort on an in-flight pull surfaces a .diskFull transfer issue")
+    func pullDiskFullAbortSurfacesIssue() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        service.start()
+        defer { service.stop() }
+
+        // beginOnly opens a transfer the host can then abort with disk.full —
+        // exercising the awaiter's onAbort issue-surfacing (the same handler the
+        // host's own mid-stream disk-full detection drives via deliverAbort).
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        responder.register(
+            generation: 5, repIndex: 0, uti: "public.data", bytes: Data(count: 4096),
+            filename: "big.bin", isInline: false, beginOnly: true)
+        responder.start()
+
+        try guest.send(
+            makeOffer(
+                generation: 5,
+                reps: [(uti: "public.data", byteCount: 4096, filename: "big.bin", isInline: false)]))
+        try await waitUntil { service.clipboardContent.representations.first?.isPendingRemote == true }
+
+        let copyTask = Task { await service.materializeForCopy() }
+        let xid = inboundTransferID(generation: 5, repIndex: 0)
+        try await responder.answered.wait(timeout: .seconds(5)) {
+            responder.requests.contains { $0.transferID == xid }
+        }
+
+        var abort = Frame()
+        abort.protocolVersion = 1
+        abort.clipboardStreamAbort = Kernova_V1_ClipboardStreamAbort.with {
+            $0.transferID = xid
+            $0.code = "disk.full"
+            $0.message = "volume filled"
+        }
+        try guest.send(abort)
+
+        _ = await copyTask.value
+        try await waitUntil {
+            if case .diskFull = service.lastTransferIssue?.kind { return true }
+            return false
+        }
+    }
+
     // MARK: - Receive-side sanitization
 
     @Test("An offer carrying a transient-marker and a raw file-url rep filters them from the published placeholders")

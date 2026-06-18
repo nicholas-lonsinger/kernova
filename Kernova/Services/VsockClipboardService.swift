@@ -89,6 +89,13 @@ final class VsockClipboardService: ClipboardServicing {
     /// redundant offers.
     private var lastGrabbedDigest: Data?
 
+    /// Digest of the content `republish` last wrote from the inbound promise.
+    ///
+    /// When `clipboardContent.digest` no longer matches, the user replaced the
+    /// offered content with their own edit, so the promise is stale and the lazy
+    /// pulls must not resurrect it (Copy-to-Mac would otherwise discard the edit).
+    private var lastInboundPublishedDigest: Data?
+
     // `nonisolated` so the off-main `consume` loop can log; `Logger` is Sendable.
     nonisolated private static let logger = Logger(
         subsystem: "app.kernova", category: "VsockClipboardService")
@@ -187,8 +194,7 @@ final class VsockClipboardService: ClipboardServicing {
         isConnected = false
         pendingOutbound = nil
         currentOutboundGeneration.set(0)
-        inboundPromise = nil
-        previewMaterializationStarted = 0
+        dropInboundPromise()
         staging.sweep()
         Self.logger.notice("Vsock clipboard service stopped for '\(self.label, privacy: .public)'")
     }
@@ -198,6 +204,8 @@ final class VsockClipboardService: ClipboardServicing {
     func clearBuffer() {
         clipboardContent = .empty
         lastGrabbedDigest = nil
+        // The user emptied the buffer — any guest offer it was showing is stale.
+        dropInboundPromise()
     }
 
     func grabIfChanged() {
@@ -367,7 +375,7 @@ final class VsockClipboardService: ClipboardServicing {
         if let previous = inboundPromise { receiver?.cancel(generation: previous.generation) }
 
         guard !offer.repInfo.isEmpty else {
-            inboundPromise = nil
+            dropInboundPromise()
             return
         }
         // Publish metadata-only placeholders immediately so the window shows the
@@ -375,9 +383,16 @@ final class VsockClipboardService: ClipboardServicing {
         // rest on Copy-to-Mac. The reps keep the guest's offer order so a
         // transfer_id's rep index stays valid against the guest's offer.
         let promise = InboundPromise(generation: offer.generation, reps: offer.repInfo)
+        republish(promise)
+        // Every offered rep was identity-skipped (transient marker / raw file-url
+        // / empty) — nothing usable to promise; mirror the guest agent's all-skip
+        // handling rather than hold a promise that resolves to nothing.
+        guard !clipboardContent.isEmpty else {
+            dropInboundPromise()
+            return
+        }
         inboundPromise = promise
         previewMaterializationStarted = 0
-        republish(promise)
         lastTransferIssue = nil
         Self.logger.notice(
             "Received guest clipboard offer for '\(self.label, privacy: .public)' (gen=\(offer.generation, privacy: .public), \(offer.repInfo.count, privacy: .public) reps) — metadata only"
@@ -405,6 +420,23 @@ final class VsockClipboardService: ClipboardServicing {
         let content = ClipboardContent(representations: reps)
         clipboardContent = content
         lastGrabbedDigest = content.digest
+        lastInboundPublishedDigest = content.digest
+    }
+
+    /// Drops the current inbound promise and its per-generation lazy-pull state.
+    private func dropInboundPromise() {
+        inboundPromise = nil
+        previewMaterializationStarted = 0
+        lastInboundPublishedDigest = nil
+    }
+
+    /// Drops any `.pendingRemote` placeholder reps — content that can't be
+    /// written to the pasteboard (no bytes) — returning `content` unchanged when
+    /// it has none.
+    private static func withoutPlaceholders(_ content: ClipboardContent) -> ClipboardContent {
+        let reps = content.representations.filter { !$0.isPendingRemote }
+        return reps.count == content.representations.count
+            ? content : ClipboardContent(representations: reps)
     }
 
     /// A representation excluded from the receive side by identity alone: an empty
@@ -423,14 +455,23 @@ final class VsockClipboardService: ClipboardServicing {
     /// Idempotent per generation; the window calls it when it displays a guest
     /// offer. Files and over-limit reps stay placeholders until Copy-to-Mac.
     func materializeForPreview() async {
-        guard let promise = inboundPromise else { return }
+        // Bail if there's no promise, or the user replaced the offered content
+        // with their own edit (the promise is then stale).
+        guard let promise = inboundPromise, clipboardContent.digest == lastInboundPublishedDigest
+        else { return }
         guard previewMaterializationStarted != promise.generation else { return }
-        previewMaterializationStarted = promise.generation
+        var allSucceeded = true
         for (index, info) in promise.reps.enumerated() {
             guard inboundPromise === promise else { return }  // superseded
             guard Self.isEagerPreviewable(info), !Self.shouldSkip(info) else { continue }
-            _ = await materialize(index: index, info: info, promise: promise)
+            if await materialize(index: index, info: info, promise: promise) == nil {
+                allSucceeded = false
+            }
         }
+        // Latch only on full success so a transient pull failure (timeout/abort)
+        // is retried on the next display trigger, instead of permanently leaving a
+        // rich rep as a chip until a new offer arrives.
+        if allSucceeded { previewMaterializationStarted = promise.generation }
     }
 
     /// Pulls every not-yet-materialized representation and returns the fully
@@ -439,14 +480,25 @@ final class VsockClipboardService: ClipboardServicing {
     /// A rep that can't be pulled (disk full, abort, supersession) is dropped from
     /// the result.
     func materializeForCopy() async -> ClipboardContent {
-        guard let promise = inboundPromise else { return clipboardContent }
+        // No active promise, or the user replaced the offered content with their
+        // own edit: copy what's actually shown, never a stale placeholder.
+        guard let promise = inboundPromise, clipboardContent.digest == lastInboundPublishedDigest
+        else {
+            dropInboundPromise()
+            return Self.withoutPlaceholders(clipboardContent)
+        }
         // Collect each pull's RETURN value rather than re-reading
         // `promise.materialized`: a caller that coalesces onto an in-flight pull
         // gets the rep back before the owning call writes the cache, so rebuilding
         // from the cache here could silently drop a just-pulled rep.
         var resolved: [ClipboardContent.Representation] = []
         for (index, info) in promise.reps.enumerated() {
-            guard inboundPromise === promise else { return clipboardContent }
+            // A supersession mid-loop: return what THIS generation resolved, not
+            // the newer generation's byte-less placeholders (which would yield zero
+            // pasteboard pairs and a misleading "couldn't prepare" error).
+            guard inboundPromise === promise else {
+                return ClipboardContent(representations: resolved)
+            }
             guard !Self.shouldSkip(info) else { continue }
             if let rep = await materialize(index: index, info: info, promise: promise) {
                 resolved.append(rep)
@@ -530,7 +582,16 @@ final class VsockClipboardService: ClipboardServicing {
             receiver.awaitTransfer(
                 transferID,
                 onComplete: { pull.resume($0) },
-                onAbort: { _ in pull.resume(nil) })
+                onAbort: { info in
+                    // Surface a mid-stream disk-full: the pre-flight above covers
+                    // the up-front case; this covers a volume that fills *during*
+                    // the transfer (parity with the retired eager onTransferAbort).
+                    // The closure fires off the main actor, so hop back to record.
+                    if info.code == "disk.full" {
+                        Task { @MainActor [weak self] in self?.recordPullDiskFull(info) }
+                    }
+                    pull.resume(nil)
+                })
             pull.armTimeout(
                 Task {
                     // A cancelled sleep (the pull resolved first) must NOT resume.
@@ -564,6 +625,14 @@ final class VsockClipboardService: ClipboardServicing {
         return rep
     }
 
+    /// Records a disk-full transfer issue for a pull that aborted mid-stream
+    /// because the staging volume filled (the up-front case is set in `pull`).
+    private func recordPullDiskFull(_ info: ClipboardStreamAbortInfo) {
+        lastTransferIssue = ClipboardTransferIssue(
+            kind: .diskFull(needed: info.neededBytes ?? 0, available: info.availableBytes),
+            date: Date())
+    }
+
     /// Whether the window renders this rep richly, so it's worth pulling for the
     /// preview: text within the editor limit, inline RTF, or an image up to the
     /// preview limit.
@@ -591,8 +660,7 @@ final class VsockClipboardService: ClipboardServicing {
         // the promise; the placeholder content stays in the window, and a later
         // Copy-to-Mac resolves nothing.
         receiver?.cancel(generation: release.generation)
-        inboundPromise = nil
-        previewMaterializationStarted = 0
+        dropInboundPromise()
         Self.logger.debug(
             "Guest released clipboard offer (gen=\(release.generation, privacy: .public)) for '\(self.label, privacy: .public)'"
         )
