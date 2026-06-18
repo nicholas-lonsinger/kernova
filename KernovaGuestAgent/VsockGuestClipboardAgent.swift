@@ -333,10 +333,12 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                     // RATIONALE: clipboard control frames (offer/request/release/
                     // error) are intentionally serialized on the main queue, so
                     // while a synchronous `provideData` pull blocks main they queue
-                    // behind it. The blocking pull is bounded by `lazyPullTimeout`,
-                    // so a no-Begin host can't freeze the guest indefinitely; a
-                    // follow-up issue tracks bounding the pre-Begin case below that
-                    // 120 s ceiling.
+                    // behind it. The host now Aborts every request it drops without
+                    // starting a transfer (#357), and that Abort routes off-main
+                    // straight to the pull's awaiter — waking it immediately rather
+                    // than letting it park to `lazyPullTimeout`. The 120 s timeout
+                    // is now a should-never-fire backstop for a host that sends
+                    // neither Begin nor Abort.
                     DispatchQueue.main.async { [weak self] in
                         self?.handleControlFrame(frame, channel: channel)
                     }
@@ -506,6 +508,12 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             Self.logger.debug(
                 "Stale clipboard request gen=\(request.generation, privacy: .public) (pending=\(self.pendingOutbound?.generation ?? 0, privacy: .public))"
             )
+            // Abort every dropped request so the host's parked pull (Copy-to-Mac /
+            // preview) wakes immediately off-main instead of stalling to its
+            // lazyPullTimeout backstop. [#357]
+            sender?.rejectRequest(
+                transferID: request.transferID, code: "request.stale",
+                message: "Request for superseded generation \(request.generation)")
             return
         }
         let repIndex = Int(request.transferID & 0xFFFF)
@@ -513,6 +521,9 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             Self.logger.warning(
                 "Clipboard request transfer_id \(request.transferID, privacy: .public) out of range"
             )
+            sender?.rejectRequest(
+                transferID: request.transferID, code: "request.range",
+                message: "Representation index \(repIndex) out of range")
             return
         }
         let representation = pending.content.representations[repIndex]
@@ -520,6 +531,9 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             Self.logger.warning(
                 "Clipboard request uti '\(request.uti, privacy: .public)' doesn't match offered rep \(repIndex, privacy: .public)"
             )
+            sender?.rejectRequest(
+                transferID: request.transferID, code: "request.uti",
+                message: "Requested UTI '\(request.uti)' does not match offered representation")
             return
         }
         let generation = currentOutboundGeneration

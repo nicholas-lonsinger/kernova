@@ -412,6 +412,67 @@ struct VsockGuestClipboardAgentTests {
         #expect(offer.repInfo.allSatisfy { $0.isInline })
     }
 
+    @Test("outbound: a request the agent can't answer is rejected with an Abort (symmetric to the host)")
+    func outboundRejectsDroppedRequestsWithAbort() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        pasteboard.setString("guest payload", forType: .string)
+        await MainActor.run { agent.checkClipboardChange() }
+
+        let offerFrame = try await nextFrame(from: hostChannel)
+        guard case .clipboardOffer(let offer) = offerFrame.payload else {
+            throw TestFailure("Expected ClipboardOffer, got \(String(describing: offerFrame.payload))")
+        }
+        let info = try #require(offer.repInfo.first)
+        let gen = offer.generation
+
+        // Each dropped-request reason must produce a ClipboardStreamAbort so the
+        // host's parked pull wakes immediately off-main rather than parking to its
+        // 120 s backstop. The control frames are processed in order on the agent's
+        // main queue, so each abort arrives before the next request is sent. [#357]
+
+        // 1. Stale generation.
+        let staleXID = ((gen &+ 1_000) << 16) | 0
+        try hostChannel.send(
+            makeRequestFrame(generation: gen &+ 1_000, transferID: staleXID, uti: info.uti))
+        let staleAbort = try await nextFrame(from: hostChannel)
+        guard case .clipboardStreamAbort(let a1) = staleAbort.payload else {
+            throw TestFailure("Expected Abort for stale request, got \(String(describing: staleAbort.payload))")
+        }
+        #expect(a1.transferID == staleXID)
+        #expect(a1.code == "request.stale")
+
+        // 2. Out-of-range rep index (low 16 bits select a rep the offer lacks).
+        let rangeXID = (gen << 16) | 5
+        try hostChannel.send(makeRequestFrame(generation: gen, transferID: rangeXID, uti: info.uti))
+        let rangeAbort = try await nextFrame(from: hostChannel)
+        guard case .clipboardStreamAbort(let a2) = rangeAbort.payload else {
+            throw TestFailure("Expected Abort for out-of-range request, got \(String(describing: rangeAbort.payload))")
+        }
+        #expect(a2.transferID == rangeXID)
+        #expect(a2.code == "request.range")
+
+        // 3. UTI mismatch.
+        let utiXID = (gen << 16) | 0
+        try hostChannel.send(
+            makeRequestFrame(generation: gen, transferID: utiXID, uti: "public.bogus"))
+        let utiAbort = try await nextFrame(from: hostChannel)
+        guard case .clipboardStreamAbort(let a3) = utiAbort.payload else {
+            throw TestFailure("Expected Abort for uti-mismatch request, got \(String(describing: utiAbort.payload))")
+        }
+        #expect(a3.transferID == utiXID)
+        #expect(a3.code == "request.uti")
+    }
+
     // MARK: - Echo suppression
 
     @Test("a registered host promise is not re-offered on the next poll (echo suppression)")
@@ -726,6 +787,37 @@ struct VsockGuestClipboardAgentTests {
                 totalBytes: payload.count, filename: "", isInline: true))
         try hostChannel.send(
             makeAbortFrame(transferID: req.transferID, code: "host.abort", message: "no"))
+        let provided = try await pull.value
+        #expect(provided == nil)
+    }
+
+    @Test("a host reject (Abort with no preceding Begin) wakes the pulling provider promptly")
+    func inboundPullPreBeginAbortReturnsNil() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        try hostChannel.send(makeTextOfferFrame(generation: 14, text: "dropped"))
+        try await waitUntil { pasteboard.promisedTypesForTesting.contains(.string) }
+
+        // OS pastes the text type; the host drops the request WITHOUT ever sending
+        // a Begin — exactly what `rejectRequest` does for a stale/out-of-range/UTI-
+        // mismatch request. The receiver's handleAbort must wake the awaiter off-
+        // main so the blocked provider returns nil immediately rather than parking
+        // to the 120 s lazyPullTimeout (the supersession-mid-paste freeze). If the
+        // wakeup were broken this test would hang, not just fail an assertion. [#357]
+        let pull = lazyPull(pasteboard, forType: .string)
+        let req = try await awaitRequest(on: hostChannel)
+        #expect(req.generation == 14)
+        try hostChannel.send(
+            makeAbortFrame(transferID: req.transferID, code: "request.stale", message: "superseded"))
         let provided = try await pull.value
         #expect(provided == nil)
     }
