@@ -448,4 +448,50 @@ struct ClipboardStreamTests {
         #expect(harness.collector.abortInfos.contains { $0.code == "size.overrun" })
         #expect(harness.collector.representation(1) == nil)
     }
+
+    // MARK: - Rejecting a request without starting a transfer (#357)
+
+    @Test("rejectRequest emits a well-formed Abort the receiver delivers with no Begin")
+    func rejectRequestEmitsAbort() async throws {
+        let harness = try roomyHarness()
+        defer { harness.tearDown() }
+
+        // No Begin/transfer is ever started: rejectRequest models a side dropping
+        // a request it won't answer (stale generation / out-of-range / UTI
+        // mismatch) and aborting so the requester's parked pull wakes immediately
+        // instead of stalling to its lazyPullTimeout. With no awaiter registered,
+        // the abort surfaces on the channel-wide onAbort (the collector).
+        let transferID = ClipboardTransferID.make(generation: 4, repIndex: 1, hostMinted: false)
+        harness.sender.rejectRequest(
+            transferID: transferID, code: "request.stale", message: "superseded")
+
+        try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
+        let info = try #require(harness.collector.abortInfos.first)
+        #expect(info.transferID == transferID)
+        #expect(info.code == "request.stale")
+        #expect(info.message == "superseded")
+        #expect(harness.collector.completedCount == 0)
+    }
+
+    @Test("rejectRequest wakes a registered awaiter (the parked pull) for that id")
+    func rejectRequestWakesAwaiter() async throws {
+        let harness = try roomyHarness()
+        defer { harness.tearDown() }
+
+        // The awaiter stands in for the per-transfer handler a blocked lazy pull
+        // registers; it must fire even though no Begin ever arrives for the id.
+        let transferID = ClipboardTransferID.make(generation: 8, repIndex: 0, hostMinted: false)
+        let collector = harness.collector
+        harness.receiver.awaitTransfer(
+            transferID,
+            onComplete: { collector.complete(transferID, $0) },
+            onAbort: { collector.abort($0) })
+
+        harness.sender.rejectRequest(
+            transferID: transferID, code: "request.uti", message: "uti mismatch")
+
+        try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
+        #expect(harness.collector.abortInfos.first?.code == "request.uti")
+        #expect(harness.collector.completedCount == 0)
+    }
 }

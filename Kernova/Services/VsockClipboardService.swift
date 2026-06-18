@@ -337,6 +337,12 @@ final class VsockClipboardService: ClipboardServicing {
             Self.logger.debug(
                 "Stale clipboard request gen=\(request.generation, privacy: .public) (pending=\(self.pendingOutbound?.generation ?? 0, privacy: .public))"
             )
+            // Abort every dropped request so the guest's parked pull wakes
+            // immediately off-main instead of stalling to its lazyPullTimeout
+            // backstop (the supersession-mid-paste freeze). [#357]
+            sender?.rejectRequest(
+                transferID: request.transferID, code: "request.stale",
+                message: "Request for superseded generation \(request.generation)")
             return
         }
         let repIndex = Int(request.transferID & 0xFFFF)
@@ -344,6 +350,9 @@ final class VsockClipboardService: ClipboardServicing {
             Self.logger.warning(
                 "Clipboard request transfer_id \(request.transferID, privacy: .public) out of range for gen=\(request.generation, privacy: .public)"
             )
+            sender?.rejectRequest(
+                transferID: request.transferID, code: "request.range",
+                message: "Representation index \(repIndex) out of range")
             return
         }
         let representation = pending.content.representations[repIndex]
@@ -351,6 +360,9 @@ final class VsockClipboardService: ClipboardServicing {
             Self.logger.warning(
                 "Clipboard request uti '\(request.uti, privacy: .public)' doesn't match offered rep \(repIndex, privacy: .public)"
             )
+            sender?.rejectRequest(
+                transferID: request.transferID, code: "request.uti",
+                message: "Requested UTI '\(request.uti)' does not match offered representation")
             return
         }
 

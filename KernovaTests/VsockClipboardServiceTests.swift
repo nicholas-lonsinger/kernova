@@ -566,8 +566,8 @@ struct VsockClipboardServiceTests {
 
     // MARK: - Outbound request edge cases
 
-    @Test("Stale ClipboardRequest (wrong generation) is ignored — no stream begins")
-    func ignoresStaleRequest() async throws {
+    @Test("Stale ClipboardRequest (wrong generation) is rejected with an Abort — no stream begins")
+    func staleRequestRejectedWithAbort() async throws {
         let (guest, host) = try makePair()
         guest.start()
         host.start()
@@ -590,34 +590,54 @@ struct VsockClipboardServiceTests {
         let recorder = FrameRecorder(channel: guest)
         defer { recorder.cancel() }
 
-        // Request a generation that doesn't match the pending offer — must be dropped.
+        // Request a generation that doesn't match the pending offer. Instead of
+        // dropping it silently (the pre-#357 behavior, which parked the guest's
+        // pull to its 120 s backstop), the service Aborts it so the requester
+        // wakes immediately.
+        let staleXID = transferID(generation: offer.generation &+ 1_000, repIndex: 0)
         var staleRequest = makeRequest(generation: offer.generation &+ 1_000, repIndex: 0, uti: info.uti)
         // Keep the transferID consistent with the stale generation so nothing matches.
-        staleRequest.clipboardRequest.transferID =
-            transferID(generation: offer.generation &+ 1_000, repIndex: 0)
+        staleRequest.clipboardRequest.transferID = staleXID
         try guest.send(staleRequest)
 
-        // Then a valid request: the Begin that arrives must be for the valid xid,
-        // proving the stale request produced no stream.
+        try await waitForFrames(recorder) {
+            recorder.first {
+                if case .clipboardStreamAbort(let abort) = $0.payload {
+                    return abort.transferID == staleXID
+                }
+                return false
+            } != nil
+        }
+        let abortFrame = try #require(
+            recorder.first {
+                if case .clipboardStreamAbort(let abort) = $0.payload {
+                    return abort.transferID == staleXID
+                }
+                return false
+            })
+        guard case .clipboardStreamAbort(let abort) = abortFrame.payload else {
+            Issue.record("Expected clipboardStreamAbort")
+            return
+        }
+        #expect(abort.code == "request.stale")
+        // No Begin is ever sent for the stale request.
+        #expect(
+            recorder.first {
+                if case .clipboardStreamBegin = $0.payload { return true }; return false
+            } == nil)
+
+        // A valid request still streams — the channel wasn't poisoned.
         try guest.send(makeRequest(generation: offer.generation, repIndex: 0, uti: info.uti))
         try await waitForFrames(recorder) {
             recorder.first {
-                if case .clipboardStreamBegin = $0.payload { return true }; return false
+                if case .clipboardStreamBegin(let begin) = $0.payload { return begin.transferID == xid }
+                return false
             } != nil
         }
-        let beginFrame = try #require(
-            recorder.first {
-                if case .clipboardStreamBegin = $0.payload { return true }; return false
-            })
-        guard case .clipboardStreamBegin(let begin) = beginFrame.payload else {
-            Issue.record("Expected clipboardStreamBegin")
-            return
-        }
-        #expect(begin.transferID == xid)
     }
 
-    @Test("A request whose uti doesn't match the offered rep is ignored")
-    func mismatchedUTIRequestIgnored() async throws {
+    @Test("A request whose rep index is out of range is rejected with an Abort")
+    func outOfRangeRequestRejectedWithAbort() async throws {
         let (guest, host) = try makePair()
         guest.start()
         host.start()
@@ -639,15 +659,84 @@ struct VsockClipboardServiceTests {
         let recorder = FrameRecorder(channel: guest)
         defer { recorder.cancel() }
 
-        // Wrong uti for rep 0 → dropped, no Begin.
+        // rep index 5 is past the single offered rep — the range guard fires
+        // before the UTI check, so the abort carries `request.range`.
+        let outOfRangeXID = transferID(generation: offer.generation, repIndex: 5)
+        try guest.send(makeRequest(generation: offer.generation, repIndex: 5, uti: info.uti))
+
+        try await waitForFrames(recorder) {
+            recorder.first {
+                if case .clipboardStreamAbort(let abort) = $0.payload {
+                    return abort.transferID == outOfRangeXID
+                }
+                return false
+            } != nil
+        }
+        let abortFrame = try #require(
+            recorder.first {
+                if case .clipboardStreamAbort = $0.payload { return true }; return false
+            })
+        guard case .clipboardStreamAbort(let abort) = abortFrame.payload else {
+            Issue.record("Expected clipboardStreamAbort")
+            return
+        }
+        #expect(abort.code == "request.range")
+        #expect(
+            recorder.first {
+                if case .clipboardStreamBegin = $0.payload { return true }; return false
+            } == nil)
+    }
+
+    @Test("A request whose uti doesn't match the offered rep is rejected with an Abort")
+    func mismatchedUTIRequestRejectedWithAbort() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        service.start()
+        defer { service.stop() }
+
+        service.clipboardContent = ClipboardContent(text: "payload")
+        service.grabIfChanged()
+        let offerFrame = try await nextFrame(from: guest)
+        guard case .clipboardOffer(let offer) = offerFrame.payload else {
+            Issue.record("Expected offer, got \(String(describing: offerFrame.payload))")
+            return
+        }
+        let info = try #require(offer.repInfo.first)
+        let xid = transferID(generation: offer.generation, repIndex: 0)
+
+        let recorder = FrameRecorder(channel: guest)
+        defer { recorder.cancel() }
+
+        // Wrong uti for rep 0 → rejected with an Abort (was: silently dropped).
         try guest.send(makeRequest(generation: offer.generation, repIndex: 0, uti: "public.bogus"))
-        try await expectNoNewFrames(on: recorder, sinceCount: 0, for: .milliseconds(150))
+        try await waitForFrames(recorder) {
+            recorder.first {
+                if case .clipboardStreamAbort(let abort) = $0.payload {
+                    return abort.transferID == xid
+                }
+                return false
+            } != nil
+        }
+        let abortFrame = try #require(
+            recorder.first {
+                if case .clipboardStreamAbort = $0.payload { return true }; return false
+            })
+        guard case .clipboardStreamAbort(let abort) = abortFrame.payload else {
+            Issue.record("Expected clipboardStreamAbort")
+            return
+        }
+        #expect(abort.code == "request.uti")
 
         // The correct request still works, proving the channel wasn't poisoned.
         try guest.send(makeRequest(generation: offer.generation, repIndex: 0, uti: info.uti))
         try await waitForFrames(recorder) {
             recorder.first {
-                if case .clipboardStreamBegin = $0.payload { return true }; return false
+                if case .clipboardStreamBegin(let begin) = $0.payload { return begin.transferID == xid }
+                return false
             } != nil
         }
     }

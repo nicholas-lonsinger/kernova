@@ -140,6 +140,26 @@ public final class ClipboardStreamSender: @unchecked Sendable {
         for transfer in all { transfer.markAborted(.superseded) }
     }
 
+    /// Rejects a `ClipboardRequest` we won't start a transfer for, sending a
+    /// `ClipboardStreamAbort` so the requester's parked pull wakes immediately
+    /// off-main instead of stalling to its `lazyPullTimeout` backstop.
+    ///
+    /// Unlike `sendAbort`, no `OutboundTransfer` is ever registered — the
+    /// request is dropped before any transfer exists — so this writes the abort
+    /// frame directly. The peer's `ClipboardStreamReceiver.handleAbort` delivers
+    /// it to the awaiter keyed on `transferID` even with no in-flight transfer.
+    public func rejectRequest(transferID: UInt64, code: String, message: String) {
+        _ = send(
+            .with {
+                $0.protocolVersion = 1
+                $0.clipboardStreamAbort = .with {
+                    $0.transferID = transferID
+                    $0.code = code
+                    $0.message = message
+                }
+            })
+    }
+
     // MARK: - Private
 
     private func transfer(_ id: UInt64) -> OutboundTransfer? {
