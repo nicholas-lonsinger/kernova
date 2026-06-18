@@ -108,6 +108,20 @@ final class VsockControlService {
     /// peer does not respond to a specific nonce.
     private var nextHeartbeatNonce: UInt64 = 1
 
+    /// Whether the connected guest agent advertised the streaming-clipboard
+    /// capability in its `Hello`.
+    ///
+    /// Set on Hello; gates the clipboard bit of every
+    /// `PolicyUpdate` we send, so an agent that can't stream never has clipboard
+    /// sharing turned on (it surfaces as `.outdated` instead, since the agent
+    /// version is bumped in lockstep with the capability).
+    private var guestSupportsClipboardStreaming = false
+
+    #if DEBUG
+    /// Test seam: whether the guest advertised `clipboard.stream.v1`.
+    var guestSupportsClipboardStreamingForTesting: Bool { guestSupportsClipboardStreaming }
+    #endif
+
     private static let logger = Logger(subsystem: "app.kernova", category: "VsockControlService")
 
     // MARK: - Init
@@ -200,6 +214,7 @@ final class VsockControlService {
         agentVersion = nil
         isUnresponsive = false
         lastInboundFrame = nil
+        guestSupportsClipboardStreaming = false
         Self.logger.info("Vsock control service stopped for '\(self.label, privacy: .public)'")
     }
 
@@ -210,7 +225,7 @@ final class VsockControlService {
         hello.protocolVersion = 1
         hello.hello = Kernova_V1_Hello.with {
             $0.serviceVersion = 1
-            $0.capabilities = ["control.v1", "control.heartbeat.v1"]
+            $0.capabilities = KernovaCapability.controlChannelDefaults
             $0.agentInfo = Kernova_V1_AgentInfo.with {
                 $0.os = "macOS"
                 $0.osVersion = ProcessInfo.processInfo.operatingSystemVersionString
@@ -231,16 +246,24 @@ final class VsockControlService {
     /// Called once on Hello receipt and again any time the user flips a hot-toggleable setting while
     /// the VM is running.
     func sendPolicyUpdate(_ policy: AgentPolicySnapshot) {
+        // Gate clipboard on the streaming capability: an agent that can't stream
+        // never gets clipboard turned on (require-match, no legacy fallback).
+        let clipboardEnabled = policy.clipboardSharingEnabled && guestSupportsClipboardStreaming
+        if policy.clipboardSharingEnabled && !guestSupportsClipboardStreaming {
+            Self.logger.notice(
+                "Clipboard sharing requested but guest agent for '\(self.label, privacy: .public)' lacks the \(KernovaCapability.clipboardStreamV1, privacy: .public) capability — keeping clipboard disabled (agent needs updating)"
+            )
+        }
         var frame = Frame()
         frame.protocolVersion = 1
         frame.policyUpdate = Kernova_V1_PolicyUpdate.with {
             $0.logForwardingEnabled = policy.logForwardingEnabled
-            $0.clipboardSharingEnabled = policy.clipboardSharingEnabled
+            $0.clipboardSharingEnabled = clipboardEnabled
         }
         do {
             try channel.send(frame)
             Self.logger.notice(
-                "Sent policy update for '\(self.label, privacy: .public)' (logForwarding=\(policy.logForwardingEnabled, privacy: .public), clipboard=\(policy.clipboardSharingEnabled, privacy: .public))"
+                "Sent policy update for '\(self.label, privacy: .public)' (logForwarding=\(policy.logForwardingEnabled, privacy: .public), clipboard=\(clipboardEnabled, privacy: .public))"
             )
         } catch {
             Self.logger.error(
@@ -341,6 +364,8 @@ final class VsockControlService {
             isUnresponsive = false
             let reportedVersion = hello.agentInfo.agentVersion
             agentVersion = reportedVersion.isEmpty ? nil : reportedVersion
+            guestSupportsClipboardStreaming = hello.capabilities.contains(
+                KernovaCapability.clipboardStreamV1)
             Self.logger.notice(
                 "Guest agent connected for '\(self.label, privacy: .public)' (service=\(hello.serviceVersion, privacy: .public), agent=\(reportedVersion, privacy: .public), caps=\(hello.capabilities.joined(separator: ","), privacy: .public))"
             )
@@ -367,7 +392,9 @@ final class VsockControlService {
             Self.logger.warning(
                 "Guest control error for '\(self.label, privacy: .public)': \(error.code, privacy: .public) — \(error.message, privacy: .public)"
             )
-        case .policyUpdate, .clipboardOffer, .clipboardRequest, .clipboardData, .clipboardRelease, .logRecord, .none:
+        case .policyUpdate, .clipboardOffer, .clipboardRequest, .clipboardRelease,
+            .clipboardStreamBegin, .clipboardChunk, .clipboardStreamEnd, .clipboardStreamAck,
+            .clipboardStreamAbort, .logRecord, .none:
             // PolicyUpdate is a host→guest message and never arrives on the
             // host side; other payloads belong on other channels. Log and
             // ignore.

@@ -48,6 +48,14 @@ final class VsockGuestControlAgent: @unchecked Sendable {
     private var unresponsiveLogged: Bool = false
     private var nextHeartbeatNonce: UInt64 = 1
 
+    /// Whether the host advertised the streaming-clipboard capability in its
+    /// `Hello`.
+    ///
+    /// Reset per connection; gates the clipboard bit of every inbound
+    /// `PolicyUpdate` so a host that can't stream never turns clipboard on here
+    /// (symmetric with the host's own gate). Guarded by `lock`.
+    private var hostSupportsClipboardStreaming = false
+
     /// Production init — connects to the control port with default cadences.
     convenience init(onPolicy: (@Sendable (Kernova_V1_PolicyUpdate) -> Void)? = nil) {
         self.init(
@@ -103,10 +111,12 @@ final class VsockGuestControlAgent: @unchecked Sendable {
 
     private func serve(channel: VsockChannel) async {
         // Reset per-connection state so `checkLiveness` doesn't fire on a
-        // stale clock from the previous connection.
+        // stale clock from the previous connection, and so a stale capability
+        // from a prior host can't leak into this connection's policy gating.
         lock.withLock {
             lastInboundFrame = nil
             unresponsiveLogged = false
+            hostSupportsClipboardStreaming = false
         }
 
         sendHello(on: channel)
@@ -170,6 +180,8 @@ final class VsockGuestControlAgent: @unchecked Sendable {
 
         switch frame.payload {
         case .hello(let hello):
+            let hostStreams = hello.capabilities.contains(KernovaCapability.clipboardStreamV1)
+            lock.withLock { hostSupportsClipboardStreaming = hostStreams }
             Self.logger.notice(
                 "Host control service ready (service=\(hello.serviceVersion, privacy: .public), caps=\(hello.capabilities.joined(separator: ","), privacy: .public))"
             )
@@ -181,11 +193,23 @@ final class VsockGuestControlAgent: @unchecked Sendable {
                 "Host control error: \(error.code, privacy: .public) — \(error.message, privacy: .public)"
             )
         case .policyUpdate(let policy):
+            // Symmetric capability gate: ignore a clipboard-enable from a host
+            // that didn't advertise streaming support.
+            let hostStreams = lock.withLock { hostSupportsClipboardStreaming }
+            var effective = policy
+            effective.clipboardSharingEnabled = policy.clipboardSharingEnabled && hostStreams
+            if policy.clipboardSharingEnabled && !hostStreams {
+                Self.logger.notice(
+                    "Host enabled clipboard but didn't advertise \(KernovaCapability.clipboardStreamV1, privacy: .public) — keeping clipboard disabled"
+                )
+            }
             Self.logger.notice(
-                "PolicyUpdate received (logForwarding=\(policy.logForwardingEnabled, privacy: .public), clipboard=\(policy.clipboardSharingEnabled, privacy: .public))"
+                "PolicyUpdate received (logForwarding=\(effective.logForwardingEnabled, privacy: .public), clipboard=\(effective.clipboardSharingEnabled, privacy: .public))"
             )
-            onPolicy?(policy)
-        case .clipboardOffer, .clipboardRequest, .clipboardData, .clipboardRelease, .logRecord, .none:
+            onPolicy?(effective)
+        case .clipboardOffer, .clipboardRequest, .clipboardRelease, .clipboardStreamBegin,
+            .clipboardChunk, .clipboardStreamEnd, .clipboardStreamAck, .clipboardStreamAbort,
+            .logRecord, .none:
             Self.logger.warning("Unexpected payload on control channel — wrong port")
         }
     }
@@ -197,7 +221,7 @@ final class VsockGuestControlAgent: @unchecked Sendable {
         hello.protocolVersion = 1
         hello.hello = Kernova_V1_Hello.with {
             $0.serviceVersion = 1
-            $0.capabilities = ["control.v1", "control.heartbeat.v1"]
+            $0.capabilities = KernovaCapability.controlChannelDefaults
             $0.agentInfo = Kernova_V1_AgentInfo.with {
                 $0.os = "macOS"
                 $0.osVersion = ProcessInfo.processInfo.operatingSystemVersionString

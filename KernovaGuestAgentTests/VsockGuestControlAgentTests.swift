@@ -8,12 +8,15 @@ struct VsockGuestControlAgentTests {
     // MARK: - Helpers
 
     /// Builds a host-side Hello frame for the agent to consume.
-    private func makeHostHelloFrame() -> Frame {
+    private func makeHostHelloFrame(streamingCapable: Bool = true) -> Frame {
         var frame = Frame()
         frame.protocolVersion = 1
         frame.hello = Kernova_V1_Hello.with {
             $0.serviceVersion = 1
-            $0.capabilities = ["control.v1", "control.heartbeat.v1"]
+            $0.capabilities =
+                streamingCapable
+                ? KernovaCapability.controlChannelDefaults
+                : [KernovaCapability.controlV1, KernovaCapability.controlHeartbeatV1]
             $0.agentInfo = Kernova_V1_AgentInfo.with {
                 $0.os = "macOS"
                 $0.osVersion = "26.0"
@@ -98,6 +101,9 @@ struct VsockGuestControlAgentTests {
         }
         #expect(hello.capabilities.contains("control.v1"))
         #expect(hello.capabilities.contains("control.heartbeat.v1"))
+        // The guest advertises streaming-clipboard support so the host can gate
+        // clipboard on it.
+        #expect(hello.capabilities.contains(KernovaCapability.clipboardStreamV1))
     }
 
     // MARK: - Heartbeat
@@ -337,6 +343,39 @@ struct VsockGuestControlAgentTests {
         }
 
         try await counts.changed.wait { counts.value >= 3 }
+    }
+
+    @Test("clipboard enable is forwarded only when the host advertised streaming")
+    func clipboardGatedOnHostCapability() async throws {
+        let (agentFd, hostFd) = try makeRawSocketPair()
+        let host = VsockChannel(fileDescriptor: hostFd)
+        host.start()
+        defer { host.close() }
+
+        let received = PolicyBox()
+        let agent = makeAgent(
+            agentFd: agentFd,
+            onPolicy: { policy in received.set(policy) })
+        agent.start()
+        defer { agent.stop() }
+
+        _ = try await nextFrame(from: host)  // drain outbound Hello
+
+        // Host that doesn't speak streaming, then a clipboard-enable policy.
+        try host.send(makeHostHelloFrame(streamingCapable: false))
+        var frame = Frame()
+        frame.protocolVersion = 1
+        frame.policyUpdate = Kernova_V1_PolicyUpdate.with {
+            $0.logForwardingEnabled = true
+            $0.clipboardSharingEnabled = true
+        }
+        try host.send(frame)
+
+        try await received.changed.wait { received.value != nil }
+        let policy = try #require(received.value)
+        // Log forwarding passes through; clipboard is forced off by the gate.
+        #expect(policy.logForwardingEnabled == true)
+        #expect(policy.clipboardSharingEnabled == false)
     }
 
     @Test("stop() halts the connection without throwing")

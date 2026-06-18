@@ -17,6 +17,12 @@ message Frame {
   // backwards-incompatible way. Currently 1.
   uint32 protocol_version = 1;
 
+  // 22 was `ClipboardData`, the legacy single-frame clipboard data path
+  // (whole payload in one frame). Retired in favour of the chunk-streamed
+  // protocol (`ClipboardStreamBegin`/`ClipboardChunk`/`ClipboardStreamEnd`).
+  // Never reuse — reserved for wire history.
+  reserved 22;
+
   oneof payload {
     Hello hello = 10;
     Error error = 11;
@@ -32,8 +38,18 @@ message Frame {
 
     ClipboardOffer clipboard_offer = 20;
     ClipboardRequest clipboard_request = 21;
-    ClipboardData clipboard_data = 22;
+    // 22 retired (see `reserved` above).
     ClipboardRelease clipboard_release = 23;
+
+    // Chunk-streamed clipboard data. One streamed representation per
+    // `transfer_id`: Begin announces it, a series of Chunks carries the bytes,
+    // End commits with a digest. Ack is the receiver's credit + go-signal,
+    // Abort is an in-band graceful failure (disk full, read error, supersede).
+    ClipboardStreamBegin clipboard_stream_begin = 24;
+    ClipboardChunk clipboard_chunk = 25;
+    ClipboardStreamEnd clipboard_stream_end = 26;
+    ClipboardStreamAck clipboard_stream_ack = 27;
+    ClipboardStreamAbort clipboard_stream_abort = 28;
 
     LogRecord log_record = 30;
   }
@@ -98,35 +114,36 @@ message LogRecord {
   string message = 5;
 }
 
-// LEGACY clipboard format enum, superseded by UTI-tagged representations
-// (`ClipboardOffer.utis` / `ClipboardData.representations`). Retained for wire
-// compatibility with peers that predate UTI support. Do not add new values —
-// new formats are expressed as UTIs.
-enum ClipboardFormat {
-  CLIPBOARD_FORMAT_UNSPECIFIED = 0;
-  CLIPBOARD_FORMAT_TEXT_UTF8 = 1;
-}
-
-// One clipboard representation: a Uniform Type Identifier naming the format
-// plus the raw bytes, mirroring one (type, data) pair of an NSPasteboardItem.
-// Order within `ClipboardData.representations` matches the sender's fidelity
-// order (richest first).
-message ClipboardRepresentation {
+// Per-representation metadata advertised in a `ClipboardOffer`. Carries no
+// bytes — it lets the receiver register lazy promises, render a preview, and
+// pre-decide disk needs before pulling any data.
+message ClipboardRepresentationInfo {
   string uti = 1;  // e.g. "public.utf8-plain-text", "public.png"
-  bytes data = 2;
+
+  // Size of the representation's bytes. For a copied file this is the file's
+  // size from a stat — the bytes themselves are never read to build the offer.
+  uint64 byte_count = 2;
 
   // Suggested filename when this representation is a file payload (e.g. a
   // copied image file → "photo.png"). Empty means inline-only: the receiver
-  // renders the bytes but does not materialize a file. When set, the receiver
-  // stages the bytes to a local temp file and also offers its file URL so a
-  // Finder paste creates the file. Deliberately excluded from the content
-  // digest so the round-tripped name can't disturb echo suppression.
+  // reassembles the bytes in memory and renders them but does not materialize
+  // a file. When set, the receiver streams the bytes to a local temp file and
+  // offers its file URL so a Finder paste creates the file. Deliberately
+  // excluded from the content digest so the round-tripped name can't disturb
+  // echo suppression.
   string filename = 3;
+
+  // Whether this representation should be placed inline on the pasteboard
+  // (text/RTF/inline image) versus materialized as a file. Mirrors the
+  // sender's inline-vs-file decision so the receiver chooses its sink (RAM vs
+  // temp file) without re-deriving the rule.
+  bool is_inline = 4;
 }
 
-// Sent by either side to advertise that fresh clipboard content is available
-// in one or more formats. The receiver picks the supported formats and replies
-// with `ClipboardRequest` to pull the actual bytes.
+// Sent by either side to advertise that fresh clipboard content is available.
+// Metadata only — never carries bytes. The receiver registers lazy promises
+// from `rep_info` and replies with a `ClipboardRequest` (one per representation
+// actually consumed) to pull the bytes via the chunk-streamed protocol.
 //
 // The `generation` field is a monotonically increasing counter scoped to the
 // sender. Each new offer bumps it; receivers use it to discard requests that
@@ -134,40 +151,44 @@ message ClipboardRepresentation {
 message ClipboardOffer {
   uint64 generation = 1;
 
-  // LEGACY: contains CLIPBOARD_FORMAT_TEXT_UTF8 when `utis` includes
-  // public.utf8-plain-text, so pre-UTI peers can still pull the text.
-  repeated ClipboardFormat formats = 2;
+  // 2 was `repeated ClipboardFormat formats` (the legacy text-only format
+  // enum); 3 was `repeated string utis` (a bare UTI list, superseded by the
+  // richer `rep_info`). Both retired — never reuse.
+  reserved 2, 3;
+  reserved "formats", "utis";
 
-  // Ordered UTIs of the available representations (first = richest).
-  // Empty when the sender predates UTI support.
-  repeated string utis = 3;
+  // Metadata for every available representation, richest first.
+  repeated ClipboardRepresentationInfo rep_info = 4;
 }
 
-// Sent in response to a `ClipboardOffer` to pull the actual clipboard bytes.
-// `generation` must echo the offer being requested.
+// Sent in response to a `ClipboardOffer` to pull one representation's bytes.
+// The OS asks the pasteboard per type, so a paste pulls only the representation
+// actually read; the requester sends one `ClipboardRequest` per representation
+// it consumes. The responder answers with a `ClipboardStreamBegin` →
+// `ClipboardChunk`* → `ClipboardStreamEnd` sequence keyed by `transfer_id`.
 message ClipboardRequest {
+  // Echoes the offer's generation so a request racing a newer offer is dropped.
   uint64 generation = 1;
 
-  // LEGACY: CLIPBOARD_FORMAT_TEXT_UTF8 when requesting from a pre-UTI peer.
-  ClipboardFormat format = 2;
+  // 2 was the legacy `ClipboardFormat format`; 3 was `repeated string utis`
+  // (the requester echoed the whole offer's UTI list). Both retired — a
+  // request now names exactly one representation via `uti`. Never reuse.
+  reserved 2, 3;
+  reserved "format", "utis";
 
-  // UTIs the receiver wants, normally echoing the offer's. Non-empty marks
-  // the requester as UTI-capable; the responder replies with
-  // `ClipboardData.representations`.
-  repeated string utis = 3;
-}
+  // Correlates the streamed reply (Begin/Chunk/End/Ack/Abort) with this
+  // request. `transfer_id = (generation << 16) | repIndex`, scoped per
+  // connection.
+  uint64 transfer_id = 4;
 
-// Carries the bytes of the clipboard content named by an earlier offer.
-// The `generation` field must echo the matching request.
-message ClipboardData {
-  uint64 generation = 1;
+  // The single representation being consumed (one of the offer's `rep_info`
+  // UTIs).
+  string uti = 5;
 
-  // LEGACY pair: populated only when answering a `format`-based request.
-  ClipboardFormat format = 2;
-  bytes data = 3;
-
-  // UTI-tagged payload: populated when answering a `utis`-based request.
-  repeated ClipboardRepresentation representations = 4;
+  // The requester's free-space ceiling for this transfer: the responder must
+  // abort (`disk.full`) rather than start a transfer the requester cannot
+  // stage. 0 means "no ceiling advertised".
+  uint64 max_accept_byte_count = 6;
 }
 
 // Sent by the offerer when an offer is no longer valid (e.g. the user copied
@@ -175,6 +196,92 @@ message ClipboardData {
 // any pending state for the named generation.
 message ClipboardRelease {
   uint64 generation = 1;
+}
+
+// Announces one streamed representation in reply to a `ClipboardRequest`. The
+// bytes follow in a series of `ClipboardChunk` frames sharing `transfer_id`,
+// terminated by a `ClipboardStreamEnd`.
+message ClipboardStreamBegin {
+  // The offer generation this transfer belongs to (so a superseded offer's
+  // in-flight transfer can be recognised and dropped).
+  uint64 generation = 1;
+
+  // Correlates Begin/Chunk/End/Ack/Abort. Echoes the request's `transfer_id`.
+  uint64 transfer_id = 2;
+
+  // The representation's UTI.
+  string uti = 3;
+
+  // Total payload size in bytes; the receiver verifies the reassembled byte
+  // count against this at `ClipboardStreamEnd`, and sizes its free-space
+  // pre-flight check from it for a file rep.
+  uint64 total_bytes = 4;
+
+  // Suggested filename for a file rep (see `ClipboardRepresentationInfo`);
+  // empty for an inline rep.
+  string filename = 5;
+
+  // Whether the receiver should reassemble in memory (inline) or stream to a
+  // temp file. Mirrors `ClipboardRepresentationInfo.is_inline`.
+  bool is_inline = 6;
+}
+
+// One chunk of a streamed representation. Each is a normal length-prefixed
+// frame the existing decoder reassembles; the payload is at most the negotiated
+// chunk size (64 KiB by default).
+message ClipboardChunk {
+  uint64 transfer_id = 1;
+
+  // Byte offset of `data` within the representation. Lets the receiver detect
+  // gaps/duplicates/reordering and write at the correct position.
+  uint64 offset = 2;
+
+  // The chunk bytes (<= the negotiated chunk size).
+  bytes data = 3;
+}
+
+// Terminates a streamed representation. The receiver commits only after the
+// reassembled byte count equals `total_bytes` and the digest matches `sha256`.
+message ClipboardStreamEnd {
+  uint64 transfer_id = 1;
+
+  // Total bytes the sender streamed; must equal the Begin's `total_bytes`.
+  uint64 total_bytes = 2;
+
+  // SHA-256 over the streamed bytes, computed incrementally as the sender read
+  // the source. The receiver verifies and reuses it as the representation's
+  // content digest (so a multi-GB file is never re-hashed).
+  bytes sha256 = 3;
+}
+
+// The receiver's credit + go-signal for a transfer. The sender holds at most
+// `window_bytes` of un-acked data in flight; the receiver sends an Ack only
+// after bytes are durably written, so credit tracks the slowest stage.
+message ClipboardStreamAck {
+  uint64 transfer_id = 1;
+
+  // CUMULATIVE count of bytes written and verified so far (not incremental),
+  // so the protocol self-heals against a lost or reordered Ack frame.
+  uint64 bytes_consumed = 2;
+
+  // The receiver's current in-flight window in bytes. The sender may have up
+  // to `bytes_consumed + window_bytes` bytes sent at any time.
+  uint64 window_bytes = 3;
+}
+
+// In-band graceful failure of a transfer (disk full, source read error, offer
+// superseded, connection teardown imminent). The channel stays up — an abort
+// is a message, not a disconnect. The peer stops, cleans up its partial state
+// (deletes any partial temp file), and is ready for the next transfer.
+message ClipboardStreamAbort {
+  uint64 transfer_id = 1;
+
+  // Stable machine-readable code, e.g. "disk.full", "read.error",
+  // "superseded", "format.unavailable".
+  string code = 2;
+
+  // Human-readable detail for logs / user-facing messages.
+  string message = 3;
 }
 
 // Liveness ping exchanged on the control channel. Each side sends one on a
@@ -205,8 +312,8 @@ message PolicyUpdate {
   bool log_forwarding_enabled = 1;
 
   // Whether the guest's clipboard agent should poll `NSPasteboard.general`
-  // and exchange `ClipboardOffer`/`ClipboardRequest`/`ClipboardData` with
-  // the host on the clipboard port.
+  // and exchange `ClipboardOffer`/`ClipboardRequest` and the chunk-streamed
+  // data frames with the host on the clipboard port.
   bool clipboard_sharing_enabled = 2;
 }
 

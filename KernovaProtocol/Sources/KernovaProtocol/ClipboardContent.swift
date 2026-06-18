@@ -15,6 +15,25 @@ import Foundation
 public struct ClipboardContent: Equatable, Sendable {
     /// One (type, data) pair of the payload.
     public struct Representation: Equatable, Sendable {
+        /// Where a representation's bytes live.
+        ///
+        /// Streaming chooses its sink by this, not by size: an `.inMemory`
+        /// representation reassembles in RAM (the pasteboard API needs the
+        /// bytes resident, and the consuming app holds them in RAM too, so RAM
+        /// is the natural bound); a `.file` representation is streamed to/from
+        /// disk in chunks and never read whole.
+        public enum Source: Equatable, Sendable {
+            /// Bytes resident in memory — text, RTF, inline images, small
+            /// payloads.
+            case inMemory(Data)
+
+            /// Bytes on disk, never loaded whole. `byteCount` is a stat result;
+            /// `sha256` is the digest the stream computed over the bytes, or
+            /// `nil` before a transfer has produced one (e.g. offer-time on the
+            /// sender side, where the file is named but not yet read).
+            case file(url: URL, byteCount: Int, sha256: Data?)
+        }
+
         /// Uniform Type Identifier naming the format.
         ///
         /// For example `"public.utf8-plain-text"` or `"public.png"`.
@@ -22,23 +41,69 @@ public struct ClipboardContent: Equatable, Sendable {
         /// pasteboard types round-trip exactly.
         public let uti: String
 
-        /// The representation's raw bytes.
-        public let data: Data
+        /// Where the representation's bytes live (memory or disk).
+        public let source: Source
 
         /// Suggested filename when this representation is a file payload.
         ///
         /// A copied/dragged image file → `"photo.png"`; `""` for inline-only
-        /// content. A receiver with a non-empty filename materializes the bytes
-        /// to a local temp file and offers its file URL so a Finder paste
-        /// creates the file. Deliberately **not** part of the digest.
+        /// content. A receiver with a non-empty filename streams the bytes to a
+        /// local temp file and offers its file URL so a Finder paste creates the
+        /// file. Deliberately **not** part of the digest.
         public let filename: String
 
-        /// Creates a representation from a UTI and its raw bytes, optionally
-        /// tagged with a suggested filename for file payloads.
-        public init(uti: String, data: Data, filename: String = "") {
+        /// Creates a representation from an explicit byte source.
+        public init(uti: String, source: Source, filename: String = "") {
             self.uti = uti
-            self.data = data
+            self.source = source
             self.filename = filename
+        }
+
+        /// Creates an in-memory representation from a UTI and its raw bytes,
+        /// optionally tagged with a suggested filename for file payloads.
+        ///
+        /// The common case for text, RTF, inline images, and small payloads.
+        public init(uti: String, data: Data, filename: String = "") {
+            self.init(uti: uti, source: .inMemory(data), filename: filename)
+        }
+
+        /// Creates a disk-backed representation from a file URL and its stat'd
+        /// size — the bytes are streamed on demand, never read to build it.
+        ///
+        /// `sha256` is the byte digest once a transfer has computed it (reused
+        /// as the content digest so a multi-GB file is never re-hashed); `nil`
+        /// when the file is only named (offer time on the sender side).
+        public init(
+            uti: String, fileURL: URL, byteCount: Int, sha256: Data? = nil, filename: String
+        ) {
+            self.init(
+                uti: uti,
+                source: .file(url: fileURL, byteCount: byteCount, sha256: sha256),
+                filename: filename
+            )
+        }
+
+        /// Size of the representation's bytes, without loading a file-backed
+        /// payload.
+        public var byteCount: Int {
+            switch source {
+            case .inMemory(let data): return data.count
+            case .file(_, let byteCount, _): return byteCount
+            }
+        }
+
+        /// The in-memory bytes, or `nil` for a file-backed representation
+        /// (whose bytes must be streamed rather than read whole).
+        public var inMemoryData: Data? {
+            if case .inMemory(let data) = source { return data }
+            return nil
+        }
+
+        /// The on-disk URL for a file-backed representation, or `nil` when the
+        /// bytes are in memory.
+        public var fileURL: URL? {
+            if case .file(let url, _, _) = source { return url }
+            return nil
         }
     }
 
@@ -116,15 +181,21 @@ public struct ClipboardContent: Equatable, Sendable {
 
     /// The UTF-8 plain-text representation decoded as a string, or `nil`
     /// when no such representation exists or its bytes are not valid UTF-8.
+    ///
+    /// Text is always in-memory; a file-backed representation (whose bytes are
+    /// not resident) yields `nil` here rather than triggering a disk read.
     public var text: String? {
-        guard let representation = representations.first(where: { $0.uti == Self.utf8TextUTI })
+        guard
+            let representation = representations.first(where: { $0.uti == Self.utf8TextUTI }),
+            let data = representation.inMemoryData
         else { return nil }
-        return String(data: representation.data, encoding: .utf8)
+        return String(data: data, encoding: .utf8)
     }
 
-    /// Sum of all representations' payload sizes in bytes.
+    /// Sum of all representations' payload sizes in bytes, without loading any
+    /// file-backed payload.
     public var totalByteCount: Int {
-        representations.reduce(0) { $0 + $1.data.count }
+        representations.reduce(0) { $0 + $1.byteCount }
     }
 
     /// Digest comparison — equivalent to full structural equality (SHA-256
@@ -135,10 +206,20 @@ public struct ClipboardContent: Equatable, Sendable {
 
     /// Hashes the representations with a length-prefixed canonical encoding.
     ///
-    /// For each representation: the big-endian `UInt64` byte count of the
-    /// UTI, the UTI bytes, the big-endian `UInt64` byte count of the data,
-    /// then the data bytes. Length prefixes prevent collisions from shifting
-    /// bytes across the uti/data or representation boundaries.
+    /// For each representation: the big-endian `UInt64` byte count of the UTI,
+    /// the UTI bytes, then a byte-stable digest of its payload. For an
+    /// `.inMemory` representation that digest is the length-prefixed bytes
+    /// themselves (so an all-inline payload hashes identically to the
+    /// pre-streaming encoding); for a `.file` representation it is the SHA-256
+    /// the stream computed over the bytes — never the file path, name, or mtime
+    /// (those differ between the host and guest temp copies and would break
+    /// cross-process echo suppression). A file representation whose digest is
+    /// not yet known (offer time on the sender side) folds in only its byte
+    /// count as a placeholder; such representations are echo-suppressed by
+    /// change-count and staging-path guards rather than by digest equality.
+    /// Length prefixes prevent collisions from shifting bytes across the
+    /// uti/payload or representation boundaries; a one-byte source tag separates
+    /// the inline-bytes and file-digest domains so the two can never alias.
     private static func computeDigest(of representations: [Representation]) -> Data {
         var hasher = SHA256()
         for representation in representations {
@@ -146,37 +227,32 @@ public struct ClipboardContent: Equatable, Sendable {
                 hasher.update(bufferPointer: $0)
             }
             hasher.update(data: Data(representation.uti.utf8))
-            withUnsafeBytes(of: UInt64(representation.data.count).bigEndian) {
-                hasher.update(bufferPointer: $0)
+            // A one-byte domain tag separates the inline-bytes domain from the
+            // file-digest domain, so a 32-byte inline payload can never alias a
+            // file rep's SHA-256 under the same UTI. [N1]
+            switch representation.source {
+            case .inMemory(let data):
+                hasher.update(data: Data([0]))
+                withUnsafeBytes(of: UInt64(data.count).bigEndian) {
+                    hasher.update(bufferPointer: $0)
+                }
+                hasher.update(data: data)
+            case .file(_, let byteCount, let sha256):
+                if let sha256 {
+                    hasher.update(data: Data([1]))
+                    withUnsafeBytes(of: UInt64(sha256.count).bigEndian) {
+                        hasher.update(bufferPointer: $0)
+                    }
+                    hasher.update(data: sha256)
+                } else {
+                    // Placeholder identity before the bytes have been streamed.
+                    hasher.update(data: Data([2]))
+                    withUnsafeBytes(of: UInt64(byteCount).bigEndian) {
+                        hasher.update(bufferPointer: $0)
+                    }
+                }
             }
-            hasher.update(data: representation.data)
         }
         return Data(hasher.finalize())
-    }
-}
-
-// MARK: - Proto bridging
-
-extension ClipboardContent {
-    /// Builds content from the representations of an inbound
-    /// `ClipboardData` frame, preserving order.
-    public init(protoRepresentations: [Kernova_V1_ClipboardRepresentation]) {
-        self.init(
-            representations: protoRepresentations.map {
-                Representation(uti: $0.uti, data: $0.data, filename: $0.filename)
-            }
-        )
-    }
-
-    /// The representations encoded for an outbound `ClipboardData` frame,
-    /// preserving order.
-    public var protoRepresentations: [Kernova_V1_ClipboardRepresentation] {
-        representations.map { representation in
-            Kernova_V1_ClipboardRepresentation.with {
-                $0.uti = representation.uti
-                $0.data = representation.data
-                $0.filename = representation.filename
-            }
-        }
     }
 }

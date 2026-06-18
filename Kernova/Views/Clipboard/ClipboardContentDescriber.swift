@@ -50,7 +50,7 @@ enum ClipboardContentDescriber {
     /// `maxSummaryRows` plus an "and N more" tail.
     static func summaryRows(for representations: [ClipboardContent.Representation]) -> [String] {
         var rows = representations.prefix(maxSummaryRows).map { representation in
-            "\(displayName(forUTI: representation.uti)) — \(DataFormatters.formatBytes(UInt64(representation.data.count)))"
+            "\(displayName(forUTI: representation.uti)) — \(DataFormatters.formatBytes(UInt64(representation.byteCount)))"
         }
         let overflow = representations.count - maxSummaryRows
         if overflow > 0 {

@@ -19,15 +19,13 @@ enum VsockFrame {
     /// `VsockFrameDecoder.nextFrame()` throws `VsockFrameError.frameTooLarge`
     /// rather than buffer unboundedly.
     ///
-    /// Sized to clear `ClipboardSnapshotPolicy.maxTotalByteCount` (104 MiB) plus
-    /// protobuf/framing overhead — one `ClipboardData` frame carries an entire
-    /// clipboard generation. 128 MiB leaves ~23% headroom; the overhead on a
-    /// handful of representations is kilobytes, not megabytes.
-    ///
-    /// DoS note: this is also the ceiling on how much a single peer-declared
-    /// frame length can make the receiver buffer before the frame is parsed.
-    /// Raising it widens that envelope; untrusted-guest hardening is tracked in
-    /// issue #145 and true streaming in #348.
+    /// Clipboard data is now chunk-streamed: each `ClipboardChunk` is a normal
+    /// frame whose payload is at most the negotiated chunk size (64 KiB by
+    /// default), so no single frame approaches this ceiling. It survives purely
+    /// as a DoS backstop — the ceiling on how much a single peer-declared frame
+    /// length can make the receiver buffer before the frame is parsed. 128 MiB
+    /// leaves generous headroom over the largest control/log frame while still
+    /// bounding that envelope; untrusted-guest hardening is tracked in #145.
     static let maxPayloadSize: Int = 128 * 1024 * 1024
 
     /// Number of bytes occupied by the length prefix.

@@ -52,9 +52,9 @@ struct ClipboardPasteboardIntakeTests {
     /// off the main actor; non-file results pass through unchanged.
     private func resolve(
         _ result: ClipboardIntakeResult, allowsBinary: Bool
-    ) async -> ClipboardIntakeResult {
+    ) -> ClipboardIntakeResult {
         guard case .pendingFile(let url) = result else { return result }
-        return await ClipboardPasteboardIntake.read(fileAt: url, allowsBinary: allowsBinary)
+        return ClipboardPasteboardIntake.read(fileAt: url, allowsBinary: allowsBinary)
     }
 
     // MARK: - Generic pasteboard reads
@@ -96,7 +96,7 @@ struct ClipboardPasteboardIntakeTests {
             content.representations.map(\.uti) == [
                 UTType.png.identifier, ClipboardContent.utf8TextUTI,
             ])
-        #expect(content.representations.first?.data == png)
+        #expect(content.representations.first?.inMemoryData == png)
     }
 
     @Test("empty pasteboard is rejected")
@@ -159,15 +159,14 @@ struct ClipboardPasteboardIntakeTests {
         }
     }
 
-    @Test("oversized representation is skipped with a user-visible note")
-    func oversizedSkippedWithNote() {
+    @Test("a large inline representation is kept (no size cap)")
+    func largeInlineRepresentationKept() {
+        // The greedy budget and per-rep cap are gone — streaming bounds size by
+        // free disk, not a fixed limit, so a large inline rep survives intake.
         let pasteboard = makeScratchPasteboard()
         write(
             [
-                (
-                    uti: UTType.tiff.identifier,
-                    data: Data(count: ClipboardSnapshotPolicy.maxRepresentationByteCount + 1)
-                ),
+                (uti: UTType.tiff.identifier, data: Data(count: 8 * 1024 * 1024)),
                 (uti: ClipboardContent.utf8TextUTI, data: Data("small".utf8)),
             ], to: pasteboard)
 
@@ -178,8 +177,11 @@ struct ClipboardPasteboardIntakeTests {
             Issue.record("Expected content")
             return
         }
-        #expect(content.representations.map(\.uti) == [ClipboardContent.utf8TextUTI])
-        #expect(note != nil)
+        #expect(
+            content.representations.map(\.uti) == [
+                UTType.tiff.identifier, ClipboardContent.utf8TextUTI,
+            ])
+        #expect(note == nil)
     }
 
     // MARK: - File URL expansion
@@ -205,11 +207,11 @@ struct ClipboardPasteboardIntakeTests {
         #expect(pending.path == url.path)
     }
 
-    @Test("dragged text file crosses as the file itself (bytes + name)")
-    func textFileIntake() async throws {
-        // A copied/dragged .txt is "the file" — its bytes cross tagged with the
-        // content UTI and name so the other side materializes a real file
-        // (matching how macOS pastes a copied text file).
+    @Test("dragged text file crosses as a disk-backed file representation (name + size)")
+    func textFileIntake() throws {
+        // A copied/dragged .txt is "the file": it crosses as a disk-backed
+        // representation tagged with the content UTI and name; its bytes stream
+        // on demand and are never read at intake.
         let contents = Data("file text".utf8)
         let url = try makeTempFile(name: "note.txt", contents: contents)
         let pasteboard = makeScratchPasteboard()
@@ -219,7 +221,7 @@ struct ClipboardPasteboardIntakeTests {
         pasteboard.writeObjects([item])
 
         guard
-            case .content(let content, _) = await resolve(
+            case .content(let content, _) = resolve(
                 ClipboardPasteboardIntake.read(from: pasteboard, allowsBinary: true),
                 allowsBinary: true)
         else {
@@ -228,11 +230,13 @@ struct ClipboardPasteboardIntakeTests {
         }
         #expect(content.representations.count == 1)
         #expect(content.representations[0].filename == "note.txt")
-        #expect(content.representations[0].data == contents)
+        #expect(content.representations[0].byteCount == contents.count)
+        #expect(content.representations[0].fileURL == url)
+        #expect(content.representations[0].inMemoryData == nil)  // never read at intake
     }
 
-    @Test("dragged image file becomes an image representation")
-    func imageFileIntake() async throws {
+    @Test("dragged image file becomes a disk-backed image representation")
+    func imageFileIntake() throws {
         let png = try makePNG()
         let url = try makeTempFile(name: "image.png", contents: png)
         let pasteboard = makeScratchPasteboard()
@@ -242,7 +246,7 @@ struct ClipboardPasteboardIntakeTests {
         pasteboard.writeObjects([item])
 
         guard
-            case .content(let content, _) = await resolve(
+            case .content(let content, _) = resolve(
                 ClipboardPasteboardIntake.read(from: pasteboard, allowsBinary: true),
                 allowsBinary: true)
         else {
@@ -251,13 +255,14 @@ struct ClipboardPasteboardIntakeTests {
         }
         #expect(content.representations.count == 1)
         #expect(UTType(content.representations[0].uti)?.conforms(to: .image) == true)
-        #expect(content.representations[0].data == png)
+        #expect(content.representations[0].byteCount == png.count)
+        #expect(content.representations[0].fileURL == url)
         // The filename is carried so the guest can paste it as a file.
         #expect(content.representations[0].filename == "image.png")
     }
 
-    @Test("dragged non-image file crosses as the file itself (bytes + name)")
-    func nonImageFileCrossesAsFile() async throws {
+    @Test("dragged non-image file crosses as a disk-backed file representation")
+    func nonImageFileCrossesAsFile() throws {
         let contents = Data([0x00, 0x01])
         let url = try makeTempFile(name: "blob.bin", contents: contents)
         let pasteboard = makeScratchPasteboard()
@@ -267,7 +272,7 @@ struct ClipboardPasteboardIntakeTests {
         pasteboard.writeObjects([item])
 
         guard
-            case .content(let content, _) = await resolve(
+            case .content(let content, _) = resolve(
                 ClipboardPasteboardIntake.read(from: pasteboard, allowsBinary: true),
                 allowsBinary: true)
         else {
@@ -276,40 +281,49 @@ struct ClipboardPasteboardIntakeTests {
         }
         #expect(content.representations.count == 1)
         #expect(content.representations[0].filename == "blob.bin")
-        #expect(content.representations[0].data == contents)
+        #expect(content.representations[0].byteCount == contents.count)
+        #expect(content.representations[0].fileURL == url)
     }
 
-    @Test("read(fileAt:) expands an image file directly — the promise-receipt path")
-    func directFileReadImage() async throws {
+    @Test("read(fileAt:) resolves an image file directly — the promise-receipt path")
+    func directFileReadImage() throws {
         let png = try makePNG()
         let url = try makeTempFile(name: "promised.png", contents: png)
 
         guard
-            case .content(let content, _) = await ClipboardPasteboardIntake.read(
+            case .content(let content, _) = ClipboardPasteboardIntake.read(
                 fileAt: url, allowsBinary: true)
         else {
             Issue.record("Expected content")
             return
         }
         #expect(content.representations.count == 1)
-        #expect(content.representations[0].data == png)
+        #expect(content.representations[0].byteCount == png.count)
+        #expect(content.representations[0].fileURL == url)
     }
 
-    @Test("read(fileAt:) rejects an oversized file before reading it")
-    func directFileReadOversizedRejected() async throws {
-        let url = try makeTempFile(
-            name: "huge.png",
-            contents: Data(count: ClipboardSnapshotPolicy.maxRepresentationByteCount + 1))
+    @Test("read(fileAt:) accepts a file far larger than the old cap (no size limit)")
+    func directFileReadLargeAccepted() throws {
+        // A file over the old 100 MiB per-rep cap is no longer rejected — it
+        // becomes a disk-backed rep whose bytes stream on demand. A sparse file
+        // keeps the test fast.
+        let url = try makeTempFile(name: "huge.bin", contents: Data())
+        let handle = try FileHandle(forWritingTo: url)
+        try handle.truncate(atOffset: 200 * 1024 * 1024)  // 200 MiB sparse
+        try handle.close()
 
-        guard case .rejected = await ClipboardPasteboardIntake.read(fileAt: url, allowsBinary: true)
+        guard
+            case .content(let content, _) = ClipboardPasteboardIntake.read(
+                fileAt: url, allowsBinary: true)
         else {
-            Issue.record("Expected rejection")
+            Issue.record("Expected content (no size cap)")
             return
         }
+        #expect(content.representations.first?.byteCount == 200 * 1024 * 1024)
     }
 
     @Test("dragged image file on a text-only transport is rejected")
-    func imageFileTextOnlyRejected() async throws {
+    func imageFileTextOnlyRejected() throws {
         let url = try makeTempFile(name: "image.png", contents: try makePNG())
         let pasteboard = makeScratchPasteboard()
         pasteboard.clearContents()
@@ -318,7 +332,7 @@ struct ClipboardPasteboardIntakeTests {
         pasteboard.writeObjects([item])
 
         guard
-            case .rejected(let message) = await resolve(
+            case .rejected(let message) = resolve(
                 ClipboardPasteboardIntake.read(from: pasteboard, allowsBinary: false),
                 allowsBinary: false)
         else {
@@ -330,8 +344,8 @@ struct ClipboardPasteboardIntakeTests {
 
     // MARK: - Screenshot thumbnail (promised file URL)
 
-    @Test("a promised-file-url on disk is read as the image — the screenshot thumbnail mechanism")
-    func promisedFileURLImage() async throws {
+    @Test("a promised-file-url on disk is resolved as the image — the screenshot thumbnail mechanism")
+    func promisedFileURLImage() throws {
         // The floating screenshot thumbnail is a promise drag: NO concrete
         // public.file-url, NO inline image bytes — only a promised-file-url
         // pointing at the temp file screencaptureui has already written, plus
@@ -348,7 +362,7 @@ struct ClipboardPasteboardIntakeTests {
         pasteboard.writeObjects([item])
 
         guard
-            case .content(let content, _) = await resolve(
+            case .content(let content, _) = resolve(
                 ClipboardPasteboardIntake.read(from: pasteboard, allowsBinary: true),
                 allowsBinary: true)
         else {
@@ -356,7 +370,9 @@ struct ClipboardPasteboardIntakeTests {
             return
         }
         #expect(content.representations.count == 1)
-        #expect(content.representations[0].data == png)
+        #expect(UTType(content.representations[0].uti)?.conforms(to: .image) == true)
+        #expect(content.representations[0].byteCount == png.count)
+        #expect(content.representations[0].fileURL == url)
         // The decisive assertion: the path text must NOT leak as content.
         #expect(content.text == nil)
     }
