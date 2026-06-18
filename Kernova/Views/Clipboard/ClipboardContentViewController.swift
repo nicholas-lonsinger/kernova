@@ -98,6 +98,13 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     /// older staged files instead of accumulating.
     private var copyToMacGeneration: UInt64 = 1
 
+    /// `true` while a "Copy to Mac" is materializing/writing.
+    ///
+    /// The async pull republishes `clipboardContent`, which re-fires the
+    /// observation pass and would re-enable the Copy button mid-copy; this flag is
+    /// the real re-entrancy guard, not the button's enabled state.
+    private var isCopyingToMac = false
+
     /// First-file-wins gate shared by one promise receipt's per-file
     /// completions (the buffer models a single pasteboard item).
     @MainActor
@@ -258,6 +265,13 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         observeServiceChanges()
     }
 
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        // The window is now visible — pull the representations it renders richly
+        // for a guest offer that arrived (or stayed a placeholder) while hidden.
+        triggerPreviewMaterialization()
+    }
+
     // MARK: - NSTextViewDelegate
 
     func textDidChange(_ notification: Notification) {
@@ -273,7 +287,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         lastAppliedDigest = edited.digest
         service.clipboardContent = edited
         indicatorView.setText(ClipboardContentDescriber.indicatorText(for: edited))
-        commandBar.copyButton.isEnabled = !edited.isEmpty
+        commandBar.copyButton.isEnabled = !edited.isEmpty && !isCopyingToMac
         commandBar.clearButton.isEnabled = !edited.isEmpty
     }
 
@@ -308,7 +322,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         let hasContent = service != nil && !(service?.clipboardContent.isEmpty ?? true)
         textView.isEditable = service != nil
         commandBar.pasteButton.isEnabled = service != nil
-        commandBar.copyButton.isEnabled = hasContent
+        commandBar.copyButton.isEnabled = hasContent && !isCopyingToMac
         commandBar.clearButton.isEnabled = hasContent
 
         if let service {
@@ -325,6 +339,17 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         }
 
         applyStatus(status, canInstallKernovaAgent: canInstallKernovaAgent)
+        triggerPreviewMaterialization()
+    }
+
+    /// Pulls the representations the window renders richly for the current guest
+    /// offer, when the window is visible — the lazy "pull on display" trigger.
+    ///
+    /// The service guards against re-pulling per generation, so calling this on
+    /// every appear/update is cheap.
+    private func triggerPreviewMaterialization() {
+        guard let service = instance.clipboardService, view.window?.isVisible == true else { return }
+        Task { await service.materializeForPreview() }
     }
 
     // MARK: - Content rendering
@@ -348,6 +373,18 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 show(contentView: imagePreview)
             } else {
                 // Undecodable image bytes degrade to the summary.
+                summaryView.configure(content: content)
+                show(contentView: summaryView)
+            }
+        case .imageFile(let url, let uti):
+            if imagePreview.configure(url: url, uti: uti) {
+                show(contentView: imagePreview)
+            } else if let file = content.filePayload {
+                // Unreadable/undecodable file image degrades to the file chip.
+                filePreview.configure(
+                    filename: file.filename, uti: file.uti, byteCount: file.byteCount)
+                show(contentView: filePreview)
+            } else {
                 summaryView.configure(content: content)
                 show(contentView: summaryView)
             }
@@ -430,19 +467,38 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
     @objc private func copyToMac(_ sender: Any?) {
         guard let service = instance.clipboardService else { return }
-        let content = service.clipboardContent
-        guard !content.isEmpty else { return }
+        guard !service.clipboardContent.isEmpty else { return }
+        // A pull landing mid-copy republishes clipboardContent, firing the
+        // observation pass that re-enables the Copy button (updateUI) while this
+        // copy is still in flight. Guard re-entry explicitly so a second click
+        // can't launch a concurrent materialize + last-writer-wins pasteboard
+        // write; the disabled button is only cosmetic.
+        guard !isCopyingToMac else { return }
+        isCopyingToMac = true
 
         let staging = self.staging
         let generation = copyToMacGeneration
         copyToMacGeneration += 1
-        // Build the pasteboard pairs off the main actor: a streamed `.file`
-        // payload's temp URL is used as-is; an inline payload's bytes are written
-        // inline (read from disk if file-backed); an inline-and-named payload
-        // (image file) is also staged to a temp file so a Finder paste creates
-        // it. A large read/stage mustn't block the UI.
+        // Pull any not-yet-fetched representations first (lazy mode), then build
+        // the pasteboard pairs off the main actor: a streamed `.file` payload's
+        // temp URL is used as-is; an inline payload's bytes are written inline
+        // (read from disk if file-backed); an inline-and-named payload (image
+        // file) is also staged to a temp file so a Finder paste creates it. A
+        // large read/stage/pull mustn't block the UI, so disable the button until
+        // it resolves.
+        commandBar.copyButton.isEnabled = false
         Task { @MainActor [weak self] in
             guard let self else { return }
+            defer {
+                self.isCopyingToMac = false
+                self.commandBar.copyButton.isEnabled = !service.clipboardContent.isEmpty
+            }
+            let content = await service.materializeForCopy()
+            guard !content.isEmpty else {
+                self.indicatorView.showTransientMessage(
+                    "Couldn't fetch the clipboard content to copy", style: .error)
+                return
+            }
             let pairs = await Self.hostPasteboardPairs(
                 for: content, generation: generation, staging: staging)
             let item = NSPasteboardItem()
@@ -495,8 +551,14 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 let sink = try? staging.makeSink(
                     generation: generation, filename: representation.filename)
             {
-                try? sink.write(data)
-                fileURL = try? sink.commit()
+                do {
+                    try sink.write(data)
+                    fileURL = try sink.commit()
+                } catch {
+                    // Don't offer a truncated file — abort the partial stage.
+                    sink.abort()
+                    fileURL = nil
+                }
             } else {
                 fileURL = nil
             }
@@ -707,7 +769,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             return instance.clipboardService != nil
         case #selector(copy(_:)):
             guard let service = instance.clipboardService else { return false }
-            return !service.clipboardContent.isEmpty
+            return !service.clipboardContent.isEmpty && !isCopyingToMac
         default:
             return true
         }

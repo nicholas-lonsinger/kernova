@@ -184,6 +184,14 @@ public final class ClipboardStreamSender: @unchecked Sendable {
                 return
             }
             reader = fileReader
+        case .pendingRemote:
+            // The sender is only ever handed materialized reps we offered; a
+            // not-yet-pulled placeholder has no bytes to stream.
+            assertionFailure("Cannot stream a pending-remote representation")
+            sendAbort(
+                transfer: transfer, code: "read.error",
+                message: "Cannot stream a pending-remote representation")
+            return
         }
         defer { reader.close() }
 

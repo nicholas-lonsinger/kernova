@@ -11,6 +11,11 @@ enum ClipboardPreviewMode: Equatable {
     case richText(data: Data, uti: String)
     /// Image preview decoded from `data`.
     case image(data: Data, uti: String)
+    /// Image preview decoded straight from a file-backed image payload at
+    /// `url` — a thumbnail is read via ImageIO without loading the whole file.
+    /// The on-disk counterpart of `.image`; used for a copied image *file* and
+    /// a streamed/materialized guest image file.
+    case imageFile(url: URL, uti: String)
     /// A copied/dropped file shown as a chip (icon + name + type · size).
     case file(filename: String, uti: String, byteCount: Int)
     /// Non-editable per-representation summary (unknown formats, or text too
@@ -28,6 +33,14 @@ enum ClipboardPreviewPolicy {
     /// `NSTextView` freezes the UI laying out multi-megabyte strings.
     static let maxEditableTextBytes = 2_000_000
 
+    /// An image or inline rich-text representation up to this size is eagerly
+    /// pulled (lazy mode) so the window shows a real preview rather than a chip;
+    /// a larger payload stays a metadata placeholder until "Copy to Mac".
+    ///
+    /// A generous bound that covers typical screenshots/photos while capping a
+    /// pathological auto-pull; tunable.
+    static let maxEagerPreviewBytes = 32 * 1024 * 1024
+
     /// Chooses the preview for a buffer, in priority order.
     ///
     /// 1. A *file payload* (a representation tagged with a filename) shows as
@@ -37,17 +50,24 @@ enum ClipboardPreviewPolicy {
     /// 2. Inline content: an image beats a coexisting path/URL *descriptor*
     ///    text; then inline RTF renders styled; then plain text lands in the
     ///    editor; then a bare image; else a summary.
-    /// A file-backed representation (no resident bytes) renders as a file chip
-    /// rather than decoding an inline image preview — its bytes live on disk and
-    /// stream on demand. (Rich previews rendered from offer metadata are a
-    /// later, lazy-mode change.)
+    /// A file-backed *image* payload renders its thumbnail straight from disk
+    /// (`.imageFile`, decoded via ImageIO without loading the whole file) so a
+    /// copied/streamed image file previews like an inline one; any other
+    /// file-backed payload renders as a file chip. A metadata-only
+    /// `.pendingRemote` placeholder (no resident bytes and no on-disk file) is a
+    /// chip until its bytes are pulled.
     static func mode(for content: ClipboardContent) -> ClipboardPreviewMode {
         if content.isEmpty {
             return .empty
         }
         if let file = content.filePayload {
-            if let image = content.imageRepresentation, let data = image.inMemoryData {
-                return .image(data: data, uti: image.uti)
+            if let image = content.imageRepresentation {
+                if let data = image.inMemoryData {
+                    return .image(data: data, uti: image.uti)
+                }
+                if let url = image.fileURL {
+                    return .imageFile(url: url, uti: image.uti)
+                }
             }
             return .file(filename: file.filename, uti: file.uti, byteCount: file.byteCount)
         }

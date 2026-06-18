@@ -250,6 +250,19 @@ func makeEndFrame(transferID: UInt64, payload: Data) -> Frame {
     return frame
 }
 
+/// A `ClipboardStreamAbort` failing an inbound transfer the agent is receiving
+/// (we are the host sender aborting a lazy pull mid-flight).
+func makeAbortFrame(transferID: UInt64, code: String, message: String) -> Frame {
+    var frame = Frame()
+    frame.protocolVersion = 1
+    frame.clipboardStreamAbort = Kernova_V1_ClipboardStreamAbort.with {
+        $0.transferID = transferID
+        $0.code = code
+        $0.message = message
+    }
+    return frame
+}
+
 /// A `ClipboardStreamAck` releasing/crediting an outbound transfer the agent is
 /// sending. `windowBytes` defaults to a generous window so the whole payload can
 /// flow without further acks; `bytesConsumed` is cumulative.

@@ -67,23 +67,50 @@ final class ClipboardImagePreviewView: NSView {
         layer?.backgroundColor = NSColor.textBackgroundColor.cgColor
     }
 
-    /// Decodes `data` into the preview.
+    /// Decodes resident `data` into the preview.
     ///
     /// Returns `false` when the bytes are not a decodable image — the
     /// caller falls back to the summary view. Runtime data, so failure is a
     /// logged condition, not a programming error.
     func configure(data: Data, uti: String) -> Bool {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
+            Self.logger.warning(
+                "Could not read image preview (uti=\(uti, privacy: .public), \(data.count, privacy: .public) bytes)"
+            )
+            imageView.image = nil
+            return false
+        }
+        return setThumbnail(from: source, uti: uti)
+    }
+
+    /// Decodes a thumbnail straight from a file-backed image at `url`.
+    ///
+    /// The whole file is never loaded into memory — ImageIO memory-maps it and
+    /// only materializes the downsampled thumbnail. The on-disk counterpart of
+    /// `configure(data:uti:)` for a copied/streamed image file. Returns `false`
+    /// when the file is missing or not a decodable image — the caller falls back
+    /// to a file chip.
+    func configure(url: URL, uti: String) -> Bool {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
+            Self.logger.warning(
+                "Could not read image preview from file (uti=\(uti, privacy: .public))")
+            imageView.image = nil
+            return false
+        }
+        return setThumbnail(from: source, uti: uti)
+    }
+
+    /// Renders a downsampled thumbnail from an image source into the view.
+    private func setThumbnail(from source: CGImageSource, uti: String) -> Bool {
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
             kCGImageSourceThumbnailMaxPixelSize: Self.thumbnailMaxPixelSize,
         ]
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-            let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+        guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
         else {
             Self.logger.warning(
-                "Could not decode image preview (uti=\(uti, privacy: .public), \(data.count, privacy: .public) bytes)"
-            )
+                "Could not decode image preview (uti=\(uti, privacy: .public))")
             imageView.image = nil
             return false
         }

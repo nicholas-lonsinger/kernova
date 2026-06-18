@@ -36,6 +36,16 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
     private let lock = NSLock()
     private var transfers: [UInt64: InboundTransfer] = [:]
 
+    /// Off-actor delivery handlers registered per `transfer_id` by a lazy pull
+    /// coordinator.
+    ///
+    /// When present for a transfer, the matching handler is fired on the
+    /// transfer's serial queue **instead of** the channel-wide
+    /// `onComplete`/`onAbort` — the lazy guest provider blocks the agent's main
+    /// thread and must be woken without a main-thread hop, which the channel-wide
+    /// closures perform. Guarded by `lock`; one-shot (removed when it fires).
+    private var awaiters: [UInt64: Awaiter] = [:]
+
     /// - Parameters:
     ///   - channel: the vsock channel the transfer frames are read from.
     ///   - staging: provides temp-file sinks and the free-space guard.
@@ -243,20 +253,30 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
             }
             transfer.finished = true
             self.remove(transfer.transferID)
-            self.onComplete(transfer.transferID, representation)
+            self.deliverComplete(transfer.transferID, representation)
         }
     }
 
     /// Tears down an inbound transfer on a peer `ClipboardStreamAbort`.
     public func handleAbort(_ abort: Kernova_V1_ClipboardStreamAbort) {
-        guard let transfer = transfer(abort.transferID) else { return }
+        guard let transfer = transfer(abort.transferID) else {
+            // No in-flight transfer for this id — the sender aborted *before*
+            // Begin (e.g. a pre-Begin `disk.full` refusal in ClipboardStreamSender),
+            // or this is a duplicate abort. Still wake a lazy pull awaiting this
+            // transfer, which would otherwise park to its timeout.
+            deliverAbort(
+                ClipboardStreamAbortInfo(
+                    transferID: abort.transferID, code: abort.code, message: abort.message,
+                    neededBytes: nil, availableBytes: nil))
+            return
+        }
         transfer.queue.async { [weak self] in
             guard let self, !transfer.finished else { return }
             transfer.stallTimer?.cancel()
             transfer.finished = true
             transfer.sink?.abort()
             self.remove(transfer.transferID)
-            self.onAbort(
+            self.deliverAbort(
                 ClipboardStreamAbortInfo(
                     transferID: abort.transferID, code: abort.code, message: abort.message,
                     neededBytes: nil, availableBytes: nil))
@@ -264,16 +284,43 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
     }
 
     /// Aborts every in-flight transfer for a superseded generation, deleting
-    /// partial temp files.
+    /// partial temp files, and wakes any lazy pull awaiting that generation.
     public func cancel(generation: UInt64) {
         let affected = lock.withLock { transfers.values.filter { $0.generation == generation } }
         for transfer in affected { teardown(transfer) }
+        // Also wake awaiters whose transfer never produced a Begin (no entry in
+        // `transfers`), so a pull blocked on a superseded/released generation
+        // resolves instead of parking to its timeout.
+        failAwaiters { Self.generation(ofTransferID: $0) == generation }
     }
 
-    /// Aborts every in-flight transfer (channel teardown / capability disable).
+    /// Aborts every in-flight transfer (channel teardown / capability disable)
+    /// and wakes every lazy pull awaiting this channel.
     public func cancelAll() {
         let all = lock.withLock { Array(transfers.values) }
         for transfer in all { teardown(transfer) }
+        failAwaiters { _ in true }
+    }
+
+    /// Registers an off-actor delivery handler for a single transfer.
+    ///
+    /// Called by `LazyPullCoordinator` before the `ClipboardRequest` is sent.
+    /// When the transfer completes or aborts, the matching handler fires on the
+    /// transfer's serial queue (off the owning actor) **in place of** the
+    /// channel-wide `onComplete`/`onAbort`, so the main-blocked guest provider is
+    /// woken without a main-thread hop. One-shot: the handler is removed when it
+    /// fires (or via `cancelAwait`).
+    public func awaitTransfer(
+        _ transferID: UInt64,
+        onComplete: @escaping @Sendable (ClipboardContent.Representation) -> Void,
+        onAbort: @escaping @Sendable (ClipboardStreamAbortInfo) -> Void
+    ) {
+        lock.withLock { awaiters[transferID] = Awaiter(onComplete: onComplete, onAbort: onAbort) }
+    }
+
+    /// Deregisters a per-transfer delivery handler without firing it.
+    public func cancelAwait(_ transferID: UInt64) {
+        lock.withLock { _ = awaiters.removeValue(forKey: transferID) }
     }
 
     // MARK: - Private
@@ -286,13 +333,77 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
         lock.withLock { _ = transfers.removeValue(forKey: id) }
     }
 
+    /// Delivers a completed representation to a registered per-transfer awaiter,
+    /// or the channel-wide `onComplete` when none is registered.
+    private func deliverComplete(_ id: UInt64, _ representation: ClipboardContent.Representation) {
+        let awaiter = lock.withLock { awaiters.removeValue(forKey: id) }
+        if let awaiter {
+            awaiter.onComplete(representation)
+        } else {
+            onComplete(id, representation)
+        }
+    }
+
+    /// Delivers a failure to a registered per-transfer awaiter, or the
+    /// channel-wide `onAbort` when none is registered.
+    private func deliverAbort(_ info: ClipboardStreamAbortInfo) {
+        let awaiter = lock.withLock { awaiters.removeValue(forKey: info.transferID) }
+        if let awaiter {
+            awaiter.onAbort(info)
+        } else {
+            onAbort(info)
+        }
+    }
+
+    /// Notifies a registered per-transfer awaiter of a teardown/supersession
+    /// without firing the channel-wide `onAbort`.
+    ///
+    /// Supersession and channel teardown are silent on the channel-wide path
+    /// (the eager flow does not surface them), but a lazy pull blocked on the
+    /// cancelled transfer must still be unblocked.
+    private func deliverAbortToAwaiterOnly(_ info: ClipboardStreamAbortInfo) {
+        let awaiter = lock.withLock { awaiters.removeValue(forKey: info.transferID) }
+        awaiter?.onAbort(info)
+    }
+
+    /// Fires (and removes) every registered awaiter whose `transfer_id` matches
+    /// `predicate`, resolving a blocked pull with a cancellation.
+    ///
+    /// Covers awaiters whose transfer never produced a `Begin`, so they have no
+    /// entry in `transfers` for `teardown` to reach. One-shot and idempotent with
+    /// `teardown`'s own awaiter notification — whichever removes the awaiter first
+    /// wins; the other is a no-op.
+    private func failAwaiters(_ predicate: (UInt64) -> Bool) {
+        let ids = lock.withLock { awaiters.keys.filter(predicate) }
+        for id in ids {
+            deliverAbortToAwaiterOnly(
+                ClipboardStreamAbortInfo(
+                    transferID: id, code: "cancelled",
+                    message: "Transfer superseded or channel closed",
+                    neededBytes: nil, availableBytes: nil))
+        }
+    }
+
+    /// The generation encoded in a `transfer_id`, ignoring the direction bit.
+    private static func generation(ofTransferID id: UInt64) -> UInt64 {
+        (id & ~ClipboardTransferID.hostReceivesBit) >> 16
+    }
+
     private func teardown(_ transfer: InboundTransfer) {
         transfer.queue.async { [weak self] in
-            guard !transfer.finished else { return }
+            guard let self, !transfer.finished else { return }
             transfer.stallTimer?.cancel()
             transfer.finished = true
             transfer.sink?.abort()
-            self?.remove(transfer.transferID)
+            self.remove(transfer.transferID)
+            // Wake a lazy pull blocked on this transfer; stay silent on the
+            // channel-wide path so supersession/teardown isn't surfaced as a
+            // user-visible abort the way a peer/disk failure is.
+            self.deliverAbortToAwaiterOnly(
+                ClipboardStreamAbortInfo(
+                    transferID: transfer.transferID, code: "cancelled",
+                    message: "Transfer superseded or channel closed",
+                    neededBytes: nil, availableBytes: nil))
         }
     }
 
@@ -352,7 +463,7 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
         transfer.finished = true
         transfer.sink?.abort()
         remove(transfer.transferID)
-        onAbort(info)
+        deliverAbort(info)
     }
 
     private func sendAbortFrame(_ transferID: UInt64, code: String, message: String) {
@@ -395,6 +506,12 @@ public struct ClipboardStreamAbortInfo: Sendable, Equatable {
         self.neededBytes = neededBytes
         self.availableBytes = availableBytes
     }
+}
+
+/// Off-actor delivery handlers for a single awaited transfer.
+private struct Awaiter {
+    let onComplete: @Sendable (ClipboardContent.Representation) -> Void
+    let onAbort: @Sendable (ClipboardStreamAbortInfo) -> Void
 }
 
 // MARK: - Per-transfer state

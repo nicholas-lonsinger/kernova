@@ -115,4 +115,15 @@ sigtermSource.resume()
 vsockConnection.start()
 clipboardAgent.start()
 controlAgent.start()
-dispatchMain()
+
+// RATIONALE: A CFRunLoop on the main thread — not dispatchMain() — because the
+// lazy clipboard path registers NSPasteboardItemDataProvider promises, and the
+// pasteboard server delivers provideDataForType callbacks via a main-thread
+// CFRunLoop source. dispatchMain() drains only the GCD main queue, so those
+// callbacks never fire and every lazy paste hangs until the pasteboard read
+// times out (verified empirically). RunLoop.main.run() spins the full CFRunLoop
+// — a strict superset of dispatchMain() that *also* drains the GCD main queue,
+// so the existing .main DispatchSource poll/signal handlers keep working. A
+// plain NSApplication is not required (the promise is served without an
+// activation policy or window-server connection).
+RunLoop.main.run()

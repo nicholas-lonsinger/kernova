@@ -54,6 +54,32 @@ struct ClipboardPreviewPolicyTests {
                 == .image(data: png, uti: UTType.png.identifier))
     }
 
+    @Test("a file-backed image payload renders the image-file preview")
+    func fileBackedImagePayloadShowsImageFile() {
+        // A copied image *file* (or a streamed/materialized guest image file)
+        // has its bytes on disk, not resident — it must still preview as an
+        // image (decoded from the URL), matching an inline image rather than
+        // degrading to a file chip.
+        let url = URL(fileURLWithPath: "/tmp/photo.png")
+        let content = ClipboardContent(representations: [
+            .init(uti: UTType.png.identifier, fileURL: url, byteCount: 4096, filename: "photo.png")
+        ])
+        #expect(
+            ClipboardPreviewPolicy.mode(for: content)
+                == .imageFile(url: url, uti: UTType.png.identifier))
+    }
+
+    @Test("a file-backed non-image payload renders the file chip")
+    func fileBackedNonImagePayloadShowsChip() {
+        let url = URL(fileURLWithPath: "/tmp/archive.zip")
+        let content = ClipboardContent(representations: [
+            .init(uti: UTType.zip.identifier, fileURL: url, byteCount: 1024, filename: "archive.zip")
+        ])
+        #expect(
+            ClipboardPreviewPolicy.mode(for: content)
+                == .file(filename: "archive.zip", uti: UTType.zip.identifier, byteCount: 1024))
+    }
+
     @Test("a copied .rtf file attaches as a file, not inline rich text")
     func rtfFilePayloadShowsChip() {
         // The file-payload rule must beat the rich-text rule: a copied .rtf
@@ -161,5 +187,44 @@ struct ClipboardPreviewPolicyTests {
             .init(uti: "com.example.custom-blob", data: Data([1, 2, 3]))
         ])
         #expect(ClipboardPreviewPolicy.mode(for: content) == .summary(content.representations))
+    }
+
+    // MARK: - Lazy-receive placeholders (.pendingRemote)
+
+    @Test("a .pendingRemote image rep with a filename renders the file chip, not an image")
+    func pendingRemoteImageWithFilenameShowsChip() {
+        // A not-yet-pulled image *file* offer has no resident bytes, so the
+        // window must render a chip (filename · type · size) rather than try to
+        // decode an image from absent data.
+        let content = ClipboardContent(representations: [
+            .init(pendingRemoteUTI: UTType.png.identifier, byteCount: 4096, filename: "photo.png")
+        ])
+        #expect(
+            ClipboardPreviewPolicy.mode(for: content)
+                == .file(filename: "photo.png", uti: UTType.png.identifier, byteCount: 4096))
+    }
+
+    @Test("a .pendingRemote inline rep with no filename renders the summary")
+    func pendingRemoteInlineNoFilenameShowsSummary() {
+        // A placeholder for an inline rep (e.g. an over-limit image not eagerly
+        // pulled, or text awaiting Copy-to-Mac) has no bytes to preview and no
+        // filename to chip, so it falls through to the per-rep summary.
+        let content = ClipboardContent(representations: [
+            .init(pendingRemoteUTI: UTType.png.identifier, byteCount: 64 * 1024 * 1024)
+        ])
+        #expect(ClipboardPreviewPolicy.mode(for: content) == .summary(content.representations))
+    }
+
+    @Test("a materialized .inMemory image rep renders the image preview")
+    func materializedInlineImageShowsImage() {
+        // The counterpart to the placeholder cases: once the image rep is pulled
+        // into memory, the same policy renders it richly.
+        let png = Data([0x89, 0x50])
+        let content = ClipboardContent(representations: [
+            .init(uti: UTType.png.identifier, data: png)
+        ])
+        #expect(
+            ClipboardPreviewPolicy.mode(for: content)
+                == .image(data: png, uti: UTType.png.identifier))
     }
 }

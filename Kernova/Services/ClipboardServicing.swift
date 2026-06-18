@@ -63,4 +63,22 @@ protocol ClipboardServicing: AnyObject {
     /// the guest — mirrors the `lastGrabbedDigest`/`lastGrabbedText` reset the
     /// inbound path already performs after a round-trip.
     func clearBuffer()
+
+    /// Pulls the representations the clipboard window renders richly (text,
+    /// inline RTF, images up to a size limit) for a lazily-offered guest payload,
+    /// updating `clipboardContent` as they land. The window calls it when it
+    /// displays a guest offer. Default no-op: transports that deliver content
+    /// eagerly (SPICE text) have nothing to pull.
+    func materializeForPreview() async
+
+    /// Pulls every not-yet-fetched representation so the full content can be
+    /// written to the host pasteboard ("Copy to Mac"), returning the resolved
+    /// content. Default returns `clipboardContent` unchanged for eager
+    /// transports.
+    func materializeForCopy() async -> ClipboardContent
+}
+
+extension ClipboardServicing {
+    func materializeForPreview() async {}
+    func materializeForCopy() async -> ClipboardContent { clipboardContent }
 }

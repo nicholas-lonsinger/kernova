@@ -1,5 +1,6 @@
 import Foundation
 import KernovaProtocol
+import UniformTypeIdentifiers
 import os
 
 /// Drives the Kernova clipboard sync protocol over a single `VsockChannel`.
@@ -14,9 +15,11 @@ import os
 /// no size cap. Each offer carries a monotonically increasing `generation` so
 /// requests that race a newer offer are detectable.
 ///
-/// This is the eager-pull stepping stone: on an inbound offer the host pulls
-/// every representation immediately and updates `clipboardContent`. The lazy
-/// "pull on Copy to Mac" path is a later change.
+/// Inbound is lazy: an offer publishes metadata-only `.pendingRemote`
+/// placeholders to `clipboardContent` immediately, the window pulls the
+/// representations it renders richly (text/RTF/images up to a size limit) when
+/// it displays the offer, and "Copy to Mac" pulls any remaining representations
+/// on demand. Large files never cross the wire until the user copies them.
 ///
 /// One instance manages one channel for the lifetime of one accepted
 /// connection; the service self-terminates when the channel closes.
@@ -48,6 +51,12 @@ final class VsockClipboardService: ClipboardServicing {
     private let label: String
     private let staging: ClipboardFileStaging
 
+    /// Backstop for a lazy pull the peer never answers while the channel stays
+    /// open — the host counterpart of the guest's `LazyPullCoordinator` timeout.
+    ///
+    /// Lowered in tests to drive the timeout-resolves-the-pull path.
+    private let lazyPullTimeout: Duration
+
     private var sender: ClipboardStreamSender?
     private var receiver: ClipboardStreamReceiver?
     private var consumeTask: Task<Void, Never>?
@@ -65,13 +74,27 @@ final class VsockClipboardService: ClipboardServicing {
     /// off-actor supersession check.
     private let currentOutboundGeneration = AtomicGeneration()
 
-    /// The inbound generation currently being pulled, with its per-transfer
-    /// progress.
-    private var pendingInbound: InboundCollection?
+    /// The guest offer currently promised in `clipboardContent`, with its
+    /// per-representation materialization cache.
+    ///
+    /// Reps are pulled lazily — on display for a rich preview, on Copy-to-Mac for
+    /// the rest.
+    private var inboundPromise: InboundPromise?
+
+    /// Generation for which preview materialization has already been started, so
+    /// the window can call `materializeForPreview()` freely without re-pulling.
+    private var previewMaterializationStarted: UInt64 = 0
 
     /// Digest of the last content we successfully announced; suppresses
     /// redundant offers.
     private var lastGrabbedDigest: Data?
+
+    /// Digest of the content `republish` last wrote from the inbound promise.
+    ///
+    /// When `clipboardContent.digest` no longer matches, the user replaced the
+    /// offered content with their own edit, so the promise is stale and the lazy
+    /// pulls must not resurrect it (Copy-to-Mac would otherwise discard the edit).
+    private var lastInboundPublishedDigest: Data?
 
     // `nonisolated` so the off-main `consume` loop can log; `Logger` is Sendable.
     nonisolated private static let logger = Logger(
@@ -79,16 +102,23 @@ final class VsockClipboardService: ClipboardServicing {
 
     private static let errorCodeTransferFailure = "clipboard.transfer.send.failure"
 
-    /// Collects the streamed representations of one inbound offer generation
-    /// until every requested transfer finishes (or aborts), then commits.
-    private final class InboundCollection {
+    /// One promised guest offer.
+    ///
+    /// Holds its representation metadata (indexed exactly as the guest offered
+    /// them, so a `transfer_id`'s rep index stays valid) and the representations
+    /// materialized so far. Each rep is pulled at most once.
+    private final class InboundPromise {
         let generation: UInt64
-        var pending: Set<UInt64>
-        var received: [UInt64: ClipboardContent.Representation] = [:]
+        let reps: [Kernova_V1_ClipboardRepresentationInfo]
+        var materialized: [Int: ClipboardContent.Representation] = [:]
+        /// Pulls in flight, keyed by rep index, so concurrent preview/copy callers
+        /// share one pull per rep instead of minting a duplicate (same-transfer_id)
+        /// request that would orphan a continuation.
+        var inFlight: [Int: Task<ClipboardContent.Representation?, Never>] = [:]
 
-        init(generation: UInt64, pending: Set<UInt64>) {
+        init(generation: UInt64, reps: [Kernova_V1_ClipboardRepresentationInfo]) {
             self.generation = generation
-            self.pending = pending
+            self.reps = reps
         }
     }
 
@@ -99,12 +129,16 @@ final class VsockClipboardService: ClipboardServicing {
     ///   - label: identifies this service's staging area and log context.
     ///   - freeSpaceProvider: injected in tests to simulate a full disk;
     ///     `nil` uses the real volume free-space query.
+    ///   - lazyPullTimeout: backstop for a pull the peer never answers while the
+    ///     channel stays open; defaults to the production value, lowered in tests.
     init(
         channel: VsockChannel, label: String,
-        freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil
+        freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
+        lazyPullTimeout: Duration = ClipboardStreamTuning.lazyPullTimeout
     ) {
         self.channel = channel
         self.label = label
+        self.lazyPullTimeout = lazyPullTimeout
         self.staging = ClipboardFileStaging(
             label: "host-\(label)", freeSpaceProvider: freeSpaceProvider)
     }
@@ -119,11 +153,19 @@ final class VsockClipboardService: ClipboardServicing {
         let sender = ClipboardStreamSender(channel: channel)
         let receiver = ClipboardStreamReceiver(
             channel: channel, staging: staging,
-            onComplete: { [weak self] transferID, representation in
-                Task { @MainActor in self?.onTransferComplete(transferID, representation) }
+            // Lazy pulls register a per-transfer awaiter (bridged to an async
+            // continuation by `pull`) that takes precedence over these
+            // channel-wide closures, so they fire only for an unexpected
+            // unawaited transfer.
+            onComplete: { transferID, _ in
+                Self.logger.warning(
+                    "Unawaited inbound clipboard transfer \(transferID, privacy: .public) completed — dropped"
+                )
             },
-            onAbort: { [weak self] info in
-                Task { @MainActor in self?.onTransferAbort(info) }
+            onAbort: { info in
+                Self.logger.debug(
+                    "Unawaited inbound clipboard transfer \(info.transferID, privacy: .public) aborted (\(info.code, privacy: .public))"
+                )
             })
         self.sender = sender
         self.receiver = receiver
@@ -134,6 +176,9 @@ final class VsockClipboardService: ClipboardServicing {
             await Self.consume(
                 channel: channel, label: label, sender: sender, receiver: receiver,
                 onControlFrame: { @MainActor frame in self?.handleControlFrame(frame) })
+            // Channel closed — wake any pull parked on a transfer whose Begin will
+            // now never arrive, so an async materialize doesn't hang forever.
+            receiver.cancelAll()
         }
         Self.logger.notice("Vsock clipboard service started for '\(self.label, privacy: .public)'")
     }
@@ -149,7 +194,7 @@ final class VsockClipboardService: ClipboardServicing {
         isConnected = false
         pendingOutbound = nil
         currentOutboundGeneration.set(0)
-        pendingInbound = nil
+        dropInboundPromise()
         staging.sweep()
         Self.logger.notice("Vsock clipboard service stopped for '\(self.label, privacy: .public)'")
     }
@@ -159,11 +204,20 @@ final class VsockClipboardService: ClipboardServicing {
     func clearBuffer() {
         clipboardContent = .empty
         lastGrabbedDigest = nil
+        // The user emptied the buffer — any guest offer it was showing is stale.
+        dropInboundPromise()
     }
 
     func grabIfChanged() {
         guard isConnected else { return }
         guard !clipboardContent.isEmpty else { return }
+        // Never offer content that still holds not-yet-pulled placeholders — the
+        // sender can't stream a `.pendingRemote` rep, and received guest content
+        // shouldn't echo back. It becomes grab-able once the user replaces it
+        // with their own bytes (a different digest).
+        guard !clipboardContent.representations.contains(where: { $0.isPendingRemote }) else {
+            return
+        }
         guard clipboardContent.digest != lastGrabbedDigest else { return }
 
         let generation = nextLocalGeneration
@@ -316,142 +370,300 @@ final class VsockClipboardService: ClipboardServicing {
     // MARK: - Inbound (we are the receiver)
 
     private func handleOffer(_ offer: Kernova_V1_ClipboardOffer) {
-        // A newer offer supersedes the previous one: cancel its in-flight
-        // inbound transfers so their partial temp files are deleted rather than
-        // leaked.
-        if let previous = pendingInbound { receiver?.cancel(generation: previous.generation) }
+        // A newer offer supersedes the previous one: cancel any in-flight pull so
+        // its partial temp file is deleted and a blocked continuation resumes.
+        if let previous = inboundPromise { receiver?.cancel(generation: previous.generation) }
 
-        // Eager pull: request every representation now. A file rep gets a
-        // free-space pre-flight first (Review Safeguard 4) so an over-budget
-        // transfer never starts.
-        var pending: Set<UInt64> = []
-        // Advertise the real free-space ceiling; an unknown capacity maps to the
-        // "no explicit ceiling" sentinel rather than 0 (which is a real, full
-        // ceiling). [M2]
+        guard !offer.repInfo.isEmpty else {
+            dropInboundPromise()
+            return
+        }
+        // Publish metadata-only placeholders immediately so the window shows the
+        // chips without waiting; renderable reps are pulled on display and the
+        // rest on Copy-to-Mac. The reps keep the guest's offer order so a
+        // transfer_id's rep index stays valid against the guest's offer.
+        let promise = InboundPromise(generation: offer.generation, reps: offer.repInfo)
+        republish(promise)
+        // Every offered rep was identity-skipped (transient marker / raw file-url
+        // / empty) — nothing usable to promise; mirror the guest agent's all-skip
+        // handling rather than hold a promise that resolves to nothing.
+        guard !clipboardContent.isEmpty else {
+            dropInboundPromise()
+            return
+        }
+        inboundPromise = promise
+        previewMaterializationStarted = 0
+        lastTransferIssue = nil
+        Self.logger.notice(
+            "Received guest clipboard offer for '\(self.label, privacy: .public)' (gen=\(offer.generation, privacy: .public), \(offer.repInfo.count, privacy: .public) reps) — metadata only"
+        )
+    }
+
+    /// Rebuilds `clipboardContent` from the promise: each rep is its materialized
+    /// form when pulled, else a `.pendingRemote` placeholder.
+    ///
+    /// Marks the result as already-grabbed so received content is never offered
+    /// back to the guest.
+    private func republish(_ promise: InboundPromise) {
+        var reps: [ClipboardContent.Representation] = []
+        // Drop identity-skip types (transient markers, raw public.file-url) so
+        // a peer can't smuggle them onto the host pasteboard — the receive-side
+        // sanitization the eager path applied. Indices into `promise.reps`
+        // stay valid for pulls; only the published view filters.
+        for (index, info) in promise.reps.enumerated() where !Self.shouldSkip(info) {
+            reps.append(
+                promise.materialized[index]
+                    ?? ClipboardContent.Representation(
+                        pendingRemoteUTI: info.uti, byteCount: Int(clamping: info.byteCount),
+                        filename: info.filename))
+        }
+        let content = ClipboardContent(representations: reps)
+        clipboardContent = content
+        lastGrabbedDigest = content.digest
+        lastInboundPublishedDigest = content.digest
+    }
+
+    /// Drops the current inbound promise and its per-generation lazy-pull state.
+    private func dropInboundPromise() {
+        inboundPromise = nil
+        previewMaterializationStarted = 0
+        lastInboundPublishedDigest = nil
+    }
+
+    /// Drops any `.pendingRemote` placeholder reps — content that can't be
+    /// written to the pasteboard (no bytes) — returning `content` unchanged when
+    /// it has none.
+    private static func withoutPlaceholders(_ content: ClipboardContent) -> ClipboardContent {
+        let reps = content.representations.filter { !$0.isPendingRemote }
+        return reps.count == content.representations.count
+            ? content : ClipboardContent(representations: reps)
+    }
+
+    /// A representation excluded from the receive side by identity alone: an empty
+    /// payload or a transient-marker / raw file-url UTI (the lazy counterpart of
+    /// `ClipboardSnapshotPolicy.sanitizedForApply`).
+    private static func shouldSkip(_ info: Kernova_V1_ClipboardRepresentationInfo) -> Bool {
+        info.byteCount == 0 || ClipboardSnapshotPolicy.shouldSkipBeforeReading(uti: info.uti)
+    }
+
+    // MARK: - Lazy materialization (we are the receiver)
+
+    /// Pulls the representations the window renders richly (text, inline RTF,
+    /// images up to the preview limit) for the current offer, updating
+    /// `clipboardContent` as each lands.
+    ///
+    /// Idempotent per generation; the window calls it when it displays a guest
+    /// offer. Files and over-limit reps stay placeholders until Copy-to-Mac.
+    func materializeForPreview() async {
+        // Bail if there's no promise, or the user replaced the offered content
+        // with their own edit (the promise is then stale).
+        guard let promise = inboundPromise, clipboardContent.digest == lastInboundPublishedDigest
+        else { return }
+        guard previewMaterializationStarted != promise.generation else { return }
+        var allSucceeded = true
+        for (index, info) in promise.reps.enumerated() {
+            guard inboundPromise === promise else { return }  // superseded
+            guard Self.isEagerPreviewable(info), !Self.shouldSkip(info) else { continue }
+            if await materialize(index: index, info: info, promise: promise) == nil {
+                allSucceeded = false
+            }
+        }
+        // Latch only on full success so a transient pull failure (timeout/abort)
+        // is retried on the next display trigger, instead of permanently leaving a
+        // rich rep as a chip until a new offer arrives.
+        if allSucceeded { previewMaterializationStarted = promise.generation }
+    }
+
+    /// Pulls every not-yet-materialized representation and returns the fully
+    /// resolved content for "Copy to Mac".
+    ///
+    /// A rep that can't be pulled (disk full, abort, supersession) is dropped from
+    /// the result.
+    func materializeForCopy() async -> ClipboardContent {
+        // No active promise, or the user replaced the offered content with their
+        // own edit: copy what's actually shown, never a stale placeholder.
+        guard let promise = inboundPromise, clipboardContent.digest == lastInboundPublishedDigest
+        else {
+            dropInboundPromise()
+            return Self.withoutPlaceholders(clipboardContent)
+        }
+        // Collect each pull's RETURN value rather than re-reading
+        // `promise.materialized`: a caller that coalesces onto an in-flight pull
+        // gets the rep back before the owning call writes the cache, so rebuilding
+        // from the cache here could silently drop a just-pulled rep.
+        var resolved: [ClipboardContent.Representation] = []
+        for (index, info) in promise.reps.enumerated() {
+            // A supersession mid-loop: return what THIS generation resolved, not
+            // the newer generation's byte-less placeholders (which would yield zero
+            // pasteboard pairs and a misleading "couldn't prepare" error).
+            guard inboundPromise === promise else {
+                return ClipboardContent(representations: resolved)
+            }
+            guard !Self.shouldSkip(info) else { continue }
+            if let rep = await materialize(index: index, info: info, promise: promise) {
+                resolved.append(rep)
+            }
+        }
+        return ClipboardContent(representations: resolved)
+    }
+
+    /// Pulls representation `index` at most once across concurrent callers
+    /// (on-display preview and Copy-to-Mac), caching and republishing on success.
+    ///
+    /// A second caller for an in-flight rep awaits the existing pull rather than
+    /// minting a duplicate same-`transfer_id` request that would orphan a
+    /// continuation.
+    private func materialize(
+        index: Int, info: Kernova_V1_ClipboardRepresentationInfo, promise: InboundPromise
+    ) async -> ClipboardContent.Representation? {
+        if let cached = promise.materialized[index] { return cached }
+        if let existing = promise.inFlight[index] {
+            let rep = await existing.value
+            // The owning call writes the cache after its own continuation resumes,
+            // which may be after this coalescing caller — populate it here too so a
+            // reader between the two resumptions doesn't miss the rep.
+            if let rep, inboundPromise === promise, promise.materialized[index] == nil {
+                promise.materialized[index] = rep
+            }
+            return rep
+        }
+        let task = Task { @MainActor in
+            await self.pull(repIndex: index, info: info, generation: promise.generation)
+        }
+        promise.inFlight[index] = task
+        let rep = await task.value
+        promise.inFlight[index] = nil
+        guard inboundPromise === promise else { return rep }
+        if let rep {
+            promise.materialized[index] = rep
+            republish(promise)
+        }
+        return rep
+    }
+
+    /// Streams one representation, bridging the off-actor receiver delivery to an
+    /// async result.
+    ///
+    /// Runs the free-space pre-flight first so an over-budget file rep never
+    /// starts a transfer [Safeguard 4].
+    private func pull(
+        repIndex: Int, info: Kernova_V1_ClipboardRepresentationInfo, generation: UInt64
+    ) async -> ClipboardContent.Representation? {
+        guard let receiver else { return nil }
+        if !info.isInline, !staging.hasCapacity(forByteCount: Int(clamping: info.byteCount)) {
+            Self.logger.warning(
+                "Not enough disk space to receive clipboard rep '\(info.uti, privacy: .public)' (\(info.byteCount, privacy: .public) bytes)"
+            )
+            lastTransferIssue = ClipboardTransferIssue(
+                kind: .diskFull(
+                    needed: Int(clamping: info.byteCount),
+                    available: staging.availableCapacity().map { Int(clamping: $0) }),
+                date: Date())
+            return nil
+        }
+        // The host is the receiver here, so it sets the direction bit. [H3]
+        let transferID = ClipboardTransferID.make(
+            generation: generation, repIndex: repIndex, hostMinted: true)
         let maxAccept =
             staging.availableCapacity().map { UInt64(clamping: $0) }
             ?? ClipboardStreamTuning.unlimitedAcceptByteCount
-        var anyRequested = false
-        for (index, info) in offer.repInfo.enumerated() {
-            // The host is the receiver here, so it sets the direction bit. [H3]
-            let transferID = ClipboardTransferID.make(
-                generation: offer.generation, repIndex: index, hostMinted: true)
-            if !info.isInline,
-                !staging.hasCapacity(forByteCount: Int(clamping: info.byteCount))
-            {
-                Self.logger.warning(
-                    "Skipping clipboard rep '\(info.uti, privacy: .public)' (\(info.byteCount, privacy: .public) bytes) — not enough disk space"
-                )
-                lastTransferIssue = ClipboardTransferIssue(
-                    kind: .diskFull(
-                        needed: Int(clamping: info.byteCount),
-                        available: staging.availableCapacity().map { Int(clamping: $0) }),
-                    date: Date())
-                continue
-            }
+        let channel = self.channel
+        let backstop = lazyPullTimeout
+        let rep: ClipboardContent.Representation? = await withCheckedContinuation { continuation in
+            // A single-resume box: the off-main awaiter, the on-main send-failure
+            // catch, and the backstop timeout can all race a channel teardown, so
+            // the first resume wins and the rest are no-ops (without it, the
+            // awaiter firing off-main and the catch resuming on main would be a
+            // double resume → continuation-misuse crash). The timeout also resolves
+            // a pull the guest accepts but never streams while the channel stays
+            // open — the host counterpart of the guest's `LazyPullCoordinator.pull`
+            // backstop.
+            let pull = PullContinuation(continuation)
+            receiver.awaitTransfer(
+                transferID,
+                onComplete: { pull.resume($0) },
+                onAbort: { info in
+                    // Surface a mid-stream disk-full: the pre-flight above covers
+                    // the up-front case; this covers a volume that fills *during*
+                    // the transfer (parity with the retired eager onTransferAbort).
+                    // The closure fires off the main actor, so hop back to record.
+                    if info.code == "disk.full" {
+                        Task { @MainActor [weak self] in self?.recordPullDiskFull(info) }
+                    }
+                    pull.resume(nil)
+                })
+            pull.armTimeout(
+                Task {
+                    // A cancelled sleep (the pull resolved first) must NOT resume.
+                    do { try await Task.sleep(for: backstop) } catch { return }
+                    receiver.cancelAwait(transferID)
+                    pull.resume(nil)
+                })
             var request = Frame()
             request.protocolVersion = 1
             request.clipboardRequest = Kernova_V1_ClipboardRequest.with {
-                $0.generation = offer.generation
+                $0.generation = generation
                 $0.transferID = transferID
                 $0.uti = info.uti
                 $0.maxAcceptByteCount = maxAccept
             }
             do {
                 try channel.send(request)
-                pending.insert(transferID)
-                anyRequested = true
             } catch {
+                receiver.cancelAwait(transferID)
                 Self.logger.error(
                     "Failed to send clipboard request: \(error.localizedDescription, privacy: .public)"
                 )
+                pull.resume(nil)
             }
         }
-
-        guard anyRequested else {
-            pendingInbound = nil
-            return
+        if rep != nil {
+            // A healthy pull clears a stale issue, but a disk-full notice stays
+            // visible — another rep may still have failed to arrive.
+            if case .diskFull = lastTransferIssue?.kind {} else { lastTransferIssue = nil }
         }
-        pendingInbound = InboundCollection(generation: offer.generation, pending: pending)
-        Self.logger.debug(
-            "Requested \(pending.count, privacy: .public) clipboard rep(s) from '\(self.label, privacy: .public)' (gen=\(offer.generation, privacy: .public))"
-        )
+        return rep
     }
 
-    private func onTransferComplete(
-        _ transferID: UInt64, _ representation: ClipboardContent.Representation
-    ) {
-        guard let collection = pendingInbound, collection.pending.contains(transferID) else {
-            Self.logger.debug(
-                "Completed clipboard transfer \(transferID, privacy: .public) no longer pending — dropping"
-            )
-            return
-        }
-        collection.received[transferID] = representation
-        collection.pending.remove(transferID)
-        if collection.pending.isEmpty { commitInbound(collection) }
+    /// Records a disk-full transfer issue for a pull that aborted mid-stream
+    /// because the staging volume filled (the up-front case is set in `pull`).
+    private func recordPullDiskFull(_ info: ClipboardStreamAbortInfo) {
+        lastTransferIssue = ClipboardTransferIssue(
+            kind: .diskFull(needed: info.neededBytes ?? 0, available: info.availableBytes),
+            date: Date())
     }
 
-    private func onTransferAbort(_ info: ClipboardStreamAbortInfo) {
-        guard let collection = pendingInbound, collection.pending.contains(info.transferID) else {
-            // An abort for a transfer this connection no longer tracks (e.g. a
-            // superseded generation) must not surface a UI issue. [L5]
-            return
+    /// Whether the window renders this rep richly, so it's worth pulling for the
+    /// preview: text within the editor limit, inline RTF, or an image up to the
+    /// preview limit.
+    ///
+    /// Files (non-image) and over-limit payloads stay placeholders.
+    private static func isEagerPreviewable(_ info: Kernova_V1_ClipboardRepresentationInfo) -> Bool {
+        let type = UTType(info.uti)
+        if type?.conforms(to: .image) == true {
+            return info.byteCount <= UInt64(ClipboardPreviewPolicy.maxEagerPreviewBytes)
         }
-        if info.code == "disk.full" {
-            lastTransferIssue = ClipboardTransferIssue(
-                kind: .diskFull(needed: info.neededBytes ?? 0, available: info.availableBytes),
-                date: Date())
+        // A non-image file renders as a chip from metadata — no pull needed.
+        guard info.filename.isEmpty else { return false }
+        if type?.conforms(to: .rtf) == true {
+            return info.byteCount <= UInt64(ClipboardPreviewPolicy.maxEagerPreviewBytes)
         }
-        collection.pending.remove(info.transferID)
-        Self.logger.warning(
-            "Clipboard transfer \(info.transferID, privacy: .public) aborted (\(info.code, privacy: .public)) for '\(self.label, privacy: .public)'"
-        )
-        if collection.pending.isEmpty { commitInbound(collection) }
-    }
-
-    /// Assembles the collected representations (in offer order) and publishes
-    /// them, re-validating the generation and connection first.
-    private func commitInbound(_ collection: InboundCollection) {
-        guard pendingInbound === collection else { return }
-        pendingInbound = nil
-
-        let representations =
-            collection.received
-            .sorted { ($0.key & 0xFFFF) < ($1.key & 0xFFFF) }
-            .map(\.value)
-        let sanitized = ClipboardSnapshotPolicy.sanitizedForApply(representations)
-        guard !sanitized.isEmpty else {
-            Self.logger.debug(
-                "Inbound clipboard gen=\(collection.generation, privacy: .public) produced no usable representations"
-            )
-            return
+        if info.uti == ClipboardContent.utf8TextUTI || type?.conforms(to: .text) == true {
+            return info.byteCount <= UInt64(ClipboardPreviewPolicy.maxEditableTextBytes)
         }
-        let content = ClipboardContent(representations: sanitized)
-        clipboardContent = content
-        lastGrabbedDigest = nil
-        // Clear a healthy transfer's stale issue, but keep a disk-full notice
-        // visible — a representation still failed to arrive even if others did.
-        if case .diskFull = lastTransferIssue?.kind {} else { lastTransferIssue = nil }
-        Self.logger.notice(
-            "Received guest clipboard content for '\(self.label, privacy: .public)' (\(content.representations.count, privacy: .public) reps, \(content.totalByteCount, privacy: .public) bytes)"
-        )
+        return false
     }
 
     private func handleRelease(_ release: Kernova_V1_ClipboardRelease) {
-        if let collection = pendingInbound, collection.generation == release.generation {
-            for transferID in collection.pending {
-                receiver?.handleAbort(
-                    .with {
-                        $0.transferID = transferID
-                        $0.code = "released"
-                    })
-            }
-            pendingInbound = nil
-            Self.logger.debug(
-                "Guest released clipboard offer (gen=\(release.generation, privacy: .public)) for '\(self.label, privacy: .public)'"
-            )
-        }
+        guard let promise = inboundPromise, promise.generation == release.generation else { return }
+        // Cancel any in-flight pull (resumes its continuation with nil) and drop
+        // the promise; the placeholder content stays in the window, and a later
+        // Copy-to-Mac resolves nothing.
+        receiver?.cancel(generation: release.generation)
+        dropInboundPromise()
+        Self.logger.debug(
+            "Guest released clipboard offer (gen=\(release.generation, privacy: .public)) for '\(self.label, privacy: .public)'"
+        )
     }
 
     // MARK: - Helpers
@@ -466,5 +678,50 @@ final class VsockClipboardService: ClipboardServicing {
             $0.filename = representation.filename
             $0.isInline = representation.shouldInlineOnPasteboard
         }
+    }
+}
+
+/// Single-resume bridge from one inbound pull's three possible resumers — the
+/// off-actor receiver delivery, the on-main send-failure `catch`, and the
+/// backstop timeout — to its `CheckedContinuation`.
+///
+/// All three can race a channel teardown; the first `resume` wins, cancels the
+/// timeout, and clears the continuation, so the others are no-ops and the
+/// continuation is resumed exactly once.
+///
+/// `@unchecked Sendable`: the continuation and timer are guarded by `lock`.
+private final class PullContinuation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<ClipboardContent.Representation?, Never>?
+    private var timeout: Task<Void, Never>?
+
+    init(_ continuation: CheckedContinuation<ClipboardContent.Representation?, Never>) {
+        self.continuation = continuation
+    }
+
+    /// Stores the backstop timer so the winning `resume` can cancel it; if the
+    /// pull already resolved before this ran, cancels the timer immediately.
+    func armTimeout(_ task: Task<Void, Never>) {
+        let alreadyResolved = lock.withLock { () -> Bool in
+            guard continuation != nil else { return true }
+            timeout = task
+            return false
+        }
+        if alreadyResolved { task.cancel() }
+    }
+
+    /// Resumes the continuation once; later calls are no-ops.
+    func resume(_ value: ClipboardContent.Representation?) {
+        let pending: CheckedContinuation<ClipboardContent.Representation?, Never>?
+        let timer: Task<Void, Never>?
+        (pending, timer) = lock.withLock {
+            let continuation = self.continuation
+            let timeout = self.timeout
+            self.continuation = nil
+            self.timeout = nil
+            return (continuation, timeout)
+        }
+        timer?.cancel()
+        pending?.resume(returning: value)
     }
 }
