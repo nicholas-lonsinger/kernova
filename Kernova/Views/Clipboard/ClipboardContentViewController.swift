@@ -462,11 +462,19 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         var pairs: [(type: NSPasteboard.PasteboardType, data: Data)] = []
         for representation in content.representations {
             if representation.shouldInlineOnPasteboard {
-                let inlineData =
-                    representation.inMemoryData
-                    ?? representation.fileURL.flatMap {
-                        try? Data(contentsOf: $0)
-                    }
+                // Resident bytes inline directly; a file-backed rep is read into
+                // RAM only when it fits the inline ceiling — never load a
+                // multi-GB image whole just to inline it. [L2]
+                let inlineData: Data?
+                if let resident = representation.inMemoryData {
+                    inlineData = resident
+                } else if let url = representation.fileURL,
+                    representation.byteCount <= ClipboardStreamTuning.maxInlineBytes
+                {
+                    inlineData = try? Data(contentsOf: url)
+                } else {
+                    inlineData = nil
+                }
                 if let inlineData {
                     pairs.append(
                         (NSPasteboard.PasteboardType(rawValue: representation.uti), inlineData))
@@ -475,13 +483,20 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             guard !representation.filename.isEmpty else { continue }
             let fileURL: URL?
             if let existing = representation.fileURL {
-                fileURL = existing
+                // Re-home the streamed file out of the service's transient staging
+                // (swept on VM stop/reconnect) into this window's launch-swept
+                // root, so the pasteboard URL survives the VM teardown.
+                // [sweep-vs-URL]
+                fileURL =
+                    (try? staging.adopt(
+                        externalFile: existing, generation: generation,
+                        filename: representation.filename)) ?? existing
             } else if let data = representation.inMemoryData,
                 let sink = try? staging.makeSink(
                     generation: generation, filename: representation.filename)
             {
                 try? sink.write(data)
-                fileURL = sink.commit()
+                fileURL = try? sink.commit()
             } else {
                 fileURL = nil
             }

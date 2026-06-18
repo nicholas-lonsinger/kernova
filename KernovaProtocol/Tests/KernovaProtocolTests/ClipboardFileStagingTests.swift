@@ -25,7 +25,7 @@ struct ClipboardFileStagingTests {
         let sink = try staging.makeSink(generation: 1, filename: "photo.png")
         try sink.write(Data([0x89, 0x50]))
         try sink.write(Data([0x4E, 0x47]))
-        let url = sink.commit()
+        let url = try sink.commit()
 
         #expect(url.lastPathComponent == "photo.png")
         #expect(FileManager.default.fileExists(atPath: url.path))
@@ -56,7 +56,7 @@ struct ClipboardFileStagingTests {
             let sink = try staging.makeSink(
                 generation: UInt64(generation), filename: "g\(generation).bin")
             try sink.write(Data([UInt8(generation)]))
-            sink.commit()
+            try sink.commit()
             dirs.append(sink.url.deletingLastPathComponent())
         }
 
@@ -74,8 +74,8 @@ struct ClipboardFileStagingTests {
 
         let a = try staging.makeSink(generation: 7, filename: "a.bin")
         let b = try staging.makeSink(generation: 7, filename: "b.bin")
-        a.commit()
-        b.commit()
+        try a.commit()
+        try b.commit()
         #expect(a.url.deletingLastPathComponent() == b.url.deletingLastPathComponent())
     }
 
@@ -83,7 +83,7 @@ struct ClipboardFileStagingTests {
     func sweepRemovesRoot() throws {
         let staging = makeStaging()
         let sink = try staging.makeSink(generation: 1, filename: "x.bin")
-        sink.commit()
+        try sink.commit()
         let dir = sink.url.deletingLastPathComponent()
         #expect(FileManager.default.fileExists(atPath: dir.path))
 
@@ -130,7 +130,7 @@ struct ClipboardFileStagingTests {
 
         let sink = try staging.makeSink(generation: 1, filename: name)
         try sink.write(Data([1]))
-        sink.commit()
+        try sink.commit()
         #expect(sink.url.lastPathComponent == "clipboard-file")
         #expect(FileManager.default.fileExists(atPath: sink.url.path))
     }

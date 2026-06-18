@@ -37,7 +37,7 @@ struct ClipboardStreamTests {
         let rep = ClipboardContent.Representation(uti: "public.utf8-plain-text", data: bytes)
 
         harness.sender.startTransfer(
-            transferID: 1, generation: 1, representation: rep, maxAcceptByteCount: 0,
+            transferID: 1, generation: 1, representation: rep, maxAcceptByteCount: .max,
             isInline: true, isCurrent: { _ in true })
 
         try await harness.collector.gate.wait { harness.collector.representation(1) != nil }
@@ -62,7 +62,7 @@ struct ClipboardStreamTests {
             uti: "public.data", fileURL: source, byteCount: bytes.count, filename: "big.bin")
 
         harness.sender.startTransfer(
-            transferID: 2, generation: 1, representation: rep, maxAcceptByteCount: 0,
+            transferID: 2, generation: 1, representation: rep, maxAcceptByteCount: .max,
             isInline: false, isCurrent: { _ in true })
 
         try await harness.collector.gate.wait { harness.collector.representation(2) != nil }
@@ -116,7 +116,7 @@ struct ClipboardStreamTests {
         let rep = ClipboardContent.Representation(
             uti: "public.data", fileURL: source, byteCount: size, filename: "huge.bin")
         harness.sender.startTransfer(
-            transferID: 3, generation: 1, representation: rep, maxAcceptByteCount: 0,
+            transferID: 3, generation: 1, representation: rep, maxAcceptByteCount: .max,
             isInline: false, isCurrent: { _ in true })
 
         try await harness.collector.gate.wait(timeout: .seconds(60)) {
@@ -141,11 +141,11 @@ struct ClipboardStreamTests {
 
         harness.sender.startTransfer(
             transferID: 10, generation: 1,
-            representation: .init(uti: "public.png", data: bytesA), maxAcceptByteCount: 0,
+            representation: .init(uti: "public.png", data: bytesA), maxAcceptByteCount: .max,
             isInline: true, isCurrent: { _ in true })
         harness.sender.startTransfer(
             transferID: 11, generation: 1,
-            representation: .init(uti: "public.tiff", data: bytesB), maxAcceptByteCount: 0,
+            representation: .init(uti: "public.tiff", data: bytesB), maxAcceptByteCount: .max,
             isInline: true, isCurrent: { _ in true })
 
         try await harness.collector.gate.wait {
@@ -167,7 +167,7 @@ struct ClipboardStreamTests {
         let bytes = Data((0..<(Self.chunk * 20 + 5)).map { UInt8(($0 * 7) & 0xFF) })
         harness.sender.startTransfer(
             transferID: 1, generation: 1,
-            representation: .init(uti: "public.data", data: bytes), maxAcceptByteCount: 0,
+            representation: .init(uti: "public.data", data: bytes), maxAcceptByteCount: .max,
             isInline: true, isCurrent: { _ in true })
 
         try await harness.collector.gate.wait { harness.collector.representation(1) != nil }
@@ -358,13 +358,94 @@ struct ClipboardStreamTests {
             uti: "public.data", fileURL: source, byteCount: bytes.count, filename: "big.bin")
 
         harness.sender.startTransfer(
-            transferID: 1, generation: 1, representation: rep, maxAcceptByteCount: 0,
+            transferID: 1, generation: 1, representation: rep, maxAcceptByteCount: .max,
             isInline: false, isCurrent: { _ in true })
 
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
         let info = try #require(harness.collector.abortInfos.first)
         #expect(info.code == "disk.full")
         #expect(info.neededBytes == bytes.count)
+        #expect(harness.collector.representation(1) == nil)
+    }
+
+    // MARK: - Liveness & untrusted-input bounds
+
+    @Test("a sender whose peer never acks aborts with ack.timeout")
+    func noAckTimesOut() async throws {
+        // The harness drops every ack, so the sender never gets the go-signal
+        // and the no-ack deadline must fire.
+        let harness = try StreamHarness(
+            chunkSize: Self.chunk, windowBytes: Self.window,
+            noAckTimeout: .milliseconds(200), suppressAcks: true,
+            freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
+        defer { harness.tearDown() }
+
+        let bytes = Data((0..<(Self.chunk * 4)).map { UInt8($0 & 0xFF) })
+        harness.sender.startTransfer(
+            transferID: 1, generation: 1,
+            representation: .init(uti: "public.data", data: bytes), maxAcceptByteCount: .max,
+            isInline: true, isCurrent: { _ in true })
+
+        try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
+        #expect(harness.collector.abortInfos.contains { $0.code == "ack.timeout" })
+        #expect(harness.collector.representation(1) == nil)
+    }
+
+    @Test("a receiver whose sender stops after Begin aborts with stall.timeout")
+    func inboundStallTimesOut() async throws {
+        let harness = try StreamHarness(
+            chunkSize: Self.chunk, windowBytes: Self.window,
+            stallTimeout: .milliseconds(150),
+            freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
+        defer { harness.tearDown() }
+
+        harness.receiver.handleBegin(
+            .with {
+                $0.generation = 1; $0.transferID = 1; $0.uti = "public.data"
+                $0.totalBytes = 1_000_000; $0.isInline = false; $0.filename = "stalled.bin"
+            })
+        // No chunks ever arrive — the inactivity deadline must abort and clean up.
+        try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
+        #expect(harness.collector.abortInfos.contains { $0.code == "stall.timeout" })
+        #expect(harness.collector.representation(1) == nil)
+        #expect(
+            !materializedFiles(under: harness.stagingTempRoot).contains {
+                $0.lastPathComponent == "stalled.bin"
+            })
+    }
+
+    @Test("an inline rep larger than the ceiling is rejected before buffering")
+    func inlineCeilingRejected() async throws {
+        let harness = try roomyHarness()
+        defer { harness.tearDown() }
+
+        harness.receiver.handleBegin(
+            .with {
+                $0.generation = 1; $0.transferID = 1; $0.uti = "public.data"
+                $0.totalBytes = UInt64(ClipboardStreamTuning.maxInlineBytes) + 1
+                $0.isInline = true
+            })
+        try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
+        #expect(harness.collector.abortInfos.contains { $0.code == "inline.too.large" })
+        #expect(harness.collector.representation(1) == nil)
+    }
+
+    @Test("a chunk past the declared total is rejected with size.overrun")
+    func overrunRejected() async throws {
+        let harness = try roomyHarness()
+        defer { harness.tearDown() }
+
+        harness.receiver.handleBegin(
+            .with {
+                $0.generation = 1; $0.transferID = 1; $0.uti = "public.data"
+                $0.totalBytes = 10; $0.isInline = true
+            })
+        harness.receiver.handleChunk(
+            .with {
+                $0.transferID = 1; $0.offset = 0; $0.data = Data(repeating: 0xAB, count: 100)
+            })
+        try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
+        #expect(harness.collector.abortInfos.contains { $0.code == "size.overrun" })
         #expect(harness.collector.representation(1) == nil)
     }
 }

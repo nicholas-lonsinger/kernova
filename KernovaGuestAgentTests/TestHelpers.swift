@@ -194,7 +194,7 @@ func makeTextOfferFrame(generation: UInt64, text: String) -> Frame {
 
 /// A `ClipboardRequest` pulling one representation of a generation.
 func makeRequestFrame(
-    generation: UInt64, transferID: UInt64, uti: String, maxAcceptByteCount: UInt64 = 0
+    generation: UInt64, transferID: UInt64, uti: String, maxAcceptByteCount: UInt64 = .max
 ) -> Frame {
     var frame = Frame()
     frame.protocolVersion = 1

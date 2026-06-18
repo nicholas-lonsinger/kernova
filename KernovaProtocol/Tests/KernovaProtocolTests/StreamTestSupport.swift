@@ -170,6 +170,8 @@ final class StreamHarness: @unchecked Sendable {
         chunkSize: Int,
         windowBytes: Int,
         noAckTimeout: Duration = .seconds(10),
+        stallTimeout: Duration = ClipboardStreamTuning.inboundStallTimeout,
+        suppressAcks: Bool = false,
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil
     ) throws {
         (a, b) = try makeStartedChannelPair()
@@ -183,7 +185,7 @@ final class StreamHarness: @unchecked Sendable {
             channel: a, chunkSize: chunkSize, windowBytes: windowBytes, noAckTimeout: noAckTimeout)
         let collector = self.collector
         receiver = ClipboardStreamReceiver(
-            channel: b, staging: staging, windowBytes: windowBytes,
+            channel: b, staging: staging, windowBytes: windowBytes, stallTimeout: stallTimeout,
             onComplete: { id, rep in collector.complete(id, rep) },
             onAbort: { info in collector.abort(info) })
 
@@ -211,6 +213,7 @@ final class StreamHarness: @unchecked Sendable {
                     for try await frame in a.incoming {
                         switch frame.payload {
                         case .clipboardStreamAck(let x):
+                            if suppressAcks { break }  // model a peer that never acks
                             sender.handleAck(
                                 transferID: x.transferID, bytesConsumed: x.bytesConsumed,
                                 windowBytes: x.windowBytes)

@@ -73,7 +73,9 @@ final class VsockClipboardService: ClipboardServicing {
     /// redundant offers.
     private var lastGrabbedDigest: Data?
 
-    private static let logger = Logger(subsystem: "app.kernova", category: "VsockClipboardService")
+    // `nonisolated` so the off-main `consume` loop can log; `Logger` is Sendable.
+    nonisolated private static let logger = Logger(
+        subsystem: "app.kernova", category: "VsockClipboardService")
 
     private static let errorCodeTransferFailure = "clipboard.transfer.send.failure"
 
@@ -133,7 +135,7 @@ final class VsockClipboardService: ClipboardServicing {
                 channel: channel, label: label, sender: sender, receiver: receiver,
                 onControlFrame: { @MainActor frame in self?.handleControlFrame(frame) })
         }
-        Self.logger.info("Vsock clipboard service started for '\(self.label, privacy: .public)'")
+        Self.logger.notice("Vsock clipboard service started for '\(self.label, privacy: .public)'")
     }
 
     func stop() {
@@ -149,7 +151,7 @@ final class VsockClipboardService: ClipboardServicing {
         currentOutboundGeneration.set(0)
         pendingInbound = nil
         staging.sweep()
-        Self.logger.info("Vsock clipboard service stopped for '\(self.label, privacy: .public)'")
+        Self.logger.notice("Vsock clipboard service stopped for '\(self.label, privacy: .public)'")
     }
 
     // MARK: - Public API
@@ -198,16 +200,18 @@ final class VsockClipboardService: ClipboardServicing {
     /// Drains the channel, routing high-frequency stream frames off the main
     /// actor.
     ///
-    /// Stream frames (begin/chunk/end/ack/abort) go straight to the thread-safe
-    /// engine; only the low-frequency control frames (offer/request/release/
-    /// error) hop to main. This keeps a multi-GB transfer's tens of thousands of
-    /// chunk/ack frames off the main actor entirely.
-    private static func consume(
+    /// `nonisolated`, so the loop and its per-frame routing run on a cooperative
+    /// thread, not the main actor: stream frames (begin/chunk/end/ack/abort) go
+    /// straight to the thread-safe engine, and only the low-frequency control
+    /// frames (offer/request/release/error) hop to main via `onControlFrame`.
+    /// This keeps a multi-GB transfer's tens of thousands of chunk/ack frames off
+    /// the main actor entirely. [M1]
+    nonisolated private static func consume(
         channel: VsockChannel,
         label: String,
         sender: ClipboardStreamSender,
         receiver: ClipboardStreamReceiver,
-        onControlFrame: @MainActor @escaping (Frame) -> Void
+        onControlFrame: @MainActor @Sendable @escaping (Frame) -> Void
     ) async {
         do {
             for try await frame in channel.incoming where frame.protocolVersion == 1 {
@@ -223,10 +227,14 @@ final class VsockClipboardService: ClipboardServicing {
                         transferID: ack.transferID, bytesConsumed: ack.bytesConsumed,
                         windowBytes: ack.windowBytes)
                 case .clipboardStreamAbort(let abort):
-                    // A transfer_id is inbound xor outbound; each engine ignores
-                    // an id it doesn't own, so routing to both is safe.
-                    receiver.handleAbort(abort)
-                    sender.handleAbort(transferID: abort.transferID)
+                    // Route by the direction bit so an abort reaches exactly the
+                    // engine that owns the id; the host receives ids that carry
+                    // the bit and sends those that don't. [H3]
+                    if ClipboardTransferID.hostReceives(abort.transferID) {
+                        receiver.handleAbort(abort)
+                    } else {
+                        sender.handleAbort(transferID: abort.transferID)
+                    }
                 default:
                     await onControlFrame(frame)
                 }
@@ -317,10 +325,17 @@ final class VsockClipboardService: ClipboardServicing {
         // free-space pre-flight first (Review Safeguard 4) so an over-budget
         // transfer never starts.
         var pending: Set<UInt64> = []
-        let maxAccept = UInt64(staging.availableCapacity() ?? 0)
+        // Advertise the real free-space ceiling; an unknown capacity maps to the
+        // "no explicit ceiling" sentinel rather than 0 (which is a real, full
+        // ceiling). [M2]
+        let maxAccept =
+            staging.availableCapacity().map { UInt64(clamping: $0) }
+            ?? ClipboardStreamTuning.unlimitedAcceptByteCount
         var anyRequested = false
         for (index, info) in offer.repInfo.enumerated() {
-            let transferID = (offer.generation << 16) | UInt64(index)
+            // The host is the receiver here, so it sets the direction bit. [H3]
+            let transferID = ClipboardTransferID.make(
+                generation: offer.generation, repIndex: index, hostMinted: true)
             if !info.isInline,
                 !staging.hasCapacity(forByteCount: Int(clamping: info.byteCount))
             {
@@ -378,13 +393,15 @@ final class VsockClipboardService: ClipboardServicing {
     }
 
     private func onTransferAbort(_ info: ClipboardStreamAbortInfo) {
+        guard let collection = pendingInbound, collection.pending.contains(info.transferID) else {
+            // An abort for a transfer this connection no longer tracks (e.g. a
+            // superseded generation) must not surface a UI issue. [L5]
+            return
+        }
         if info.code == "disk.full" {
             lastTransferIssue = ClipboardTransferIssue(
                 kind: .diskFull(needed: info.neededBytes ?? 0, available: info.availableBytes),
                 date: Date())
-        }
-        guard let collection = pendingInbound, collection.pending.contains(info.transferID) else {
-            return
         }
         collection.pending.remove(info.transferID)
         Self.logger.warning(

@@ -63,15 +63,25 @@ public final class ClipboardFileStaging: @unchecked Sendable {
 
         /// Closes the file and keeps it; the bytes are complete.
         ///
-        /// Returns the
-        /// final URL. Idempotent.
+        /// Returns the final URL. Idempotent.
+        ///
+        /// - Throws: an error from `FileHandle.close()`. With `F_NOCACHE` and no
+        ///   `fsync`, the kernel can defer a write failure (e.g. the volume
+        ///   filling on the final extent) to `close()`; propagating it lets the
+        ///   receiver fail the transfer rather than deliver a truncated file that
+        ///   still passed the in-flight digest check. The partial is deleted on a
+        ///   close failure. [L3]
         @discardableResult
-        public func commit() -> URL {
+        public func commit() throws -> URL {
             lock.lock()
             defer { lock.unlock() }
-            if !finished {
-                finished = true
-                try? handle.close()
+            guard !finished else { return url }
+            finished = true
+            do {
+                try handle.close()
+            } catch {
+                try? FileManager.default.removeItem(at: url)
+                throw error
             }
             return url
         }
@@ -165,6 +175,28 @@ public final class ClipboardFileStaging: @unchecked Sendable {
         let handle = try FileHandle(forWritingTo: url)
         _ = fcntl(handle.fileDescriptor, F_NOCACHE, 1)
         return Sink(url: url, handle: handle)
+    }
+
+    /// Adopts an externally-staged file into this root, returning a URL under it.
+    ///
+    /// Hard-links the source (instant, no byte copy) when it shares this root's
+    /// volume, falling back to a copy across volumes. Used when "Copy to Mac"
+    /// promotes a streamed file — whose bytes live in the *service's* transient
+    /// staging, swept on VM stop/reconnect — into the window's launch-swept root,
+    /// so the `public.file-url` placed on `NSPasteboard.general` outlives the VM
+    /// connection's teardown. [sweep-vs-URL]
+    public func adopt(externalFile url: URL, generation: UInt64, filename: String) throws -> URL {
+        lock.lock()
+        defer { lock.unlock() }
+        let dir = try directory(for: generation)
+        let dest = dir.appendingPathComponent(Self.sanitize(filename))
+        try? FileManager.default.removeItem(at: dest)
+        do {
+            try FileManager.default.linkItem(at: url, to: dest)
+        } catch {
+            try FileManager.default.copyItem(at: url, to: dest)
+        }
+        return dest
     }
 
     /// Removes the entire staging root — crash orphans and all live generations.

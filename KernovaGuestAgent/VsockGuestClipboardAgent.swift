@@ -286,8 +286,13 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                         transferID: ack.transferID, bytesConsumed: ack.bytesConsumed,
                         windowBytes: ack.windowBytes)
                 case .clipboardStreamAbort(let abort):
-                    receiver.handleAbort(abort)
-                    sender.handleAbort(transferID: abort.transferID)
+                    // Route by the direction bit: a host-received id (bit set) is
+                    // one this guest sends; otherwise this guest receives it. [H3]
+                    if ClipboardTransferID.hostReceives(abort.transferID) {
+                        sender.handleAbort(transferID: abort.transferID)
+                    } else {
+                        receiver.handleAbort(abort)
+                    }
                 default:
                     DispatchQueue.main.async { [weak self] in
                         self?.handleControlFrame(frame, channel: channel)
@@ -492,9 +497,16 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         if let previous = pendingInbound { receiver?.cancel(generation: previous.generation) }
 
         var pending: Set<UInt64> = []
-        let maxAccept = UInt64(staging.availableCapacity() ?? 0)
+        // Advertise the real free-space ceiling; an unknown capacity maps to the
+        // "no explicit ceiling" sentinel rather than 0 (a real, full ceiling). [M2]
+        let maxAccept =
+            staging.availableCapacity().map { UInt64(clamping: $0) }
+            ?? ClipboardStreamTuning.unlimitedAcceptByteCount
         for (index, info) in offer.repInfo.enumerated() {
-            let transferID = (offer.generation << 16) | UInt64(index)
+            // The guest is the receiver here, so it does not set the direction
+            // bit (only the host does). [H3]
+            let transferID = ClipboardTransferID.make(
+                generation: offer.generation, repIndex: index, hostMinted: false)
             if !info.isInline, !staging.hasCapacity(forByteCount: Int(clamping: info.byteCount)) {
                 Self.logger.warning(
                     "Skipping clipboard rep '\(info.uti, privacy: .public)' (\(info.byteCount, privacy: .public) bytes) — not enough disk space"
@@ -609,7 +621,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             {
                 // Inline payload (e.g. image file) also offered as a file URL.
                 try? sink.write(data)
-                fileURL = sink.commit()
+                fileURL = try? sink.commit()
             } else {
                 fileURL = nil
             }

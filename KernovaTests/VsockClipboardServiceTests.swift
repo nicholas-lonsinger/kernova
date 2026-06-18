@@ -150,6 +150,16 @@ struct VsockClipboardServiceTests {
         (generation << 16) | repIndex
     }
 
+    /// The id the **service** mints for an inbound transfer it requests.
+    ///
+    /// This is the outbound id plus the host direction bit [H3]; inbound tests
+    /// use it so a driven `Begin` matches the service's pending set and
+    /// `req.transferID`.
+    private func inboundTransferID(generation: UInt64, repIndex: UInt64) -> UInt64 {
+        ClipboardTransferID.make(
+            generation: generation, repIndex: Int(repIndex), hostMinted: true)
+    }
+
     /// A `ClipboardRequest` pulling representation `repIndex` of `generation`.
     private func makeRequest(generation: UInt64, repIndex: UInt64, uti: String) -> Frame {
         var frame = Frame()
@@ -158,7 +168,7 @@ struct VsockClipboardServiceTests {
             $0.generation = generation
             $0.transferID = transferID(generation: generation, repIndex: repIndex)
             $0.uti = uti
-            $0.maxAcceptByteCount = 0  // 0 = no ceiling
+            $0.maxAcceptByteCount = .max  // no ceiling
         }
         return frame
     }
@@ -699,7 +709,7 @@ struct VsockClipboardServiceTests {
             Issue.record("Expected clipboardRequest, got \(String(describing: request.payload))")
             return
         }
-        let xid = transferID(generation: 42, repIndex: 0)
+        let xid = inboundTransferID(generation: 42, repIndex: 0)
         #expect(req.generation == 42)
         #expect(req.transferID == xid)
         #expect(req.uti == ClipboardContent.utf8TextUTI)
@@ -736,7 +746,7 @@ struct VsockClipboardServiceTests {
             Issue.record("Expected clipboardRequest, got \(String(describing: request.payload))")
             return
         }
-        let xid = transferID(generation: 3, repIndex: 0)
+        let xid = inboundTransferID(generation: 3, repIndex: 0)
         #expect(req.transferID == xid)
 
         // Feed many small chunks (32 KiB) to exercise the reassembly path.
@@ -770,7 +780,7 @@ struct VsockClipboardServiceTests {
             Issue.record("Expected clipboardRequest, got \(String(describing: request.payload))")
             return
         }
-        let xid = transferID(generation: 9, repIndex: 0)
+        let xid = inboundTransferID(generation: 9, repIndex: 0)
         #expect(req.transferID == xid)
 
         // Stream it as a file rep (isInline=false, filename set).
@@ -817,10 +827,10 @@ struct VsockClipboardServiceTests {
 
         // Stream both back; the forbidden public.file-url rep must be dropped at commit.
         try streamPayload(
-            from: guest, transferID: transferID(generation: 5, repIndex: 0), generation: 5,
+            from: guest, transferID: inboundTransferID(generation: 5, repIndex: 0), generation: 5,
             uti: "public.file-url", bytes: fileURLBytes, isInline: true)
         try streamPayload(
-            from: guest, transferID: transferID(generation: 5, repIndex: 1), generation: 5,
+            from: guest, transferID: inboundTransferID(generation: 5, repIndex: 1), generation: 5,
             uti: "public.png", bytes: pngBytes, isInline: true)
 
         try await waitUntil { !service.clipboardContent.isEmpty }
@@ -922,7 +932,7 @@ struct VsockClipboardServiceTests {
         // is never streamed — its collection was replaced when gen=2 arrived.
         let fresh = Data("fresh".utf8)
         try streamPayload(
-            from: guest, transferID: transferID(generation: 2, repIndex: 0), generation: 2,
+            from: guest, transferID: inboundTransferID(generation: 2, repIndex: 0), generation: 2,
             uti: ClipboardContent.utf8TextUTI, bytes: fresh, isInline: true)
 
         try await waitUntil { service.clipboardContent.text == "fresh" }

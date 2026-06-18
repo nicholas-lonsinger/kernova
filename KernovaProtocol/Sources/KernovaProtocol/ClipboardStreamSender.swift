@@ -78,10 +78,16 @@ public final class ClipboardStreamSender: @unchecked Sendable {
         isInline: Bool,
         isCurrent: @escaping @Sendable (UInt64) -> Bool
     ) {
-        let transfer = OutboundTransfer(transferID: transferID, generation: generation)
-        lock.lock()
-        transfers[transferID] = transfer
-        lock.unlock()
+        let transfer = OutboundTransfer(
+            transferID: transferID, generation: generation, windowBytes: windowBytes)
+        // Ignore a duplicate transfer_id rather than overwrite an in-flight
+        // transfer (which would orphan its open reader). [L4]
+        let inserted = lock.withLock { () -> Bool in
+            guard transfers[transferID] == nil else { return false }
+            transfers[transferID] = transfer
+            return true
+        }
+        guard inserted else { return }
 
         transfer.queue.async { [weak self] in
             self?.run(
@@ -157,7 +163,12 @@ public final class ClipboardStreamSender: @unchecked Sendable {
 
         // The requester advertised its free-space ceiling; refuse a transfer it
         // can't accept rather than stream bytes that will be dropped.
-        if maxAcceptByteCount > 0 && UInt64(totalBytes) > maxAcceptByteCount {
+        // `unlimitedAcceptByteCount` (UInt64.max) means the requester could not
+        // measure its free space; any other value — including 0 — is a real
+        // ceiling. [M2]
+        if maxAcceptByteCount != ClipboardStreamTuning.unlimitedAcceptByteCount
+            && UInt64(totalBytes) > maxAcceptByteCount
+        {
             sendAbort(transfer: transfer, code: "disk.full", message: "Requester cannot accept \(totalBytes) bytes")
             return
         }
@@ -199,7 +210,7 @@ public final class ClipboardStreamSender: @unchecked Sendable {
             // Wait for the go-signal (first ack) and then for credit, bounded by
             // the no-ack deadline; bail on abort.
             let outcome = transfer.awaitCredit(
-                offset: offset, chunkSize: nextChunkSize, window: windowBytes, timeout: noAckTimeout)
+                offset: offset, chunkSize: nextChunkSize, timeout: noAckTimeout)
             switch outcome {
             case .aborted(let reason):
                 // A local supersede/cancel notifies the peer; an inbound abort
@@ -290,8 +301,9 @@ private final class OutboundTransfer: @unchecked Sendable {
 
     /// Cumulative bytes the receiver has acknowledged.
     var ackedBytes = 0
-    /// Receiver-advertised window (updated by acks).
-    var windowBytes = ClipboardStreamTuning.defaultWindowBytes
+    /// Effective credit window: seeded with the sender's configured window, then
+    /// updated to the receiver's advertised window by each ack.
+    var windowBytes: Int
     /// Set once the first ack (the go-signal) arrives.
     var started = false
     /// Set on inbound abort / supersession / teardown.
@@ -307,9 +319,10 @@ private final class OutboundTransfer: @unchecked Sendable {
         case superseded
     }
 
-    init(transferID: UInt64, generation: UInt64) {
+    init(transferID: UInt64, generation: UInt64, windowBytes: Int) {
         self.transferID = transferID
         self.generation = generation
+        self.windowBytes = windowBytes
         self.queue = DispatchQueue(
             label: "app.kernova.clipboard.stream-send.\(transferID)", qos: .userInitiated)
     }
@@ -318,13 +331,15 @@ private final class OutboundTransfer: @unchecked Sendable {
 
     /// Blocks until there is credit for a `chunkSize` chunk at `offset`, the
     /// transfer is aborted, or the no-ack deadline elapses without progress.
-    func awaitCredit(offset: Int, chunkSize: Int, window: Int, timeout: Duration) -> CreditOutcome {
+    func awaitCredit(offset: Int, chunkSize: Int, timeout: Duration) -> CreditOutcome {
         condition.lock()
         defer { condition.unlock() }
-        let deadline = Date(timeIntervalSinceNow: timeout.seconds)
-        let effectiveWindow = max(window, chunkSize)
+        let deadline = Date(timeIntervalSinceNow: timeout.timeInterval)
         while true {
             if aborted { return .aborted(abortReason) }
+            // Honor the receiver-advertised window (updated by acks under this
+            // lock), never the sender's own constant. [L1]
+            let effectiveWindow = max(windowBytes, chunkSize)
             let inFlight = offset - ackedBytes
             if started && inFlight + chunkSize <= effectiveWindow { return .proceed }
             if !condition.wait(until: deadline) {
@@ -332,7 +347,7 @@ private final class OutboundTransfer: @unchecked Sendable {
                 // deadline still counts as progress.
                 if aborted { return .aborted(abortReason) }
                 let inFlightNow = offset - ackedBytes
-                if started && inFlightNow + chunkSize <= effectiveWindow { return .proceed }
+                if started && inFlightNow + chunkSize <= max(windowBytes, chunkSize) { return .proceed }
                 return .timedOut
             }
         }
@@ -390,13 +405,5 @@ private final class FileChunkReader: ChunkReader {
     }
     func close() {
         try? handle.close()
-    }
-}
-
-extension Duration {
-    /// This duration as a `TimeInterval` (seconds, fractional).
-    fileprivate var seconds: Double {
-        let (s, attos) = components
-        return Double(s) + Double(attos) / 1_000_000_000_000_000_000
     }
 }

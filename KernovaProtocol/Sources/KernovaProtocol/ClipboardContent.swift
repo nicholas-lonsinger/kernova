@@ -218,7 +218,8 @@ public struct ClipboardContent: Equatable, Sendable {
     /// count as a placeholder; such representations are echo-suppressed by
     /// change-count and staging-path guards rather than by digest equality.
     /// Length prefixes prevent collisions from shifting bytes across the
-    /// uti/payload or representation boundaries.
+    /// uti/payload or representation boundaries; a one-byte source tag separates
+    /// the inline-bytes and file-digest domains so the two can never alias.
     private static func computeDigest(of representations: [Representation]) -> Data {
         var hasher = SHA256()
         for representation in representations {
@@ -226,20 +227,26 @@ public struct ClipboardContent: Equatable, Sendable {
                 hasher.update(bufferPointer: $0)
             }
             hasher.update(data: Data(representation.uti.utf8))
+            // A one-byte domain tag separates the inline-bytes domain from the
+            // file-digest domain, so a 32-byte inline payload can never alias a
+            // file rep's SHA-256 under the same UTI. [N1]
             switch representation.source {
             case .inMemory(let data):
+                hasher.update(data: Data([0]))
                 withUnsafeBytes(of: UInt64(data.count).bigEndian) {
                     hasher.update(bufferPointer: $0)
                 }
                 hasher.update(data: data)
             case .file(_, let byteCount, let sha256):
                 if let sha256 {
+                    hasher.update(data: Data([1]))
                     withUnsafeBytes(of: UInt64(sha256.count).bigEndian) {
                         hasher.update(bufferPointer: $0)
                     }
                     hasher.update(data: sha256)
                 } else {
                     // Placeholder identity before the bytes have been streamed.
+                    hasher.update(data: Data([2]))
                     withUnsafeBytes(of: UInt64(byteCount).bigEndian) {
                         hasher.update(bufferPointer: $0)
                     }

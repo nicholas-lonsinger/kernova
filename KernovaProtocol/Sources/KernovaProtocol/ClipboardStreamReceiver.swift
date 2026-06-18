@@ -20,6 +20,7 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
     private let channel: VsockChannel
     private let staging: ClipboardFileStaging
     private let windowBytes: Int
+    private let stallTimeout: Duration
 
     /// Delivers a completed representation.
     ///
@@ -39,6 +40,8 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
     ///   - channel: the vsock channel the transfer frames are read from.
     ///   - staging: provides temp-file sinks and the free-space guard.
     ///   - windowBytes: advertised credit window; sent in each ack.
+    ///   - stallTimeout: how long a transfer waits for its next chunk before
+    ///     aborting a silent sender. Tests inject a short value.
     ///   - onComplete: receives `(transferID, representation)` for each
     ///     successful transfer.
     ///   - onAbort: receives an `AbortInfo` for each failed transfer.
@@ -46,12 +49,14 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
         channel: VsockChannel,
         staging: ClipboardFileStaging,
         windowBytes: Int = ClipboardStreamTuning.defaultWindowBytes,
+        stallTimeout: Duration = ClipboardStreamTuning.inboundStallTimeout,
         onComplete: @escaping @Sendable (UInt64, ClipboardContent.Representation) -> Void,
         onAbort: @escaping @Sendable (ClipboardStreamAbortInfo) -> Void
     ) {
         self.channel = channel
         self.staging = staging
         self.windowBytes = min(max(windowBytes, 1), ClipboardStreamTuning.maxWindowBytes)
+        self.stallTimeout = stallTimeout
         self.onComplete = onComplete
         self.onAbort = onAbort
     }
@@ -71,7 +76,14 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
             isInline: begin.isInline,
             totalBytes: Int(clamping: begin.totalBytes)
         )
-        lock.withLock { transfers[begin.transferID] = transfer }
+        // Ignore a duplicate transfer_id rather than overwrite an in-flight
+        // transfer (which would orphan its open sink + partial temp file). [L4]
+        let inserted = lock.withLock { () -> Bool in
+            guard transfers[begin.transferID] == nil else { return false }
+            transfers[begin.transferID] = transfer
+            return true
+        }
+        guard inserted else { return }
 
         transfer.queue.async { [weak self] in
             guard let self else { return }
@@ -90,11 +102,22 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
                     return
                 }
             } else {
+                // Inline reps reassemble in RAM, so a peer-declared size needs a
+                // hard ceiling — a file rep is unbounded, streamed to disk. [H1]
+                guard transfer.totalBytes <= ClipboardStreamTuning.maxInlineBytes else {
+                    self.fail(
+                        transfer, code: "inline.too.large",
+                        message: "Inline representation of \(transfer.totalBytes) bytes exceeds limit")
+                    return
+                }
                 transfer.buffer = Data()
                 transfer.buffer?.reserveCapacity(min(transfer.totalBytes, ClipboardStreamTuning.maxWindowBytes))
             }
             // Go-signal: tell the sender we're ready and advertise the window.
             self.sendAck(transfer)
+            // Start the stall clock — a sender that never sends a chunk after
+            // Begin must not pin this transfer's fd/partial forever. [H2]
+            self.armStallTimer(transfer)
         }
     }
 
@@ -118,6 +141,22 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
                 self.fail(
                     transfer, code: "offset.gap",
                     message: "Out-of-order chunk at \(offset), expected \(transfer.receivedBytes)")
+                return
+            }
+            // Bound a single chunk — a frame can carry up to 128 MiB, but the
+            // negotiated chunk is 64 KiB. [M3]
+            guard chunk.data.count <= ClipboardStreamTuning.maxChunkBytes else {
+                self.fail(
+                    transfer, code: "chunk.too.large",
+                    message: "Chunk of \(chunk.data.count) bytes exceeds limit")
+                return
+            }
+            // Reject a peer streaming past its declared total — bounds both the
+            // inline RAM buffer and the file sink to total_bytes. [H1]
+            guard transfer.receivedBytes + chunk.data.count <= transfer.totalBytes else {
+                self.fail(
+                    transfer, code: "size.overrun",
+                    message: "Chunk exceeds declared total of \(transfer.totalBytes)")
                 return
             }
 
@@ -148,6 +187,8 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
                 }
             }
             self.sendAck(transfer)
+            // A chunk arrived — reset the stall clock. [H2]
+            self.armStallTimer(transfer)
         }
     }
 
@@ -157,6 +198,7 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
         transfer.queue.async { [weak self] in
             guard let self else { return }
             guard !transfer.finished else { return }
+            transfer.stallTimer?.cancel()
             let expected = Int(clamping: end.totalBytes)
             guard transfer.receivedBytes == expected else {
                 self.fail(
@@ -182,7 +224,15 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
                     self.fail(transfer, code: "stage.error", message: "Missing staging sink at End")
                     return
                 }
-                let url = sink.commit()
+                let url: URL
+                do {
+                    url = try sink.commit()
+                } catch {
+                    self.fail(
+                        transfer, code: "commit.error",
+                        message: "Finalizing staged file failed: \(error.localizedDescription)")
+                    return
+                }
                 representation = ClipboardContent.Representation(
                     uti: transfer.uti,
                     fileURL: url,
@@ -202,6 +252,7 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
         guard let transfer = transfer(abort.transferID) else { return }
         transfer.queue.async { [weak self] in
             guard let self, !transfer.finished else { return }
+            transfer.stallTimer?.cancel()
             transfer.finished = true
             transfer.sink?.abort()
             self.remove(transfer.transferID)
@@ -238,10 +289,28 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
     private func teardown(_ transfer: InboundTransfer) {
         transfer.queue.async { [weak self] in
             guard !transfer.finished else { return }
+            transfer.stallTimer?.cancel()
             transfer.finished = true
             transfer.sink?.abort()
             self?.remove(transfer.transferID)
         }
+    }
+
+    /// (Re)arms the inbound stall timer: fails the transfer if no chunk arrives
+    /// within `stallTimeout`.
+    ///
+    /// Called only from the transfer's serial queue, so cancelling and
+    /// rescheduling here never races chunk processing; the work item's
+    /// `!finished` guard makes a fire that loses the race to completion a no-op.
+    /// [H2]
+    private func armStallTimer(_ transfer: InboundTransfer) {
+        transfer.stallTimer?.cancel()
+        let timer = DispatchWorkItem { [weak self, weak transfer] in
+            guard let self, let transfer, !transfer.finished else { return }
+            self.fail(transfer, code: "stall.timeout", message: "Sender stopped sending")
+        }
+        transfer.stallTimer = timer
+        transfer.queue.asyncAfter(deadline: .now() + stallTimeout.timeInterval, execute: timer)
     }
 
     /// Sends a cumulative ack for the transfer's current progress.
@@ -279,6 +348,7 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
 
     private func finishFailed(_ transfer: InboundTransfer, info: ClipboardStreamAbortInfo) {
         guard !transfer.finished else { return }
+        transfer.stallTimer?.cancel()
         transfer.finished = true
         transfer.sink?.abort()
         remove(transfer.transferID)
@@ -345,6 +415,11 @@ private final class InboundTransfer: @unchecked Sendable {
     var buffer: Data?
     var sink: ClipboardFileStaging.Sink?
     var finished = false
+    /// Pending inactivity timeout; rescheduled on each chunk, cancelled on
+    /// finish.
+    ///
+    /// Touched only on `queue`.
+    var stallTimer: DispatchWorkItem?
 
     init(
         transferID: UInt64, generation: UInt64, uti: String, filename: String, isInline: Bool,
