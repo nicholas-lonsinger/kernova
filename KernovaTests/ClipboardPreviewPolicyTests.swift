@@ -54,6 +54,32 @@ struct ClipboardPreviewPolicyTests {
                 == .image(data: png, uti: UTType.png.identifier))
     }
 
+    @Test("a file-backed image payload renders the image-file preview")
+    func fileBackedImagePayloadShowsImageFile() {
+        // A copied image *file* (or a streamed/materialized guest image file)
+        // has its bytes on disk, not resident — it must still preview as an
+        // image (decoded from the URL), matching an inline image rather than
+        // degrading to a file chip.
+        let url = URL(fileURLWithPath: "/tmp/photo.png")
+        let content = ClipboardContent(representations: [
+            .init(uti: UTType.png.identifier, fileURL: url, byteCount: 4096, filename: "photo.png")
+        ])
+        #expect(
+            ClipboardPreviewPolicy.mode(for: content)
+                == .imageFile(url: url, uti: UTType.png.identifier))
+    }
+
+    @Test("a file-backed non-image payload renders the file chip")
+    func fileBackedNonImagePayloadShowsChip() {
+        let url = URL(fileURLWithPath: "/tmp/archive.zip")
+        let content = ClipboardContent(representations: [
+            .init(uti: UTType.zip.identifier, fileURL: url, byteCount: 1024, filename: "archive.zip")
+        ])
+        #expect(
+            ClipboardPreviewPolicy.mode(for: content)
+                == .file(filename: "archive.zip", uti: UTType.zip.identifier, byteCount: 1024))
+    }
+
     @Test("a copied .rtf file attaches as a file, not inline rich text")
     func rtfFilePayloadShowsChip() {
         // The file-payload rule must beat the rich-text rule: a copied .rtf

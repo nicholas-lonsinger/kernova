@@ -86,6 +86,27 @@ struct ClipboardContentDescriberTests {
                 == "\(name) · 12 × 7 · \(size)")
     }
 
+    @Test("file-backed image indicator includes pixel dimensions read from disk")
+    func fileBackedImageIndicator() throws {
+        // The user-reported path: a copied image *file* (bytes on disk, no
+        // resident data) must read its dimensions from the file header and render
+        // like an inline image — "type · W × H · size" — not a bare file chip.
+        let png = try makePNG(width: 12, height: 7)
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString).png")
+        try png.write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let content = ClipboardContent(representations: [
+            .init(uti: UTType.png.identifier, fileURL: url, byteCount: png.count, filename: "photo.png")
+        ])
+        let name = ClipboardContentDescriber.displayName(forUTI: UTType.png.identifier)
+        let size = DataFormatters.formatBytes(UInt64(content.totalByteCount))
+        #expect(
+            ClipboardContentDescriber.indicatorText(for: content)
+                == "\(name) · 12 × 7 · \(size)")
+    }
+
     @Test("summary indicator uses the first representation's display name")
     func summaryIndicator() {
         let content = ClipboardContent(representations: [
@@ -121,5 +142,23 @@ struct ClipboardContentDescriberTests {
     @Test("imagePixelSize returns nil for non-image bytes")
     func pixelSizeNilForGarbage() {
         #expect(ClipboardContentDescriber.imagePixelSize(data: Data("not an image".utf8)) == nil)
+    }
+
+    @Test("imagePixelSize(url:) reads dimensions from a file-backed image header")
+    func pixelSizeFromURL() throws {
+        let png = try makePNG(width: 20, height: 9)
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString).png")
+        try png.write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        #expect(ClipboardContentDescriber.imagePixelSize(url: url) == CGSize(width: 20, height: 9))
+    }
+
+    @Test("imagePixelSize(url:) returns nil for a missing file")
+    func pixelSizeURLNilForMissing() {
+        let missing = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString)-does-not-exist.png")
+        #expect(ClipboardContentDescriber.imagePixelSize(url: missing) == nil)
     }
 }

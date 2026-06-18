@@ -369,6 +369,18 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 summaryView.configure(content: content)
                 show(contentView: summaryView)
             }
+        case .imageFile(let url, let uti):
+            if imagePreview.configure(url: url, uti: uti) {
+                show(contentView: imagePreview)
+            } else if let file = content.filePayload {
+                // Unreadable/undecodable file image degrades to the file chip.
+                filePreview.configure(
+                    filename: file.filename, uti: file.uti, byteCount: file.byteCount)
+                show(contentView: filePreview)
+            } else {
+                summaryView.configure(content: content)
+                show(contentView: summaryView)
+            }
         case .file(let filename, let uti, let byteCount):
             filePreview.configure(filename: filename, uti: uti, byteCount: byteCount)
             show(contentView: filePreview)

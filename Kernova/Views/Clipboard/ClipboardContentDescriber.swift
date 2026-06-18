@@ -29,6 +29,12 @@ enum ClipboardContentDescriber {
             } else {
                 primary = displayName(forUTI: uti)
             }
+        case .imageFile(let url, let uti):
+            if let size = imagePixelSize(url: url) {
+                primary = "\(displayName(forUTI: uti)) · \(Int(size.width)) × \(Int(size.height))"
+            } else {
+                primary = displayName(forUTI: uti)
+            }
         case .file(let filename, let uti, _):
             // Name · type, e.g. "notes.txt · Plain Text Document" — the size is
             // appended below like every other mode.
@@ -65,11 +71,22 @@ enum ClipboardContentDescriber {
         UTType(uti)?.localizedDescription ?? uti
     }
 
-    /// Pixel dimensions read from the image header — no full decode.
+    /// Pixel dimensions read from a resident image header — no full decode.
     static func imagePixelSize(data: Data) -> CGSize? {
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-            let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil)
-                as? [CFString: Any],
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        return pixelSize(from: source)
+    }
+
+    /// Pixel dimensions read from a file-backed image header — no full decode
+    /// and no whole-file load (ImageIO reads only the header).
+    static func imagePixelSize(url: URL) -> CGSize? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        return pixelSize(from: source)
+    }
+
+    private static func pixelSize(from source: CGImageSource) -> CGSize? {
+        guard
+            let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
             let width = properties[kCGImagePropertyPixelWidth] as? Int,
             let height = properties[kCGImagePropertyPixelHeight] as? Int
         else { return nil }

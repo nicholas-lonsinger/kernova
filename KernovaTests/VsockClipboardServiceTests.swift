@@ -1401,6 +1401,48 @@ struct VsockClipboardServiceTests {
         #expect(settledCopy.representations.first?.inMemoryData == payload)
     }
 
+    @Test("A pull the guest never answers (channel open) resolves via the backstop timeout, not a hang")
+    func pullBackstopTimeoutResolvesParkedPull() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        // A tiny backstop so the parked pull resolves promptly instead of waiting
+        // the production 120 s.
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)",
+            lazyPullTimeout: .milliseconds(200))
+        service.start()
+        defer { service.stop() }
+
+        // The responder records the host's request but registers NO reply, so it
+        // never sends a Begin — and never closes the channel. With no completion,
+        // abort, supersession, or teardown to resolve the host's pull, only the
+        // backstop timeout can; if it didn't fire, this test would hang.
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        responder.start()
+
+        try guest.send(
+            makeOffer(
+                generation: 5,
+                reps: [(uti: ClipboardContent.utf8TextUTI, byteCount: 5, filename: "", isInline: true)]))
+        try await waitUntil { service.clipboardContent.representations.first?.isPendingRemote == true }
+
+        // Copy issues the pull; with no answer and the channel open, it must
+        // resolve (not hang) once the backstop fires — dropping the un-pulled rep.
+        let resolved = await service.materializeForCopy()
+        #expect(resolved.representations.isEmpty)
+
+        // The request DID go out (proving the pull started and the backstop, not a
+        // pre-send failure, resolved it), and the rep stays a placeholder.
+        try await responder.answered.wait(timeout: .seconds(5)) {
+            responder.requests.contains { $0.generation == 5 }
+        }
+        #expect(service.clipboardContent.representations.first?.isPendingRemote == true)
+    }
+
     // MARK: - Receive-side sanitization
 
     @Test("An offer carrying a transient-marker and a raw file-url rep filters them from the published placeholders")

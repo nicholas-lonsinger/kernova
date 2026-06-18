@@ -51,6 +51,12 @@ final class VsockClipboardService: ClipboardServicing {
     private let label: String
     private let staging: ClipboardFileStaging
 
+    /// Backstop for a lazy pull the peer never answers while the channel stays
+    /// open — the host counterpart of the guest's `LazyPullCoordinator` timeout.
+    ///
+    /// Lowered in tests to drive the timeout-resolves-the-pull path.
+    private let lazyPullTimeout: Duration
+
     private var sender: ClipboardStreamSender?
     private var receiver: ClipboardStreamReceiver?
     private var consumeTask: Task<Void, Never>?
@@ -116,12 +122,16 @@ final class VsockClipboardService: ClipboardServicing {
     ///   - label: identifies this service's staging area and log context.
     ///   - freeSpaceProvider: injected in tests to simulate a full disk;
     ///     `nil` uses the real volume free-space query.
+    ///   - lazyPullTimeout: backstop for a pull the peer never answers while the
+    ///     channel stays open; defaults to the production value, lowered in tests.
     init(
         channel: VsockChannel, label: String,
-        freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil
+        freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
+        lazyPullTimeout: Duration = ClipboardStreamTuning.lazyPullTimeout
     ) {
         self.channel = channel
         self.label = label
+        self.lazyPullTimeout = lazyPullTimeout
         self.staging = ClipboardFileStaging(
             label: "host-\(label)", freeSpaceProvider: freeSpaceProvider)
     }
@@ -506,11 +516,28 @@ final class VsockClipboardService: ClipboardServicing {
             staging.availableCapacity().map { UInt64(clamping: $0) }
             ?? ClipboardStreamTuning.unlimitedAcceptByteCount
         let channel = self.channel
+        let backstop = lazyPullTimeout
         let rep: ClipboardContent.Representation? = await withCheckedContinuation { continuation in
+            // A single-resume box: the off-main awaiter, the on-main send-failure
+            // catch, and the backstop timeout can all race a channel teardown, so
+            // the first resume wins and the rest are no-ops (without it, the
+            // awaiter firing off-main and the catch resuming on main would be a
+            // double resume → continuation-misuse crash). The timeout also resolves
+            // a pull the guest accepts but never streams while the channel stays
+            // open — the host counterpart of the guest's `LazyPullCoordinator.pull`
+            // backstop.
+            let pull = PullContinuation(continuation)
             receiver.awaitTransfer(
                 transferID,
-                onComplete: { rep in continuation.resume(returning: rep) },
-                onAbort: { _ in continuation.resume(returning: nil) })
+                onComplete: { pull.resume($0) },
+                onAbort: { _ in pull.resume(nil) })
+            pull.armTimeout(
+                Task {
+                    // A cancelled sleep (the pull resolved first) must NOT resume.
+                    do { try await Task.sleep(for: backstop) } catch { return }
+                    receiver.cancelAwait(transferID)
+                    pull.resume(nil)
+                })
             var request = Frame()
             request.protocolVersion = 1
             request.clipboardRequest = Kernova_V1_ClipboardRequest.with {
@@ -526,7 +553,7 @@ final class VsockClipboardService: ClipboardServicing {
                 Self.logger.error(
                     "Failed to send clipboard request: \(error.localizedDescription, privacy: .public)"
                 )
-                continuation.resume(returning: nil)
+                pull.resume(nil)
             }
         }
         if rep != nil {
@@ -583,5 +610,50 @@ final class VsockClipboardService: ClipboardServicing {
             $0.filename = representation.filename
             $0.isInline = representation.shouldInlineOnPasteboard
         }
+    }
+}
+
+/// Single-resume bridge from one inbound pull's three possible resumers — the
+/// off-actor receiver delivery, the on-main send-failure `catch`, and the
+/// backstop timeout — to its `CheckedContinuation`.
+///
+/// All three can race a channel teardown; the first `resume` wins, cancels the
+/// timeout, and clears the continuation, so the others are no-ops and the
+/// continuation is resumed exactly once.
+///
+/// `@unchecked Sendable`: the continuation and timer are guarded by `lock`.
+private final class PullContinuation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<ClipboardContent.Representation?, Never>?
+    private var timeout: Task<Void, Never>?
+
+    init(_ continuation: CheckedContinuation<ClipboardContent.Representation?, Never>) {
+        self.continuation = continuation
+    }
+
+    /// Stores the backstop timer so the winning `resume` can cancel it; if the
+    /// pull already resolved before this ran, cancels the timer immediately.
+    func armTimeout(_ task: Task<Void, Never>) {
+        let alreadyResolved = lock.withLock { () -> Bool in
+            guard continuation != nil else { return true }
+            timeout = task
+            return false
+        }
+        if alreadyResolved { task.cancel() }
+    }
+
+    /// Resumes the continuation once; later calls are no-ops.
+    func resume(_ value: ClipboardContent.Representation?) {
+        let pending: CheckedContinuation<ClipboardContent.Representation?, Never>?
+        let timer: Task<Void, Never>?
+        (pending, timer) = lock.withLock {
+            let continuation = self.continuation
+            let timeout = self.timeout
+            self.continuation = nil
+            self.timeout = nil
+            return (continuation, timeout)
+        }
+        timer?.cancel()
+        pending?.resume(returning: value)
     }
 }
