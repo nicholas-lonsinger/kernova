@@ -674,7 +674,10 @@ struct VsockClipboardServiceTests {
         }
         let abortFrame = try #require(
             recorder.first {
-                if case .clipboardStreamAbort = $0.payload { return true }; return false
+                if case .clipboardStreamAbort(let abort) = $0.payload {
+                    return abort.transferID == outOfRangeXID
+                }
+                return false
             })
         guard case .clipboardStreamAbort(let abort) = abortFrame.payload else {
             Issue.record("Expected clipboardStreamAbort")
@@ -723,13 +726,23 @@ struct VsockClipboardServiceTests {
         }
         let abortFrame = try #require(
             recorder.first {
-                if case .clipboardStreamAbort = $0.payload { return true }; return false
+                if case .clipboardStreamAbort(let abort) = $0.payload {
+                    return abort.transferID == xid
+                }
+                return false
             })
         guard case .clipboardStreamAbort(let abort) = abortFrame.payload else {
             Issue.record("Expected clipboardStreamAbort")
             return
         }
         #expect(abort.code == "request.uti")
+        // No Begin is ever sent for the mismatched request (catches a dropped
+        // `return` that would Abort *and* start the transfer). Asserted before
+        // the valid request below, whose Begin shares this xid.
+        #expect(
+            recorder.first {
+                if case .clipboardStreamBegin = $0.payload { return true }; return false
+            } == nil)
 
         // The correct request still works, proving the channel wasn't poisoned.
         try guest.send(makeRequest(generation: offer.generation, repIndex: 0, uti: info.uti))
