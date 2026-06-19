@@ -5,13 +5,16 @@ import UniformTypeIdentifiers
 extension UTType {
     /// RTF-family rich-text flavors, richest first.
     ///
-    /// flat-RTFD (`com.apple.flat-rtfd`) and RTFD (`com.apple.rtfd`) carry inline
-    /// images and styling; plain RTF (`public.rtf`) is text-only and cannot embed
-    /// raster images. A rich-text copy with an embedded image advertises *both*
-    /// flat-RTFD and plain RTF, so the image survives only if the RTFD flavor is
-    /// preferred — hence the order. flat-RTFD does **not** conform to `.rtf`, so a
-    /// bare `conforms(to: .rtf)` check misses the image-bearing flavor entirely.
-    static let rtfFamilyByPreference: [UTType] = [.flatRTFD, .rtfd, .rtf]
+    /// flat-RTFD (`com.apple.flat-rtfd`) carries inline images and styling; plain
+    /// RTF (`public.rtf`) is text-only and cannot embed raster images. A rich-text
+    /// copy with an embedded image advertises *both*, so the image survives only
+    /// if flat-RTFD is preferred — hence the order. flat-RTFD does **not** conform
+    /// to `.rtf`, so a bare `conforms(to: .rtf)` check misses the image-bearing
+    /// flavor. The bundle form `com.apple.rtfd` (`UTType.rtfd`) is intentionally
+    /// absent: it never appears as an inline pasteboard flavor — the flat form
+    /// does — and as a directory bundle its bytes aren't decodable like a flat
+    /// stream, so modeling it would be speculative.
+    static let rtfFamilyByPreference: [UTType] = [.flatRTFD, .rtf]
 
     /// Whether this type is any RTF-family rich-text flavor (see
     /// `rtfFamilyByPreference`).
@@ -20,9 +23,9 @@ extension UTType {
     }
 
     /// Whether bytes of this type must be decoded with the RTFD document type —
-    /// an RTFD flavor carries attachments, so it needs `.rtfd`, not `.rtf`.
+    /// flat-RTFD carries attachments, so it needs `.rtfd`, not `.rtf`.
     var needsRTFDDocumentType: Bool {
-        conforms(to: .flatRTFD) || conforms(to: .rtfd)
+        conforms(to: .flatRTFD)
     }
 }
 
@@ -55,22 +58,26 @@ extension ClipboardContent {
     /// The inline rich-text representation best suited to a styled preview, or
     /// `nil` when none is present.
     ///
-    /// Prefers the richest RTF-family flavor (flat-RTFD/RTFD over plain RTF) so a
-    /// copy with an embedded inline image previews *with* the image — the image
-    /// bytes live only in the RTFD flavor, never in plain RTF. File payloads are
+    /// Prefers the richest RTF-family flavor (flat-RTFD over plain RTF) so a copy
+    /// with an embedded inline image previews *with* the image — the image bytes
+    /// live only in the flat-RTFD flavor, never in plain RTF. File payloads are
     /// excluded — a copied `.rtf`/`.rtfd` *file* is a file attachment, not inline
     /// rich text. HTML is deliberately *not* rendered styled: `NSAttributedString`'s
     /// HTML import can synchronously fetch remote resources and block the main
     /// thread, which is unsafe for untrusted clipboard bytes — HTML copies fall
     /// through to the plain-text preview instead.
     var richTextRepresentation: Representation? {
-        let inline = representations.filter { $0.filename.isEmpty }
-        for flavor in UTType.rtfFamilyByPreference {
-            if let rep = inline.first(where: { UTType($0.uti)?.conforms(to: flavor) == true }) {
-                return rep
-            }
+        // Single pass: parse each inline rep's UTType once and keep the one with
+        // the best (lowest-index) `rtfFamilyByPreference` rank.
+        var best: (rank: Int, rep: Representation)?
+        for representation in representations where representation.filename.isEmpty {
+            guard let type = UTType(representation.uti),
+                let rank = UTType.rtfFamilyByPreference.firstIndex(where: { type.conforms(to: $0) })
+            else { continue }
+            if let best, best.rank <= rank { continue }
+            best = (rank, representation)
         }
-        return nil
+        return best?.rep
     }
 
     /// The representation best suited to an image preview, or `nil` when

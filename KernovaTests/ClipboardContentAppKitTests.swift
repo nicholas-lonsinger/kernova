@@ -98,12 +98,13 @@ struct ClipboardContentAppKitTests {
 
     // MARK: - UTType RTF-family helpers
 
-    @Test("flat-RTFD and RTFD are RTF-family flavors that need the RTFD document type")
+    @Test("flat-RTFD is an RTF-family flavor that needs the RTFD document type")
     func flatRTFDIsRichAndNeedsRTFD() {
         #expect(UTType.flatRTFD.conformsToRTFFamily)
-        #expect(UTType.rtfd.conformsToRTFFamily)
         #expect(UTType.flatRTFD.needsRTFDDocumentType)
-        #expect(UTType.rtfd.needsRTFDDocumentType)
+        // The bundle form `com.apple.rtfd` is intentionally not modeled — it never
+        // appears as an inline pasteboard flavor (the flat form does).
+        #expect(!UTType.rtfd.conformsToRTFFamily)
     }
 
     @Test("plain RTF is an RTF-family flavor but decodes as plain RTF, not RTFD")

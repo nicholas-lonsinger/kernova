@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 
 /// Root view of the clipboard window's content: accepts drag-and-drop into
 /// the buffer and anchors the responder chain when no text view has focus.
@@ -11,11 +12,15 @@ final class ClipboardDropContainerView: NSView {
     /// Pasteboard types the window accepts as a drop.
     ///
     /// Anything the intake path can use — files, file *promises* (what the
-    /// screenshot thumbnail, Photos, and browsers drag), images, rich text,
-    /// plain text. Promise types must be registered explicitly or
-    /// promise-only drags never even reach `draggingEntered`.
+    /// screenshot thumbnail, Photos, and browsers drag), images, rich text
+    /// (including flat-RTFD, the only carrier of an inline image), plain text.
+    /// Promise types must be registered explicitly or promise-only drags never
+    /// even reach `draggingEntered`.
     static let acceptedDragTypes: [NSPasteboard.PasteboardType] =
-        [.fileURL, .png, .tiff, .pdf, .rtf, .html, .string]
+        [
+            .fileURL, .png, .tiff, .pdf,
+            NSPasteboard.PasteboardType(UTType.flatRTFD.identifier), .rtf, .html, .string,
+        ]
         + NSImage.imageTypes.map(NSPasteboard.PasteboardType.init(_:))
         + NSFilePromiseReceiver.readableDraggedTypes.map(NSPasteboard.PasteboardType.init(_:))
 
