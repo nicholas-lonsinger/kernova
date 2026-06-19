@@ -3,6 +3,7 @@ import Foundation
 import Darwin
 import CryptoKit
 import KernovaProtocol
+import UniformTypeIdentifiers
 @testable import Kernova
 
 @Suite("VsockClipboardService")
@@ -1023,6 +1024,44 @@ struct VsockClipboardServiceTests {
         #expect(req.generation == 42)
         #expect(req.transferID == inboundTransferID(generation: 42, repIndex: 0))
         #expect(req.uti == ClipboardContent.utf8TextUTI)
+    }
+
+    @Test("materializeForPreview pulls an inline flat-RTFD rep (the image-bearing flavor)")
+    func previewMaterializesFlatRTFD() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        service.start()
+        defer { service.stop() }
+
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        let bytes = Data("rtfd-with-inline-image".utf8)
+        responder.register(
+            generation: 53, repIndex: 0, uti: UTType.flatRTFD.identifier, bytes: bytes,
+            isInline: true)
+        responder.start()
+
+        try guest.send(
+            makeOffer(
+                generation: 53,
+                reps: [(uti: UTType.flatRTFD.identifier, byteCount: bytes.count, filename: "", isInline: true)]))
+        try await waitUntil { service.clipboardContent.representations.first?.isPendingRemote == true }
+
+        await service.materializeForPreview()
+
+        // flat-RTFD does not conform to `.rtf`; before the fix it was not eagerly
+        // previewable and stayed a placeholder (text-only preview). It must now be
+        // pulled so the window previews the inline image.
+        let rep = try #require(service.clipboardContent.representations.first)
+        #expect(!rep.isPendingRemote)
+        #expect(rep.inMemoryData == bytes)
+        #expect(service.clipboardContent.richTextRepresentation?.uti == UTType.flatRTFD.identifier)
+        let req = try #require(responder.requests.first)
+        #expect(req.uti == UTType.flatRTFD.identifier)
     }
 
     @Test("materializeForPreview leaves non-image file and over-limit image reps as placeholders")

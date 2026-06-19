@@ -70,13 +70,22 @@ final class ClipboardRichTextPreviewView: NSView {
 
     /// Renders `data` as styled text.
     ///
-    /// Returns `false` when the bytes can't be decoded as RTF — the caller
-    /// falls back to the summary. Runtime data, so failure is a logged
-    /// condition, not a programming error.
+    /// Decodes with the RTFD document type for an RTFD flavor (so an inline image
+    /// renders in place) and plain RTF otherwise — flat-RTFD is a self-contained
+    /// flat byte stream, so no unpacking is needed. Returns `false` when the bytes
+    /// can't be decoded — the caller falls back to the summary. Runtime data, so
+    /// failure is a logged condition, not a programming error.
     func configure(data: Data, uti: String) -> Bool {
-        guard let attributed = NSAttributedString(rtf: data, documentAttributes: nil) else {
+        let documentType: NSAttributedString.DocumentType =
+            UTType(uti)?.needsRTFDDocumentType == true ? .rtfd : .rtf
+        guard
+            let attributed = try? NSAttributedString(
+                data: data,
+                options: [.documentType: documentType],
+                documentAttributes: nil)
+        else {
             Self.logger.warning(
-                "Could not decode RTF preview (uti=\(uti, privacy: .public), \(data.count, privacy: .public) bytes)"
+                "Could not decode rich-text preview (uti=\(uti, privacy: .public), \(data.count, privacy: .public) bytes)"
             )
             return false
         }

@@ -32,6 +32,68 @@ struct ClipboardPreviewPolicyTests {
                 == .richText(data: rtf, uti: UTType.rtf.identifier))
     }
 
+    @Test("flat-RTFD wins over plain RTF for the rich preview")
+    func flatRTFDBeatsPlainRTFForRichPreview() {
+        // A TextEdit copy of styled text with an inline image advertises, in
+        // order: flat-RTFD (carries the image), plain RTF (text-only), then a
+        // plain-text sibling. The image-bearing flat-RTFD must be previewed —
+        // it does not conform to `.rtf`, so the policy must prefer it explicitly.
+        let rtfd = Data("rtfd-with-image".utf8)
+        let content = ClipboardContent(representations: [
+            .init(uti: UTType.flatRTFD.identifier, data: rtfd),
+            .init(uti: UTType.rtf.identifier, data: Data("{\\rtf1}".utf8)),
+            .init(uti: ClipboardContent.utf8TextUTI, data: Data("plain".utf8)),
+        ])
+        #expect(
+            ClipboardPreviewPolicy.mode(for: content)
+                == .richText(data: rtfd, uti: UTType.flatRTFD.identifier))
+    }
+
+    @Test("flat-RTFD alone renders the rich preview")
+    func flatRTFDOnlyRendersRich() {
+        // Even without a sibling plain RTF, flat-RTFD is rich text (not a plain
+        // image and not `.rtf`-conforming) and must render styled, not as a
+        // summary or the plain-text editor.
+        let rtfd = Data("rtfd-with-image".utf8)
+        let content = ClipboardContent(representations: [
+            .init(uti: UTType.flatRTFD.identifier, data: rtfd),
+            .init(uti: ClipboardContent.utf8TextUTI, data: Data("plain".utf8)),
+        ])
+        #expect(
+            ClipboardPreviewPolicy.mode(for: content)
+                == .richText(data: rtfd, uti: UTType.flatRTFD.identifier))
+    }
+
+    @Test("a flat-RTFD rep beats a coexisting bare image rep (the RTFD carries the image)")
+    func flatRTFDBeatsBareImageSibling() {
+        // Some apps vend a styled snippet as flat-RTFD *and* a standalone image
+        // flavor on the same item. The RTFD must win so the preview renders the
+        // styled text with its inline image, not just the bare image — the
+        // richText branch precedes the bare-image branch in mode(for:).
+        let rtfd = Data("rtfd-with-image".utf8)
+        let png = Data([0x89, 0x50])
+        let content = ClipboardContent(representations: [
+            .init(uti: UTType.flatRTFD.identifier, data: rtfd),
+            .init(uti: UTType.png.identifier, data: png),
+        ])
+        #expect(
+            ClipboardPreviewPolicy.mode(for: content)
+                == .richText(data: rtfd, uti: UTType.flatRTFD.identifier))
+    }
+
+    @Test("a copied .rtfd file attaches as a file, not inline rich text")
+    func rtfdFilePayloadShowsChip() {
+        // The file-payload rule must beat the rich-text rule for RTFD too: a
+        // copied .rtfd *file* is a file attachment, not styled inline content.
+        let rtfd = Data("rtfd-bytes".utf8)
+        let content = ClipboardContent(representations: [
+            .init(uti: UTType.flatRTFD.identifier, data: rtfd, filename: "styled.rtfd")
+        ])
+        #expect(
+            ClipboardPreviewPolicy.mode(for: content)
+                == .file(filename: "styled.rtfd", uti: UTType.flatRTFD.identifier, byteCount: rtfd.count))
+    }
+
     @Test("a non-image file payload renders the file chip")
     func nonImageFilePayloadShowsChip() {
         let bytes = Data("hello".utf8)
