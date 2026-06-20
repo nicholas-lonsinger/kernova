@@ -55,8 +55,13 @@ final class SheetPresenter: NSObject {
         sheet.contentViewController = content
 
         parent.beginSheet(sheet) { [weak self] _ in
-            self?.sheetWindow = nil
-            self?.onClose?()
+            // Only act if THIS sheet is still the current one. If it was already
+            // reconciled by `close()`'s parent-torn-down path, or replaced by a
+            // newer sheet, an orphaned completion firing late must not nil the
+            // newer sheet's window or fire its `onClose`.
+            guard let self, self.sheetWindow === sheet else { return }
+            self.sheetWindow = nil
+            self.onClose?()
         }
         sheetWindow = sheet
     }

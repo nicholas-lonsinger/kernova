@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 
@@ -126,6 +127,53 @@ struct DetailAlertsPresenterTests {
 
         #expect(presenter.pendingDeleteInstanceIDForTesting == vmB.id)
         #expect(presenter.pendingDeletePermanentlyForTesting == false)
+    }
+
+    @Test("A retarget landing DURING the off-main resolve re-resolves the new VM")
+    func retargetDuringResolveReResolves() async {
+        let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
+        let vmA = makeInstance(name: "A")
+        let vmB = makeInstance(name: "B")
+
+        // Drive a one-shot vmB request into the gap right after vmA's externals
+        // resolve but before the loop checks whether the request changed — this
+        // is the across-the-await `continue` re-resolve path (the #364 core) that
+        // a synchronous retarget (handled before the Task body runs) can't reach.
+        presenter.afterDeleteResolveForTesting = { [weak presenter] in
+            presenter?.afterDeleteResolveForTesting = nil
+            presenter?.presentDeleteSheet(for: vmB)
+        }
+        presenter.presentDeleteSheet(for: vmA)
+        await presenter.deleteResolutionTaskForTesting?.value
+
+        #expect(presenter.pendingCountForTesting == 1)
+        #expect(presenter.pendingDeleteInstanceIDForTesting == vmB.id)
+    }
+
+    // MARK: - Shown sheet is authoritative (no silent drop)
+
+    @Test("A delete gesture while the sheet is shown is ignored, not dropped")
+    func ignoreWhileSheetShown() async {
+        let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 320),
+            styleMask: [.titled], backing: .buffered, defer: true)
+        presenter.start(window: window)
+        let vmA = makeInstance(name: "A")
+        let vmB = makeInstance(name: "B")
+
+        // With a window, the resolved delete actually shows a sheet.
+        presenter.presentDeleteSheet(for: vmA)
+        await presenter.deleteResolutionTaskForTesting?.value
+        #expect(presenter.pendingCountForTesting == 0)  // drained → shown, not queued
+
+        // A different-VM gesture while that sheet is on screen is ignored (the
+        // modal sheet is authoritative), NOT coalesced into the in-flight request
+        // and then silently dropped when the shown sheet closes.
+        presenter.presentDeleteSheet(for: vmB)
+        #expect(presenter.pendingDeleteInstanceIDForTesting == vmA.id)
+
+        presenter.stop()  // tear down the sheet so the window doesn't linger
     }
 
     // MARK: - Teardown

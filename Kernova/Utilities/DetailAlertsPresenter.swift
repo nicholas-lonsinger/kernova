@@ -126,6 +126,11 @@ final class DetailAlertsPresenter: NSObject {
     /// token guard (a current-token close clears the in-flight delete; a stale
     /// one does not) without a live window to present a real sheet.
     func handleDeleteSheetClosedForTesting(token: Int) { handleDeleteSheetClosed(token: token) }
+
+    /// Test seam: awaited inside `resolveAndEnqueueDelete` right after the
+    /// externals resolve, so a test can drive a retarget into that exact gap and
+    /// exercise the across-the-await re-resolve (`continue`) path deterministically.
+    var afterDeleteResolveForTesting: (@MainActor () async -> Void)?
     #endif
 
     // MARK: - Imperative presentation
@@ -135,13 +140,25 @@ final class DetailAlertsPresenter: NSObject {
     }
 
     func presentDeleteSheet(for instance: VMInstance, permanently: Bool = false) {
+        // Once a delete sheet is on screen it is an authoritative, window-modal
+        // confirmation — ignore further delete gestures (the menu key-equivalents
+        // stay live under a window-modal sheet) until it closes. Coalescing them
+        // would be worse than ignoring: the new request would overwrite
+        // `pendingDelete`, then be cleared by the shown sheet's close without ever
+        // being shown — silently dropping the delete. `deleteSheetInstance` is set
+        // for the whole shown→closing window, so this also covers the gap between
+        // a Cancel/Confirm and the sheet's async `onClose`.
+        guard deleteSheetInstance == nil else {
+            Self.logger.debug(
+                "Delete sheet already on screen; ignoring request for '\(instance.name, privacy: .public)'")
+            return
+        }
         // De-dup to one delete sheet at a time, with the LATEST request winning
         // until the sheet is shown: a follow-up ⌘⌫ → ⌥⌘⌫ upgrades the mode and a
         // different VM retargets, both by updating `pendingDelete` (the single
         // source of truth the show step reads). So a fast double-invoke never
         // opens a second sheet, and the user's most recent intent is honored
-        // rather than silently downgraded. Once the sheet is on screen its
-        // displayed disposition is authoritative; the confirmation gates it.
+        // rather than silently downgraded.
         let wasIdle = pendingDelete == nil
         pendingDelete = PendingDelete(instance: instance, permanently: permanently)
         guard wasIdle else {
@@ -168,6 +185,9 @@ final class DetailAlertsPresenter: NSObject {
         // the new VM's externals instead of caching stale ones.
         while let request = pendingDelete {
             let externals = await viewModel.externalAttachmentsResolvingExistence(for: request.instance)
+            #if DEBUG
+            await afterDeleteResolveForTesting?()
+            #endif
             // `stop()` ran (cancel + clear), or a teardown cleared the request.
             guard !Task.isCancelled, let latest = pendingDelete else { return }
             if latest.instance.id != request.instance.id { continue }  // retargeted → re-resolve
@@ -227,10 +247,12 @@ final class DetailAlertsPresenter: NSObject {
         // If the request retargeted to a different VM after this show was
         // enqueued (e.g. while queued behind another alert), the cached externals
         // belong to the wrong VM — re-resolve for the new one instead of showing
-        // stale data.
+        // stale data. Cancel any in-flight resolve and start a fresh one so the
+        // retarget can never be swallowed (today the task is already nil here).
         guard let resolved = resolvedDelete, resolved.instanceID == request.instance.id else {
             resolvedDelete = nil
-            if deleteResolutionTask == nil { startDeleteResolution() }
+            deleteResolutionTask?.cancel()
+            startDeleteResolution()
             return
         }
         deleteSheetToken += 1
