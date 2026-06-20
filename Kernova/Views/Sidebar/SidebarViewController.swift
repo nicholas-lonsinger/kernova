@@ -782,10 +782,23 @@ extension SidebarViewController {
 
         menu.addItem(.separator())
 
-        // Destructive
-        let trash = item("Move to Trash", #selector(menuMoveToTrash(_:)), instance)
+        // Destructive — "Move to Trash…" gathers input (which externals to delete), so
+        // per the project HIG rule the ellipsis is correct here.
+        let trash = item("Move to Trash…", #selector(menuMoveToTrash(_:)), instance)
         trash.isEnabled = status.canEditSettings
         menu.addItem(trash)
+        // Advanced destructive: an ⌥-alternate of "Move to Trash…" (revealed on ⌥-hold),
+        // or a plain always-visible item when "Always show advanced options" is on. Mirrors
+        // the Stop/Force Stop pair above — no zero-height top anchor is needed because this
+        // pair sits at the menu's end, so collapsing the primary can't shift the menu.
+        let deleteImmediately = item("Delete Immediately…", #selector(menuDeleteImmediately(_:)), instance)
+        deleteImmediately.isEnabled = status.canEditSettings
+        if !AppPreferences.shared.alwaysShowAdvancedOptions {
+            trash.keyEquivalentModifierMask = []
+            deleteImmediately.keyEquivalentModifierMask = [.option]
+            deleteImmediately.isAlternate = true
+        }
+        menu.addItem(deleteImmediately)
 
         return menu
     }
@@ -862,6 +875,11 @@ extension SidebarViewController {
     @objc private func menuMoveToTrash(_ sender: NSMenuItem) {
         guard let instance = sender.representedObject as? VMInstance else { return }
         viewModel.confirmDelete(instance)
+    }
+
+    @objc private func menuDeleteImmediately(_ sender: NSMenuItem) {
+        guard let instance = sender.representedObject as? VMInstance else { return }
+        viewModel.confirmDelete(instance, permanently: true)
     }
 
     @objc private func menuCancelPreparing(_ sender: NSMenuItem) {

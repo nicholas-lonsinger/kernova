@@ -217,7 +217,9 @@ final class VMLifecycleCoordinator {
                                 )
                             }
                         }
-                        ipswService.discardResumeData(at: downloadDestination)
+                        // Fresh-download cleanup is recoverable on purpose: trash the
+                        // stale partial so the user can restore it if needed.
+                        ipswService.discardResumeData(at: downloadDestination, permanently: false)
                         instance.performConfigurationMutation {
                             $0.installContext?.requestedFreshDownload = false
                         }

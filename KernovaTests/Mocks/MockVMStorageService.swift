@@ -13,6 +13,7 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
 
     var saveConfigurationCallCount = 0
     var deleteVMBundleCallCount = 0
+    var permanentlyDeleteVMBundleCallCount = 0
     var createVMBundleCallCount = 0
     var cloneVMBundleCallCount = 0
 
@@ -22,6 +23,7 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
     var cloneVMBundleError: (any Error)?
     var saveConfigurationError: (any Error)?
     var deleteVMBundleError: (any Error)?
+    var permanentlyDeleteVMBundleError: (any Error)?
     var listVMBundlesError: (any Error)?
     /// Set of bundle URLs whose loadConfiguration should throw.
     var loadConfigurationFailURLs: Set<URL> = []
@@ -81,6 +83,12 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
     func deleteVMBundle(at bundleURL: URL) throws {
         deleteVMBundleCallCount += 1
         if let error = deleteVMBundleError { throw error }
+        bundles.removeValue(forKey: bundleURL)
+    }
+
+    func permanentlyDeleteVMBundle(at bundleURL: URL) throws {
+        permanentlyDeleteVMBundleCallCount += 1
+        if let error = permanentlyDeleteVMBundleError { throw error }
         bundles.removeValue(forKey: bundleURL)
     }
 }

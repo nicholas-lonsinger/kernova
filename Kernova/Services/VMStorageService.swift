@@ -129,6 +129,17 @@ struct VMStorageService: Sendable {
         try FileManager.default.trashItem(at: bundleURL, resultingItemURL: nil)
         Self.logger.notice("Moved VM bundle to Trash: \(bundleURL.lastPathComponent, privacy: .public)")
     }
+
+    /// Permanently deletes a VM bundle directory and all its contents, bypassing the Trash.
+    func permanentlyDeleteVMBundle(at bundleURL: URL) throws {
+        guard FileManager.default.fileExists(atPath: bundleURL.path(percentEncoded: false)) else {
+            throw VMStorageError.bundleNotFound(bundleURL)
+        }
+        // RATIONALE: This is the user-confirmed "Delete Immediately" path, the deliberate
+        // exception to CLAUDE.md's "prefer trash over rm" guideline.
+        try FileManager.default.removeItem(at: bundleURL)
+        Self.logger.notice("Permanently deleted VM bundle: \(bundleURL.lastPathComponent, privacy: .public)")
+    }
 }
 
 // MARK: - VMStorageProviding

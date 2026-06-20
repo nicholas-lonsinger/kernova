@@ -457,6 +457,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         viewModel.confirmDelete(instance)
     }
 
+    @objc func deleteImmediatelyVM(_ sender: Any?) {
+        guard let instance = activeInstance else { return }
+        viewModel.confirmDelete(instance, permanently: true)
+    }
+
     @objc func showVMInFinder(_ sender: Any?) {
         guard let instance = activeInstance else { return }
         NSWorkspace.shared.activateFileViewerSelecting([instance.bundleURL])
@@ -775,7 +780,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         case #selector(cloneVM(_:)):
             guard let instance = activeInstance else { return false }
             return instance.status.canEditSettings && !viewModel.hasPreparing
-        case #selector(deleteVM(_:)):
+        case #selector(deleteVM(_:)), #selector(deleteImmediatelyVM(_:)):
+            // Same gate for both the primary and its ⌥-alternate so the collapsed
+            // menu row stays consistent.
             return activeInstance?.status.canEditSettings ?? false
         case #selector(showVMInFinder(_:)):
             return activeInstance != nil
@@ -949,9 +956,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         vmMenu.addItem(withTitle: "Clone", action: #selector(cloneVM(_:)), keyEquivalent: "d")
         vmMenu.addItem(withTitle: "Show in Finder", action: #selector(showVMInFinder(_:)), keyEquivalent: "")
         vmMenu.addItem(.separator())
+        // "Move to Trash…" gathers input (the delete sheet lets the user pick which
+        // external files to remove too), so the ellipsis is HIG-correct here.
         let deleteItem = vmMenu.addItem(
-            withTitle: "Move to Trash", action: #selector(deleteVM(_:)), keyEquivalent: "\u{08}")
+            withTitle: "Move to Trash…", action: #selector(deleteVM(_:)), keyEquivalent: "\u{08}")
         deleteItem.keyEquivalentModifierMask = [.command]
+        // ⌥-alternate (Finder's File-menu idiom for this exact pair): holding Option swaps
+        // "Move to Trash…" (⌘⌫) for "Delete Immediately…" (⌥⌘⌫). Unlike the always-visible
+        // advanced items above (Start in Recovery, Force Stop), this one is intentionally
+        // tucked behind ⌥ because it's irreversible and shouldn't be one slip from the pointer.
+        let deleteImmediatelyItem = vmMenu.addItem(
+            withTitle: "Delete Immediately…", action: #selector(deleteImmediatelyVM(_:)), keyEquivalent: "\u{08}")
+        deleteImmediatelyItem.keyEquivalentModifierMask = [.command, .option]
+        deleteImmediatelyItem.isAlternate = true
         vmMenu.addItem(.separator())
         // Title is a placeholder — `validateMenuItem(_:)` retitles per agent
         // status / attach state on every menu open (Install / Update / Reinstall

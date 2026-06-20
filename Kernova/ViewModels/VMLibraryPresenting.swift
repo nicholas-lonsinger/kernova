@@ -25,8 +25,10 @@ protocol VMLibraryPresenting: AnyObject {
     func presentError(_ message: String)
     /// Show the unified delete sheet: the VM's in-bundle disks (removed with
     /// the VM) plus any external files, each individually selectable for
-    /// trashing. Used for every delete.
-    func presentDeleteSheet(for instance: VMInstance)
+    /// deletion. Used for every delete. `permanently` selects the immediate
+    /// (bypass-Trash) variant, which the sheet reflects in its wording and
+    /// confirm button.
+    func presentDeleteSheet(for instance: VMInstance, permanently: Bool)
     /// Show the force-stop / discard-saved-state confirmation.
     func presentForceStop(for instance: VMInstance)
     /// Show the confirmation for booting a macOS guest into macOS Recovery.

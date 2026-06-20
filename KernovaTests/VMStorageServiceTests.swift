@@ -94,6 +94,31 @@ struct VMStorageServiceTests {
         }
     }
 
+    @Test("Permanently delete VM bundle removes it from disk")
+    func permanentlyDeleteBundle() throws {
+        let config = VMConfiguration(
+            name: "Immediate Delete VM",
+            guestOS: .linux,
+            bootMode: .efi
+        )
+
+        let bundleURL = try service.createVMBundle(for: config)
+        #expect(FileManager.default.fileExists(atPath: bundleURL.path(percentEncoded: false)))
+
+        try service.permanentlyDeleteVMBundle(at: bundleURL)
+        #expect(!FileManager.default.fileExists(atPath: bundleURL.path(percentEncoded: false)))
+    }
+
+    @Test("Permanently deleting non-existent bundle throws error")
+    func permanentlyDeleteNonExistentThrows() {
+        let fakeURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("nonexistent-vm-bundle")
+
+        #expect(throws: VMStorageError.self) {
+            try service.permanentlyDeleteVMBundle(at: fakeURL)
+        }
+    }
+
     @Test("List VM bundles finds created bundles")
     func listBundles() throws {
         let config = VMConfiguration(

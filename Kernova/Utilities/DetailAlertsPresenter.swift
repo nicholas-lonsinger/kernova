@@ -21,6 +21,12 @@ final class DetailAlertsPresenter: NSObject {
     /// The VM the delete sheet is currently presenting for, read by the sheet
     /// delegate on confirm.
     private var deleteSheetInstance: VMInstance?
+    /// Whether the in-flight delete sheet is the immediate (bypass-Trash)
+    /// variant.
+    ///
+    /// The sheet doesn't re-encode the disposition on confirm, so the presenter
+    /// remembers which mode it showed and routes accordingly.
+    private var deleteSheetPermanent = false
     /// Presentation requests deferred because the presenter was busy (an alert
     /// or sheet was up) or had no window yet; drained in order once free.
     private var pending: [(DetailAlertsPresenter) -> Void] = []
@@ -46,7 +52,7 @@ final class DetailAlertsPresenter: NSObject {
         enqueue { $0.present($0.errorConfig(message)) }
     }
 
-    func presentDeleteSheet(for instance: VMInstance) {
+    func presentDeleteSheet(for instance: VMInstance, permanently: Bool = false) {
         // Resolve external-file existence off-main *before* enqueuing, so the
         // serialized presentation step stays synchronous and a stale mount
         // can't block the main actor. The brief async gap is acceptable for a
@@ -54,7 +60,7 @@ final class DetailAlertsPresenter: NSObject {
         Task { @MainActor [weak self] in
             guard let self else { return }
             let externals = await self.viewModel.externalAttachmentsResolvingExistence(for: instance)
-            self.enqueue { $0.showDeleteSheet(for: instance, externals: externals) }
+            self.enqueue { $0.showDeleteSheet(for: instance, externals: externals, permanently: permanently) }
         }
     }
 
@@ -102,17 +108,22 @@ final class DetailAlertsPresenter: NSObject {
         }
     }
 
-    private func showDeleteSheet(for instance: VMInstance, externals: [ExternalAttachment]) {
+    private func showDeleteSheet(
+        for instance: VMInstance, externals: [ExternalAttachment], permanently: Bool
+    ) {
         guard let window else { return }
         let content = DeleteVMSheetContentViewController(
             vmName: instance.name,
             bundledDisks: viewModel.bundledDisks(for: instance),
-            externals: externals
+            externals: externals,
+            mode: permanently ? .immediate : .trash
         )
         content.delegate = self
         deleteSheetInstance = instance
+        deleteSheetPermanent = permanently
         deleteSheetPresenter.onClose = { [weak self] in
             self?.deleteSheetInstance = nil
+            self?.deleteSheetPermanent = false
             self?.runNext()
         }
         deleteSheetPresenter.show(content: content, in: window)
@@ -227,10 +238,11 @@ extension DetailAlertsPresenter: DeleteVMSheetContentViewControllerDelegate {
     }
 
     func deleteVMSheet(
-        _ vc: DeleteVMSheetContentViewController, didConfirmTrashingExternalIDs ids: Set<UUID>
+        _ vc: DeleteVMSheetContentViewController, didConfirmDeletingExternalIDs ids: Set<UUID>
     ) {
         if let instance = deleteSheetInstance {
-            _ = viewModel.deleteConfirmed(instance, trashingExternalIDs: ids)
+            _ = viewModel.deleteConfirmed(
+                instance, deletingExternalIDs: ids, permanently: deleteSheetPermanent)
         }
         deleteSheetPresenter.close()
     }
