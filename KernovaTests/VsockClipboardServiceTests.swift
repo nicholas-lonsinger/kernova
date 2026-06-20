@@ -1420,8 +1420,9 @@ struct VsockClipboardServiceTests {
 
         let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
         service.start()
-        // No `defer { service.stop() }`: the test calls stop() itself, and a
-        // second stop() is harmless but kept out for clarity.
+        // The test calls stop() itself mid-flow (that is the action under test);
+        // this defer is an idempotent safety net for the early-throw path.
+        defer { service.stop() }
 
         let responder = FakeGuestResponder(guest: guest)
         defer { responder.cancel() }
