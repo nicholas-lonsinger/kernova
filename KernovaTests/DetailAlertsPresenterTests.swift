@@ -176,6 +176,32 @@ struct DetailAlertsPresenterTests {
         presenter.stop()  // tear down the sheet so the window doesn't linger
     }
 
+    @Test("A delete after teardown during a shown sheet is accepted, not blocked")
+    func deleteAcceptedAfterStopDuringShownSheet() async {
+        let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 320),
+            styleMask: [.titled], backing: .buffered, defer: true)
+        presenter.start(window: window)
+        let vmA = makeInstance(name: "A")
+        let vmB = makeInstance(name: "B")
+
+        presenter.presentDeleteSheet(for: vmA)
+        await presenter.deleteResolutionTaskForTesting?.value  // vmA's sheet is shown
+
+        // Teardown must clear the shown-sheet state synchronously; otherwise the
+        // ignore guard would still see deleteSheetInstance set and reject the next
+        // delete after the pane reappears.
+        presenter.stop()
+        presenter.start(window: window)
+        presenter.presentDeleteSheet(for: vmB)
+        await presenter.deleteResolutionTaskForTesting?.value
+
+        #expect(presenter.pendingDeleteInstanceIDForTesting == vmB.id)
+
+        presenter.stop()
+    }
+
     // MARK: - Teardown
 
     @Test("stop() cancels the resolution Task and clears all in-flight state")

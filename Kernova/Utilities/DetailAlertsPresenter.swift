@@ -82,6 +82,13 @@ final class DetailAlertsPresenter: NSObject {
         deleteResolutionTask = nil
         pendingDelete = nil
         resolvedDelete = nil
+        // Clear the shown-sheet state synchronously rather than waiting for the
+        // async `onClose` that `close()` (below) schedules: the `presentDeleteSheet`
+        // ignore guard keys on `deleteSheetInstance`, so leaving it set until the
+        // late completion fires would wrongly ignore deletes for a window after the
+        // next `start()`. The late `onClose` clears these again harmlessly.
+        deleteSheetInstance = nil
+        deleteSheetPermanent = false
         // Invalidate the in-flight sheet's `onClose` so its late async close
         // (fired by the `close()` below) can't clear state belonging to a sheet
         // shown after the next `start()`. stop() has already cleared the
