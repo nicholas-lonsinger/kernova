@@ -1101,6 +1101,74 @@ struct VsockGuestClipboardAgentTests {
         #expect(offer2.generation > offer1.generation)
     }
 
+    // MARK: - Teardown identity (Guard #1)
+
+    // The serve() teardown re-checks `liveChannel === channel` before tearing the
+    // connection down, so a stale connection's teardown can't clobber a live one.
+    // The reconnect loop serves connections strictly sequentially today, so the
+    // stale branch never fires in production — these are predicate unit tests of
+    // the extracted `teardownIfCurrent`, not a fabricated two-connection race.
+
+    @Test("teardownIfCurrent ignores a stale channel — the live connection and its inbound promise survive")
+    func staleChannelDoesNotTearDownLiveConnection() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        // Register an inbound promise on the live connection, so a wrongful
+        // teardown would be observable as a nil'd generation as well as a nil
+        // channel (teardownConnectionState clears both).
+        try hostChannel.send(makeTextOfferFrame(generation: 77, text: "live payload"))
+        try await waitUntil {
+            DispatchQueue.main.sync { agent.inboundPromiseGenerationForTesting } == 77
+        }
+
+        // Capture the live channel's identity — only its reference matters here.
+        let liveChannel = try #require(DispatchQueue.main.sync { agent.liveChannelForTesting })
+
+        // A throwaway channel that was never served; teardownIfCurrent must reject
+        // it by identity, leaving the live connection untouched.
+        let (staleFdA, staleFdB) = try makeRawSocketPair()
+        let staleChannel = VsockChannel(fileDescriptor: staleFdA)
+        let staleOther = VsockChannel(fileDescriptor: staleFdB)
+        defer { staleChannel.close(); staleOther.close() }
+
+        await MainActor.run { agent.teardownIfCurrentForTesting(staleChannel) }
+
+        // Both the live channel and its promise are intact — a failed identity
+        // check would have nil'd both via teardownConnectionState.
+        #expect(DispatchQueue.main.sync { agent.liveChannelForTesting } === liveChannel)
+        #expect(DispatchQueue.main.sync { agent.inboundPromiseGenerationForTesting } == 77)
+    }
+
+    @Test("teardownIfCurrent tears down when handed the live channel")
+    func liveChannelTearsDownConnection() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        let liveChannel = try #require(DispatchQueue.main.sync { agent.liveChannelForTesting })
+
+        // Handed the live channel, the positive branch fires and tears it down.
+        await MainActor.run { agent.teardownIfCurrentForTesting(liveChannel) }
+
+        #expect(DispatchQueue.main.sync { agent.liveChannelForTesting } == nil)
+    }
+
     @Test("serve publishes liveChannel synchronously so the read loop can process inbound frames immediately")
     func servePublishesLiveChannelBeforeReadLoop() async throws {
         let pasteboard = FakePasteboard()

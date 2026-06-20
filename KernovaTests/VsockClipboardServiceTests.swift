@@ -1339,6 +1339,137 @@ struct VsockClipboardServiceTests {
         #expect(rep.uti == "public.png")
     }
 
+    @Test("A newer offer during a SUCCESSFUL pull is suppressed — the new placeholder survives, no republish")
+    func newerOfferSupersedesSuccessfulPull() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        service.start()
+        defer { service.stop() }
+
+        // Unlike `newerOfferSupersedesInFlightPull` (beginOnly → pull resolves to
+        // nil), gen=1 answers with a COMPLETE transfer, so the pull resolves with
+        // real bytes. That is the only path where the `inboundPromise === promise`
+        // re-check is load-bearing: a successful pull's bytes would clobber the
+        // newer offer's placeholders if the guard didn't suppress the republish.
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        responder.register(
+            generation: 1, repIndex: 0, uti: "public.data", bytes: Data(count: 4096),
+            filename: "stale.bin", isInline: false)
+        responder.start()
+
+        // The seam parks the materialize call in the window between the pull
+        // resolving and the guard, so the test lands a newer offer in that gap.
+        let entered = AsyncGate()
+        let release = AsyncGate()
+        var didEnter = false
+        var released = false
+        var parkedOnce = false
+        service.afterInboundPullForTesting = {
+            // One-shot: the single gen=1 rep reaches the seam exactly once, but
+            // guard defensively so a stray pull can't re-park and deadlock.
+            if parkedOnce { return }
+            parkedOnce = true
+            didEnter = true
+            entered.notify()
+            try? await release.wait(timeout: .seconds(5)) { released }
+        }
+
+        // gen=1 — a single non-inline file rep, a placeholder until pulled.
+        try guest.send(
+            makeOffer(
+                generation: 1,
+                reps: [(uti: "public.data", byteCount: 4096, filename: "stale.bin", isInline: false)]))
+        try await waitUntil { service.clipboardContent.representations.first?.isPendingRemote == true }
+
+        // Copy issues the gen=1 pull; it completes and parks in the seam.
+        let copyTask = Task { await service.materializeForCopy() }
+        try await entered.wait(timeout: .seconds(5)) { didEnter }
+
+        // The materialize call is parked, so the main actor is free: a newer offer
+        // lands and republishes gen=2's placeholder.
+        try guest.send(
+            makeOffer(
+                generation: 2,
+                reps: [(uti: "public.png", byteCount: 64, filename: "new.png", isInline: false)]))
+        try await waitUntil { service.clipboardContent.representations.first?.uti == "public.png" }
+
+        // Release: materialize resumes, the guard sees inboundPromise(gen2) !==
+        // promise(gen1) and returns WITHOUT republishing gen=1's bytes.
+        released = true
+        release.notify()
+        // gen=1's bytes legitimately ride the return value (the guard suppresses
+        // the republish, not the return) — assert on the published content only.
+        _ = await copyTask.value
+
+        let rep = try #require(service.clipboardContent.representations.first)
+        #expect(rep.uti == "public.png")
+        #expect(rep.isPendingRemote)
+    }
+
+    @Test("stop() during a SUCCESSFUL pull is suppressed — the gen=1 placeholder is retained, not republished")
+    func stopDuringSuccessfulPull() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        service.start()
+        // The test calls stop() itself mid-flow (that is the action under test);
+        // this defer is an idempotent safety net for the early-throw path.
+        defer { service.stop() }
+
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        responder.register(
+            generation: 1, repIndex: 0, uti: "public.data", bytes: Data(count: 4096),
+            filename: "stale.bin", isInline: false)
+        responder.start()
+
+        let entered = AsyncGate()
+        let release = AsyncGate()
+        var didEnter = false
+        var released = false
+        var parkedOnce = false
+        service.afterInboundPullForTesting = {
+            if parkedOnce { return }
+            parkedOnce = true
+            didEnter = true
+            entered.notify()
+            try? await release.wait(timeout: .seconds(5)) { released }
+        }
+
+        try guest.send(
+            makeOffer(
+                generation: 1,
+                reps: [(uti: "public.data", byteCount: 4096, filename: "stale.bin", isInline: false)]))
+        try await waitUntil { service.clipboardContent.representations.first?.isPendingRemote == true }
+
+        let copyTask = Task { await service.materializeForCopy() }
+        try await entered.wait(timeout: .seconds(5)) { didEnter }
+
+        // stop() drops the inbound promise (via dropInboundPromise) but leaves
+        // clipboardContent intact — so the resumed guard sees nil !== promise and
+        // must NOT republish gen=1's materialized .file rep over the placeholder.
+        service.stop()
+
+        released = true
+        release.notify()
+        _ = await copyTask.value
+
+        // A failed guard would have republished the materialized rep, giving a
+        // non-nil fileURL; the placeholder must survive unchanged.
+        let rep = try #require(service.clipboardContent.representations.first)
+        #expect(rep.isPendingRemote)
+        #expect(rep.fileURL == nil)
+        #expect(rep.inMemoryData == nil)
+    }
+
     @Test("handleRelease drops the promise — a later Copy-to-Mac resolves nothing")
     func releaseDropsPromise() async throws {
         let (guest, host) = try makePair()
