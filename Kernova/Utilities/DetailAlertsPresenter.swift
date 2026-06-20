@@ -1,4 +1,5 @@
 import AppKit
+import os
 
 /// Presents the detail pane's lifecycle confirmation alerts and the delete
 /// sheet on behalf of `DetailContainerViewController`.
@@ -14,6 +15,8 @@ import AppKit
 /// the window exists) are queued and run in order.
 @MainActor
 final class DetailAlertsPresenter: NSObject {
+    private static let logger = Logger(subsystem: "app.kernova", category: "DetailAlertsPresenter")
+
     private let viewModel: VMLibraryViewModel
     private weak var window: NSWindow?
     private let deleteSheetPresenter = SheetPresenter()
@@ -21,6 +24,14 @@ final class DetailAlertsPresenter: NSObject {
     /// The VM the delete sheet is currently presenting for, read by the sheet
     /// delegate on confirm.
     private var deleteSheetInstance: VMInstance?
+    /// The VM whose delete sheet is in flight — resolving externals off-main,
+    /// queued in `pending`, or shown — used to de-dup repeat delete requests.
+    ///
+    /// Cleared when the sheet closes (`onClose`) or the presenter is torn down
+    /// (`stop()`).
+    private var pendingDeleteInstanceID: UUID?
+    /// Tracks the off-main external-resolution task so `stop()` can cancel it.
+    private var deleteResolutionTask: Task<Void, Never>?
     /// Whether the in-flight delete sheet is the immediate (bypass-Trash)
     /// variant.
     ///
@@ -42,9 +53,33 @@ final class DetailAlertsPresenter: NSObject {
     }
 
     func stop() {
-        if deleteSheetPresenter.isShown { deleteSheetPresenter.close() }
+        deleteResolutionTask?.cancel()
+        deleteResolutionTask = nil
+        pendingDeleteInstanceID = nil
         pending.removeAll()
+        // Belt-and-suspenders: a resolution task that resolves after teardown
+        // (or any late enqueue) can't present on the disappearing window once
+        // it's nil. `start(window:)` re-sets it on the next `viewDidAppear`.
+        window = nil
+        // Order: clear `pending` and nil `window` *before* closing the sheet.
+        // `close()` fires `onClose` via the `beginSheet` completion (which calls
+        // `runNext()`), and with `window == nil` that `runNext` is a no-op.
+        if deleteSheetPresenter.isShown { deleteSheetPresenter.close() }
     }
+
+    #if DEBUG
+    /// Number of presentation closures currently queued.
+    ///
+    /// With no window set (test harness never calls `start`), `runNext` always
+    /// bails, so enqueued delete sheets accumulate here for the de-dup tests.
+    var pendingCountForTesting: Int { pending.count }
+
+    /// The VM id whose delete sheet is in flight, or `nil` if none.
+    var pendingDeleteInstanceIDForTesting: UUID? { pendingDeleteInstanceID }
+
+    /// The tracked off-main resolution task, so tests can `await` its `.value`.
+    var deleteResolutionTaskForTesting: Task<Void, Never>? { deleteResolutionTask }
+    #endif
 
     // MARK: - Imperative presentation
 
@@ -53,13 +88,32 @@ final class DetailAlertsPresenter: NSObject {
     }
 
     func presentDeleteSheet(for instance: VMInstance, permanently: Bool = false) {
+        // De-dup: at most one delete sheet is ever in flight. A second request —
+        // e.g. ⌘⌫ then ⌥⌘⌫ on the same VM — is ignored so the user never sees a
+        // duplicate sheet. Once shown the sheet is window-modal, and while queued
+        // a prior alert/sheet blocks the window, so the only reachable re-entry
+        // is a fast double-invoke during the brief off-main resolve; that targets
+        // the same VM. Different-VM re-entry isn't reachable, so a blanket
+        // "already in flight" guard is correct and keeps the single-task invariant.
+        guard pendingDeleteInstanceID == nil else {
+            Self.logger.debug(
+                "Ignoring delete request for '\(instance.name, privacy: .public)'; a delete sheet is already in flight")
+            return
+        }
+        pendingDeleteInstanceID = instance.id
         // Resolve external-file existence off-main *before* enqueuing, so the
         // serialized presentation step stays synchronous and a stale mount
         // can't block the main actor. The brief async gap is acceptable for a
-        // user-initiated confirmation sheet.
-        Task { @MainActor [weak self] in
+        // user-initiated confirmation sheet. The task is tracked so `stop()` can
+        // cancel it.
+        deleteResolutionTask = Task { @MainActor [weak self] in
             guard let self else { return }
             let externals = await self.viewModel.externalAttachmentsResolvingExistence(for: instance)
+            // `stop()` ran during the resolve: bail without enqueuing or touching
+            // `pendingDeleteInstanceID` (owned by `onClose`/`stop()`, never cleared
+            // here — avoids an ABA race where a stale task clears a newer request).
+            guard !Task.isCancelled else { return }
+            self.deleteResolutionTask = nil
             self.enqueue { $0.showDeleteSheet(for: instance, externals: externals, permanently: permanently) }
         }
     }
@@ -124,6 +178,9 @@ final class DetailAlertsPresenter: NSObject {
         deleteSheetPresenter.onClose = { [weak self] in
             self?.deleteSheetInstance = nil
             self?.deleteSheetPermanent = false
+            // Allow the next delete: the in-flight sheet has closed (cancel,
+            // confirm, or programmatic `close()` all route through here).
+            self?.pendingDeleteInstanceID = nil
             self?.runNext()
         }
         deleteSheetPresenter.show(content: content, in: window)
