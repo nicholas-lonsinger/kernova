@@ -246,6 +246,100 @@ struct VMLibraryViewModelTests {
         #expect(viewModel.selectedID == first.id)
     }
 
+    @Test("confirmDelete forwards the immediate flag to the delete sheet")
+    func confirmDeleteForwardsPermanentlyFlag() {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        viewModel.instances.append(instance)
+
+        viewModel.confirmDelete(instance)
+        #expect(presenter.lastDeleteSheetPermanently == false)
+
+        viewModel.confirmDelete(instance, permanently: true)
+        #expect(presenter.lastDeleteSheetPermanently == true)
+    }
+
+    @Test("deleteConfirmed permanently hard-deletes the bundle, bypassing the Trash")
+    func deleteConfirmedPermanentlyUsesHardDelete() {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        viewModel.instances.append(instance)
+        viewModel.selectedID = instance.id
+        storage.bundles[instance.bundleURL] = instance.configuration
+
+        viewModel.deleteConfirmed(instance, permanently: true)
+
+        #expect(viewModel.instances.isEmpty)
+        #expect(viewModel.selectedID == nil)
+        // Hard-delete path is taken; the Trash path is not.
+        #expect(storage.permanentlyDeleteVMBundleCallCount == 1)
+        #expect(storage.deleteVMBundleCallCount == 0)
+    }
+
+    @Test("deleteConfirmed permanently deletes the selected external files")
+    func deleteConfirmedPermanentlyDeletesExternals() async throws {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        let externalDisk = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString)-external.img")
+        try Data("disk".utf8).write(to: externalDisk)
+        defer { try? FileManager.default.removeItem(at: externalDisk) }
+
+        let diskID = UUID()
+        instance.configuration.storageDisks = [
+            StorageDisk(
+                id: diskID, path: externalDisk.path(percentEncoded: false),
+                readOnly: false, label: "External", isInternal: false, kind: .virtio
+            )
+        ]
+        viewModel.instances.append(instance)
+        storage.bundles[instance.bundleURL] = instance.configuration
+
+        let tasks = viewModel.deleteConfirmed(instance, deletingExternalIDs: [diskID], permanently: true)
+        for task in tasks { await task.value }
+
+        #expect(tasks.count == 1)
+        #expect(viewModel.instances.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: externalDisk.path(percentEncoded: false)))
+        #expect(!presenter.showError)
+    }
+
+    @Test("deleteConfirmed permanently never deletes a shared external even if selected")
+    func deleteConfirmedPermanentlyNeverDeletesSharedExternal() async throws {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let sharedDisk = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString)-shared.img")
+        try Data("shared".utf8).write(to: sharedDisk)
+        defer { try? FileManager.default.removeItem(at: sharedDisk) }
+
+        let sharedID = UUID()
+        let sharedPath = sharedDisk.path(percentEncoded: false)
+        let target = makeInstance(name: "Target")
+        target.configuration.storageDisks = [
+            StorageDisk(
+                id: sharedID, path: sharedPath,
+                readOnly: false, label: "Shared", isInternal: false, kind: .virtio
+            )
+        ]
+        let other = makeInstance(name: "Other")
+        other.configuration.storageDisks = [
+            StorageDisk(
+                path: sharedPath, readOnly: false, label: "Shared",
+                isInternal: false, kind: .virtio
+            )
+        ]
+        viewModel.instances = [target, other]
+        storage.bundles[target.bundleURL] = target.configuration
+
+        let tasks = viewModel.deleteConfirmed(target, deletingExternalIDs: [sharedID], permanently: true)
+        for task in tasks { await task.value }
+
+        // The shared-file hard-block holds in the immediate path too.
+        #expect(tasks.isEmpty)
+        #expect(FileManager.default.fileExists(atPath: sharedPath))
+        #expect(!presenter.showError)
+    }
+
     @Test("confirmDelete routes to sheet when the VM references external attachments")
     func confirmDeleteRoutesToSheetWithExternals() {
         let (viewModel, _, _, _, _) = makeViewModel()
@@ -402,7 +496,7 @@ struct VMLibraryViewModelTests {
         // excluded by `externalAttachments`, so no task is spawned. Require
         // this *before* awaiting: a regression would otherwise move the real
         // app-bundle DMG to the Trash.
-        let tasks = viewModel.deleteConfirmed(instance, trashingExternalIDs: [agentID])
+        let tasks = viewModel.deleteConfirmed(instance, deletingExternalIDs: [agentID])
 
         try #require(tasks.isEmpty)
         #expect(viewModel.instances.isEmpty)
@@ -604,7 +698,7 @@ struct VMLibraryViewModelTests {
         viewModel.instances.append(instance)
         storage.bundles[instance.bundleURL] = instance.configuration
 
-        let tasks = viewModel.deleteConfirmed(instance, trashingExternalIDs: [diskID, isoID])
+        let tasks = viewModel.deleteConfirmed(instance, deletingExternalIDs: [diskID, isoID])
         for task in tasks { await task.value }
 
         #expect(tasks.count == 2)
@@ -645,7 +739,7 @@ struct VMLibraryViewModelTests {
         viewModel.instances.append(instance)
         storage.bundles[instance.bundleURL] = instance.configuration
 
-        let tasks = viewModel.deleteConfirmed(instance, trashingExternalIDs: [trashedID])
+        let tasks = viewModel.deleteConfirmed(instance, deletingExternalIDs: [trashedID])
         for task in tasks { await task.value }
 
         // Only the selected disk is trashed; the unselected one stays put.
@@ -683,7 +777,7 @@ struct VMLibraryViewModelTests {
         viewModel.instances = [target, other]
         storage.bundles[target.bundleURL] = target.configuration
 
-        let tasks = viewModel.deleteConfirmed(target, trashingExternalIDs: [sharedID])
+        let tasks = viewModel.deleteConfirmed(target, deletingExternalIDs: [sharedID])
         for task in tasks { await task.value }
 
         // Hard-block: a shared file is never trashed, so the other VM keeps it.
@@ -806,7 +900,7 @@ struct VMLibraryViewModelTests {
         viewModel.instances.append(instance)
         storage.bundles[instance.bundleURL] = instance.configuration
 
-        let tasks = viewModel.deleteConfirmed(instance, trashingExternalIDs: [ghostID])
+        let tasks = viewModel.deleteConfirmed(instance, deletingExternalIDs: [ghostID])
         for task in tasks { await task.value }
 
         #expect(viewModel.instances.isEmpty)

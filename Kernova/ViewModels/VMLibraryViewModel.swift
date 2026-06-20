@@ -494,40 +494,52 @@ final class VMLibraryViewModel {
     ///
     /// Always presents the unified delete sheet, which lists the VM's
     /// in-bundle disks (removed with the VM) and any external files (each
-    /// individually selectable for trashing). There is no longer a separate
+    /// individually selectable for deletion). There is no longer a separate
     /// "simple alert" path: every VM has at least its main disk to show.
-    func confirmDelete(_ instance: VMInstance) {
-        presenter?.presentDeleteSheet(for: instance)
+    ///
+    /// `permanently` selects the destructive variant: when `false` (the
+    /// default) the bundle and chosen externals are moved to Trash; when
+    /// `true` they are deleted immediately, bypassing the Trash. The sheet
+    /// reflects the mode and routes back through ``deleteConfirmed(_:deletingExternalIDs:permanently:)``.
+    func confirmDelete(_ instance: VMInstance, permanently: Bool = false) {
+        presenter?.presentDeleteSheet(for: instance, permanently: permanently)
     }
 
-    /// Trashes the VM bundle and the chosen external files.
+    /// Deletes the VM bundle and the chosen external files, either to the
+    /// Trash or immediately (bypassing it).
     ///
-    /// Bundle-internal disks ride along inside the trashed bundle. External
+    /// Bundle-internal disks ride along inside the deleted bundle. External
     /// storage disks and removable media live outside the bundle, so each
-    /// one whose `id` is in `trashingExternalIDs` is moved to Trash via a
-    /// detached Task (mirroring `removeStorageDisk` / `removeRemovableMedia`
-    /// — see those for the rationale on `Task.detached`).
+    /// one whose `id` is in `deletingExternalIDs` is removed via a detached
+    /// Task (mirroring `removeStorageDisk` / `removeRemovableMedia` — see
+    /// those for the rationale on `Task.detached`). `permanently` is threaded
+    /// through to both the bundle and the externals so the whole operation
+    /// uses one disposition.
     ///
-    /// Files shared with other VMs are **never** trashed even if their id is
+    /// Files shared with other VMs are **never** deleted even if their id is
     /// passed in: the sheet locks their toggle off, and this guard enforces
     /// the same invariant at the model layer so a delete can never break
-    /// another VM. Externals are trashed *after* the bundle so the VM
-    /// disappears from the library even if a downstream trash op fails, and
-    /// the returned Tasks let tests await completion.
+    /// another VM. Externals are deleted *after* the bundle so the VM
+    /// disappears from the library even if a downstream op fails, and the
+    /// returned Tasks let tests await completion.
     @discardableResult
     func deleteConfirmed(
-        _ instance: VMInstance, trashingExternalIDs: Set<UUID> = []
+        _ instance: VMInstance, deletingExternalIDs: Set<UUID> = [], permanently: Bool = false
     ) -> [Task<Void, Never>] {
         instance.tearDownSession()
-        let toTrash =
-            trashingExternalIDs.isEmpty
+        let toDelete =
+            deletingExternalIDs.isEmpty
             ? []
             : externalAttachments(for: instance).filter {
-                trashingExternalIDs.contains($0.id) && !$0.isShared
+                deletingExternalIDs.contains($0.id) && !$0.isShared
             }
         var tasks: [Task<Void, Never>] = []
         do {
-            try storageService.deleteVMBundle(at: instance.bundleURL)
+            if permanently {
+                try storageService.permanentlyDeleteVMBundle(at: instance.bundleURL)
+            } else {
+                try storageService.deleteVMBundle(at: instance.bundleURL)
+            }
             cleanupInstallResumeData(for: instance)
             lifecycle.clearActiveOperation(for: instance.id)
             sleepPausedInstanceIDs.remove(instance.id)
@@ -536,14 +548,19 @@ final class VMLibraryViewModel {
             if selectedID == instance.id {
                 selectedID = instances.first?.id
             }
-            Self.logger.notice("Moved VM '\(instance.name, privacy: .public)' to Trash")
+            if permanently {
+                Self.logger.notice("Permanently deleted VM '\(instance.name, privacy: .public)'")
+            } else {
+                Self.logger.notice("Moved VM '\(instance.name, privacy: .public)' to Trash")
+            }
             let vmName = instance.name
-            for attachment in toTrash {
+            for attachment in toDelete {
                 tasks.append(
-                    trashExternalAttachment(
+                    deleteExternalAttachment(
                         at: URL(fileURLWithPath: attachment.path),
                         label: attachment.label,
-                        vmName: vmName
+                        vmName: vmName,
+                        permanently: permanently
                     )
                 )
             }
@@ -596,8 +613,8 @@ final class VMLibraryViewModel {
     /// Existence is **not** resolved here — every attachment's
     /// ``ExternalAttachment/isMissing`` is left `false`. This keeps the method
     /// free of filesystem syscalls so it stays cheap on the main actor (the
-    /// trash fan-out in ``deleteConfirmed(_:trashingExternalIDs:)`` only needs
-    /// id/sharing). The delete sheet, which *does* surface missing-file state,
+    /// delete fan-out in ``deleteConfirmed(_:deletingExternalIDs:permanently:)`` only
+    /// needs id/sharing). The delete sheet, which *does* surface missing-file state,
     /// uses ``externalAttachmentsResolvingExistence(for:)`` to fill `isMissing`
     /// off-main.
     func externalAttachments(for instance: VMInstance) -> [ExternalAttachment] {
@@ -735,27 +752,37 @@ final class VMLibraryViewModel {
         )
     }
 
-    /// Detached trash for a single external attachment.
+    /// Detached delete for a single external attachment, to Trash or
+    /// immediately depending on `permanently`.
     ///
     /// Mirrors the error policy of `removeStorageDisk` / `removeRemovableMedia`:
     /// missing files are swallowed at `.notice` (the source may have been
     /// moved or deleted out-of-band), other failures log `.warning` and
     /// surface a single error alert on the MainActor.
-    private func trashExternalAttachment(at url: URL, label: String, vmName: String) -> Task<Void, Never> {
+    private func deleteExternalAttachment(
+        at url: URL, label: String, vmName: String, permanently: Bool
+    ) -> Task<Void, Never> {
         Task.detached(priority: .userInitiated) { [weak self] in
             do {
-                try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+                if permanently {
+                    // RATIONALE: the user-confirmed "Delete Immediately" path; the deliberate
+                    // exception to CLAUDE.md's "prefer trash over rm" guideline (see also
+                    // `VMStorageService.permanentlyDeleteVMBundle`).
+                    try FileManager.default.removeItem(at: url)
+                } else {
+                    try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+                }
                 Self.logger.notice(
-                    "Trashed external attachment '\(label, privacy: .public)' for deleted VM '\(vmName, privacy: .public)'"
+                    "Deleted external attachment '\(label, privacy: .public)' for deleted VM '\(vmName, privacy: .public)'"
                 )
             } catch let error as CocoaError where error.code == .fileNoSuchFile || error.code == .fileReadNoSuchFile {
                 Self.logger.notice(
-                    "External attachment already gone for '\(label, privacy: .public)' (\(url.lastPathComponent, privacy: .public)) on deleted VM '\(vmName, privacy: .public)'; skipping trash"
+                    "External attachment already gone for '\(label, privacy: .public)' (\(url.lastPathComponent, privacy: .public)) on deleted VM '\(vmName, privacy: .public)'; skipping delete"
                 )
             } catch {
                 let message = error.localizedDescription
                 Self.logger.warning(
-                    "Failed to trash external attachment '\(label, privacy: .public)' (\(url.lastPathComponent, privacy: .public)) on deleted VM '\(vmName, privacy: .public)': \(message, privacy: .public)"
+                    "Failed to delete external attachment '\(label, privacy: .public)' (\(url.lastPathComponent, privacy: .public)) on deleted VM '\(vmName, privacy: .public)': \(message, privacy: .public)"
                 )
                 await MainActor.run { [weak self] in
                     self?.surfaceError(message)

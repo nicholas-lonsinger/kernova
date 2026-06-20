@@ -279,8 +279,8 @@ extension DetailContainerViewController: VMLibraryPresenting {
         alertsPresenter.presentError(message)
     }
 
-    func presentDeleteSheet(for instance: VMInstance) {
-        alertsPresenter.presentDeleteSheet(for: instance)
+    func presentDeleteSheet(for instance: VMInstance, permanently: Bool) {
+        alertsPresenter.presentDeleteSheet(for: instance, permanently: permanently)
     }
 
     func presentForceStop(for instance: VMInstance) {

@@ -201,6 +201,55 @@ struct DeleteVMSheetContentViewControllerTests {
         #expect(cancel.keyEquivalent == "\u{1B}")
     }
 
+    // MARK: - Immediate-delete mode
+
+    @Test("immediate mode header warns about permanent deletion")
+    func immediateModeHeader() {
+        let vc = make(vmName: "MyVM", mode: .immediate)
+        vc.loadViewIfNeeded()
+        let labels = collectLabels(in: vc.view).map(\.stringValue)
+        #expect(labels.contains { $0.contains("MyVM") && $0.contains("Immediately?") })
+        #expect(labels.contains { $0.contains("can't undo") })
+        // The reversible "Put Back" framing must not leak into the permanent variant.
+        #expect(!labels.contains { $0.contains("Put Back") })
+    }
+
+    @Test("immediate mode confirm button reads Delete Immediately and is not the Return default")
+    func immediateModeConfirmButton() {
+        let vc = make(vmName: "MyVM", mode: .immediate)
+        vc.loadViewIfNeeded()
+        guard let confirm = findButton(titled: "Delete Immediately", in: vc.view) else {
+            Issue.record("Expected a Delete Immediately button")
+            return
+        }
+        // No Return default for the irreversible action; still styled destructive.
+        #expect(confirm.keyEquivalent == "")
+        #expect(confirm.hasDestructiveAction)
+        // The trash-mode title must not also be present.
+        #expect(findButton(titled: "Move to Trash", in: vc.view) == nil)
+    }
+
+    @Test("immediate mode still returns the checked external ids on confirm")
+    func immediateModeConfirmReturnsSelectedExternalIDs() {
+        let keepID = UUID()
+        let deleteID = UUID()
+        let externals = [
+            makeAttachment(id: keepID, label: "Keep", path: "/tmp/keep.img"),
+            makeAttachment(id: deleteID, label: "Delete", path: "/tmp/delete.img"),
+        ]
+        let vc = make(vmName: "MyVM", externals: externals, mode: .immediate)
+        let delegate = MockDelegate()
+        vc.delegate = delegate
+        vc.loadViewIfNeeded()
+
+        guard let confirm = findButton(titled: "Delete Immediately", in: vc.view) else {
+            Issue.record("Expected a Delete Immediately button")
+            return
+        }
+        confirm.performClick(nil)
+        #expect(delegate.confirmedIDChoices == [[keepID, deleteID]])
+    }
+
     // The content list's height is driven by an explicit measured constant
     // (see `makeContentList`), so these layout assertions resolve
     // deterministically after a plain layout pass — no window needed.
@@ -290,10 +339,11 @@ struct DeleteVMSheetContentViewControllerTests {
     private func make(
         vmName: String,
         bundledDisks: [StorageDisk] = [],
-        externals: [ExternalAttachment] = []
+        externals: [ExternalAttachment] = [],
+        mode: DeleteVMSheetContentViewController.Mode = .trash
     ) -> DeleteVMSheetContentViewController {
         DeleteVMSheetContentViewController(
-            vmName: vmName, bundledDisks: bundledDisks, externals: externals
+            vmName: vmName, bundledDisks: bundledDisks, externals: externals, mode: mode
         )
     }
 
@@ -325,7 +375,7 @@ struct DeleteVMSheetContentViewControllerTests {
 
         func deleteVMSheet(
             _ vc: DeleteVMSheetContentViewController,
-            didConfirmTrashingExternalIDs ids: Set<UUID>
+            didConfirmDeletingExternalIDs ids: Set<UUID>
         ) {
             confirmedIDChoices.append(ids)
         }

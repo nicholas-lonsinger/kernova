@@ -153,7 +153,7 @@ struct SidebarViewControllerTests {
         #expect(!menuTitles.contains("Stop"))
         #expect(menuItem("Rename", in: menu)?.isEnabled == true)
         #expect(menuItem("Clone", in: menu)?.isEnabled == true)
-        #expect(menuItem("Move to Trash", in: menu)?.isEnabled == true)
+        #expect(menuItem("Move to Trash…", in: menu)?.isEnabled == true)
     }
 
     @Test("Context menu for a running VM offers Pause/Stop/Suspend and disables editing")
@@ -171,7 +171,7 @@ struct SidebarViewControllerTests {
         #expect(menuTitles.contains("Suspend"))
         #expect(!menuTitles.contains("Start"))
         #expect(menuItem("Clone", in: menu)?.isEnabled == false)
-        #expect(menuItem("Move to Trash", in: menu)?.isEnabled == false)
+        #expect(menuItem("Move to Trash…", in: menu)?.isEnabled == false)
         #expect(menuItem("Rename", in: menu)?.isEnabled == true)
     }
 
@@ -247,6 +247,46 @@ struct SidebarViewControllerTests {
         // visible without holding Option.
         #expect(!menuTitles.contains("Stop"))
         #expect(menuItem("Force Stop…", in: menu)?.isAlternate == false)
+    }
+
+    @Test("Delete Immediately is the Option-alternate of Move to Trash (advanced options off)")
+    func contextMenuDeleteImmediatelyIsOptionAlternate() {
+        UserDefaults.standard.removeObject(forKey: "alwaysShowAdvancedOptions")
+        let viewModel = makeViewModel()
+        let instance = makeInstance(status: .stopped)
+        viewModel.instances.append(instance)
+        let controller = SidebarViewController(viewModel: viewModel)
+
+        let menu = controller.buildContextMenu(for: instance)
+
+        // Both rows exist; AppKit collapses them into one visible "Move to Trash…" row
+        // and swaps in "Delete Immediately…" only while Option is held.
+        let trash = menuItem("Move to Trash…", in: menu)
+        let deleteImmediately = menuItem("Delete Immediately…", in: menu)
+        #expect(trash != nil)
+        #expect(deleteImmediately != nil)
+        #expect(deleteImmediately?.isAlternate == true)
+        #expect(deleteImmediately?.keyEquivalentModifierMask == [.option])
+        #expect(trash?.keyEquivalentModifierMask == [])
+        // The alternate shares the primary's enablement gate.
+        #expect(deleteImmediately?.isEnabled == true)
+    }
+
+    @Test("Delete Immediately is a plain always-visible item when advanced options are on")
+    func contextMenuDeleteImmediatelyVisibleWhenAdvanced() {
+        UserDefaults.standard.set(true, forKey: "alwaysShowAdvancedOptions")
+        defer { UserDefaults.standard.removeObject(forKey: "alwaysShowAdvancedOptions") }
+        let viewModel = makeViewModel()
+        let instance = makeInstance(status: .stopped)
+        viewModel.instances.append(instance)
+        let controller = SidebarViewController(viewModel: viewModel)
+
+        let menu = controller.buildContextMenu(for: instance)
+
+        let deleteImmediately = menuItem("Delete Immediately…", in: menu)
+        #expect(menuItem("Move to Trash…", in: menu) != nil)
+        #expect(deleteImmediately != nil)
+        #expect(deleteImmediately?.isAlternate == false)
     }
 
     @Test("Context menu for a preparing VM offers only Cancel and Show in Finder")

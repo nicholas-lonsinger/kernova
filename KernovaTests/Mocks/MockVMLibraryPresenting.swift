@@ -12,6 +12,9 @@ import Foundation
 final class MockVMLibraryPresenting: VMLibraryPresenting {
     private(set) var errors: [String] = []
     private(set) var deleteSheetInstances: [VMInstance] = []
+    /// Parallel to `deleteSheetInstances`: whether each request asked for the
+    /// immediate (bypass-Trash) variant.
+    private(set) var deleteSheetPermanentlyFlags: [Bool] = []
     private(set) var forceStopInstances: [VMInstance] = []
     private(set) var recoveryBootInstances: [VMInstance] = []
     private(set) var stopPausedInstances: [VMInstance] = []
@@ -21,7 +24,10 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     private(set) var creationWizardCount = 0
 
     func presentError(_ message: String) { errors.append(message) }
-    func presentDeleteSheet(for instance: VMInstance) { deleteSheetInstances.append(instance) }
+    func presentDeleteSheet(for instance: VMInstance, permanently: Bool) {
+        deleteSheetInstances.append(instance)
+        deleteSheetPermanentlyFlags.append(permanently)
+    }
     func presentForceStop(for instance: VMInstance) { forceStopInstances.append(instance) }
     func presentRecoveryBoot(for instance: VMInstance) { recoveryBootInstances.append(instance) }
     func presentStopPaused(for instance: VMInstance) { stopPausedInstances.append(instance) }
@@ -38,6 +44,8 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     var errorMessage: String? { errors.last }
     var showDeleteSheet: Bool { !deleteSheetInstances.isEmpty }
     var instanceToDelete: VMInstance? { deleteSheetInstances.last }
+    /// Whether the most recent delete-sheet request asked for immediate delete.
+    var lastDeleteSheetPermanently: Bool? { deleteSheetPermanentlyFlags.last }
     var showForceStopConfirmation: Bool { !forceStopInstances.isEmpty }
     var instanceToForceStop: VMInstance? { forceStopInstances.last }
     var showRecoveryBootConfirmation: Bool { !recoveryBootInstances.isEmpty }
@@ -55,6 +63,7 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     func reset() {
         errors.removeAll()
         deleteSheetInstances.removeAll()
+        deleteSheetPermanentlyFlags.removeAll()
         forceStopInstances.removeAll()
         recoveryBootInstances.removeAll()
         stopPausedInstances.removeAll()
