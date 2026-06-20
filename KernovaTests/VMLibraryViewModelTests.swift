@@ -869,6 +869,34 @@ struct VMLibraryViewModelTests {
             ipswService.lastDiscardResumeDataURL?.path(percentEncoded: false)
                 == destination.path(percentEncoded: false)
         )
+        // A move-to-Trash delete discards the partial download to the Trash too.
+        #expect(ipswService.lastDiscardResumeDataPermanently == false)
+        #expect(viewModel.instances.isEmpty)
+    }
+
+    @Test("deleteConfirmed permanently discards the IPSW resume-data immediately too")
+    func deleteConfirmedPermanentlyDiscardsResumeDataImmediately() {
+        let ipswService = MockIPSWService()
+        let storage = MockVMStorageService()
+        let viewModel = makeViewModelWithIPSW(ipswService: ipswService, storage: storage)
+
+        let instance = makeInstance()
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString)-RestoreImage.ipsw")
+        instance.configuration.installContext = MacOSInstallContext(
+            source: .downloadLatest,
+            downloadDestinationPath: destination.path(percentEncoded: false)
+        )
+        viewModel.instances.append(instance)
+        storage.bundles[instance.bundleURL] = instance.configuration
+
+        viewModel.deleteConfirmed(instance, permanently: true)
+
+        // The whole operation uses one disposition: the partial download is removed
+        // immediately, not trashed, matching the bundle and externals.
+        #expect(ipswService.discardResumeDataCallCount == 1)
+        #expect(ipswService.lastDiscardResumeDataPermanently == true)
+        #expect(storage.permanentlyDeleteVMBundleCallCount == 1)
         #expect(viewModel.instances.isEmpty)
     }
 
@@ -904,6 +932,48 @@ struct VMLibraryViewModelTests {
         for task in tasks { await task.value }
 
         #expect(viewModel.instances.isEmpty)
+        #expect(!presenter.showError)
+    }
+
+    @Test("deleteConfirmed permanently swallows missing-file errors for a selected external")
+    func deleteConfirmedPermanentlySwallowsMissingExternals() async {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        let ghostID = UUID()
+        let ghostPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("kernova-ghost-\(UUID().uuidString).iso")
+            .path(percentEncoded: false)
+        instance.configuration.removableMedia = [
+            RemovableMediaItem(id: ghostID, path: ghostPath, readOnly: true)
+        ]
+        viewModel.instances.append(instance)
+        storage.bundles[instance.bundleURL] = instance.configuration
+
+        // removeItem on a vanished file throws the same fileNoSuchFile family as
+        // trashItem, so the immediate path must swallow it without an error alert.
+        let tasks = viewModel.deleteConfirmed(instance, deletingExternalIDs: [ghostID], permanently: true)
+        for task in tasks { await task.value }
+
+        #expect(viewModel.instances.isEmpty)
+        #expect(!presenter.showError)
+    }
+
+    @Test("deleteConfirmed ignores a repeat confirm for an already-removed VM")
+    func deleteConfirmedIgnoresStaleRepeatConfirm() {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        viewModel.instances.append(instance)
+        storage.bundles[instance.bundleURL] = instance.configuration
+
+        viewModel.deleteConfirmed(instance)
+        #expect(storage.deleteVMBundleCallCount == 1)
+        #expect(viewModel.instances.isEmpty)
+
+        // A second confirm (e.g. a duplicate queued delete sheet) must not re-run the
+        // delete on the now-missing bundle and surface a spurious bundleNotFound error.
+        let tasks = viewModel.deleteConfirmed(instance)
+        #expect(tasks.isEmpty)
+        #expect(storage.deleteVMBundleCallCount == 1)
         #expect(!presenter.showError)
     }
 

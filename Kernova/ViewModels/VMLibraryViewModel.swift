@@ -526,6 +526,16 @@ final class VMLibraryViewModel {
     func deleteConfirmed(
         _ instance: VMInstance, deletingExternalIDs: Set<UUID> = [], permanently: Bool = false
     ) -> [Task<Void, Never>] {
+        // Guard against a stale repeat confirm: a delete sheet is window-modal but
+        // doesn't disable the menu bar, so the user can queue two delete sheets for
+        // the same VM. Once the first removes it, a second confirm would hit a missing
+        // bundle (`bundleNotFound`) and surface a spurious error — bail instead.
+        guard instances.contains(where: { $0.id == instance.id }) else {
+            Self.logger.debug(
+                "Ignoring delete confirm for already-removed VM '\(instance.name, privacy: .public)'"
+            )
+            return []
+        }
         instance.tearDownSession()
         let toDelete =
             deletingExternalIDs.isEmpty
@@ -540,7 +550,7 @@ final class VMLibraryViewModel {
             } else {
                 try storageService.deleteVMBundle(at: instance.bundleURL)
             }
-            cleanupInstallResumeData(for: instance)
+            cleanupInstallResumeData(for: instance, permanently: permanently)
             lifecycle.clearActiveOperation(for: instance.id)
             sleepPausedInstanceIDs.remove(instance.id)
             instances.removeAll { $0.id == instance.id }
@@ -736,19 +746,21 @@ final class VMLibraryViewModel {
     ///
     /// The `.kernovadownload` bundle sitting next to the chosen destination
     /// holds the partial download bytes plus resume metadata. Once the VM is
-    /// gone the bundle is meaningless, so it's trashed unconditionally on
-    /// delete (not gated on the "trash externals" toggle). The completed IPSW
-    /// file at `downloadDestinationPath`, if present, lives at a user-known
-    /// path and is intentionally left alone. No-op for VMs without a
+    /// gone the bundle is meaningless, so it's discarded unconditionally on
+    /// delete (not gated on the "delete externals" toggle), using the same
+    /// disposition as the VM itself — `permanently` removes it immediately
+    /// instead of trashing it so an immediate delete leaves nothing behind. The
+    /// completed IPSW file at `downloadDestinationPath`, if present, lives at a
+    /// user-known path and is intentionally left alone. No-op for VMs without a
     /// `.downloadLatest` install context.
-    private func cleanupInstallResumeData(for instance: VMInstance) {
+    private func cleanupInstallResumeData(for instance: VMInstance, permanently: Bool) {
         guard let context = instance.configuration.installContext,
             context.source == .downloadLatest,
             let destinationURL = context.downloadDestinationURL
         else { return }
-        lifecycle.ipswService.discardResumeData(at: destinationURL)
+        lifecycle.ipswService.discardResumeData(at: destinationURL, permanently: permanently)
         Self.logger.notice(
-            "Trashed in-progress download bundle for deleted VM '\(instance.name, privacy: .public)'"
+            "Discarded in-progress download bundle for deleted VM '\(instance.name, privacy: .public)'"
         )
     }
 

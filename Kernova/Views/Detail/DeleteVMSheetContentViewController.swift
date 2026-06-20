@@ -173,8 +173,11 @@ final class DeleteVMSheetContentViewController: NSViewController {
     // MARK: - Header
 
     private func makeHeader() -> NSView {
+        // Immediate delete bypasses the Trash, so it gets a caution glyph rather
+        // than the trash can that visually implies the recoverable Put-Back flow.
+        let iconName = mode == .immediate ? "exclamationmark.triangle.fill" : "trash"
         let icon = NSImageView(
-            image: .systemSymbol("trash", accessibilityDescription: "")
+            image: .systemSymbol(iconName, accessibilityDescription: "")
         )
         icon.contentTintColor = .systemRed
         icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 22, weight: .regular)
@@ -197,8 +200,12 @@ final class DeleteVMSheetContentViewController: NSViewController {
                 "The VM moves to the Trash. Restore it with Finder's Put Back, or empty the Trash to delete it permanently."
         case .immediate:
             titleText = "Delete \u{201C}\(vmName)\u{201D} Immediately?"
+            // When externals are listed, they're removed with the same (permanent)
+            // disposition, so name them — the body shows above the checkbox list.
             bodyText =
-                "This VM and its disks will be deleted immediately. You can't undo this action."
+                externals.isEmpty
+                ? "This VM and its disks will be deleted immediately. You can't undo this action."
+                : "This VM and its disks, plus any external files you select below, will be deleted immediately. You can't undo this action."
         }
 
         let title = NSTextField(labelWithString: titleText)

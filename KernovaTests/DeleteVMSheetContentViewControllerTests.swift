@@ -214,6 +214,17 @@ struct DeleteVMSheetContentViewControllerTests {
         #expect(!labels.contains { $0.contains("Put Back") })
     }
 
+    @Test("immediate mode body warns that selected external files are also permanently deleted")
+    func immediateModeBodyNamesExternals() {
+        let externals = [makeAttachment(id: UUID(), label: "Disk", path: "/tmp/ext.img")]
+        let vc = make(vmName: "MyVM", externals: externals, mode: .immediate)
+        vc.loadViewIfNeeded()
+        let labels = collectLabels(in: vc.view).map(\.stringValue)
+        // The body must name the external files so the user knows they're permanently
+        // removed too — otherwise "this VM and its disks" understates the consequence.
+        #expect(labels.contains { $0.contains("external files") && $0.contains("can't undo") })
+    }
+
     @Test("immediate mode confirm button reads Delete Immediately and is not the Return default")
     func immediateModeConfirmButton() {
         let vc = make(vmName: "MyVM", mode: .immediate)

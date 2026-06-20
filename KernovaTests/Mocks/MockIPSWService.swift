@@ -7,6 +7,7 @@ final class MockIPSWService: IPSWProviding, @unchecked Sendable {
     var downloadCallCount = 0
     var discardResumeDataCallCount = 0
     var lastDiscardResumeDataURL: URL?
+    var lastDiscardResumeDataPermanently: Bool?
 
     private static let mockRestoreImageURL: URL = {
         guard let url = URL(string: "https://example.com/restore.ipsw") else {
@@ -34,8 +35,9 @@ final class MockIPSWService: IPSWProviding, @unchecked Sendable {
         if let error = downloadError { throw error }
     }
 
-    func discardResumeData(at destinationURL: URL) {
+    func discardResumeData(at destinationURL: URL, permanently: Bool) {
         discardResumeDataCallCount += 1
         lastDiscardResumeDataURL = destinationURL
+        lastDiscardResumeDataPermanently = permanently
     }
 }

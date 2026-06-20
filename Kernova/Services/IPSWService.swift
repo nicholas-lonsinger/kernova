@@ -246,18 +246,26 @@ final class IPSWService: Sendable {
         return metadata
     }
 
-    /// Trashes the `.kernovadownload` bundle for the given destination, if present.
+    /// Discards the `.kernovadownload` bundle for the given destination, if present.
     ///
     /// Safe to call when no bundle exists. The bundle may contain multi-GB of
-    /// partial data; trashing (rather than `rm`) lets the user recover from Trash
-    /// if a VM delete was unintentional. Mirrors the policy in commit `2ca723d`
-    /// for external storage trashed on VM delete.
-    func discardResumeData(at destinationURL: URL) {
+    /// partial data; the default trashes (rather than `rm`) so the user can recover
+    /// from Trash if a VM delete was unintentional. `permanently` removes it
+    /// immediately instead, matching a "Delete Immediately" VM delete so the whole
+    /// operation uses one disposition. Mirrors the policy in commit `2ca723d` for
+    /// external storage trashed on VM delete.
+    func discardResumeData(at destinationURL: URL, permanently: Bool = false) {
         let bundleURL = Self.resumeBundleURL(for: destinationURL)
         do {
-            try FileManager.default.trashItem(at: bundleURL, resultingItemURL: nil)
+            if permanently {
+                // RATIONALE: the user-confirmed "Delete Immediately" path; the deliberate
+                // exception to CLAUDE.md's "prefer trash over rm" guideline.
+                try FileManager.default.removeItem(at: bundleURL)
+            } else {
+                try FileManager.default.trashItem(at: bundleURL, resultingItemURL: nil)
+            }
             Self.logger.info(
-                "Trashed in-progress download bundle at '\(bundleURL.lastPathComponent, privacy: .public)'"
+                "Discarded in-progress download bundle at '\(bundleURL.lastPathComponent, privacy: .public)'"
             )
         } catch CocoaError.fileNoSuchFile {
             // Nothing to discard — common case.
@@ -272,7 +280,7 @@ final class IPSWService: Sendable {
             // common "no bundle to trash" case to log noise.
         } catch {
             Self.logger.warning(
-                "Failed to trash in-progress download bundle at '\(bundleURL.path(percentEncoded: false), privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                "Failed to discard in-progress download bundle at '\(bundleURL.path(percentEncoded: false), privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
         }
     }
