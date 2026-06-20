@@ -40,19 +40,23 @@ struct DetailAlertsPresenterTests {
         return VMInstance(configuration: config, bundleURL: bundleURL)
     }
 
-    @Test("A second delete request for the same VM is de-duped (⌘⌫ then ⌥⌘⌫)")
-    func dedupSameVM() async {
+    @Test("⌘⌫ then ⌥⌘⌫ on one VM yields a single sheet upgraded to Immediate")
+    func dedupSameVMUpgradesMode() async {
         let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
         let vmA = makeInstance(name: "A")
 
-        presenter.presentDeleteSheet(for: vmA)
+        // ⌘⌫ (Trash) starts the in-flight delete; ⌥⌘⌫ (Immediate) fires before
+        // the first resolves and folds in — one sheet, latest gesture wins.
+        presenter.presentDeleteSheet(for: vmA, permanently: false)
         let task = presenter.deleteResolutionTaskForTesting
-        // Second invoke fires before the first resolves — must be ignored.
         presenter.presentDeleteSheet(for: vmA, permanently: true)
         await task?.value
 
         #expect(presenter.pendingCountForTesting == 1)
         #expect(presenter.pendingDeleteInstanceIDForTesting == vmA.id)
+        // The surviving sheet carries the later, stronger disposition — the
+        // immediate request is not silently downgraded to Trash.
+        #expect(presenter.pendingDeletePermanentlyForTesting == true)
     }
 
     @Test("Only one delete sheet is in flight, even for a different VM")
@@ -63,8 +67,8 @@ struct DetailAlertsPresenterTests {
 
         presenter.presentDeleteSheet(for: vmA)
         await presenter.deleteResolutionTaskForTesting?.value
-        // vmA's sheet is queued (no window → not drained); a vmB request while
-        // one is in flight is ignored.
+        // vmA's sheet is queued (no window → not drained); a different-VM request
+        // while one is in flight is dropped in favor of the first (#364).
         presenter.presentDeleteSheet(for: vmB)
 
         #expect(presenter.pendingCountForTesting == 1)

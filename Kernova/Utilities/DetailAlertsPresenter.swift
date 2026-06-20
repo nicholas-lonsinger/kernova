@@ -27,9 +27,18 @@ final class DetailAlertsPresenter: NSObject {
     /// The VM whose delete sheet is in flight — resolving externals off-main,
     /// queued in `pending`, or shown — used to de-dup repeat delete requests.
     ///
-    /// Cleared when the sheet closes (`onClose`) or the presenter is torn down
-    /// (`stop()`).
+    /// The stored id is load-bearing, not just a presence flag: a repeat request
+    /// for the *same* VM folds into the in-flight one (`presentDeleteSheet`), and
+    /// `onClose` only clears the id when it still names that sheet's VM so a stale
+    /// sheet closing after teardown can't clobber a newer delete (see `onClose`).
+    /// Cleared when the matching sheet closes (`onClose`) or on teardown (`stop()`).
     private var pendingDeleteInstanceID: UUID?
+    /// The latest requested disposition for the in-flight delete (`true` =
+    /// immediate / bypass-Trash).
+    ///
+    /// Updated when a same-VM request folds in, so a follow-up ⌥⌘⌫ after a ⌘⌫
+    /// upgrades the sheet's mode (last gesture wins).
+    private var pendingDeletePermanently = false
     /// Tracks the off-main external-resolution task so `stop()` can cancel it.
     private var deleteResolutionTask: Task<Void, Never>?
     /// Whether the in-flight delete sheet is the immediate (bypass-Trash)
@@ -77,6 +86,10 @@ final class DetailAlertsPresenter: NSObject {
     /// The VM id whose delete sheet is in flight, or `nil` if none.
     var pendingDeleteInstanceIDForTesting: UUID? { pendingDeleteInstanceID }
 
+    /// The latest folded-in disposition for the in-flight delete (last gesture
+    /// wins), so a test can assert ⌘⌫-then-⌥⌘⌫ upgrades the sheet to Immediate.
+    var pendingDeletePermanentlyForTesting: Bool { pendingDeletePermanently }
+
     /// The tracked off-main resolution task, so tests can `await` its `.value`.
     var deleteResolutionTaskForTesting: Task<Void, Never>? { deleteResolutionTask }
     #endif
@@ -88,19 +101,25 @@ final class DetailAlertsPresenter: NSObject {
     }
 
     func presentDeleteSheet(for instance: VMInstance, permanently: Bool = false) {
-        // De-dup: at most one delete sheet is ever in flight. A second request —
-        // e.g. ⌘⌫ then ⌥⌘⌫ on the same VM — is ignored so the user never sees a
-        // duplicate sheet. Once shown the sheet is window-modal, and while queued
-        // a prior alert/sheet blocks the window, so the only reachable re-entry
-        // is a fast double-invoke during the brief off-main resolve; that targets
-        // the same VM. Different-VM re-entry isn't reachable, so a blanket
-        // "already in flight" guard is correct and keeps the single-task invariant.
+        // De-dup: at most one delete sheet is ever in flight, so a fast
+        // double-invoke during the brief off-main resolve never opens a second
+        // sheet. A repeat request for the *same* VM — e.g. ⌘⌫ then ⌥⌘⌫ — folds
+        // into the in-flight one and upgrades its disposition to the latest
+        // gesture (last wins; the confirmation sheet still gates the action), so
+        // the user's stronger intent isn't silently downgraded to Trash. A
+        // request for a *different* VM is dropped in favor of the first; the
+        // first VM's sheet still confirms. That different-VM drop is a sub-frame
+        // race (selection would have to change mid-resolve) tracked in #364.
         guard pendingDeleteInstanceID == nil else {
+            if pendingDeleteInstanceID == instance.id {
+                pendingDeletePermanently = permanently
+            }
             Self.logger.debug(
-                "Ignoring delete request for '\(instance.name, privacy: .public)'; a delete sheet is already in flight")
+                "Delete sheet already in flight; coalescing repeat request for '\(instance.name, privacy: .public)'")
             return
         }
         pendingDeleteInstanceID = instance.id
+        pendingDeletePermanently = permanently
         // Resolve external-file existence off-main *before* enqueuing, so the
         // serialized presentation step stays synchronous and a stale mount
         // can't block the main actor. The brief async gap is acceptable for a
@@ -114,6 +133,9 @@ final class DetailAlertsPresenter: NSObject {
             // here — avoids an ABA race where a stale task clears a newer request).
             guard !Task.isCancelled else { return }
             self.deleteResolutionTask = nil
+            // Use the latest requested disposition: a follow-up gesture during
+            // the resolve may have upgraded Trash → Immediate.
+            let permanently = self.pendingDeletePermanently
             self.enqueue { $0.showDeleteSheet(for: instance, externals: externals, permanently: permanently) }
         }
     }
@@ -179,8 +201,15 @@ final class DetailAlertsPresenter: NSObject {
             self?.deleteSheetInstance = nil
             self?.deleteSheetPermanent = false
             // Allow the next delete: the in-flight sheet has closed (cancel,
-            // confirm, or programmatic `close()` all route through here).
-            self?.pendingDeleteInstanceID = nil
+            // confirm, or programmatic `close()` all route through here). Clear
+            // the de-dup id only if it still names THIS sheet's VM — a stop()/
+            // start() cycle can leave a stale sheet closing asynchronously after
+            // a newer delete already claimed the id, and an unconditional clear
+            // would clobber that newer request and reopen the duplicate-sheet
+            // path (#362).
+            if self?.pendingDeleteInstanceID == instance.id {
+                self?.pendingDeleteInstanceID = nil
+            }
             self?.runNext()
         }
         deleteSheetPresenter.show(content: content, in: window)
