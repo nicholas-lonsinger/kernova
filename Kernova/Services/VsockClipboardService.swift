@@ -96,6 +96,13 @@ final class VsockClipboardService: ClipboardServicing {
     /// pulls must not resurrect it (Copy-to-Mac would otherwise discard the edit).
     private var lastInboundPublishedDigest: Data?
 
+    #if DEBUG
+    /// Test seam: awaited inside `materialize` in the window between a pull
+    /// resolving and the supersession re-check, so a test can drive a newer
+    /// offer / `stop()` into that exact gap deterministically.
+    var afterInboundPullForTesting: (@MainActor () async -> Void)?
+    #endif
+
     // `nonisolated` so the off-main `consume` loop can log; `Logger` is Sendable.
     nonisolated private static let logger = Logger(
         subsystem: "app.kernova", category: "VsockClipboardService")
@@ -544,6 +551,9 @@ final class VsockClipboardService: ClipboardServicing {
         }
         promise.inFlight[index] = task
         let rep = await task.value
+        #if DEBUG
+        await afterInboundPullForTesting?()
+        #endif
         promise.inFlight[index] = nil
         guard inboundPromise === promise else { return rep }
         if let rep {

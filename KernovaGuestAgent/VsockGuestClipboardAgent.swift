@@ -272,6 +272,24 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         // the promise).
     }
 
+    /// Tears the connection down only if `channel` is still the live one.
+    // RATIONALE: defensive against a future overlapping-connection refactor. The
+    // current VsockGuestClient reconnect loop serves connections strictly
+    // sequentially (serve(A) returns before serve(B) connects), so a stale
+    // connection never races a live one in production today — the identity check
+    // is reliably true and the stale branch is never taken.
+    private func teardownIfCurrent(_ channel: VsockChannel) {
+        if liveChannel === channel { teardownConnectionState() }
+    }
+
+    #if DEBUG
+    /// Drives `teardownIfCurrent` from the guest test target, which compiles
+    /// these sources directly (no `@testable` needed for internal members).
+    func teardownIfCurrentForTesting(_ channel: VsockChannel) {
+        teardownIfCurrent(channel)
+    }
+    #endif
+
     // MARK: - Per-connection serve
 
     private func serve(channel: VsockChannel) async {
@@ -355,9 +373,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         // teardownConnectionState runs on main, which a blocked provider holds.
         self.lazyCoordinator.failAll()
         await MainActor.run {
-            if self.liveChannel === channel {
-                self.teardownConnectionState()
-            }
+            self.teardownIfCurrent(channel)
         }
     }
 
