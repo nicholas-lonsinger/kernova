@@ -3,20 +3,23 @@ import Testing
 
 @testable import Kernova
 
-/// Covers the delete-sheet de-dup invariant and cancellable resolution Task
-/// added for issue #362.
+/// Covers the delete-sheet de-dup state machine (issue #362 and follow-ups
+/// #364/#366): one sheet in flight at a time, the latest gesture winning (mode
+/// upgrade *and* different-VM retarget) up until the sheet is shown, a
+/// cancellable off-main resolution, and a per-sheet token so a stale close can't
+/// clobber a newer delete.
 ///
 /// The presenter never has `start(window:)` called, so `window == nil` and
-/// `runNext()` always bails — enqueued `showDeleteSheet` closures simply
-/// accumulate in `pending`. The de-dup is therefore observable purely as
-/// `pendingCountForTesting`, with no real sheet (which would need a live window
-/// and run loop, unavailable headless — same constraint `SheetPresenterTests`
-/// documents).
+/// `runNext()` always bails — enqueued show closures simply accumulate in
+/// `pending` (a real sheet needs a live window + run loop, unavailable headless,
+/// the same constraint `SheetPresenterTests` documents). The in-flight request
+/// is therefore observable via the `…ForTesting` seams, and the close-handler's
+/// token guard is driven directly through `handleDeleteSheetClosedForTesting`.
 ///
-/// Determinism: every test holds the main actor synchronously from
+/// Determinism: each test holds the main actor synchronously from
 /// `presentDeleteSheet` through the follow-up call/`stop()`, so the off-main
 /// resolution Task can't run until the test `await`s the captured handle's
-/// `.value`. This is event-driven — no polling or `waitUntil`.
+/// `.value` — event-driven, no polling.
 @Suite("DetailAlertsPresenter Tests", .serialized)
 @MainActor
 struct DetailAlertsPresenterTests {
@@ -40,6 +43,21 @@ struct DetailAlertsPresenterTests {
         return VMInstance(configuration: config, bundleURL: bundleURL)
     }
 
+    /// A VM carrying an external (non-bundle) storage disk so
+    /// `externalAttachmentsResolvingExistence` actually runs its off-main
+    /// `FileManager.fileExists` probe — exercising the real async resolve gap.
+    private func makeInstanceWithExternalDisk(name: String = "Ext VM") -> VMInstance {
+        var config = VMConfiguration(name: name, guestOS: .linux, bootMode: .efi)
+        config.storageDisks = [
+            StorageDisk(path: "/tmp/does-not-exist-\(config.id.uuidString).img", isInternal: false)
+        ]
+        let bundleURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(config.id.uuidString, isDirectory: true)
+        return VMInstance(configuration: config, bundleURL: bundleURL)
+    }
+
+    // MARK: - Mode (last gesture wins, both directions)
+
     @Test("⌘⌫ then ⌥⌘⌫ on one VM yields a single sheet upgraded to Immediate")
     func dedupSameVMUpgradesMode() async {
         let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
@@ -54,33 +72,70 @@ struct DetailAlertsPresenterTests {
 
         #expect(presenter.pendingCountForTesting == 1)
         #expect(presenter.pendingDeleteInstanceIDForTesting == vmA.id)
-        // The surviving sheet carries the later, stronger disposition — the
-        // immediate request is not silently downgraded to Trash.
+        // The show step reads `pendingDelete` directly, so this is the disposition
+        // the sheet would carry — the immediate request is not downgraded to Trash.
         #expect(presenter.pendingDeletePermanentlyForTesting == true)
     }
 
-    @Test("Only one delete sheet is in flight, even for a different VM")
-    func singleInFlightDifferentVM() async {
+    @Test("⌥⌘⌫ then ⌘⌫ on one VM downgrades to Trash (last gesture wins both ways)")
+    func dedupSameVMDowngradesMode() async {
+        let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
+        let vmA = makeInstance(name: "A")
+
+        presenter.presentDeleteSheet(for: vmA, permanently: true)
+        let task = presenter.deleteResolutionTaskForTesting
+        presenter.presentDeleteSheet(for: vmA, permanently: false)
+        await task?.value
+
+        #expect(presenter.pendingCountForTesting == 1)
+        // Last wins is symmetric: a later plain ⌘⌫ backs off bypass-Trash.
+        #expect(presenter.pendingDeletePermanentlyForTesting == false)
+    }
+
+    // MARK: - Single in flight + different-VM retarget (#364)
+
+    @Test("A different-VM request during the resolve retargets the in-flight sheet")
+    func differentVMRetargets() async {
         let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
         let vmA = makeInstance(name: "A")
         let vmB = makeInstance(name: "B")
 
+        // vmA starts the in-flight delete; a vmB request before it resolves wins
+        // (last gesture) — still a single sheet, now targeting vmB (#364).
         presenter.presentDeleteSheet(for: vmA)
-        await presenter.deleteResolutionTaskForTesting?.value
-        // vmA's sheet is queued (no window → not drained); a different-VM request
-        // while one is in flight is dropped in favor of the first (#364).
+        let task = presenter.deleteResolutionTaskForTesting
         presenter.presentDeleteSheet(for: vmB)
+        await task?.value
 
         #expect(presenter.pendingCountForTesting == 1)
-        #expect(presenter.pendingDeleteInstanceIDForTesting == vmA.id)
+        #expect(presenter.pendingDeleteInstanceIDForTesting == vmB.id)
     }
 
-    @Test("stop() cancels the in-flight resolution Task before it enqueues")
-    func stopCancelsResolutionTask() async {
+    @Test("Retargeting to a different VM carries that VM's own disposition")
+    func retargetCarriesNewVMMode() async {
+        let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
+        let vmA = makeInstance(name: "A")
+        let vmB = makeInstance(name: "B")
+
+        // The request is a single {instance, permanently} unit, so retargeting
+        // swaps both — vmA's Immediate intent does not leak onto vmB's Trash.
+        presenter.presentDeleteSheet(for: vmA, permanently: true)
+        let task = presenter.deleteResolutionTaskForTesting
+        presenter.presentDeleteSheet(for: vmB, permanently: false)
+        await task?.value
+
+        #expect(presenter.pendingDeleteInstanceIDForTesting == vmB.id)
+        #expect(presenter.pendingDeletePermanentlyForTesting == false)
+    }
+
+    // MARK: - Teardown
+
+    @Test("stop() cancels the resolution Task and clears all in-flight state")
+    func stopClearsInFlightState() async {
         let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
         let vmA = makeInstance(name: "A")
 
-        presenter.presentDeleteSheet(for: vmA)
+        presenter.presentDeleteSheet(for: vmA, permanently: true)
         let task = presenter.deleteResolutionTaskForTesting
         // The test holds the main actor, so the Task body hasn't run yet —
         // cancellation lands before it can enqueue.
@@ -89,9 +144,26 @@ struct DetailAlertsPresenterTests {
 
         #expect(presenter.pendingCountForTesting == 0)
         #expect(presenter.pendingDeleteInstanceIDForTesting == nil)
+        // Both halves of the request are cleared symmetrically (no latched mode).
+        #expect(presenter.pendingDeletePermanentlyForTesting == nil)
+        #expect(presenter.deleteResolutionTaskForTesting == nil)
     }
 
-    @Test("A new delete is accepted after teardown clears the de-dup id")
+    @Test("stop() bumps the sheet token so a stale close is invalidated")
+    func stopBumpsDeleteSheetToken() async {
+        let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
+        let vmA = makeInstance(name: "A")
+        let before = presenter.deleteSheetTokenForTesting
+
+        presenter.presentDeleteSheet(for: vmA)
+        let task = presenter.deleteResolutionTaskForTesting
+        presenter.stop()
+        await task?.value
+
+        #expect(presenter.deleteSheetTokenForTesting == before + 1)
+    }
+
+    @Test("A new delete is accepted after teardown clears the in-flight request")
     func dedupResetsAfterStop() async {
         let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
         let vmA = makeInstance(name: "A")
@@ -101,11 +173,61 @@ struct DetailAlertsPresenterTests {
         presenter.stop()
         await firstTask?.value  // drain the cancelled Task (it bails, no enqueue)
 
-        // De-dup id was cleared by stop(); a fresh request is accepted.
+        // The in-flight request was cleared by stop(); a fresh request is accepted.
         presenter.presentDeleteSheet(for: vmA)
         await presenter.deleteResolutionTaskForTesting?.value
 
         #expect(presenter.pendingCountForTesting == 1)
         #expect(presenter.pendingDeleteInstanceIDForTesting == vmA.id)
+    }
+
+    // MARK: - Close-handler token guard (#362 same-VM clobber)
+
+    @Test("A close with the current token clears the in-flight delete")
+    func currentTokenCloseClears() async {
+        let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
+        let vmA = makeInstance(name: "A")
+
+        presenter.presentDeleteSheet(for: vmA)
+        await presenter.deleteResolutionTaskForTesting?.value
+
+        // The shown sheet's onClose carries the current token — it clears.
+        presenter.handleDeleteSheetClosedForTesting(token: presenter.deleteSheetTokenForTesting)
+        #expect(presenter.pendingDeleteInstanceIDForTesting == nil)
+    }
+
+    @Test("A stale-token close does NOT clobber a newer delete (#362)")
+    func staleTokenCloseDoesNotClobber() async {
+        let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
+        let vmA = makeInstance(name: "A")
+
+        presenter.presentDeleteSheet(for: vmA)
+        await presenter.deleteResolutionTaskForTesting?.value
+
+        // A stale sheet's late close (older token, e.g. after a stop()/start()
+        // bumped the token) must not clear the newer in-flight delete — even for
+        // the same VM, which an id-keyed guard could not distinguish.
+        presenter.handleDeleteSheetClosedForTesting(token: presenter.deleteSheetTokenForTesting - 1)
+        #expect(presenter.pendingDeleteInstanceIDForTesting == vmA.id)
+    }
+
+    // MARK: - Real off-main resolve path (#366)
+
+    @Test("De-dup holds across the real off-main external-resolution probe")
+    func dedupAcrossRealOffMainResolve() async {
+        let presenter = DetailAlertsPresenter(viewModel: makeViewModel())
+        let vm = makeInstanceWithExternalDisk(name: "Ext")
+
+        // This VM has an external disk, so resolution genuinely suspends on the
+        // off-main `FileManager.fileExists` probe (not the synchronous []-return
+        // path the other tests take).
+        presenter.presentDeleteSheet(for: vm, permanently: false)
+        let task = presenter.deleteResolutionTaskForTesting
+        presenter.presentDeleteSheet(for: vm, permanently: true)
+        await task?.value
+
+        #expect(presenter.pendingCountForTesting == 1)
+        #expect(presenter.pendingDeleteInstanceIDForTesting == vm.id)
+        #expect(presenter.pendingDeletePermanentlyForTesting == true)
     }
 }

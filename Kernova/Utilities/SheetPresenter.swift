@@ -66,7 +66,17 @@ final class SheetPresenter: NSObject {
     /// Idempotent. The completion handler attached to ``show(content:in:)``
     /// will fire (which in turn invokes ``onClose``).
     func close() {
-        guard let sheetWindow, let parent = sheetWindow.sheetParent else { return }
+        guard let sheetWindow else { return }
+        guard let parent = sheetWindow.sheetParent else {
+            // The parent was torn down without dismissing the sheet through
+            // `beginSheet`'s completion, so that completion will never fire —
+            // reconcile our state directly so `isShown` doesn't stick `true`
+            // (which would wedge any presenter that gates on it). Mirror the
+            // completion handler: drop the window reference, then fire `onClose`.
+            self.sheetWindow = nil
+            onClose?()
+            return
+        }
         parent.endSheet(sheetWindow)
     }
 }
