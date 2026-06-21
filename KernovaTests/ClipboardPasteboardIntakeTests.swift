@@ -459,6 +459,96 @@ struct ClipboardPasteboardIntakeTests {
         #expect(message == ClipboardPasteboardIntake.textOnlyTransportMessage)
     }
 
+    // MARK: - Folder archiving (Phase 2)
+
+    private func makeStaging() -> ClipboardFileStaging {
+        ClipboardFileStaging(
+            label: "intake-test-\(UUID().uuidString)",
+            tempRoot: FileManager.default.temporaryDirectory.appendingPathComponent(
+                UUID().uuidString, isDirectory: true))
+    }
+
+    private func makeTempFolder(name: String, files: [(String, Data)]) throws -> URL {
+        let parent = FileManager.default.temporaryDirectory
+            .appendingPathComponent("kernova-intake-folder-\(UUID().uuidString)", isDirectory: true)
+        let folder = parent.appendingPathComponent(name, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        for (fileName, data) in files {
+            try data.write(to: folder.appendingPathComponent(fileName))
+        }
+        return folder
+    }
+
+    @Test("a copied folder is archived into one directory representation")
+    func folderArchivedAsDirectoryRep() async throws {
+        let staging = makeStaging()
+        defer { staging.sweep() }
+        let folder = try makeTempFolder(
+            name: "MyFolder", files: [("a.txt", Data("a".utf8)), ("b.txt", Data("bee".utf8))])
+        defer { try? FileManager.default.removeItem(at: folder.deletingLastPathComponent()) }
+
+        guard
+            case .content(let content, let note) = await ClipboardPasteboardIntake.read(
+                filesAt: [folder], allowsBinary: true, staging: staging, generation: 1)
+        else {
+            Issue.record("Expected content")
+            return
+        }
+        #expect(note == nil)
+        #expect(content.representations.count == 1)
+        let rep = try #require(content.representations.first)
+        #expect(rep.isDirectory)
+        #expect(rep.uti == UTType.folder.identifier)
+        #expect(rep.filename == "MyFolder")
+        #expect(rep.byteCount > 0)
+        // The rep points at a real `.aar` that extracts back to the original tree.
+        let archiveURL = try #require(rep.fileURL)
+        let dest = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: dest, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dest) }
+        try ClipboardDirectoryArchive.extract(archiveAt: archiveURL, to: dest)
+        #expect(
+            try String(contentsOf: dest.appendingPathComponent("b.txt"), encoding: .utf8) == "bee")
+    }
+
+    @Test("a mixed file + folder selection yields one rep each, in order")
+    func mixedFileAndFolder() async throws {
+        let staging = makeStaging()
+        defer { staging.sweep() }
+        let file = try makeTempFile(name: "plain.txt", contents: Data("hello".utf8))
+        let folder = try makeTempFolder(name: "Docs", files: [("inside.txt", Data("x".utf8))])
+        defer { try? FileManager.default.removeItem(at: folder.deletingLastPathComponent()) }
+
+        guard
+            case .content(let content, _) = await ClipboardPasteboardIntake.read(
+                filesAt: [file, folder], allowsBinary: true, staging: staging, generation: 1)
+        else {
+            Issue.record("Expected content")
+            return
+        }
+        #expect(content.representations.count == 2)
+        #expect(content.representations[0].isDirectory == false)
+        #expect(content.representations[0].filename == "plain.txt")
+        #expect(content.representations[1].isDirectory)
+        #expect(content.representations[1].filename == "Docs")
+    }
+
+    @Test("folder archiving on a text-only transport is rejected")
+    func folderTextOnlyRejected() async throws {
+        let staging = makeStaging()
+        defer { staging.sweep() }
+        let folder = try makeTempFolder(name: "F", files: [("a", Data("a".utf8))])
+        defer { try? FileManager.default.removeItem(at: folder.deletingLastPathComponent()) }
+        guard
+            case .rejected = await ClipboardPasteboardIntake.read(
+                filesAt: [folder], allowsBinary: false, staging: staging, generation: 1)
+        else {
+            Issue.record("Expected rejection")
+            return
+        }
+    }
+
     // MARK: - Screenshot thumbnail (promised file URL)
 
     @Test("a promised-file-url on disk is resolved as the image — the screenshot thumbnail mechanism")

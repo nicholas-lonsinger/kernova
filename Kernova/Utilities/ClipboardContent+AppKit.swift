@@ -36,10 +36,12 @@ extension ClipboardContent.Representation {
     /// Non-file content (no filename) and image file payloads inline so the
     /// receiver (Notes/TextEdit) shows them in place; every other file payload
     /// is file-only so it attaches as a file rather than inserting its
-    /// contents. Mirrors `VsockGuestClipboardAgent.shouldInline(_:)`, which
-    /// applies the same rule on the guest side (a separate target can't share
-    /// this extension).
+    /// contents. A directory is always file-only — its bytes are an archive of
+    /// the tree, never something to insert inline. Mirrors
+    /// `VsockGuestClipboardAgent.shouldInline(_:)`, which applies the same rule
+    /// on the guest side (a separate target can't share this extension).
     var shouldInlineOnPasteboard: Bool {
+        if isDirectory { return false }
         if filename.isEmpty { return true }
         return UTType(uti)?.conforms(to: .image) == true
     }

@@ -369,6 +369,18 @@ public nonisolated struct Kernova_V1_ClipboardRepresentationInfo: Sendable {
   /// temp file) without re-deriving the rule.
   public var isInline: Bool = false
 
+  /// Whether this file representation is a *directory* (folder, or an OS
+  /// package such as .app/.rtfd). When set, the streamed bytes are an
+  /// in-process AppleArchive (.aar, LZFSE) of the tree, not the file itself;
+  /// the receiver extracts them into a real directory and offers that folder's
+  /// URL so a Finder paste recreates the tree. Implies a non-empty `filename`
+  /// (the folder name, without an archive suffix) and `is_inline = false`. The
+  /// stream layer is offer-agnostic, so this flag is re-applied to the
+  /// delivered representation by the offer-aware layer on the receiver. Excluded
+  /// from the content digest — the archive's SHA-256 and the folded filename
+  /// already identify it.
+  public var isDirectory: Bool = false
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -1057,7 +1069,7 @@ nonisolated extension Kernova_V1_LogRecord.Level: SwiftProtobuf._ProtoNameProvid
 
 nonisolated extension Kernova_V1_ClipboardRepresentationInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ClipboardRepresentationInfo"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}uti\0\u{3}byte_count\0\u{1}filename\0\u{3}is_inline\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}uti\0\u{3}byte_count\0\u{1}filename\0\u{3}is_inline\0\u{3}is_directory\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1069,6 +1081,7 @@ nonisolated extension Kernova_V1_ClipboardRepresentationInfo: SwiftProtobuf.Mess
       case 2: try { try decoder.decodeSingularUInt64Field(value: &self.byteCount) }()
       case 3: try { try decoder.decodeSingularStringField(value: &self.filename) }()
       case 4: try { try decoder.decodeSingularBoolField(value: &self.isInline) }()
+      case 5: try { try decoder.decodeSingularBoolField(value: &self.isDirectory) }()
       default: break
       }
     }
@@ -1087,6 +1100,9 @@ nonisolated extension Kernova_V1_ClipboardRepresentationInfo: SwiftProtobuf.Mess
     if self.isInline != false {
       try visitor.visitSingularBoolField(value: self.isInline, fieldNumber: 4)
     }
+    if self.isDirectory != false {
+      try visitor.visitSingularBoolField(value: self.isDirectory, fieldNumber: 5)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -1095,6 +1111,7 @@ nonisolated extension Kernova_V1_ClipboardRepresentationInfo: SwiftProtobuf.Mess
     if lhs.byteCount != rhs.byteCount {return false}
     if lhs.filename != rhs.filename {return false}
     if lhs.isInline != rhs.isInline {return false}
+    if lhs.isDirectory != rhs.isDirectory {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

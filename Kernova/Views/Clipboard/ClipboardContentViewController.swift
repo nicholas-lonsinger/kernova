@@ -99,6 +99,13 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     /// older staged files instead of accumulating.
     private var copyToMacGeneration: UInt64 = 1
 
+    /// Monotonic generation for folders archived to *send* to the guest, so each
+    /// send supersedes older archive temps instead of accumulating.
+    ///
+    /// Separate from `copyToMacGeneration` so a send and a copy don't evict each
+    /// other.
+    private var sendGeneration: UInt64 = 1
+
     /// `true` while a "Copy to Mac" is materializing/writing.
     ///
     /// The async pull republishes `clipboardContent`, which re-fires the
@@ -581,13 +588,33 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     /// returns its URL, so the pasteboard `public.file-url` outlives the VM
     /// teardown.
     ///
-    /// Re-homes a streamed `.file` out of the service's transient staging (swept
-    /// on VM stop/reconnect) via `adopt`, or writes an inline-and-named payload's
-    /// bytes to a fresh sink. [sweep-vs-URL]
+    /// A directory payload is extracted from its streamed `.aar` into a real
+    /// folder so a Finder paste recreates the tree. Otherwise re-homes a streamed
+    /// `.file` out of the service's transient staging (swept on VM stop/reconnect)
+    /// via `adopt`, or writes an inline-and-named payload's bytes to a fresh sink.
+    /// [sweep-vs-URL]
     nonisolated private static func stagedFileURL(
         for representation: ClipboardContent.Representation, generation: UInt64,
         staging: ClipboardFileStaging
     ) -> URL? {
+        if representation.isDirectory, let archiveURL = representation.fileURL {
+            // A directory rep's bytes are an `.aar` of the tree. Extract it into a
+            // real folder under the launch-swept root so a Finder paste recreates
+            // the tree, not the archive file. Guard the transient double-disk use
+            // (archive + extracted tree); on a failure the partial tree is removed
+            // and nothing is staged — the same outcome as a failed file stage.
+            guard staging.hasCapacity(forByteCount: representation.byteCount) else { return nil }
+            guard
+                let directory = try? staging.reserveDirectory(
+                    generation: generation, name: representation.filename)
+            else { return nil }
+            do {
+                try ClipboardDirectoryArchive.extract(archiveAt: archiveURL, to: directory)
+                return directory
+            } catch {
+                return nil
+            }
+        }
         if let existing = representation.fileURL {
             let adopted = try? staging.adopt(
                 externalFile: existing, generation: generation,
@@ -647,14 +674,41 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         let allowsBinary = service.supportsBinaryRepresentations
         let result = ClipboardPasteboardIntake.read(from: pasteboard, allowsBinary: allowsBinary)
         if case .pendingFiles(let urls) = result {
-            // Read the files' bytes off the main actor, then apply on the way back.
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                _ = self.apply(
-                    intake: ClipboardPasteboardIntake.read(filesAt: urls, allowsBinary: allowsBinary))
-            }
+            resolveAndApply(pendingFiles: urls, allowsBinary: allowsBinary)
         } else {
             _ = apply(intake: result)
+        }
+    }
+
+    /// Resolves `.pendingFiles` URLs off the main actor — archiving any folder
+    /// into the staging root — and applies the result on the way back.
+    ///
+    /// Shared by the Paste / responder path and drag-and-drop.
+    private func resolveAndApply(pendingFiles urls: [URL], allowsBinary: Bool) {
+        let staging = self.staging
+        let generation = sendGeneration
+        sendGeneration += 1
+        // A folder archives eagerly; warn the user it may take a moment. A cheap
+        // stat only — the tree walk happens off-main in the resolve below.
+        if Self.containsDirectory(urls) {
+            indicatorView.showTransientMessage("Archiving folder…", style: .info)
+        }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let resolved = await ClipboardPasteboardIntake.read(
+                filesAt: urls, allowsBinary: allowsBinary, staging: staging, generation: generation)
+            _ = self.apply(intake: resolved)
+        }
+    }
+
+    /// Whether any URL points at a directory (a folder or OS package), via a
+    /// cheap stat — gates the "Archiving folder…" transient before the off-main
+    /// resolve.
+    nonisolated private static func containsDirectory(_ urls: [URL]) -> Bool {
+        urls.contains { url in
+            var isDirectory: ObjCBool = false
+            return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
+                && isDirectory.boolValue
         }
     }
 
@@ -714,13 +768,9 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         case .content:
             return apply(intake: result)
         case .pendingFiles(let urls):
-            // Accept the drop now; read the files' bytes off the main actor
+            // Accept the drop now; resolve the files/folders off the main actor
             // (the dragging pasteboard was already consumed synchronously above).
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                _ = self.apply(
-                    intake: ClipboardPasteboardIntake.read(filesAt: urls, allowsBinary: allowsBinary))
-            }
+            resolveAndApply(pendingFiles: urls, allowsBinary: allowsBinary)
             return true
         case .rejected:
             // Nothing usable synchronously. Receive a modern file promise async.

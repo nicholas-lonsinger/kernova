@@ -124,4 +124,52 @@ struct ClipboardHostPasteboardItemsTests {
         #expect(try Data(contentsOf: urlA) == Data("one".utf8))
         #expect(try Data(contentsOf: urlB) == Data("two".utf8))
     }
+
+    @Test("a directory payload is extracted into a real folder on the pasteboard")
+    func directoryPayloadExtracted() async throws {
+        let fm = FileManager.default
+        let staging = makeStaging()
+        defer { staging.sweep() }
+
+        // Build a source tree, archive it (mirroring what the receiver staged),
+        // and point a directory rep at the `.aar`.
+        let src = fm.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            .appendingPathComponent("Project", isDirectory: true)
+        try fm.createDirectory(
+            at: src.appendingPathComponent("sub"), withIntermediateDirectories: true)
+        try "readme".write(
+            to: src.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+        try "nested".write(
+            to: src.appendingPathComponent("sub/n.txt"), atomically: true, encoding: .utf8)
+        defer { try? fm.removeItem(at: src.deletingLastPathComponent()) }
+
+        let archive = fm.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).aar")
+        try ClipboardDirectoryArchive.archive(directoryAt: src, to: archive)
+        defer { try? fm.removeItem(at: archive) }
+        let size = try #require(fm.attributesOfItem(atPath: archive.path)[.size] as? Int)
+
+        let content = ClipboardContent(representations: [
+            .init(
+                uti: UTType.folder.identifier, fileURL: archive, byteCount: size,
+                filename: "Project", isDirectory: true)
+        ])
+        let items = await ClipboardContentViewController.hostPasteboardItems(
+            for: content, generation: 1, staging: staging)
+
+        #expect(items.count == 1)
+        // A directory is file-only: a single `.fileURL`, no inline bytes.
+        #expect(items[0].map { $0.type } == [.fileURL])
+        let dirURL = try #require(fileURL(in: items[0]))
+        var isDir: ObjCBool = false
+        #expect(fm.fileExists(atPath: dirURL.path, isDirectory: &isDir) && isDir.boolValue)
+        // The pasted folder keeps its exact name and contains the extracted tree.
+        #expect(dirURL.lastPathComponent == "Project")
+        #expect(
+            try String(contentsOf: dirURL.appendingPathComponent("README.md"), encoding: .utf8)
+                == "readme")
+        #expect(
+            try String(contentsOf: dirURL.appendingPathComponent("sub/n.txt"), encoding: .utf8)
+                == "nested")
+    }
 }

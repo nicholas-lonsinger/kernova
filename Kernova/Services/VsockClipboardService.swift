@@ -652,6 +652,13 @@ final class VsockClipboardService: ClipboardServicing {
             // visible — another rep may still have failed to arrive.
             if case .diskFull = lastTransferIssue?.kind {} else { lastTransferIssue = nil }
         }
+        // The stream layer is offer-agnostic, so re-tag the delivered rep as a
+        // directory from the offer's metadata. The window then extracts the
+        // staged `.aar` into a real folder instead of pasting the archive file.
+        if let rep, info.isDirectory {
+            return ClipboardContent.Representation(
+                uti: rep.uti, source: rep.source, filename: rep.filename, isDirectory: true)
+        }
         return rep
     }
 
@@ -710,6 +717,7 @@ final class VsockClipboardService: ClipboardServicing {
             $0.byteCount = UInt64(representation.byteCount)
             $0.filename = representation.filename
             $0.isInline = representation.shouldInlineOnPasteboard
+            $0.isDirectory = representation.isDirectory
         }
     }
 }

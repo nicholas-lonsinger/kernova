@@ -101,6 +101,25 @@ struct ClipboardContentTests {
         #expect(content(secondName: "b.bin").digest != content(secondName: "c.bin").digest)
     }
 
+    @Test("isDirectory is excluded from the digest")
+    func isDirectoryDigestInvisible() {
+        // The archive's SHA-256 plus the folded folder name already identify a
+        // directory rep, and the receiver re-derives the flag from the offer, so
+        // hashing it would only risk a host/guest asymmetry. Two reps differing
+        // only by isDirectory must hash identically.
+        let sha = Data(repeating: 0xCD, count: 32)
+        func content(isDirectory: Bool) -> ClipboardContent {
+            ClipboardContent(representations: [
+                .init(
+                    uti: "public.folder", fileURL: URL(fileURLWithPath: "/tmp/a.aar"),
+                    byteCount: 16, sha256: sha, filename: "MyFolder", isDirectory: isDirectory)
+            ])
+        }
+        #expect(content(isDirectory: true).digest == content(isDirectory: false).digest)
+        // Sanity: the flag itself round-trips on the representation.
+        #expect(content(isDirectory: true).representations[0].isDirectory)
+    }
+
     // MARK: - .pendingRemote (lazy-receive placeholder) digest
 
     @Test(".pendingRemote digest is deterministic for equal (uti, byteCount)")
