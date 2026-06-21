@@ -84,4 +84,20 @@ final class SheetPresenter: NSObject {
         }
         parent.endSheet(sheetWindow)
     }
+
+    /// Synchronously tears the sheet down for a teardown path that has already
+    /// done its own state cleanup and just needs ``isShown`` to drop *now*.
+    ///
+    /// Unlike ``close()``, this does **not** wait for — or fire — the async
+    /// dismissal completion (so ``onClose`` is not called): it drives `endSheet`
+    /// for the visual dismissal when a parent is still attached, then drops the
+    /// window reference immediately. The original `beginSheet` completion, if it
+    /// later fires, is a no-op because its `sheetWindow === sheet` guard fails.
+    /// This guarantees ``isShown`` can't linger `true` past teardown even if the
+    /// parent window is destroyed before its dismissal completion is delivered.
+    func reset() {
+        guard let sheetWindow else { return }
+        sheetWindow.sheetParent?.endSheet(sheetWindow)
+        self.sheetWindow = nil
+    }
 }

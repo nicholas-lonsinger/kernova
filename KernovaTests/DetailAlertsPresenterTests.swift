@@ -198,6 +198,9 @@ struct DetailAlertsPresenterTests {
         await presenter.deleteResolutionTaskForTesting?.value
 
         #expect(presenter.pendingDeleteInstanceIDForTesting == vmB.id)
+        // stop() resets the sheet synchronously, so the prior sheet's lingering
+        // `isShown` doesn't stall vmB — its sheet drains immediately (count 0).
+        #expect(presenter.pendingCountForTesting == 0)
 
         presenter.stop()
     }

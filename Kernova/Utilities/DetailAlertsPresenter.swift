@@ -99,10 +99,12 @@ final class DetailAlertsPresenter: NSObject {
         // (or any late enqueue) can't present on the disappearing window once
         // it's nil. `start(window:)` re-sets it on the next `viewDidAppear`.
         window = nil
-        // Order: clear `pending` and nil `window` *before* closing the sheet.
-        // `close()` fires `onClose` via the `beginSheet` completion (which calls
-        // `runNext()`), and with `window == nil` that `runNext` is a no-op.
-        if deleteSheetPresenter.isShown { deleteSheetPresenter.close() }
+        // Reset (not close) the sheet: `reset()` drops `isShown` *synchronously*
+        // rather than via the async dismissal completion, so a sheet whose parent
+        // window is torn down before that completion fires can't leave `isShown`
+        // stuck `true` and silently wedge `runNext`. We've already done the delete
+        // state cleanup above, so we don't need the `onClose` that `close()` fires.
+        if deleteSheetPresenter.isShown { deleteSheetPresenter.reset() }
     }
 
     #if DEBUG
