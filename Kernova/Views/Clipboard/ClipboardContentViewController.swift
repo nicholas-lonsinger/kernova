@@ -449,6 +449,10 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 return "The guest rejected the transfer as too large"
             case "clipboard.format.unavailable":
                 return "The guest couldn't provide the requested format"
+            case "clipboard.paste.disk.full":
+                return "The guest ran out of disk space receiving the clipboard file"
+            case "clipboard.paste.timeout":
+                return "The clipboard transfer to the guest timed out"
             default:
                 return "Clipboard transfer failed on the guest side"
             }

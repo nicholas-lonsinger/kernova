@@ -17,6 +17,14 @@ struct LazyPullCoordinatorTests {
         var abortInfo: ClipboardStreamAbortInfo? { lock.withLock { abort } }
     }
 
+    /// A `Sendable` tally for counting off-actor `onProgress` callbacks.
+    private final class ProgressCounter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var count = 0
+        func bump() { lock.withLock { count += 1 } }
+        var value: Int { lock.withLock { count } }
+    }
+
     /// Runs the blocking `pull` on a global queue so the test's cooperative
     /// thread stays free to deliver/abort/failAll and `await` the outcome.
     private func runPull(
@@ -83,6 +91,43 @@ struct LazyPullCoordinatorTests {
             return
         }
         #expect(coordinator.pendingSlotCountForTesting == 0)
+    }
+
+    @Test("heartbeats re-arm the inactivity window so a slow-but-live pull is not timed out")
+    func heartbeatExtendsTimeout() async throws {
+        let coordinator = LazyPullCoordinator()
+        // A short window: an absolute deadline would fire long before delivery.
+        async let outcome = runPull(coordinator, transferID: 11, timeout: .milliseconds(300))
+        try await pollUntil { coordinator.pendingSlotCountForTesting == 1 }
+        // Beat far faster than the window for well over a window's worth of
+        // wall-clock, so an un-reset (absolute) backstop would have fired by now.
+        for _ in 0..<24 {
+            try await Task.sleep(for: .milliseconds(25))
+            coordinator.heartbeat(11)
+        }
+        coordinator.deliver(11, inlineRep("slow but alive"))
+
+        guard case .delivered(let rep) = await outcome else {
+            Issue.record("Expected .delivered — heartbeats should have prevented the timeout")
+            return
+        }
+        #expect(rep.inMemoryData == Data("slow but alive".utf8))
+        #expect(coordinator.pendingSlotCountForTesting == 0)
+    }
+
+    @Test("a heartbeat for an unknown or resolved pull is a harmless no-op")
+    func heartbeatNoOpWhenAbsent() async throws {
+        let coordinator = LazyPullCoordinator()
+        coordinator.heartbeat(404)  // nobody waiting
+        async let outcome = runPull(coordinator, transferID: 12, timeout: .seconds(5))
+        try await pollUntil { coordinator.pendingSlotCountForTesting == 1 }
+        coordinator.deliver(12, inlineRep("done"))
+        // A late heartbeat after the slot resolves must not crash or hang.
+        coordinator.heartbeat(12)
+        guard case .delivered = await outcome else {
+            Issue.record("Expected .delivered")
+            return
+        }
     }
 
     @Test("failAll unblocks every waiting pull with .cancelled")
@@ -193,6 +238,42 @@ struct LazyPullCoordinatorTests {
         // transfer.
         #expect(harness.collector.representation(1) == nil)
         #expect(harness.collector.completedCount == 0)
+    }
+
+    @Test("awaitTransfer fires onProgress once per durably-written chunk")
+    func awaitTransferReportsProgress() async throws {
+        let harness = try StreamHarness(
+            chunkSize: 4096, windowBytes: 1 << 20,
+            freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
+        defer { harness.tearDown() }
+
+        let progress = ProgressCounter()
+        let box = RepBox()
+        let gate = AsyncGate()
+        harness.receiver.awaitTransfer(
+            1,
+            onComplete: { rep in
+                box.setRep(rep)
+                gate.notify()
+            },
+            onAbort: { info in
+                box.setAbort(info)
+                gate.notify()
+            },
+            onProgress: { progress.bump() })
+
+        // 3 full chunks + a partial → 4 chunks → 4 progress callbacks, all of
+        // which precede onComplete on the transfer's serial queue.
+        var bytes = Data()
+        for i in 0..<(4096 * 3 + 7) { bytes.append(UInt8((i * 7 + 1) & 0xFF)) }
+        let rep = ClipboardContent.Representation(uti: ClipboardContent.utf8TextUTI, data: bytes)
+        harness.sender.startTransfer(
+            transferID: 1, generation: 1, representation: rep, maxAcceptByteCount: .max,
+            isInline: true, isCurrent: { _ in true })
+
+        try await gate.wait { box.representation != nil }
+        #expect(box.representation?.inMemoryData == bytes)
+        #expect(progress.value == 4)
     }
 
     @Test("a registered awaiter receives a peer abort instead of the channel-wide onAbort")

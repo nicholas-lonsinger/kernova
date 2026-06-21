@@ -621,13 +621,26 @@ final class VsockClipboardService: ClipboardServicing {
                         Task { @MainActor [weak self] in self?.recordPullDiskFull(info) }
                     }
                     pull.resume(nil)
-                })
+                },
+                // Re-arm the inactivity backstop on each chunk so a large
+                // still-progressing guest→host transfer (e.g. Copy-to-Mac of a
+                // multi-GB file) is never cut off mid-stream. [large-paste]
+                onProgress: { pull.noteProgress() })
             pull.armTimeout(
                 Task {
-                    // A cancelled sleep (the pull resolved first) must NOT resume.
-                    do { try await Task.sleep(for: backstop) } catch { return }
-                    receiver.cancelAwait(transferID)
-                    pull.resume(nil)
+                    // Inactivity backstop: `backstop` is a window, not an absolute
+                    // deadline. Re-arm while chunks keep arriving; fire only after a
+                    // full window of silence. A cancelled sleep (the pull resolved
+                    // first) must NOT resume. This is the async (off-main `Task`)
+                    // counterpart of the guest's blocking `LazyPullCoordinator.pull`
+                    // inactivity loop — keep the two in sync.
+                    while true {
+                        do { try await Task.sleep(for: backstop) } catch { return }
+                        if pull.consumeProgress() { continue }
+                        receiver.cancelAwait(transferID)
+                        pull.resume(nil)
+                        return
+                    }
                 })
             var request = Frame()
             request.protocolVersion = 1
@@ -740,9 +753,30 @@ private final class PullContinuation: @unchecked Sendable {
     private let lock = NSLock()
     private var continuation: CheckedContinuation<ClipboardContent.Representation?, Never>?
     private var timeout: Task<Void, Never>?
+    /// Set by `noteProgress` (a chunk landed), consumed by the backstop loop at
+    /// each window boundary to re-arm instead of firing.
+    private var progressed = false
 
     init(_ continuation: CheckedContinuation<ClipboardContent.Representation?, Never>) {
         self.continuation = continuation
+    }
+
+    /// Records that the transfer made progress so the backstop loop keeps
+    /// waiting past the next window boundary.
+    ///
+    /// No-op once resolved.
+    func noteProgress() {
+        lock.withLock { if continuation != nil { progressed = true } }
+    }
+
+    /// Returns (and clears) whether progress occurred since the last check, so
+    /// the backstop loop re-arms only when a chunk actually landed in the window.
+    func consumeProgress() -> Bool {
+        lock.withLock {
+            guard progressed else { return false }
+            progressed = false
+            return true
+        }
     }
 
     /// Stores the backstop timer so the winning `resume` can cancel it; if the
