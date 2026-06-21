@@ -356,9 +356,11 @@ public nonisolated struct Kernova_V1_ClipboardRepresentationInfo: Sendable {
   /// copied image file → "photo.png"). Empty means inline-only: the receiver
   /// reassembles the bytes in memory and renders them but does not materialize
   /// a file. When set, the receiver streams the bytes to a local temp file and
-  /// offers its file URL so a Finder paste creates the file. Deliberately
-  /// excluded from the content digest so the round-tripped name can't disturb
-  /// echo suppression.
+  /// offers its file URL so a Finder paste creates the file. Each non-empty
+  /// filename is a distinct file, so a multi-file copy carries several. Folded
+  /// into the content digest (it round-trips identically across the wire) so two
+  /// files that share bytes+UTI but differ only by name are distinguishable —
+  /// the file *path* is still never hashed.
   public var filename: String = String()
 
   /// Whether this representation should be placed inline on the pasteboard
