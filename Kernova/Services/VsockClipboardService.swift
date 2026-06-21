@@ -228,7 +228,9 @@ final class VsockClipboardService: ClipboardServicing {
         guard clipboardContent.digest != lastGrabbedDigest else { return }
 
         let generation = nextLocalGeneration
-        let content = clipboardContent
+        // Cap to the 16-bit rep-index limit; the buffer's own (uncapped) digest
+        // stays the dedup key so an unchanged buffer isn't re-offered.
+        let content = Self.cappedToOfferLimit(clipboardContent)
 
         var offer = Frame()
         offer.protocolVersion = 1
@@ -244,7 +246,7 @@ final class VsockClipboardService: ClipboardServicing {
             if let previous = pendingOutbound { sender?.cancel(generation: previous.generation) }
             pendingOutbound = (generation: generation, content: content)
             currentOutboundGeneration.set(generation)
-            lastGrabbedDigest = content.digest
+            lastGrabbedDigest = clipboardContent.digest
             lastTransferIssue = nil
             Self.logger.notice(
                 "Sent clipboard offer to '\(self.label, privacy: .public)' (gen=\(generation, privacy: .public), \(content.representations.count, privacy: .public) reps, \(content.totalByteCount, privacy: .public) bytes)"
@@ -692,6 +694,24 @@ final class VsockClipboardService: ClipboardServicing {
     }
 
     // MARK: - Helpers
+
+    /// Caps `content` to `ClipboardContent.maxOfferableRepresentations`, logging
+    /// when it truncates.
+    ///
+    /// A `transfer_id` packs the rep index into 16 bits, so an offer past the
+    /// limit would alias indices. Returns the input unchanged in the common case
+    /// (no recompute); copying ~65 000 files at once is the only way to hit it.
+    private static func cappedToOfferLimit(_ content: ClipboardContent) -> ClipboardContent {
+        guard content.representations.count > ClipboardContent.maxOfferableRepresentations else {
+            return content
+        }
+        logger.warning(
+            "Clipboard offer truncated from \(content.representations.count, privacy: .public) to \(ClipboardContent.maxOfferableRepresentations, privacy: .public) representations (16-bit transfer-id limit)"
+        )
+        return ClipboardContent(
+            representations: Array(
+                content.representations.prefix(ClipboardContent.maxOfferableRepresentations)))
+    }
 
     /// Builds the metadata advertised for a representation in an offer.
     private static func repInfo(

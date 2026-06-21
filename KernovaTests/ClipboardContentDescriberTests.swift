@@ -73,6 +73,16 @@ struct ClipboardContentDescriberTests {
                 == "note.txt · \(typeName) · \(size)")
     }
 
+    @Test("multi-file indicator is a count and total size (no per-rep tail)")
+    func multipleFilesIndicator() {
+        let content = ClipboardContent(representations: [
+            .init(uti: UTType.plainText.identifier, data: Data("aa".utf8), filename: "a.txt"),
+            .init(uti: UTType.png.identifier, data: Data([0x89, 0x50]), filename: "b.png"),
+        ])
+        let size = DataFormatters.formatBytes(UInt64(content.totalByteCount))
+        #expect(ClipboardContentDescriber.indicatorText(for: content) == "2 files · \(size)")
+    }
+
     @Test("image indicator includes pixel dimensions")
     func imageIndicator() throws {
         let png = try makePNG(width: 12, height: 7)

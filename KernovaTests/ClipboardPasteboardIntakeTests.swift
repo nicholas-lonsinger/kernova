@@ -46,15 +46,15 @@ struct ClipboardPasteboardIntakeTests {
         return try #require(rep.representation(using: .png, properties: [:]))
     }
 
-    /// Resolves a `.pendingFile` outcome by performing the async file read.
+    /// Resolves a `.pendingFiles` outcome by performing the async file read.
     ///
     /// Lets a file-URL intake test read the same as before the byte read moved
     /// off the main actor; non-file results pass through unchanged.
     private func resolve(
         _ result: ClipboardIntakeResult, allowsBinary: Bool
     ) -> ClipboardIntakeResult {
-        guard case .pendingFile(let url) = result else { return result }
-        return ClipboardPasteboardIntake.read(fileAt: url, allowsBinary: allowsBinary)
+        guard case .pendingFiles(let urls) = result else { return result }
+        return ClipboardPasteboardIntake.read(filesAt: urls, allowsBinary: allowsBinary)
     }
 
     // MARK: - Generic pasteboard reads
@@ -216,8 +216,8 @@ struct ClipboardPasteboardIntakeTests {
 
     // MARK: - File URL expansion
 
-    @Test("read(from:) defers a file URL to .pendingFile so the bytes read off-actor")
-    func readFromDefersFileToPendingFile() throws {
+    @Test("read(from:) defers a file URL to .pendingFiles so the bytes read off-actor")
+    func readFromDefersFileToPendingFiles() throws {
         let url = try makeTempFile(name: "deferred.txt", contents: Data("x".utf8))
         let pasteboard = makeScratchPasteboard()
         pasteboard.clearContents()
@@ -225,16 +225,103 @@ struct ClipboardPasteboardIntakeTests {
         item.setString(url.absoluteString, forType: .fileURL)
         pasteboard.writeObjects([item])
 
-        // The bytes are NOT read synchronously: read(from:) returns the URL for
-        // the caller to read off the main actor via read(fileAt:).
+        // The bytes are NOT read synchronously: read(from:) returns the URLs for
+        // the caller to read off the main actor via read(filesAt:).
         guard
-            case .pendingFile(let pending) = ClipboardPasteboardIntake.read(
+            case .pendingFiles(let pending) = ClipboardPasteboardIntake.read(
                 from: pasteboard, allowsBinary: true)
         else {
-            Issue.record("Expected .pendingFile")
+            Issue.record("Expected .pendingFiles")
             return
         }
-        #expect(pending.path == url.path)
+        #expect(pending.map(\.path) == [url.path])
+    }
+
+    @Test("read(from:) returns every item's file URL as .pendingFiles, in order")
+    func readFromMultipleFiles() throws {
+        let a = try makeTempFile(name: "a.txt", contents: Data("a".utf8))
+        let b = try makeTempFile(name: "b.txt", contents: Data("b".utf8))
+        let pasteboard = makeScratchPasteboard()
+        pasteboard.clearContents()
+        let itemA = NSPasteboardItem()
+        itemA.setString(a.absoluteString, forType: .fileURL)
+        let itemB = NSPasteboardItem()
+        itemB.setString(b.absoluteString, forType: .fileURL)
+        pasteboard.writeObjects([itemA, itemB])
+
+        guard
+            case .pendingFiles(let urls) = ClipboardPasteboardIntake.read(
+                from: pasteboard, allowsBinary: true)
+        else {
+            Issue.record("Expected .pendingFiles")
+            return
+        }
+        #expect(urls.map(\.lastPathComponent) == ["a.txt", "b.txt"])
+    }
+
+    @Test("read(filesAt:) builds one ordered filename rep per file")
+    func readFilesAtMultiple() throws {
+        let a = try makeTempFile(name: "one.txt", contents: Data("one".utf8))
+        let b = try makeTempFile(name: "two.bin", contents: Data([0, 1, 2]))
+
+        guard
+            case .content(let content, let note) = ClipboardPasteboardIntake.read(
+                filesAt: [a, b], allowsBinary: true)
+        else {
+            Issue.record("Expected content")
+            return
+        }
+        #expect(content.representations.count == 2)
+        #expect(content.representations.map(\.filename) == ["one.txt", "two.bin"])
+        #expect(content.representations[0].fileURL == a)
+        #expect(content.representations[1].byteCount == 3)
+        #expect(note == nil)
+    }
+
+    @Test("read(filesAt:) skips an unreadable file with a note, keeping the rest")
+    func readFilesAtSkipsUnreadable() throws {
+        let good = try makeTempFile(name: "good.txt", contents: Data("ok".utf8))
+        let missing = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString)-missing.txt")
+
+        guard
+            case .content(let content, let note) = ClipboardPasteboardIntake.read(
+                filesAt: [good, missing], allowsBinary: true)
+        else {
+            Issue.record("Expected content")
+            return
+        }
+        #expect(content.representations.map(\.filename) == ["good.txt"])
+        #expect(note != nil)
+    }
+
+    @Test("read(filesAt:) rejects when every file is unreadable")
+    func readFilesAtAllFail() {
+        let missing1 = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString)-m1")
+        let missing2 = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString)-m2")
+
+        guard
+            case .rejected = ClipboardPasteboardIntake.read(
+                filesAt: [missing1, missing2], allowsBinary: true)
+        else {
+            Issue.record("Expected rejection")
+            return
+        }
+    }
+
+    @Test("read(filesAt:) on a text-only transport is rejected")
+    func readFilesAtTextOnlyRejected() throws {
+        let a = try makeTempFile(name: "a.txt", contents: Data("a".utf8))
+        guard
+            case .rejected(let message) = ClipboardPasteboardIntake.read(
+                filesAt: [a], allowsBinary: false)
+        else {
+            Issue.record("Expected rejection")
+            return
+        }
+        #expect(message == ClipboardPasteboardIntake.textOnlyTransportMessage)
     }
 
     @Test("dragged text file crosses as a disk-backed file representation (name + size)")

@@ -8,10 +8,18 @@ import Foundation
 /// Order is meaningful — it matches the source pasteboard's fidelity order
 /// (richest representation first) and is preserved across the wire.
 ///
+/// A flat `representations` list models both inline content and file payloads:
+/// a representation with an empty `filename` is an alternative encoding of one
+/// *inline* item (text + RTF + image data; the consumer picks the richest);
+/// each representation with a non-empty `filename` is a distinct *file* the
+/// receiver materializes. Several file representations therefore mean several
+/// files.
+///
 /// Equality is digest-based: a SHA-256 over a length-prefixed canonical
-/// encoding of every (uti, data) pair, computed once at init. Dedup and
-/// echo-suppression state can therefore retain the 32-byte `digest` instead
-/// of a second copy of multi-megabyte payloads.
+/// encoding of every representation (uti, filename, and a byte-stable payload
+/// digest), computed once at init. Dedup and echo-suppression state can
+/// therefore retain the 32-byte `digest` instead of a second copy of
+/// multi-megabyte payloads.
 public struct ClipboardContent: Equatable, Sendable {
     /// One (type, data) pair of the payload.
     public struct Representation: Equatable, Sendable {
@@ -58,7 +66,9 @@ public struct ClipboardContent: Equatable, Sendable {
         /// A copied/dragged image file → `"photo.png"`; `""` for inline-only
         /// content. A receiver with a non-empty filename streams the bytes to a
         /// local temp file and offers its file URL so a Finder paste creates the
-        /// file. Deliberately **not** part of the digest.
+        /// file. **Part of the digest** (folded under its own length-prefixed
+        /// block) so two files that share bytes+UTI but differ only by name are
+        /// distinguishable — required once a payload can carry several files.
         public let filename: String
 
         /// Creates a representation from an explicit byte source.
@@ -141,6 +151,15 @@ public struct ClipboardContent: Equatable, Sendable {
     ///
     /// Never offered to a peer.
     public static let empty = ClipboardContent(representations: [])
+
+    /// Maximum representations an offer may advertise.
+    ///
+    /// A `transfer_id` packs the representation index into its low 16 bits
+    /// (`(generation << 16) | repIndex`), so an index past `0xFFFF` would alias
+    /// a lower one. Offer builders truncate to this and log. Reaching it means
+    /// copying ~65 000 files at once, so it's a defensive bound rather than a
+    /// limit any real selection hits.
+    public static let maxOfferableRepresentations = 0xFFFF
 
     /// Ordered representations, richest first.
     public let representations: [Representation]
@@ -231,19 +250,25 @@ public struct ClipboardContent: Equatable, Sendable {
     /// Hashes the representations with a length-prefixed canonical encoding.
     ///
     /// For each representation: the big-endian `UInt64` byte count of the UTI,
-    /// the UTI bytes, then a byte-stable digest of its payload. For an
-    /// `.inMemory` representation that digest is the length-prefixed bytes
-    /// themselves (so an all-inline payload hashes identically to the
-    /// pre-streaming encoding); for a `.file` representation it is the SHA-256
-    /// the stream computed over the bytes — never the file path, name, or mtime
-    /// (those differ between the host and guest temp copies and would break
-    /// cross-process echo suppression). A file representation whose digest is
-    /// not yet known (offer time on the sender side) folds in only its byte
-    /// count as a placeholder; such representations are echo-suppressed by
+    /// the UTI bytes, the length-prefixed `filename` bytes, then a byte-stable
+    /// digest of its payload. For an `.inMemory` representation that digest is
+    /// the length-prefixed bytes themselves (so an all-inline payload with no
+    /// filename hashes identically to the pre-multi-file encoding); for a
+    /// `.file` representation it is the SHA-256 the stream computed over the
+    /// bytes. The *suggested* `filename` is folded in — it round-trips
+    /// identically across the wire, so it stays stable cross-process and lets
+    /// two files that share bytes+UTI but differ only by name be told apart
+    /// (otherwise `[a.bin, b.bin] → [a.bin, c.bin]` with byte-identical b/c
+    /// would be silently echo-suppressed) — but the file *path* and mtime are
+    /// never hashed (those differ between the host and guest temp copies and
+    /// would break cross-process echo suppression). A file representation whose
+    /// digest is not yet known (offer time on the sender side) folds in only its
+    /// byte count as a placeholder; such representations are echo-suppressed by
     /// change-count and staging-path guards rather than by digest equality.
     /// Length prefixes prevent collisions from shifting bytes across the
-    /// uti/payload or representation boundaries; a one-byte source tag separates
-    /// the inline-bytes and file-digest domains so the two can never alias.
+    /// uti/filename/payload or representation boundaries; a one-byte source tag
+    /// separates the inline-bytes and file-digest domains so the two can never
+    /// alias.
     private static func computeDigest(of representations: [Representation]) -> Data {
         var hasher = SHA256()
         for representation in representations {
@@ -251,6 +276,14 @@ public struct ClipboardContent: Equatable, Sendable {
                 hasher.update(bufferPointer: $0)
             }
             hasher.update(data: Data(representation.uti.utf8))
+            // The suggested filename rides in its own length-prefixed block (an
+            // empty name folds in a 0 length, leaving inline-only content
+            // unchanged). [N2]
+            let filenameBytes = Data(representation.filename.utf8)
+            withUnsafeBytes(of: UInt64(filenameBytes.count).bigEndian) {
+                hasher.update(bufferPointer: $0)
+            }
+            hasher.update(data: filenameBytes)
             // A one-byte domain tag separates the inline-bytes domain from the
             // file-digest domain, so a 32-byte inline payload can never alias a
             // file rep's SHA-256 under the same UTI. [N1]

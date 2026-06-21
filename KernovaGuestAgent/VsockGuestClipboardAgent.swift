@@ -14,24 +14,33 @@ protocol Pasteboard: AnyObject {
     var changeCount: Int { get }
 
     /// Types of the **first** pasteboard item, in fidelity order; empty when
-    /// the pasteboard holds nothing. The agent models one logical item — see
-    /// `ClipboardContent`.
+    /// the pasteboard holds nothing. Used for the inline (non-file) snapshot,
+    /// which is genuinely one item — see `ClipboardContent`.
     var firstItemTypes: [NSPasteboard.PasteboardType] { get }
+
+    /// File URLs of every pasteboard item that carries a concrete
+    /// `public.file-url`, in item order; empty when no item is a file.
+    ///
+    /// A multi-select copy (Finder ⌘C of several files) puts one file URL per
+    /// item, so the outbound poll offers them all rather than just item 0.
+    var itemFileURLs: [URL] { get }
 
     func data(forType type: NSPasteboard.PasteboardType) -> Data?
 
     @discardableResult func clearContents() -> Int
 
-    /// Writes a single pasteboard item that **promises** the given types, lazily
-    /// served by `provider` when the OS asks for one.
+    /// Writes one pasteboard item per entry, each **promising** its types lazily
+    /// served by its own `provider` when the OS asks for one.
     ///
-    /// The lazy inbound path: a host offer registers promises and pulls no bytes;
-    /// each `NSPasteboardItemDataProvider.pasteboard(_:item:provideDataForType:)`
-    /// callback streams the requested representation on demand.
+    /// The lazy inbound path: a host offer registers promises and pulls no
+    /// bytes; each `NSPasteboardItemDataProvider.pasteboard(_:item:provideDataForType:)`
+    /// callback streams the requested representation on demand. An offer with
+    /// several file reps writes one item per file so the OS pulls each
+    /// independently — hence one provider per item, each closing over the reps
+    /// that item serves.
     @discardableResult
-    func writeItem(
-        promisedTypes types: [NSPasteboard.PasteboardType],
-        provider: NSPasteboardItemDataProvider
+    func writeItems(
+        _ items: [(types: [NSPasteboard.PasteboardType], provider: NSPasteboardItemDataProvider)]
     ) -> Bool
 }
 
@@ -40,18 +49,29 @@ extension NSPasteboard: Pasteboard {
         pasteboardItems?.first?.types ?? []
     }
 
+    var itemFileURLs: [URL] {
+        (pasteboardItems ?? []).compactMap { item in
+            guard let string = item.string(forType: .fileURL),
+                let url = URL(string: string), url.isFileURL
+            else { return nil }
+            return url
+        }
+    }
+
     // RATIONALE: NSPasteboard's own `data(forType:)` reads from "the first
     // pasteboard item that contains the type". The agent only queries types
     // reported by `firstItemTypes` (item 0), so the existing method satisfies
     // the protocol requirement with the intended item-0 semantics.
 
-    func writeItem(
-        promisedTypes types: [NSPasteboard.PasteboardType],
-        provider: NSPasteboardItemDataProvider
+    func writeItems(
+        _ items: [(types: [NSPasteboard.PasteboardType], provider: NSPasteboardItemDataProvider)]
     ) -> Bool {
-        let item = NSPasteboardItem()
-        item.setDataProvider(provider, forTypes: types)
-        return writeObjects([item])
+        let pasteboardItems = items.map { entry -> NSPasteboardItem in
+            let item = NSPasteboardItem()
+            item.setDataProvider(entry.provider, forTypes: entry.types)
+            return item
+        }
+        return writeObjects(pasteboardItems)
     }
 }
 
@@ -174,6 +194,10 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         let generation: UInt64
         let reps: [Kernova_V1_ClipboardRepresentationInfo]
         var materialized: [Int: ClipboardContent.Representation] = [:]
+        /// Temp-file URLs for inline payloads staged on demand (an image file
+        /// served as a file URL), keyed by rep index, so a repeated `.fileURL`
+        /// pull returns the same staged file instead of re-staging a duplicate.
+        var stagedInlineURLs: [Int: URL] = [:]
 
         init(generation: UInt64, reps: [Kernova_V1_ClipboardRepresentationInfo]) {
             self.generation = generation
@@ -394,15 +418,18 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         let currentCount = pasteboard.changeCount
         guard currentCount != lastPasteboardChangeCount else { return }
 
-        // A copied *file* (Finder ⌘C) puts only a file URL on the pasteboard —
-        // build a disk-backed rep from a stat (no read, no size cap); the bytes
-        // are streamed later when the host requests them.
-        if let candidate = fileExpansionCandidate() {
-            let content = ClipboardContent(representations: [
-                ClipboardContent.Representation(
-                    uti: candidate.type.identifier, fileURL: candidate.url,
-                    byteCount: candidate.byteCount, filename: candidate.filename)
-            ])
+        // Copied *files* (Finder ⌘C) leave one file URL per pasteboard item —
+        // build a disk-backed rep from each (a stat, no read, no size cap); the
+        // bytes stream later when the host requests them. A multi-select copy
+        // offers all of them.
+        let fileCandidates = fileExpansionCandidates()
+        if !fileCandidates.isEmpty {
+            let content = ClipboardContent(
+                representations: fileCandidates.map { candidate in
+                    ClipboardContent.Representation(
+                        uti: candidate.type.identifier, fileURL: candidate.url,
+                        byteCount: candidate.byteCount, filename: candidate.filename)
+                })
             sendOfferIfNeeded(content, channel: channel, changeCount: currentCount)
             return
         }
@@ -437,28 +464,32 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             lastPasteboardChangeCount = changeCount
             return
         }
+        // Dedup on the buffer's own (uncapped) digest — the poll rebuilds the
+        // same content each tick, so an unchanged pasteboard hits this guard.
         guard content.digest != lastSeenDigest else {
             lastPasteboardChangeCount = changeCount
             return
         }
+        // Cap only what's offered/answered to the 16-bit rep-index limit.
+        let offered = Self.cappedToOfferLimit(content)
 
         let generation = nextLocalGeneration
         var offer = Frame()
         offer.protocolVersion = 1
         offer.clipboardOffer = Kernova_V1_ClipboardOffer.with {
             $0.generation = generation
-            $0.repInfo = content.representations.map(Self.repInfo(for:))
+            $0.repInfo = offered.representations.map(Self.repInfo(for:))
         }
         do {
             try channel.send(offer)
             nextLocalGeneration += 1
             if let previous = pendingOutbound { sender?.cancel(generation: previous.generation) }
-            pendingOutbound = (generation: generation, content: content)
+            pendingOutbound = (generation: generation, content: offered)
             currentOutboundGeneration.set(generation)
             lastSeenDigest = content.digest
             lastPasteboardChangeCount = changeCount
             Self.logger.notice(
-                "Sent clipboard offer (gen=\(generation, privacy: .public), \(content.representations.count, privacy: .public) reps, \(content.totalByteCount, privacy: .public) bytes)"
+                "Sent clipboard offer (gen=\(generation, privacy: .public), \(offered.representations.count, privacy: .public) reps, \(offered.totalByteCount, privacy: .public) bytes)"
             )
         } catch {
             Self.logger.warning(
@@ -467,29 +498,31 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         }
     }
 
-    /// Cheap main-queue metadata check for a single copied *file*.
+    /// Cheap main-queue metadata check for copied *files*, one per pasteboard
+    /// item.
     ///
-    /// Returns the file URL, content type, name, and stat'd size when the first
-    /// item is one on-disk file — with no size cap, since the bytes are streamed
-    /// on demand rather than read here. A file already inside our own staging
-    /// root (one we materialized from a prior inbound paste) is skipped so it
-    /// can't be offered back to the host (echo suppression for files).
-    private func fileExpansionCandidate() -> (url: URL, type: UTType, filename: String, byteCount: Int)? {
-        guard pasteboard.firstItemTypes.contains(.fileURL),
-            let urlData = pasteboard.data(forType: .fileURL),
-            let urlString = String(data: urlData, encoding: .utf8),
-            let url = URL(string: urlString), url.isFileURL
-        else { return nil }
-
-        guard !staging.isInStagingRoot(url) else { return nil }
-
-        guard let values = try? url.resourceValues(forKeys: [.contentTypeKey, .fileSizeKey]),
-            let type = values.contentType
-        else { return nil }
-
-        let size = values.fileSize ?? 0
-        guard size > 0 else { return nil }
-        return (url: url, type: type, filename: url.lastPathComponent, byteCount: size)
+    /// Returns the file URL, content type, name, and stat'd size for each on-disk
+    /// file — with no size cap, since the bytes are streamed on demand rather
+    /// than read here. A file already inside our own staging root (one we
+    /// materialized from a prior inbound paste) is skipped per file so it can't
+    /// be offered back to the host (echo suppression for files).
+    private func fileExpansionCandidates()
+        -> [(url: URL, type: UTType, filename: String, byteCount: Int)]
+    {
+        var candidates: [(url: URL, type: UTType, filename: String, byteCount: Int)] = []
+        // Skip per file: one inside our own staging root was materialized from a
+        // prior inbound paste, so it must not be offered back (file echo
+        // suppression).
+        for url in pasteboard.itemFileURLs where !staging.isInStagingRoot(url) {
+            guard let values = try? url.resourceValues(forKeys: [.contentTypeKey, .fileSizeKey]),
+                let type = values.contentType
+            else { continue }
+            let size = values.fileSize ?? 0
+            guard size > 0 else { continue }
+            candidates.append(
+                (url: url, type: type, filename: url.lastPathComponent, byteCount: size))
+        }
+        return candidates
     }
 
     // MARK: - Frame handlers (main queue)
@@ -570,7 +603,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// Registers a host offer as lazy promises on the guest pasteboard, pulling
     /// no bytes.
     ///
-    /// One `NSPasteboardItem` is written whose promised types are backed by a
+    /// One `NSPasteboardItem` is written per promised item (one for inline
+    /// content, one per file rep), each backed by its own
     /// `LazyClipboardDataProvider`; each representation is streamed only when the
     /// OS asks for it (`provideData`). The post-write `changeCount` is recorded
     /// immediately so the 0.5 s poll does not read — and thereby self-trigger —
@@ -584,8 +618,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             lazyCoordinator.failAll()
         }
 
-        let promisedTypes = Self.promisedTypes(for: offer.repInfo)
-        guard !promisedTypes.isEmpty else {
+        let items = Self.promisedItems(for: offer.repInfo)
+        guard !items.isEmpty else {
             inboundPromise = nil
             return
         }
@@ -593,38 +627,53 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         let promise = InboundPromise(generation: offer.generation, reps: offer.repInfo)
         inboundPromise = promise
         let generation = offer.generation
-        let provider = LazyClipboardDataProvider(
-            provide: { [weak self] type in self?.provideData(type, generation: generation) },
-            onFinished: { [weak self] provider in self?.providerFinished(provider) })
-        liveProviders.insert(provider)
+
+        // One provider per promised item, each resolving a requested type to a
+        // rep index against *its own* type map — so an offer's several file reps
+        // each resolve `.fileURL` to their own file instead of all collapsing to
+        // the first.
+        var newProviders: [LazyClipboardDataProvider] = []
+        let writes = items.map {
+            item -> (types: [NSPasteboard.PasteboardType], provider: NSPasteboardItemDataProvider) in
+            let provider = LazyClipboardDataProvider(
+                provide: { [weak self] type in
+                    self?.provideData(type, itemTypes: item, generation: generation)
+                },
+                onFinished: { [weak self] provider in self?.providerFinished(provider) })
+            newProviders.append(provider)
+            return (types: item.map { $0.type }, provider: provider)
+        }
+        newProviders.forEach { liveProviders.insert($0) }
 
         pasteboard.clearContents()
-        let written = pasteboard.writeItem(promisedTypes: promisedTypes, provider: provider)
+        let written = pasteboard.writeItems(writes)
         // Capture the bumped changeCount whether or not the write reported
         // success, so a partial write can't leave the poll re-offering. [Safeguard 2]
         lastPasteboardChangeCount = pasteboard.changeCount
         guard written else {
             Self.logger.warning(
                 "Failed to register host clipboard promise (gen=\(generation, privacy: .public))")
-            liveProviders.remove(provider)
+            newProviders.forEach { liveProviders.remove($0) }
             inboundPromise = nil
             return
         }
         Self.logger.notice(
-            "Registered host clipboard promise (gen=\(generation, privacy: .public), \(promisedTypes.count, privacy: .public) type(s))"
+            "Registered host clipboard promise (gen=\(generation, privacy: .public), \(items.count, privacy: .public) item(s))"
         )
     }
 
     /// Streams the bytes for a promised pasteboard type on demand.
     ///
     /// Runs synchronously on the agent's main thread (the pasteboard server's
-    /// `provideDataForType` callback). Pulls the backing representation at most
-    /// once per offer — caching it so an image rep promised as both its UTI and
-    /// `public.file-url` is fetched a single time — then formats it for the
-    /// requested type. Returns `nil` (empty) on a stale generation, a failed
-    /// pull, or a type we never promised.
+    /// `provideDataForType` callback). `itemTypes` is the promising item's own
+    /// type → rep-index map, so a `.fileURL` pull resolves to *this* item's file
+    /// rep rather than the first file rep across the offer. Pulls the backing
+    /// representation at most once per offer — caching it so an image rep
+    /// promised as both its UTI and `public.file-url` is fetched a single time —
+    /// then formats it for the requested type. Returns `nil` (empty) on a stale
+    /// generation, a failed pull, or a type this item never promised.
     private func provideData(
-        _ type: NSPasteboard.PasteboardType, generation: UInt64
+        _ type: NSPasteboard.PasteboardType, itemTypes: PromisedItem, generation: UInt64
     ) -> Data? {
         guard let promise = inboundPromise, promise.generation == generation else {
             Self.logger.debug(
@@ -632,7 +681,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             return nil
         }
         guard let channel = liveChannel, let receiver = receiver else { return nil }
-        guard let repIndex = Self.repIndex(for: type, in: promise.reps) else {
+        guard let repIndex = itemTypes.first(where: { $0.type == type })?.repIndex else {
             Self.logger.warning(
                 "provideData for unpromised type '\(type.rawValue, privacy: .public)'")
             return nil
@@ -651,7 +700,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         }
 
         if type == .fileURL {
-            return fileURLData(from: representation, generation: generation)
+            return fileURLData(
+                from: representation, repIndex: repIndex, promise: promise, generation: generation)
         }
         return representation.inMemoryData
     }
@@ -735,10 +785,19 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// staging an inline payload (e.g. an image file shown in place yet also
     /// pasteable as a file) to a temp file when it has no on-disk URL yet.
     private func fileURLData(
-        from representation: ClipboardContent.Representation, generation: UInt64
+        from representation: ClipboardContent.Representation, repIndex: Int,
+        promise: InboundPromise, generation: UInt64
     ) -> Data? {
         if let url = representation.fileURL {
             return Data(url.absoluteString.utf8)
+        }
+        // Cache the staged URL per rep so a repeated `.fileURL` pull of an inline
+        // payload returns the same file instead of re-staging a duplicate
+        // (`ClipboardFileStaging` would otherwise mint `name (2).ext`).
+        if let cached = promise.stagedInlineURLs[repIndex],
+            FileManager.default.fileExists(atPath: cached.path)
+        {
+            return Data(cached.absoluteString.utf8)
         }
         guard
             !representation.filename.isEmpty,
@@ -749,6 +808,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         do {
             try sink.write(data)
             let url = try sink.commit()
+            promise.stagedInlineURLs[repIndex] = url
             return Data(url.absoluteString.utf8)
         } catch {
             // A truncated file must not reach the pasteboard — abort the stage.
@@ -762,58 +822,63 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         liveProviders.remove(provider)
     }
 
+    /// One promised pasteboard item: each pasteboard type it offers paired with
+    /// the offer-rep index that backs it.
+    ///
+    /// Carrying the index per type lets each item's provider resolve a requested
+    /// type to the correct rep *within that item* — so an offer's several file
+    /// reps each map their `.fileURL` to their own file instead of all
+    /// collapsing to the first.
+    private typealias PromisedItem = [(type: NSPasteboard.PasteboardType, repIndex: Int)]
+
     /// Whether an offered rep may be promised and pulled — the receive-side
     /// sanitization gate.
     ///
     /// An identity-skip type (transient marker, raw `public.file-url` smuggle) or
-    /// an empty rep is never surfaced. `promisedTypes` and `repIndex(for:)` MUST
-    /// share this gate: if `repIndex` searched the unfiltered reps, a `.fileURL`
-    /// (or inline) request could resolve to a rep `promisedTypes` dropped — the
-    /// very smuggle this sanitization exists to block.
+    /// an empty rep is never surfaced. `promisedItems` carries each surviving
+    /// rep's index alongside its promised type, so a `provideData` pull can only
+    /// reach a rep this gate kept — a smuggle is dropped here and is therefore
+    /// unreachable, with no separate index lookup to keep in sync.
     private static func isPromisable(_ info: Kernova_V1_ClipboardRepresentationInfo) -> Bool {
         info.byteCount != 0 && !ClipboardSnapshotPolicy.shouldSkipBeforeReading(uti: info.uti)
     }
 
-    /// The pasteboard types to promise for an offer, applying the same
-    /// inline-vs-file rule as the eager path: an inline rep promises its content
-    /// UTI; a file rep promises `public.file-url`; an image file promises both.
-    private static func promisedTypes(
+    /// The promised pasteboard items for an offer, applying the same
+    /// inline-vs-file rule as the eager path.
+    ///
+    /// Inline-only reps (no filename) share one item promising each rep's content
+    /// UTI; each file rep gets its own item promising `public.file-url` (and its
+    /// image UTI when it's an image file). Receive-side sanitization (the lazy
+    /// counterpart of `ClipboardSnapshotPolicy.sanitizedForApply`): an
+    /// identity-skip type or an empty rep is never promised. Each promised type
+    /// carries the offer-rep index that backs it.
+    private static func promisedItems(
         for reps: [Kernova_V1_ClipboardRepresentationInfo]
-    ) -> [NSPasteboard.PasteboardType] {
-        var types: [NSPasteboard.PasteboardType] = []
-        var seen: Set<String> = []
-        // Receive-side sanitization (the lazy counterpart of
-        // ClipboardSnapshotPolicy.sanitizedForApply): never promise an
-        // identity-skip type or an empty rep.
-        for info in reps where isPromisable(info) {
-            if info.isInline, seen.insert(info.uti).inserted {
-                types.append(NSPasteboard.PasteboardType(info.uti))
-            }
-            if !info.filename.isEmpty,
-                seen.insert(NSPasteboard.PasteboardType.fileURL.rawValue).inserted
-            {
-                types.append(.fileURL)
-            }
-        }
-        return types
-    }
+    ) -> [PromisedItem] {
+        var items: [PromisedItem] = []
 
-    /// Maps a requested pasteboard type back to the offered representation index:
-    /// `public.file-url` resolves to the first file rep; any other type to the
-    /// inline rep whose UTI matches.
-    private static func repIndex(
-        for type: NSPasteboard.PasteboardType, in reps: [Kernova_V1_ClipboardRepresentationInfo]
-    ) -> Int? {
-        // Resolve only to a rep that was actually promised (`isPromisable`), so a
-        // request can't reach a rep `promisedTypes` sanitized away.
-        // RATIONALE: `.fileURL` collapses to the FIRST promisable file rep —
-        // NSPasteboard's single-item promise model carries only one
-        // `public.file-url`, and current intake (host and guest) never offers more
-        // than one file rep per item, so this is lossless today.
-        if type == .fileURL {
-            return reps.firstIndex { isPromisable($0) && !$0.filename.isEmpty }
+        // One shared inline item for all inline-only (filename-less) reps.
+        var inlineItem: PromisedItem = []
+        var seen: Set<String> = []
+        for (index, info) in reps.enumerated() where isPromisable(info) {
+            guard info.filename.isEmpty, info.isInline else { continue }
+            if seen.insert(info.uti).inserted {
+                inlineItem.append((NSPasteboard.PasteboardType(info.uti), index))
+            }
         }
-        return reps.firstIndex { isPromisable($0) && $0.isInline && $0.uti == type.rawValue }
+        if !inlineItem.isEmpty { items.append(inlineItem) }
+
+        // One item per file rep (image files also promise their image UTI).
+        for (index, info) in reps.enumerated() where isPromisable(info) {
+            guard !info.filename.isEmpty else { continue }
+            var item: PromisedItem = []
+            if info.isInline {
+                item.append((NSPasteboard.PasteboardType(info.uti), index))
+            }
+            item.append((.fileURL, index))
+            items.append(item)
+        }
+        return items
     }
 
     /// Whether a representation's bytes should be written inline (vs. carried
@@ -842,6 +907,24 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     }
 
     // MARK: - Helpers
+
+    /// Caps `content` to `ClipboardContent.maxOfferableRepresentations`, logging
+    /// when it truncates.
+    ///
+    /// A `transfer_id` packs the rep index into 16 bits, so an offer past the
+    /// limit would alias indices. Returns the input unchanged in the common case
+    /// (no recompute); copying ~65 000 files at once is the only way to hit it.
+    private static func cappedToOfferLimit(_ content: ClipboardContent) -> ClipboardContent {
+        guard content.representations.count > ClipboardContent.maxOfferableRepresentations else {
+            return content
+        }
+        Self.logger.warning(
+            "Clipboard offer truncated from \(content.representations.count, privacy: .public) to \(ClipboardContent.maxOfferableRepresentations, privacy: .public) representations (16-bit transfer-id limit)"
+        )
+        return ClipboardContent(
+            representations: Array(
+                content.representations.prefix(ClipboardContent.maxOfferableRepresentations)))
+    }
 
     private static func repInfo(
         for representation: ClipboardContent.Representation

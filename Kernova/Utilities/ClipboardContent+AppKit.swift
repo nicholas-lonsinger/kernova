@@ -46,13 +46,22 @@ extension ClipboardContent.Representation {
 }
 
 extension ClipboardContent {
-    /// The single file payload in the buffer, if any — a representation tagged
-    /// with a suggested filename (a copied/dragged file's bytes).
+    /// Every file payload — each a representation tagged with a suggested
+    /// filename (a copied/dragged file's bytes).
     ///
-    /// The buffer models one logical pasteboard item, so a file copy/drop
-    /// produces exactly one filename-tagged representation.
-    var filePayload: Representation? {
-        representations.first { !$0.filename.isEmpty }
+    /// Partitions the buffer with `inlineRepresentations`: a non-empty filename
+    /// marks a distinct file the receiver materializes, so several of these mean
+    /// several files. `filePayloads.first` is the single-file representative.
+    var filePayloads: [Representation] {
+        representations.filter { !$0.filename.isEmpty }
+    }
+
+    /// The inline representations — alternative encodings of one inline content
+    /// item (text + RTF + image data; the consumer picks the richest).
+    ///
+    /// The complement of `filePayloads`.
+    var inlineRepresentations: [Representation] {
+        representations.filter { $0.filename.isEmpty }
     }
 
     /// The inline rich-text representation best suited to a styled preview, or

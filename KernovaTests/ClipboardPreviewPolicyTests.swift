@@ -105,6 +105,32 @@ struct ClipboardPreviewPolicyTests {
                 == .file(filename: "note.txt", uti: UTType.plainText.identifier, byteCount: bytes.count))
     }
 
+    @Test("several file payloads render the multi-file list, in order")
+    func multipleFilePayloadsShowFilesList() {
+        // A mix of file types (image and not) still renders as the file list
+        // whenever there is more than one file payload.
+        let content = ClipboardContent(representations: [
+            .init(uti: UTType.plainText.identifier, data: Data("a".utf8), filename: "a.txt"),
+            .init(uti: UTType.png.identifier, data: Data([0x89]), filename: "b.png"),
+        ])
+        #expect(
+            ClipboardPreviewPolicy.mode(for: content)
+                == .files([
+                    .init(filename: "a.txt", uti: UTType.plainText.identifier, byteCount: 1),
+                    .init(filename: "b.png", uti: UTType.png.identifier, byteCount: 1),
+                ]))
+    }
+
+    @Test("a single file payload still renders the single-file chip, not the list")
+    func singleFilePayloadShowsChipNotList() {
+        let content = ClipboardContent(representations: [
+            .init(uti: UTType.plainText.identifier, data: Data("a".utf8), filename: "a.txt")
+        ])
+        #expect(
+            ClipboardPreviewPolicy.mode(for: content)
+                == .file(filename: "a.txt", uti: UTType.plainText.identifier, byteCount: 1))
+    }
+
     @Test("an image file payload still renders the image preview")
     func imageFilePayloadShowsImage() {
         let png = Data([0x89, 0x50])

@@ -11,11 +11,12 @@ enum ClipboardIntakeResult: Equatable {
     case content(ClipboardContent, note: String?)
     /// Nothing usable; `message` says why in user-facing terms.
     case rejected(message: String)
-    /// A file resolved on disk whose bytes still have to be read — `read(from:)`
-    /// returns this so the caller can read them asynchronously (off the main
-    /// actor) via `read(fileAt:)` before they become `.content`. Never applied
-    /// directly.
-    case pendingFile(URL)
+    /// One or more files resolved on disk whose bytes still have to be read —
+    /// `read(from:)` returns this so the caller can read them asynchronously
+    /// (off the main actor) via `read(filesAt:)` before they become `.content`.
+    /// A multi-select copy/drag carries several URLs, in pasteboard order. Never
+    /// applied directly.
+    case pendingFiles([URL])
 }
 
 /// The single intake path for every host-side gesture that feeds the
@@ -31,14 +32,15 @@ enum ClipboardPasteboardIntake {
 
     static let textOnlyTransportMessage = "Only text can be shared with Linux guests"
 
-    /// Reads the first item of `pasteboard` into clipboard content.
+    /// Reads `pasteboard` into clipboard content.
     ///
-    /// A file already on disk — whether a concrete `public.file-url` (Finder
+    /// Files already on disk — whether concrete `public.file-url`s (Finder
     /// drag/copy) or a `promised-file-url` whose file the source has already
-    /// written (the floating screenshot thumbnail) — is expanded: image files
-    /// become an image representation, other files become their name. With
-    /// `allowsBinary == false` (text-only transports) only the plain-text
-    /// representation is taken.
+    /// written (the floating screenshot thumbnail) — are expanded across *every*
+    /// item: each becomes its own filename-tagged representation (a multi-select
+    /// copy yields several). The inline snapshot, taken only when no item is a
+    /// file, reads item 0. With `allowsBinary == false` (text-only transports)
+    /// only the plain-text representation is taken.
     ///
     /// When the drag is clearly a file/image (a file URL or file promise is
     /// present) but no file is readable, the URL/path text representations are
@@ -46,15 +48,19 @@ enum ClipboardPasteboardIntake {
     /// caller falls through to asynchronous promise receipt instead of showing
     /// a path string.
     static func read(from pasteboard: NSPasteboard, allowsBinary: Bool) -> ClipboardIntakeResult {
-        guard let item = pasteboard.pasteboardItems?.first else {
+        guard let items = pasteboard.pasteboardItems, let item = items.first else {
             return .rejected(message: "The Mac clipboard is empty")
         }
 
         // A concrete-or-promised file already on disk carries a URL, not the
-        // file's bytes. Defer it: the caller reads the bytes off the main actor
-        // via `read(fileAt:)` (a large file mustn't block the UI here).
-        if let url = existingFileURL(in: item) {
-            return .pendingFile(url)
+        // file's bytes. File enumeration spans every item (a multi-select copy
+        // puts one file per item); defer them so the caller reads each off the
+        // main actor via `read(filesAt:)` (a large file mustn't block the UI).
+        // Only file *enumeration* spans items — the inline snapshot below stays
+        // item-0-scoped, since inline content is genuinely one item.
+        let fileURLs = items.compactMap { existingFileURL(in: $0) }
+        if !fileURLs.isEmpty {
+            return .pendingFiles(fileURLs)
         }
 
         guard allowsBinary else {
@@ -134,40 +140,55 @@ enum ClipboardPasteboardIntake {
     }
 
     /// Resolves a single dropped/copied file into a disk-backed representation —
-    /// the expansion used for dragged/copied `public.file-url` items and for
-    /// files received from drag-and-drop file promises (screenshot thumbnail,
-    /// Photos, browsers).
+    /// the drag-and-drop file-promise receipt path (screenshot thumbnail,
+    /// Photos, browsers), which delivers one file per completion.
     ///
-    /// The file crosses as a disk-backed `.file` representation: only a stat
+    /// A thin wrapper over `read(filesAt:)`; multi-file pasteboard reads go
+    /// through that directly.
+    static func read(fileAt url: URL, allowsBinary: Bool) -> ClipboardIntakeResult {
+        read(filesAt: [url], allowsBinary: allowsBinary)
+    }
+
+    /// Resolves dropped/copied files into disk-backed representations, one per
+    /// URL in pasteboard order — the expansion for a multi-select
+    /// `public.file-url` copy or drag.
+    ///
+    /// Each file crosses as a disk-backed `.file` representation: only a stat
     /// runs here (name + size + content UTI), and the bytes stream on demand
-    /// when the guest requests them, so there is no size cap and the UI never
+    /// when the peer requests them, so there is no size cap and the UI never
     /// blocks on a read. The other side materializes a real file — a Finder
     /// paste creates it, matching how macOS pastes a copied file — and an image
     /// additionally pastes inline (the receiver decides per UTI). The file's
-    /// path never crosses, only its name. Text-only transports (Linux/SPICE)
-    /// can't carry files at all.
-    static func read(fileAt url: URL, allowsBinary: Bool) -> ClipboardIntakeResult {
-        guard
-            let values = try? url.resourceValues(forKeys: [.contentTypeKey, .fileSizeKey]),
-            let type = values.contentType
-        else {
-            return .rejected(message: "Couldn't read the dropped file")
-        }
-
+    /// path never crosses, only its name. A file that fails to stat (or is
+    /// empty) is skipped and noted; if *every* file fails the result is
+    /// `.rejected`. Text-only transports (Linux/SPICE) can't carry files at all.
+    static func read(filesAt urls: [URL], allowsBinary: Bool) -> ClipboardIntakeResult {
         guard allowsBinary else {
             return .rejected(message: Self.textOnlyTransportMessage)
         }
-        let fileSize = values.fileSize ?? 0
-        guard fileSize > 0 else {
-            return .rejected(message: "Couldn't read the dropped file")
-        }
-        return .content(
-            ClipboardContent(representations: [
+        var representations: [ClipboardContent.Representation] = []
+        var skipped = 0
+        for url in urls {
+            guard
+                let values = try? url.resourceValues(forKeys: [.contentTypeKey, .fileSizeKey]),
+                let type = values.contentType,
+                let fileSize = values.fileSize, fileSize > 0
+            else {
+                skipped += 1
+                continue
+            }
+            representations.append(
                 .init(
                     uti: type.identifier, fileURL: url, byteCount: fileSize,
-                    filename: url.lastPathComponent)
-            ]),
-            note: nil
-        )
+                    filename: url.lastPathComponent))
+        }
+        guard !representations.isEmpty else {
+            return .rejected(
+                message: urls.count > 1
+                    ? "Couldn't read the dropped files" : "Couldn't read the dropped file")
+        }
+        let note =
+            skipped > 0 ? "Skipped \(skipped) unreadable file\(skipped == 1 ? "" : "s")" : nil
+        return .content(ClipboardContent(representations: representations), note: note)
     }
 }

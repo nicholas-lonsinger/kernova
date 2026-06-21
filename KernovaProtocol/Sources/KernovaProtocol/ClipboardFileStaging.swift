@@ -167,7 +167,10 @@ public final class ClipboardFileStaging: @unchecked Sendable {
         defer { lock.unlock() }
 
         let dir = try directory(for: generation)
-        let url = dir.appendingPathComponent(Self.sanitize(filename))
+        // Uniquify within the generation so two same-named payloads in one copy
+        // don't collapse onto one path. createFile below claims the name, so a
+        // later sink/adopt in this generation sees it taken.
+        let url = Self.uniqueDestination(in: dir, filename: filename)
         // Create an empty file, then open it for writing. `F_NOCACHE` keeps a
         // multi-GB transfer from evicting the page cache (the DTS-preferred
         // behaviour for streaming large files).
@@ -189,8 +192,10 @@ public final class ClipboardFileStaging: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         let dir = try directory(for: generation)
-        let dest = dir.appendingPathComponent(Self.sanitize(filename))
-        try? FileManager.default.removeItem(at: dest)
+        // Uniquify so two same-named files adopted into one generation (e.g. a
+        // multi-file Copy-to-Mac) each get a distinct URL instead of the second
+        // clobbering the first.
+        let dest = Self.uniqueDestination(in: dir, filename: filename)
         do {
             try FileManager.default.linkItem(at: url, to: dest)
         } catch {
@@ -228,6 +233,31 @@ public final class ClipboardFileStaging: @unchecked Sendable {
             try? FileManager.default.removeItem(at: oldest.dir)
         }
         return dir
+    }
+
+    /// A destination URL under `dir` named `filename` (sanitized), uniquified
+    /// with a ` (n)` suffix before the extension when that name is already
+    /// taken.
+    ///
+    /// A single multi-file copy can carry two payloads that share a name (a
+    /// crafted offer, or files gathered from different folders); without this
+    /// the second `makeSink`/`adopt` in the generation would reuse the first's
+    /// path and the two files would collapse into one. Finder applies the same
+    /// ` (n)` disambiguation when pasting. Caller holds the lock.
+    private static func uniqueDestination(in dir: URL, filename: String) -> URL {
+        let sanitized = sanitize(filename)
+        let candidate = dir.appendingPathComponent(sanitized)
+        guard FileManager.default.fileExists(atPath: candidate.path) else { return candidate }
+        let name = sanitized as NSString
+        let base = name.deletingPathExtension
+        let ext = name.pathExtension
+        var counter = 2
+        while true {
+            let suffixed = ext.isEmpty ? "\(base) (\(counter))" : "\(base) (\(counter)).\(ext)"
+            let url = dir.appendingPathComponent(suffixed)
+            if !FileManager.default.fileExists(atPath: url.path) { return url }
+            counter += 1
+        }
     }
 
     /// Reduces a suggested filename to a single safe path component so a

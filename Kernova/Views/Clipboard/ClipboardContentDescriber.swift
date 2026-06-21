@@ -39,6 +39,12 @@ enum ClipboardContentDescriber {
             // Name · type, e.g. "notes.txt · Plain Text Document" — the size is
             // appended below like every other mode.
             primary = "\(filename) · \(displayName(forUTI: uti))"
+        case .files(let files):
+            // The chip list enumerates each file, so the indicator is a count +
+            // total size header ("3 files · 4.2 MB") — return early to skip the
+            // generic "+ N more" tail, which would double-count here.
+            let totalSize = DataFormatters.formatBytes(UInt64(content.totalByteCount))
+            return "\(files.count) files · \(totalSize)"
         case .summary(let representations):
             guard let first = representations.first else { return "Empty" }
             primary = displayName(forUTI: first.uti)

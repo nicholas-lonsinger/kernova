@@ -10,36 +10,41 @@ import UniformTypeIdentifiers
 
 /// In-memory `Pasteboard` substitute for the lazy promise model.
 ///
-/// Mirrors the single `NSPasteboardItem` the agent reads and writes, but the
-/// agent never writes resident bytes any more: a host offer registers a
-/// *promise* (a set of types backed by an `NSPasteboardItemDataProvider`), and
+/// Mirrors the `NSPasteboardItem`s the agent reads and writes, but the agent
+/// never writes resident bytes any more: a host offer registers one *promise*
+/// per item (a set of types backed by an `NSPasteboardItemDataProvider`), and
 /// the bytes are served on demand only when the OS asks for a type. The fake
-/// records the promised types and the provider, and exposes `invokeProvider`
-/// to simulate the OS asking — which drives the agent's blocking lazy pull.
+/// records the promised items and exposes `invokeProvider` to simulate the OS
+/// asking — which drives the agent's blocking lazy pull.
 ///
 /// Two write surfaces:
-/// - `writeItem(promisedTypes:provider:)` — the production protocol method the
-///   agent calls on a host offer; records the promise (no bytes).
-/// - `setItem(_:)` / `setString(_:forType:)` — test-only setup that places
-///   resident (type, data) pairs, modelling a *user* copying inside the guest;
-///   used to drive the outbound path.
+/// - `writeItems(_:)` — the production protocol method the agent calls on a host
+///   offer; records one promise per item (no bytes). A multi-file offer writes
+///   several.
+/// - `setItem(_:)` / `setItems(_:)` / `setString(_:forType:)` — test-only setup
+///   that places resident (type, data) pairs, modelling a *user* copying inside
+///   the guest; used to drive the outbound path.
 ///
 /// Thread-safe via NSLock so tests running on DispatchQueue.main don't race the
 /// setup thread or a background `invokeProvider`.
 final class FakePasteboard: Pasteboard, @unchecked Sendable {
+    /// One promised pasteboard item: its types and the provider serving them.
+    private struct PromisedItem {
+        let types: [NSPasteboard.PasteboardType]
+        let provider: NSPasteboardItemDataProvider
+    }
+
     private let lock = NSLock()
     private var storedChangeCount: Int = 0
-    /// Resident (type, data) pairs.
+    /// Resident (type, data) pairs, possibly across several items.
     ///
     /// Only the test-only setup paths populate these (a user copying inside the
     /// guest). The agent's promise writes leave these empty; promised bytes are
-    /// served lazily via `provider`.
+    /// served lazily via the per-item provider.
     private var storedRepresentations: [(type: NSPasteboard.PasteboardType, data: Data)] = []
-    /// Types the current promise covers, in fidelity order.
-    private var promisedTypes: [NSPasteboard.PasteboardType] = []
-    /// Provider backing the current promise, retained so `invokeProvider` can
-    /// drive a lazy pull.
-    private var provider: NSPasteboardItemDataProvider?
+    /// Items the current promise covers — one per pasteboard item the agent
+    /// wrote (one inline item plus one per file rep).
+    private var promisedItems: [PromisedItem] = []
     private var storedWriteFailureCount: Int = 0
 
     var changeCount: Int {
@@ -47,27 +52,45 @@ final class FakePasteboard: Pasteboard, @unchecked Sendable {
     }
 
     var firstItemTypes: [NSPasteboard.PasteboardType] {
-        lock.withLock { promisedTypes.isEmpty ? storedRepresentations.map(\.type) : promisedTypes }
+        lock.withLock {
+            if let first = promisedItems.first { return first.types }
+            return storedRepresentations.map(\.type)
+        }
     }
 
-    /// The types promised by the agent's most recent `writeItem` (empty after a
-    /// `clearContents` or a resident `setItem`).
+    var itemFileURLs: [URL] {
+        lock.withLock {
+            storedRepresentations
+                .filter { $0.type == .fileURL }
+                .compactMap { String(data: $0.data, encoding: .utf8).flatMap(URL.init(string:)) }
+        }
+    }
+
+    /// Every promised type across all items, concatenated in item order (a
+    /// multi-file offer promises one item per file).
+    ///
+    /// Empty after a `clearContents` or a resident `setItem`.
     var promisedTypesForTesting: [NSPasteboard.PasteboardType] {
-        lock.withLock { promisedTypes }
+        lock.withLock { promisedItems.flatMap(\.types) }
     }
 
-    /// Snapshots the current promise's provider so a test can invoke it directly
-    /// (e.g. after a superseding offer replaced it) without going through the
-    /// recorded-provider path `invokeProvider` uses.
+    /// Number of promised pasteboard items the agent's last write registered.
+    var promisedItemCountForTesting: Int {
+        lock.withLock { promisedItems.count }
+    }
+
+    /// Snapshots the first promised item's provider so a test can invoke it
+    /// directly (e.g. after a superseding offer replaced it) without going
+    /// through the recorded-provider path `invokeProvider` uses.
     func captureProviderForTesting() -> NSPasteboardItemDataProvider? {
-        lock.withLock { provider }
+        lock.withLock { promisedItems.first?.provider }
     }
 
     func data(forType type: NSPasteboard.PasteboardType) -> Data? {
         lock.withLock { storedRepresentations.first(where: { $0.type == type })?.data }
     }
 
-    /// Make the next `n` `writeItem` calls return `false` and skip storage
+    /// Make the next `n` `writeItems` calls return `false` and skip storage
     /// updates.
     ///
     /// Lets tests model OS-level pasteboard write failures.
@@ -82,21 +105,19 @@ final class FakePasteboard: Pasteboard, @unchecked Sendable {
         // delta matches a real pasteboard.
         lock.withLock {
             storedRepresentations.removeAll()
-            promisedTypes.removeAll()
-            provider = nil
+            promisedItems.removeAll()
             storedChangeCount += 1
             return storedChangeCount
         }
     }
 
-    /// Production protocol method: registers a lazy promise.
+    /// Production protocol method: registers one lazy promise per item.
     ///
-    /// Promises `types`, served by `provider` when the OS asks for one. Records
-    /// no bytes.
+    /// Each entry promises its `types`, served by its own `provider` when the OS
+    /// asks. Records no bytes.
     @discardableResult
-    func writeItem(
-        promisedTypes types: [NSPasteboard.PasteboardType],
-        provider: NSPasteboardItemDataProvider
+    func writeItems(
+        _ items: [(types: [NSPasteboard.PasteboardType], provider: NSPasteboardItemDataProvider)]
     ) -> Bool {
         lock.withLock {
             if storedWriteFailureCount > 0 {
@@ -104,27 +125,41 @@ final class FakePasteboard: Pasteboard, @unchecked Sendable {
                 return false
             }
             storedRepresentations.removeAll()
-            self.promisedTypes = types
-            self.provider = provider
+            promisedItems = items.map { PromisedItem(types: $0.types, provider: $0.provider) }
             storedChangeCount += 1
             return true
         }
     }
 
-    /// Simulates the OS asking the promise for a type's bytes.
+    /// Simulates the OS asking the first promised item that offers `type`.
+    func invokeProvider(forType type: NSPasteboard.PasteboardType) -> Data? {
+        invokeProvider(forType: type, itemIndex: nil)
+    }
+
+    /// Simulates the OS asking a promised item for a type's bytes.
     ///
     /// Builds a fresh `NSPasteboardItem`, invokes the recorded provider's
     /// `pasteboard(_:item:provideDataForType:)` synchronously, and returns the
-    /// data the provider set (or `nil` when it declined). This call BLOCKS until
-    /// the agent's lazy pull resolves — call it OFF the test's main actor so the
-    /// fake host can respond to the resulting `ClipboardRequest` concurrently.
+    /// data the provider set (or `nil` when it declined). `itemIndex` targets a
+    /// specific promised item (needed when several items promise the same type,
+    /// e.g. `.fileURL` across multiple files); `nil` uses the first item offering
+    /// the type. This call BLOCKS until the agent's lazy pull resolves — call it
+    /// OFF the test's main actor so the fake host can respond to the resulting
+    /// `ClipboardRequest` concurrently.
     ///
     /// Resolved bytes are cached back into the resident item (mirroring how a
     /// real `NSPasteboardItem` retains provided data) so a subsequent
     /// `data(forType:)` / `writtenFileURLs` read reflects what a paste would see
     /// — without re-invoking the provider.
-    func invokeProvider(forType type: NSPasteboard.PasteboardType) -> Data? {
-        let provider = lock.withLock { self.provider }
+    func invokeProvider(forType type: NSPasteboard.PasteboardType, itemIndex: Int?) -> Data? {
+        let provider: NSPasteboardItemDataProvider? = lock.withLock {
+            if let itemIndex {
+                guard promisedItems.indices.contains(itemIndex) else { return nil }
+                let item = promisedItems[itemIndex]
+                return item.types.contains(type) ? item.provider : nil
+            }
+            return promisedItems.first { $0.types.contains(type) }?.provider
+        }
         guard let provider else { return nil }
         let item = NSPasteboardItem()
         provider.pasteboard(nil, item: item, provideDataForType: type)
@@ -140,11 +175,10 @@ final class FakePasteboard: Pasteboard, @unchecked Sendable {
 
     // MARK: - Test-only resident setup (a user copying inside the guest)
 
-    /// File URLs in the resident item.
+    /// File URLs resident on the pasteboard.
     ///
-    /// Decoded from any `.fileURL` representation a test placed via `setItem`.
-    /// Promise writes record no bytes, so this reflects test-driven resident
-    /// content only.
+    /// Decoded from any `.fileURL` representation a test placed via `setItem`, or
+    /// cached back by `invokeProvider`. Promise writes record no bytes.
     var writtenFileURLs: [URL] {
         lock.withLock {
             storedRepresentations
@@ -155,13 +189,27 @@ final class FakePasteboard: Pasteboard, @unchecked Sendable {
 
     /// Places resident (type, data) pairs, modelling a user copying in the guest.
     ///
-    /// The agent's outbound poll reads these. Clears any promise.
+    /// The agent's outbound poll reads these. Clears any promise. Models one
+    /// pasteboard item; `setItems` models several (a multi-file copy).
     @discardableResult
     func setItem(_ representations: [(type: NSPasteboard.PasteboardType, data: Data)]) -> Bool {
         lock.withLock {
             storedRepresentations = representations
-            promisedTypes.removeAll()
-            provider = nil
+            promisedItems.removeAll()
+            storedChangeCount += 1
+            return true
+        }
+    }
+
+    /// Places several resident pasteboard items, modelling a multi-select copy
+    /// in the guest.
+    ///
+    /// The outbound poll reads each item's `.fileURL` via `itemFileURLs`.
+    @discardableResult
+    func setItems(_ items: [[(type: NSPasteboard.PasteboardType, data: Data)]]) -> Bool {
+        lock.withLock {
+            storedRepresentations = items.flatMap { $0 }
+            promisedItems.removeAll()
             storedChangeCount += 1
             return true
         }
@@ -361,6 +409,83 @@ struct VsockGuestClipboardAgentTests {
                 generation: offer.generation, transferID: transferID, uti: info.uti))
         let transfer = try await collectOutboundTransfer(transferID: transferID, from: hostChannel)
         #expect(transfer.bytes == png)
+    }
+
+    @Test("outbound multiple files: every copied file is offered as its own rep, in order")
+    func outboundMultipleFiles() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        let a = try writeTempFile(name: "a.txt", data: Data("aaa".utf8))
+        let b = try writeTempFile(name: "b.bin", data: Data([1, 2, 3, 4]))
+        defer { try? FileManager.default.removeItem(at: a.deletingLastPathComponent()) }
+        defer { try? FileManager.default.removeItem(at: b.deletingLastPathComponent()) }
+        // A multi-select Finder ⌘C leaves one file URL per pasteboard item.
+        pasteboard.setItems([
+            [(type: .fileURL, data: Data(a.absoluteString.utf8))],
+            [(type: .fileURL, data: Data(b.absoluteString.utf8))],
+        ])
+        await MainActor.run { agent.checkClipboardChange() }
+
+        let offer = try await awaitOffer(on: hostChannel)
+        #expect(offer.repInfo.count == 2)
+        #expect(offer.repInfo.map(\.filename) == ["a.txt", "b.bin"])
+        // Both are non-image files → file-only.
+        #expect(offer.repInfo.allSatisfy { !$0.isInline })
+        #expect(offer.repInfo[1].byteCount == 4)
+    }
+
+    @Test("outbound: a staging-root file among several copied files is dropped, the rest offered")
+    func outboundDropsStagedFileAmongSeveral() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        // Materialize a file into the agent's staging root via an inbound paste.
+        let contents = Data("staged body".utf8)
+        let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 3,
+                reps: [
+                    RepInfo(
+                        uti: txtUTI, byteCount: UInt64(contents.count), filename: "notes.txt",
+                        isInline: false)
+                ]))
+        try await waitUntil { pasteboard.promisedTypesForTesting.contains(.fileURL) }
+        let pull = lazyPull(pasteboard, forType: .fileURL)
+        try await driveInboundStream(
+            generation: 3, uti: txtUTI, filename: "notes.txt", payload: contents, isInline: false,
+            on: hostChannel)
+        let staged = try #require(
+            (try await pull.value).flatMap { String(data: $0, encoding: .utf8) }
+                .flatMap(URL.init(string:)))
+
+        // Copy [the staged file, a fresh file]: the staging-root file is dropped
+        // per-file; only the fresh file is offered back to the host.
+        let fresh = try writeTempFile(name: "fresh.txt", data: Data("fresh".utf8))
+        defer { try? FileManager.default.removeItem(at: fresh.deletingLastPathComponent()) }
+        pasteboard.setItems([
+            [(type: .fileURL, data: Data(staged.absoluteString.utf8))],
+            [(type: .fileURL, data: Data(fresh.absoluteString.utf8))],
+        ])
+        await MainActor.run { agent.checkClipboardChange() }
+
+        let offer = try await awaitOffer(on: hostChannel)
+        #expect(offer.repInfo.map(\.filename) == ["fresh.txt"])
     }
 
     @Test("an empty/filtered pasteboard sends no offer")
@@ -717,6 +842,113 @@ struct VsockGuestClipboardAgentTests {
         #expect(try Data(contentsOf: staged) == png)
     }
 
+    @Test("a repeated .fileURL pull of an inline image file reuses the staged file (no duplicate)")
+    func inboundImageFileRepeatedFileURLPullReusesStagedFile() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        let png = try makeTestPNG()
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 11,
+                reps: [
+                    RepInfo(
+                        uti: UTType.png.identifier, byteCount: UInt64(png.count), filename: "shot.png",
+                        isInline: true)
+                ]))
+        try await waitUntil { pasteboard.promisedTypesForTesting.count == 2 }
+
+        // First `.fileURL` pull stages the inline bytes to a temp file.
+        let pull1 = lazyPull(pasteboard, forType: .fileURL)
+        try await driveInboundStream(
+            generation: 11, uti: UTType.png.identifier, filename: "shot.png", payload: png,
+            isInline: true, on: hostChannel)
+        let url1 = try #require(
+            (try await pull1.value).flatMap { String(data: $0, encoding: .utf8) }
+                .flatMap(URL.init(string:)))
+
+        // A second `.fileURL` pull is a cache hit — NO new request, and the SAME
+        // staged URL (not a `shot (2).png` duplicate from the staging de-dup).
+        let pull2 = lazyPull(pasteboard, forType: .fileURL)
+        let url2 = try #require(
+            (try await pull2.value).flatMap { String(data: $0, encoding: .utf8) }
+                .flatMap(URL.init(string:)))
+        try await expectNoRequest(from: hostChannel)
+        #expect(url1 == url2)
+        #expect(url1.lastPathComponent == "shot.png")
+    }
+
+    @Test("inbound multiple files: each rep is its own promised item; pulls don't cross-talk")
+    func inboundMultipleFilesPromiseAndPull() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
+        let bodyA = Data("first file body".utf8)
+        let bodyB = Data("second file body".utf8)
+        // Two non-image file reps in one offer.
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 9,
+                reps: [
+                    RepInfo(
+                        uti: txtUTI, byteCount: UInt64(bodyA.count), filename: "a.txt",
+                        isInline: false),
+                    RepInfo(
+                        uti: txtUTI, byteCount: UInt64(bodyB.count), filename: "b.txt",
+                        isInline: false),
+                ]))
+        // Two promised items, each promising exactly `.fileURL`.
+        try await waitUntil { pasteboard.promisedItemCountForTesting == 2 }
+        #expect(pasteboard.promisedTypesForTesting == [.fileURL, .fileURL])
+
+        // Pull item 0's `.fileURL` → a request for rep 0 (transfer_id low bits 0).
+        let pull0 = lazyPull(pasteboard, forType: .fileURL, itemIndex: 0)
+        try await driveInboundStream(
+            generation: 9, uti: txtUTI, filename: "a.txt", payload: bodyA, isInline: false,
+            on: hostChannel
+        ) { req in
+            #expect(req.transferID & 0xFFFF == 0)
+        }
+        let staged0 = try #require(
+            (try await pull0.value).flatMap { String(data: $0, encoding: .utf8) }
+                .flatMap(URL.init(string:)))
+        #expect(staged0.lastPathComponent == "a.txt")
+        #expect(try Data(contentsOf: staged0) == bodyA)
+
+        // Pull item 1's `.fileURL` → a distinct request for rep 1 (low bits 1),
+        // with no cache cross-talk: the second file's bytes, not the first's.
+        let pull1 = lazyPull(pasteboard, forType: .fileURL, itemIndex: 1)
+        try await driveInboundStream(
+            generation: 9, uti: txtUTI, filename: "b.txt", payload: bodyB, isInline: false,
+            on: hostChannel
+        ) { req in
+            #expect(req.transferID & 0xFFFF == 1)
+        }
+        let staged1 = try #require(
+            (try await pull1.value).flatMap { String(data: $0, encoding: .utf8) }
+                .flatMap(URL.init(string:)))
+        #expect(staged1.lastPathComponent == "b.txt")
+        #expect(try Data(contentsOf: staged1) == bodyB)
+
+        // Distinct staged files, each with its own (uncrossed) contents.
+        #expect(staged0 != staged1)
+    }
+
     @Test("a second pull for another promised type of the same rep is a cache hit")
     func secondPullSameRepIsCacheHit() async throws {
         let pasteboard = FakePasteboard()
@@ -879,9 +1111,10 @@ struct VsockGuestClipboardAgentTests {
         let pngType = NSPasteboard.PasteboardType(UTType.png.identifier)
         // A hostile/buggy offer: a raw `public.file-url` smuggle rep (filename-
         // bearing, so it would be the FIRST file rep) ahead of the legit PNG file
-        // rep. `promisedTypes` drops the smuggle and promises `.fileURL` for the
-        // PNG; the `.fileURL` pull MUST resolve to the PNG (index 1), not the
-        // smuggle (index 0) — `repIndex(for:)` shares the same sanitization gate.
+        // rep. `promisedItems` drops the smuggle (it carries no promisable item)
+        // and promises `.fileURL` for the PNG; the `.fileURL` pull MUST resolve to
+        // the PNG (index 1), not the smuggle (index 0) — each promised item
+        // carries its own rep index, gated by the same `isPromisable` check.
         try hostChannel.send(
             makeOfferFrame(
                 generation: 7,
@@ -1351,24 +1584,52 @@ struct VsockGuestClipboardAgentTests {
     /// The caller streams the response on the host channel concurrently — e.g.
     /// via `driveInboundStream` — before awaiting `.value`.
     private func lazyPull(
-        _ pasteboard: FakePasteboard, forType type: NSPasteboard.PasteboardType
+        _ pasteboard: FakePasteboard, forType type: NSPasteboard.PasteboardType,
+        itemIndex: Int? = nil
     ) -> Task<Data?, Never> {
         Task.detached {
             await withCheckedContinuation { (cont: CheckedContinuation<Data?, Never>) in
                 DispatchQueue.global(qos: .userInitiated).async {
-                    cont.resume(returning: pasteboard.invokeProvider(forType: type))
+                    cont.resume(
+                        returning: pasteboard.invokeProvider(forType: type, itemIndex: itemIndex))
                 }
             }
         }
     }
 
-    /// Reads the next frame and requires it to be a `ClipboardRequest`.
+    /// Reads frames until a `ClipboardRequest` arrives, draining `ack` frames a
+    /// prior inbound stream left queued (so two sequential pulls on one channel
+    /// don't trip over the first stream's acks).
     private func awaitRequest(on channel: VsockChannel) async throws -> Kernova_V1_ClipboardRequest {
-        let frame = try await nextFrame(from: channel)
-        guard case .clipboardRequest(let req) = frame.payload else {
-            throw TestFailure("Expected ClipboardRequest, got \(String(describing: frame.payload))")
+        while true {
+            let frame = try await nextFrame(from: channel)
+            switch frame.payload {
+            case .clipboardRequest(let req):
+                return req
+            case .clipboardStreamAck:
+                continue
+            default:
+                throw TestFailure(
+                    "Expected ClipboardRequest, got \(String(describing: frame.payload))")
+            }
         }
-        return req
+    }
+
+    /// Reads frames until a `ClipboardOffer` arrives, draining `ack` frames a
+    /// prior inbound stream left queued.
+    private func awaitOffer(on channel: VsockChannel) async throws -> Kernova_V1_ClipboardOffer {
+        while true {
+            let frame = try await nextFrame(from: channel)
+            switch frame.payload {
+            case .clipboardOffer(let offer):
+                return offer
+            case .clipboardStreamAck:
+                continue
+            default:
+                throw TestFailure(
+                    "Expected ClipboardOffer, got \(String(describing: frame.payload))")
+            }
+        }
     }
 
     /// Responds to the agent's lazy pull by streaming the requested rep.
