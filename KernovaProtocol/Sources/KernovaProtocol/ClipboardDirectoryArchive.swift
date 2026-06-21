@@ -129,3 +129,65 @@ public enum ClipboardDirectoryArchive {
         }
     }
 }
+
+extension ClipboardDirectoryArchive {
+    /// UTI for a directory representation (a folder or OS package).
+    ///
+    /// Equals `UTType.folder.identifier`; kept as a literal so the package needn't
+    /// import `UniformTypeIdentifiers`.
+    public static let directoryUTI = "public.folder"
+
+    /// Archives the directory at `directoryURL` into a single `.aar` staged under
+    /// `staging`/`generation` and returns a file representation describing it, or
+    /// `nil` if the archive has no readable size.
+    ///
+    /// The folder name (not the `.aar`) rides in `filename`, the UTI is
+    /// `directoryUTI`, and `isDirectory` is set, so the receiver extracts it back
+    /// into a real folder. Shared by the host intake and the guest agent — both
+    /// import `KernovaProtocol` — so the archive/UTI/sizing rules live in one
+    /// place and can't drift between the two ends. Throws the underlying archive
+    /// error so the caller can log it at its own subsystem (this package stays
+    /// log-free).
+    public static func archivedRepresentation(
+        ofDirectoryAt directoryURL: URL, named folderName: String,
+        into staging: ClipboardFileStaging, generation: UInt64
+    ) throws -> ClipboardContent.Representation? {
+        let archiveURL = try staging.reserveURL(
+            generation: generation, filename: folderName + ".aar")
+        try archive(directoryAt: directoryURL, to: archiveURL)
+        guard
+            let size = try? archiveURL.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > 0
+        else { return nil }
+        return ClipboardContent.Representation(
+            uti: directoryUTI, fileURL: archiveURL, byteCount: size, filename: folderName,
+            isDirectory: true)
+    }
+
+    /// Extracts a directory representation's staged `.aar` into a real folder
+    /// under `staging`/`generation`, returning the folder URL, or `nil` if the
+    /// rep isn't a directory, its archive URL is missing, the volume lacks room,
+    /// or extraction fails.
+    ///
+    /// The free-space check is a best-effort **floor**: `representation.byteCount`
+    /// is the LZFSE-compressed archive size, while extraction writes the larger
+    /// uncompressed tree — so a volume that passes the check can still fill
+    /// mid-extract. That's handled, not guaranteed away: `extract` deletes the
+    /// partial tree on a throw and this returns `nil`, the same graceful outcome
+    /// as a failed file stage.
+    public static func extractedDirectoryURL(
+        for representation: ClipboardContent.Representation,
+        into staging: ClipboardFileStaging, generation: UInt64
+    ) -> URL? {
+        guard representation.isDirectory, let archiveURL = representation.fileURL,
+            staging.hasCapacity(forByteCount: representation.byteCount),
+            let directory = try? staging.reserveDirectory(
+                generation: generation, name: representation.filename)
+        else { return nil }
+        do {
+            try extract(archiveAt: archiveURL, to: directory)
+            return directory
+        } catch {
+            return nil
+        }
+    }
+}

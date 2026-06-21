@@ -172,4 +172,24 @@ struct ClipboardHostPasteboardItemsTests {
             try String(contentsOf: dirURL.appendingPathComponent("sub/n.txt"), encoding: .utf8)
                 == "nested")
     }
+
+    @Test("a directory payload whose archive can't be extracted is dropped (no item)")
+    func directoryExtractionFailureDropsItem() async throws {
+        let staging = makeStaging()
+        defer { staging.sweep() }
+
+        // A directory rep pointing at a non-existent `.aar` — extraction fails, so
+        // no pasteboard item is produced. copyToMac counts this shortfall as a
+        // dropped payload and warns instead of claiming success.
+        let missing = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString)-missing.aar")
+        let content = ClipboardContent(representations: [
+            .init(
+                uti: UTType.folder.identifier, fileURL: missing, byteCount: 100, filename: "Gone",
+                isDirectory: true)
+        ])
+        let items = await ClipboardContentViewController.hostPasteboardItems(
+            for: content, generation: 1, staging: staging)
+        #expect(items.isEmpty)
+    }
 }

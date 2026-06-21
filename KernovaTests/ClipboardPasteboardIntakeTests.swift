@@ -402,14 +402,14 @@ struct ClipboardPasteboardIntakeTests {
         #expect(content.representations[0].fileURL == url)
     }
 
-    @Test("read(fileAt:) resolves an image file directly — the promise-receipt path")
+    @Test("read(filesAt:) resolves a single image file directly — the promise-receipt path")
     func directFileReadImage() throws {
         let png = try makePNG()
         let url = try makeTempFile(name: "promised.png", contents: png)
 
         guard
             case .content(let content, _) = ClipboardPasteboardIntake.read(
-                fileAt: url, allowsBinary: true)
+                filesAt: [url], allowsBinary: true)
         else {
             Issue.record("Expected content")
             return
@@ -419,7 +419,7 @@ struct ClipboardPasteboardIntakeTests {
         #expect(content.representations[0].fileURL == url)
     }
 
-    @Test("read(fileAt:) accepts a file far larger than the old cap (no size limit)")
+    @Test("read(filesAt:) accepts a file far larger than the old cap (no size limit)")
     func directFileReadLargeAccepted() throws {
         // A file over the old 100 MiB per-rep cap is no longer rejected — it
         // becomes a disk-backed rep whose bytes stream on demand. A sparse file
@@ -431,7 +431,7 @@ struct ClipboardPasteboardIntakeTests {
 
         guard
             case .content(let content, _) = ClipboardPasteboardIntake.read(
-                fileAt: url, allowsBinary: true)
+                filesAt: [url], allowsBinary: true)
         else {
             Issue.record("Expected content (no size cap)")
             return

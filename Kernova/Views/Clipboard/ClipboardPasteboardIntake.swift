@@ -146,25 +146,15 @@ enum ClipboardPasteboardIntake {
             || uti == "Apple URL pasteboard type"
     }
 
-    /// Resolves a single dropped/copied file into a disk-backed representation —
-    /// the drag-and-drop file-promise receipt path (screenshot thumbnail,
-    /// Photos, browsers), which delivers one file per completion.
-    ///
-    /// A thin wrapper over `read(filesAt:)`; multi-file pasteboard reads go
-    /// through that directly.
-    static func read(fileAt url: URL, allowsBinary: Bool) -> ClipboardIntakeResult {
-        read(filesAt: [url], allowsBinary: allowsBinary)
-    }
-
-    /// Resolves dropped/copied files into disk-backed representations, one per
-    /// URL in pasteboard order — the expansion for the single-file drag-and-drop
-    /// promise-receipt path.
+    /// Resolves dropped/copied *files* into disk-backed representations, one per
+    /// URL in pasteboard order.
     ///
     /// Files only: a folder URL is skipped here. Each file crosses as a
     /// disk-backed `.file` representation built by `fileRepresentation(at:)`. A
     /// file that fails to stat (or is empty) is skipped and noted; if *every*
-    /// file fails the result is `.rejected`. Multi-select copy/drag (which can
-    /// include folders) uses the `staging`/`generation` overload below.
+    /// file fails the result is `.rejected`. Every gesture that can carry a
+    /// folder (a multi-select copy/drag, the file-promise receipt path) uses the
+    /// `staging`/`generation` overload below instead.
     static func read(filesAt urls: [URL], allowsBinary: Bool) -> ClipboardIntakeResult {
         guard allowsBinary else {
             return .rejected(message: Self.textOnlyTransportMessage)
@@ -254,31 +244,19 @@ enum ClipboardPasteboardIntake {
             filename: url.lastPathComponent)
     }
 
-    /// Archives the directory at `url` into a single `.aar` under
-    /// `staging`/`generation` and returns a `.file` directory representation
-    /// pointing at it, or `nil` if archiving fails (skipped + noted by callers).
+    /// Archives the directory at `url` into a staged directory representation, or
+    /// `nil` if archiving fails (skipped + noted by callers).
     ///
-    /// The folder name (not the `.aar`) rides in `filename`; the archive temp is
-    /// echo-suppressed and swept by the staging generation window.
+    /// A thin logging wrapper over the shared
+    /// `ClipboardDirectoryArchive.archivedRepresentation`, which the guest agent
+    /// also calls so the archive/UTI/sizing rules stay identical on both ends.
     nonisolated private static func directoryRepresentation(
         at url: URL, staging: ClipboardFileStaging, generation: UInt64
     ) -> ClipboardContent.Representation? {
         let folderName = url.lastPathComponent
         do {
-            let archiveURL = try staging.reserveURL(
-                generation: generation, filename: folderName + ".aar")
-            try ClipboardDirectoryArchive.archive(directoryAt: url, to: archiveURL)
-            guard
-                let size = try? archiveURL.resourceValues(forKeys: [.fileSizeKey]).fileSize,
-                size > 0
-            else {
-                logger.warning(
-                    "Archived folder '\(folderName, privacy: .public)' has no readable size")
-                return nil
-            }
-            return ClipboardContent.Representation(
-                uti: UTType.folder.identifier, fileURL: archiveURL, byteCount: size,
-                filename: folderName, isDirectory: true)
+            return try ClipboardDirectoryArchive.archivedRepresentation(
+                ofDirectoryAt: url, named: folderName, into: staging, generation: generation)
         } catch {
             logger.error(
                 "Failed to archive folder '\(folderName, privacy: .public)': \(error.localizedDescription, privacy: .public)"

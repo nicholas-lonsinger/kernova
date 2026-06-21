@@ -612,13 +612,18 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             }
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
+                // A stale archive (this connection was torn down and replaced)
+                // must not touch the live connection's in-flight flag or
+                // bookkeeping — leave the newer archive's `archiveInFlight` intact
+                // (teardown already reset it for the old one).
+                guard self.liveChannel === channel else { return }
                 self.archiveInFlight = false
-                // Stale if the user copied again while we archived, the channel
-                // changed, or every folder failed to archive: let the next poll
-                // handle whatever is on the pasteboard now.
-                guard self.liveChannel === channel,
-                    self.pasteboard.changeCount == changeCount, !reps.isEmpty
-                else { return }
+                // Advance the change-count gate regardless of outcome so a folder
+                // that fails to archive (reps empty) or was superseded isn't
+                // re-walked/re-compressed every 0.5 s poll; a genuine new copy
+                // bumps the count and is picked up on the next tick.
+                self.lastPasteboardChangeCount = changeCount
+                guard self.pasteboard.changeCount == changeCount, !reps.isEmpty else { return }
                 self.sendOfferIfNeeded(
                     ClipboardContent(representations: reps), channel: channel,
                     changeCount: changeCount)
@@ -626,23 +631,20 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         }
     }
 
-    /// Archives the folder for `candidate` into a single `.aar` under
-    /// `staging`/`generation` and returns a `.file` directory representation, or
-    /// `nil` if archiving fails (the folder is then dropped from the offer).
+    /// Archives the folder for `candidate` into a `.file` directory
+    /// representation, or `nil` if archiving fails (the folder is then dropped
+    /// from the offer).
+    ///
+    /// A thin logging wrapper over the shared
+    /// `ClipboardDirectoryArchive.archivedRepresentation`, which the host intake
+    /// also calls so the archive/UTI/sizing rules stay identical on both ends.
     nonisolated private static func archivedDirectoryRep(
         _ candidate: FileCandidate, staging: ClipboardFileStaging, generation: UInt64
     ) -> ClipboardContent.Representation? {
         do {
-            let archiveURL = try staging.reserveURL(
-                generation: generation, filename: candidate.filename + ".aar")
-            try ClipboardDirectoryArchive.archive(directoryAt: candidate.url, to: archiveURL)
-            guard
-                let size = try? archiveURL.resourceValues(forKeys: [.fileSizeKey]).fileSize,
-                size > 0
-            else { return nil }
-            return ClipboardContent.Representation(
-                uti: UTType.folder.identifier, fileURL: archiveURL, byteCount: size,
-                filename: candidate.filename, isDirectory: true)
+            return try ClipboardDirectoryArchive.archivedRepresentation(
+                ofDirectoryAt: candidate.url, named: candidate.filename, into: staging,
+                generation: generation)
         } catch {
             Self.logger.error(
                 "Failed to archive folder '\(candidate.filename, privacy: .public)': \(error.localizedDescription, privacy: .public)"
@@ -893,9 +895,11 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
 
         switch outcome {
         case .delivered(let representation):
-            // The stream layer is offer-agnostic; re-tag a directory rep from the
-            // offer's metadata so `fileURLData` extracts the `.aar` into a folder
-            // instead of pasting the archive file.
+            // RATIONALE: `is_directory` rides the offer, not ClipboardStreamBegin,
+            // so the offer-aware layer re-tags the delivered rep here, mirroring
+            // VsockClipboardService.pull (see its note for why the flag stays off
+            // the stream message). `fileURLData` then extracts the `.aar` into a
+            // real folder instead of pasting the archive file.
             if info.isDirectory {
                 return ClipboardContent.Representation(
                     uti: representation.uti, source: representation.source,
@@ -922,7 +926,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         from representation: ClipboardContent.Representation, repIndex: Int,
         promise: InboundPromise, generation: UInt64
     ) -> Data? {
-        if representation.isDirectory, let archiveURL = representation.fileURL {
+        if representation.isDirectory {
             // A directory rep's bytes are an `.aar` of the tree. Extract it into a
             // real folder and offer that folder's URL so a Finder paste recreates
             // the tree, not the archive file. Cache the extracted folder per rep
@@ -932,20 +936,14 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             {
                 return Data(cached.absoluteString.utf8)
             }
-            // Extraction transiently doubles disk use (archive + extracted tree);
-            // guard it. On failure the partial tree is removed and nothing is
-            // staged, the same outcome as a failed file stage.
-            guard staging.hasCapacity(forByteCount: representation.byteCount),
-                let directory = try? staging.reserveDirectory(
-                    generation: generation, name: representation.filename)
+            // The shared helper (also used by the host) does the free-space floor
+            // check + reserveDirectory + extract, returning nil on any failure.
+            guard
+                let directory = ClipboardDirectoryArchive.extractedDirectoryURL(
+                    for: representation, into: staging, generation: generation)
             else { return nil }
-            do {
-                try ClipboardDirectoryArchive.extract(archiveAt: archiveURL, to: directory)
-                promise.stagedInlineURLs[repIndex] = directory
-                return Data(directory.absoluteString.utf8)
-            } catch {
-                return nil
-            }
+            promise.stagedInlineURLs[repIndex] = directory
+            return Data(directory.absoluteString.utf8)
         }
         if let url = representation.fileURL {
             return Data(url.absoluteString.utf8)

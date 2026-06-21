@@ -95,16 +95,17 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     /// just-copied URL on the pasteboard stays valid across a couple more copies.
     private let staging = ClipboardFileStaging(label: ClipboardContentViewController.stagingLabel)
 
-    /// Monotonic generation for "Copy to Mac" staging, so each copy supersedes
-    /// older staged files instead of accumulating.
-    private var copyToMacGeneration: UInt64 = 1
-
-    /// Monotonic generation for folders archived to *send* to the guest, so each
-    /// send supersedes older archive temps instead of accumulating.
+    /// Monotonic generation for the window's launch-swept staging root.
     ///
-    /// Separate from `copyToMacGeneration` so a send and a copy don't evict each
-    /// other.
-    private var sendGeneration: UInt64 = 1
+    /// Bumped by both "Copy to Mac" (files/folders staged for the pasteboard) and
+    /// outbound folder archiving, so each operation supersedes older staged
+    /// artifacts within `ClipboardFileStaging`'s recency window. One shared
+    /// counter is correct here: both uses key on this *local* counter and one
+    /// `staging` instance, so there is no generation-namespace collision. The
+    /// guest, by contrast, needs a separate `sendStaging` because its inbound
+    /// staging keys on the host's offer generation — a foreign namespace an
+    /// outbound counter could collide with.
+    private var stagingGeneration: UInt64 = 1
 
     /// `true` while a "Copy to Mac" is materializing/writing.
     ///
@@ -488,8 +489,8 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         isCopyingToMac = true
 
         let staging = self.staging
-        let generation = copyToMacGeneration
-        copyToMacGeneration += 1
+        let generation = stagingGeneration
+        stagingGeneration += 1
         // Pull any not-yet-fetched representations first (lazy mode), then build
         // the pasteboard pairs off the main actor: a streamed `.file` payload's
         // temp URL is used as-is; an inline payload's bytes are written inline
@@ -517,7 +518,15 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 for pair in pairs { item.setData(pair.data, forType: pair.type) }
                 return item
             }
-            self.finishCopyToMac(items: items, representationCount: content.representations.count)
+            // Each successfully staged/extracted file payload yields exactly one
+            // item carrying a `.fileURL`; any shortfall is a payload (often a
+            // folder whose extraction failed) silently dropped — surface it rather
+            // than showing an unqualified success.
+            let stagedFileCount = items.filter { $0.types.contains(.fileURL) }.count
+            let droppedFiles = content.filePayloads.count - stagedFileCount
+            self.finishCopyToMac(
+                items: items, representationCount: content.representations.count,
+                droppedFiles: droppedFiles)
         }
     }
 
@@ -597,23 +606,13 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         for representation: ClipboardContent.Representation, generation: UInt64,
         staging: ClipboardFileStaging
     ) -> URL? {
-        if representation.isDirectory, let archiveURL = representation.fileURL {
+        if representation.isDirectory {
             // A directory rep's bytes are an `.aar` of the tree. Extract it into a
             // real folder under the launch-swept root so a Finder paste recreates
-            // the tree, not the archive file. Guard the transient double-disk use
-            // (archive + extracted tree); on a failure the partial tree is removed
-            // and nothing is staged — the same outcome as a failed file stage.
-            guard staging.hasCapacity(forByteCount: representation.byteCount) else { return nil }
-            guard
-                let directory = try? staging.reserveDirectory(
-                    generation: generation, name: representation.filename)
-            else { return nil }
-            do {
-                try ClipboardDirectoryArchive.extract(archiveAt: archiveURL, to: directory)
-                return directory
-            } catch {
-                return nil
-            }
+            // the tree, not the archive file. The shared helper (also used by the
+            // guest agent) does the free-space floor check + extract.
+            return ClipboardDirectoryArchive.extractedDirectoryURL(
+                for: representation, into: staging, generation: generation)
         }
         if let existing = representation.fileURL {
             let adopted = try? staging.adopt(
@@ -641,7 +640,9 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     /// Split from `copyToMac(_:)` so the file-staging step can run off the main
     /// actor in between. `writeObjects` with several `NSPasteboardItem`s is the
     /// multi-item write a Finder paste turns into N files.
-    private func finishCopyToMac(items: [NSPasteboardItem], representationCount: Int) {
+    private func finishCopyToMac(
+        items: [NSPasteboardItem], representationCount: Int, droppedFiles: Int
+    ) {
         // A file payload whose staging failed contributes an empty item; drop
         // empties. If nothing survives, surface the failure rather than clearing
         // the Mac clipboard to write nothing.
@@ -655,9 +656,17 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         if pasteboard.writeObjects(nonEmpty) {
-            indicatorView.showTransientMessage("Copied to Mac clipboard", style: .info)
+            if droppedFiles > 0 {
+                // Partial success: some payloads (e.g. a folder that failed to
+                // extract) were dropped — don't claim an unqualified success.
+                indicatorView.showTransientMessage(
+                    "Copied to Mac clipboard — \(droppedFiles) item\(droppedFiles == 1 ? "" : "s") couldn't be prepared",
+                    style: .warning)
+            } else {
+                indicatorView.showTransientMessage("Copied to Mac clipboard", style: .info)
+            }
             Self.logger.info(
-                "Copied clipboard buffer to host pasteboard (\(representationCount, privacy: .public) reps, \(nonEmpty.count, privacy: .public) items)"
+                "Copied clipboard buffer to host pasteboard (\(representationCount, privacy: .public) reps, \(nonEmpty.count, privacy: .public) items, \(droppedFiles, privacy: .public) dropped)"
             )
         } else {
             indicatorView.showTransientMessage("Couldn't write to the Mac clipboard", style: .error)
@@ -686,8 +695,8 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     /// Shared by the Paste / responder path and drag-and-drop.
     private func resolveAndApply(pendingFiles urls: [URL], allowsBinary: Bool) {
         let staging = self.staging
-        let generation = sendGeneration
-        sendGeneration += 1
+        let generation = stagingGeneration
+        stagingGeneration += 1
         // A folder archives eagerly; warn the user it may take a moment. A cheap
         // stat only — the tree walk happens off-main in the resolve below.
         if Self.containsDirectory(urls) {
@@ -837,8 +846,18 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 }
                 guard !firstFileGate.taken else { return }
                 firstFileGate.taken = true
-                _ = self.apply(
-                    intake: ClipboardPasteboardIntake.read(fileAt: url, allowsBinary: allowsBinary))
+                // Resolve off the main actor through the archive-aware overload so
+                // a promised *folder* is archived just like a concrete file-URL
+                // drag, instead of being silently rejected as "unreadable" (a
+                // directory has no `.fileSize`). Still single-item — the gate above
+                // takes only the first promised entry.
+                let generation = self.stagingGeneration
+                self.stagingGeneration += 1
+                let staging = self.staging
+                let resolved = await ClipboardPasteboardIntake.read(
+                    filesAt: [url], allowsBinary: allowsBinary, staging: staging,
+                    generation: generation)
+                _ = self.apply(intake: resolved)
             }
         }
     }
