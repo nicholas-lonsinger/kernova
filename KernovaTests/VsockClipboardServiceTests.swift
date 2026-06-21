@@ -1230,6 +1230,68 @@ struct VsockClipboardServiceTests {
         #expect(service.clipboardContent.representations.allSatisfy { !$0.isPendingRemote })
     }
 
+    @Test("materializeForCopy re-tags a directory offer's rep as a directory")
+    func copyReTagsDirectoryRep() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        service.start()
+        defer { service.stop() }
+
+        // The bytes the "guest" streams are an `.aar` of a small tree.
+        let src = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            .appendingPathComponent("MyFolder", isDirectory: true)
+        try FileManager.default.createDirectory(at: src, withIntermediateDirectories: true)
+        try "x".write(to: src.appendingPathComponent("f.txt"), atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
+        let aarDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: aarDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: aarDir) }
+        let aar = aarDir.appendingPathComponent("MyFolder.aar")
+        try ClipboardDirectoryArchive.archive(directoryAt: src, to: aar)
+        let aarBytes = try Data(contentsOf: aar)
+
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        responder.register(
+            generation: 11, repIndex: 0, uti: UTType.folder.identifier, bytes: aarBytes,
+            filename: "MyFolder", isInline: false)
+        responder.start()
+
+        // The offer carries the directory flag; the offer-agnostic stream layer
+        // does not, so the service must re-tag the delivered rep from it.
+        var offer = Frame()
+        offer.protocolVersion = 1
+        offer.clipboardOffer = Kernova_V1_ClipboardOffer.with {
+            $0.generation = 11
+            $0.repInfo = [
+                Kernova_V1_ClipboardRepresentationInfo.with {
+                    $0.uti = UTType.folder.identifier
+                    $0.byteCount = UInt64(aarBytes.count)
+                    $0.filename = "MyFolder"
+                    $0.isInline = false
+                    $0.isDirectory = true
+                }
+            ]
+        }
+        try guest.send(offer)
+        try await waitUntil { service.clipboardContent.representations.count == 1 }
+
+        let resolved = await service.materializeForCopy()
+        #expect(resolved.representations.count == 1)
+        let rep = try #require(resolved.representations.first)
+        // The re-tag carried the directory flag from the offer onto the rep.
+        #expect(rep.isDirectory)
+        // Its bytes are the streamed `.aar`, ready to extract on Copy-to-Mac.
+        let url = try #require(rep.fileURL)
+        #expect(try Data(contentsOf: url) == aarBytes)
+    }
+
     @Test("materializeForCopy resolves preview-pulled reps without re-requesting them")
     func copyReusesPreviewMaterializedReps() async throws {
         let (guest, host) = try makePair()

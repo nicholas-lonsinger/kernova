@@ -488,6 +488,124 @@ struct VsockGuestClipboardAgentTests {
         #expect(offer.repInfo.map(\.filename) == ["fresh.txt"])
     }
 
+    // MARK: - Folders (Phase 2)
+
+    @Test("outbound copied folder: archived, offered as a directory rep, streamed as a valid archive")
+    func outboundCopiedFolderOfferAndStream() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        // A copied folder leaves one file URL on the pasteboard (Finder ⌘C).
+        let folder = try writeTempFolder(
+            name: "Project",
+            files: [("README.md", Data("readme".utf8)), ("sub/n.txt", Data("nested".utf8))])
+        defer { try? FileManager.default.removeItem(at: folder.deletingLastPathComponent()) }
+        pasteboard.setItem([(type: .fileURL, data: Data(folder.absoluteString.utf8))])
+        await MainActor.run { agent.checkClipboardChange() }
+
+        // The archive runs off-main; the offer arrives once it lands.
+        let offer = try await awaitOffer(on: hostChannel)
+        #expect(offer.repInfo.count == 1)
+        let info = try #require(offer.repInfo.first)
+        #expect(info.isDirectory)
+        #expect(info.uti == UTType.folder.identifier)
+        #expect(info.filename == "Project")
+        #expect(!info.isInline)
+        #expect(info.byteCount > 0)
+
+        // Pull the rep: the streamed bytes are an `.aar` that extracts to the tree.
+        let transferID: UInt64 = (offer.generation << 16) | 0
+        try hostChannel.send(
+            makeRequestFrame(generation: offer.generation, transferID: transferID, uti: info.uti))
+        let transfer = try await collectOutboundTransfer(
+            transferID: transferID, from: hostChannel, timeout: .seconds(10))
+        #expect(!transfer.begin.isInline)
+        #expect(transfer.begin.filename == "Project")
+
+        let aar = try writeTempFile(name: "got.aar", data: transfer.bytes)
+        defer { try? FileManager.default.removeItem(at: aar.deletingLastPathComponent()) }
+        let dest = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: dest, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dest) }
+        try ClipboardDirectoryArchive.extract(archiveAt: aar, to: dest)
+        #expect(
+            try String(contentsOf: dest.appendingPathComponent("README.md"), encoding: .utf8)
+                == "readme")
+        #expect(
+            try String(contentsOf: dest.appendingPathComponent("sub/n.txt"), encoding: .utf8)
+                == "nested")
+    }
+
+    @Test("inbound directory offer: promises only .fileURL and extracts into a real folder")
+    func inboundDirectoryExtractsToFolder() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        // Build the archive the host would stream for the folder.
+        let src = try writeTempFolder(
+            name: "Shared",
+            files: [("hello.txt", Data("hi".utf8)), ("d/inner.txt", Data("deep".utf8))])
+        defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
+        let aarDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: aarDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: aarDir) }
+        let aar = aarDir.appendingPathComponent("Shared.aar")
+        try ClipboardDirectoryArchive.archive(directoryAt: src, to: aar)
+        let aarBytes = try Data(contentsOf: aar)
+
+        // The host offers one directory rep.
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 7,
+                reps: [
+                    RepInfo(
+                        uti: UTType.folder.identifier, byteCount: UInt64(aarBytes.count),
+                        filename: "Shared", isInline: false, isDirectory: true)
+                ]))
+
+        // The guest promises exactly one item, offering only `.fileURL`.
+        try await waitUntil { pasteboard.promisedTypesForTesting.contains(.fileURL) }
+        #expect(pasteboard.promisedItemCountForTesting == 1)
+        #expect(pasteboard.promisedTypesForTesting == [.fileURL])
+
+        // The OS pulls `.fileURL`; the host streams the `.aar`; the guest extracts.
+        let pull = lazyPull(pasteboard, forType: .fileURL)
+        try await driveInboundStream(
+            generation: 7, uti: UTType.folder.identifier, filename: "Shared", payload: aarBytes,
+            isInline: false, on: hostChannel)
+        let folderURL = try #require(
+            (try await pull.value).flatMap { String(data: $0, encoding: .utf8) }
+                .flatMap(URL.init(string:)))
+
+        var isDir: ObjCBool = false
+        #expect(
+            FileManager.default.fileExists(atPath: folderURL.path, isDirectory: &isDir)
+                && isDir.boolValue)
+        #expect(folderURL.lastPathComponent == "Shared")
+        #expect(
+            try String(contentsOf: folderURL.appendingPathComponent("hello.txt"), encoding: .utf8)
+                == "hi")
+        #expect(
+            try String(contentsOf: folderURL.appendingPathComponent("d/inner.txt"), encoding: .utf8)
+                == "deep")
+    }
+
     @Test("an empty/filtered pasteboard sends no offer")
     func filteredTypesProduceNoOffer() async throws {
         let pasteboard = FakePasteboard()
@@ -1705,6 +1823,20 @@ struct VsockGuestClipboardAgentTests {
                 colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
             ))
         return try #require(rep.representation(using: .png, properties: [:]))
+    }
+
+    private func writeTempFolder(name: String, files: [(String, Data)]) throws -> URL {
+        let parent = FileManager.default.temporaryDirectory
+            .appendingPathComponent("KernovaAgentFolder-\(UUID().uuidString)", isDirectory: true)
+        let folder = parent.appendingPathComponent(name, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        for (path, data) in files {
+            let fileURL = folder.appendingPathComponent(path)
+            try FileManager.default.createDirectory(
+                at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: fileURL)
+        }
+        return folder
     }
 
     private func writeTempFile(name: String, data: Data) throws -> URL {

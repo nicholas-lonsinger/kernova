@@ -140,6 +140,18 @@ message ClipboardRepresentationInfo {
   // sender's inline-vs-file decision so the receiver chooses its sink (RAM vs
   // temp file) without re-deriving the rule.
   bool is_inline = 4;
+
+  // Whether this file representation is a *directory* (folder, or an OS
+  // package such as .app/.rtfd). When set, the streamed bytes are an
+  // in-process AppleArchive (.aar, LZFSE) of the tree, not the file itself;
+  // the receiver extracts them into a real directory and offers that folder's
+  // URL so a Finder paste recreates the tree. Implies a non-empty `filename`
+  // (the folder name, without an archive suffix) and `is_inline = false`. The
+  // stream layer is offer-agnostic, so this flag is re-applied to the
+  // delivered representation by the offer-aware layer on the receiver. Excluded
+  // from the content digest — the archive's SHA-256 and the folded filename
+  // already identify it.
+  bool is_directory = 5;
 }
 
 // Sent by either side to advertise that fresh clipboard content is available.

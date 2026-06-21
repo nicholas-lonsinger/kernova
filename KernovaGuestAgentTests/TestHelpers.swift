@@ -150,12 +150,17 @@ struct RepInfo {
     var byteCount: UInt64
     var filename: String
     var isInline: Bool
+    var isDirectory: Bool
 
-    init(uti: String, byteCount: UInt64, filename: String = "", isInline: Bool) {
+    init(
+        uti: String, byteCount: UInt64, filename: String = "", isInline: Bool,
+        isDirectory: Bool = false
+    ) {
         self.uti = uti
         self.byteCount = byteCount
         self.filename = filename
         self.isInline = isInline
+        self.isDirectory = isDirectory
     }
 
     /// A single inline text representation (`public.utf8-plain-text`).
@@ -181,6 +186,7 @@ func makeOfferFrame(generation: UInt64, reps: [RepInfo]) -> Frame {
                 $0.byteCount = rep.byteCount
                 $0.filename = rep.filename
                 $0.isInline = rep.isInline
+                $0.isDirectory = rep.isDirectory
             }
         }
     }

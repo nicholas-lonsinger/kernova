@@ -71,11 +71,30 @@ public struct ClipboardContent: Equatable, Sendable {
         /// distinguishable — required once a payload can carry several files.
         public let filename: String
 
+        /// `true` when this file representation is a *directory* (folder, or an
+        /// OS package such as `.app`/`.rtfd`) whose bytes are an in-process
+        /// AppleArchive of the tree rather than a single file's bytes.
+        ///
+        /// The receiver extracts the archive into a real directory and offers
+        /// that folder's URL, so a Finder paste recreates the tree. Implies a
+        /// non-empty `filename` (the folder name, no archive suffix) and a
+        /// file-backed, non-inline source.
+        ///
+        /// **Excluded from the digest:** the archive's SHA-256 (folded via the
+        /// `.file` source) and the folded `filename` already identify the
+        /// content; the flag only changes how the receiver *materializes* it,
+        /// and the stream layer is offer-agnostic, so a receiver re-applies it
+        /// to the delivered representation from the offer's metadata.
+        public let isDirectory: Bool
+
         /// Creates a representation from an explicit byte source.
-        public init(uti: String, source: Source, filename: String = "") {
+        public init(
+            uti: String, source: Source, filename: String = "", isDirectory: Bool = false
+        ) {
             self.uti = uti
             self.source = source
             self.filename = filename
+            self.isDirectory = isDirectory
         }
 
         /// Creates an in-memory representation from a UTI and its raw bytes,
@@ -92,21 +111,30 @@ public struct ClipboardContent: Equatable, Sendable {
         /// `sha256` is the byte digest once a transfer has computed it (reused
         /// as the content digest so a multi-GB file is never re-hashed); `nil`
         /// when the file is only named (offer time on the sender side).
+        /// `isDirectory` marks a folder/package whose bytes are an AppleArchive
+        /// of the tree (the URL points at the `.aar`, not the original folder).
         public init(
-            uti: String, fileURL: URL, byteCount: Int, sha256: Data? = nil, filename: String
+            uti: String, fileURL: URL, byteCount: Int, sha256: Data? = nil, filename: String,
+            isDirectory: Bool = false
         ) {
             self.init(
                 uti: uti,
                 source: .file(url: fileURL, byteCount: byteCount, sha256: sha256),
-                filename: filename
+                filename: filename,
+                isDirectory: isDirectory
             )
         }
 
         /// Creates a metadata-only placeholder for a peer-offered representation
         /// whose bytes have not been pulled — the lazy-receive preview, replaced
         /// by `.inMemory`/`.file` once a `ClipboardRequest` streams the bytes.
-        public init(pendingRemoteUTI uti: String, byteCount: Int, filename: String = "") {
-            self.init(uti: uti, source: .pendingRemote(byteCount: byteCount), filename: filename)
+        public init(
+            pendingRemoteUTI uti: String, byteCount: Int, filename: String = "",
+            isDirectory: Bool = false
+        ) {
+            self.init(
+                uti: uti, source: .pendingRemote(byteCount: byteCount), filename: filename,
+                isDirectory: isDirectory)
         }
 
         /// Size of the representation's bytes, without loading a file-backed
@@ -286,7 +314,11 @@ public struct ClipboardContent: Equatable, Sendable {
     /// Length prefixes prevent collisions from shifting bytes across the
     /// uti/filename/payload or representation boundaries; a one-byte source tag
     /// separates the inline-bytes and file-digest domains so the two can never
-    /// alias.
+    /// alias. `isDirectory` is deliberately **not** hashed — the archive's
+    /// SHA-256 (folded via the `.file` source) plus the folded folder name
+    /// already identify a directory rep, and the flag is re-derived from the
+    /// offer on the receiver, so hashing it would only risk an asymmetry
+    /// between the two ends.
     private static func computeDigest(of representations: [Representation]) -> Data {
         var hasher = SHA256()
         for representation in representations {

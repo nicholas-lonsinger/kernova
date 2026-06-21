@@ -652,6 +652,18 @@ final class VsockClipboardService: ClipboardServicing {
             // visible — another rep may still have failed to arrive.
             if case .diskFull = lastTransferIssue?.kind {} else { lastTransferIssue = nil }
         }
+        // RATIONALE: `is_directory` rides the ClipboardOffer, not
+        // ClipboardStreamBegin, so the offer-aware layer re-tags the delivered rep
+        // here. Begin already carries `is_inline`/`filename`, so it *could* carry
+        // `is_directory` too — but keeping the flag off the stream message avoids a
+        // second wire change, and every receiver path materializes through this
+        // offer-correlated layer. The window then extracts the staged `.aar` into a
+        // real folder instead of pasting the archive file. (Mirrored in the guest's
+        // `pullRepresentation`.)
+        if let rep, info.isDirectory {
+            return ClipboardContent.Representation(
+                uti: rep.uti, source: rep.source, filename: rep.filename, isDirectory: true)
+        }
         return rep
     }
 
@@ -710,6 +722,7 @@ final class VsockClipboardService: ClipboardServicing {
             $0.byteCount = UInt64(representation.byteCount)
             $0.filename = representation.filename
             $0.isInline = representation.shouldInlineOnPasteboard
+            $0.isDirectory = representation.isDirectory
         }
     }
 }

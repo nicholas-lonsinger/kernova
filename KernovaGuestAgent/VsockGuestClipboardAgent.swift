@@ -171,6 +171,24 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// connect/teardown/disable.
     private let staging: ClipboardFileStaging
 
+    /// Holds folder archives built to *send* to the host, kept separate from
+    /// `staging` so an outbound archive's generation can't share a directory
+    /// with an inbound transfer (which keys on the host's offer generation).
+    ///
+    /// Swept alongside `staging`.
+    private let sendStaging: ClipboardFileStaging
+
+    /// Monotonic generation for outbound folder archives in `sendStaging`, so a
+    /// new send supersedes older archive temps instead of accumulating.
+    private var sendArchiveGeneration: UInt64 = 1
+
+    /// `true` while an off-main folder archive for an outbound offer is running,
+    /// so overlapping 0.5 s polls don't kick off a second archive of the same
+    /// content.
+    ///
+    /// Reset on the archive's completion and on teardown.
+    private var archiveInFlight = false
+
     private var pollingTimer: DispatchSourceTimer?
 
     /// Whether clipboard sync is currently allowed by host policy.
@@ -227,6 +245,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         self.client = client
         self.staging = ClipboardFileStaging(
             label: "agent", tempRoot: stagingTempRoot, freeSpaceProvider: freeSpaceProvider)
+        self.sendStaging = ClipboardFileStaging(
+            label: "agent-send", tempRoot: stagingTempRoot, freeSpaceProvider: freeSpaceProvider)
         self.lastPasteboardChangeCount = pasteboard.changeCount
         // Default-disabled: pause the reconnect loop until the host enables.
         self.client.pause()
@@ -236,6 +256,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
 
     func start() {
         staging.sweep()
+        sendStaging.sweep()
         client.start { [weak self] channel in
             await self?.serve(channel: channel)
         }
@@ -262,6 +283,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             pollingTimer = nil
             teardownConnectionState()
             staging.sweep()
+            sendStaging.sweep()
             Self.logger.notice("Clipboard sharing disabled by host policy")
         }
     }
@@ -274,6 +296,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             self?.pollingTimer = nil
             self?.teardownConnectionState()
             self?.staging.sweep()
+            self?.sendStaging.sweep()
         }
         Self.logger.notice("Vsock clipboard agent stopped")
     }
@@ -290,6 +313,9 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         pendingOutbound = nil
         currentOutboundGeneration.set(0)
         inboundPromise = nil
+        // A stale in-flight archive's completion checks `liveChannel` and drops
+        // itself; clear the flag now so the next connection can archive again.
+        archiveInFlight = false
         // liveProviders are NOT dropped here: Apple requires a data provider stay
         // alive while its item is still on the pasteboard. They're released when
         // pasteboardFinishedWithDataProvider fires (a later offer/clear overwrites
@@ -421,16 +447,23 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         // Copied *files* (Finder ⌘C) leave one file URL per pasteboard item —
         // build a disk-backed rep from each (a stat, no read, no size cap); the
         // bytes stream later when the host requests them. A multi-select copy
-        // offers all of them.
+        // offers all of them. A copied *folder* must be archived first.
         let fileCandidates = fileExpansionCandidates()
         if !fileCandidates.isEmpty {
-            let content = ClipboardContent(
-                representations: fileCandidates.map { candidate in
-                    ClipboardContent.Representation(
-                        uti: candidate.type.identifier, fileURL: candidate.url,
-                        byteCount: candidate.byteCount, filename: candidate.filename)
-                })
-            sendOfferIfNeeded(content, channel: channel, changeCount: currentCount)
+            if fileCandidates.contains(where: { $0.isDirectory }) {
+                // A folder must be archived (eagerly, off the main queue) before
+                // it can be offered — the offer needs the archive's size and the
+                // stream its SHA-256. Offer once the archive lands back on main.
+                archiveAndOffer(fileCandidates, channel: channel, changeCount: currentCount)
+            } else {
+                let content = ClipboardContent(
+                    representations: fileCandidates.map { candidate in
+                        ClipboardContent.Representation(
+                            uti: candidate.type.identifier, fileURL: candidate.url,
+                            byteCount: candidate.byteCount, filename: candidate.filename)
+                    })
+                sendOfferIfNeeded(content, channel: channel, changeCount: currentCount)
+            }
             return
         }
 
@@ -504,31 +537,120 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         }
     }
 
-    /// Cheap main-queue metadata check for copied *files*, one per pasteboard
-    /// item.
+    /// One on-disk pasteboard file or folder gathered for an outbound offer.
     ///
-    /// Returns the file URL, content type, name, and stat'd size for each on-disk
-    /// file — with no size cap, since the bytes are streamed on demand rather
-    /// than read here. A file already inside our own staging root (one we
-    /// materialized from a prior inbound paste) is skipped per file so it can't
-    /// be offered back to the host (echo suppression for files).
-    private func fileExpansionCandidates()
-        -> [(url: URL, type: UTType, filename: String, byteCount: Int)]
-    {
-        var candidates: [(url: URL, type: UTType, filename: String, byteCount: Int)] = []
-        // Skip per file: one inside our own staging root was materialized from a
-        // prior inbound paste, so it must not be offered back (file echo
-        // suppression).
+    /// A folder (`isDirectory`) carries no `byteCount` yet — it's filled in once
+    /// the folder is archived; a file's `byteCount` is its stat'd size.
+    private struct FileCandidate {
+        let url: URL
+        let type: UTType
+        let filename: String
+        let byteCount: Int
+        let isDirectory: Bool
+    }
+
+    /// Cheap main-queue metadata check for copied *files and folders*, one per
+    /// pasteboard item.
+    ///
+    /// Returns the URL, content type, name, and (for a file) stat'd size of each
+    /// on-disk item — no size cap, since file bytes stream on demand and a folder
+    /// is archived later. A directory is flagged via `.isDirectoryKey` (its inode
+    /// `.fileSize` is meaningless, so it's not gated on size) and tagged
+    /// `public.folder`. An item inside our own staging root (materialized from a
+    /// prior inbound paste) is skipped per item so it can't be offered back to
+    /// the host (echo suppression).
+    private func fileExpansionCandidates() -> [FileCandidate] {
+        var candidates: [FileCandidate] = []
         for url in pasteboard.itemFileURLs where !staging.isInStagingRoot(url) {
-            guard let values = try? url.resourceValues(forKeys: [.contentTypeKey, .fileSizeKey]),
-                let type = values.contentType
+            guard
+                let values = try? url.resourceValues(forKeys: [
+                    .contentTypeKey, .isDirectoryKey, .fileSizeKey,
+                ])
             else { continue }
-            let size = values.fileSize ?? 0
-            guard size > 0 else { continue }
-            candidates.append(
-                (url: url, type: type, filename: url.lastPathComponent, byteCount: size))
+            if values.isDirectory == true {
+                candidates.append(
+                    FileCandidate(
+                        url: url, type: .folder, filename: url.lastPathComponent, byteCount: 0,
+                        isDirectory: true))
+            } else {
+                guard let type = values.contentType, let size = values.fileSize, size > 0
+                else { continue }
+                candidates.append(
+                    FileCandidate(
+                        url: url, type: type, filename: url.lastPathComponent, byteCount: size,
+                        isDirectory: false))
+            }
         }
         return candidates
+    }
+
+    /// Archives any folder candidate off the main queue, then offers the mixed
+    /// file/folder content back on main.
+    ///
+    /// A folder tree walk + LZFSE compress would freeze the agent's run loop, so
+    /// it hops to a global queue and back. The `archiveInFlight` flag keeps an
+    /// overlapping 0.5 s poll from launching a second archive of the same
+    /// content; the completion drops itself if the user copied again (the
+    /// `changeCount` moved) or the connection changed while archiving.
+    private func archiveAndOffer(
+        _ candidates: [FileCandidate], channel: VsockChannel, changeCount: Int
+    ) {
+        guard !archiveInFlight else { return }
+        archiveInFlight = true
+        let generation = sendArchiveGeneration
+        sendArchiveGeneration += 1
+        let sendStaging = self.sendStaging
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let reps: [ClipboardContent.Representation] = candidates.compactMap { candidate in
+                if candidate.isDirectory {
+                    return Self.archivedDirectoryRep(
+                        candidate, staging: sendStaging, generation: generation)
+                }
+                return ClipboardContent.Representation(
+                    uti: candidate.type.identifier, fileURL: candidate.url,
+                    byteCount: candidate.byteCount, filename: candidate.filename)
+            }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                // A stale archive (this connection was torn down and replaced)
+                // must not touch the live connection's in-flight flag or
+                // bookkeeping — leave the newer archive's `archiveInFlight` intact
+                // (teardown already reset it for the old one).
+                guard self.liveChannel === channel else { return }
+                self.archiveInFlight = false
+                // Advance the change-count gate regardless of outcome so a folder
+                // that fails to archive (reps empty) or was superseded isn't
+                // re-walked/re-compressed every 0.5 s poll; a genuine new copy
+                // bumps the count and is picked up on the next tick.
+                self.lastPasteboardChangeCount = changeCount
+                guard self.pasteboard.changeCount == changeCount, !reps.isEmpty else { return }
+                self.sendOfferIfNeeded(
+                    ClipboardContent(representations: reps), channel: channel,
+                    changeCount: changeCount)
+            }
+        }
+    }
+
+    /// Archives the folder for `candidate` into a `.file` directory
+    /// representation, or `nil` if archiving fails (the folder is then dropped
+    /// from the offer).
+    ///
+    /// A thin logging wrapper over the shared
+    /// `ClipboardDirectoryArchive.archivedRepresentation`, which the host intake
+    /// also calls so the archive/UTI/sizing rules stay identical on both ends.
+    nonisolated private static func archivedDirectoryRep(
+        _ candidate: FileCandidate, staging: ClipboardFileStaging, generation: UInt64
+    ) -> ClipboardContent.Representation? {
+        do {
+            return try ClipboardDirectoryArchive.archivedRepresentation(
+                ofDirectoryAt: candidate.url, named: candidate.filename, into: staging,
+                generation: generation)
+        } catch {
+            Self.logger.error(
+                "Failed to archive folder '\(candidate.filename, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+            return nil
+        }
     }
 
     // MARK: - Frame handlers (main queue)
@@ -773,6 +895,16 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
 
         switch outcome {
         case .delivered(let representation):
+            // RATIONALE: `is_directory` rides the offer, not ClipboardStreamBegin,
+            // so the offer-aware layer re-tags the delivered rep here, mirroring
+            // VsockClipboardService.pull (see its note for why the flag stays off
+            // the stream message). `fileURLData` then extracts the `.aar` into a
+            // real folder instead of pasting the archive file.
+            if info.isDirectory {
+                return ClipboardContent.Representation(
+                    uti: representation.uti, source: representation.source,
+                    filename: representation.filename, isDirectory: true)
+            }
             return representation
         case .aborted(let abort):
             Self.logger.warning(
@@ -794,6 +926,25 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         from representation: ClipboardContent.Representation, repIndex: Int,
         promise: InboundPromise, generation: UInt64
     ) -> Data? {
+        if representation.isDirectory {
+            // A directory rep's bytes are an `.aar` of the tree. Extract it into a
+            // real folder and offer that folder's URL so a Finder paste recreates
+            // the tree, not the archive file. Cache the extracted folder per rep
+            // so a repeated `.fileURL` pull returns it instead of re-extracting.
+            if let cached = promise.stagedInlineURLs[repIndex],
+                FileManager.default.fileExists(atPath: cached.path)
+            {
+                return Data(cached.absoluteString.utf8)
+            }
+            // The shared helper (also used by the host) does the free-space floor
+            // check + reserveDirectory + extract, returning nil on any failure.
+            guard
+                let directory = ClipboardDirectoryArchive.extractedDirectoryURL(
+                    for: representation, into: staging, generation: generation)
+            else { return nil }
+            promise.stagedInlineURLs[repIndex] = directory
+            return Data(directory.absoluteString.utf8)
+        }
         if let url = representation.fileURL {
             return Data(url.absoluteString.utf8)
         }
@@ -891,8 +1042,10 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// only as a materialized file URL).
     ///
     /// Non-file content and image file
-    /// payloads inline; every other file payload is file-only.
+    /// payloads inline; every other file payload is file-only. A directory is
+    /// always file-only — its bytes are an archive of the tree, never inlined.
     static func shouldInline(_ representation: ClipboardContent.Representation) -> Bool {
+        if representation.isDirectory { return false }
         if representation.filename.isEmpty { return true }
         return UTType(representation.uti)?.conforms(to: .image) == true
     }
@@ -922,6 +1075,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             $0.byteCount = UInt64(representation.byteCount)
             $0.filename = representation.filename
             $0.isInline = shouldInline(representation)
+            $0.isDirectory = representation.isDirectory
         }
     }
 }

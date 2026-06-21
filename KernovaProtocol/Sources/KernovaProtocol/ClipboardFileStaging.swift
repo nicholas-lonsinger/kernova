@@ -204,6 +204,51 @@ public final class ClipboardFileStaging: @unchecked Sendable {
         return dest
     }
 
+    /// Reserves an empty child directory named exactly `name` under the
+    /// generation directory, for the receiver to extract a directory tree into.
+    ///
+    /// `makeSink`/`adopt` are per-file (a `Sink` appends bytes, `adopt`
+    /// hardlinks a single file); neither materializes a tree. This creates an
+    /// empty directory for `ClipboardDirectoryArchive.extract(...)` to populate.
+    /// The directory is nested under a fresh UUID parent so it keeps the *exact*
+    /// folder name — a sibling staged `.aar` of the same name (the streamed
+    /// archive lands beside it) can't force a Finder-style ` (n)` suffix, which
+    /// would rename the pasted folder. `name` is sanitized to a single path
+    /// component so a crafted offer can't escape the generation dir (defense in
+    /// depth alongside AppleArchive's own confinement). The extracted tree rides
+    /// generation rotation + the teardown sweep, and `isInStagingRoot` (a prefix
+    /// check) echo-suppresses it.
+    ///
+    /// - Throws: a filesystem error if the directory can't be created.
+    public func reserveDirectory(generation: UInt64, name: String) throws -> URL {
+        lock.lock()
+        defer { lock.unlock() }
+        let dir = try directory(for: generation)
+        let parent = dir.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let url = parent.appendingPathComponent(Self.sanitize(name), isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    /// Reserves a unique destination URL under the generation directory for the
+    /// sender's directory archive before it is offered.
+    ///
+    /// Unlike `makeSink`, no `Sink` is returned: the caller writes the bytes
+    /// itself (AppleArchive opens its own stream at the returned URL). An empty
+    /// placeholder claims the name so a later reserve/sink/adopt in the same
+    /// generation can't collide on it, and the file rides generation rotation +
+    /// the teardown sweep.
+    ///
+    /// - Throws: a filesystem error if the directory can't be created.
+    public func reserveURL(generation: UInt64, filename: String) throws -> URL {
+        lock.lock()
+        defer { lock.unlock() }
+        let dir = try directory(for: generation)
+        let url = Self.uniqueDestination(in: dir, filename: filename)
+        FileManager.default.createFile(atPath: url.path, contents: nil)
+        return url
+    }
+
     /// Removes the entire staging root — crash orphans and all live generations.
     ///
     /// Call on agent start/stop and capability disable.

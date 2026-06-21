@@ -181,4 +181,72 @@ struct ClipboardFileStagingTests {
         #expect(sink.url.lastPathComponent == "clipboard-file")
         #expect(FileManager.default.fileExists(atPath: sink.url.path))
     }
+
+    // MARK: - Directory / tree reservations (Phase 2)
+
+    @Test("reserveURL claims a placeholder; same-named reserves get distinct paths")
+    func reserveURLClaimsAndDedups() throws {
+        let staging = makeStaging()
+        defer { staging.sweep() }
+
+        let a = try staging.reserveURL(generation: 1, filename: "Folder.aar")
+        // An empty placeholder claims the name so a later reserve can't collide.
+        #expect(FileManager.default.fileExists(atPath: a.path))
+        #expect(a.lastPathComponent == "Folder.aar")
+
+        let b = try staging.reserveURL(generation: 1, filename: "Folder.aar")
+        #expect(a != b)
+        #expect(b.lastPathComponent == "Folder (2).aar")
+    }
+
+    @Test("reserveDirectory creates an empty directory named exactly `name`")
+    func reserveDirectoryKeepsName() throws {
+        let staging = makeStaging()
+        defer { staging.sweep() }
+
+        let dir = try staging.reserveDirectory(generation: 1, name: "MyFolder")
+        var isDir: ObjCBool = false
+        #expect(FileManager.default.fileExists(atPath: dir.path, isDirectory: &isDir))
+        #expect(isDir.boolValue)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path).isEmpty)
+        #expect(dir.lastPathComponent == "MyFolder")
+    }
+
+    @Test("reserveDirectory keeps the exact name despite a sibling archive of the same base")
+    func reserveDirectoryNameSurvivesSiblingArchive() throws {
+        // The receive path stages the streamed `.aar` (named after the folder)
+        // beside the extracted tree. Nesting the directory under a fresh UUID
+        // parent keeps its name exact instead of degrading to "MyFolder (2)".
+        let staging = makeStaging()
+        defer { staging.sweep() }
+
+        _ = try staging.reserveURL(generation: 5, filename: "MyFolder")  // the staged archive
+        let dir = try staging.reserveDirectory(generation: 5, name: "MyFolder")
+        #expect(dir.lastPathComponent == "MyFolder")
+    }
+
+    @Test("reserveDirectory sanitizes a path-traversal name")
+    func reserveDirectorySanitizes() throws {
+        let staging = makeStaging()
+        defer { staging.sweep() }
+
+        let dir = try staging.reserveDirectory(generation: 1, name: "../../escape")
+        #expect(dir.lastPathComponent == "escape")
+        #expect(dir.deletingLastPathComponent().lastPathComponent != "..")
+    }
+
+    @Test("reserved trees and archives ride the generation window (3 newest survive)")
+    func reservationsRideGenerationWindow() throws {
+        let staging = makeStaging()
+        defer { staging.sweep() }
+
+        var dirs: [URL] = []
+        for generation in 1...4 {
+            dirs.append(try staging.reserveDirectory(generation: UInt64(generation), name: "g"))
+        }
+        // Generation 1's directory tree is evicted when generation 4 arrives.
+        #expect(!FileManager.default.fileExists(atPath: dirs[0].path))
+        #expect(FileManager.default.fileExists(atPath: dirs[1].path))
+        #expect(FileManager.default.fileExists(atPath: dirs[3].path))
+    }
 }
