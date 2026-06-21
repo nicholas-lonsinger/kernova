@@ -55,15 +55,50 @@ struct ClipboardContentTests {
         #expect(a.digest != b.digest)
     }
 
-    @Test("filename stays out of the digest (load-bearing for echo suppression)")
-    func filenameNotInDigest() {
+    @Test("filename is folded into the digest (distinguishes same-bytes files by name)")
+    func filenameInDigest() {
+        // Required once a payload can carry several files: two file payloads that
+        // share bytes+UTI but differ only by name must hash differently, or a
+        // legitimate [a,b] → [a,c] change (b/c byte-identical) would be silently
+        // echo-suppressed by the digest guards.
         let withName = ClipboardContent(representations: [
             .init(uti: "public.png", data: Data([1, 2, 3]), filename: "photo.png")
         ])
         let withoutName = ClipboardContent(representations: [
             .init(uti: "public.png", data: Data([1, 2, 3]))
         ])
-        #expect(withName.digest == withoutName.digest)
+        #expect(withName.digest != withoutName.digest)
+
+        let differentName = ClipboardContent(representations: [
+            .init(uti: "public.png", data: Data([1, 2, 3]), filename: "other.png")
+        ])
+        #expect(withName.digest != differentName.digest)
+
+        // Same name round-trips to the same digest, so cross-process echo
+        // suppression is preserved.
+        let sameName = ClipboardContent(representations: [
+            .init(uti: "public.png", data: Data([1, 2, 3]), filename: "photo.png")
+        ])
+        #expect(withName.digest == sameName.digest)
+    }
+
+    @Test("two file reps differing only by filename produce different digests")
+    func multiFileNameSensitivity() {
+        // The multi-file echo-suppression scenario: [a.bin, b.bin] vs
+        // [a.bin, c.bin] where b and c are byte-identical (same sha256). Only the
+        // second name differs, and that must change the content digest.
+        let sha = Data(repeating: 0xAB, count: 32)
+        func content(secondName: String) -> ClipboardContent {
+            ClipboardContent(representations: [
+                .init(
+                    uti: "public.data", fileURL: URL(fileURLWithPath: "/tmp/a"),
+                    byteCount: 8, sha256: sha, filename: "a.bin"),
+                .init(
+                    uti: "public.data", fileURL: URL(fileURLWithPath: "/tmp/x"),
+                    byteCount: 8, sha256: sha, filename: secondName),
+            ])
+        }
+        #expect(content(secondName: "b.bin").digest != content(secondName: "c.bin").digest)
     }
 
     // MARK: - .pendingRemote (lazy-receive placeholder) digest
@@ -78,11 +113,12 @@ struct ClipboardContentTests {
         #expect(make().digest == make().digest)
         #expect(make() == make())
 
-        // Filename is out of the digest here too — only (uti, byteCount) matter.
+        // Filename is folded into the digest here too, so the same placeholder
+        // with no name is a different digest (uniform with the materialized form).
         let withoutName = ClipboardContent(representations: [
             .init(pendingRemoteUTI: "public.png", byteCount: 4096)
         ])
-        #expect(make().digest == withoutName.digest)
+        #expect(make().digest != withoutName.digest)
 
         // A different advertised byteCount changes the placeholder's identity.
         let differentSize = ClipboardContent(representations: [
@@ -171,20 +207,21 @@ struct ClipboardContentTests {
         let a = ClipboardContent(representations: [
             .init(
                 uti: "public.data", fileURL: URL(fileURLWithPath: "/tmp/host.bin"),
-                byteCount: 1024, sha256: sha, filename: "a.bin")
+                byteCount: 1024, sha256: sha, filename: "data.bin")
         ])
         let b = ClipboardContent(representations: [
             .init(
                 uti: "public.data", fileURL: URL(fileURLWithPath: "/var/guest.bin"),
-                byteCount: 1024, sha256: sha, filename: "b.bin")
+                byteCount: 1024, sha256: sha, filename: "data.bin")
         ])
-        // Same bytes (same sha256), different path/name → same digest.
+        // Same bytes (same sha256) and same suggested name, different *path* →
+        // same digest: the host and guest temp paths differ but are never hashed.
         #expect(a.digest == b.digest)
 
         let differentBytes = ClipboardContent(representations: [
             .init(
                 uti: "public.data", fileURL: URL(fileURLWithPath: "/tmp/host.bin"),
-                byteCount: 1024, sha256: Data(repeating: 0xCD, count: 32), filename: "a.bin")
+                byteCount: 1024, sha256: Data(repeating: 0xCD, count: 32), filename: "data.bin")
         ])
         #expect(a.digest != differentBytes.digest)
     }

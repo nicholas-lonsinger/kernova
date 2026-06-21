@@ -41,6 +41,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     private let richTextPreview = ClipboardRichTextPreviewView()
     private let imagePreview = ClipboardImagePreviewView()
     private let filePreview = ClipboardFilePreviewView()
+    private let filesPreview = ClipboardFilesPreviewView()
     private let summaryView = ClipboardSummaryView()
     private let commandBar = ClipboardCommandBarView()
     /// Content-type indicator + transient-status surface, placed in the status
@@ -50,7 +51,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     /// Every content view stacked in the content area; exactly one is visible.
     /// `scrollView` (the editable plain-text editor) is first — the default.
     private var contentViews: [NSView] {
-        [scrollView, richTextPreview, imagePreview, filePreview, summaryView]
+        [scrollView, richTextPreview, imagePreview, filePreview, filesPreview, summaryView]
     }
     private let statusCircle: NSView
     private let statusLabel: NSTextField
@@ -379,7 +380,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         case .imageFile(let url, let uti):
             if imagePreview.configure(url: url, uti: uti) {
                 show(contentView: imagePreview)
-            } else if let file = content.filePayload {
+            } else if let file = content.filePayloads.first {
                 // Unreadable/undecodable file image degrades to the file chip.
                 filePreview.configure(
                     filename: file.filename, uti: file.uti, byteCount: file.byteCount)
@@ -391,6 +392,9 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         case .file(let filename, let uti, let byteCount):
             filePreview.configure(filename: filename, uti: uti, byteCount: byteCount)
             show(contentView: filePreview)
+        case .files:
+            filesPreview.configure(content: content)
+            show(contentView: filesPreview)
         case .summary:
             summaryView.configure(content: content)
             show(contentView: summaryView)
@@ -499,96 +503,134 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                     "Couldn't fetch the clipboard content to copy", style: .error)
                 return
             }
-            let pairs = await Self.hostPasteboardPairs(
+            let itemPairs = await Self.hostPasteboardItems(
                 for: content, generation: generation, staging: staging)
-            let item = NSPasteboardItem()
-            for pair in pairs { item.setData(pair.data, forType: pair.type) }
-            self.finishCopyToMac(item: item, representationCount: content.representations.count)
+            let items = itemPairs.map { pairs -> NSPasteboardItem in
+                let item = NSPasteboardItem()
+                for pair in pairs { item.setData(pair.data, forType: pair.type) }
+                return item
+            }
+            self.finishCopyToMac(items: items, representationCount: content.representations.count)
         }
     }
 
-    /// Builds the (type, data) pairs to write to the host pasteboard for
-    /// `content`, reading file-backed bytes and staging file URLs off the main
-    /// actor.
+    /// Builds the pasteboard items to write to the host pasteboard for
+    /// `content`, one inner list per `NSPasteboardItem`, reading file-backed
+    /// bytes and staging file URLs off the main actor.
     ///
-    /// Mirrors the guest agent's apply rule.
-    nonisolated private static func hostPasteboardPairs(
+    /// A single inline item carries every inline (filename-less) representation;
+    /// each file payload becomes its own item holding exactly one `.fileURL`
+    /// (and, for an image file, its inline image bytes too). One `.fileURL` per
+    /// item is what a Finder paste needs to create N files — a single item holds
+    /// only one value per type, so several file URLs in one item would collide.
+    /// Mirrors the guest agent's inbound promise grouping.
+    ///
+    /// Internal (not `private`) so `@testable import` can exercise this pure
+    /// grouping/staging step directly without driving the whole controller.
+    nonisolated static func hostPasteboardItems(
         for content: ClipboardContent, generation: UInt64, staging: ClipboardFileStaging
-    ) async -> [(type: NSPasteboard.PasteboardType, data: Data)] {
-        var pairs: [(type: NSPasteboard.PasteboardType, data: Data)] = []
-        for representation in content.representations {
-            if representation.shouldInlineOnPasteboard {
-                // Resident bytes inline directly; a file-backed rep is read into
-                // RAM only when it fits the inline ceiling — never load a
-                // multi-GB image whole just to inline it. [L2]
-                let inlineData: Data?
-                if let resident = representation.inMemoryData {
-                    inlineData = resident
-                } else if let url = representation.fileURL,
-                    representation.byteCount <= ClipboardStreamTuning.maxInlineBytes
-                {
-                    inlineData = try? Data(contentsOf: url)
-                } else {
-                    inlineData = nil
-                }
-                if let inlineData {
-                    pairs.append(
-                        (NSPasteboard.PasteboardType(rawValue: representation.uti), inlineData))
-                }
+    ) async -> [[(type: NSPasteboard.PasteboardType, data: Data)]] {
+        var items: [[(type: NSPasteboard.PasteboardType, data: Data)]] = []
+
+        // One inline item: every inline (filename-less) representation's bytes.
+        var inlinePairs: [(type: NSPasteboard.PasteboardType, data: Data)] = []
+        for representation in content.inlineRepresentations
+        where representation.shouldInlineOnPasteboard {
+            if let data = inlineData(for: representation) {
+                inlinePairs.append((NSPasteboard.PasteboardType(rawValue: representation.uti), data))
             }
-            guard !representation.filename.isEmpty else { continue }
-            let fileURL: URL?
-            if let existing = representation.fileURL {
-                // Re-home the streamed file out of the service's transient staging
-                // (swept on VM stop/reconnect) into this window's launch-swept
-                // root, so the pasteboard URL survives the VM teardown.
-                // [sweep-vs-URL]
-                fileURL =
-                    (try? staging.adopt(
-                        externalFile: existing, generation: generation,
-                        filename: representation.filename)) ?? existing
-            } else if let data = representation.inMemoryData,
-                let sink = try? staging.makeSink(
-                    generation: generation, filename: representation.filename)
+        }
+        if !inlinePairs.isEmpty { items.append(inlinePairs) }
+
+        // One item per file payload — each carries exactly one `.fileURL` (plus
+        // inline image bytes for an image file). Same-named files get distinct
+        // staged URLs from `ClipboardFileStaging`.
+        for representation in content.filePayloads {
+            var pairs: [(type: NSPasteboard.PasteboardType, data: Data)] = []
+            if representation.shouldInlineOnPasteboard, let data = inlineData(for: representation) {
+                pairs.append((NSPasteboard.PasteboardType(rawValue: representation.uti), data))
+            }
+            if let fileURL = stagedFileURL(
+                for: representation, generation: generation, staging: staging)
             {
-                do {
-                    try sink.write(data)
-                    fileURL = try sink.commit()
-                } catch {
-                    // Don't offer a truncated file — abort the partial stage.
-                    sink.abort()
-                    fileURL = nil
-                }
-            } else {
-                fileURL = nil
-            }
-            if let fileURL {
                 pairs.append((.fileURL, Data(fileURL.absoluteString.utf8)))
             }
+            if !pairs.isEmpty { items.append(pairs) }
         }
-        return pairs
+        return items
     }
 
-    /// Writes the prepared pasteboard item to the Mac clipboard, surfacing
+    /// Resident bytes to inline for a representation, reading a file-backed rep
+    /// into RAM only when it fits the inline ceiling — never load a multi-GB
+    /// image whole just to inline it. [L2]
+    nonisolated private static func inlineData(
+        for representation: ClipboardContent.Representation
+    ) -> Data? {
+        if let resident = representation.inMemoryData {
+            return resident
+        }
+        if let url = representation.fileURL,
+            representation.byteCount <= ClipboardStreamTuning.maxInlineBytes
+        {
+            return try? Data(contentsOf: url)
+        }
+        return nil
+    }
+
+    /// Stages a file payload's bytes under the window's launch-swept root and
+    /// returns its URL, so the pasteboard `public.file-url` outlives the VM
+    /// teardown.
+    ///
+    /// Re-homes a streamed `.file` out of the service's transient staging (swept
+    /// on VM stop/reconnect) via `adopt`, or writes an inline-and-named payload's
+    /// bytes to a fresh sink. [sweep-vs-URL]
+    nonisolated private static func stagedFileURL(
+        for representation: ClipboardContent.Representation, generation: UInt64,
+        staging: ClipboardFileStaging
+    ) -> URL? {
+        if let existing = representation.fileURL {
+            let adopted = try? staging.adopt(
+                externalFile: existing, generation: generation,
+                filename: representation.filename)
+            return adopted ?? existing
+        }
+        guard let data = representation.inMemoryData,
+            let sink = try? staging.makeSink(
+                generation: generation, filename: representation.filename)
+        else { return nil }
+        do {
+            try sink.write(data)
+            return try sink.commit()
+        } catch {
+            // Don't offer a truncated file — abort the partial stage.
+            sink.abort()
+            return nil
+        }
+    }
+
+    /// Writes the prepared pasteboard items to the Mac clipboard, surfacing
     /// success/failure.
     ///
     /// Split from `copyToMac(_:)` so the file-staging step can run off the main
-    /// actor in between.
-    private func finishCopyToMac(item: NSPasteboardItem, representationCount: Int) {
-        // A non-image file payload contributes no inline data; if staging also
-        // failed, the item is empty. Don't clear the Mac clipboard to write
-        // nothing — surface the failure instead.
-        guard !item.types.isEmpty else {
-            indicatorView.showTransientMessage("Couldn't prepare the clipboard content to copy", style: .error)
-            Self.logger.error("copyToMac produced no pasteboard representations (staging failed)")
+    /// actor in between. `writeObjects` with several `NSPasteboardItem`s is the
+    /// multi-item write a Finder paste turns into N files.
+    private func finishCopyToMac(items: [NSPasteboardItem], representationCount: Int) {
+        // A file payload whose staging failed contributes an empty item; drop
+        // empties. If nothing survives, surface the failure rather than clearing
+        // the Mac clipboard to write nothing.
+        let nonEmpty = items.filter { !$0.types.isEmpty }
+        guard !nonEmpty.isEmpty else {
+            indicatorView.showTransientMessage(
+                "Couldn't prepare the clipboard content to copy", style: .error)
+            Self.logger.error("copyToMac produced no pasteboard items (staging failed)")
             return
         }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        if pasteboard.writeObjects([item]) {
+        if pasteboard.writeObjects(nonEmpty) {
             indicatorView.showTransientMessage("Copied to Mac clipboard", style: .info)
             Self.logger.info(
-                "Copied clipboard buffer to host pasteboard (\(representationCount, privacy: .public) reps)"
+                "Copied clipboard buffer to host pasteboard (\(representationCount, privacy: .public) reps, \(nonEmpty.count, privacy: .public) items)"
             )
         } else {
             indicatorView.showTransientMessage("Couldn't write to the Mac clipboard", style: .error)
@@ -604,12 +646,12 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         guard let service = instance.clipboardService else { return }
         let allowsBinary = service.supportsBinaryRepresentations
         let result = ClipboardPasteboardIntake.read(from: pasteboard, allowsBinary: allowsBinary)
-        if case .pendingFile(let url) = result {
-            // Read the file's bytes off the main actor, then apply on the way back.
+        if case .pendingFiles(let urls) = result {
+            // Read the files' bytes off the main actor, then apply on the way back.
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 _ = self.apply(
-                    intake: ClipboardPasteboardIntake.read(fileAt: url, allowsBinary: allowsBinary))
+                    intake: ClipboardPasteboardIntake.read(filesAt: urls, allowsBinary: allowsBinary))
             }
         } else {
             _ = apply(intake: result)
@@ -636,11 +678,12 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             indicatorView.showTransientMessage(message, style: .warning)
             Self.logger.info("Pasteboard intake rejected: \(message, privacy: .public)")
             return false
-        case .pendingFile:
-            // A pending file must be resolved via read(fileAt:) (off the main
+        case .pendingFiles:
+            // Pending files must be resolved via read(filesAt:) (off the main
             // actor) before apply — reaching here is a programming error.
-            Self.logger.fault("apply(intake:) received .pendingFile — resolve it via read(fileAt:) first")
-            assertionFailure("apply(intake:) received .pendingFile")
+            Self.logger.fault(
+                "apply(intake:) received .pendingFiles — resolve it via read(filesAt:) first")
+            assertionFailure("apply(intake:) received .pendingFiles")
             return false
         }
     }
@@ -670,13 +713,13 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         switch result {
         case .content:
             return apply(intake: result)
-        case .pendingFile(let url):
-            // Accept the drop now; read the file's bytes off the main actor
+        case .pendingFiles(let urls):
+            // Accept the drop now; read the files' bytes off the main actor
             // (the dragging pasteboard was already consumed synchronously above).
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 _ = self.apply(
-                    intake: ClipboardPasteboardIntake.read(fileAt: url, allowsBinary: allowsBinary))
+                    intake: ClipboardPasteboardIntake.read(filesAt: urls, allowsBinary: allowsBinary))
             }
             return true
         case .rejected:

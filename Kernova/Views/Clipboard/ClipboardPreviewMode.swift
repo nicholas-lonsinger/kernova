@@ -1,6 +1,16 @@
 import Foundation
 import KernovaProtocol
 
+/// One file's metadata for the multi-file preview chip list (`.files`).
+///
+/// A named `Equatable` type rather than a tuple so `ClipboardPreviewMode` can
+/// synthesize `Equatable` (tuples don't conform).
+struct ClipboardFileEntry: Equatable {
+    let filename: String
+    let uti: String
+    let byteCount: Int
+}
+
 /// What the clipboard window's content area shows for a given buffer.
 enum ClipboardPreviewMode: Equatable {
     /// No content — an empty, editable text view (typing must keep working).
@@ -18,6 +28,9 @@ enum ClipboardPreviewMode: Equatable {
     case imageFile(url: URL, uti: String)
     /// A copied/dropped file shown as a chip (icon + name + type · size).
     case file(filename: String, uti: String, byteCount: Int)
+    /// Several copied/dropped files shown as a list of chips with a count+size
+    /// header. The on-screen counterpart of multiple file payloads in one copy.
+    case files([ClipboardFileEntry])
     /// Non-editable per-representation summary (unknown formats, or text too
     /// large for `NSTextView` — still sendable and copyable, just not edited
     /// in place).
@@ -43,11 +56,13 @@ enum ClipboardPreviewPolicy {
 
     /// Chooses the preview for a buffer, in priority order.
     ///
-    /// 1. A *file payload* (a representation tagged with a filename) shows as
-    ///    the file itself — an image file as its image, any other file as a
-    ///    file chip — before any inline-content rule, so a copied `.rtf` file
-    ///    attaches as a file rather than rendering as rich text.
-    /// 2. Inline content: an image beats a coexisting path/URL *descriptor*
+    /// 1. *Several file payloads* (multiple filename-tagged reps) show as the
+    ///    multi-file chip list (`.files`).
+    /// 2. A single *file payload* shows as the file itself — an image file as
+    ///    its image, any other file as a file chip — before any inline-content
+    ///    rule, so a copied `.rtf` file attaches as a file rather than rendering
+    ///    as rich text.
+    /// 3. Inline content: an image beats a coexisting path/URL *descriptor*
     ///    text; then inline RTF renders styled; then plain text lands in the
     ///    editor; then a bare image; else a summary.
     /// A file-backed *image* payload renders its thumbnail straight from disk
@@ -60,7 +75,14 @@ enum ClipboardPreviewPolicy {
         if content.isEmpty {
             return .empty
         }
-        if let file = content.filePayload {
+        let files = content.filePayloads
+        if files.count > 1 {
+            return .files(
+                files.map {
+                    ClipboardFileEntry(filename: $0.filename, uti: $0.uti, byteCount: $0.byteCount)
+                })
+        }
+        if let file = files.first {
             if let image = content.imageRepresentation {
                 if let data = image.inMemoryData {
                     return .image(data: data, uti: image.uti)

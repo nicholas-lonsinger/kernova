@@ -79,6 +79,53 @@ struct ClipboardFileStagingTests {
         #expect(a.url.deletingLastPathComponent() == b.url.deletingLastPathComponent())
     }
 
+    @Test("same-named sinks in one generation get distinct, non-colliding URLs")
+    func sameNameSinksDeduped() throws {
+        // A multi-file copy can carry two payloads that share a name; the second
+        // sink must not reuse the first's path (which would collapse them).
+        let staging = makeStaging()
+        defer { staging.sweep() }
+
+        let a = try staging.makeSink(generation: 1, filename: "dup.txt")
+        try a.write(Data("first".utf8))
+        let b = try staging.makeSink(generation: 1, filename: "dup.txt")
+        try b.write(Data("second".utf8))
+        let urlA = try a.commit()
+        let urlB = try b.commit()
+
+        #expect(urlA != urlB)
+        #expect(urlA.lastPathComponent == "dup.txt")
+        #expect(urlB.lastPathComponent == "dup (2).txt")
+        #expect(try Data(contentsOf: urlA) == Data("first".utf8))
+        #expect(try Data(contentsOf: urlB) == Data("second".utf8))
+    }
+
+    @Test("adopt de-dups a repeated filename in one generation")
+    func adoptDedupsSameName() throws {
+        let staging = makeStaging()
+        defer { staging.sweep() }
+
+        // Two distinct external files that happen to share a name.
+        let extDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: extDir.appendingPathComponent("one"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: extDir.appendingPathComponent("two"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: extDir) }
+        let srcA = extDir.appendingPathComponent("one/dup.bin")
+        let srcB = extDir.appendingPathComponent("two/dup.bin")
+        try Data("A".utf8).write(to: srcA)
+        try Data("B".utf8).write(to: srcB)
+
+        let destA = try staging.adopt(externalFile: srcA, generation: 1, filename: "dup.bin")
+        let destB = try staging.adopt(externalFile: srcB, generation: 1, filename: "dup.bin")
+
+        #expect(destA != destB)
+        #expect(try Data(contentsOf: destA) == Data("A".utf8))
+        #expect(try Data(contentsOf: destB) == Data("B".utf8))
+    }
+
     @Test("sweep removes the staging root")
     func sweepRemovesRoot() throws {
         let staging = makeStaging()

@@ -30,20 +30,35 @@ struct ClipboardContentAppKitTests {
         #expect(!rep.shouldInlineOnPasteboard)
     }
 
-    // MARK: - filePayload / richTextRepresentation
+    // MARK: - filePayloads / inlineRepresentations / richTextRepresentation
 
-    @Test("filePayload returns the filename-tagged representation")
-    func filePayloadFound() {
+    @Test("filePayloads returns the filename-tagged representations in order")
+    func filePayloadsFound() {
         let content = ClipboardContent(representations: [
-            .init(uti: UTType.plainText.identifier, data: Data("x".utf8), filename: "note.txt")
+            .init(uti: UTType.plainText.identifier, data: Data("x".utf8), filename: "a.txt"),
+            .init(uti: ClipboardContent.utf8TextUTI, data: Data("inline".utf8)),
+            .init(uti: UTType.png.identifier, data: Data([0x89]), filename: "b.png"),
         ])
-        #expect(content.filePayload?.filename == "note.txt")
+        #expect(content.filePayloads.map(\.filename) == ["a.txt", "b.png"])
+        #expect(content.filePayloads.first?.filename == "a.txt")
     }
 
-    @Test("filePayload is nil when no representation carries a filename")
-    func filePayloadAbsent() {
+    @Test("filePayloads is empty and inlineRepresentations holds all when none carry a filename")
+    func filePayloadsAbsent() {
         let content = ClipboardContent(text: "just text")
-        #expect(content.filePayload == nil)
+        #expect(content.filePayloads.isEmpty)
+        #expect(content.inlineRepresentations.count == content.representations.count)
+    }
+
+    @Test("filePayloads and inlineRepresentations partition the representations")
+    func partitionComplementary() {
+        let content = ClipboardContent(representations: [
+            .init(uti: UTType.plainText.identifier, data: Data("x".utf8), filename: "a.txt"),
+            .init(uti: ClipboardContent.utf8TextUTI, data: Data("inline".utf8)),
+        ])
+        #expect(content.filePayloads.count == 1)
+        #expect(content.inlineRepresentations.count == 1)
+        #expect(content.inlineRepresentations.allSatisfy { $0.filename.isEmpty })
     }
 
     @Test("richTextRepresentation finds an inline RTF rep")
