@@ -241,6 +241,24 @@ public struct ClipboardContent: Equatable, Sendable {
         representations.reduce(0) { $0 + $1.byteCount }
     }
 
+    /// Caps the representation list to `maxOfferableRepresentations`.
+    ///
+    /// A `transfer_id` packs the rep index into 16 bits, so an offer past the
+    /// limit would alias indices. Returns the content unchanged in the common
+    /// case (no recompute); `truncatedFrom` is the original representation count
+    /// when truncation happened — so a caller can log it with its own logger —
+    /// and `nil` otherwise. Reaching the cap means copying ~65 000 files at once.
+    public func cappedToOfferLimit() -> (content: ClipboardContent, truncatedFrom: Int?) {
+        guard representations.count > Self.maxOfferableRepresentations else {
+            return (self, nil)
+        }
+        return (
+            ClipboardContent(
+                representations: Array(representations.prefix(Self.maxOfferableRepresentations))),
+            representations.count
+        )
+    }
+
     /// Digest comparison — equivalent to full structural equality (SHA-256
     /// collision resistance) at a constant 32-byte cost.
     public static func == (lhs: ClipboardContent, rhs: ClipboardContent) -> Bool {

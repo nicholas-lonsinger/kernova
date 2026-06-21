@@ -42,8 +42,11 @@ enum ClipboardContentDescriber {
         case .files(let files):
             // The chip list enumerates each file, so the indicator is a count +
             // total size header ("3 files · 4.2 MB") — return early to skip the
-            // generic "+ N more" tail, which would double-count here.
-            let totalSize = DataFormatters.formatBytes(UInt64(content.totalByteCount))
+            // generic "+ N more" tail, which would double-count here. Sum the
+            // listed files (not `totalByteCount`) so the header's size always
+            // matches its count, never folding in a coexisting inline rep.
+            let totalBytes = files.reduce(0) { $0 + $1.byteCount }
+            let totalSize = DataFormatters.formatBytes(UInt64(totalBytes))
             return "\(files.count) files · \(totalSize)"
         case .summary(let representations):
             guard let first = representations.first else { return "Empty" }
@@ -75,6 +78,15 @@ enum ClipboardContentDescriber {
     /// unregistered or dynamic types.
     static func displayName(forUTI uti: String) -> String {
         UTType(uti)?.localizedDescription ?? uti
+    }
+
+    /// A file chip's "type · size" subtitle, e.g. `"PNG image · 3.4 MB"`.
+    ///
+    /// Shared by the single-file (`ClipboardFilePreviewView`) and multi-file
+    /// (`ClipboardFilesPreviewView`) chips so a file's detail line is formatted
+    /// identically in both.
+    static func fileDetail(uti: String, byteCount: Int) -> String {
+        "\(displayName(forUTI: uti)) · \(DataFormatters.formatBytes(UInt64(byteCount)))"
     }
 
     /// Pixel dimensions read from a resident image header — no full decode.

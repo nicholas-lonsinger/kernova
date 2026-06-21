@@ -471,7 +471,13 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             return
         }
         // Cap only what's offered/answered to the 16-bit rep-index limit.
-        let offered = Self.cappedToOfferLimit(content)
+        let capped = content.cappedToOfferLimit()
+        if let originalCount = capped.truncatedFrom {
+            Self.logger.warning(
+                "Clipboard offer truncated from \(originalCount, privacy: .public) to \(ClipboardContent.maxOfferableRepresentations, privacy: .public) representations (16-bit transfer-id limit)"
+            )
+        }
+        let offered = capped.content
 
         let generation = nextLocalGeneration
         var offer = Frame()
@@ -907,24 +913,6 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     }
 
     // MARK: - Helpers
-
-    /// Caps `content` to `ClipboardContent.maxOfferableRepresentations`, logging
-    /// when it truncates.
-    ///
-    /// A `transfer_id` packs the rep index into 16 bits, so an offer past the
-    /// limit would alias indices. Returns the input unchanged in the common case
-    /// (no recompute); copying ~65 000 files at once is the only way to hit it.
-    private static func cappedToOfferLimit(_ content: ClipboardContent) -> ClipboardContent {
-        guard content.representations.count > ClipboardContent.maxOfferableRepresentations else {
-            return content
-        }
-        Self.logger.warning(
-            "Clipboard offer truncated from \(content.representations.count, privacy: .public) to \(ClipboardContent.maxOfferableRepresentations, privacy: .public) representations (16-bit transfer-id limit)"
-        )
-        return ClipboardContent(
-            representations: Array(
-                content.representations.prefix(ClipboardContent.maxOfferableRepresentations)))
-    }
 
     private static func repInfo(
         for representation: ClipboardContent.Representation

@@ -140,9 +140,7 @@ final class ClipboardFilesPreviewView: NSView {
         nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         let detailLabel = NSTextField(
-            labelWithString:
-                "\(type?.localizedDescription ?? uti) · \(DataFormatters.formatBytes(UInt64(byteCount)))"
-        )
+            labelWithString: ClipboardContentDescriber.fileDetail(uti: uti, byteCount: byteCount))
         detailLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         detailLabel.textColor = .secondaryLabelColor
         detailLabel.lineBreakMode = .byTruncatingTail

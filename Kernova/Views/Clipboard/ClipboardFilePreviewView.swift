@@ -76,10 +76,8 @@ final class ClipboardFilePreviewView: NSView {
     }
 
     func configure(filename: String, uti: String, byteCount: Int) {
-        let type = UTType(uti)
-        iconView.image = NSWorkspace.shared.icon(for: type ?? .data)
+        iconView.image = NSWorkspace.shared.icon(for: UTType(uti) ?? .data)
         nameLabel.stringValue = filename
-        let typeName = type?.localizedDescription ?? uti
-        detailLabel.stringValue = "\(typeName) · \(DataFormatters.formatBytes(UInt64(byteCount)))"
+        detailLabel.stringValue = ClipboardContentDescriber.fileDetail(uti: uti, byteCount: byteCount)
     }
 }
