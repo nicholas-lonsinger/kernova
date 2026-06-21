@@ -1342,6 +1342,45 @@ struct VsockGuestClipboardAgentTests {
         try await expectNoRequest(from: hostChannel)
     }
 
+    @Test("disk full: the guest surfaces the failure to the host as a clipboard.paste error frame")
+    func diskFullSurfacesErrorFrame() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        // Only 1 KiB free, so a 50 MiB file rep fails the pre-flight disk guard.
+        let agent = makeAgent(
+            pasteboard: pasteboard, agentFd: agentFd, freeSpaceProvider: { _ in 1024 })
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 13,
+                reps: [
+                    RepInfo(
+                        uti: txtUTI, byteCount: 50 * 1024 * 1024, filename: "huge.bin",
+                        isInline: false)
+                ]))
+        try await waitUntil { pasteboard.promisedTypesForTesting == [.fileURL] }
+
+        let pull = lazyPull(pasteboard, forType: .fileURL)
+        #expect(try await pull.value == nil)
+
+        // The guest has no UI, so it tells the host — which surfaces it in the
+        // clipboard window — via a `clipboard.*` Error frame (not a request).
+        let frame = try await maybeNextFrame(from: hostChannel)
+        guard case .error(let error)? = frame?.payload else {
+            Issue.record("Expected an Error frame, got \(String(describing: frame?.payload))")
+            return
+        }
+        #expect(error.code == "clipboard.paste.disk.full")
+    }
+
     // MARK: - Request send failure
 
     @Test("a request-send failure resolves the lazy pull promptly with nil instead of blocking")

@@ -72,16 +72,21 @@ public enum ClipboardStreamTuning {
     /// 10 s no-ack timeout so a slow-but-live transfer is never killed.
     public static let inboundStallTimeout: Duration = .seconds(30)
 
-    /// Backstop ceiling on how long a lazy pull blocks the consuming thread
-    /// waiting for a representation: 120 s.
+    /// Backstop on how long a lazy pull blocks the consuming thread *without
+    /// progress* before giving up: 120 s of **inactivity**.
     ///
-    /// This is **not** the primary liveness guard — the receiver's
-    /// `inboundStallTimeout` (30 s of no chunk) already aborts a dead transfer
-    /// and wakes the blocked pull, and channel teardown unblocks it immediately.
-    /// A legitimate large transfer makes steady progress and completes well
-    /// inside this window; it only fires if neither the receiver nor teardown
-    /// delivers an outcome (a coordinator/receiver bug), so the consuming app's
-    /// paste can't hang forever. Tests inject a tiny value to exercise it.
+    /// This is an inactivity window, not an absolute deadline — each arriving
+    /// chunk re-arms it (`LazyPullCoordinator.heartbeat`, driven by the
+    /// receiver's per-chunk progress hook), so a healthy transfer of any size
+    /// never trips it no matter how long it runs. (An earlier absolute 120 s
+    /// ceiling silently killed large, still-progressing transfers — e.g. a
+    /// multi-GB file that simply needed more than two minutes to stream, which
+    /// left the paste hanging then failing with no feedback.) It is not the
+    /// primary liveness guard either: the receiver's `inboundStallTimeout` (30 s
+    /// of no chunk) aborts a dead transfer and wakes the blocked pull first, and
+    /// channel teardown unblocks it immediately. The backstop fires only if
+    /// neither delivers an outcome after a full window of silence (a
+    /// coordinator/receiver bug). Tests inject a tiny value to exercise it.
     public static let lazyPullTimeout: Duration = .seconds(120)
 
     /// Sentinel `maxAcceptByteCount` meaning "no explicit ceiling" — the

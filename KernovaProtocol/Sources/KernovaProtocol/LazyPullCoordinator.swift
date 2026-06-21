@@ -41,6 +41,9 @@ public final class LazyPullCoordinator: @unchecked Sendable {
         let semaphore = DispatchSemaphore(value: 0)
         var outcome: LazyPullOutcome = .cancelled
         var resolved = false
+        /// Set by `heartbeat` when a chunk lands; consumed by `pull` at each
+        /// window boundary to re-arm the inactivity backstop.
+        var progressed = false
     }
 
     private let lock = NSLock()
@@ -50,18 +53,27 @@ public final class LazyPullCoordinator: @unchecked Sendable {
     public init() {}
 
     /// Sends a request (via `send`) and blocks the calling thread until the
-    /// matching transfer is delivered, aborts, is cancelled, or the timeout
-    /// fires.
+    /// matching transfer is delivered, aborts, is cancelled, or the pull goes a
+    /// full `timeout` window without progress.
     ///
     /// The slot is registered **before** `send` runs so a fast completion can't
     /// be missed. MUST be called off the thread that `deliver`/`abort`/`failAll`
     /// run on (e.g. off the guest agent's main thread), or the wakeup deadlocks.
     ///
+    /// `timeout` is an **inactivity** window, not an absolute deadline: each
+    /// `heartbeat` (one per durably-written chunk) re-arms it, so a healthy
+    /// transfer of any size never times out no matter how long it runs. The
+    /// backstop fires only after a full window with no chunk *and* no terminal
+    /// outcome — and the receiver's own 30 s stall timer normally aborts a dead
+    /// transfer first. (An earlier absolute deadline silently killed large,
+    /// still-progressing transfers that needed more than one window to stream.)
+    /// The host runs the equivalent inactivity loop for the reverse direction in
+    /// `VsockClipboardService.pull`.
+    ///
     /// - Parameters:
     ///   - transferID: correlates this pull with its `ClipboardRequest` and the
     ///     streamed reply.
-    ///   - timeout: backstop ceiling on the block (see
-    ///     `ClipboardStreamTuning.lazyPullTimeout`).
+    ///   - timeout: inactivity window (see `ClipboardStreamTuning.lazyPullTimeout`).
     ///   - send: emits the `ClipboardRequest`; runs synchronously on the calling
     ///     thread after the slot is registered.
     /// - Returns: the outcome the matching transfer resolved with — delivered,
@@ -74,14 +86,45 @@ public final class LazyPullCoordinator: @unchecked Sendable {
         let slot = Slot()
         lock.withLock { slots[transferID] = slot }
         send()
-        let waitResult = slot.semaphore.wait(timeout: .now() + timeout.timeInterval)
-        return lock.withLock {
-            slots[transferID] = nil
-            if waitResult == .timedOut && !slot.resolved {
+        while true {
+            // The wait blocks one window; the slot's flags — not the wait result —
+            // decide the outcome, so a signal that races the deadline is still
+            // honored via `resolved` below.
+            _ = slot.semaphore.wait(timeout: .now() + timeout.timeInterval)
+            let outcome: LazyPullOutcome? = lock.withLock {
+                // A terminal resolve (deliver/abort/cancel) sets `resolved` before
+                // signaling, so it's observed here whether the wait was signaled or
+                // raced the deadline.
+                if slot.resolved {
+                    slots[transferID] = nil
+                    return slot.outcome
+                }
+                // The window elapsed with no terminal outcome. If a chunk landed
+                // during it (heartbeat), re-arm; otherwise give up.
+                if slot.progressed {
+                    slot.progressed = false
+                    return nil
+                }
                 slot.resolved = true
                 slot.outcome = .timedOut
+                slots[transferID] = nil
+                return .timedOut
             }
-            return slot.outcome
+            if let outcome { return outcome }
+        }
+    }
+
+    /// Re-arms the inactivity backstop for `transferID`: records that a chunk
+    /// landed so the blocked `pull` keeps waiting past the next window boundary.
+    ///
+    /// Off-actor and idempotent; a heartbeat for a resolved or unknown pull is a
+    /// no-op. Does not signal the semaphore — the blocked `pull` reads the flag
+    /// when its current wait window elapses, so a heartbeat costs nothing while
+    /// bytes flow.
+    public func heartbeat(_ transferID: UInt64) {
+        lock.withLock {
+            guard let slot = slots[transferID], !slot.resolved else { return }
+            slot.progressed = true
         }
     }
 

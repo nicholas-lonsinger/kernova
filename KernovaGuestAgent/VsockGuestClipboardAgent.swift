@@ -851,6 +851,11 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             Self.logger.warning(
                 "Not enough disk space to receive clipboard rep '\(info.uti, privacy: .public)' (\(info.byteCount, privacy: .public) bytes)"
             )
+            // The guest has no UI; tell the host so it shows the failure.
+            sendPasteError(
+                code: "clipboard.paste.disk.full",
+                message: "Not enough disk space in the guest to receive \(info.byteCount) bytes",
+                on: channel)
             return nil
         }
         // The guest is the receiver, so it does not set the direction bit. [H3]
@@ -864,7 +869,10 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         receiver.awaitTransfer(
             transferID,
             onComplete: { rep in coordinator.deliver(transferID, rep) },
-            onAbort: { abort in coordinator.abort(transferID, abort) })
+            onAbort: { abort in coordinator.abort(transferID, abort) },
+            // Re-arm the pull's inactivity backstop on every chunk so a large
+            // still-streaming file is never timed out mid-transfer. [large-paste]
+            onProgress: { coordinator.heartbeat(transferID) })
 
         let outcome = lazyCoordinator.pull(transferID: transferID) {
             var request = Frame()
@@ -910,13 +918,71 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             Self.logger.warning(
                 "Inbound clipboard pull \(transferID, privacy: .public) aborted (\(abort.code, privacy: .public))"
             )
+            // Surface a genuine receive failure to the host UI; stay quiet for a
+            // normal supersession/teardown (the user simply copied something new).
+            if !Self.benignAbortCodes.contains(abort.code) {
+                sendPasteError(
+                    code: Self.pasteErrorCode(forAbortCode: abort.code),
+                    message: abort.message, on: channel)
+            }
         case .timedOut:
             receiver.cancelAwait(transferID)
             Self.logger.warning("Inbound clipboard pull \(transferID, privacy: .public) timed out")
+            // Stop any stream the host is still sending for this abandoned pull,
+            // then surface the failure (the guest has no UI of its own).
+            sendStreamAbort(
+                transferID: transferID, code: "paste.timeout",
+                message: "Receiver gave up waiting for the clipboard transfer", on: channel)
+            sendPasteError(
+                code: "clipboard.paste.timeout",
+                message: "The clipboard transfer to the guest timed out", on: channel)
         case .cancelled:
             receiver.cancelAwait(transferID)
         }
         return nil
+    }
+
+    /// Abort codes that are a normal supersession/teardown, not a failure worth
+    /// surfacing to the user (the user copied something new, or the channel
+    /// closed).
+    private static let benignAbortCodes: Set<String> = ["superseded", "cancelled", "request.stale"]
+
+    /// Maps a receiver/peer abort code to the user-facing `clipboard.paste.*`
+    /// code the host renders.
+    ///
+    /// Disk-full and a stalled (silent-sender) transfer get specific messages;
+    /// every other receive error is a generic failure — the precise internal
+    /// code is still captured in the guest log.
+    private static func pasteErrorCode(forAbortCode code: String) -> String {
+        switch code {
+        case "disk.full": return "clipboard.paste.disk.full"
+        case "stall.timeout": return "clipboard.paste.timeout"
+        default: return "clipboard.paste.failed"
+        }
+    }
+
+    /// Sends an `Error` frame so the host surfaces an inbound-paste failure in
+    /// its clipboard window — the guest agent has no UI of its own.
+    ///
+    /// The host maps a `clipboard.*` code to a
+    /// `ClipboardTransferIssue.peerReportedError`.
+    private func sendPasteError(code: String, message: String, on channel: VsockChannel) {
+        try? channel.sendErrorFrame(code: code, message: message, inReplyTo: "clipboard.request")
+    }
+
+    /// Sends a `ClipboardStreamAbort` for an inbound transfer the receiver is
+    /// abandoning, so the host's sender stops streaming the remaining bytes.
+    private func sendStreamAbort(
+        transferID: UInt64, code: String, message: String, on channel: VsockChannel
+    ) {
+        var frame = Frame()
+        frame.protocolVersion = 1
+        frame.clipboardStreamAbort = .with {
+            $0.transferID = transferID
+            $0.code = code
+            $0.message = message
+        }
+        try? channel.send(frame)
     }
 
     /// Returns the `public.file-url` bytes for a materialized representation,
