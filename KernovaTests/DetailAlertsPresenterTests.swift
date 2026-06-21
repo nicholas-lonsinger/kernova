@@ -10,12 +10,19 @@ import Testing
 /// cancellable off-main resolution, and a per-sheet token so a stale close can't
 /// clobber a newer delete.
 ///
-/// The presenter never has `start(window:)` called, so `window == nil` and
-/// `runNext()` always bails — enqueued show closures simply accumulate in
-/// `pending` (a real sheet needs a live window + run loop, unavailable headless,
-/// the same constraint `SheetPresenterTests` documents). The in-flight request
-/// is therefore observable via the `…ForTesting` seams, and the close-handler's
-/// token guard is driven directly through `handleDeleteSheetClosedForTesting`.
+/// Most tests don't call `start(window:)`, so `window == nil` and `runNext()`
+/// always bails — enqueued show closures simply accumulate in `pending` (the
+/// in-flight request is observed via the `…ForTesting` seams, and the
+/// close-handler's token guard is driven directly through
+/// `handleDeleteSheetClosedForTesting`). The shown-sheet tests DO use a real
+/// `NSWindow` so `showDeleteSheet` runs and `deleteSheetPresenter.isShown`
+/// becomes true synchronously.
+///
+/// Headless limitation: the async `beginSheet` dismissal completion is never
+/// delivered (no run loop is spun), so the close()/onClose path and `reset()`'s
+/// interaction with a genuinely-delivered completion are integration-only —
+/// these tests assert the synchronous state transitions, not the async
+/// completion (the same constraint `SheetPresenterTests` documents).
 ///
 /// Determinism: each test holds the main actor synchronously from
 /// `presentDeleteSheet` through the follow-up call/`stop()`, so the off-main

@@ -21,24 +21,19 @@ final class DetailAlertsPresenter: NSObject {
     private weak var window: NSWindow?
     private let deleteSheetPresenter = SheetPresenter()
     private var isShowingAlert = false
-    /// The VM the *shown* delete sheet is presenting for, read by the sheet
-    /// delegate on confirm.
-    ///
-    /// Frozen at show time so the displayed sheet and the confirm disposition
-    /// always agree.
-    private var deleteSheetInstance: VMInstance?
-    /// Whether the *shown* delete sheet is the immediate (bypass-Trash) variant.
-    ///
-    /// The sheet doesn't re-encode the disposition on confirm, so the presenter
-    /// remembers which mode it showed and routes accordingly. Frozen at show time
-    /// alongside ``deleteSheetInstance``.
-    private var deleteSheetPermanent = false
-
     /// A requested VM deletion (target + disposition).
     private struct PendingDelete {
         let instance: VMInstance
         let permanently: Bool
     }
+    /// The request the *shown* delete sheet is presenting, read by the sheet
+    /// delegate on confirm; `nil` when no sheet is on screen.
+    ///
+    /// Frozen as a single value at show time (the sheet doesn't re-encode the
+    /// disposition on confirm) so the displayed sheet and the confirm disposition
+    /// can never disagree. Distinct from ``pendingDelete``: a stale-token close
+    /// clears this but preserves the in-flight ``pendingDelete``.
+    private var shownDelete: PendingDelete?
     /// The latest in-flight delete request — resolving externals off-main, queued
     /// in `pending`, or shown — used to de-dup and to let the latest gesture win.
     ///
@@ -83,12 +78,11 @@ final class DetailAlertsPresenter: NSObject {
         pendingDelete = nil
         resolvedDelete = nil
         // Clear the shown-sheet state synchronously rather than waiting for the
-        // async `onClose` that `close()` (below) schedules: the `presentDeleteSheet`
-        // ignore guard keys on `deleteSheetInstance`, so leaving it set until the
-        // late completion fires would wrongly ignore deletes for a window after the
-        // next `start()`. The late `onClose` clears these again harmlessly.
-        deleteSheetInstance = nil
-        deleteSheetPermanent = false
+        // async `onClose` that `reset()` would otherwise rely on: the
+        // `presentDeleteSheet` ignore guard keys on `shownDelete`, so leaving it
+        // set until a late completion fires would wrongly ignore deletes for a
+        // window after the next `start()`.
+        shownDelete = nil
         // Invalidate the in-flight sheet's `onClose` so its late async close
         // (fired by the `close()` below) can't clear state belonging to a sheet
         // shown after the next `start()`. stop() has already cleared the
@@ -154,10 +148,10 @@ final class DetailAlertsPresenter: NSObject {
         // stay live under a window-modal sheet) until it closes. Coalescing them
         // would be worse than ignoring: the new request would overwrite
         // `pendingDelete`, then be cleared by the shown sheet's close without ever
-        // being shown — silently dropping the delete. `deleteSheetInstance` is set
-        // for the whole shown→closing window, so this also covers the gap between
-        // a Cancel/Confirm and the sheet's async `onClose`.
-        guard deleteSheetInstance == nil else {
+        // being shown — silently dropping the delete. `shownDelete` is set for the
+        // whole shown→closing window, so this also covers the gap between a
+        // Cancel/Confirm and the sheet's async `onClose`.
+        guard shownDelete == nil else {
             Self.logger.debug(
                 "Delete sheet already on screen; ignoring request for '\(instance.name, privacy: .public)'")
             return
@@ -273,11 +267,10 @@ final class DetailAlertsPresenter: NSObject {
             mode: request.permanently ? .immediate : .trash
         )
         content.delegate = self
-        // Freeze the shown sheet's VM + disposition so the displayed sheet and
-        // the confirm delegate always agree, even if a later gesture updates
+        // Freeze the shown sheet's request as one value so the displayed sheet
+        // and the confirm delegate always agree, even if a later gesture updates
         // `pendingDelete` while the sheet is up.
-        deleteSheetInstance = request.instance
-        deleteSheetPermanent = request.permanently
+        shownDelete = request
         deleteSheetPresenter.onClose = { [weak self] in
             self?.handleDeleteSheetClosed(token: token)
         }
@@ -285,8 +278,7 @@ final class DetailAlertsPresenter: NSObject {
     }
 
     private func handleDeleteSheetClosed(token: Int) {
-        deleteSheetInstance = nil
-        deleteSheetPermanent = false
+        shownDelete = nil
         // Allow the next delete: the sheet has closed (cancel, confirm, or
         // programmatic `close()` all route through here). Clear the in-flight
         // delete only if THIS is still the current sheet — a stop()/start() cycle
@@ -411,9 +403,9 @@ extension DetailAlertsPresenter: DeleteVMSheetContentViewControllerDelegate {
     func deleteVMSheet(
         _ vc: DeleteVMSheetContentViewController, didConfirmDeletingExternalIDs ids: Set<UUID>
     ) {
-        if let instance = deleteSheetInstance {
+        if let shown = shownDelete {
             _ = viewModel.deleteConfirmed(
-                instance, deletingExternalIDs: ids, permanently: deleteSheetPermanent)
+                shown.instance, deletingExternalIDs: ids, permanently: shown.permanently)
         }
         deleteSheetPresenter.close()
     }

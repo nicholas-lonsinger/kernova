@@ -99,5 +99,8 @@ final class SheetPresenter: NSObject {
         guard let sheetWindow else { return }
         sheetWindow.sheetParent?.endSheet(sheetWindow)
         self.sheetWindow = nil
+        // Drop the (now-orphaned) handler too: reset() does not fire it, and the
+        // next show() installs a fresh one — no reason to retain the old closure.
+        onClose = nil
     }
 }
