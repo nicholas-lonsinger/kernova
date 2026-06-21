@@ -49,6 +49,15 @@ Kernova is a pure-AppKit app that manages virtual machines via Apple's `Virtuali
 
 **No third-party dependencies.** The Kernova app target uses only Apple system frameworks. Apple-published Swift Packages (e.g. `apple/swift-protobuf`, currently consumed by the local `KernovaProtocol/` package) are acceptable when they pull their weight; non-Apple packages still require explicit sign-off.
 
+## Mac App Store Readiness
+
+Kernova is intended for **Mac App Store distribution** eventually, which will require adopting the **App Sandbox** (`com.apple.security.app-sandbox`). The main app is **not sandboxed yet** — `Kernova/Resources/Kernova.entitlements` carries only `com.apple.security.virtualization` and `com.apple.security.device.audio-input`. The virtualization entitlement itself is MAS-compatible (UTM ships a sandboxed `Virtualization.framework` app on the store); the App Sandbox is the gating work, and it will be done deliberately as **one coordinated effort**, not piecemeal.
+
+**The rule for now is simply: don't make that eventual migration bigger.** When you write *new* code, choose the approach that is already sandbox-safe so it won't need reworking later. Do not go the other way and convert existing, working code toward sandbox-compatibility as a side effect of unrelated work.
+
+- **For new code, prefer in-process Apple framework APIs over shelling out** to system command-line tools (`Process` / `NSTask` → `/usr/bin/ditto`, `unzip`, `tar`, …), which a sandboxed app cannot spawn, and over adding entitlements unavailable to MAS apps. Picking the in-process API up front costs nothing extra and adds nothing to the pile.
+- **Don't start disruptive sandbox conversions on your own.** Moving file access to security-scoped bookmarks, relocating storage into the app container, and similar changes belong to the single sandbox-adoption effort and need to happen all at once — not chipped away during feature work.
+
 ## Development Guidelines
 
 ### Unit Tests
