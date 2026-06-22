@@ -408,7 +408,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                     // is now a should-never-fire backstop for a host that sends
                     // neither Begin nor Abort.
                     DispatchQueue.main.async { [weak self] in
-                        self?.handleControlFrame(frame, channel: channel)
+                        self?.handleControlFrame(frame)
                     }
                 }
             }
@@ -657,10 +657,10 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
 
     /// Handles the control frames the consume loop hops to the main queue for
     /// (stream frames are routed off-main directly to the engine).
-    private func handleControlFrame(_ frame: Frame, channel: VsockChannel) {
+    private func handleControlFrame(_ frame: Frame) {
         switch frame.payload {
         case .clipboardOffer(let offer):
-            handleOffer(offer, channel: channel)
+            handleOffer(offer)
         case .clipboardRequest(let request):
             handleRequest(request)
         case .clipboardRelease(let release):
@@ -737,7 +737,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// OS asks for it (`provideData`). The post-write `changeCount` is recorded
     /// immediately so the 0.5 s poll does not read — and thereby self-trigger —
     /// our own promise (echo suppression at promise time).
-    private func handleOffer(_ offer: Kernova_V1_ClipboardOffer, channel: VsockChannel) {
+    private func handleOffer(_ offer: Kernova_V1_ClipboardOffer) {
         // A newer offer supersedes the previous one. Pulls are synchronous on
         // main, so no inbound transfer can be in flight here, but cancel + failAll
         // defensively and drop the stale promise/cache.

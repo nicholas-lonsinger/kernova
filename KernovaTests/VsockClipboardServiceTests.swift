@@ -176,59 +176,6 @@ struct VsockClipboardServiceTests {
 
     // MARK: - Streaming a reply to the service (we are the sender)
 
-    /// Drives a full `ClipboardStreamBegin` → `ClipboardChunk`* →
-    /// `ClipboardStreamEnd` sequence for `transferID` from the guest end.
-    ///
-    /// The service routes these to its `ClipboardStreamReceiver`, which acks
-    /// each chunk back; we don't need to consume the acks — the receiver makes
-    /// progress regardless.
-    private func streamPayload(
-        from guest: VsockChannel,
-        transferID: UInt64,
-        generation: UInt64,
-        uti: String,
-        bytes: Data,
-        filename: String = "",
-        isInline: Bool,
-        chunkSize: Int = 64 * 1024
-    ) throws {
-        var begin = Frame()
-        begin.protocolVersion = 1
-        begin.clipboardStreamBegin = Kernova_V1_ClipboardStreamBegin.with {
-            $0.generation = generation
-            $0.transferID = transferID
-            $0.uti = uti
-            $0.totalBytes = UInt64(bytes.count)
-            $0.filename = filename
-            $0.isInline = isInline
-        }
-        try guest.send(begin)
-
-        var offset = 0
-        while offset < bytes.count {
-            let end = min(offset + chunkSize, bytes.count)
-            let slice = bytes.subdata(in: offset..<end)
-            var chunkFrame = Frame()
-            chunkFrame.protocolVersion = 1
-            chunkFrame.clipboardChunk = Kernova_V1_ClipboardChunk.with {
-                $0.transferID = transferID
-                $0.offset = UInt64(offset)
-                $0.data = slice
-            }
-            try guest.send(chunkFrame)
-            offset = end
-        }
-
-        var endFrame = Frame()
-        endFrame.protocolVersion = 1
-        endFrame.clipboardStreamEnd = Kernova_V1_ClipboardStreamEnd.with {
-            $0.transferID = transferID
-            $0.totalBytes = UInt64(bytes.count)
-            $0.sha256 = Data(SHA256.hash(data: bytes))
-        }
-        try guest.send(endFrame)
-    }
-
     /// Streams `ClipboardChunk`(s) → `ClipboardStreamEnd` for `transferID` from
     /// the guest end, **without** a preceding `Begin`.
     ///
