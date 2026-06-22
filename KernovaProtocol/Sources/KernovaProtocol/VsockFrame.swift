@@ -49,12 +49,7 @@ enum VsockFrame {
 }
 
 /// Errors thrown by the framing layer.
-///
-/// Public because it escapes the module through `VsockChannel.send(_:)`:
-/// an oversized frame fails encoding *before* any bytes hit the wire (the
-/// channel stays open), and callers need to discriminate that case from a
-/// transport failure by type.
-public enum VsockFrameError: Error, Sendable, Equatable {
+enum VsockFrameError: Error, Sendable, Equatable {
     /// A frame's declared payload size exceeds `VsockFrame.maxPayloadSize`.
     /// On the decode side the stream is unrecoverable at this point and the
     /// caller should close the connection.

@@ -159,16 +159,6 @@ public final class VsockChannel: @unchecked Sendable {
         }
     }
 
-    /// Sends a frame with every O(payload) step off the caller's actor.
-    ///
-    /// `serializeFramed(_:)` (protobuf encode + framing copy) and the socket
-    /// write both run on the cooperative executor, so awaiting this from the
-    /// `@MainActor` keeps a large frame send from blocking the UI.
-    /// Throws the same errors as `send(_:)`.
-    public func sendOffActor(_ frame: Frame) async throws {
-        try writeFramed(Self.serializeFramed(frame))
-    }
-
     /// Tears down the channel.
     ///
     /// Subsequent `send` calls throw `.closed` and

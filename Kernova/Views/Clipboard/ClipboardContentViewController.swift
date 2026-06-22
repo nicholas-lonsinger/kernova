@@ -461,7 +461,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
     // MARK: - Actions
 
-    @objc private func pasteFromMac(_ sender: Any?) {
+    @objc private func pasteFromMac(_: Any?) {
         takeIn(pasteboard: .general)
     }
 
@@ -470,7 +470,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     /// Clears only the gated buffer/preview — the host and guest pasteboards
     /// are the user's real clipboards and are left untouched. The observation
     /// pass resets the editor to empty and the indicator to "Empty".
-    @objc private func clearClipboard(_ sender: Any?) {
+    @objc private func clearClipboard(_: Any?) {
         guard let service = instance.clipboardService, !service.clipboardContent.isEmpty else {
             return
         }
@@ -481,7 +481,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             "Cleared clipboard buffer for VM '\(self.instance.name, privacy: .public)'")
     }
 
-    @objc private func copyToMac(_ sender: Any?) {
+    @objc private func copyToMac(_: Any?) {
         guard let service = instance.clipboardService else { return }
         guard !service.clipboardContent.isEmpty else { return }
         // A pull landing mid-copy republishes clipboardContent, firing the

@@ -107,8 +107,6 @@ final class VsockClipboardService: ClipboardServicing {
     nonisolated private static let logger = Logger(
         subsystem: "app.kernova", category: "VsockClipboardService")
 
-    private static let errorCodeTransferFailure = "clipboard.transfer.send.failure"
-
     /// One promised guest offer.
     ///
     /// Holds its representation metadata (indexed exactly as the guest offered

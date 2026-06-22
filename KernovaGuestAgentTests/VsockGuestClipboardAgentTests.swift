@@ -149,8 +149,8 @@ final class FakePasteboard: Pasteboard, @unchecked Sendable {
     ///
     /// Resolved bytes are cached back into the resident item (mirroring how a
     /// real `NSPasteboardItem` retains provided data) so a subsequent
-    /// `data(forType:)` / `writtenFileURLs` read reflects what a paste would see
-    /// — without re-invoking the provider.
+    /// `data(forType:)` read reflects what a paste would see — without
+    /// re-invoking the provider.
     func invokeProvider(forType type: NSPasteboard.PasteboardType, itemIndex: Int?) -> Data? {
         let provider: NSPasteboardItemDataProvider? = lock.withLock {
             if let itemIndex {
@@ -174,18 +174,6 @@ final class FakePasteboard: Pasteboard, @unchecked Sendable {
     }
 
     // MARK: - Test-only resident setup (a user copying inside the guest)
-
-    /// File URLs resident on the pasteboard.
-    ///
-    /// Decoded from any `.fileURL` representation a test placed via `setItem`, or
-    /// cached back by `invokeProvider`. Promise writes record no bytes.
-    var writtenFileURLs: [URL] {
-        lock.withLock {
-            storedRepresentations
-                .filter { $0.type == .fileURL }
-                .compactMap { String(data: $0.data, encoding: .utf8).flatMap(URL.init(string:)) }
-        }
-    }
 
     /// Places resident (type, data) pairs, modelling a user copying in the guest.
     ///
@@ -220,10 +208,6 @@ final class FakePasteboard: Pasteboard, @unchecked Sendable {
     @discardableResult
     func setString(_ string: String, forType type: NSPasteboard.PasteboardType) -> Bool {
         setItem([(type: type, data: Data(string.utf8))])
-    }
-
-    func string(forType type: NSPasteboard.PasteboardType) -> String? {
-        data(forType: type).flatMap { String(data: $0, encoding: .utf8) }
     }
 }
 
