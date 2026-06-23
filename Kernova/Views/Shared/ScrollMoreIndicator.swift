@@ -13,9 +13,9 @@ import os
 /// All overlays are hit-transparent, so the indicator never blocks scrolling.
 ///
 /// Create one per scroll view and retain it (typically a stored property on the
-/// owning view controller). It inserts its overlays into the scroll view's
-/// superview lazily on the first layout and removes them on `deinit`, so it works
-/// whether the scroll view is already in a view hierarchy or mounted later.
+/// owning view controller). It inserts its hit-transparent overlays into the
+/// scroll view's superview on the first layout — so it works whether the scroll
+/// view is already in a hierarchy or mounted later — and removes them on `deinit`.
 @MainActor
 final class ScrollMoreIndicator {
     private static let logger = Logger(subsystem: "app.kernova", category: "ScrollMoreIndicator")
@@ -36,6 +36,15 @@ final class ScrollMoreIndicator {
     ///
     /// Exposed for tests; production observes it only through the overlay state.
     private(set) var hasMoreBelow = false
+
+    #if DEBUG
+    /// The overlays in z-order — `[fade, chevron]`, chevron on top — once inserted,
+    /// else empty.
+    var overlaysForTesting: [NSView] { didInsertOverlays ? [fade, chevron] : [] }
+
+    /// Whether the one-time scroller flash has latched.
+    var hasFlashedForTesting: Bool { didFlash }
+    #endif
 
     init(scrollView: NSScrollView) {
         self.scrollView = scrollView
@@ -61,9 +70,10 @@ final class ScrollMoreIndicator {
 
     deinit {
         NotificationCenter.default.removeObserver(self)
-        // The overlays live in the scroll view's superview, so they must be pulled
-        // when the indicator (owned by the same VC as the scroll view) goes away.
-        // The VC is `@MainActor`, so this deinit runs on the main actor.
+        // The overlays live in the scroll view's superview (a long-lived container),
+        // so they're pulled here. Every owner is an @MainActor view controller whose
+        // deallocation runs on the main thread, so `assumeIsolated` holds; this would
+        // need revisiting if a future owner could be last-released off the main thread.
         MainActor.assumeIsolated {
             fade.removeFromSuperview()
             chevron.removeFromSuperview()
@@ -107,7 +117,9 @@ final class ScrollMoreIndicator {
     /// Adds the overlays to the scroll view's superview, pinned over its bottom edge,
     /// the first time both exist.
     ///
-    /// The chevron layers above the fade.
+    /// The fade is added first, then the chevron above it, so the chevron is on top.
+    /// They're pinned to the scroll view's edges (not scrolled), so the cue stays at
+    /// the bottom.
     private func insertOverlaysIfNeeded() {
         guard !didInsertOverlays, let scrollView, let host = scrollView.superview else { return }
         didInsertOverlays = true

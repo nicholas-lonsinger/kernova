@@ -57,18 +57,37 @@ struct ScrollMoreIndicatorTests {
         #expect(indicator.hasMoreBelow == true)
     }
 
-    @Test("Inserts its two overlays into the scroll view's superview")
-    func insertsOverlaysIntoSuperview() {
-        let host = NSView(frame: NSRect(x: 0, y: 0, width: Self.width, height: Self.viewportHeight))
+    @Test("Inserts the fade + chevron lazily once the scroll view is mounted, chevron on top")
+    func lazilyInsertsOverlaysOnMount() {
+        // Production creates the indicator in loadView, before the scroll view is in
+        // any hierarchy — so at init there is no superview and nothing is inserted.
         let scrollView = makeScrollView(documentHeight: 1000)
-        host.addSubview(scrollView)
-        #expect(host.subviews.count == 1)
-
         let indicator = ScrollMoreIndicator(scrollView: scrollView)
-        // The chevron disc + fade are layered above the scroll view on first layout.
-        #expect(host.subviews.count == 3)
-        #expect(host.subviews.last !== scrollView)
-        _ = indicator
+        #expect(indicator.overlaysForTesting.isEmpty)
+
+        // Mount it, then fire a geometry notification: the overlays insert into the
+        // superview, the chevron above the fade.
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: Self.width, height: Self.viewportHeight))
+        host.addSubview(scrollView)
+        scrollView.contentView.scroll(to: NSPoint(x: 0, y: 1))
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+
+        let overlays = indicator.overlaysForTesting
+        #expect(overlays.count == 2)
+        #expect(overlays.allSatisfy { $0.superview === host })
+        let fadeIndex = host.subviews.firstIndex { $0 === overlays[0] }
+        let chevronIndex = host.subviews.firstIndex { $0 === overlays[1] }
+        #expect(fadeIndex != nil && chevronIndex != nil)
+        if let f = fadeIndex, let c = chevronIndex { #expect(c > f) }
+    }
+
+    @Test("Latches the one-time scroller flash on overflow, not when content fits")
+    func flashLatch() {
+        let fits = ScrollMoreIndicator(scrollView: makeScrollView(documentHeight: 50))
+        #expect(fits.hasFlashedForTesting == false)
+
+        let overflows = ScrollMoreIndicator(scrollView: makeScrollView(documentHeight: 1000))
+        #expect(overflows.hasFlashedForTesting == true)
     }
 
     @Test("Re-evaluates when content grows in place")
