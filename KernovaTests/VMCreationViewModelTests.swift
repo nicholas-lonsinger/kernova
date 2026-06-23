@@ -607,68 +607,6 @@ struct VMCreationViewModelTests {
         #expect(vm.validationMessage == "Enter a name for your virtual machine.")
     }
 
-    // MARK: - Scroll gate
-
-    @Test("currentStepScrollGateSatisfied defaults to true")
-    func scrollGateDefaultsSatisfied() {
-        let vm = VMCreationViewModel()
-        #expect(vm.currentStepScrollGateSatisfied == true)
-    }
-
-    @Test("setCurrentStepScrollGateSatisfied updates the flag")
-    func setScrollGateUpdatesFlag() {
-        let vm = VMCreationViewModel()
-        vm.setCurrentStepScrollGateSatisfied(false)
-        #expect(vm.currentStepScrollGateSatisfied == false)
-        vm.setCurrentStepScrollGateSatisfied(true)
-        #expect(vm.currentStepScrollGateSatisfied == true)
-    }
-
-    @Test("advancing a step resets the scroll gate to satisfied")
-    func goNextResetsScrollGate() {
-        let vm = VMCreationViewModel()
-        vm.setCurrentStepScrollGateSatisfied(false)
-        vm.goNext()
-        #expect(vm.currentStepScrollGateSatisfied == true)
-    }
-
-    @Test("going back resets the scroll gate to satisfied")
-    func goBackResetsScrollGate() {
-        let vm = VMCreationViewModel()
-        vm.currentStep = .resources
-        vm.setCurrentStepScrollGateSatisfied(false)
-        vm.goBack()
-        #expect(vm.currentStepScrollGateSatisfied == true)
-    }
-
-    @Test("assigning currentStep resets the scroll gate to satisfied")
-    func currentStepAssignmentResetsScrollGate() {
-        let vm = VMCreationViewModel()
-        vm.setCurrentStepScrollGateSatisfied(false)
-        vm.currentStep = .review
-        #expect(vm.currentStepScrollGateSatisfied == true)
-    }
-
-    @Test("validationMessage nudges to scroll when content is valid but gate is unsatisfied")
-    func validationMessageScrollHint() {
-        let vm = VMCreationViewModel()
-        // Review is always content-advanceable; engage the gate after the step
-        // assignment (which resets it).
-        vm.currentStep = .review
-        vm.setCurrentStepScrollGateSatisfied(false)
-        #expect(vm.validationMessage == "Scroll down to review the rest of this step.")
-    }
-
-    @Test("validationMessage prefers the domain hint over the scroll hint when content is invalid")
-    func validationMessageDomainTakesPrecedenceOverScrollHint() {
-        let vm = VMCreationViewModel()
-        vm.currentStep = .resources
-        vm.vmName = ""
-        vm.setCurrentStepScrollGateSatisfied(false)
-        // The name is the real blocker; the scroll hint must not mask it.
-        #expect(vm.validationMessage == "Enter a name for your virtual machine.")
-    }
-
     // MARK: - buildInstallContext
 
     @Test("buildInstallContext snapshots downloadLatest with chosen path")

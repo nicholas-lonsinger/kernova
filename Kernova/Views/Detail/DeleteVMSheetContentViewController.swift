@@ -76,12 +76,13 @@ final class DeleteVMSheetContentViewController: NSViewController {
         Set(checkboxes.filter { $0.value.state == .on }.map(\.key))
     }
 
-    /// The content scroll view, and whether its list is taller than the cap.
-    ///
-    /// Used by `viewDidAppear` to flash the scrollbar as a "more below" hint
-    /// when the list overflows.
-    private weak var contentScrollView: NSScrollView?
+    /// Whether the content list is taller than the cap, so it scrolls rather than
+    /// growing an over-tall sheet.
     private(set) var contentOverflows = false
+
+    /// Shows the shared "more content below" cue (chevron + fade + scroller flash)
+    /// while the list overflows the cap.
+    private var scrollMoreIndicator: ScrollMoreIndicator?
 
     // MARK: - Layout constants
 
@@ -158,16 +159,6 @@ final class DeleteVMSheetContentViewController: NSViewController {
         ])
 
         view = container
-    }
-
-    override func viewDidAppear() {
-        super.viewDidAppear()
-        // Flash the scrollbar when the sheet appears with an overflowing list,
-        // so the user sees there's more below. Matches the app's (system)
-        // scroller style. (A repeat flash on any re-appearance is harmless.)
-        if contentOverflows {
-            contentScrollView?.flashScrollers()
-        }
     }
 
     // MARK: - Header
@@ -259,9 +250,8 @@ final class DeleteVMSheetContentViewController: NSViewController {
         scrollView.drawsBackground = false
         scrollView.autohidesScrollers = true
         // Use the system's scroller style (matches every other scroll view in
-        // the app). When the list overflows, `viewDidAppear` flashes the
-        // scrollbar as a "there's more below" hint — overlay scrollers can't be
-        // pinned permanently visible, so a flash is the consistent equivalent.
+        // the app). When the list overflows, `ScrollMoreIndicator` shows the
+        // "there's more below" cue (chevron + fade + a one-time scroller flash).
         // Disable safe-area-like auto-adjustment AND zero the clip view's
         // own contentInsets — on macOS Tahoe the default contributes a
         // visible ~10pt of padding above the document.
@@ -359,7 +349,7 @@ final class DeleteVMSheetContentViewController: NSViewController {
             scrollView.heightAnchor.constraint(equalToConstant: visibleHeight),
         ])
 
-        contentScrollView = scrollView
+        scrollMoreIndicator = ScrollMoreIndicator(scrollView: scrollView)
         return scrollView
     }
 

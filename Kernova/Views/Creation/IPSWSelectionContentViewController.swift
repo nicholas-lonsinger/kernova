@@ -17,10 +17,9 @@ final class IPSWSelectionContentViewController: NSViewController {
 
     /// Rebuilt by ``rebuildConditional()`` whenever the source/path/warning state changes.
     private let conditionalContainer = NSStackView()
-    /// Gates Next until the user has scrolled this step to the bottom (when its
-    /// content — radios plus the conditional path badge / banners — overflows);
-    /// reports scroll geometry into the shared model.
-    private var scrollGate: WizardScrollGate?
+    /// Shows the "more content below" cue while this step's content — radios plus
+    /// the conditional path badge / banners — overflows the sheet; a hint only.
+    private var scrollMoreIndicator: ScrollMoreIndicator?
 
     init(creationVM: VMCreationViewModel) {
         self.creationVM = creationVM
@@ -75,9 +74,7 @@ final class IPSWSelectionContentViewController: NSViewController {
         ])
 
         view = scrollView
-        scrollGate = WizardScrollGate(scrollView: scrollView) { [weak creationVM] satisfied in
-            creationVM?.setCurrentStepScrollGateSatisfied(satisfied)
-        }
+        scrollMoreIndicator = ScrollMoreIndicator(scrollView: scrollView)
         refresh()
     }
 

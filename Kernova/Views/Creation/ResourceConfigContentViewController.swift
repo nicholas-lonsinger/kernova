@@ -20,9 +20,9 @@ final class ResourceConfigContentViewController: NSViewController {
     private let memoryStepper = NSStepper()
     private let diskPopUp = NSPopUpButton()
     private let networkSwitch = NSSwitch()
-    /// Gates Next until the user has scrolled this step to the bottom (when its
-    /// content overflows); reports scroll geometry into the shared model.
-    private var scrollGate: WizardScrollGate?
+    /// Shows the "more content below" cue while this step's content overflows the
+    /// sheet; a hint only.
+    private var scrollMoreIndicator: ScrollMoreIndicator?
 
     private var os: VMGuestOS { creationVM.selectedOS }
 
@@ -56,9 +56,7 @@ final class ResourceConfigContentViewController: NSViewController {
         ])
 
         view = scrollView
-        scrollGate = WizardScrollGate(scrollView: scrollView) { [weak creationVM] satisfied in
-            creationVM?.setCurrentStepScrollGateSatisfied(satisfied)
-        }
+        scrollMoreIndicator = ScrollMoreIndicator(scrollView: scrollView)
     }
 
     // MARK: - Form construction
