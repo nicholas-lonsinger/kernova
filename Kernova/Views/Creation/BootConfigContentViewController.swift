@@ -17,6 +17,10 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
     private let bootModeControl = NSSegmentedControl(
         labels: ["EFI (ISO Image)", "Linux Kernel"], trackingMode: .selectOne, target: nil, action: nil)
     private let conditionalContainer = NSStackView()
+    /// Gates Next until the user has scrolled this step to the bottom (when its
+    /// content — the mode switch plus the conditional kernel/initrd fields —
+    /// overflows); reports scroll geometry into the shared model.
+    private var scrollGate: WizardScrollGate?
 
     /// Default kernel command line shown — and committed — when none is set.
     private static let defaultKernelCommandLine = "console=hvc0"
@@ -59,6 +63,9 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
         ])
 
         view = scrollView
+        scrollGate = WizardScrollGate(scrollView: scrollView) { [weak creationVM] satisfied in
+            creationVM?.setCurrentStepScrollGateSatisfied(satisfied)
+        }
         rebuildConditional()
     }
 

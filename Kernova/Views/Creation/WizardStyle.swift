@@ -121,6 +121,61 @@ func makeWizardRadioOption(radio: NSButton, iconSymbol: String, description desc
     return option
 }
 
+// MARK: - Scroll indicator
+
+/// A passive overlay container that lets clicks and scroll-wheel events fall
+/// through to the content beneath.
+///
+/// Used for the "more below" scroll indicator so the chevron never intercepts the
+/// scrolling it's prompting.
+final class WizardHitTransparentView: NSView {
+    // RATIONALE: Returning nil from hitTest removes the whole subtree from mouse/
+    // scroll event routing, so events reach the scroll view layered beneath the
+    // overlay — the standard AppKit pattern for a non-interactive overlay.
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
+/// Builds the "more content below — scroll to continue" indicator: a `chevron.down`
+/// over a small translucent circular material, sized for the bottom-center of a
+/// scrolling wizard step.
+///
+/// The returned view is hit-transparent (see ``WizardHitTransparentView``), so the
+/// caller can layer it over the step's scroll view without blocking scrolling. The
+/// caller owns positioning and show/hide (the wizard shell fades it based on
+/// `VMCreationViewModel.currentStepScrollGateSatisfied`).
+@MainActor
+func makeWizardScrollIndicator() -> NSView {
+    let diameter: CGFloat = 28
+
+    let backing = NSVisualEffectView()
+    backing.material = .hudWindow
+    backing.blendingMode = .withinWindow
+    backing.state = .active
+    backing.wantsLayer = true
+    backing.layer?.cornerRadius = diameter / 2
+    backing.layer?.masksToBounds = true
+
+    let chevron = NSImageView(
+        image: .systemSymbol(
+            "chevron.down", accessibilityDescription: "More content below — scroll to continue"))
+    chevron.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
+    chevron.contentTintColor = .secondaryLabelColor
+    chevron.translatesAutoresizingMaskIntoConstraints = false
+
+    let container = WizardHitTransparentView()
+    container.translatesAutoresizingMaskIntoConstraints = false
+    container.addFullSizeSubview(backing)
+    backing.addSubview(chevron)
+
+    NSLayoutConstraint.activate([
+        container.widthAnchor.constraint(equalToConstant: diameter),
+        container.heightAnchor.constraint(equalToConstant: diameter),
+        chevron.centerXAnchor.constraint(equalTo: backing.centerXAnchor),
+        chevron.centerYAnchor.constraint(equalTo: backing.centerYAnchor),
+    ])
+    return container
+}
+
 // MARK: - Buttons & badges
 
 /// Builds a borderless, link-styled push button (caption font, link color).

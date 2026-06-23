@@ -20,6 +20,9 @@ final class ResourceConfigContentViewController: NSViewController {
     private let memoryStepper = NSStepper()
     private let diskPopUp = NSPopUpButton()
     private let networkSwitch = NSSwitch()
+    /// Gates Next until the user has scrolled this step to the bottom (when its
+    /// content overflows); reports scroll geometry into the shared model.
+    private var scrollGate: WizardScrollGate?
 
     private var os: VMGuestOS { creationVM.selectedOS }
 
@@ -53,6 +56,9 @@ final class ResourceConfigContentViewController: NSViewController {
         ])
 
         view = scrollView
+        scrollGate = WizardScrollGate(scrollView: scrollView) { [weak creationVM] satisfied in
+            creationVM?.setCurrentStepScrollGateSatisfied(satisfied)
+        }
     }
 
     // MARK: - Form construction

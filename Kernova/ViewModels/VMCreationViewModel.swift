@@ -30,7 +30,27 @@ enum IPSWSource: Sendable {
 final class VMCreationViewModel {
     // MARK: - Wizard State
 
-    var currentStep: VMCreationStep = .osSelection
+    var currentStep: VMCreationStep = .osSelection {
+        didSet {
+            // A freshly entered step starts ungated (optimistic) so non-scrolling
+            // steps are never blocked; an overflowing step's scroll observer flips
+            // this false once it measures its geometry. `didSet` doesn't fire on
+            // init, so the initial `.osSelection` step keeps the satisfied default.
+            currentStepScrollGateSatisfied = true
+        }
+    }
+
+    /// Whether the current step's content has been scrolled to its bottom — or
+    /// doesn't overflow the fixed-size sheet at all.
+    ///
+    /// Drives both the forward-navigation gate (composed with `canAdvance` /
+    /// `canCreate` by the wizard shell) and the "more below" down-arrow indicator,
+    /// which are the same condition inverted: the indicator shows exactly when the
+    /// gate is *not* satisfied. Defaults satisfied and resets satisfied on every
+    /// step change; the active step's ``WizardScrollGate`` flips it false only when
+    /// its content actually overflows and isn't yet at the bottom. Derived from
+    /// real scroll geometry, never a hardcoded per-step flag.
+    private(set) var currentStepScrollGateSatisfied: Bool = true
 
     // MARK: - Step 1: OS Selection
 
@@ -76,7 +96,14 @@ final class VMCreationViewModel {
     // MARK: - Navigation
 
     var validationMessage: String? {
-        guard !canAdvance else { return nil }
+        guard !canAdvance else {
+            // Content is valid; if the step still has unseen content below the
+            // fold, nudge the user to scroll (the down-arrow's textual companion,
+            // read aloud by VoiceOver via the shell's validation label).
+            return currentStepScrollGateSatisfied
+                ? nil
+                : "Scroll down to review the rest of this step."
+        }
         switch currentStep {
         case .osSelection, .review:
             return nil
@@ -141,6 +168,15 @@ final class VMCreationViewModel {
             case .macOS: false
             }
         }
+    }
+
+    /// Reports the active step's scroll-gate state, set by its ``WizardScrollGate``
+    /// from real scroll geometry.
+    ///
+    /// The wizard shell observes the resulting `currentStepScrollGateSatisfied` to
+    /// drive the Next/Create button and the down-arrow indicator.
+    func setCurrentStepScrollGateSatisfied(_ satisfied: Bool) {
+        currentStepScrollGateSatisfied = satisfied
     }
 
     func goNext() {

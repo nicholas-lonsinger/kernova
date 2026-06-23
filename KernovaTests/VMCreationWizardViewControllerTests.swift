@@ -135,6 +135,37 @@ struct VMCreationWizardViewControllerTests {
             findLabel(withText: "Enter a name for your virtual machine.", in: wizard.view) != nil)
     }
 
+    @Test("An unsatisfied scroll gate disables Next and surfaces the scroll hint")
+    func scrollGateDisablesNext() {
+        let vm = VMCreationViewModel()
+        // Simulate an overflowing step that hasn't reached the bottom. Set it on
+        // osSelection — which has no scroll observer to reset it — so the
+        // windowless mount preserves the value (the default-satisfied gate is what
+        // keeps every other windowless test green).
+        vm.setCurrentStepScrollGateSatisfied(false)
+        let wizard = VMCreationWizardViewController(creationVM: vm)
+        wizard.loadViewIfNeeded()
+
+        // osSelection is content-advanceable, so only the scroll gate blocks Next.
+        #expect(findButton(titled: "Next", in: wizard.view)?.isEnabled == false)
+        #expect(
+            findLabel(withText: "Scroll down to review the rest of this step.", in: wizard.view)
+                != nil)
+    }
+
+    @Test("An unsatisfied scroll gate disables Create on the review step")
+    func scrollGateDisablesCreate() {
+        let vm = VMCreationViewModel()
+        vm.currentStep = .review
+        vm.vmName = "Scrolled VM"
+        // Engage the gate after the step assignment, which resets it.
+        vm.setCurrentStepScrollGateSatisfied(false)
+        let wizard = VMCreationWizardViewController(creationVM: vm)
+        wizard.loadViewIfNeeded()
+
+        #expect(findButton(titled: "Create", in: wizard.view)?.isEnabled == false)
+    }
+
     // MARK: - Helpers
 
     @MainActor

@@ -12,6 +12,9 @@ import AppKit
 final class ReviewContentViewController: NSViewController {
     private let creationVM: VMCreationViewModel
     private let startSwitch = NSSwitch()
+    /// Gates Create until the user has scrolled this (often-overflowing) summary
+    /// to the bottom; reports scroll geometry into the shared model.
+    private var scrollGate: WizardScrollGate?
 
     init(creationVM: VMCreationViewModel) {
         self.creationVM = creationVM
@@ -43,6 +46,9 @@ final class ReviewContentViewController: NSViewController {
         ])
 
         view = scrollView
+        scrollGate = WizardScrollGate(scrollView: scrollView) { [weak creationVM] satisfied in
+            creationVM?.setCurrentStepScrollGateSatisfied(satisfied)
+        }
     }
 
     private func makeSummary() -> NSView {

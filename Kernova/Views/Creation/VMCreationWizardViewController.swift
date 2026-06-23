@@ -43,6 +43,13 @@ final class VMCreationWizardViewController: NSViewController {
 
     private let stepIndicator = WizardStepIndicatorView()
     private let contentContainer = NSView()
+    /// Floating "more below" chevron, layered over the active step's scroll view
+    /// and faded in whenever the scroll gate is unsatisfied.
+    ///
+    /// Hit-transparent, so it never blocks the scrolling it prompts. Shell-owned
+    /// (one instance reused across steps) and kept above the mounted step view by
+    /// ``showStep(_:)``.
+    private let scrollIndicator = makeWizardScrollIndicator()
     private let validationLabel = NSTextField(labelWithString: "")
     private let cancelButton = NSButton()
     private let backButton = NSButton()
@@ -68,7 +75,7 @@ final class VMCreationWizardViewController: NSViewController {
     // MARK: - Lifecycle
 
     override func loadView() {
-        let container = NSView()
+        let container = WizardRootView()
 
         let indicatorRow = makeIndicatorRow()
         let divider1 = makeHorizontalSeparator()
@@ -107,6 +114,23 @@ final class VMCreationWizardViewController: NSViewController {
             navBar.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
 
+        // Overlay the scroll indicator near the bottom-center of the content area
+        // (just inside the step's content padding). It starts hidden; `apply()`
+        // fades it in when the active step overflows and isn't yet at the bottom.
+        scrollIndicator.translatesAutoresizingMaskIntoConstraints = false
+        scrollIndicator.alphaValue = 0
+        contentContainer.addSubview(scrollIndicator)
+        NSLayoutConstraint.activate([
+            scrollIndicator.centerXAnchor.constraint(equalTo: contentContainer.centerXAnchor),
+            scrollIndicator.bottomAnchor.constraint(
+                equalTo: contentContainer.bottomAnchor,
+                constant: -(WizardStyle.contentPadding + Spacing.small)),
+        ])
+
+        container.onScrollKey = { [weak self] key in
+            self?.handleScrollKey(key)
+        }
+
         view = container
     }
 
@@ -128,12 +152,18 @@ final class VMCreationWizardViewController: NSViewController {
                     _ = self.creationVM.canCreate
                     _ = self.creationVM.validationMessage
                     _ = self.creationVM.selectedOS
+                    _ = self.creationVM.currentStepScrollGateSatisfied
                 },
                 apply: { [weak self] in
                     self?.apply()
                 }
             )
         }
+        // Focus the root view so keyboard scroll keys (Page Up/Down, Home/End,
+        // arrows) reach the active step's scroll view via the forwarding overrides
+        // below — the non-pointer way to satisfy the scroll gate. The initial step
+        // mounted in `viewDidLoad` before the window existed, so claim focus now.
+        view.window?.makeFirstResponder(view)
     }
 
     override func viewWillDisappear() {
@@ -227,6 +257,21 @@ final class VMCreationWizardViewController: NSViewController {
     private func apply() {
         let step = creationVM.currentStep
 
+        // Transition first: `showStep` forces a synchronous layout, so an
+        // overflowing step has already engaged its scroll gate (writing the model
+        // back through the gate observer) before we read it for the button state
+        // below. That closes the window where a fast Return could advance a step
+        // whose content hasn't been seen.
+        if displayedStep != step {
+            showStep(step)
+            displayedStep = step
+        }
+
+        // The forward-navigation gate: per-step domain validation AND, on a step
+        // that overflows, having scrolled to the bottom. A disabled primary button
+        // ignores its Return key-equivalent, so the keyboard path is gated too.
+        let scrollGate = creationVM.currentStepScrollGateSatisfied
+
         validationLabel.stringValue = creationVM.validationMessage ?? ""
 
         backButton.isHidden = step == .osSelection
@@ -234,8 +279,8 @@ final class VMCreationWizardViewController: NSViewController {
         let isReview = step == .review
         nextButton.isHidden = isReview
         createButton.isHidden = !isReview
-        nextButton.isEnabled = creationVM.canAdvance
-        createButton.isEnabled = creationVM.canCreate
+        nextButton.isEnabled = creationVM.canAdvance && scrollGate
+        createButton.isEnabled = creationVM.canCreate && scrollGate
 
         // Only the visible primary button owns the Return key.
         nextButton.keyEquivalent = isReview ? "" : "\r"
@@ -243,9 +288,21 @@ final class VMCreationWizardViewController: NSViewController {
 
         stepIndicator.currentStep = step
 
-        if displayedStep != step {
-            showStep(step)
-            displayedStep = step
+        setScrollIndicatorVisible(!scrollGate)
+    }
+
+    /// Fades the "more below" indicator in or out, mirroring the app's standard
+    /// `NSAnimationContext` alpha fade.
+    ///
+    /// Animating to the current value is a no-op, so a satisfied step never flashes
+    /// the indicator.
+    private func setScrollIndicatorVisible(_ visible: Bool) {
+        let target: CGFloat = visible ? 1 : 0
+        guard scrollIndicator.alphaValue != target else { return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.2
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            scrollIndicator.animator().alphaValue = target
         }
     }
 
@@ -277,6 +334,63 @@ final class VMCreationWizardViewController: NSViewController {
             old.removeFromParent()
         }
         currentChild = newChild
+
+        // Keep the scroll indicator above the freshly added step view.
+        contentContainer.addSubview(scrollIndicator, positioned: .above, relativeTo: newChild.view)
+
+        // Once on screen, force a synchronous layout pass so a scrolling step
+        // measures its geometry and engages its scroll gate now, not a runloop
+        // later — `apply()` reads the gate immediately after this returns. Guarded
+        // on `window` so a not-yet-presented mount (and windowless tests) keeps the
+        // optimistic default gate; the gate then settles on the first real layout.
+        if view.window != nil {
+            contentContainer.layoutSubtreeIfNeeded()
+            // Reclaim focus onto the root view so the new step starts keyboard-
+            // scrollable (the step's own controls take focus on click/Tab).
+            // Reclaim focus onto the root view so the new step starts keyboard-
+            // scrollable (the step's own controls take focus on click/Tab).
+            view.window?.makeFirstResponder(view)
+        }
+    }
+
+    // MARK: - Keyboard scrolling
+
+    /// The active step's scroll view, when the step scrolls (its root view *is* the
+    /// scroll view). `nil` for the non-scrolling OS step.
+    private var activeStepScrollView: NSScrollView? {
+        currentChild?.view as? NSScrollView
+    }
+
+    /// Scrolls the active step's scroll view in response to a keyboard scroll key
+    /// forwarded by ``WizardRootView``.
+    ///
+    /// The root holds first responder so these keys land here — the non-pointer way
+    /// to satisfy the scroll-to-bottom gate. Drives the clip-view origin directly
+    /// (NSScrollView doesn't honor the `scrollPage…` responder actions when no
+    /// document control is first responder), which also fires the bounds-changed
+    /// notification the gate observes. No-op on the non-scrolling OS step.
+    fileprivate func handleScrollKey(_ key: WizardScrollKey) {
+        guard let scrollView = activeStepScrollView else { return }
+        let clip = scrollView.contentView
+        let viewport = clip.bounds.height
+        let line: CGFloat = 24
+        // Overlap a line of context between pages, matching standard page scrolling.
+        let page = max(line, viewport - line)
+        let maxOffset = max(0, (scrollView.documentView?.frame.height ?? 0) - viewport)
+
+        var y = clip.bounds.origin.y
+        switch key {
+        case .pageDown: y += page
+        case .pageUp: y -= page
+        case .lineDown: y += line
+        case .lineUp: y -= line
+        case .top: y = 0
+        case .bottom: y = maxOffset
+        }
+        y = min(max(0, y), maxOffset)
+
+        clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: y))
+        scrollView.reflectScrolledClipView(clip)
     }
 
     /// Builds the step view controller for `step`, reading `selectedOS` fresh
@@ -366,5 +480,46 @@ final class VMCreationWizardViewController: NSViewController {
         alert.informativeText = message ?? "An unknown error occurred while creating the virtual machine."
         alert.addButton(withTitle: "OK")
         alert.beginSheetModal(for: window, completionHandler: nil)
+    }
+}
+
+/// A keyboard scroll key the wizard root forwards to the active step's scroll view.
+enum WizardScrollKey {
+    case pageDown, pageUp, top, bottom, lineDown, lineUp
+
+    /// Classifies a `keyDown` event, or `nil` if it isn't a scroll key.
+    init?(event: NSEvent) {
+        guard let scalar = event.charactersIgnoringModifiers?.unicodeScalars.first else { return nil }
+        switch Int(scalar.value) {
+        case NSPageDownFunctionKey, 0x20: self = .pageDown  // Page Down or Space
+        case NSPageUpFunctionKey: self = .pageUp
+        case NSHomeFunctionKey: self = .top
+        case NSEndFunctionKey: self = .bottom
+        case NSDownArrowFunctionKey: self = .lineDown
+        case NSUpArrowFunctionKey: self = .lineUp
+        default: return nil
+        }
+    }
+}
+
+/// Root container for the wizard shell that can hold first responder and turn
+/// keyboard scroll keys into ``WizardScrollKey`` callbacks.
+///
+/// A plain `NSView` refuses first responder, so with no focused control the window
+/// has nowhere to route keyboard scroll keys — and a plain view's `keyDown` doesn't
+/// translate Page Down into the `scrollPage…` responder actions either. Accepting
+/// first responder and classifying `keyDown` here lets the shell drive the active
+/// step's scroll view, the keyboard path for satisfying the scroll-to-bottom gate.
+private final class WizardRootView: NSView {
+    var onScrollKey: ((WizardScrollKey) -> Void)?
+
+    override var acceptsFirstResponder: Bool { true }
+
+    override func keyDown(with event: NSEvent) {
+        if let key = WizardScrollKey(event: event) {
+            onScrollKey?(key)
+        } else {
+            super.keyDown(with: event)
+        }
     }
 }
