@@ -4,28 +4,20 @@ import KernovaProtocol
 
 @Suite("GuestAgentMenuText")
 struct GuestAgentMenuTextTests {
-    // MARK: - versionLine
+    // MARK: - about
 
-    @Test("versionLine: unknown update shows no suffix")
-    func versionUnknown() {
-        #expect(
-            GuestAgentMenuText.versionLine(version: "0.23.0", build: "42", update: .unknown)
-                == "Version 0.23.0 (42)")
+    @Test("about command title")
+    func about() {
+        #expect(GuestAgentMenuText.about() == "About Kernova Guest Agent")
     }
 
-    @Test("versionLine: up to date")
-    func versionUpToDate() {
-        #expect(
-            GuestAgentMenuText.versionLine(version: "0.23.0", build: "42", update: .upToDate)
-                == "Version 0.23.0 (42) · Up to date")
-    }
+    // MARK: - updateAvailableLine
 
-    @Test("versionLine: update available names the host version")
-    func versionUpdateAvailable() {
+    @Test("updateAvailableLine names the host's bundled version")
+    func updateAvailable() {
         #expect(
-            GuestAgentMenuText.versionLine(
-                version: "0.22.0", build: "40", update: .updateAvailable(bundled: "0.23.0"))
-                == "Version 0.22.0 (40) · Update available (host has 0.23.0)")
+            GuestAgentMenuText.updateAvailableLine(bundled: "0.25.0")
+                == "Update available — host bundles 0.25.0")
     }
 
     // MARK: - hostStatusLine

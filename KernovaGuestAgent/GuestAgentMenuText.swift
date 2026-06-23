@@ -6,25 +6,17 @@ import KernovaProtocol
 /// Free of AppKit so they're trivially unit-testable; `GuestAgentStatusItemController`
 /// calls them when (re)building menu lines in `menuNeedsUpdate`.
 enum GuestAgentMenuText {
-    /// Identity header line.
-    static func identity() -> String { "Kernova Guest Agent" }
+    /// "About" command title — opens the standard About panel, which carries
+    /// the identity, version/build, and copyright moved out of the dropdown.
+    static func about() -> String { "About Kernova Guest Agent" }
 
-    /// Version + build line, with an update suffix derived from the host's
-    /// bundled version. `.unknown` (host hasn't reported one) shows no suffix.
-    static func versionLine(
-        version: String,
-        build: String,
-        update: KernovaVersionComparison.UpdateState
-    ) -> String {
-        let base = "Version \(version) (\(build))"
-        switch update {
-        case .unknown:
-            return base
-        case .upToDate:
-            return base + " · Up to date"
-        case .updateAvailable(let bundled):
-            return base + " · Update available (host has \(bundled))"
-        }
+    /// Top-level hint shown only when the host bundles a newer agent.
+    ///
+    /// Used as the About panel's credits string for the same case; the
+    /// up-to-date / unknown cases show nothing — version/build live in the
+    /// About panel.
+    static func updateAvailableLine(bundled: String) -> String {
+        "Update available — host bundles \(bundled)"
     }
 
     /// Host control-channel status line.

@@ -120,7 +120,6 @@ final class GuestAgentAppDelegate: NSObject, NSApplicationDelegate {
 
         self.statusItemController = GuestAgentStatusItemController(
             version: Self.version,
-            build: Self.buildNumber,
             connectionState: { [weak controlAgent] in controlAgent?.connectionState ?? .connecting },
             hostBundledVersion: { [weak controlAgent] in controlAgent?.hostBundledAgentVersion ?? "" },
             clipboardActivity: { [weak clipboardAgent] in clipboardAgent?.clipboardActivity ?? .idle },
