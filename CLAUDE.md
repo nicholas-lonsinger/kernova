@@ -355,14 +355,13 @@ When merging PRs with `gh pr merge`, always squash-merge with `--squash --subjec
 
 #### Post-merge cleanup
 
-After a successful merge, confirm it landed, then tear down the branch and sync `main`:
+After a successful merge, confirm it landed, then sync `main` (and, when working directly in a checkout, tear down the local branch):
 
 1. `gh pr view <N> --json state -q .state` — confirm `"MERGED"` before deleting anything.
 
-**In an `EnterWorktree` session** (the usual case), let the tool do the teardown, then sync:
+**In an `EnterWorktree` session** (the usual case), **stay in the worktree** — do not `ExitWorktree`. Just fast-forward the primary checkout's `main` from inside the worktree:
 
-2. `ExitWorktree` with `action: "remove"`. Squash-merge leaves the worktree's commit off `main` by SHA, so the tool refuses unless you also pass `discard_changes: true` — that's expected and safe here, since the content already landed on `main` as the squash commit. This returns the session to the primary checkout and deletes the worktree and its scratch branch in one step (the branch deletion works because the scratch branch still carries its original `worktree-` name — see [Branch Naming](#branch-naming)).
-3. Now in the primary checkout: `git checkout main` (if not already on it), then `git pull --prune --ff-only` to fast-forward onto the squash commit and drop the now-stale `origin/<type>/<short-description>` remote-tracking ref.
+2. `git -C <primary-checkout-path> pull --prune --ff-only` — `git -C <path>` runs this one command as if in the primary checkout (where `main` is checked out), so it fetches, fast-forwards `main` onto the squash commit, and drops the now-stale `origin/<type>/<short-description>` remote-tracking ref — all without leaving the worktree. A plain `git fetch --prune` from inside the worktree would only update the shared `origin/main` ref, not the local `main` branch pointer, which is why this targets the primary checkout. (For this repo the primary is `/Users/nlonsinger/Developer/GitHub/nicholas-lonsinger/kernova`; resolve it at runtime via `git worktree list` if unsure.) The worktree and its scratch branch are left in place for continued or follow-up work.
 
 **Working directly in a checkout** (no `EnterWorktree` session), delete the branch by hand instead:
 
