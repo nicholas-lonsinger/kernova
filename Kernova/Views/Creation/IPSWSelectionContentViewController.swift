@@ -17,6 +17,9 @@ final class IPSWSelectionContentViewController: NSViewController {
 
     /// Rebuilt by ``rebuildConditional()`` whenever the source/path/warning state changes.
     private let conditionalContainer = NSStackView()
+    /// Shows the "more content below" cue while this step's content — radios plus
+    /// the conditional path badge / banners — overflows the sheet; a hint only.
+    private var scrollMoreIndicator: ScrollMoreIndicator?
 
     init(creationVM: VMCreationViewModel) {
         self.creationVM = creationVM
@@ -71,6 +74,7 @@ final class IPSWSelectionContentViewController: NSViewController {
         ])
 
         view = scrollView
+        scrollMoreIndicator = ScrollMoreIndicator(scrollView: scrollView)
         refresh()
     }
 

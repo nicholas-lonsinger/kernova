@@ -20,10 +20,6 @@ func diskIconSystemName(for disk: StorageDisk) -> String {
 // `Kernova/Utilities/DiskSubtitle.swift` (Foundation-only, shared with the
 // KernovaQuickLook extension); this file keeps the AppKit painters.
 
-/// Duration of the subtitle's fade-in when an async size read lands, easing the
-/// value in instead of snapping it.
-private let diskSubtitleFadeDuration: TimeInterval = 0.2
-
 /// Paints `text` into the subtitle field, fading it in when the content changes.
 ///
 /// The in-bundle size figures arrive after an off-main read, so snapping them
@@ -43,11 +39,7 @@ private func setDiskSubtitle(_ field: NSTextField, text: String, animated: Bool)
     }
     field.alphaValue = 0
     applyAttachmentSubtitle(to: field, path: text, isMissing: false)
-    NSAnimationContext.runAnimationGroup { context in
-        context.duration = diskSubtitleFadeDuration
-        context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        field.animator().alphaValue = 1
-    }
+    animateFade(field, to: 1)
 }
 
 /// In-flight subtitle reads keyed by the painted field.

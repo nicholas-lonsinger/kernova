@@ -17,6 +17,10 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
     private let bootModeControl = NSSegmentedControl(
         labels: ["EFI (ISO Image)", "Linux Kernel"], trackingMode: .selectOne, target: nil, action: nil)
     private let conditionalContainer = NSStackView()
+    /// Shows the "more content below" cue while this step's content — the mode
+    /// switch plus the conditional kernel/initrd fields — overflows the sheet; a
+    /// hint only.
+    private var scrollMoreIndicator: ScrollMoreIndicator?
 
     /// Default kernel command line shown — and committed — when none is set.
     private static let defaultKernelCommandLine = "console=hvc0"
@@ -59,6 +63,7 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
         ])
 
         view = scrollView
+        scrollMoreIndicator = ScrollMoreIndicator(scrollView: scrollView)
         rebuildConditional()
     }
 

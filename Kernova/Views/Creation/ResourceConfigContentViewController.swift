@@ -20,6 +20,9 @@ final class ResourceConfigContentViewController: NSViewController {
     private let memoryStepper = NSStepper()
     private let diskPopUp = NSPopUpButton()
     private let networkSwitch = NSSwitch()
+    /// Shows the "more content below" cue while this step's content overflows the
+    /// sheet; a hint only.
+    private var scrollMoreIndicator: ScrollMoreIndicator?
 
     private var os: VMGuestOS { creationVM.selectedOS }
 
@@ -53,6 +56,7 @@ final class ResourceConfigContentViewController: NSViewController {
         ])
 
         view = scrollView
+        scrollMoreIndicator = ScrollMoreIndicator(scrollView: scrollView)
     }
 
     // MARK: - Form construction

@@ -12,6 +12,9 @@ import AppKit
 final class ReviewContentViewController: NSViewController {
     private let creationVM: VMCreationViewModel
     private let startSwitch = NSSwitch()
+    /// Shows the "more content below" cue while this (often-overflowing) summary
+    /// doesn't fit the sheet; a hint only.
+    private var scrollMoreIndicator: ScrollMoreIndicator?
 
     init(creationVM: VMCreationViewModel) {
         self.creationVM = creationVM
@@ -43,6 +46,7 @@ final class ReviewContentViewController: NSViewController {
         ])
 
         view = scrollView
+        scrollMoreIndicator = ScrollMoreIndicator(scrollView: scrollView)
     }
 
     private func makeSummary() -> NSView {
