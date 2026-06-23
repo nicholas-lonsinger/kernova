@@ -8,7 +8,9 @@ struct VsockGuestControlAgentTests {
     // MARK: - Helpers
 
     /// Builds a host-side Hello frame for the agent to consume.
-    private func makeHostHelloFrame(streamingCapable: Bool = true) -> Frame {
+    private func makeHostHelloFrame(
+        streamingCapable: Bool = true, bundledAgentVersion: String = ""
+    ) -> Frame {
         var frame = Frame()
         frame.protocolVersion = 1
         frame.hello = Kernova_V1_Hello.with {
@@ -17,6 +19,7 @@ struct VsockGuestControlAgentTests {
                 streamingCapable
                 ? KernovaCapability.controlChannelDefaults
                 : [KernovaCapability.controlV1, KernovaCapability.controlHeartbeatV1]
+            $0.bundledAgentVersion = bundledAgentVersion
             $0.agentInfo = Kernova_V1_AgentInfo.with {
                 $0.os = "macOS"
                 $0.osVersion = "26.0"
@@ -204,6 +207,55 @@ struct VsockGuestControlAgentTests {
             throw TestFailure(
                 "Expected heartbeat from agent after inbound traffic; got \(String(describing: frame.payload))")
         }
+    }
+
+    // MARK: - UI state seam
+
+    @Test("connectionState is .connected after connect; Hello records the host's bundled version")
+    func connectionStateAndBundledVersion() async throws {
+        let (agentFd, hostFd) = try makeRawSocketPair()
+        let host = VsockChannel(fileDescriptor: hostFd)
+        host.start()
+        defer { host.close() }
+
+        let agent = makeAgent(agentFd: agentFd, heartbeatInterval: .milliseconds(100))
+        defer { agent.stop() }
+        agent.start()
+
+        // Once the agent's outbound Hello has been sent, serve() has already
+        // marked the channel connected.
+        _ = try await nextFrame(from: host)
+        #expect(agent.connectionState == .connected)
+        // No Hello received yet → host bundled version still unknown (empty).
+        #expect(agent.hostBundledAgentVersion == "")
+
+        try host.send(makeHostHelloFrame(bundledAgentVersion: "9.9.9"))
+        try await waitUntil { agent.hostBundledAgentVersion == "9.9.9" }
+        #expect(agent.connectionState == .connected)
+    }
+
+    @Test("connectionState reports .unresponsive after the host goes silent")
+    func connectionStateUnresponsive() async throws {
+        let (agentFd, hostFd) = try makeRawSocketPair()
+        let host = VsockChannel(fileDescriptor: hostFd)
+        host.start()
+        defer { host.close() }
+
+        // Short unresponsive window, long terminate window: the watchdog flags
+        // "unresponsive" without tearing the channel down during the test.
+        let agent = makeAgent(
+            agentFd: agentFd,
+            heartbeatInterval: .milliseconds(50),
+            unresponsiveAfter: .milliseconds(150),
+            terminateAfter: .seconds(3_600))
+        defer { agent.stop() }
+        agent.start()
+
+        _ = try await nextFrame(from: host)
+        // Host stays silent (sends nothing): liveness needs a first inbound frame
+        // to start its clock, so send one Hello, then go quiet.
+        try host.send(makeHostHelloFrame())
+        try await waitUntil { agent.connectionState == .unresponsive }
     }
 
     // MARK: - Liveness teardown + reconnect

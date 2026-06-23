@@ -70,6 +70,14 @@ message Hello {
 
   // Optional identifying info. Diagnostic only; not used for routing.
   AgentInfo agent_info = 3;
+
+  // The guest-agent version the *host* currently bundles, sent host->guest so
+  // the guest can show its own update state ("up to date" / "update available")
+  // in its menu-bar UI. Populated only by the host's control service; the
+  // guest leaves it empty in its own Hello. Empty when unknown (e.g. a host
+  // predating this field, or its version sidecar is missing) — the guest must
+  // treat empty as "no update info" and never render an update prompt from it.
+  string bundled_agent_version = 4;
 }
 
 // Identifying info about the peer. All fields are optional — populate what's

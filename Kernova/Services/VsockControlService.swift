@@ -226,6 +226,10 @@ final class VsockControlService {
         hello.hello = Kernova_V1_Hello.with {
             $0.serviceVersion = 1
             $0.capabilities = KernovaCapability.controlChannelDefaults
+            // Tell the guest which agent version this host bundles so it can show
+            // its own update state. Empty when the sidecar is missing — the guest
+            // treats empty as "unknown" and shows no update prompt.
+            $0.bundledAgentVersion = bundledAgentVersion ?? ""
             $0.agentInfo = Kernova_V1_AgentInfo.with {
                 $0.os = "macOS"
                 $0.osVersion = ProcessInfo.processInfo.operatingSystemVersionString

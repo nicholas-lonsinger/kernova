@@ -1724,6 +1724,57 @@ struct VsockGuestClipboardAgentTests {
     ///
     /// The caller streams the response on the host channel concurrently — e.g.
     /// via `driveInboundStream` — before awaiting `.value`.
+    // MARK: - UI activity seam
+
+    @Test("outbound offer sets clipboard activity to .offeredToHost")
+    func outboundOfferSetsActivity() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        let initial = await MainActor.run { agent.clipboardActivity }
+        #expect(initial == .idle)
+
+        pasteboard.setString("hello", forType: .string)
+        await MainActor.run { agent.checkClipboardChange() }
+        _ = try await awaitOffer(on: hostChannel)  // ensure the offer was sent
+
+        let after = await MainActor.run { agent.clipboardActivity }
+        #expect(after == .offeredToHost)
+    }
+
+    @Test("a delivered inbound paste sets clipboard activity to .receivedFromHost")
+    func inboundPullSetsActivity() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        try hostChannel.send(makeTextOfferFrame(generation: 1, text: "payload"))
+        try await waitUntil { pasteboard.promisedTypesForTesting.contains(.string) }
+
+        let payload = Data("payload".utf8)
+        let pull = lazyPull(pasteboard, forType: .string)
+        try await driveInboundStream(
+            generation: 1, uti: ClipboardContent.utf8TextUTI, filename: "", payload: payload,
+            isInline: true, on: hostChannel)
+        _ = await pull.value
+
+        let after = await MainActor.run { agent.clipboardActivity }
+        #expect(after == .receivedFromHost)
+    }
+
     private func lazyPull(
         _ pasteboard: FakePasteboard, forType type: NSPasteboard.PasteboardType,
         itemIndex: Int? = nil

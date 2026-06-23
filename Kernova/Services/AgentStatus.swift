@@ -1,4 +1,5 @@
 import Foundation
+import KernovaProtocol
 
 /// Whether the guest agent is installed and current relative to what the host bundles,
 /// and whether it's actively responding.
@@ -135,9 +136,10 @@ enum AgentStatus: Equatable, Sendable {
     /// and `VMInstance.recordObservedAgentVersion`'s auto-eject decision.
     static func isObservedVersionCurrent(_ version: String, bundled: String?) -> Bool {
         guard let bundled else { return true }
-        // `.numeric` compares dotted decimals correctly ("0.9.0" < "0.10.0").
-        // Strictly-older is outdated; equal or newer (dev builds, downgraded
-        // host) is current.
-        return version.compare(bundled, options: .numeric) != .orderedAscending
+        // Delegates to the shared comparator in `KernovaProtocol` so the host and
+        // the guest's menu-bar update line decide current-vs-outdated by exactly
+        // the same numeric rule. Equal or newer (dev builds, downgraded host) is
+        // current; strictly-older is outdated.
+        return KernovaVersionComparison.isAtLeast(version, bundled)
     }
 }

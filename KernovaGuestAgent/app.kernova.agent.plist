@@ -4,14 +4,27 @@
 <dict>
 	<key>Label</key>
 	<string>app.kernova.agent</string>
+	<!-- Tells Login Items & Extensions ("Allow in the Background") which app
+	     bundle owns this job, so it shows Kernova Guest Agent.app's icon + display
+	     name instead of a generic icon. Required because we install this plist
+	     into ~/Library/LaunchAgents directly rather than via SMAppService. -->
+	<key>AssociatedBundleIdentifiers</key>
+	<array>
+		<string>app.kernova.agent</string>
+	</array>
 	<key>ProgramArguments</key>
 	<array>
-		<string>__INSTALL_DIR__/kernova-agent</string>
+		<string>__INSTALL_DIR__/Kernova Guest Agent.app/Contents/MacOS/KernovaGuestAgent</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>
 	<key>KeepAlive</key>
-	<true/>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>LimitLoadToSessionType</key>
+	<string>Aqua</string>
 	<key>ThrottleInterval</key>
 	<integer>10</integer>
 </dict>
