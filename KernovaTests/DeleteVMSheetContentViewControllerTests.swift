@@ -281,7 +281,8 @@ struct DeleteVMSheetContentViewControllerTests {
         // …while the document keeps its full content height and overflows, so
         // the rows scroll rather than being squashed to fit.
         #expect(documentHeight > visibleHeight + 100)
-        // Overflow is detected, which drives the scrollbar flash on appear.
+        // Overflow is detected, which caps the height and scrolls (and drives the
+        // shared `ScrollMoreIndicator` cue).
         #expect(vc.contentOverflows)
     }
 

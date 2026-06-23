@@ -153,15 +153,23 @@ let scrollMoreFadeHeight: CGFloat = 36
 /// A passive bottom-edge fade: the content dissolves into the sheet background as
 /// it nears the bottom.
 ///
-/// Drawn with an `NSGradient` in `draw(_:)` (re-evaluated under the current
-/// appearance, so it adapts to light/dark without `CGColor` juggling) and
-/// hit-transparent so it never blocks scrolling.
+/// Drawn with an `NSGradient` in `draw(_:)` so it adapts to light/dark without
+/// `CGColor` juggling. Because the resolved colors are baked into the draw, a
+/// light/dark switch is force-redrawn via `viewDidChangeEffectiveAppearance`
+/// (matching `SidebarVMRowCellView`). Hit-transparent so it never blocks scrolling.
 private final class ScrollMoreFadeView: NSView {
     override var isOpaque: Bool { false }
 
     // RATIONALE: nil from hitTest drops the view from event routing so the scroll
     // view beneath still scrolls under the cursor.
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        // A custom `draw(_:)` bakes the resolved colors, so AppKit won't refresh it
+        // on a light/dark switch on its own — mark it dirty.
+        needsDisplay = true
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         let opaque = NSColor.windowBackgroundColor
