@@ -31,6 +31,10 @@ final class VMSettingsViewController: NSViewController {
     // MARK: - Observation & live state
 
     private let fileMonitor = AttachmentFileMonitor()
+    /// Flashes the form's scroller once when its content overflows the viewport,
+    /// signaling there's more below — a light, overlay-free cue (`.flash` only,
+    /// see ``ScrollMoreCues``).
+    private var scrollMoreIndicator: ScrollMoreIndicator?
     private var modelObservation: ObservationLoop?
     private var hasDisappeared = false
     /// Identifies the current file-monitor observation cycle.
@@ -234,6 +238,16 @@ final class VMSettingsViewController: NSViewController {
             }
         }
         apply()
+
+        if instanceChanged {
+            // Re-arm the overflow flash for the freshly built form and re-evaluate
+            // against its laid-out geometry. The indicator is reused across VM
+            // switches, so without this only the first overflowing pane in a
+            // session would flash. Force layout so overflow is measured on the new
+            // form's real height, not the outgoing VM's.
+            view.layoutSubtreeIfNeeded()
+            scrollMoreIndicator?.rearmFlash()
+        }
     }
 
     // MARK: - Lifecycle
@@ -247,6 +261,14 @@ final class VMSettingsViewController: NSViewController {
         // Margin only at the bottom; the top sits flush under the toolbar.
         let scrollView = makeGroupedFormScrollView(documentView: formStack, bottomInset: 16)
         scrollView.setContentHuggingPriority(.defaultLow, for: .vertical)
+
+        // Flash the scroller when the form overflows — this is the app's longest
+        // grouped form. Flash-only (no chevron/fade overlays): the root is an
+        // `NSStackView`, which shouldn't host unmanaged overlay subviews, and a
+        // brief flash is cue enough here. The indicator is reused across VM
+        // switches; `reconfigure` re-arms the flash so each overflowing pane gets
+        // the cue, not just the first shown in the session.
+        scrollMoreIndicator = ScrollMoreIndicator(scrollView: scrollView, cues: .flash)
 
         bannerContainer = makeBannerContainer()
 

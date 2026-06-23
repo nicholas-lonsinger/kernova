@@ -2,11 +2,17 @@ import AppKit
 import os
 
 /// Shows the standard "there's more content below" cues over a vertically
-/// scrolling view: a down-chevron disc and a soft bottom fade, plus a one-time
-/// scroller flash when overflowing content first appears.
+/// scrolling view.
 ///
-/// Shared by the creation wizard's steps and the delete-VM sheet so the cue is
-/// identical everywhere. It is purely a hint — it never gates interaction. The
+/// Two independent cues, selected via ``ScrollMoreCues`` at construction:
+/// persistent `overlays` — a down-chevron disc and a soft bottom fade that track
+/// scroll position — and a one-time scroller `flash` when overflowing content
+/// first appears. ``ScrollMoreCues/all`` (the default) shows both.
+///
+/// Shared by the creation wizard's steps and the delete-VM sheet (both default
+/// to `.all`), and the VM settings pane (`.flash` only — a light cue that needs
+/// no overlays hosted in its `NSStackView` root). It is purely a hint — it never
+/// gates interaction. The
 /// overlays are driven by live scroll geometry (clip bounds + document frame):
 /// they fade in when the content overflows and isn't scrolled to the bottom, and
 /// out when it fits or reaches the bottom (no latch — they track scroll position).
@@ -23,6 +29,22 @@ import os
 ///   binds to the document view here in `init`. Every grouped-form scroll view
 ///   (`makeGroupedFormScrollView`) and the delete-VM sheet satisfy both; the
 ///   initializer asserts them so a future misuse trips in Debug.
+/// Selects which "more below" cues a ``ScrollMoreIndicator`` shows: the
+/// persistent `overlays` (chevron disc + bottom fade) and/or the one-time
+/// scroller `flash`. They're independent, so a surface can opt into a light
+/// flash-only hint without the overlay chrome.
+struct ScrollMoreCues: OptionSet, Sendable {
+    let rawValue: Int
+
+    /// The persistent chevron disc and bottom fade that track scroll position.
+    static let overlays = ScrollMoreCues(rawValue: 1 << 0)
+    /// A one-time scroller flash when overflowing content first appears.
+    static let flash = ScrollMoreCues(rawValue: 1 << 1)
+
+    /// Both cues — the default for the creation wizard and the delete-VM sheet.
+    static let all: ScrollMoreCues = [.overlays, .flash]
+}
+
 @MainActor
 final class ScrollMoreIndicator {
     private static let logger = Logger(subsystem: "app.kernova", category: "ScrollMoreIndicator")
@@ -35,6 +57,7 @@ final class ScrollMoreIndicator {
     private static let fadeHeight: CGFloat = 36
 
     private weak var scrollView: NSScrollView?
+    private let cues: ScrollMoreCues
     private let fade = ScrollMoreFadeView()
     private let chevron = makeScrollMoreChevron()
 
@@ -55,8 +78,12 @@ final class ScrollMoreIndicator {
     var hasFlashedForTesting: Bool { didFlash }
     #endif
 
-    init(scrollView: NSScrollView) {
+    /// Creates an indicator for `scrollView`, showing the cues named by `cues`
+    /// (default ``ScrollMoreCues/all``; pass `.flash` for a flash-only hint with
+    /// no overlay chrome).
+    init(scrollView: NSScrollView, cues: ScrollMoreCues = .all) {
         self.scrollView = scrollView
+        self.cues = cues
 
         // See the type's `- Precondition`: the at-bottom math assumes a flipped
         // clip, and content-growth tracking binds to the document view below.
@@ -106,6 +133,20 @@ final class ScrollMoreIndicator {
         }
     }
 
+    /// Re-arms the one-time scroller flash and re-evaluates overflow, so the
+    /// scroller flashes again the next time the content overflows.
+    ///
+    /// The flash latches after firing once — it's a per-appearance cue, sized for
+    /// a short-lived owner (a wizard step or sheet rebuilt per presentation). The
+    /// settings pane instead reuses one indicator across VM switches, so it calls
+    /// this on each rebind: the just-rebuilt form is re-measured here and an
+    /// overflowing one flashes, so every overflowing pane gets the cue rather than
+    /// only the first shown in the session. A pane that now fits doesn't flash.
+    func rearmFlash() {
+        didFlash = false
+        recompute()
+    }
+
     @objc private func geometryChanged() {
         recompute()
     }
@@ -135,14 +176,17 @@ final class ScrollMoreIndicator {
         // the next main-actor hop because `flashScrollers()` is a no-op before the
         // scroll view has drawn.
         //
-        // RATIONALE: this is a supplementary cue — the chevron and fade (alpha-driven,
-        // rendered on first draw) are the primary "more below" affordances, so a flash
-        // that no-ops because geometry settled before the view was on screen (e.g. a
-        // sheet laid out before presentation) is acceptable; the chevron and fade still
-        // show. A `Task { @MainActor }` hop, not `DispatchQueue.main.async`, matches the
-        // codebase's strict-concurrency convention for main-thread re-dispatch.
-        if overflows, !didFlash {
+        // RATIONALE: the flash is a supplementary cue. When overlays are shown (the
+        // default) they're the primary affordance, so a flash that no-ops because
+        // geometry settled before the view was on screen (e.g. a sheet laid out before
+        // presentation) is acceptable — the chevron and fade still show. In flash-only
+        // mode the native scroller is the fallback. A `Task { @MainActor }` hop, not
+        // `DispatchQueue.main.async`, matches the codebase's strict-concurrency
+        // convention for main-thread re-dispatch.
+        if cues.contains(.flash), overflows, !didFlash {
             didFlash = true
+            Self.logger.debug(
+                "Flashing scroller (window present: \(scrollView.window != nil, privacy: .public))")
             Task { @MainActor [weak self] in self?.scrollView?.flashScrollers() }
         }
     }
@@ -150,10 +194,11 @@ final class ScrollMoreIndicator {
     /// Adds the overlays to the scroll view's superview, pinned over its bottom edge,
     /// the first time both exist.
     ///
-    /// The fade is added first, then the chevron above it, so the chevron is on top.
-    /// They're pinned to the scroll view's edges (not scrolled), so the cue stays at
-    /// the bottom.
+    /// No-op unless the `overlays` cue is requested. The fade is added first, then the
+    /// chevron above it, so the chevron is on top. They're pinned to the scroll view's
+    /// edges (not scrolled), so the cue stays at the bottom.
     private func insertOverlaysIfNeeded() {
+        guard cues.contains(.overlays) else { return }
         guard !didInsertOverlays, let scrollView, let host = scrollView.superview else { return }
         didInsertOverlays = true
 
