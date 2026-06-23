@@ -136,24 +136,26 @@ final class WizardHitTransparentView: NSView {
 }
 
 /// Builds the "more content below — scroll to continue" indicator: a `chevron.down`
-/// over a small translucent circular material, sized for the bottom-center of a
-/// scrolling wizard step.
+/// on a grey disc, sized for the bottom-center of a scrolling wizard step.
 ///
-/// The returned view is hit-transparent (see ``WizardHitTransparentView``), so the
-/// caller can layer it over the step's scroll view without blocking scrolling. The
-/// caller owns positioning and show/hide (the wizard shell fades it based on
+/// The disc is an `NSBox` so its fill/border are `NSColor`s that adapt to light/dark
+/// automatically; the fill sits well above the grouped-form cards' faint tint so the
+/// disc reads against the form content, and a hairline border defines its edge. The
+/// returned view is hit-transparent (see ``WizardHitTransparentView``), so the caller
+/// can layer it over the step's scroll view without blocking scrolling. The caller
+/// owns positioning and show/hide (the wizard shell fades it based on
 /// `VMCreationViewModel.currentStepScrollGateSatisfied`).
 @MainActor
 func makeWizardScrollIndicator() -> NSView {
     let diameter: CGFloat = 28
 
-    let backing = NSVisualEffectView()
-    backing.material = .hudWindow
-    backing.blendingMode = .withinWindow
-    backing.state = .active
-    backing.wantsLayer = true
-    backing.layer?.cornerRadius = diameter / 2
-    backing.layer?.masksToBounds = true
+    let disc = NSBox()
+    disc.boxType = .custom
+    disc.titlePosition = .noTitle
+    disc.cornerRadius = diameter / 2
+    disc.fillColor = .secondaryLabelColor.withAlphaComponent(0.2)
+    disc.borderWidth = 1
+    disc.borderColor = .separatorColor
 
     let chevron = NSImageView(
         image: .systemSymbol(
@@ -162,18 +164,47 @@ func makeWizardScrollIndicator() -> NSView {
     chevron.contentTintColor = .secondaryLabelColor
     chevron.translatesAutoresizingMaskIntoConstraints = false
 
+    // RATIONALE: a custom NSBox sizes a `contentView` through the legacy autoresizing
+    // path and collapses, so it's pinned as a chrome layer behind the chevron sibling
+    // (the same pattern as `makeGroupedFormBox`).
     let container = WizardHitTransparentView()
     container.translatesAutoresizingMaskIntoConstraints = false
-    container.addFullSizeSubview(backing)
-    backing.addSubview(chevron)
+    container.addFullSizeSubview(disc)
+    container.addSubview(chevron)
 
     NSLayoutConstraint.activate([
         container.widthAnchor.constraint(equalToConstant: diameter),
         container.heightAnchor.constraint(equalToConstant: diameter),
-        chevron.centerXAnchor.constraint(equalTo: backing.centerXAnchor),
-        chevron.centerYAnchor.constraint(equalTo: backing.centerYAnchor),
+        chevron.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+        chevron.centerYAnchor.constraint(equalTo: container.centerYAnchor),
     ])
     return container
+}
+
+/// Height of the bottom fade strip (see ``WizardScrollFadeView``).
+let wizardScrollFadeHeight: CGFloat = 36
+
+/// A passive bottom-edge fade for a scrolling wizard step.
+///
+/// The content dissolves into the sheet background as it nears the bottom — a soft
+/// "more below" cue that complements the chevron. Drawn with an `NSGradient` in
+/// `draw(_:)` (re-evaluated under the current appearance, so it adapts to light/dark
+/// without `CGColor` juggling) and hit-transparent so it never blocks scrolling.
+final class WizardScrollFadeView: NSView {
+    override var isOpaque: Bool { false }
+
+    // RATIONALE: nil from hitTest drops the view from event routing so the scroll
+    // view beneath still scrolls under the cursor — same pattern as
+    // ``WizardHitTransparentView``.
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let opaque = NSColor.windowBackgroundColor
+        let clear = opaque.withAlphaComponent(0)
+        // 90° runs bottom→top: opaque background at the bottom edge fading to clear,
+        // so content shows through above and dissolves into the sheet at the bottom.
+        NSGradient(starting: opaque, ending: clear)?.draw(in: bounds, angle: 90)
+    }
 }
 
 // MARK: - Buttons & badges

@@ -50,6 +50,9 @@ final class VMCreationWizardViewController: NSViewController {
     /// (one instance reused across steps) and kept above the mounted step view by
     /// ``showStep(_:)``.
     private let scrollIndicator = makeWizardScrollIndicator()
+    /// Soft gradient at the bottom of the scroll area that fades content into the
+    /// sheet background — a second "more below" cue, faded in/out with the chevron.
+    private let scrollFade = WizardScrollFadeView()
     private let validationLabel = NSTextField(labelWithString: "")
     private let cancelButton = NSButton()
     private let backButton = NSButton()
@@ -61,6 +64,9 @@ final class VMCreationWizardViewController: NSViewController {
     private var currentChild: NSViewController?
     private var displayedStep: VMCreationStep?
     private var observation: ObservationLoop?
+    /// Whether the scroller has already been flashed for the displayed step, so the
+    /// "there's more below" flash fires once when an overflowing step appears.
+    private var didFlashScrollersForStep = false
 
     init(creationVM: VMCreationViewModel) {
         self.creationVM = creationVM
@@ -114,13 +120,26 @@ final class VMCreationWizardViewController: NSViewController {
             navBar.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
 
-        // Overlay the scroll indicator near the bottom-center of the content area
-        // (just inside the step's content padding). It starts hidden; `apply()`
-        // fades it in when the active step overflows and isn't yet at the bottom.
+        // Overlay the "more below" affordances over the bottom of the content area.
+        // Both start hidden; `apply()` fades them in when the active step overflows
+        // and isn't yet at the bottom. The fade strip is added first so the chevron
+        // layers above it. Both are pinned just inside the step's content padding
+        // (the scroll viewport's bottom edge).
+        scrollFade.translatesAutoresizingMaskIntoConstraints = false
+        scrollFade.alphaValue = 0
+        contentContainer.addSubview(scrollFade)
+
         scrollIndicator.translatesAutoresizingMaskIntoConstraints = false
         scrollIndicator.alphaValue = 0
         contentContainer.addSubview(scrollIndicator)
+
         NSLayoutConstraint.activate([
+            scrollFade.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
+            scrollFade.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
+            scrollFade.bottomAnchor.constraint(
+                equalTo: contentContainer.bottomAnchor, constant: -WizardStyle.contentPadding),
+            scrollFade.heightAnchor.constraint(equalToConstant: wizardScrollFadeHeight),
+
             scrollIndicator.centerXAnchor.constraint(equalTo: contentContainer.centerXAnchor),
             scrollIndicator.bottomAnchor.constraint(
                 equalTo: contentContainer.bottomAnchor,
@@ -288,21 +307,33 @@ final class VMCreationWizardViewController: NSViewController {
 
         stepIndicator.currentStep = step
 
-        setScrollIndicatorVisible(!scrollGate)
+        let moreBelow = !scrollGate
+        setMoreBelowAffordanceVisible(moreBelow)
+        // Flash the scroller once when an overflowing step first appears — the
+        // native "there's more below" hint, matching the delete sheet. Deferred to
+        // the next runloop because `flashScrollers()` is a no-op before the step's
+        // scroll view has drawn; capture the view now so a fast navigation flashes
+        // the step that was actually overflowing.
+        if moreBelow, !didFlashScrollersForStep {
+            didFlashScrollersForStep = true
+            let scrollView = activeStepScrollView
+            DispatchQueue.main.async { scrollView?.flashScrollers() }
+        }
     }
 
-    /// Fades the "more below" indicator in or out, mirroring the app's standard
-    /// `NSAnimationContext` alpha fade.
+    /// Fades the "more below" affordances — the chevron and the bottom gradient — in
+    /// or out together, mirroring the app's standard `NSAnimationContext` alpha fade.
     ///
     /// Animating to the current value is a no-op, so a satisfied step never flashes
-    /// the indicator.
-    private func setScrollIndicatorVisible(_ visible: Bool) {
+    /// the affordances.
+    private func setMoreBelowAffordanceVisible(_ visible: Bool) {
         let target: CGFloat = visible ? 1 : 0
         guard scrollIndicator.alphaValue != target else { return }
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.2
             context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
             scrollIndicator.animator().alphaValue = target
+            scrollFade.animator().alphaValue = target
         }
     }
 
@@ -335,8 +366,13 @@ final class VMCreationWizardViewController: NSViewController {
         }
         currentChild = newChild
 
-        // Keep the scroll indicator above the freshly added step view.
-        contentContainer.addSubview(scrollIndicator, positioned: .above, relativeTo: newChild.view)
+        // A fresh step hasn't been flashed yet.
+        didFlashScrollersForStep = false
+
+        // Keep the "more below" affordances above the freshly added step view, with
+        // the chevron above the fade strip.
+        contentContainer.addSubview(scrollFade, positioned: .above, relativeTo: newChild.view)
+        contentContainer.addSubview(scrollIndicator, positioned: .above, relativeTo: scrollFade)
 
         // Once on screen, force a synchronous layout pass so a scrolling step
         // measures its geometry and engages its scroll gate now, not a runloop
