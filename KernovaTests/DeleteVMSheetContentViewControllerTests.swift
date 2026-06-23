@@ -344,6 +344,21 @@ struct DeleteVMSheetContentViewControllerTests {
         #expect(labels.contains { $0.contains("external files") && $0.contains("can't undo") })
     }
 
+    @Test("immediate mode body omits the external-files clause when none are selectable")
+    func immediateModeBodyOmitsExternalsWhenNoneSelectable() {
+        // The only external is shared (locked off, kept), so there is nothing the
+        // user can select for deletion — the body must not promise removing
+        // external files; it falls back to the plain VM-only wording.
+        let externals = [
+            makeAttachment(id: UUID(), label: "Shared ISO", path: "/tmp/shared.iso", shared: ["Other VM"])
+        ]
+        let vc = make(vmName: "MyVM", externals: externals, mode: .immediate)
+        vc.loadViewIfNeeded()
+        let labels = collectLabels(in: vc.view).map(\.stringValue)
+        #expect(labels.contains { $0.contains("can't undo") })
+        #expect(!labels.contains { $0.contains("external files you select") })
+    }
+
     @Test("immediate mode confirm button reads Delete Immediately and is not the Return default")
     func immediateModeConfirmButton() {
         let vc = make(vmName: "MyVM", mode: .immediate)
