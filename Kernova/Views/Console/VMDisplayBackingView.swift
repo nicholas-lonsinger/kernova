@@ -84,16 +84,10 @@ final class VMDisplayBackingView: NSView {
 
         if visible { overlay.isHidden = false }
 
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.25
-            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            overlay.animator().alphaValue = visible ? 1 : 0
-        } completionHandler: { [weak overlay] in
-            // RATIONALE: NSAnimationContext completion handlers are not actor-isolated by the
-            // framework, but always execute on the main thread. We bridge back via assumeIsolated.
-            MainActor.assumeIsolated {
-                if !visible { overlay?.isHidden = true }
-            }
+        // 0.25s rather than the standard fade: the pause/transition overlays are
+        // large surfaces where a slightly slower dissolve reads better.
+        animateFade(overlay, to: visible ? 1 : 0, duration: 0.25) { [weak overlay] in
+            if !visible { overlay?.isHidden = true }
         }
     }
 

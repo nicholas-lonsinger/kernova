@@ -81,6 +81,38 @@ struct ScrollMoreIndicatorTests {
         if let f = fadeIndex, let c = chevronIndex { #expect(c > f) }
     }
 
+    @Test("Overlays render visible (alpha 1) on overflow at mount, hidden (alpha 0) when content fits")
+    func overlaysReflectOverflowAlphaAtMount() {
+        // Mounted + overflowing: the insert path applies the settled state instantly,
+        // so the overlays are fully opaque. Guards against a future edit inverting the
+        // alpha target (e.g. `visible ? 0 : 1`) or dropping the visibility call — the
+        // geometry flag alone wouldn't catch either.
+        let overflowing = makeScrollView(documentHeight: 1000)
+        let overflowIndicator = ScrollMoreIndicator(scrollView: overflowing)
+        let overflowHost = NSView(
+            frame: NSRect(x: 0, y: 0, width: Self.width, height: Self.viewportHeight))
+        overflowHost.addSubview(overflowing)
+        overflowing.contentView.scroll(to: NSPoint(x: 0, y: 1))
+        overflowing.reflectScrolledClipView(overflowing.contentView)
+
+        let visibleOverlays = overflowIndicator.overlaysForTesting
+        #expect(visibleOverlays.count == 2)
+        #expect(visibleOverlays.allSatisfy { $0.alphaValue == 1 })
+
+        // Mounted but content fits: overlays still insert, but stay fully transparent.
+        let fitting = makeScrollView(documentHeight: 50)
+        let fitIndicator = ScrollMoreIndicator(scrollView: fitting)
+        let fitHost = NSView(
+            frame: NSRect(x: 0, y: 0, width: Self.width, height: Self.viewportHeight))
+        fitHost.addSubview(fitting)
+        // A still-fitting document resize fires frameDidChange, driving the insert.
+        fitting.documentView?.setFrameSize(NSSize(width: Self.width, height: 60))
+
+        let hiddenOverlays = fitIndicator.overlaysForTesting
+        #expect(hiddenOverlays.count == 2)
+        #expect(hiddenOverlays.allSatisfy { $0.alphaValue == 0 })
+    }
+
     @Test("Latches the one-time scroller flash on overflow, not when content fits")
     func flashLatch() {
         let fits = ScrollMoreIndicator(scrollView: makeScrollView(documentHeight: 50))

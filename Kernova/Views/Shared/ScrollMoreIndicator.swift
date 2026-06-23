@@ -16,6 +16,13 @@ import os
 /// owning view controller). It inserts its hit-transparent overlays into the
 /// scroll view's superview on the first layout — so it works whether the scroll
 /// view is already in a hierarchy or mounted later — and removes them on `deinit`.
+///
+/// - Precondition: the scroll view uses a top-anchored `FlippedClipView` and has
+///   its `documentView` set before construction. The at-bottom math reads the
+///   clip's flipped bounds (origin 0 at the top), and content-growth tracking
+///   binds to the document view here in `init`. Every grouped-form scroll view
+///   (`makeGroupedFormScrollView`) and the delete-VM sheet satisfy both; the
+///   initializer asserts them so a future misuse trips in Debug.
 @MainActor
 final class ScrollMoreIndicator {
     private static let logger = Logger(subsystem: "app.kernova", category: "ScrollMoreIndicator")
@@ -24,13 +31,15 @@ final class ScrollMoreIndicator {
     /// sub-pixel short of "at the bottom".
     private static let epsilon: CGFloat = 1.0
 
+    /// Height of the bottom fade strip.
+    private static let fadeHeight: CGFloat = 36
+
     private weak var scrollView: NSScrollView?
     private let fade = ScrollMoreFadeView()
     private let chevron = makeScrollMoreChevron()
 
     private var didInsertOverlays = false
     private var didFlash = false
-    private var overlaysVisible = false
 
     /// Whether the content currently overflows below the visible area.
     ///
@@ -48,6 +57,17 @@ final class ScrollMoreIndicator {
 
     init(scrollView: NSScrollView) {
         self.scrollView = scrollView
+
+        // See the type's `- Precondition`: the at-bottom math assumes a flipped
+        // clip, and content-growth tracking binds to the document view below.
+        assert(
+            scrollView.contentView.isFlipped,
+            "ScrollMoreIndicator requires a top-anchored FlippedClipView; a standard NSClipView inverts the at-bottom calculation."
+        )
+        assert(
+            scrollView.documentView != nil,
+            "ScrollMoreIndicator requires scrollView.documentView to be set before construction; content-growth tracking binds to it here."
+        )
 
         let clip = scrollView.contentView
         // Scrolling and clip resizes post bounds-changed; content growth posts the
@@ -71,9 +91,15 @@ final class ScrollMoreIndicator {
     deinit {
         NotificationCenter.default.removeObserver(self)
         // The overlays live in the scroll view's superview (a long-lived container),
-        // so they're pulled here. Every owner is an @MainActor view controller whose
-        // deallocation runs on the main thread, so `assumeIsolated` holds; this would
-        // need revisiting if a future owner could be last-released off the main thread.
+        // not the scroll view itself, so removing the scroll view doesn't take them —
+        // they're pulled here instead. Cleanup is therefore bound to this object's
+        // deallocation: an owner kept alive past its on-screen life would leave its
+        // overlays parented in the shared container. Every current owner is a step /
+        // sheet view controller rebuilt fresh and released synchronously on each
+        // transition, so they don't linger. Those owners are @MainActor controllers
+        // whose deallocation runs on the main thread, so `assumeIsolated` holds; this
+        // would need revisiting if a future owner could be last-released off the main
+        // thread, or cached across transitions.
         MainActor.assumeIsolated {
             fade.removeFromSuperview()
             chevron.removeFromSuperview()
@@ -102,15 +128,22 @@ final class ScrollMoreIndicator {
         if moreBelow != hasMoreBelow {
             hasMoreBelow = moreBelow
             Self.logger.debug("More below: \(moreBelow, privacy: .public)")
+            setOverlaysVisible(moreBelow, animated: true)
         }
-        setOverlaysVisible(moreBelow)
 
-        // Flash the scroller once when overflowing content first appears. Deferred
-        // because `flashScrollers()` is a no-op before the scroll view has drawn (the
-        // cue must outlive the first layout pass).
+        // Flash the scroller once when overflowing content first appears. Deferred to
+        // the next main-actor hop because `flashScrollers()` is a no-op before the
+        // scroll view has drawn.
+        //
+        // RATIONALE: this is a supplementary cue — the chevron and fade (alpha-driven,
+        // rendered on first draw) are the primary "more below" affordances, so a flash
+        // that no-ops because geometry settled before the view was on screen (e.g. a
+        // sheet laid out before presentation) is acceptable; the chevron and fade still
+        // show. A `Task { @MainActor }` hop, not `DispatchQueue.main.async`, matches the
+        // codebase's strict-concurrency convention for main-thread re-dispatch.
         if overflows, !didFlash {
             didFlash = true
-            DispatchQueue.main.async { [weak self] in self?.scrollView?.flashScrollers() }
+            Task { @MainActor [weak self] in self?.scrollView?.flashScrollers() }
         }
     }
 
@@ -136,31 +169,37 @@ final class ScrollMoreIndicator {
             fade.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
             fade.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
             fade.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
-            fade.heightAnchor.constraint(equalToConstant: scrollMoreFadeHeight),
+            fade.heightAnchor.constraint(equalToConstant: Self.fadeHeight),
 
             chevron.centerXAnchor.constraint(equalTo: scrollView.centerXAnchor),
             chevron.bottomAnchor.constraint(
                 equalTo: scrollView.bottomAnchor, constant: -Spacing.small),
         ])
+
+        // `recompute()` may have already settled `hasMoreBelow` before the scroll
+        // view had a superview to host the overlays. Reflect that state now that they
+        // exist — instantly, since they're appearing for the first time from alpha 0.
+        setOverlaysVisible(hasMoreBelow, animated: false)
     }
 
-    private func setOverlaysVisible(_ visible: Bool) {
-        guard didInsertOverlays, visible != overlaysVisible else { return }
-        overlaysVisible = visible
+    /// Fades (or, when `animated` is false, snaps) both overlays to match `visible`.
+    ///
+    /// `recompute()` calls this only when `hasMoreBelow` actually changes, so the
+    /// visible state is derived from that single signal — no separate "currently
+    /// visible" flag to keep in sync.
+    private func setOverlaysVisible(_ visible: Bool, animated: Bool) {
+        guard didInsertOverlays else { return }
         let target: CGFloat = visible ? 1 : 0
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.2
-            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            fade.animator().alphaValue = target
-            chevron.animator().alphaValue = target
+        guard animated else {
+            fade.alphaValue = target
+            chevron.alphaValue = target
+            return
         }
+        animateFade(fade, chevron, to: target)
     }
 }
 
 // MARK: - Overlays
-
-/// Height of the bottom fade strip.
-let scrollMoreFadeHeight: CGFloat = 36
 
 /// A passive bottom-edge fade: the content dissolves into the sheet background as
 /// it nears the bottom.
@@ -224,6 +263,10 @@ private func makeScrollMoreChevron() -> NSView {
     chevron.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
     chevron.contentTintColor = .secondaryLabelColor
     chevron.translatesAutoresizingMaskIntoConstraints = false
+    // Decorative: the cue is a redundant visual hint over already-navigable content,
+    // and `hitTest` suppresses only pointer events, not the accessibility tree. Drop
+    // it from VoiceOver so it isn't announced as a focusable element with no action.
+    chevron.setAccessibilityElement(false)
 
     // RATIONALE: a custom NSBox sizes a `contentView` through the legacy autoresizing
     // path and collapses, so it's pinned as a chrome layer behind the chevron sibling
