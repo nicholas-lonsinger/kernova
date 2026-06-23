@@ -83,7 +83,7 @@
 		A1000005 /* KernovaTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KernovaTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A10000F0 /* DiskTemplates */ = {isa = PBXFileReference; lastKnownFileType = folder; path = DiskTemplates; sourceTree = "<group>"; };
 		A1000100 /* KernovaRelaunchHelper */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = KernovaRelaunchHelper; sourceTree = BUILT_PRODUCTS_DIR; };
-		A1000200 /* KernovaGuestAgent */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = KernovaGuestAgent; sourceTree = BUILT_PRODUCTS_DIR; };
+		A1000200 /* Kernova Guest Agent.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Kernova Guest Agent.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000300 /* KernovaGuestAgentTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KernovaGuestAgentTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000400 /* KernovaQuickLook.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = KernovaQuickLook.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		B62FC33F2FAFDBB1003775B7 /* KernovaProtocol */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = KernovaProtocol; sourceTree = "<group>"; };
@@ -101,12 +101,20 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				app.kernova.agent.plist,
+				Assets.xcassets,
+				GuestAgentAppDelegate.swift,
 				Info.plist,
 				install.command,
-				main.swift,
 				uninstall.command,
 			);
 			target = A1000303 /* KernovaGuestAgentTests */;
+		};
+		A100020D /* Exceptions for "KernovaGuestAgent" folder in "KernovaGuestAgent" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = A1000204 /* KernovaGuestAgent */;
 		};
 		A1000409 /* Exceptions for "KernovaQuickLook" folder in "Kernova" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
@@ -155,6 +163,7 @@
 		A1000201 /* KernovaGuestAgent */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
+				A100020D /* Exceptions for "KernovaGuestAgent" folder in "KernovaGuestAgent" target */,
 				A1000308 /* Exceptions for "KernovaGuestAgent" folder in "KernovaGuestAgentTests" target */,
 			);
 			path = KernovaGuestAgent;
@@ -245,7 +254,7 @@
 				A1000004 /* Kernova.app */,
 				A1000005 /* KernovaTests.xctest */,
 				A1000100 /* KernovaRelaunchHelper */,
-				A1000200 /* KernovaGuestAgent */,
+				A1000200 /* Kernova Guest Agent.app */,
 				A1000300 /* KernovaGuestAgentTests.xctest */,
 				A1000400 /* KernovaQuickLook.appex */,
 			);
@@ -336,6 +345,7 @@
 				A100020C /* Set Build Number from Git */,
 				A1000202 /* Sources */,
 				A1000203 /* Frameworks */,
+				A100020B /* Resources */,
 			);
 			buildRules = (
 			);
@@ -349,8 +359,8 @@
 				A2000005 /* KernovaProtocol */,
 			);
 			productName = KernovaGuestAgent;
-			productReference = A1000200 /* KernovaGuestAgent */;
-			productType = "com.apple.product-type.tool";
+			productReference = A1000200 /* Kernova Guest Agent.app */;
+			productType = "com.apple.product-type.application";
 		};
 		A1000303 /* KernovaGuestAgentTests */ = {
 			isa = PBXNativeTarget;
@@ -472,6 +482,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A100020B /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		A1000306 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -510,7 +527,9 @@
 			inputFileListPaths = (
 			);
 			inputPaths = (
-				"$(BUILT_PRODUCTS_DIR)/KernovaGuestAgent",
+				"$(BUILT_PRODUCTS_DIR)/Kernova Guest Agent.app",
+				"$(BUILT_PRODUCTS_DIR)/Kernova Guest Agent.app/Contents/Info.plist",
+				"$(BUILT_PRODUCTS_DIR)/Kernova Guest Agent.app/Contents/MacOS/KernovaGuestAgent",
 				"$(SRCROOT)/KernovaGuestAgent/install.command",
 				"$(SRCROOT)/KernovaGuestAgent/uninstall.command",
 				"$(SRCROOT)/KernovaGuestAgent/app.kernova.agent.plist",
@@ -524,7 +543,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;
-			shellScript = "set -euo pipefail\n\nSTAGING_DIR=$(mktemp -d \"${DERIVED_FILE_DIR}/guest-agent-dmg-staging.XXXXXX\")\nTEMP_DMG=\"$(mktemp -u \"${DERIVED_FILE_DIR}/guest-agent-temp.XXXXXX\").dmg\"\ntrap 'rm -rf \"${STAGING_DIR}\" \"${TEMP_DMG}\"' EXIT\n\nRAW_PREFIX=\"${DERIVED_FILE_DIR}/guest-agent-raw\"\nDMG_OUTPUT=\"${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources/KernovaGuestAgent.dmg\"\nVERSION_OUTPUT=\"${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources/KernovaGuestAgentVersion.txt\"\n\ncp \"${BUILT_PRODUCTS_DIR}/KernovaGuestAgent\" \"${STAGING_DIR}/kernova-agent\"\ncp \"${SRCROOT}/KernovaGuestAgent/install.command\" \"${STAGING_DIR}/install.command\"\ncp \"${SRCROOT}/KernovaGuestAgent/uninstall.command\" \"${STAGING_DIR}/uninstall.command\"\nchmod +x \"${STAGING_DIR}/install.command\" \"${STAGING_DIR}/uninstall.command\"\ncp \"${SRCROOT}/KernovaGuestAgent/app.kernova.agent.plist\" \"${STAGING_DIR}/app.kernova.agent.plist\"\n\nmkdir -p \"$(dirname \"${DMG_OUTPUT}\")\"\n\n# Create a UDRW DMG then convert to DVD/CD-R master (UDTO/.cdr).\n# VZDiskImageStorageDeviceAttachment needs a format it can present as a\n# USB block device — the .cdr export works reliably for guest-mountable volumes.\nhdiutil create \\\n    -volname \"Kernova Guest Agent\" \\\n    -srcfolder \"${STAGING_DIR}\" \\\n    -ov -format UDRW \\\n    \"${TEMP_DMG}\"\nhdiutil convert \"${TEMP_DMG}\" -format UDTO -ov -o \"${RAW_PREFIX}\"\nmv \"${RAW_PREFIX}.cdr\" \"${DMG_OUTPUT}\"\n\n# Strip extended attributes that break code signing\nxattr -cr \"${DMG_OUTPUT}\"\n\n# Extract the agent's CFBundleShortVersionString from its embedded Info.plist\n# and write a sidecar the host reads at runtime. Keeping the agent binary as the\n# single source of truth means the host cannot drift from what it actually ships.\nAGENT_VERSION=$(otool -X -P \"${BUILT_PRODUCTS_DIR}/KernovaGuestAgent\" | plutil -extract CFBundleShortVersionString raw -)\nif [ -z \"${AGENT_VERSION}\" ]; then\n    echo \"error: Could not extract agent version from binary\" >&2\n    exit 1\nfi\nprintf '%s' \"${AGENT_VERSION}\" > \"${VERSION_OUTPUT}\"\n";
+			shellScript = "set -euo pipefail\n\nSTAGING_DIR=$(mktemp -d \"${DERIVED_FILE_DIR}/guest-agent-dmg-staging.XXXXXX\")\nTEMP_DMG=\"$(mktemp -u \"${DERIVED_FILE_DIR}/guest-agent-temp.XXXXXX\").dmg\"\ntrap 'rm -rf \"${STAGING_DIR}\" \"${TEMP_DMG}\"' EXIT\n\nRAW_PREFIX=\"${DERIVED_FILE_DIR}/guest-agent-raw\"\nDMG_OUTPUT=\"${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources/KernovaGuestAgent.dmg\"\nVERSION_OUTPUT=\"${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources/KernovaGuestAgentVersion.txt\"\n\nditto \"${BUILT_PRODUCTS_DIR}/Kernova Guest Agent.app\" \"${STAGING_DIR}/Kernova Guest Agent.app\"\ncp \"${SRCROOT}/KernovaGuestAgent/install.command\" \"${STAGING_DIR}/install.command\"\ncp \"${SRCROOT}/KernovaGuestAgent/uninstall.command\" \"${STAGING_DIR}/uninstall.command\"\nchmod +x \"${STAGING_DIR}/install.command\" \"${STAGING_DIR}/uninstall.command\"\ncp \"${SRCROOT}/KernovaGuestAgent/app.kernova.agent.plist\" \"${STAGING_DIR}/app.kernova.agent.plist\"\n\nmkdir -p \"$(dirname \"${DMG_OUTPUT}\")\"\n\n# Create a UDRW DMG then convert to DVD/CD-R master (UDTO/.cdr).\n# VZDiskImageStorageDeviceAttachment needs a format it can present as a\n# USB block device — the .cdr export works reliably for guest-mountable volumes.\nhdiutil create \\\n    -volname \"Kernova Guest Agent\" \\\n    -srcfolder \"${STAGING_DIR}\" \\\n    -ov -format UDRW \\\n    \"${TEMP_DMG}\"\nhdiutil convert \"${TEMP_DMG}\" -format UDTO -ov -o \"${RAW_PREFIX}\"\nmv \"${RAW_PREFIX}.cdr\" \"${DMG_OUTPUT}\"\n\n# Strip extended attributes that break code signing\nxattr -cr \"${DMG_OUTPUT}\"\n\n# Extract the agent's CFBundleShortVersionString from the app bundle's Info.plist\n# and write a sidecar the host reads at runtime. Keeping the agent bundle as the\n# single source of truth means the host cannot drift from what it actually ships.\nAGENT_VERSION=$(plutil -extract CFBundleShortVersionString raw \"${BUILT_PRODUCTS_DIR}/Kernova Guest Agent.app/Contents/Info.plist\")\nif [ -z \"${AGENT_VERSION}\" ]; then\n    echo \"error: Could not extract agent version from app bundle\" >&2\n    exit 1\nfi\nprintf '%s' \"${AGENT_VERSION}\" > \"${VERSION_OUTPUT}\"\n";
 		};
 		A100020C /* Set Build Number from Git */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -773,7 +792,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Kernova/Resources/Kernova.entitlements;
-				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
@@ -802,7 +821,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Kernova/Resources/Kernova.entitlements;
-				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
@@ -865,6 +884,7 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 8MT4P4GZL2;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 6.0;
 			};
@@ -875,6 +895,7 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 8MT4P4GZL2;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 6.0;
 			};
@@ -883,17 +904,21 @@
 		A1000207 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_INSTRUMENT_FOR_OPTIMIZATION_PROFILING = NO;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
 				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 8MT4P4GZL2;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = KernovaGuestAgent/Info.plist;
 				INFOPLIST_PREFIX_HEADER = "$(DERIVED_FILE_DIR)/AgentBuildNumber.h";
 				INFOPLIST_PREPROCESS = YES;
-				MARKETING_VERSION = 0.22.0;
+				MARKETING_VERSION = 0.23.4;
+				EXECUTABLE_NAME = KernovaGuestAgent;
 				PRODUCT_BUNDLE_IDENTIFIER = app.kernova.agent;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_MODULE_NAME = KernovaGuestAgent;
+				PRODUCT_NAME = "Kernova Guest Agent";
 				SWIFT_VERSION = 6.0;
 			};
 			name = Debug;
@@ -901,16 +926,20 @@
 		A1000208 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
 				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 8MT4P4GZL2;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = KernovaGuestAgent/Info.plist;
 				INFOPLIST_PREFIX_HEADER = "$(DERIVED_FILE_DIR)/AgentBuildNumber.h";
 				INFOPLIST_PREPROCESS = YES;
-				MARKETING_VERSION = 0.22.0;
+				MARKETING_VERSION = 0.23.4;
+				EXECUTABLE_NAME = KernovaGuestAgent;
 				PRODUCT_BUNDLE_IDENTIFIER = app.kernova.agent;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_MODULE_NAME = KernovaGuestAgent;
+				PRODUCT_NAME = "Kernova Guest Agent";
 				SWIFT_VERSION = 6.0;
 			};
 			name = Release;
@@ -949,7 +978,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = KernovaQuickLook/KernovaQuickLook.entitlements;
-				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
@@ -977,7 +1006,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = KernovaQuickLook/KernovaQuickLook.entitlements;
-				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;

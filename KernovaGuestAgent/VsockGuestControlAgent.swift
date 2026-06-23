@@ -43,10 +43,30 @@ final class VsockGuestControlAgent: @unchecked Sendable {
     /// `VsockGuestClipboardAgent` so each capability honors host policy.
     private let onPolicy: (@Sendable (Kernova_V1_PolicyUpdate) -> Void)?
 
+    /// Invoked whenever `connectionState` changes, so the menu-bar UI can update
+    /// the status-item icon without polling.
+    ///
+    /// Called off the main thread; the receiver is responsible for hopping to the
+    /// main actor.
+    private let onStateChange: (@Sendable (HostConnectionState) -> Void)?
+
     private let lock = NSLock()
     private var lastInboundFrame: ContinuousClock.Instant?
     private var unresponsiveLogged: Bool = false
     private var nextHeartbeatNonce: UInt64 = 1
+
+    /// Connection state surfaced to the menu-bar UI.
+    ///
+    /// Guarded by `lock`; mutated only through `updateConnectionState(_:)` so the
+    /// change callback fires exactly on real transitions.
+    private var connectionStateStorage: HostConnectionState = .connecting
+
+    /// The guest-agent version the host bundles, learned from the host's `Hello`
+    /// (`bundled_agent_version`).
+    ///
+    /// Guarded by `lock`. Empty until a Hello arrives, or when the host predates
+    /// the field — the UI treats empty as "unknown" and shows no update prompt.
+    private var hostBundledAgentVersionStorage: String = ""
 
     /// Whether the host advertised the streaming-clipboard capability in its
     /// `Hello`.
@@ -57,10 +77,14 @@ final class VsockGuestControlAgent: @unchecked Sendable {
     private var hostSupportsClipboardStreaming = false
 
     /// Production init — connects to the control port with default cadences.
-    convenience init(onPolicy: (@Sendable (Kernova_V1_PolicyUpdate) -> Void)? = nil) {
+    convenience init(
+        onPolicy: (@Sendable (Kernova_V1_PolicyUpdate) -> Void)? = nil,
+        onStateChange: (@Sendable (HostConnectionState) -> Void)? = nil
+    ) {
         self.init(
             client: VsockGuestClient(port: KernovaVsockPort.control, label: "control"),
-            onPolicy: onPolicy
+            onPolicy: onPolicy,
+            onStateChange: onStateChange
         )
     }
 
@@ -70,7 +94,8 @@ final class VsockGuestControlAgent: @unchecked Sendable {
         heartbeatInterval: Duration = .seconds(5),
         unresponsiveAfter: Duration = .seconds(15),
         terminateAfter: Duration = .seconds(30),
-        onPolicy: (@Sendable (Kernova_V1_PolicyUpdate) -> Void)? = nil
+        onPolicy: (@Sendable (Kernova_V1_PolicyUpdate) -> Void)? = nil,
+        onStateChange: (@Sendable (HostConnectionState) -> Void)? = nil
     ) {
         // The two-stage watchdog requires `unresponsiveAfter < terminateAfter`
         // so the "host appears unresponsive" warning is observable before the
@@ -89,6 +114,38 @@ final class VsockGuestControlAgent: @unchecked Sendable {
         // over-spin.
         self.livenessTickInterval = min(heartbeatInterval, unresponsiveAfter / 3)
         self.onPolicy = onPolicy
+        self.onStateChange = onStateChange
+    }
+
+    // MARK: - UI state accessors
+
+    /// Current host-connection state for the menu-bar UI to pull when its menu
+    /// opens.
+    ///
+    /// Thread-safe.
+    var connectionState: HostConnectionState {
+        lock.withLock { connectionStateStorage }
+    }
+
+    /// The guest-agent version the host bundles, as learned from the most recent
+    /// `Hello`.
+    ///
+    /// Empty when unknown. Thread-safe.
+    var hostBundledAgentVersion: String {
+        lock.withLock { hostBundledAgentVersionStorage }
+    }
+
+    /// Transitions `connectionState`, firing `onStateChange` only on a real
+    /// change.
+    ///
+    /// Must not be called while already holding `lock` (NSLock is not reentrant).
+    private func updateConnectionState(_ newState: HostConnectionState) {
+        let changed: Bool = lock.withLock {
+            guard connectionStateStorage != newState else { return false }
+            connectionStateStorage = newState
+            return true
+        }
+        if changed { onStateChange?(newState) }
     }
 
     // MARK: - Lifecycle
@@ -118,6 +175,9 @@ final class VsockGuestControlAgent: @unchecked Sendable {
             unresponsiveLogged = false
             hostSupportsClipboardStreaming = false
         }
+        // The channel is established; the menu shows "connected" until the host
+        // either goes silent (`.unresponsive`) or the channel drops (`.connecting`).
+        updateConnectionState(.connected)
 
         sendHello(on: channel)
 
@@ -148,6 +208,8 @@ final class VsockGuestControlAgent: @unchecked Sendable {
         defer {
             heartbeatTask.cancel()
             livenessTask.cancel()
+            // Channel is gone; the reconnect loop will rebuild it.
+            updateConnectionState(.connecting)
         }
 
         do {
@@ -177,11 +239,17 @@ final class VsockGuestControlAgent: @unchecked Sendable {
             lastInboundFrame = ContinuousClock.now
             unresponsiveLogged = false
         }
+        // Fresh traffic means the host is responding again (recovers from
+        // `.unresponsive`); a no-op when already `.connected`.
+        updateConnectionState(.connected)
 
         switch frame.payload {
         case .hello(let hello):
             let hostStreams = hello.capabilities.contains(KernovaCapability.clipboardStreamV1)
-            lock.withLock { hostSupportsClipboardStreaming = hostStreams }
+            lock.withLock {
+                hostSupportsClipboardStreaming = hostStreams
+                hostBundledAgentVersionStorage = hello.bundledAgentVersion
+            }
             Self.logger.notice(
                 "Host control service ready (service=\(hello.serviceVersion, privacy: .public), caps=\(hello.capabilities.joined(separator: ","), privacy: .public))"
             )
@@ -284,6 +352,9 @@ final class VsockGuestControlAgent: @unchecked Sendable {
                 )
                 lock.withLock { unresponsiveLogged = true }
             }
+            // Channel is still open but the host has gone quiet; surface it in
+            // the menu. Recovers to `.connected` on the next inbound frame.
+            updateConnectionState(.unresponsive)
         }
     }
 }

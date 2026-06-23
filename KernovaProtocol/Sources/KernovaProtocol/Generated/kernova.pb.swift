@@ -222,6 +222,14 @@ public nonisolated struct Kernova_V1_Hello: Sendable {
   /// Clears the value of `agentInfo`. Subsequent reads from it will return its default value.
   public mutating func clearAgentInfo() {self._agentInfo = nil}
 
+  /// The guest-agent version the *host* currently bundles, sent host->guest so
+  /// the guest can show its own update state ("up to date" / "update available")
+  /// in its menu-bar UI. Populated only by the host's control service; the
+  /// guest leaves it empty in its own Hello. Empty when unknown (e.g. a host
+  /// predating this field, or its version sidecar is missing) — the guest must
+  /// treat empty as "no update info" and never render an update prompt from it.
+  public var bundledAgentVersion: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -931,7 +939,7 @@ nonisolated extension Kernova_V1_Frame: SwiftProtobuf.Message, SwiftProtobuf._Me
 
 nonisolated extension Kernova_V1_Hello: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Hello"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}service_version\0\u{1}capabilities\0\u{3}agent_info\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}service_version\0\u{1}capabilities\0\u{3}agent_info\0\u{3}bundled_agent_version\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -942,6 +950,7 @@ nonisolated extension Kernova_V1_Hello: SwiftProtobuf.Message, SwiftProtobuf._Me
       case 1: try { try decoder.decodeSingularUInt32Field(value: &self.serviceVersion) }()
       case 2: try { try decoder.decodeRepeatedStringField(value: &self.capabilities) }()
       case 3: try { try decoder.decodeSingularMessageField(value: &self._agentInfo) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.bundledAgentVersion) }()
       default: break
       }
     }
@@ -961,6 +970,9 @@ nonisolated extension Kernova_V1_Hello: SwiftProtobuf.Message, SwiftProtobuf._Me
     try { if let v = self._agentInfo {
       try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
     } }()
+    if !self.bundledAgentVersion.isEmpty {
+      try visitor.visitSingularStringField(value: self.bundledAgentVersion, fieldNumber: 4)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -968,6 +980,7 @@ nonisolated extension Kernova_V1_Hello: SwiftProtobuf.Message, SwiftProtobuf._Me
     if lhs.serviceVersion != rhs.serviceVersion {return false}
     if lhs.capabilities != rhs.capabilities {return false}
     if lhs._agentInfo != rhs._agentInfo {return false}
+    if lhs.bundledAgentVersion != rhs.bundledAgentVersion {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

@@ -96,8 +96,11 @@ extension NSPasteboard: Pasteboard {
 ///
 /// All mutable state is accessed exclusively on the main dispatch queue.
 // RATIONALE: @unchecked Sendable with DispatchQueue.main serialization is
-// used because @MainActor is impractical here — the entry point is
-// main.swift top-level code (nonisolated in Swift 6), not an @main app.
+// retained even though the agent now runs inside an @main NSApplication: the
+// lazy-pasteboard pull blocks the main thread synchronously, and the existing
+// main-queue serialization models that precisely without the actor-hop churn a
+// @MainActor conversion would impose on the streaming engine's off-main
+// callbacks. The menu-bar UI reads `clipboardActivity` on the same main queue.
 final class VsockGuestClipboardAgent: @unchecked Sendable {
     private static let logger = KernovaLogger(subsystem: "app.kernova.agent", category: "VsockGuestClipboardAgent")
     private static let pollingInterval: TimeInterval = 0.5
@@ -203,6 +206,22 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     var isEnabledForTesting: Bool { enabled }
     #endif
 
+    /// Most recent clipboard activity, surfaced to the menu-bar UI.
+    ///
+    /// Mutated only on the main queue (like all other state here); read by the
+    /// menu on main.
+    private var clipboardActivityStorage: ClipboardActivity = .idle
+
+    /// The most recent clipboard activity, for the menu-bar status line.
+    ///
+    /// Reads the main-queue-confined state; the caller must be on the main queue
+    /// (the menu delegate is). See `ClipboardActivity` for why this is a
+    /// last-event signal rather than a live one.
+    var clipboardActivity: ClipboardActivity {
+        dispatchPrecondition(condition: .onQueue(.main))
+        return clipboardActivityStorage
+    }
+
     /// One promised inbound offer: its representation metadata and the
     /// representations materialized so far (each pulled at most once, then
     /// served to every promised type it backs).
@@ -284,6 +303,9 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             teardownConnectionState()
             staging.sweep()
             sendStaging.sweep()
+            // Feature turned off — clear the last-activity line (a mere reconnect
+            // leaves it intact, since teardownConnectionState doesn't touch it).
+            clipboardActivityStorage = .idle
             Self.logger.notice("Clipboard sharing disabled by host policy")
         }
     }
@@ -527,6 +549,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             currentOutboundGeneration.set(generation)
             lastSeenDigest = content.digest
             lastPasteboardChangeCount = changeCount
+            clipboardActivityStorage = .offeredToHost
             Self.logger.notice(
                 "Sent clipboard offer (gen=\(generation, privacy: .public), \(offered.representations.count, privacy: .public) reps, \(offered.totalByteCount, privacy: .public) bytes)"
             )
@@ -903,6 +926,9 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
 
         switch outcome {
         case .delivered(let representation):
+            // The bytes landed on the guest pasteboard — record it for the menu.
+            // (This runs after the main-thread pull unblocks, so it's observable.)
+            clipboardActivityStorage = .receivedFromHost
             // RATIONALE: `is_directory` rides the offer, not ClipboardStreamBegin,
             // so the offer-aware layer re-tags the delivered rep here, mirroring
             // VsockClipboardService.pull (see its note for why the flag stays off

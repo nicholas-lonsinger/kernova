@@ -3,17 +3,24 @@ set -euo pipefail
 trap 'echo ""; echo "ERROR: An unexpected error occurred (line $LINENO)."; echo "Run uninstall.command to clean up, then try again."; echo ""; read -p "Press Enter to exit..."' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-INSTALL_DIR="${HOME}/Library/Application Support/Kernova"
-BINARY_NAME="kernova-agent"
+INSTALL_DIR="${HOME}/Applications"
+APP_NAME="Kernova Guest Agent.app"
+APP_SRC="${SCRIPT_DIR}/${APP_NAME}"
+APP_DEST="${INSTALL_DIR}/${APP_NAME}"
+EXEC_REL="Contents/MacOS/KernovaGuestAgent"
 
-# Parse version: "kernova-agent 0.9.0 (4)" → version="0.9.0 (4)", build="4"
-NEW_OUTPUT=$("${SCRIPT_DIR}/${BINARY_NAME}" --version 2>/dev/null) || NEW_OUTPUT=""
+# Legacy (pre-app-bundle) install location, cleaned up on upgrade.
+LEGACY_DIR="${HOME}/Library/Application Support/Kernova"
+LEGACY_BINARY="${LEGACY_DIR}/kernova-agent"
+
+# Parse version: "kernova-agent 0.23.0 (42)" → version="0.23.0 (42)", build="42"
+NEW_OUTPUT=$("${APP_SRC}/${EXEC_REL}" --version 2>/dev/null) || NEW_OUTPUT=""
 NEW_VERSION=$(echo "${NEW_OUTPUT}" | sed 's/^kernova-agent //')
 NEW_BUILD=$(echo "${NEW_OUTPUT}" | sed -n 's/.*(\([0-9]*\)).*/\1/p')
 
 if [[ -z "${NEW_VERSION}" ]]; then
-    echo "ERROR: Could not determine version of the new agent binary."
-    echo "The binary may not be executable on this system."
+    echo "ERROR: Could not determine version of the new agent app."
+    echo "The app may not be executable on this system."
     echo ""
     read -p "Press Enter to exit..."
     exit 1
@@ -21,8 +28,8 @@ fi
 
 INSTALLED_VERSION=""
 INSTALLED_BUILD=""
-if [[ -x "${INSTALL_DIR}/${BINARY_NAME}" ]]; then
-    INSTALLED_OUTPUT=$("${INSTALL_DIR}/${BINARY_NAME}" --version 2>/dev/null) || INSTALLED_OUTPUT=""
+if [[ -x "${APP_DEST}/${EXEC_REL}" ]]; then
+    INSTALLED_OUTPUT=$("${APP_DEST}/${EXEC_REL}" --version 2>/dev/null) || INSTALLED_OUTPUT=""
     INSTALLED_VERSION=$(echo "${INSTALLED_OUTPUT}" | sed 's/^kernova-agent //')
     INSTALLED_BUILD=$(echo "${INSTALLED_OUTPUT}" | sed -n 's/.*(\([0-9]*\)).*/\1/p')
 fi
@@ -41,7 +48,7 @@ else
     echo "  Installing version ${NEW_VERSION}."
 fi
 echo ""
-echo "  Binary:      ~/Library/Application Support/Kernova/kernova-agent"
+echo "  App:         ~/Applications/Kernova Guest Agent.app"
 echo "  LaunchAgent: ~/Library/LaunchAgents/app.kernova.agent.plist"
 echo ""
 echo "To uninstall later, run uninstall.command from this disk."
@@ -57,14 +64,29 @@ if [[ "${choice}" =~ ^[Yy]$ ]]; then
 
     echo "Installing..."
 
-    # Stop existing agent if running
+    # Stop any running agent (current or legacy — same label) before replacing it.
     launchctl bootout "gui/$(id -u)/${LABEL}" 2>/dev/null || true
 
+    # Copy the app bundle with ditto so its code signature and layout survive — a
+    # flattened or re-permissioned copy would invalidate the bundle signature and
+    # launchd would refuse to exec it.
     mkdir -p "${INSTALL_DIR}"
-    cp "${SCRIPT_DIR}/${BINARY_NAME}" "${INSTALL_DIR}/${BINARY_NAME}"
-    chmod 755 "${INSTALL_DIR}/${BINARY_NAME}"
+    rm -rf "${APP_DEST}"
+    ditto "${APP_SRC}" "${APP_DEST}"
+    # Strip quarantine defensively so launchd/syspolicyd never blocks first exec.
+    xattr -dr com.apple.quarantine "${APP_DEST}" 2>/dev/null || true
 
-    # Install plist with resolved install path
+    # Remove the legacy bare-binary install if present (its LaunchAgent shared
+    # this label and is replaced below).
+    rm -f "${LEGACY_BINARY}"
+    rmdir "${LEGACY_DIR}" 2>/dev/null || true
+
+    # Remove the pre-rename app bundle ("KernovaGuestAgent.app", no spaces) so the
+    # rename to "Kernova Guest Agent.app" doesn't leave a stale second copy and a
+    # duplicate Login Items entry behind.
+    rm -rf "${INSTALL_DIR}/KernovaGuestAgent.app"
+
+    # Install the LaunchAgent plist with the resolved install path.
     mkdir -p "${LAUNCHAGENTS_DIR}"
     sed "s|__INSTALL_DIR__|${INSTALL_DIR}|g" "${SCRIPT_DIR}/${PLIST_NAME}" > "${LAUNCHAGENTS_DIR}/${PLIST_NAME}"
     if grep -q '__INSTALL_DIR__' "${LAUNCHAGENTS_DIR}/${PLIST_NAME}"; then
@@ -75,7 +97,7 @@ if [[ "${choice}" =~ ^[Yy]$ ]]; then
     # Register with launchd
     launchctl bootstrap "gui/$(id -u)" "${LAUNCHAGENTS_DIR}/${PLIST_NAME}"
 
-    INSTALLED_VER=$("${INSTALL_DIR}/${BINARY_NAME}" --version 2>/dev/null) || INSTALLED_VER="(could not determine)"
+    INSTALLED_VER=$("${APP_DEST}/${EXEC_REL}" --version 2>/dev/null) || INSTALLED_VER="(could not determine)"
     echo ""
     echo "Installed: ${INSTALLED_VER}"
     echo "LaunchAgent registered as ${LABEL}"
