@@ -34,6 +34,11 @@ final class ClipboardConcealedPreviewView: NSView {
         detailLabel.textColor = .secondaryLabelColor
         detailLabel.alignment = .center
         detailLabel.isSelectable = false
+        // A wrapping label computes its intrinsic *height* at this width, so the
+        // stack lays it out at the correct multi-line height rather than a
+        // single-line guess (the width constraint below alone forces wrapping but
+        // not the matching height). Matches the codebase's wrapping-label idiom.
+        detailLabel.preferredMaxLayoutWidth = Self.detailWidth
 
         super.init(frame: .zero)
         wantsLayer = true
@@ -53,10 +58,15 @@ final class ClipboardConcealedPreviewView: NSView {
             stack.trailingAnchor.constraint(
                 lessThanOrEqualTo: trailingAnchor, constant: -Spacing.large),
             // Cap the explanation's width so it wraps to a few lines rather than
-            // dictating the window width.
-            detailLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 260),
+            // dictating the window width (paired with `preferredMaxLayoutWidth`
+            // above, which gives the wrapped text its correct height).
+            detailLabel.widthAnchor.constraint(lessThanOrEqualToConstant: Self.detailWidth),
         ])
     }
+
+    /// The wrapped explanation's max width — shared by the width constraint and
+    /// `preferredMaxLayoutWidth` so the two can't drift.
+    private static let detailWidth: CGFloat = 260
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
