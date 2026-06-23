@@ -35,6 +35,10 @@ enum ClipboardPreviewMode: Equatable {
     /// large for `NSTextView` — still sendable and copyable, just not edited
     /// in place).
     case summary([ClipboardContent.Representation])
+    /// Confidential content (`org.nspasteboard.ConcealedType`, e.g. a password):
+    /// a read-only placeholder, never the secret bytes — the content still pastes
+    /// into the peer, only its on-screen display is suppressed.
+    case concealed
 }
 
 /// Pure decision logic for which preview a `ClipboardContent` gets.
@@ -56,6 +60,9 @@ enum ClipboardPreviewPolicy {
 
     /// Chooses the preview for a buffer, in priority order.
     ///
+    /// 0. A *concealed* snapshot (`org.nspasteboard.ConcealedType`) short-circuits
+    ///    to `.concealed` before any rule below — the window never renders the
+    ///    secret bytes, whatever representation type they carry.
     /// 1. *Several file payloads* (multiple filename-tagged reps) show as the
     ///    multi-file chip list (`.files`).
     /// 2. A single *file payload* shows as the file itself — an image file as
@@ -74,6 +81,11 @@ enum ClipboardPreviewPolicy {
     static func mode(for content: ClipboardContent) -> ClipboardPreviewMode {
         if content.isEmpty {
             return .empty
+        }
+        // Confidential content is a placeholder regardless of its representation
+        // type — the window never renders the secret bytes.
+        if content.isConcealed {
+            return .concealed
         }
         let files = content.filePayloads
         if files.count > 1 {

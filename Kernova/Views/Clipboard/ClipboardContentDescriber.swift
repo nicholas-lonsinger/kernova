@@ -19,6 +19,9 @@ enum ClipboardContentDescriber {
         switch ClipboardPreviewPolicy.mode(for: content) {
         case .empty:
             return "Empty"
+        case .concealed:
+            // No size or type — a concealed item must not leak even its shape.
+            return "Concealed content"
         case .text:
             primary = "Plain text"
         case .richText(_, let uti):

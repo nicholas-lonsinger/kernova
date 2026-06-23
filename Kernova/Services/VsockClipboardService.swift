@@ -115,15 +115,22 @@ final class VsockClipboardService: ClipboardServicing {
     private final class InboundPromise {
         let generation: UInt64
         let reps: [Kernova_V1_ClipboardRepresentationInfo]
+        /// `true` when the guest's offer carried `org.nspasteboard.ConcealedType`:
+        /// the content republishes concealed (the window hides it) and is not
+        /// eagerly pulled for preview.
+        let isConcealed: Bool
         var materialized: [Int: ClipboardContent.Representation] = [:]
         /// Pulls in flight, keyed by rep index, so concurrent preview/copy callers
         /// share one pull per rep instead of minting a duplicate (same-transfer_id)
         /// request that would orphan a continuation.
         var inFlight: [Int: Task<ClipboardContent.Representation?, Never>] = [:]
 
-        init(generation: UInt64, reps: [Kernova_V1_ClipboardRepresentationInfo]) {
+        init(
+            generation: UInt64, reps: [Kernova_V1_ClipboardRepresentationInfo], isConcealed: Bool
+        ) {
             self.generation = generation
             self.reps = reps
+            self.isConcealed = isConcealed
         }
     }
 
@@ -241,6 +248,7 @@ final class VsockClipboardService: ClipboardServicing {
         offer.clipboardOffer = Kernova_V1_ClipboardOffer.with {
             $0.generation = generation
             $0.repInfo = content.representations.map(Self.repInfo(for:))
+            $0.isConcealed = content.isConcealed
         }
 
         do {
@@ -407,7 +415,8 @@ final class VsockClipboardService: ClipboardServicing {
         // chips without waiting; renderable reps are pulled on display and the
         // rest on Copy-to-Mac. The reps keep the guest's offer order so a
         // transfer_id's rep index stays valid against the guest's offer.
-        let promise = InboundPromise(generation: offer.generation, reps: offer.repInfo)
+        let promise = InboundPromise(
+            generation: offer.generation, reps: offer.repInfo, isConcealed: offer.isConcealed)
         republish(promise)
         // Every offered rep was identity-skipped (transient marker / raw file-url
         // / empty) — nothing usable to promise; mirror the guest agent's all-skip
@@ -442,7 +451,7 @@ final class VsockClipboardService: ClipboardServicing {
                         pendingRemoteUTI: info.uti, byteCount: Int(clamping: info.byteCount),
                         filename: info.filename))
         }
-        let content = ClipboardContent(representations: reps)
+        let content = ClipboardContent(representations: reps, isConcealed: promise.isConcealed)
         clipboardContent = content
         lastGrabbedDigest = content.digest
         lastInboundPublishedDigest = content.digest
@@ -484,6 +493,11 @@ final class VsockClipboardService: ClipboardServicing {
         // with their own edit (the promise is then stale).
         guard let promise = inboundPromise, clipboardContent.digest == lastInboundPublishedDigest
         else { return }
+        // Concealed content is never previewed: the window shows a placeholder,
+        // so pulling the secret bytes into host memory would be pointless (and
+        // exactly what concealment avoids). They are still pulled on an explicit
+        // Copy-to-Mac via materializeForCopy().
+        guard !promise.isConcealed else { return }
         guard previewMaterializationStarted != promise.generation else { return }
         var allSucceeded = true
         for (index, info) in promise.reps.enumerated() {

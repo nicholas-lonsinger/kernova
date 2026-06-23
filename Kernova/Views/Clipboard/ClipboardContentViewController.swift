@@ -43,6 +43,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     private let filePreview = ClipboardFilePreviewView()
     private let filesPreview = ClipboardFilesPreviewView()
     private let summaryView = ClipboardSummaryView()
+    private let concealedPreview = ClipboardConcealedPreviewView()
     private let commandBar = ClipboardCommandBarView()
     /// Content-type indicator + transient-status surface, placed in the status
     /// row (right-aligned) so the command row stays a clean set of buttons.
@@ -51,7 +52,10 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     /// Every content view stacked in the content area; exactly one is visible.
     /// `scrollView` (the editable plain-text editor) is first — the default.
     private var contentViews: [NSView] {
-        [scrollView, richTextPreview, imagePreview, filePreview, filesPreview, summaryView]
+        [
+            scrollView, richTextPreview, imagePreview, filePreview, filesPreview, summaryView,
+            concealedPreview,
+        ]
     }
     private let statusCircle: NSView
     private let statusLabel: NSTextField
@@ -406,6 +410,10 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         case .summary:
             summaryView.configure(content: content)
             show(contentView: summaryView)
+        case .concealed:
+            // The placeholder is static — nothing to configure; the secret bytes
+            // are never handed to a view.
+            show(contentView: concealedPreview)
         }
     }
 

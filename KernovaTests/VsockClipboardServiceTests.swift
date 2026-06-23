@@ -118,12 +118,14 @@ struct VsockClipboardServiceTests {
     /// representation — the streaming protocol's announce frame.
     private func makeOffer(
         generation: UInt64,
-        reps: [(uti: String, byteCount: Int, filename: String, isInline: Bool)]
+        reps: [(uti: String, byteCount: Int, filename: String, isInline: Bool)],
+        isConcealed: Bool = false
     ) -> Frame {
         var frame = Frame()
         frame.protocolVersion = 1
         frame.clipboardOffer = Kernova_V1_ClipboardOffer.with {
             $0.generation = generation
+            $0.isConcealed = isConcealed
             $0.repInfo = reps.map { rep in
                 Kernova_V1_ClipboardRepresentationInfo.with {
                     $0.uti = rep.uti
@@ -1094,6 +1096,46 @@ struct VsockClipboardServiceTests {
         // previewMaterializationStarted).
         await service.materializeForPreview()
         #expect(responder.requests.count == afterFirst)
+    }
+
+    @Test("an inbound concealed offer publishes concealed content and is not eagerly previewed")
+    func inboundConcealedOffer() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        service.start()
+        defer { service.stop() }
+
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        responder.register(
+            generation: 7, repIndex: 0, uti: ClipboardContent.utf8TextUTI,
+            bytes: Data("hunter2".utf8), isInline: true)
+        responder.start()
+
+        try guest.send(
+            makeOffer(
+                generation: 7,
+                reps: [
+                    (
+                        uti: ClipboardContent.utf8TextUTI, byteCount: Data("hunter2".utf8).count,
+                        filename: "", isInline: true
+                    )
+                ],
+                isConcealed: true))
+        try await waitUntil { service.clipboardContent.representations.first?.isPendingRemote == true }
+
+        // The published content is flagged concealed so the window hides it.
+        #expect(service.clipboardContent.isConcealed)
+
+        // The eager preview pull is a no-op for concealed content: the secret is
+        // never pulled into host memory just to render a preview we won't show.
+        await service.materializeForPreview()
+        #expect(responder.requests.isEmpty)
+        #expect(service.clipboardContent.representations.first?.isPendingRemote == true)
     }
 
     @Test("A large multi-chunk inline preview rep reassembles correctly")
