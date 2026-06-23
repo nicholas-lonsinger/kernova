@@ -36,10 +36,13 @@ protocol DeleteVMSheetContentViewControllerDelegate: AnyObject {
 ///   there's nothing to decide, but they're surfaced so the user sees the
 ///   full picture of what's being deleted.
 /// - **Files outside this VM** — external storage disks and removable media
-///   that live outside the bundle. Each gets its own checkbox so the user
-///   can pick which to move to Trash. A file **shared** with other VMs is
-///   shown with its checkbox locked off (deleting this VM only detaches it),
-///   so a delete can never pull a disk out from under another VM.
+///   that live outside the bundle. Each gets its own checkbox, defaulting
+///   **off** (kept) so trashing a host file the user deliberately placed
+///   outside the bundle is always opt-in; a trailing **Select All** /
+///   **Deselect All** link toggles every selectable row at once when two or
+///   more can be selected. A file **shared** with other VMs is shown with its
+///   checkbox locked off (deleting this VM only detaches it), so a delete can
+///   never pull a disk out from under another VM.
 ///
 /// The bundled Guest Agent installer is already filtered out upstream (it's
 /// app-owned, not a user file), so it never appears here.
@@ -75,6 +78,12 @@ final class DeleteVMSheetContentViewController: NSViewController {
     var selectedExternalIDs: Set<UUID> {
         Set(checkboxes.filter { $0.value.state == .on }.map(\.key))
     }
+
+    /// The "Select All" / "Deselect All" link in the external-files section header.
+    ///
+    /// Present only when two or more rows are selectable; its title tracks
+    /// whether every selectable row is currently checked.
+    private weak var selectAllButton: NSButton?
 
     /// Whether the content list is taller than the cap, so it scrolls rather than
     /// growing an over-tall sheet.
@@ -286,7 +295,19 @@ final class DeleteVMSheetContentViewController: NSViewController {
             if let lastBundledRow = listStack.arrangedSubviews.last {
                 listStack.setCustomSpacing(Self.padding, after: lastBundledRow)
             }
-            listStack.addArrangedSubview(makeGroupedFormSectionHeader("Files outside this VM"))
+            // Rows that can actually be trashed (exclusively owned, present).
+            // Drives whether the header offers a Select All toggle.
+            let selectableCount = externals.filter { !$0.isShared && !$0.isMissing }.count
+            let externalHeader = makeExternalSectionHeader(selectableCount: selectableCount)
+            listStack.addArrangedSubview(externalHeader)
+            if selectableCount >= 2 {
+                // The header row carries a trailing Select All link, so it must
+                // span the content column (the .leading-aligned stack otherwise
+                // lets it hug its label). Insets trim the stack's edge padding.
+                externalHeader.widthAnchor.constraint(
+                    equalTo: listStack.widthAnchor, constant: -2 * Self.padding
+                ).isActive = true
+            }
             for external in externals {
                 listStack.addArrangedSubview(makeExternalRow(external))
             }
@@ -408,14 +429,43 @@ final class DeleteVMSheetContentViewController: NSViewController {
         return row
     }
 
+    /// Header for the "Files outside this VM" section.
+    ///
+    /// When two or more rows are selectable (exclusively-owned, present), the
+    /// header carries a trailing "Select All" / "Deselect All" link that toggles
+    /// every selectable row at once; with zero or one selectable row the toggle
+    /// would be redundant, so it's just the plain section-header label.
+    private func makeExternalSectionHeader(selectableCount: Int) -> NSView {
+        let label = makeGroupedFormSectionHeader("Files outside this VM")
+        guard selectableCount >= 2 else { return label }
+
+        let button = makeLinkButton(
+            "Select All", target: self, action: #selector(selectAllToggled(_:)))
+        selectAllButton = button
+
+        let spacer = NSView()
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        let row = NSStackView(views: [label, spacer, button])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = Spacing.medium
+        return row
+    }
+
     /// Row for an external attachment, with a leading checkbox.
     ///
-    /// Exclusively owned files default to on (trash). Shared files get a
-    /// disabled, always-off checkbox plus an inline "kept" warning. Missing
-    /// files (backing path no longer resolves) are likewise locked off — there
-    /// is nothing to trash — with the path shown in the red "Missing —" style
-    /// and an "already gone" note. A locked-off checkbox is never recorded in
-    /// `checkboxes`, so it can never be collected on confirm.
+    /// Exclusively owned files default to **off** (kept): files outside the
+    /// bundle live at user-chosen host paths, so trashing one is opt-in — the
+    /// user checks the row (or uses Select All) to include it. The checkbox
+    /// stays enabled and is recorded in `checkboxes`, and toggling it keeps the
+    /// Select All title in sync. Shared files get a disabled, always-off
+    /// checkbox plus an inline "kept" warning. Missing files (backing path no
+    /// longer resolves) are likewise locked off — there is nothing to trash —
+    /// with the path shown in the red "Missing —" style and an "already gone"
+    /// note. A locked-off checkbox is never recorded in `checkboxes`, so it can
+    /// never be collected on confirm.
     private func makeExternalRow(_ external: ExternalAttachment) -> NSView {
         let checkbox = NSButton(checkboxWithTitle: "", target: self, action: nil)
         checkbox.identifier = NSUserInterfaceItemIdentifier(external.id.uuidString)
@@ -426,7 +476,8 @@ final class DeleteVMSheetContentViewController: NSViewController {
             checkbox.state = .off
             checkbox.isEnabled = false
         } else {
-            checkbox.state = .on
+            checkbox.state = .off
+            checkbox.action = #selector(externalRowToggled(_:))
             checkboxes[external.id] = checkbox
         }
 
@@ -556,6 +607,36 @@ final class DeleteVMSheetContentViewController: NSViewController {
 
     @objc private func confirmTapped(_: NSButton) {
         delegate?.deleteVMSheet(self, didConfirmDeletingExternalIDs: selectedExternalIDs)
+    }
+
+    /// Bulk-toggles every selectable external row.
+    ///
+    /// Turns them all off when they are all already on, otherwise turns them all
+    /// on. Locked-off shared/missing rows aren't in `checkboxes`, so they're
+    /// untouched.
+    @objc private func selectAllToggled(_: NSButton) {
+        let newState: NSControl.StateValue = allSelectableRowsOn ? .off : .on
+        for checkbox in checkboxes.values { checkbox.state = newState }
+        refreshSelectAllButtonTitle()
+    }
+
+    /// Keeps the Select All / Deselect All title in sync when an individual row
+    /// is toggled.
+    @objc private func externalRowToggled(_: NSButton) {
+        refreshSelectAllButtonTitle()
+    }
+
+    /// `true` when every selectable external row is currently checked (and at
+    /// least one exists).
+    ///
+    /// Drives both the bulk-toggle direction and the Select All / Deselect All
+    /// label.
+    private var allSelectableRowsOn: Bool {
+        !checkboxes.isEmpty && checkboxes.values.allSatisfy { $0.state == .on }
+    }
+
+    private func refreshSelectAllButtonTitle() {
+        selectAllButton?.title = allSelectableRowsOn ? "Deselect All" : "Select All"
     }
 
     // MARK: - Helpers

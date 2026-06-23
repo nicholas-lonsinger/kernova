@@ -218,6 +218,22 @@ func makeGroupedFormCaption(_ text: String) -> NSTextField {
     return label
 }
 
+/// Builds a borderless, link-styled push button (caption font, link color).
+///
+/// Used for lightweight inline affordances — e.g. a "Change…" path control in
+/// the creation wizard or a "Select All" toggle in the delete sheet's section
+/// header.
+@MainActor
+func makeLinkButton(_ title: String, target: AnyObject, action: Selector) -> NSButton {
+    let button = NSButton(title: title, target: target, action: action)
+    button.isBordered = false
+    button.bezelStyle = .inline
+    button.font = .preferredFont(forTextStyle: .caption1)
+    button.contentTintColor = .linkColor
+    button.setContentHuggingPriority(.required, for: .horizontal)
+    return button
+}
+
 // MARK: - Boxes & banners
 
 /// Wraps `content` in a rounded, tinted container drawn by an `NSBox`.

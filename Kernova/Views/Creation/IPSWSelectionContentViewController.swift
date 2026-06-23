@@ -129,7 +129,7 @@ final class IPSWSelectionContentViewController: NSViewController {
         switch creationVM.ipswSource {
         case .downloadLatest:
             guard let path = creationVM.ipswDownloadPath else { return }
-            let change = makeWizardLinkButton(
+            let change = makeLinkButton(
                 "Change…", target: self, action: #selector(changeDownloadDestination))
             conditionalContainer.addArrangedSubview(makeWizardPathBadge(path: path, changeButton: change))
 
@@ -157,7 +157,7 @@ final class IPSWSelectionContentViewController: NSViewController {
             }
         case .localFile:
             guard let path = creationVM.ipswPath else { return }
-            let change = makeWizardLinkButton(
+            let change = makeLinkButton(
                 "Change…", target: self, action: #selector(changeLocalFile))
             conditionalContainer.addArrangedSubview(makeWizardPathBadge(path: path, changeButton: change))
         }
