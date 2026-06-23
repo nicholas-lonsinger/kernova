@@ -182,4 +182,31 @@ struct ScrollMoreIndicatorTests {
         scrollView.documentView?.setFrameSize(NSSize(width: Self.width, height: 1000))
         #expect(indicator.hasMoreBelow == true)
     }
+
+    @Test("Pulls its overlays out of the host superview when deallocated")
+    func deinitRemovesOverlays() {
+        // The overlays live in the scroll view's *superview*, not the scroll view,
+        // so they outlive the scroll view's removal and are torn down only in the
+        // indicator's `deinit`. Hold strong refs to the overlays so they survive
+        // the indicator's deallocation and we can assert they were unparented (not
+        // merely collected).
+        let scrollView = makeScrollView(documentHeight: 1000)
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: Self.width, height: Self.viewportHeight))
+        host.addSubview(scrollView)
+
+        var overlays: [NSView] = []
+        do {
+            let indicator = ScrollMoreIndicator(scrollView: scrollView)
+            // Mount-driven insert: a geometry notification parents the overlays into
+            // the host.
+            scrollView.contentView.scroll(to: NSPoint(x: 0, y: 1))
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+            overlays = indicator.overlaysForTesting
+            #expect(overlays.count == 2)
+            #expect(overlays.allSatisfy { $0.superview === host })
+        }
+        // The indicator is released at the end of the `do` scope; its `deinit`
+        // removes both overlays from the host.
+        #expect(overlays.allSatisfy { $0.superview == nil })
+    }
 }

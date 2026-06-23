@@ -1,38 +1,11 @@
 import AppKit
 import os
 
-/// Shows the standard "there's more content below" cues over a vertically
-/// scrolling view.
+/// Selects which "more below" cues a ``ScrollMoreIndicator`` shows.
 ///
-/// Two independent cues, selected via ``ScrollMoreCues`` at construction:
-/// persistent `overlays` — a down-chevron disc and a soft bottom fade that track
-/// scroll position — and a one-time scroller `flash` when overflowing content
-/// first appears. ``ScrollMoreCues/all`` (the default) shows both.
-///
-/// Shared by the creation wizard's steps and the delete-VM sheet (both default
-/// to `.all`), and the VM settings pane (`.flash` only — a light cue that needs
-/// no overlays hosted in its `NSStackView` root). It is purely a hint — it never
-/// gates interaction. The
-/// overlays are driven by live scroll geometry (clip bounds + document frame):
-/// they fade in when the content overflows and isn't scrolled to the bottom, and
-/// out when it fits or reaches the bottom (no latch — they track scroll position).
-/// All overlays are hit-transparent, so the indicator never blocks scrolling.
-///
-/// Create one per scroll view and retain it (typically a stored property on the
-/// owning view controller). It inserts its hit-transparent overlays into the
-/// scroll view's superview on the first layout — so it works whether the scroll
-/// view is already in a hierarchy or mounted later — and removes them on `deinit`.
-///
-/// - Precondition: the scroll view uses a top-anchored `FlippedClipView` and has
-///   its `documentView` set before construction. The at-bottom math reads the
-///   clip's flipped bounds (origin 0 at the top), and content-growth tracking
-///   binds to the document view here in `init`. Every grouped-form scroll view
-///   (`makeGroupedFormScrollView`) and the delete-VM sheet satisfy both; the
-///   initializer asserts them so a future misuse trips in Debug.
-/// Selects which "more below" cues a ``ScrollMoreIndicator`` shows: the
-/// persistent `overlays` (chevron disc + bottom fade) and/or the one-time
-/// scroller `flash`. They're independent, so a surface can opt into a light
-/// flash-only hint without the overlay chrome.
+/// The two cues — persistent `overlays` (chevron disc + bottom fade) and a
+/// one-time scroller `flash` — are independent, so a surface can opt into a
+/// light flash-only hint without the overlay chrome.
 struct ScrollMoreCues: OptionSet, Sendable {
     let rawValue: Int
 
@@ -45,6 +18,34 @@ struct ScrollMoreCues: OptionSet, Sendable {
     static let all: ScrollMoreCues = [.overlays, .flash]
 }
 
+/// Shows the standard "there's more content below" cues over a vertically
+/// scrolling view.
+///
+/// Two independent cues, selected via ``ScrollMoreCues`` at construction:
+/// persistent `overlays` — a down-chevron disc and a soft bottom fade that track
+/// scroll position — and a one-time scroller `flash` when overflowing content
+/// first appears. ``ScrollMoreCues/all`` (the default) shows both.
+///
+/// Shared by the creation wizard's steps and the delete-VM sheet (both default
+/// to `.all`), and the VM settings pane (`.flash` only — a light cue that needs
+/// no overlays hosted in its `NSStackView` root). It is purely a hint — it never
+/// gates interaction. The overlays are driven by live scroll geometry (clip
+/// bounds + document frame): they fade in when the content overflows and isn't
+/// scrolled to the bottom, and out when it fits or reaches the bottom (no latch —
+/// they track scroll position). All overlays are hit-transparent, so the
+/// indicator never blocks scrolling.
+///
+/// Create one per scroll view and retain it (typically a stored property on the
+/// owning view controller). It inserts its hit-transparent overlays into the
+/// scroll view's superview on the first layout — so it works whether the scroll
+/// view is already in a hierarchy or mounted later — and removes them on `deinit`.
+///
+/// - Precondition: the scroll view uses a top-anchored `FlippedClipView` and has
+///   its `documentView` set before construction. The at-bottom math reads the
+///   clip's flipped bounds (origin 0 at the top), and content-growth tracking
+///   binds to the document view here in `init`. Every grouped-form scroll view
+///   (`makeGroupedFormScrollView`) and the delete-VM sheet satisfy both; the
+///   initializer asserts them so a future misuse trips in Debug.
 @MainActor
 final class ScrollMoreIndicator {
     private static let logger = Logger(subsystem: "app.kernova", category: "ScrollMoreIndicator")
