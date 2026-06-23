@@ -123,17 +123,8 @@ func makeWizardRadioOption(radio: NSButton, iconSymbol: String, description desc
 
 // MARK: - Buttons & badges
 
-/// Builds a borderless, link-styled push button (caption font, link color).
-@MainActor
-func makeWizardLinkButton(_ title: String, target: AnyObject, action: Selector) -> NSButton {
-    let button = NSButton(title: title, target: target, action: action)
-    button.isBordered = false
-    button.bezelStyle = .inline
-    button.font = .preferredFont(forTextStyle: .caption1)
-    button.contentTintColor = .linkColor
-    button.setContentHuggingPriority(.required, for: .horizontal)
-    return button
-}
+// The borderless link-styled button used here lives in `GroupedFormStyle` as
+// `makeLinkButton(_:target:action:)`, shared with the Detail layer.
 
 /// Builds the IPSW path badge: a doc icon, a middle-truncating path, and a
 /// trailing "Change…" button, in a subtle rounded container.

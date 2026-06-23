@@ -48,13 +48,18 @@ struct DeleteVMSheetContentViewControllerTests {
         #expect(labels.contains("/tmp/installer.iso"))
     }
 
-    @Test("exclusively-owned external starts checked (defaults to trash)")
-    func exclusivelyOwnedStartsChecked() {
+    @Test("exclusively-owned external starts unchecked (defaults to keep) but stays selectable")
+    func exclusivelyOwnedStartsUnchecked() {
         let id = UUID()
         let vc = make(vmName: "MyVM", externals: [makeAttachment(id: id, label: "Disk", path: "/tmp/d.img")])
         vc.loadViewIfNeeded()
-        #expect(vc.selectedExternalIDs == [id])
-        #expect(vc.checkboxes[id]?.state == .on)
+        // Out-of-bundle files are kept by default: nothing selected, row off.
+        #expect(vc.selectedExternalIDs.isEmpty)
+        #expect(vc.checkboxes[id]?.state == .off)
+        // …but the row is still selectable (recorded + enabled), unlike a
+        // locked-off shared/missing row.
+        #expect(vc.checkboxes[id] != nil)
+        #expect(vc.checkboxes[id]?.isEnabled == true)
     }
 
     @Test("shared external is locked off and shows a 'kept' note")
@@ -120,8 +125,8 @@ struct DeleteVMSheetContentViewControllerTests {
         #expect(labels.contains { $0.contains("Missing — ") && $0.contains(path) })
     }
 
-    @Test("a present external stays checked even when others are missing")
-    func presentExternalStaysChecked() {
+    @Test("a present external stays selectable when others are missing")
+    func presentExternalStaysSelectable() {
         let presentID = UUID()
         let missingID = UUID()
         let externals = [
@@ -130,8 +135,10 @@ struct DeleteVMSheetContentViewControllerTests {
         ]
         let vc = make(vmName: "MyVM", externals: externals)
         vc.loadViewIfNeeded()
-        #expect(vc.selectedExternalIDs == [presentID])
-        #expect(vc.checkboxes[presentID]?.state == .on)
+        // Present row: recorded + off by default (selectable). Missing row: locked off.
+        #expect(vc.selectedExternalIDs.isEmpty)
+        #expect(vc.checkboxes[presentID]?.state == .off)
+        #expect(vc.checkboxes[presentID] != nil)
         #expect(vc.checkboxes[missingID] == nil)
     }
 
@@ -168,14 +175,14 @@ struct DeleteVMSheetContentViewControllerTests {
             Issue.record("Expected a Move to Trash button")
             return
         }
-        // Both start checked.
+        // Both start unchecked: confirming keeps every external file.
         confirm.performClick(nil)
-        #expect(delegate.confirmedIDChoices == [[keepID, trashID]])
+        #expect(delegate.confirmedIDChoices == [[]])
 
-        // Uncheck one row and confirm again — only the other is returned.
-        vc.checkboxes[keepID]?.state = .off
+        // Check one row and confirm again — only that id is returned.
+        vc.checkboxes[trashID]?.state = .on
         confirm.performClick(nil)
-        #expect(delegate.confirmedIDChoices == [[keepID, trashID], [trashID]])
+        #expect(delegate.confirmedIDChoices == [[], [trashID]])
     }
 
     @Test("Move to Trash button is the default (Return)")
@@ -201,6 +208,118 @@ struct DeleteVMSheetContentViewControllerTests {
         #expect(cancel.keyEquivalent == "\u{1B}")
     }
 
+    // MARK: - Select All
+
+    @Test("Select All checks every selectable external and flips to Deselect All")
+    func selectAllChecksEverySelectableExternal() {
+        let id1 = UUID()
+        let id2 = UUID()
+        let externals = [
+            makeAttachment(id: id1, label: "Disk A", path: "/tmp/a.img"),
+            makeAttachment(id: id2, label: "Disk B", path: "/tmp/b.img"),
+        ]
+        let vc = make(vmName: "MyVM", externals: externals)
+        vc.loadViewIfNeeded()
+
+        guard let selectAll = findButton(titled: "Select All", in: vc.view) else {
+            Issue.record("Expected a Select All button")
+            return
+        }
+        selectAll.performClick(nil)
+        #expect(vc.selectedExternalIDs == [id1, id2])
+        #expect(selectAll.title == "Deselect All")
+    }
+
+    @Test("Deselect All clears the selection and flips back to Select All")
+    func deselectAllClearsSelection() {
+        let id1 = UUID()
+        let id2 = UUID()
+        let externals = [
+            makeAttachment(id: id1, label: "Disk A", path: "/tmp/a.img"),
+            makeAttachment(id: id2, label: "Disk B", path: "/tmp/b.img"),
+        ]
+        let vc = make(vmName: "MyVM", externals: externals)
+        vc.loadViewIfNeeded()
+
+        guard let selectAll = findButton(titled: "Select All", in: vc.view) else {
+            Issue.record("Expected a Select All button")
+            return
+        }
+        // First click selects all; the same button now reads "Deselect All".
+        selectAll.performClick(nil)
+        #expect(selectAll.title == "Deselect All")
+        // Second click clears everything.
+        selectAll.performClick(nil)
+        #expect(vc.selectedExternalIDs.isEmpty)
+        #expect(selectAll.title == "Select All")
+    }
+
+    @Test("Select All ignores shared and missing rows")
+    func selectAllIgnoresLockedRows() {
+        let owned1 = UUID()
+        let owned2 = UUID()
+        let sharedID = UUID()
+        let missingID = UUID()
+        let externals = [
+            makeAttachment(id: owned1, label: "Owned A", path: "/tmp/a.img"),
+            makeAttachment(id: owned2, label: "Owned B", path: "/tmp/b.img"),
+            makeAttachment(id: sharedID, label: "Shared", path: "/tmp/shared.iso", shared: ["Other VM"]),
+            makeAttachment(id: missingID, label: "Gone", path: "/tmp/gone.img", missing: true),
+        ]
+        let vc = make(vmName: "MyVM", externals: externals)
+        vc.loadViewIfNeeded()
+
+        guard let selectAll = findButton(titled: "Select All", in: vc.view) else {
+            Issue.record("Expected a Select All button")
+            return
+        }
+        selectAll.performClick(nil)
+        // Only the exclusively-owned, present rows are selected; locked-off
+        // shared/missing rows aren't recorded and can't be collected.
+        #expect(vc.selectedExternalIDs == [owned1, owned2])
+        #expect(vc.checkboxes[sharedID] == nil)
+        #expect(vc.checkboxes[missingID] == nil)
+    }
+
+    @Test("Select All is hidden when fewer than two externals are selectable")
+    func selectAllHiddenWithOneSelectable() {
+        // One selectable + one locked-off row: only a single togglable row, so a
+        // Select All would be redundant and is not shown.
+        let externals = [
+            makeAttachment(id: UUID(), label: "Owned", path: "/tmp/owned.img"),
+            makeAttachment(id: UUID(), label: "Shared", path: "/tmp/shared.iso", shared: ["Other VM"]),
+        ]
+        let vc = make(vmName: "MyVM", externals: externals)
+        vc.loadViewIfNeeded()
+        #expect(findButton(titled: "Select All", in: vc.view) == nil)
+        #expect(findButton(titled: "Deselect All", in: vc.view) == nil)
+    }
+
+    @Test("toggling rows keeps the Select All title in sync")
+    func togglingRowsUpdatesSelectAllTitle() {
+        let id1 = UUID()
+        let id2 = UUID()
+        let externals = [
+            makeAttachment(id: id1, label: "Disk A", path: "/tmp/a.img"),
+            makeAttachment(id: id2, label: "Disk B", path: "/tmp/b.img"),
+        ]
+        let vc = make(vmName: "MyVM", externals: externals)
+        vc.loadViewIfNeeded()
+
+        guard let selectAll = findButton(titled: "Select All", in: vc.view) else {
+            Issue.record("Expected a Select All button")
+            return
+        }
+        // performClick fires the row's action (setting .state directly would not),
+        // which is what keeps the header label current.
+        vc.checkboxes[id1]?.performClick(nil)
+        #expect(selectAll.title == "Select All")  // one of two checked
+        vc.checkboxes[id2]?.performClick(nil)
+        #expect(selectAll.title == "Deselect All")  // all checked
+        vc.checkboxes[id1]?.performClick(nil)
+        #expect(selectAll.title == "Select All")  // back to partial
+    }
+
     // MARK: - Immediate-delete mode
 
     @Test("immediate mode header warns about permanent deletion")
@@ -223,6 +342,21 @@ struct DeleteVMSheetContentViewControllerTests {
         // The body must name the external files so the user knows they're permanently
         // removed too — otherwise "this VM and its disks" understates the consequence.
         #expect(labels.contains { $0.contains("external files") && $0.contains("can't undo") })
+    }
+
+    @Test("immediate mode body omits the external-files clause when none are selectable")
+    func immediateModeBodyOmitsExternalsWhenNoneSelectable() {
+        // The only external is shared (locked off, kept), so there is nothing the
+        // user can select for deletion — the body must not promise removing
+        // external files; it falls back to the plain VM-only wording.
+        let externals = [
+            makeAttachment(id: UUID(), label: "Shared ISO", path: "/tmp/shared.iso", shared: ["Other VM"])
+        ]
+        let vc = make(vmName: "MyVM", externals: externals, mode: .immediate)
+        vc.loadViewIfNeeded()
+        let labels = collectLabels(in: vc.view).map(\.stringValue)
+        #expect(labels.contains { $0.contains("can't undo") })
+        #expect(!labels.contains { $0.contains("external files you select") })
     }
 
     @Test("immediate mode confirm button reads Delete Immediately and is not the Return default")
@@ -257,8 +391,10 @@ struct DeleteVMSheetContentViewControllerTests {
             Issue.record("Expected a Delete Immediately button")
             return
         }
+        // Opt one file in; the unchecked one is kept.
+        vc.checkboxes[deleteID]?.state = .on
         confirm.performClick(nil)
-        #expect(delegate.confirmedIDChoices == [[keepID, deleteID]])
+        #expect(delegate.confirmedIDChoices == [[deleteID]])
     }
 
     // The content list's height is driven by an explicit measured constant
