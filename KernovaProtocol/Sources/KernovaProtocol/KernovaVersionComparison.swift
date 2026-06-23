@@ -30,8 +30,7 @@ public enum KernovaVersionComparison {
     public static func isAtLeast(_ version: String, _ bundled: String) -> Bool {
         let reference = bundled.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !reference.isEmpty else { return true }
-        // `.numeric` compares dotted decimals correctly ("0.9.0" < "0.10.0").
-        return version.compare(reference, options: .numeric) != .orderedAscending
+        return isAtLeast(version, normalizedBundled: reference)
     }
 
     /// Classifies `own` against the host's `bundled` version for UI display.
@@ -41,6 +40,17 @@ public enum KernovaVersionComparison {
     public static func updateState(own: String, hostBundled bundled: String) -> UpdateState {
         let reference = bundled.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !reference.isEmpty else { return .unknown }
-        return isAtLeast(own, reference) ? .upToDate : .updateAvailable(bundled: reference)
+        return isAtLeast(own, normalizedBundled: reference)
+            ? .upToDate : .updateAvailable(bundled: reference)
+    }
+
+    /// Numeric comparison against an already-trimmed, non-empty reference.
+    ///
+    /// The two public entry points each normalize `bundled` exactly once and
+    /// share this core, so there is a single normalization point — no second
+    /// trim and no re-checking emptiness that the callers already guaranteed.
+    private static func isAtLeast(_ version: String, normalizedBundled reference: String) -> Bool {
+        // `.numeric` compares dotted decimals correctly ("0.9.0" < "0.10.0").
+        version.compare(reference, options: .numeric) != .orderedAscending
     }
 }

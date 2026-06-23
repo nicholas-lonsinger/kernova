@@ -9,7 +9,7 @@ import os
 /// rather than offering switches that would fight host policy. Dynamic lines are
 /// rebuilt each time the menu opens (`menuNeedsUpdate`) by pulling the current
 /// state through the closures supplied at init; the status-item icon is updated
-/// live via `connectionStateChanged(to:)` so it tracks the connection even while
+/// live via `connectionStateChanged()` so it tracks the connection even while
 /// the menu is closed.
 @MainActor
 final class GuestAgentStatusItemController: NSObject, NSMenuDelegate {
@@ -53,9 +53,14 @@ final class GuestAgentStatusItemController: NSObject, NSMenuDelegate {
     /// Updates the menu-bar icon to reflect a connection-state change.
     ///
     /// Called by the app delegate from the control agent's `onStateChange`
-    /// (hopped to main).
-    func connectionStateChanged(to state: HostConnectionState) {
-        setIcon(for: state)
+    /// (hopped to main). Re-reads the live (lock-guarded) state rather than
+    /// trusting a delivered value: each off-main `onStateChange` is hopped
+    /// through its own `Task { @MainActor }`, and independently-spawned tasks
+    /// have no ordering guarantee, so a rapid connect/disconnect flap could
+    /// arrive out of order — reading ground truth makes the icon converge on
+    /// the real state regardless of arrival order.
+    func connectionStateChanged() {
+        setIcon(for: connectionState())
     }
 
     private static func symbolName(for state: HostConnectionState) -> String {

@@ -104,10 +104,12 @@ final class GuestAgentAppDelegate: NSObject, NSApplicationDelegate {
                     self?.updateAppNap(clipboardEnabled: policy.clipboardSharingEnabled)
                 }
             },
-            onStateChange: { [weak self] state in
+            onStateChange: { [weak self] _ in
                 // Called off-main; hop to the main actor to touch the status item.
+                // The delivered state is only a trigger — the controller re-reads
+                // the live state, since independently-hopped tasks aren't ordered.
                 Task { @MainActor in
-                    self?.statusItemController?.connectionStateChanged(to: state)
+                    self?.statusItemController?.connectionStateChanged()
                 }
             }
         )
@@ -143,6 +145,10 @@ final class GuestAgentAppDelegate: NSObject, NSApplicationDelegate {
         controlAgent?.stop()
         clipboardAgent?.stop()
         vsockConnection?.stop()
+        // Balance any held App-Nap activity so begin/end stays paired (harmless
+        // at real process exit, but keeps the assertion from leaking if the
+        // lifecycle ever keeps the process alive past terminate).
+        updateAppNap(clipboardEnabled: false)
     }
 
     // MARK: - App Nap
