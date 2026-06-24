@@ -10,6 +10,11 @@ import KernovaProtocol
 // Xcode 16 synchronized folders make each bundle's files target-private,
 // so a single file can't be shared across both — the duplication here is
 // deliberate. Keep these signatures aligned with the GuestAgent variant.
+//
+// Exception: `waitForChange` is KernovaTests-only. It observes `@MainActor`
+// `@Observable` production state directly; the GuestAgent bundle's helpers are
+// `nonisolated`/`@Sendable` over `Sendable` boxes and have no such type to
+// track, so there is nothing to mirror there.
 
 // MARK: - TestFailure
 
@@ -166,6 +171,10 @@ final class AsyncGate: @unchecked Sendable {
         deadline: ContinuousClock.Instant,
         predicate: () -> Bool
     ) async {
+        // Captured so it can be cancelled once `notify()` (or the immediate-hit
+        // re-check) resolves the wait; otherwise every happy-path arm would leak
+        // a Task sleeping until `deadline`.
+        var backstop: Task<Void, Never>?
         await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
             let id = UUID()
             let once = ResumeOnce()
@@ -184,12 +193,15 @@ final class AsyncGate: @unchecked Sendable {
             }
             // Backstop: resume at the deadline even if no notify arrives, so a
             // genuinely stuck condition fails the wait instead of hanging.
-            Task {
+            backstop = Task {
                 try? await Task.sleep(until: deadline, clock: ContinuousClock())
                 self.lock.withLock { _ = self.waiters.removeValue(forKey: id) }
                 once.fire { cont.resume() }
             }
         }
+        // Resolved via notify() or the immediate hit; cancel the backstop so it
+        // doesn't linger asleep until `deadline`.
+        backstop?.cancel()
     }
 }
 
@@ -208,10 +220,15 @@ final class AsyncGate: @unchecked Sendable {
 /// flaky-CI investigation; see memory `ci-test-timings`.
 ///
 /// The predicate must read every value it inspects through an `@Observable`
-/// getter so tracking registers a dependency (computed properties that read
-/// observed stored properties, like `agentStatus`, qualify). A predicate over
-/// plain non-observed state would never be re-evaluated and must keep
-/// `waitUntil`.
+/// getter so tracking registers a dependency, and it must be **side-effect-free**
+/// — it is evaluated several times per wait (the arming pass, the immediate-hit
+/// re-check, and each outer-loop iteration). Computed properties that read
+/// observed stored properties qualify (e.g. `agentStatus` reads `isUnresponsive`),
+/// but tracking only registers the properties actually read on the arming pass:
+/// a getter that short-circuits *before* reaching the property that will change
+/// won't wake the waiter, which then resolves only via the deadline backstop. A
+/// predicate over plain non-observed state would never be re-evaluated and must
+/// keep `waitUntil`.
 @MainActor
 func waitForChange(
     timeout: Duration = .seconds(10),
@@ -238,6 +255,10 @@ private func armObservationOnce(
     deadline: ContinuousClock.Instant,
     predicate: @escaping @MainActor () -> Bool
 ) async {
+    // Captured so it can be cancelled once the wait resolves via observation (or
+    // the immediate-hit re-check); otherwise every happy-path arm would leak a
+    // Task sleeping until `deadline`, the opposite of the "zero wake-ups" goal.
+    var backstop: Task<Void, Never>?
     await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
         let once = ResumeOnce()
         // Arm tracking over whatever observable state the predicate reads. The
@@ -259,9 +280,12 @@ private func armObservationOnce(
         }
         // Backstop: resume at the deadline so a genuinely stuck condition fails
         // the wait instead of hanging.
-        Task { @MainActor in
+        backstop = Task { @MainActor in
             try? await Task.sleep(until: deadline, clock: ContinuousClock())
             once.fire { cont.resume() }
         }
     }
+    // Resolved (observation, immediate hit, or the backstop itself) — cancel the
+    // backstop so it doesn't linger asleep until `deadline`.
+    backstop?.cancel()
 }

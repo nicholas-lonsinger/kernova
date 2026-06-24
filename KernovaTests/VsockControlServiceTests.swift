@@ -414,10 +414,10 @@ struct VsockControlServiceTests {
 
         _ = try await nextFrame(from: guest)
         try guest.send(makeGuestHello(agentVersion: "0.9.0"))
-        try await waitForChange { service.isConnected }
+        try await waitUntil { service.isConnected }
 
         // Go silent → unresponsive.
-        try await waitForChange(timeout: .seconds(5)) {
+        try await waitUntil(timeout: .seconds(5)) {
             service.agentStatus == .unresponsive(version: "0.9.0")
         }
 
@@ -429,17 +429,21 @@ struct VsockControlServiceTests {
         // starves that tick the next one sees a stale timestamp, re-latches
         // `.unresponsive`, and — with no further inbound frames — the service
         // stays stuck forever. Sustained heartbeats guarantee some tick sees a
-        // recent frame regardless of scheduling. Cancelled once recovered.
+        // recent frame regardless of scheduling. Cancelled once recovered. (The
+        // heartbeat nonce is ignored by the service — recovery keys only off the
+        // frame arriving — so the default nonce is fine.)
         let resumeHeartbeats = Task {
-            var nonce: UInt64 = 99
             while !Task.isCancelled {
-                try? guest.send(makeHeartbeat(nonce: nonce))
-                nonce += 1
+                try? guest.send(makeHeartbeat())
                 try? await Task.sleep(for: .milliseconds(60))
             }
         }
         defer { resumeHeartbeats.cancel() }
 
+        // Only the recovery → .current transition was the proven CI flake (the
+        // poll budget timed out under jitter), so it alone uses the event-driven
+        // wait; the suite's other agentStatus/isConnected waits stay on the poll
+        // per the project's migrate-on-flake stance.
         try await waitForChange(timeout: .seconds(5)) {
             service.agentStatus == .current(version: "0.9.0")
         }
