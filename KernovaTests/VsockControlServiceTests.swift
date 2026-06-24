@@ -397,13 +397,11 @@ struct VsockControlServiceTests {
         host.start()
         defer { guest.close() }
 
-        // `terminateAfter` is set well beyond the test's wall-clock budget
-        // (two 5 s `waitUntil` calls plus per-test setup overhead) so the
-        // watchdog cannot close the channel before the recovery heartbeat
-        // lands. Same CI-jitter rationale as `terminateClosesChannel`: on
-        // slow runners the original 2 s value occasionally fired between
-        // detecting `.unresponsive` and sending the heartbeat, leaving the
-        // service stuck and timing out the second `waitUntil`.
+        // `terminateAfter` is set well beyond the test's wall-clock budget so
+        // the watchdog cannot close the channel before recovery lands. Same
+        // CI-jitter rationale as `terminateClosesChannel`: on slow runners the
+        // original 2 s value occasionally fired between detecting `.unresponsive`
+        // and recovery, leaving the service stuck.
         let service = makeService(
             channel: host,
             bundledAgentVersion: "0.9.0",
@@ -423,9 +421,30 @@ struct VsockControlServiceTests {
             service.agentStatus == .unresponsive(version: "0.9.0")
         }
 
-        // Resume heartbeats. The next liveness tick clears the flag.
-        try guest.send(makeHeartbeat(nonce: 99))
-        try await waitUntil(timeout: .seconds(5)) {
+        // Resume heartbeats. A live guest sends them continuously, so emit a
+        // sustained stream rather than a single frame: recovery is driven by a
+        // liveness tick observing a fresh `lastInboundFrame`, and that clock is
+        // refreshed *only* by inbound frames. A lone heartbeat opens just one
+        // ~unresponsiveAfter-wide window for a tick to land; if MainActor jitter
+        // starves that tick the next one sees a stale timestamp, re-latches
+        // `.unresponsive`, and — with no further inbound frames — the service
+        // stays stuck forever. Sustained heartbeats guarantee some tick sees a
+        // recent frame regardless of scheduling. Cancelled once recovered. (The
+        // heartbeat nonce is ignored by the service — recovery keys only off the
+        // frame arriving — so the default nonce is fine.)
+        let resumeHeartbeats = Task {
+            while !Task.isCancelled {
+                try? guest.send(makeHeartbeat())
+                try? await Task.sleep(for: .milliseconds(60))
+            }
+        }
+        defer { resumeHeartbeats.cancel() }
+
+        // Only the recovery → .current transition was the proven CI flake (the
+        // poll budget timed out under jitter), so it alone uses the event-driven
+        // wait; the suite's other agentStatus/isConnected waits stay on the poll
+        // per the project's migrate-on-flake stance.
+        try await waitForChange(timeout: .seconds(5)) {
             service.agentStatus == .current(version: "0.9.0")
         }
         #expect(service.agentStatus == .current(version: "0.9.0"))

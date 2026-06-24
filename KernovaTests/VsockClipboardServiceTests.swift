@@ -887,7 +887,7 @@ struct VsockClipboardServiceTests {
                     (uti: "public.data", byteCount: fileBytes, filename: "doc.bin", isInline: false),
                 ]))
 
-        try await waitUntil { service.clipboardContent.representations.count == 2 }
+        try await waitForChange { service.clipboardContent.representations.count == 2 }
         let reps = service.clipboardContent.representations
         // Both reps are placeholders, in the guest's offer order.
         #expect(reps.allSatisfy { $0.isPendingRemote })
@@ -927,7 +927,7 @@ struct VsockClipboardServiceTests {
                 generation: 2,
                 reps: [(uti: "public.png", byteCount: 99, filename: "kept.png", isInline: false)]))
 
-        try await waitUntil {
+        try await waitForChange {
             service.clipboardContent.representations.first?.filename == "kept.png"
         }
         let rep = try #require(service.clipboardContent.representations.first)
@@ -959,7 +959,7 @@ struct VsockClipboardServiceTests {
             makeOffer(
                 generation: 42,
                 reps: [(uti: ClipboardContent.utf8TextUTI, byteCount: bytes.count, filename: "", isInline: true)]))
-        try await waitUntil { service.clipboardContent.representations.first?.isPendingRemote == true }
+        try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
 
         await service.materializeForPreview()
 
@@ -998,7 +998,7 @@ struct VsockClipboardServiceTests {
             makeOffer(
                 generation: 53,
                 reps: [(uti: UTType.flatRTFD.identifier, byteCount: bytes.count, filename: "", isInline: true)]))
-        try await waitUntil { service.clipboardContent.representations.first?.isPendingRemote == true }
+        try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
 
         await service.materializeForPreview()
 
@@ -1051,7 +1051,7 @@ struct VsockClipboardServiceTests {
                     (uti: "public.data", byteCount: 4096, filename: "doc.bin", isInline: false),
                     (uti: "public.png", byteCount: oversizeImage, filename: "", isInline: true),
                 ]))
-        try await waitUntil { service.clipboardContent.representations.count == 3 }
+        try await waitForChange { service.clipboardContent.representations.count == 3 }
 
         await service.materializeForPreview()
 
@@ -1085,7 +1085,7 @@ struct VsockClipboardServiceTests {
         responder.start()
 
         try guest.send(makeTextOffer(generation: 4, text: "x"))
-        try await waitUntil { service.clipboardContent.representations.first?.isPendingRemote == true }
+        try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
 
         await service.materializeForPreview()
         #expect(service.clipboardContent.text == "x")
@@ -1163,7 +1163,7 @@ struct VsockClipboardServiceTests {
             makeOffer(
                 generation: 3,
                 reps: [(uti: textUTI, byteCount: bytes.count, filename: "", isInline: true)]))
-        try await waitUntil { service.clipboardContent.representations.first?.isPendingRemote == true }
+        try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
 
         await service.materializeForPreview()
         #expect(service.clipboardContent.representations.first?.inMemoryData == bytes)
@@ -1200,7 +1200,7 @@ struct VsockClipboardServiceTests {
                     (uti: ClipboardContent.utf8TextUTI, byteCount: inlineBytes.count, filename: "", isInline: true),
                     (uti: "public.data", byteCount: fileBytes.count, filename: "from-guest.bin", isInline: false),
                 ]))
-        try await waitUntil { service.clipboardContent.representations.count == 2 }
+        try await waitForChange { service.clipboardContent.representations.count == 2 }
 
         let resolved = await service.materializeForCopy()
 
@@ -1269,7 +1269,7 @@ struct VsockClipboardServiceTests {
             ]
         }
         try guest.send(offer)
-        try await waitUntil { service.clipboardContent.representations.count == 1 }
+        try await waitForChange { service.clipboardContent.representations.count == 1 }
 
         let resolved = await service.materializeForCopy()
         #expect(resolved.representations.count == 1)
@@ -1312,7 +1312,7 @@ struct VsockClipboardServiceTests {
                     (uti: ClipboardContent.utf8TextUTI, byteCount: inlineBytes.count, filename: "", isInline: true),
                     (uti: "public.data", byteCount: fileBytes.count, filename: "doc.bin", isInline: false),
                 ]))
-        try await waitUntil { service.clipboardContent.representations.count == 2 }
+        try await waitForChange { service.clipboardContent.representations.count == 2 }
 
         // Preview pulls only rep 0 (the inline text); the file rep stays pending.
         await service.materializeForPreview()
@@ -1358,7 +1358,7 @@ struct VsockClipboardServiceTests {
             makeOffer(
                 generation: 1,
                 reps: [(uti: "public.data", byteCount: 4096, filename: "stale.bin", isInline: false)]))
-        try await waitUntil { service.clipboardContent.representations.first?.isPendingRemote == true }
+        try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
 
         // Start a copy that issues the gen=1 pull and parks (no End ever arrives).
         let copyTask = Task { await service.materializeForCopy() }
@@ -1382,7 +1382,7 @@ struct VsockClipboardServiceTests {
         #expect(resolved.representations.allSatisfy { $0.isPendingRemote })
 
         // The new offer's placeholder is what's published.
-        try await waitUntil {
+        try await waitForChange {
             service.clipboardContent.representations.first?.filename == "new.png"
         }
         let rep = try #require(service.clipboardContent.representations.first)
@@ -1435,7 +1435,7 @@ struct VsockClipboardServiceTests {
             makeOffer(
                 generation: 1,
                 reps: [(uti: "public.data", byteCount: 4096, filename: "stale.bin", isInline: false)]))
-        try await waitUntil { service.clipboardContent.representations.first?.isPendingRemote == true }
+        try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
 
         // Copy issues the gen=1 pull; it completes and parks in the seam.
         let copyTask = Task { await service.materializeForCopy() }
@@ -1447,7 +1447,7 @@ struct VsockClipboardServiceTests {
             makeOffer(
                 generation: 2,
                 reps: [(uti: "public.png", byteCount: 64, filename: "new.png", isInline: false)]))
-        try await waitUntil { service.clipboardContent.representations.first?.uti == "public.png" }
+        try await waitForChange { service.clipboardContent.representations.first?.uti == "public.png" }
 
         // Release: materialize resumes, the guard sees inboundPromise(gen2) !==
         // promise(gen1) and returns WITHOUT republishing gen=1's bytes.
@@ -1499,7 +1499,7 @@ struct VsockClipboardServiceTests {
             makeOffer(
                 generation: 1,
                 reps: [(uti: "public.data", byteCount: 4096, filename: "stale.bin", isInline: false)]))
-        try await waitUntil { service.clipboardContent.representations.first?.isPendingRemote == true }
+        try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
 
         let copyTask = Task { await service.materializeForCopy() }
         try await entered.wait(timeout: .seconds(5)) { didEnter }
@@ -1540,7 +1540,7 @@ struct VsockClipboardServiceTests {
         responder.start()
 
         try guest.send(makeTextOffer(generation: 8, text: "x"))
-        try await waitUntil { service.clipboardContent.representations.first?.isPendingRemote == true }
+        try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
 
         // The guest releases the offer before the host pulls anything.
         var release = Frame()
@@ -1555,7 +1555,7 @@ struct VsockClipboardServiceTests {
         try guest.sendErrorFrame(
             code: "clipboard.barrier", message: "release processed",
             inReplyTo: "clipboard.release")
-        try await waitUntil { service.lastTransferIssue != nil }
+        try await waitForChange { service.lastTransferIssue != nil }
 
         // After release, the promise is gone: materializeForCopy resolves nothing
         // new and never requests the rep.
@@ -1583,7 +1583,7 @@ struct VsockClipboardServiceTests {
             makeOffer(
                 generation: 1,
                 reps: [(uti: "public.png", byteCount: 1024, filename: "p.png", isInline: false)]))
-        try await waitUntil { service.clipboardContent.representations.first?.isPendingRemote == true }
+        try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
 
         // grabIfChanged must NOT echo placeholder content back to the guest.
         let before = recorder.frames.count
@@ -1663,7 +1663,7 @@ struct VsockClipboardServiceTests {
             makeOffer(
                 generation: generation,
                 reps: [(uti: textUTI, byteCount: payload.count, filename: "", isInline: true)]))
-        try await waitUntil { service.clipboardContent.representations.first?.isPendingRemote == true }
+        try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
 
         // First caller: preview pull for rep 0. It sends one request and parks
         // (no End arrives). Run it detached so the test keeps driving.
@@ -1751,7 +1751,7 @@ struct VsockClipboardServiceTests {
             makeOffer(
                 generation: 5,
                 reps: [(uti: ClipboardContent.utf8TextUTI, byteCount: 5, filename: "", isInline: true)]))
-        try await waitUntil { service.clipboardContent.representations.first?.isPendingRemote == true }
+        try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
 
         // Copy issues the pull; with no answer and the channel open, it must
         // resolve (not hang) once the backstop fires — dropping the un-pulled rep.
@@ -1785,7 +1785,7 @@ struct VsockClipboardServiceTests {
         responder.start()
 
         try guest.send(makeTextOffer(generation: 3, text: "from guest"))
-        try await waitUntil { service.clipboardContent.representations.first?.isPendingRemote == true }
+        try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
         await service.materializeForPreview()
         #expect(service.clipboardContent.text == "from guest")
 
@@ -1818,7 +1818,7 @@ struct VsockClipboardServiceTests {
         responder.start()
 
         try guest.send(makeTextOffer(generation: 2, text: "retry me"))
-        try await waitUntil { service.clipboardContent.representations.first?.isPendingRemote == true }
+        try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
 
         // First attempt: the pull times out, the rep stays a placeholder.
         await service.materializeForPreview()
@@ -1859,7 +1859,7 @@ struct VsockClipboardServiceTests {
         // Barrier: an error frame after the offer; once it surfaces, handleOffer ran.
         try guest.sendErrorFrame(
             code: "clipboard.barrier", message: "offer processed", inReplyTo: "clipboard.offer")
-        try await waitUntil { service.lastTransferIssue != nil }
+        try await waitForChange { service.lastTransferIssue != nil }
 
         #expect(service.clipboardContent.isEmpty)
         // No promise is held: Copy-to-Mac resolves nothing and sends no request
@@ -1894,7 +1894,7 @@ struct VsockClipboardServiceTests {
             makeOffer(
                 generation: 5,
                 reps: [(uti: "public.data", byteCount: 4096, filename: "big.bin", isInline: false)]))
-        try await waitUntil { service.clipboardContent.representations.first?.isPendingRemote == true }
+        try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
 
         let copyTask = Task { await service.materializeForCopy() }
         let xid = inboundTransferID(generation: 5, repIndex: 0)
@@ -1912,7 +1912,7 @@ struct VsockClipboardServiceTests {
         try guest.send(abort)
 
         _ = await copyTask.value
-        try await waitUntil {
+        try await waitForChange {
             if case .diskFull = service.lastTransferIssue?.kind { return true }
             return false
         }
@@ -1945,7 +1945,7 @@ struct VsockClipboardServiceTests {
 
         // The published placeholders exclude both identity-skip reps — only the
         // legit PNG file rep survives.
-        try await waitUntil {
+        try await waitForChange {
             service.clipboardContent.representations.map(\.uti) == ["public.png"]
         }
         let reps = service.clipboardContent.representations
@@ -1987,7 +1987,7 @@ struct VsockClipboardServiceTests {
             inReplyTo: "clipboard.request"
         )
 
-        try await waitUntil { service.lastTransferIssue != nil }
+        try await waitForChange { service.lastTransferIssue != nil }
         guard case .peerReportedError(let code, let message) = service.lastTransferIssue?.kind
         else {
             Issue.record("Expected peerReportedError issue, got \(String(describing: service.lastTransferIssue))")
