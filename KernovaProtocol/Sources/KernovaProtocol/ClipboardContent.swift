@@ -219,8 +219,10 @@ public struct ClipboardContent: Equatable, Sendable {
 
     /// Creates content with an already-computed digest.
     ///
-    /// Backs `makeOffActor(representations:)` so the O(payload) hash can run on
-    /// a background executor; the result is assembled here without re-hashing.
+    /// Backs the digest-reusing factories so the O(payload) hash is paid at most
+    /// once: `makeOffActor(representations:)` runs it on a background executor,
+    /// and `withConcealed(_:)` skips it entirely (the flag is excluded from the
+    /// digest). The result is assembled here without re-hashing.
     private init(representations: [Representation], isConcealed: Bool, precomputedDigest: Data) {
         self.representations = representations
         self.isConcealed = isConcealed

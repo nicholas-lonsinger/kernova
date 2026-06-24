@@ -532,4 +532,17 @@ struct ClipboardContentConcealedTests {
         #expect(concealed.withConcealed(true).isConcealed)
         #expect(concealed.withConcealed(true).digest == concealed.digest)
     }
+
+    @Test("withConcealed clears the flag and reuses the digest")
+    func withConcealedClearsTheFlag() {
+        let reps = [ClipboardContent.Representation(uti: ClipboardContent.utf8TextUTI, data: Data("pw".utf8))]
+        let concealed = ClipboardContent(representations: reps, isConcealed: true)
+        let revealed = concealed.withConcealed(false)
+        #expect(!revealed.isConcealed)
+        // Clearing reuses the digest too (the flag is excluded), so the revealed
+        // copy stays digest-equal to the concealed original and to a from-scratch
+        // unconcealed build.
+        #expect(revealed.digest == concealed.digest)
+        #expect(revealed == ClipboardContent(representations: reps, isConcealed: false))
+    }
 }
