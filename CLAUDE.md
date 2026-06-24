@@ -3,6 +3,8 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 > Design philosophy and UI guidelines are in [SPEC.md](SPEC.md).
+>
+> Clipboard subsystem principles (host↔guest copy/paste — the authoritative rules for any clipboard work) are in [CLIPBOARD.md](CLIPBOARD.md).
 
 ## Build & Test
 
