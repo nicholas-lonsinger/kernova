@@ -118,13 +118,9 @@ enum ClipboardPasteboardIntake {
         }
 
         // `evaluate` builds non-concealed content; re-stamp the concealed flag
-        // when the marker called for it (cheap — inline snapshots are small).
-        let content =
-            isConcealed
-            ? ClipboardContent(
-                representations: outcome.content.representations, isConcealed: true)
-            : outcome.content
-        return .content(content, note: nil)
+        // when the marker called for it. `withConcealed` reuses the digest
+        // (isConcealed is excluded from it), so no second hash of the payload.
+        return .content(outcome.content.withConcealed(isConcealed), note: nil)
     }
 
     /// The user-facing reason a snapshot was dropped wholesale by an

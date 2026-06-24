@@ -219,8 +219,10 @@ public struct ClipboardContent: Equatable, Sendable {
 
     /// Creates content with an already-computed digest.
     ///
-    /// Backs `makeOffActor(representations:)` so the O(payload) hash can run on
-    /// a background executor; the result is assembled here without re-hashing.
+    /// Backs the digest-reusing factories so the O(payload) hash is paid at most
+    /// once: `makeOffActor(representations:)` runs it on a background executor,
+    /// and `withConcealed(_:)` skips it entirely (the flag is excluded from the
+    /// digest). The result is assembled here without re-hashing.
     private init(representations: [Representation], isConcealed: Bool, precomputedDigest: Data) {
         self.representations = representations
         self.isConcealed = isConcealed
@@ -245,6 +247,21 @@ public struct ClipboardContent: Equatable, Sendable {
             isConcealed: isConcealed,
             precomputedDigest: computeDigest(of: representations)
         )
+    }
+
+    /// Returns a copy with `isConcealed` set, **without** recomputing the digest.
+    ///
+    /// `isConcealed` is excluded from the digest (it changes how the content is
+    /// displayed, not its identity), so the flag can be flipped by reusing the
+    /// existing `digest` rather than re-hashing the whole payload — the snapshot
+    /// path re-stamps the concealed marker after `ClipboardSnapshotPolicy.evaluate`
+    /// builds non-concealed content, and that re-stamp must not pay a second
+    /// SHA-256 over a large inline payload. Returns `self` unchanged when the flag
+    /// already matches.
+    public func withConcealed(_ concealed: Bool) -> ClipboardContent {
+        guard concealed != isConcealed else { return self }
+        return ClipboardContent(
+            representations: representations, isConcealed: concealed, precomputedDigest: digest)
     }
 
     /// Content holding a single UTF-8 plain-text representation.
