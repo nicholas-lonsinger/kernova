@@ -507,4 +507,29 @@ struct ClipboardContentConcealedTests {
         #expect(plain == concealed)
         #expect(plain.digest == concealed.digest)
     }
+
+    @Test("withConcealed sets the flag and reuses the digest (no re-hash)")
+    func withConcealedReusesDigest() {
+        let reps = [ClipboardContent.Representation(uti: ClipboardContent.utf8TextUTI, data: Data("pw".utf8))]
+        let plain = ClipboardContent(representations: reps, isConcealed: false)
+        let concealed = plain.withConcealed(true)
+        #expect(concealed.isConcealed)
+        // The digest must be byte-identical to the unconcealed content's — that is
+        // the whole point: the re-stamp avoids a second SHA-256, and the flag is
+        // excluded from the digest so echo suppression stays unaffected.
+        #expect(concealed.digest == plain.digest)
+        #expect(concealed == plain)
+        // Matches the digest a from-scratch concealed build would produce.
+        #expect(concealed.digest == ClipboardContent(representations: reps, isConcealed: true).digest)
+    }
+
+    @Test("withConcealed returns self unchanged when the flag already matches")
+    func withConcealedNoOpWhenUnchanged() {
+        let reps = [ClipboardContent.Representation(uti: ClipboardContent.utf8TextUTI, data: Data("pw".utf8))]
+        let plain = ClipboardContent(representations: reps, isConcealed: false)
+        #expect(plain.withConcealed(false) == plain)
+        let concealed = ClipboardContent(representations: reps, isConcealed: true)
+        #expect(concealed.withConcealed(true).isConcealed)
+        #expect(concealed.withConcealed(true).digest == concealed.digest)
+    }
 }

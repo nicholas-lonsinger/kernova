@@ -525,11 +525,9 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             )
         }
         // `evaluate` builds non-concealed content; re-stamp the flag when the
-        // marker called for it (inline snapshots are small, so the rehash is cheap).
-        let content =
-            isConcealed
-            ? ClipboardContent(representations: outcome.content.representations, isConcealed: true)
-            : outcome.content
+        // marker called for it. `withConcealed` reuses the digest (isConcealed is
+        // excluded from it), so no second hash of the payload.
+        let content = outcome.content.withConcealed(isConcealed)
         sendOfferIfNeeded(content, channel: channel, changeCount: currentCount)
     }
 

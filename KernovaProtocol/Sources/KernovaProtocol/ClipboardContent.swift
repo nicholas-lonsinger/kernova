@@ -247,6 +247,21 @@ public struct ClipboardContent: Equatable, Sendable {
         )
     }
 
+    /// Returns a copy with `isConcealed` set, **without** recomputing the digest.
+    ///
+    /// `isConcealed` is excluded from the digest (it changes how the content is
+    /// displayed, not its identity), so the flag can be flipped by reusing the
+    /// existing `digest` rather than re-hashing the whole payload — the snapshot
+    /// path re-stamps the concealed marker after `ClipboardSnapshotPolicy.evaluate`
+    /// builds non-concealed content, and that re-stamp must not pay a second
+    /// SHA-256 over a large inline payload. Returns `self` unchanged when the flag
+    /// already matches.
+    public func withConcealed(_ concealed: Bool) -> ClipboardContent {
+        guard concealed != isConcealed else { return self }
+        return ClipboardContent(
+            representations: representations, isConcealed: concealed, precomputedDigest: digest)
+    }
+
     /// Content holding a single UTF-8 plain-text representation.
     ///
     /// The empty string normalizes to `.empty` — "empty text" and "no
