@@ -397,13 +397,11 @@ struct VsockControlServiceTests {
         host.start()
         defer { guest.close() }
 
-        // `terminateAfter` is set well beyond the test's wall-clock budget
-        // (two 5 s `waitUntil` calls plus per-test setup overhead) so the
-        // watchdog cannot close the channel before the recovery heartbeat
-        // lands. Same CI-jitter rationale as `terminateClosesChannel`: on
-        // slow runners the original 2 s value occasionally fired between
-        // detecting `.unresponsive` and sending the heartbeat, leaving the
-        // service stuck and timing out the second `waitUntil`.
+        // `terminateAfter` is set well beyond the test's wall-clock budget so
+        // the watchdog cannot close the channel before recovery lands. Same
+        // CI-jitter rationale as `terminateClosesChannel`: on slow runners the
+        // original 2 s value occasionally fired between detecting `.unresponsive`
+        // and recovery, leaving the service stuck.
         let service = makeService(
             channel: host,
             bundledAgentVersion: "0.9.0",
@@ -416,16 +414,33 @@ struct VsockControlServiceTests {
 
         _ = try await nextFrame(from: guest)
         try guest.send(makeGuestHello(agentVersion: "0.9.0"))
-        try await waitUntil { service.isConnected }
+        try await waitForChange { service.isConnected }
 
         // Go silent → unresponsive.
-        try await waitUntil(timeout: .seconds(5)) {
+        try await waitForChange(timeout: .seconds(5)) {
             service.agentStatus == .unresponsive(version: "0.9.0")
         }
 
-        // Resume heartbeats. The next liveness tick clears the flag.
-        try guest.send(makeHeartbeat(nonce: 99))
-        try await waitUntil(timeout: .seconds(5)) {
+        // Resume heartbeats. A live guest sends them continuously, so emit a
+        // sustained stream rather than a single frame: recovery is driven by a
+        // liveness tick observing a fresh `lastInboundFrame`, and that clock is
+        // refreshed *only* by inbound frames. A lone heartbeat opens just one
+        // ~unresponsiveAfter-wide window for a tick to land; if MainActor jitter
+        // starves that tick the next one sees a stale timestamp, re-latches
+        // `.unresponsive`, and — with no further inbound frames — the service
+        // stays stuck forever. Sustained heartbeats guarantee some tick sees a
+        // recent frame regardless of scheduling. Cancelled once recovered.
+        let resumeHeartbeats = Task {
+            var nonce: UInt64 = 99
+            while !Task.isCancelled {
+                try? guest.send(makeHeartbeat(nonce: nonce))
+                nonce += 1
+                try? await Task.sleep(for: .milliseconds(60))
+            }
+        }
+        defer { resumeHeartbeats.cancel() }
+
+        try await waitForChange(timeout: .seconds(5)) {
             service.agentStatus == .current(version: "0.9.0")
         }
         #expect(service.agentStatus == .current(version: "0.9.0"))
