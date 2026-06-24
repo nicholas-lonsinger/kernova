@@ -4,6 +4,8 @@
 
 Kernova is a macOS application for creating and managing virtual machines via Apple's Virtualization.framework, supporting both macOS and Linux guests. It is built as a pure-AppKit app (the app target no longer imports SwiftUI), targeting macOS 26 (Tahoe) with Swift 6 strict concurrency. There are no external package dependencies — the app uses only Apple system frameworks.
 
+> The clipboard subsystem (host↔guest copy/paste) is governed by a dedicated set of design principles in [CLIPBOARD.md](CLIPBOARD.md) — the authoritative *why* and rules behind the clipboard files mapped below. Consult it before changing any clipboard code.
+
 ## Directory Structure
 
 ```
