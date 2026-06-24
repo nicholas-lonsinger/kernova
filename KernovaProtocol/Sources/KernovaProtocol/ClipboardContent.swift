@@ -192,6 +192,18 @@ public struct ClipboardContent: Equatable, Sendable {
     /// Ordered representations, richest first.
     public let representations: [Representation]
 
+    /// `true` when the source pasteboard marked this snapshot confidential
+    /// (`org.nspasteboard.ConcealedType`, the convention password managers use).
+    ///
+    /// Snapshot-level metadata, not a representation: the content still syncs so
+    /// it can be pasted into the peer, but the host clipboard window hides it
+    /// behind a placeholder rather than rendering the secret. Carried across the
+    /// wire on the `ClipboardOffer`. **Excluded from the digest** (like
+    /// `Representation.isDirectory`) — it changes how the content is *displayed*,
+    /// not its identity, so two snapshots with the same bytes stay
+    /// echo-suppressed regardless of the flag.
+    public let isConcealed: Bool
+
     /// SHA-256 over a length-prefixed canonical encoding of `representations`.
     ///
     /// Stable across processes (used for echo suppression on both ends of
@@ -199,8 +211,9 @@ public struct ClipboardContent: Equatable, Sendable {
     public let digest: Data
 
     /// Creates content from ordered representations, computing the digest.
-    public init(representations: [Representation]) {
+    public init(representations: [Representation], isConcealed: Bool = false) {
         self.representations = representations
+        self.isConcealed = isConcealed
         self.digest = Self.computeDigest(of: representations)
     }
 
@@ -208,8 +221,9 @@ public struct ClipboardContent: Equatable, Sendable {
     ///
     /// Backs `makeOffActor(representations:)` so the O(payload) hash can run on
     /// a background executor; the result is assembled here without re-hashing.
-    private init(representations: [Representation], precomputedDigest: Data) {
+    private init(representations: [Representation], isConcealed: Bool, precomputedDigest: Data) {
         self.representations = representations
+        self.isConcealed = isConcealed
         self.digest = precomputedDigest
     }
 
@@ -224,10 +238,11 @@ public struct ClipboardContent: Equatable, Sendable {
     /// Use it on the large-payload create/receive paths; keep the synchronous
     /// `init` for small, latency-insensitive content.
     public static func makeOffActor(
-        representations: [Representation]
+        representations: [Representation], isConcealed: Bool = false
     ) async -> ClipboardContent {
         ClipboardContent(
             representations: representations,
+            isConcealed: isConcealed,
             precomputedDigest: computeDigest(of: representations)
         )
     }
@@ -236,14 +251,16 @@ public struct ClipboardContent: Equatable, Sendable {
     ///
     /// The empty string normalizes to `.empty` — "empty text" and "no
     /// content" are deliberately the same non-offerable value, resolved here
-    /// once rather than at every call site.
-    public init(text: String) {
+    /// once rather than at every call site (so empty text is never concealed:
+    /// there is nothing to conceal).
+    public init(text: String, isConcealed: Bool = false) {
         if text.isEmpty {
             self = .empty
         } else {
-            self.init(representations: [
-                Representation(uti: Self.utf8TextUTI, data: Data(text.utf8))
-            ])
+            self.init(
+                representations: [
+                    Representation(uti: Self.utf8TextUTI, data: Data(text.utf8))
+                ], isConcealed: isConcealed)
         }
     }
 
@@ -282,7 +299,8 @@ public struct ClipboardContent: Equatable, Sendable {
         }
         return (
             ClipboardContent(
-                representations: Array(representations.prefix(Self.maxOfferableRepresentations))),
+                representations: Array(representations.prefix(Self.maxOfferableRepresentations)),
+                isConcealed: isConcealed),
             representations.count
         )
     }

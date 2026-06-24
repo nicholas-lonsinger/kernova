@@ -412,6 +412,13 @@ public nonisolated struct Kernova_V1_ClipboardOffer: Sendable {
   /// Metadata for every available representation, richest first.
   public var repInfo: [Kernova_V1_ClipboardRepresentationInfo] = []
 
+  /// Whether the source pasteboard marked this snapshot confidential
+  /// (org.nspasteboard.ConcealedType — the convention password managers use).
+  /// The content is still offered so it can be pasted into the peer; the
+  /// receiver hides it behind a placeholder in its clipboard window rather than
+  /// rendering the secret. Snapshot-level, not per-representation.
+  public var isConcealed: Bool = false
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -1132,7 +1139,7 @@ nonisolated extension Kernova_V1_ClipboardRepresentationInfo: SwiftProtobuf.Mess
 
 nonisolated extension Kernova_V1_ClipboardOffer: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ClipboardOffer"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}generation\0\u{4}\u{3}rep_info\0\u{b}formats\0\u{b}utis\0\u{c}\u{2}\u{1}\u{c}\u{3}\u{1}")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}generation\0\u{4}\u{3}rep_info\0\u{3}is_concealed\0\u{b}formats\0\u{b}utis\0\u{c}\u{2}\u{1}\u{c}\u{3}\u{1}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1142,6 +1149,7 @@ nonisolated extension Kernova_V1_ClipboardOffer: SwiftProtobuf.Message, SwiftPro
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularUInt64Field(value: &self.generation) }()
       case 4: try { try decoder.decodeRepeatedMessageField(value: &self.repInfo) }()
+      case 5: try { try decoder.decodeSingularBoolField(value: &self.isConcealed) }()
       default: break
       }
     }
@@ -1154,12 +1162,16 @@ nonisolated extension Kernova_V1_ClipboardOffer: SwiftProtobuf.Message, SwiftPro
     if !self.repInfo.isEmpty {
       try visitor.visitRepeatedMessageField(value: self.repInfo, fieldNumber: 4)
     }
+    if self.isConcealed != false {
+      try visitor.visitSingularBoolField(value: self.isConcealed, fieldNumber: 5)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Kernova_V1_ClipboardOffer, rhs: Kernova_V1_ClipboardOffer) -> Bool {
     if lhs.generation != rhs.generation {return false}
     if lhs.repInfo != rhs.repInfo {return false}
+    if lhs.isConcealed != rhs.isConcealed {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

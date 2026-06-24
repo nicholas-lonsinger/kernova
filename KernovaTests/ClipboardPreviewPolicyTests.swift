@@ -18,6 +18,16 @@ struct ClipboardPreviewPolicyTests {
         #expect(mode == .text("hello"))
     }
 
+    @Test("concealed content short-circuits to the placeholder regardless of type")
+    func concealedShortCircuits() {
+        // Even ordinary plain text, if marked concealed, must never reach the
+        // editable text editor — it renders as the placeholder.
+        let content = ClipboardContent(
+            representations: [.init(uti: ClipboardContent.utf8TextUTI, data: Data("hunter2".utf8))],
+            isConcealed: true)
+        #expect(ClipboardPreviewPolicy.mode(for: content) == .concealed)
+    }
+
     @Test("inline rich text renders styled instead of plain")
     func richTextWinsOverPlain() {
         // A TextEdit rich copy carries RTF + a plain-text sibling; the styled

@@ -466,6 +466,23 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         let currentCount = pasteboard.changeCount
         guard currentCount != lastPasteboardChangeCount else { return }
 
+        // Snapshot-level `org.nspasteboard.*` marker handling, from the
+        // unfiltered first-item type list (before per-rep filtering strips the
+        // markers). A transient/auto-generated snapshot is never offered; a
+        // concealed snapshot (a password) is offered so the host can still paste
+        // it, but flagged so the host window hides it. Folders are never
+        // concealed secrets, so the archive path below ignores the flag.
+        let disposition = ClipboardSnapshotPolicy.disposition(
+            forTypes: pasteboard.firstItemTypes.map(\.rawValue))
+        if case .suppress(let reason) = disposition {
+            Self.logger.notice(
+                "Clipboard snapshot suppressed by \(String(describing: reason), privacy: .public) marker"
+            )
+            lastPasteboardChangeCount = currentCount
+            return
+        }
+        let isConcealed = disposition == .conceal
+
         // Copied *files* (Finder ⌘C) leave one file URL per pasteboard item —
         // build a disk-backed rep from each (a stat, no read, no size cap); the
         // bytes stream later when the host requests them. A multi-select copy
@@ -483,7 +500,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                         ClipboardContent.Representation(
                             uti: candidate.type.identifier, fileURL: candidate.url,
                             byteCount: candidate.byteCount, filename: candidate.filename)
-                    })
+                    }, isConcealed: isConcealed)
                 sendOfferIfNeeded(content, channel: channel, changeCount: currentCount)
             }
             return
@@ -507,7 +524,13 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                 "Clipboard snapshot skipped \(outcome.skipped.count, privacy: .public) representation(s): \(summary, privacy: .public)"
             )
         }
-        sendOfferIfNeeded(outcome.content, channel: channel, changeCount: currentCount)
+        // `evaluate` builds non-concealed content; re-stamp the flag when the
+        // marker called for it (inline snapshots are small, so the rehash is cheap).
+        let content =
+            isConcealed
+            ? ClipboardContent(representations: outcome.content.representations, isConcealed: true)
+            : outcome.content
+        sendOfferIfNeeded(content, channel: channel, changeCount: currentCount)
     }
 
     /// Announces `content` to the host when it's non-empty and not an echo of
@@ -540,6 +563,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         offer.clipboardOffer = Kernova_V1_ClipboardOffer.with {
             $0.generation = generation
             $0.repInfo = offered.representations.map(Self.repInfo(for:))
+            $0.isConcealed = offered.isConcealed
         }
         do {
             try channel.send(offer)

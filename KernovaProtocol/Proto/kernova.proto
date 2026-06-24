@@ -181,6 +181,13 @@ message ClipboardOffer {
 
   // Metadata for every available representation, richest first.
   repeated ClipboardRepresentationInfo rep_info = 4;
+
+  // Whether the source pasteboard marked this snapshot confidential
+  // (org.nspasteboard.ConcealedType — the convention password managers use).
+  // The content is still offered so it can be pasted into the peer; the
+  // receiver hides it behind a placeholder in its clipboard window rather than
+  // rendering the secret. Snapshot-level, not per-representation.
+  bool is_concealed = 5;
 }
 
 // Sent in response to a `ClipboardOffer` to pull one representation's bytes.
