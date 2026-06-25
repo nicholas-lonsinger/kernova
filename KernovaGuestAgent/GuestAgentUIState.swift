@@ -24,19 +24,52 @@ enum HostConnectionState: Equatable, Sendable {
     case unresponsive
 }
 
-/// The most recent clipboard activity, for display in the menu.
+/// Clipboard sharing state for display in the menu.
 ///
-/// This is deliberately a *last-event* signal, not a live "in progress" one: the
-/// inbound paste pull runs synchronously on the main thread (the pasteboard
-/// server's `provideDataForType` callback), and the status item + its menu are
-/// also main-thread, so an in-flight transfer can't be drawn while it blocks
-/// main. The achievable, useful signal is therefore what happened most recently,
+/// Two of the cases are feature-states (`enabled` / `disabled`, driven by host
+/// policy); the other four are the most recent *flow* event, forming a symmetric
+/// 2×2 of offer-vs-fulfillment across both directions:
+///
+/// |             | offer (someone copied) | fulfillment (someone pasted) |
+/// | ----------- | ---------------------- | ---------------------------- |
+/// | guest → host | `offeredToHost`        | `sentToHost`                 |
+/// | host → guest | `offeredFromHost`      | `receivedFromHost`           |
+///
+/// A flow event overwrites `enabled`; `disabled` is set only when host policy
+/// turns sharing off.
+///
+/// The four flow cases are deliberately a *last-event* signal, not a live "in
+/// progress" one: the inbound paste pull runs synchronously on the main thread
+/// (the pasteboard server's `provideDataForType` callback), and the status item +
+/// its menu are also main-thread, so an in-flight transfer can't be drawn while
+/// it blocks main. The achievable, useful signal is what happened most recently,
 /// set at quick main-thread boundaries and read when the menu next opens.
+///
+/// RATIONALE: `sentToHost` is marked when the outbound stream *starts* (the host's
+/// request arrives and `ClipboardStreamSender.startTransfer` is called), not when
+/// it completes — the byte stream runs off-main and can't be drawn in flight. This
+/// mirrors `offeredToHost`, which is set at offer-*send* time, not on delivery. A
+/// transfer that later aborts can therefore briefly read "sent to host", which is
+/// acceptable for a best-effort last-event line.
 enum ClipboardActivity: Equatable, Sendable {
-    /// Nothing has crossed the clipboard yet this session.
-    case idle
+    /// Sharing is on by host policy and nothing has crossed yet this session.
+    case enabled
     /// The guest's local clipboard was offered to the host (a local copy).
     case offeredToHost
+    /// The host offered its clipboard to the guest (a remote copy); the guest
+    /// registered lazy promises but pulled no bytes.
+    case offeredFromHost
+    /// The host pulled the guest's clipboard bytes (an outbound stream started).
+    ///
+    /// "Pull" today is any host fetch of the bytes — a clipboard-window preview
+    /// or an explicit "Copy to Mac" — not necessarily a genuine host paste,
+    /// because the host materializes eagerly and the guest can't tell the
+    /// triggers apart. Once the host writes its pasteboard lazily (a provider
+    /// that resolves at paste time — issue #392), this pull coincides with an
+    /// actual host paste, which is the intended meaning.
+    case sentToHost
     /// An inbound paste from the host was materialized on the guest pasteboard.
     case receivedFromHost
+    /// Host policy turned clipboard sharing off.
+    case disabled
 }

@@ -210,7 +210,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     ///
     /// Mutated only on the main queue (like all other state here); read by the
     /// menu on main.
-    private var clipboardActivityStorage: ClipboardActivity = .idle
+    private var clipboardActivityStorage: ClipboardActivity = .disabled
 
     /// The most recent clipboard activity, for the menu-bar status line.
     ///
@@ -295,6 +295,9 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         if enabled {
             client.resume()
             startPolling()
+            // Feature turned on — reset the line to the quiet "enabled" baseline
+            // (clears a prior "disabled"); a flow event overwrites it next.
+            clipboardActivityStorage = .enabled
             Self.logger.notice("Clipboard sharing enabled by host policy")
         } else {
             client.pause()
@@ -303,9 +306,9 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             teardownConnectionState()
             staging.sweep()
             sendStaging.sweep()
-            // Feature turned off — clear the last-activity line (a mere reconnect
-            // leaves it intact, since teardownConnectionState doesn't touch it).
-            clipboardActivityStorage = .idle
+            // Feature turned off — reflect it on the line (a mere reconnect leaves
+            // the last activity intact, since teardownConnectionState doesn't touch it).
+            clipboardActivityStorage = .disabled
             Self.logger.notice("Clipboard sharing disabled by host policy")
         }
     }
@@ -766,6 +769,9 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             maxAcceptByteCount: request.maxAcceptByteCount,
             isInline: Self.shouldInline(representation),
             isCurrent: { value in generation.isCurrent(value) })
+        // The host pulled our clipboard — the outbound stream is starting. (See
+        // `ClipboardActivity` for why this is marked at start, not completion.)
+        clipboardActivityStorage = .sentToHost
         Self.logger.debug(
             "Streaming clipboard rep \(repIndex, privacy: .public) (gen=\(request.generation, privacy: .public), \(representation.byteCount, privacy: .public) bytes)"
         )
@@ -830,6 +836,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             inboundPromise = nil
             return
         }
+        clipboardActivityStorage = .offeredFromHost
         Self.logger.notice(
             "Registered host clipboard promise (gen=\(generation, privacy: .public), \(items.count, privacy: .public) item(s))"
         )

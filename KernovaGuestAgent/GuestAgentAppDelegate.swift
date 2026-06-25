@@ -122,7 +122,10 @@ final class GuestAgentAppDelegate: NSObject, NSApplicationDelegate {
             version: Self.version,
             connectionState: { [weak controlAgent] in controlAgent?.connectionState ?? .connecting },
             hostBundledVersion: { [weak controlAgent] in controlAgent?.hostBundledAgentVersion ?? "" },
-            clipboardActivity: { [weak clipboardAgent] in clipboardAgent?.clipboardActivity ?? .idle },
+            logForwardingEnabled: { [weak vsockConnection] in
+                vsockConnection?.isLogForwardingEnabled ?? false
+            },
+            clipboardActivity: { [weak clipboardAgent] in clipboardAgent?.clipboardActivity ?? .disabled },
             onQuit: { NSApp.terminate(nil) }
         )
 

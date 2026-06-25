@@ -41,12 +41,14 @@ final class VsockHostConnection: @unchecked Sendable {
     /// initial `PolicyUpdate` says otherwise. Toggled by `setEnabled(_:)`.
     private var enabled: Bool = false
 
-    #if DEBUG
-    /// Test seam: read the current enabled state without exposing the mutator.
-    var isEnabledForTesting: Bool {
+    /// Lock-guarded read of `enabled` for the main-thread menu.
+    ///
+    /// Renders the "Log Forwarding: enabled/disabled" line; the lock makes the
+    /// cross-thread read safe (`enabled` is mutated from the off-main policy
+    /// callback).
+    var isLogForwardingEnabled: Bool {
         lock.withLock { enabled }
     }
-    #endif
 
     init() {
         self.client = VsockGuestClient(port: KernovaVsockPort.log, label: "log")

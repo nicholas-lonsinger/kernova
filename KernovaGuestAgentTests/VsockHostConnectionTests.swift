@@ -283,7 +283,7 @@ struct VsockHostConnectionTests {
         let result = conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "msg")
         #expect(result == false)
         #expect(pendingLogCount(conn) == 0)
-        #expect(conn.isEnabledForTesting == false)
+        #expect(conn.isLogForwardingEnabled == false)
     }
 
     @Test("setEnabled(true) allows forwardLog to buffer when no channel exists")
@@ -293,7 +293,7 @@ struct VsockHostConnectionTests {
 
         conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "msg")
         #expect(pendingLogCount(conn) == 1)
-        #expect(conn.isEnabledForTesting == true)
+        #expect(conn.isLogForwardingEnabled == true)
     }
 
     @Test("setEnabled(false) discards the buffered frames")
@@ -308,7 +308,7 @@ struct VsockHostConnectionTests {
 
         conn.setEnabled(false)
         #expect(pendingLogCount(conn) == 0)
-        #expect(conn.isEnabledForTesting == false)
+        #expect(conn.isLogForwardingEnabled == false)
     }
 
     @Test("setEnabled is idempotent — repeat calls with same value are no-ops")
@@ -317,11 +317,11 @@ struct VsockHostConnectionTests {
 
         conn.setEnabled(false)
         conn.setEnabled(false)
-        #expect(conn.isEnabledForTesting == false)
+        #expect(conn.isLogForwardingEnabled == false)
 
         conn.setEnabled(true)
         conn.setEnabled(true)
-        #expect(conn.isEnabledForTesting == true)
+        #expect(conn.isLogForwardingEnabled == true)
 
         // Buffering still works after a no-op repeat enable.
         conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "x")
