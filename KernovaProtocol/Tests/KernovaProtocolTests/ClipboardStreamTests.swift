@@ -414,20 +414,94 @@ struct ClipboardStreamTests {
             })
     }
 
-    @Test("an inline rep larger than the ceiling is rejected before buffering")
-    func inlineCeilingRejected() async throws {
-        let harness = try roomyHarness()
+    @Test("an inline rep past the residency threshold spills to disk, then mmaps back identically")
+    func inlineSpillsAboveThreshold() async throws {
+        // Tiny residency threshold so a few KiB exercises the spill path without
+        // moving 256 MiB. The rep is inline (no filename) — the large-image case
+        // — and must round-trip byte-identical via the memory-mapped read.
+        let harness = try StreamHarness(
+            chunkSize: Self.chunk, windowBytes: Self.window,
+            maxResidentInlineBytes: 8192,
+            freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
         defer { harness.tearDown() }
 
+        var bytes = Data()
+        for i in 0..<(Self.chunk * 6 + 77) { bytes.append(UInt8((i * 53 + 11) & 0xFF)) }
+        #expect(bytes.count > 8192)  // above the threshold → must spill
+        let rep = ClipboardContent.Representation(uti: "public.png", data: bytes)
+
+        harness.sender.startTransfer(
+            transferID: 1, generation: 1, representation: rep, maxAcceptByteCount: .max,
+            isInline: true, isCurrent: { _ in true })
+
+        try await harness.collector.gate.wait { harness.collector.representation(1) != nil }
+        let received = try #require(harness.collector.representation(1))
+        // Delivered as a resident `.inMemory` payload (mmap is transparent), bytes
+        // and flavor preserved — no inline.too.large, no downgrade to a file rep.
+        #expect(received.inMemoryData == bytes)
+        #expect(received.fileURL == nil)
+        #expect(received.uti == "public.png")
+        #expect(harness.collector.abortCount == 0)
+        // It really spilled: a staging file backs the mapping.
+        #expect(!materializedFiles(under: harness.stagingTempRoot).isEmpty)
+        // The digest is byte-based (tag 0), identical to the same bytes assembled
+        // in memory — so echo suppression still recognizes round-tripped content.
+        let inMemory = ClipboardContent.Representation(uti: "public.png", data: bytes)
+        #expect(
+            ClipboardContent(representations: [received]).digest
+                == ClipboardContent(representations: [inMemory]).digest)
+    }
+
+    @Test("an inline rep at/below the residency threshold stays in RAM (no staging file)")
+    func inlineBelowThresholdStaysResident() async throws {
+        let harness = try StreamHarness(
+            chunkSize: Self.chunk, windowBytes: Self.window,
+            maxResidentInlineBytes: 1 << 20,  // 1 MiB
+            freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
+        defer { harness.tearDown() }
+
+        var bytes = Data()
+        for i in 0..<(Self.chunk * 4) { bytes.append(UInt8((i * 13 + 5) & 0xFF)) }  // ~16 KiB
+        let rep = ClipboardContent.Representation(uti: "public.utf8-plain-text", data: bytes)
+        harness.sender.startTransfer(
+            transferID: 1, generation: 1, representation: rep, maxAcceptByteCount: .max,
+            isInline: true, isCurrent: { _ in true })
+
+        try await harness.collector.gate.wait { harness.collector.representation(1) != nil }
+        let received = try #require(harness.collector.representation(1))
+        #expect(received.inMemoryData == bytes)
+        #expect(harness.collector.abortCount == 0)
+        // Stayed resident: nothing was staged to disk.
+        #expect(materializedFiles(under: harness.stagingTempRoot).isEmpty)
+    }
+
+    @Test("a spilled inline transfer cancelled mid-stream deletes its partial staging file")
+    func spilledInlineCancelDeletesPartial() async throws {
+        let harness = try StreamHarness(
+            chunkSize: Self.chunk, windowBytes: Self.window,
+            maxResidentInlineBytes: 4096,
+            freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
+        defer { harness.tearDown() }
+
+        // An inline rep declaring more than the threshold spills to a staging
+        // sink; drive Begin + one partial chunk directly so the transfer is left
+        // in flight.
         harness.receiver.handleBegin(
             .with {
-                $0.generation = 1; $0.transferID = 1; $0.uti = "public.data"
-                $0.totalBytes = UInt64(ClipboardStreamTuning.maxInlineBytes) + 1
-                $0.isInline = true
+                $0.generation = 1; $0.transferID = 1; $0.uti = "public.png"
+                $0.totalBytes = 1_000_000; $0.isInline = true
             })
-        try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
-        #expect(harness.collector.abortInfos.contains { $0.code == "inline.too.large" })
-        #expect(harness.collector.representation(1) == nil)
+        harness.receiver.handleChunk(
+            .with {
+                $0.transferID = 1; $0.offset = 0
+                $0.data = Data(repeating: 0xAB, count: Self.chunk)
+            })
+        // The sink was created and a partial written.
+        try await pollUntil { !materializedFiles(under: harness.stagingTempRoot).isEmpty }
+        // Supersede the generation: the spilled partial must be deleted, exactly
+        // like a file rep's.
+        harness.receiver.cancel(generation: 1)
+        try await pollUntil { materializedFiles(under: harness.stagingTempRoot).isEmpty }
     }
 
     @Test("a chunk past the declared total is rejected with size.overrun")

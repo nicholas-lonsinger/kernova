@@ -914,7 +914,7 @@
 				INFOPLIST_FILE = KernovaGuestAgent/Info.plist;
 				INFOPLIST_PREFIX_HEADER = "$(DERIVED_FILE_DIR)/AgentBuildNumber.h";
 				INFOPLIST_PREPROCESS = YES;
-				MARKETING_VERSION = 0.26.0;
+				MARKETING_VERSION = 0.27.0;
 				EXECUTABLE_NAME = KernovaGuestAgent;
 				PRODUCT_BUNDLE_IDENTIFIER = app.kernova.agent;
 				PRODUCT_MODULE_NAME = KernovaGuestAgent;
@@ -935,7 +935,7 @@
 				INFOPLIST_FILE = KernovaGuestAgent/Info.plist;
 				INFOPLIST_PREFIX_HEADER = "$(DERIVED_FILE_DIR)/AgentBuildNumber.h";
 				INFOPLIST_PREPROCESS = YES;
-				MARKETING_VERSION = 0.26.0;
+				MARKETING_VERSION = 0.27.0;
 				EXECUTABLE_NAME = KernovaGuestAgent;
 				PRODUCT_BUNDLE_IDENTIFIER = app.kernova.agent;
 				PRODUCT_MODULE_NAME = KernovaGuestAgent;

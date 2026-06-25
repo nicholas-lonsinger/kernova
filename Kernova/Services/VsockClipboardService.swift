@@ -437,13 +437,40 @@ final class VsockClipboardService: ClipboardServicing {
     /// form when pulled, else a `.pendingRemote` placeholder.
     ///
     /// Marks the result as already-grabbed so received content is never offered
-    /// back to the guest.
+    /// back to the guest. The synchronous form hashes on the owning actor and is
+    /// for the placeholder-only publish (byte-less reps → trivial digest); after
+    /// a pull materializes real bytes, use `republishOffActor` so a large inline
+    /// payload (now uncapped) is not hashed on the main actor (§8).
     private func republish(_ promise: InboundPromise) {
+        apply(
+            ClipboardContent(
+                representations: rebuiltReps(from: promise), isConcealed: promise.isConcealed))
+    }
+
+    /// `republish` with the content digest computed off the owning actor.
+    ///
+    /// Materializing a pulled rep can now deliver a memory-mapped inline payload
+    /// of any size; hashing it for the content digest is `O(payload)` and must
+    /// not stall the main actor (§8). `makeOffActor` runs that hash on the
+    /// cooperative executor. The promise is re-checked after the hop so a
+    /// supersession that landed mid-hash doesn't overwrite newer content.
+    private func republishOffActor(_ promise: InboundPromise) async {
+        let reps = rebuiltReps(from: promise)
+        let content = await ClipboardContent.makeOffActor(
+            representations: reps, isConcealed: promise.isConcealed)
+        guard inboundPromise === promise else { return }
+        apply(content)
+    }
+
+    /// Builds the published representation list from the promise: each rep's
+    /// materialized form when pulled, else a `.pendingRemote` placeholder.
+    ///
+    /// Drops identity-skip types (transient markers, raw public.file-url) so a
+    /// peer can't smuggle them onto the host pasteboard — the receive-side
+    /// sanitization the eager path applied. Indices into `promise.reps` stay
+    /// valid for pulls; only the published view filters.
+    private func rebuiltReps(from promise: InboundPromise) -> [ClipboardContent.Representation] {
         var reps: [ClipboardContent.Representation] = []
-        // Drop identity-skip types (transient markers, raw public.file-url) so
-        // a peer can't smuggle them onto the host pasteboard — the receive-side
-        // sanitization the eager path applied. Indices into `promise.reps`
-        // stay valid for pulls; only the published view filters.
         for (index, info) in promise.reps.enumerated() where !Self.shouldSkip(info) {
             reps.append(
                 promise.materialized[index]
@@ -451,7 +478,12 @@ final class VsockClipboardService: ClipboardServicing {
                         pendingRemoteUTI: info.uti, byteCount: Int(clamping: info.byteCount),
                         filename: info.filename))
         }
-        let content = ClipboardContent(representations: reps, isConcealed: promise.isConcealed)
+        return reps
+    }
+
+    /// Publishes `content` as the current inbound view and latches its digest for
+    /// edit-detection and echo suppression.
+    private func apply(_ content: ClipboardContent) {
         clipboardContent = content
         lastGrabbedDigest = content.digest
         lastInboundPublishedDigest = content.digest
@@ -578,7 +610,9 @@ final class VsockClipboardService: ClipboardServicing {
         guard inboundPromise === promise else { return rep }
         if let rep {
             promise.materialized[index] = rep
-            republish(promise)
+            // A pulled rep can be a memory-mapped inline payload of any size;
+            // hash its content digest off the main actor (§8).
+            await republishOffActor(promise)
         }
         return rep
     }

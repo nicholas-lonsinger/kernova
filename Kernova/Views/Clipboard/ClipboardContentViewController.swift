@@ -588,19 +588,20 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         return items
     }
 
-    /// Resident bytes to inline for a representation, reading a file-backed rep
-    /// into RAM only when it fits the inline ceiling — never load a multi-GB
-    /// image whole just to inline it. [L2]
+    /// Resident bytes to inline for a representation, memory-mapped rather than
+    /// read whole so a multi-GB image is never loaded into the heap. [L2]
+    ///
+    /// The bytes page in on demand and the OS can evict them under pressure. The
+    /// caller gates this to image payloads (`shouldInlineOnPasteboard`), so there
+    /// is no size ceiling to apply (CLIPBOARD.md §1).
     nonisolated private static func inlineData(
         for representation: ClipboardContent.Representation
     ) -> Data? {
         if let resident = representation.inMemoryData {
             return resident
         }
-        if let url = representation.fileURL,
-            representation.byteCount <= ClipboardStreamTuning.maxInlineBytes
-        {
-            return try? Data(contentsOf: url)
+        if let url = representation.fileURL {
+            return try? Data(contentsOf: url, options: .mappedIfSafe)
         }
         return nil
     }
