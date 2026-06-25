@@ -171,6 +171,7 @@ final class StreamHarness: @unchecked Sendable {
         windowBytes: Int,
         noAckTimeout: Duration = .seconds(10),
         stallTimeout: Duration = ClipboardStreamTuning.inboundStallTimeout,
+        maxResidentInlineBytes: Int = ClipboardStreamTuning.maxResidentInlineBytes,
         suppressAcks: Bool = false,
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil
     ) throws {
@@ -186,6 +187,7 @@ final class StreamHarness: @unchecked Sendable {
         let collector = self.collector
         receiver = ClipboardStreamReceiver(
             channel: b, staging: staging, windowBytes: windowBytes, stallTimeout: stallTimeout,
+            maxResidentInlineBytes: maxResidentInlineBytes,
             onComplete: { id, rep in collector.complete(id, rep) },
             onAbort: { info in collector.abort(info) })
 

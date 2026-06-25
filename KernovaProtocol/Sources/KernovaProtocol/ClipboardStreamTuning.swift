@@ -44,15 +44,21 @@ public enum ClipboardStreamTuning {
     /// transfer never fills the staging volume to the last byte.
     public static let freeSpaceMargin = 64 * 1024 * 1024
 
-    /// Hard ceiling on an inline (RAM-reassembled) representation: 256 MiB.
+    /// RAM-residency threshold for an inline representation: 256 MiB.
     ///
-    /// Inline reps (text/RTF/inline image) are held resident in memory by
-    /// design, so unlike file reps they need a finite bound: a peer-declared
-    /// `total_bytes` is otherwise an unbounded heap-growth (OOM) vector from an
-    /// untrusted or buggy guest. 256 MiB comfortably covers any realistic
-    /// clipboard text/image while capping the blast radius. File representations
-    /// stay unbounded — they stream to disk under the free-space guard.
-    public static let maxInlineBytes = 256 * 1024 * 1024
+    /// An inline rep (text/RTF/inline image) is reassembled in memory up to this
+    /// size — matching native, where small clipboard content stays RAM-resident
+    /// and the consuming app holds it in RAM too. Beyond it the rep is **not**
+    /// rejected: the receiver spills it to a staging file and serves it back via
+    /// a memory-mapped read, so residency is an implementation detail and there
+    /// is **no** Kernova-imposed size cap (CLIPBOARD.md §1). The blast radius of
+    /// a peer-declared `total_bytes` is then bounded by the disk free-space guard
+    /// — exactly as a file rep already is — rather than by a fixed heap ceiling.
+    ///
+    /// This is a spill point, not a hard cap: lowering it trades less Kernova RAM
+    /// for a disk round-trip on medium payloads (§2 prefers matching native
+    /// residency), so any change is a measurement call, not a correctness one.
+    public static let maxResidentInlineBytes = 256 * 1024 * 1024
 
     /// Hard ceiling on a single received chunk: 16 MiB.
     ///

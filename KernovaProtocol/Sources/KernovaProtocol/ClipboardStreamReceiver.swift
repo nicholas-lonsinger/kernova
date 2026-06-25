@@ -2,9 +2,14 @@ import CryptoKit
 import Foundation
 
 /// Reassembles streamed clipboard representations from a peer, choosing its sink
-/// by representation role: an inline representation (text/RTF/inline image)
-/// accumulates in memory; a file representation streams to a temp file under the
+/// by representation role and size: a small inline representation (text/RTF/
+/// inline image) accumulates in memory; a file representation — and a large
+/// inline one past `maxResidentInlineBytes` — streams to a temp file under the
 /// free-space guard, never resident whole.
+///
+/// A spilled inline rep is mmapped back at End and delivered as a resident
+/// `.inMemory` payload, so residency stays an implementation detail and inline
+/// content has no Kernova-imposed size cap.
 ///
 /// One receiver drives all inbound transfers on a channel, keyed by
 /// `transfer_id`. The owning service routes `ClipboardStreamBegin` /
@@ -21,6 +26,12 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
     private let staging: ClipboardFileStaging
     private let windowBytes: Int
     private let stallTimeout: Duration
+
+    /// Inline payloads at/below this size reassemble in RAM; larger ones spill to
+    /// the staging file and are mmapped back (so there is no inline size cap).
+    ///
+    /// Injectable so tests exercise the spill path without moving 256 MiB.
+    private let maxResidentInlineBytes: Int
 
     /// Delivers a completed representation.
     ///
@@ -52,6 +63,9 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
     ///   - windowBytes: advertised credit window; sent in each ack.
     ///   - stallTimeout: how long a transfer waits for its next chunk before
     ///     aborting a silent sender. Tests inject a short value.
+    ///   - maxResidentInlineBytes: inline-rep RAM-residency spill threshold;
+    ///     larger inline reps stream to disk and are mmapped back. Tests inject a
+    ///     tiny value to exercise the spill path.
     ///   - onComplete: receives `(transferID, representation)` for each
     ///     successful transfer.
     ///   - onAbort: receives an `AbortInfo` for each failed transfer.
@@ -60,6 +74,7 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
         staging: ClipboardFileStaging,
         windowBytes: Int = ClipboardStreamTuning.defaultWindowBytes,
         stallTimeout: Duration = ClipboardStreamTuning.inboundStallTimeout,
+        maxResidentInlineBytes: Int = ClipboardStreamTuning.maxResidentInlineBytes,
         onComplete: @escaping @Sendable (UInt64, ClipboardContent.Representation) -> Void,
         onAbort: @escaping @Sendable (ClipboardStreamAbortInfo) -> Void
     ) {
@@ -67,6 +82,7 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
         self.staging = staging
         self.windowBytes = min(max(windowBytes, 1), ClipboardStreamTuning.maxWindowBytes)
         self.stallTimeout = stallTimeout
+        self.maxResidentInlineBytes = max(maxResidentInlineBytes, 0)
         self.onComplete = onComplete
         self.onAbort = onAbort
     }
@@ -84,7 +100,8 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
             uti: begin.uti,
             filename: begin.filename,
             isInline: begin.isInline,
-            totalBytes: Int(clamping: begin.totalBytes)
+            totalBytes: Int(clamping: begin.totalBytes),
+            maxResidentInlineBytes: maxResidentInlineBytes
         )
         // Ignore a duplicate transfer_id rather than overwrite an in-flight
         // transfer (which would orphan its open sink + partial temp file). [L4]
@@ -97,9 +114,13 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
 
         transfer.queue.async { [weak self] in
             guard let self else { return }
-            if !transfer.isInline {
-                // Up-front disk guard for a file rep — create no temp file when
-                // the volume can't hold it.
+            if transfer.streamsToDisk {
+                // A file rep always streams to disk; an inline rep past the RAM-
+                // residency threshold spills to disk too and is mmapped back at
+                // End — so residency never decides whether the paste succeeds and
+                // there is no inline size cap (CLIPBOARD.md §1). The disk
+                // free-space guard, not a heap ceiling, bounds a misbehaving
+                // peer's declared size: create no temp file when it can't fit. [H1]
                 guard self.staging.hasCapacity(forByteCount: transfer.totalBytes) else {
                     self.failDiskFull(transfer)
                     return
@@ -112,16 +133,11 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
                     return
                 }
             } else {
-                // Inline reps reassemble in RAM, so a peer-declared size needs a
-                // hard ceiling — a file rep is unbounded, streamed to disk. [H1]
-                guard transfer.totalBytes <= ClipboardStreamTuning.maxInlineBytes else {
-                    self.fail(
-                        transfer, code: "inline.too.large",
-                        message: "Inline representation of \(transfer.totalBytes) bytes exceeds limit")
-                    return
-                }
+                // A small inline rep reassembles in RAM, matching native (the
+                // consuming app holds the bytes in RAM too).
                 transfer.buffer = Data()
-                transfer.buffer?.reserveCapacity(min(transfer.totalBytes, ClipboardStreamTuning.maxWindowBytes))
+                transfer.buffer?.reserveCapacity(
+                    min(transfer.totalBytes, ClipboardStreamTuning.maxWindowBytes))
             }
             // Go-signal: tell the sender we're ready and advertise the window.
             self.sendAck(transfer)
@@ -171,10 +187,10 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
             }
 
             do {
-                if transfer.isInline {
-                    transfer.buffer?.append(chunk.data)
-                } else {
+                if transfer.streamsToDisk {
                     try transfer.sink?.write(chunk.data)
+                } else {
+                    transfer.buffer?.append(chunk.data)
                 }
             } catch {
                 self.fail(transfer, code: "write.error", message: "Chunk write failed: \(error.localizedDescription)")
@@ -183,9 +199,10 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
             transfer.hasher.update(data: chunk.data)
             transfer.receivedBytes += chunk.data.count
 
-            // Incremental disk guard for a file rep: re-check the remaining bytes
-            // once per window so a volume filling mid-stream aborts cleanly.
-            if !transfer.isInline {
+            // Incremental disk guard for any disk-streamed rep (a file rep or a
+            // spilled large inline): re-check the remaining bytes once per window
+            // so a volume filling mid-stream aborts cleanly.
+            if transfer.streamsToDisk {
                 transfer.bytesSinceCheck += chunk.data.count
                 if transfer.bytesSinceCheck >= self.windowBytes {
                     transfer.bytesSinceCheck = 0
@@ -227,7 +244,8 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
             }
 
             let representation: ClipboardContent.Representation
-            if transfer.isInline {
+            if !transfer.streamsToDisk {
+                // Small inline rep: reassembled in RAM.
                 representation = ClipboardContent.Representation(
                     uti: transfer.uti,
                     source: .inMemory(transfer.buffer ?? Data()),
@@ -247,13 +265,43 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
                         message: "Finalizing staged file failed: \(error.localizedDescription)")
                     return
                 }
-                representation = ClipboardContent.Representation(
-                    uti: transfer.uti,
-                    fileURL: url,
-                    byteCount: transfer.receivedBytes,
-                    sha256: digest,
-                    filename: transfer.filename
-                )
+                if transfer.isInline {
+                    // A large inline rep spilled to disk: serve its bytes back as a
+                    // resident `.inMemory` payload through a memory-mapped read. The
+                    // pasteboard flavor is unchanged (inline image data, full
+                    // fidelity), while Kernova's added RAM stays near zero — the
+                    // bytes page in on demand and the OS can evict them under
+                    // pressure (CLIPBOARD.md §1/§2/§8). The mmap is taken here on the
+                    // transfer's queue, never on the owning actor.
+                    //
+                    // RATIONALE: the mapping outlives the staging generation. The
+                    // staged file rides the receiver's 3-generation retention, and on
+                    // Darwin a file mapped with `.mappedIfSafe` stays valid after the
+                    // directory is later swept (unlinking does not drop an open
+                    // mapping), so the mapped rep needs no separate lifetime tracking.
+                    let mapped: Data
+                    do {
+                        mapped = try Data(contentsOf: url, options: .mappedIfSafe)
+                    } catch {
+                        self.fail(
+                            transfer, code: "map.error",
+                            message: "Mapping staged inline file failed: \(error.localizedDescription)")
+                        return
+                    }
+                    representation = ClipboardContent.Representation(
+                        uti: transfer.uti,
+                        source: .inMemory(mapped),
+                        filename: transfer.filename
+                    )
+                } else {
+                    representation = ClipboardContent.Representation(
+                        uti: transfer.uti,
+                        fileURL: url,
+                        byteCount: transfer.receivedBytes,
+                        sha256: digest,
+                        filename: transfer.filename
+                    )
+                }
             }
             transfer.finished = true
             self.remove(transfer.transferID)
@@ -547,7 +595,17 @@ private final class InboundTransfer: @unchecked Sendable {
     let filename: String
     let isInline: Bool
     let totalBytes: Int
+    let maxResidentInlineBytes: Int
     let queue: DispatchQueue
+
+    /// Whether this transfer streams to a staging file instead of a RAM buffer:
+    /// every file rep, plus an inline rep past `maxResidentInlineBytes` (which is
+    /// mmapped back at End so there is no inline size cap).
+    ///
+    /// Stable — derived from the immutable `isInline`/`totalBytes`.
+    var streamsToDisk: Bool {
+        !isInline || totalBytes > maxResidentInlineBytes
+    }
 
     var receivedBytes = 0
     var bytesSinceCheck = 0
@@ -563,7 +621,7 @@ private final class InboundTransfer: @unchecked Sendable {
 
     init(
         transferID: UInt64, generation: UInt64, uti: String, filename: String, isInline: Bool,
-        totalBytes: Int
+        totalBytes: Int, maxResidentInlineBytes: Int
     ) {
         self.transferID = transferID
         self.generation = generation
@@ -571,6 +629,7 @@ private final class InboundTransfer: @unchecked Sendable {
         self.filename = filename
         self.isInline = isInline
         self.totalBytes = totalBytes
+        self.maxResidentInlineBytes = maxResidentInlineBytes
         self.queue = DispatchQueue(
             label: "app.kernova.clipboard.stream-recv.\(transferID)", qos: .userInitiated)
     }
