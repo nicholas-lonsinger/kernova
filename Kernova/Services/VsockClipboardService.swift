@@ -124,6 +124,12 @@ final class VsockClipboardService: ClipboardServicing {
         /// share one pull per rep instead of minting a duplicate (same-transfer_id)
         /// request that would orphan a continuation.
         var inFlight: [Int: Task<ClipboardContent.Representation?, Never>] = [:]
+        /// Monotonic count of materializations cached into `materialized`, bumped
+        /// on each pulled rep. `republishOffActor` captures it before its
+        /// off-actor hash and re-checks it after, so a snapshot taken before the
+        /// await can't clobber a fresher publish that landed during the hop — the
+        /// newer materialization republishes the complete set.
+        var materializeEpoch = 0
 
         init(
             generation: UInt64, reps: [Kernova_V1_ClipboardRepresentationInfo], isConcealed: Bool
@@ -452,13 +458,19 @@ final class VsockClipboardService: ClipboardServicing {
     /// Materializing a pulled rep can now deliver a memory-mapped inline payload
     /// of any size; hashing it for the content digest is `O(payload)` and must
     /// not stall the main actor (§8). `makeOffActor` runs that hash on the
-    /// cooperative executor. The promise is re-checked after the hop so a
-    /// supersession that landed mid-hash doesn't overwrite newer content.
+    /// cooperative executor. Promise identity and the materialization epoch are
+    /// re-checked after the hop, so neither a supersession nor a newer
+    /// materialization that landed mid-hash is overwritten by this stale snapshot.
     private func republishOffActor(_ promise: InboundPromise) async {
+        let epoch = promise.materializeEpoch
         let reps = rebuiltReps(from: promise)
         let content = await ClipboardContent.makeOffActor(
             representations: reps, isConcealed: promise.isConcealed)
-        guard inboundPromise === promise else { return }
+        // A supersession (new promise) or a newer materialization (higher epoch)
+        // landed during the off-actor hash; that pull republishes the complete
+        // set, so applying this snapshot would revert a just-materialized rep back
+        // to a placeholder.
+        guard inboundPromise === promise, promise.materializeEpoch == epoch else { return }
         apply(content)
     }
 
@@ -610,6 +622,7 @@ final class VsockClipboardService: ClipboardServicing {
         guard inboundPromise === promise else { return rep }
         if let rep {
             promise.materialized[index] = rep
+            promise.materializeEpoch += 1
             // A pulled rep can be a memory-mapped inline payload of any size;
             // hash its content digest off the main actor (§8).
             await republishOffActor(promise)
