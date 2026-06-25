@@ -104,14 +104,18 @@ struct VMSettingsViewControllerTests {
 
     // MARK: - Agent-dependent grouping (#398)
 
-    @Test("Clipboard Sharing is reachable for both guest OSes")
-    func clipboardReachableForBothGuestOSes() {
-        // macOS: nested as a row in the agent group. Linux: its own SPICE section.
+    @Test("Clipboard Sharing nests in the agent group on macOS, standalone on Linux")
+    func clipboardGroupingByGuestOS() {
+        // macOS: the row is nested in the Guest Agent group, with no standalone
+        // "Clipboard" section header (guards against re-adding the sibling section).
         let (macVC, _, _) = makeController(guestOS: .macOS, isReadOnly: false)
         #expect(containsLabel("Clipboard Sharing", in: macVC.view))
+        #expect(!containsLabel("Clipboard", in: macVC.view))
 
+        // Linux: SPICE clipboard keeps its own standalone section header.
         let (linuxVC, _, _) = makeController(guestOS: .linux, isReadOnly: false)
         #expect(containsLabel("Clipboard Sharing", in: linuxVC.view))
+        #expect(containsLabel("Clipboard", in: linuxVC.view))
     }
 
     @Test("Agent-dependency caption appears for macOS but not Linux")

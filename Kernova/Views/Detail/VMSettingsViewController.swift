@@ -785,7 +785,7 @@ extension VMSettingsViewController {
     /// Makes the cohort's shared dependency legible at a glance; extracted so
     /// tests can assert it verbatim.
     static let agentDependencyCaption =
-        "Clipboard sharing and log forwarding require the Kernova guest agent. Kernova offers to install it from the clipboard window."
+        "Clipboard sharing and log forwarding require the Kernova guest agent. Kernova offers to install or update it from the clipboard window."
 
     /// Guest Agent group for **macOS** guests.
     ///
@@ -799,11 +799,10 @@ extension VMSettingsViewController {
         installReminderSwitch = makeSwitch(action: #selector(installReminderToggled))
         clipboardSwitch = makeSwitch(action: #selector(clipboardToggled))
         // Not lockable — every toggle here takes effect live. Future
-        // agent-backed features belong in this group too, so the cohort that
-        // depends on the guest agent stays intact rather than spawning new
-        // top-level sections.
-        // Capability toggles first (the cohort the caption names), then the
-        // install-reminder nudge control last.
+        // agent-backed features belong in this group too, keeping the
+        // agent-dependent cohort intact rather than spawning new top-level
+        // sections. Capability toggles lead (the cohort the caption names); the
+        // install-reminder nudge sits last.
         let card = makeGroupedFormCard(rows: [
             makeToggleRowWithInfo(
                 "Forward guest logs", control: logForwardingSwitch,
@@ -815,9 +814,9 @@ extension VMSettingsViewController {
             makeToggleRowWithInfo(
                 "Clipboard Sharing", control: clipboardSwitch,
                 paragraphs: [
-                    .body(
-                        "Exchanges clipboard text between host and guest. Uses the bundled Kernova guest agent."
-                    )
+                    // Behavior only — the group caption below carries the shared
+                    // agent dependency, so it isn't repeated here.
+                    .body("Exchanges clipboard text between host and guest.")
                 ]),
             makeToggleRowWithInfo(
                 "Show install reminder", control: installReminderSwitch,
@@ -1229,8 +1228,14 @@ extension VMSettingsViewController {
     }
 
     private func refreshClipboard() {
+        // The clipboard switch lives on both platforms (nested in the agent
+        // group on macOS, standalone on Linux), so its state always refreshes.
         clipboardSwitch.state = instance.configuration.clipboardSharingEnabled ? .on : .off
-        clipboardCaption.isHidden = !(isReadOnly && instance.configuration.guestOS == .linux)
+        // The "takes effect on next start" caption is built only by the Linux
+        // standalone section; macOS clipboard is hot-toggleable and has none, so
+        // gate the caption here (symmetric with refreshGuestAgent's guard).
+        guard instance.configuration.guestOS == .linux else { return }
+        clipboardCaption.isHidden = !isReadOnly
     }
 
     private func refreshSerialRelay() {
