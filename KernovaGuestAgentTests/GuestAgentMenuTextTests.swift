@@ -33,9 +33,25 @@ struct GuestAgentMenuTextTests {
 
     @Test("clipboardLine for each activity")
     func clipboard() {
-        #expect(GuestAgentMenuText.clipboardLine(.idle) == "Clipboard: idle")
+        #expect(GuestAgentMenuText.clipboardLine(.enabled) == "Clipboard: enabled")
         #expect(GuestAgentMenuText.clipboardLine(.offeredToHost) == "Clipboard: shared with host")
+        #expect(GuestAgentMenuText.clipboardLine(.offeredFromHost) == "Clipboard: shared from host")
+        #expect(GuestAgentMenuText.clipboardLine(.sentToHost) == "Clipboard: sent to host")
         #expect(
             GuestAgentMenuText.clipboardLine(.receivedFromHost) == "Clipboard: received from host")
+        #expect(GuestAgentMenuText.clipboardLine(.disabled) == "Clipboard: disabled")
+    }
+
+    // MARK: - logForwardingLine / statusSubmenu
+
+    @Test("logForwardingLine reflects the enabled flag")
+    func logForwarding() {
+        #expect(GuestAgentMenuText.logForwardingLine(true) == "Log Forwarding: enabled")
+        #expect(GuestAgentMenuText.logForwardingLine(false) == "Log Forwarding: disabled")
+    }
+
+    @Test("statusSubmenu title")
+    func statusSubmenuTitle() {
+        #expect(GuestAgentMenuText.statusSubmenu() == "Status")
     }
 }

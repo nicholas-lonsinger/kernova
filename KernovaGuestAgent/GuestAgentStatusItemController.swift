@@ -4,10 +4,11 @@ import os
 
 /// Owns the agent's menu-bar `NSStatusItem` and its dropdown.
 ///
-/// The dropdown leads with live status (host connection, clipboard activity)
-/// and offers About + Quit: clipboard/log enablement is host-driven (the host
-/// pushes `PolicyUpdate`), so the menu reflects state rather than offering
-/// switches that would fight host policy. Identity, version/build, and
+/// The dropdown leads with the live host-connection line, then a "Status"
+/// submenu grouping the two host-driven capability states (log forwarding,
+/// clipboard), and offers About + Quit: clipboard/log enablement is host-driven
+/// (the host pushes `PolicyUpdate`), so the menu reflects state rather than
+/// offering switches that would fight host policy. Identity, version/build, and
 /// copyright live in the standard About panel (`aboutTapped`); a pending agent
 /// update also surfaces as a top-level hint line. Dynamic lines are rebuilt
 /// each time the menu opens (`menuNeedsUpdate`) by pulling the current state
@@ -24,6 +25,7 @@ final class GuestAgentStatusItemController: NSObject, NSMenuDelegate {
     private let version: String
     private let connectionState: () -> HostConnectionState
     private let hostBundledVersion: () -> String
+    private let logForwardingEnabled: () -> Bool
     private let clipboardActivity: () -> ClipboardActivity
     private let onQuit: () -> Void
 
@@ -31,6 +33,7 @@ final class GuestAgentStatusItemController: NSObject, NSMenuDelegate {
         version: String,
         connectionState: @escaping () -> HostConnectionState,
         hostBundledVersion: @escaping () -> String,
+        logForwardingEnabled: @escaping () -> Bool,
         clipboardActivity: @escaping () -> ClipboardActivity,
         onQuit: @escaping () -> Void
     ) {
@@ -38,6 +41,7 @@ final class GuestAgentStatusItemController: NSObject, NSMenuDelegate {
         self.version = version
         self.connectionState = connectionState
         self.hostBundledVersion = hostBundledVersion
+        self.logForwardingEnabled = logForwardingEnabled
         self.clipboardActivity = clipboardActivity
         self.onQuit = onQuit
         super.init()
@@ -104,7 +108,18 @@ final class GuestAgentStatusItemController: NSObject, NSMenuDelegate {
         }
 
         addInfoItem(GuestAgentMenuText.hostStatusLine(connectionState()))
-        addInfoItem(GuestAgentMenuText.clipboardLine(clipboardActivity()))
+
+        // Group the two host-driven capability states under a "Status" submenu,
+        // log forwarding first. The connection line above stays at the top level
+        // (it's the headline health and drives the icon).
+        let statusMenuItem = NSMenuItem(
+            title: GuestAgentMenuText.statusSubmenu(), action: nil, keyEquivalent: "")
+        let statusMenu = NSMenu()
+        statusMenu.autoenablesItems = false
+        addInfoItem(GuestAgentMenuText.logForwardingLine(logForwardingEnabled()), to: statusMenu)
+        addInfoItem(GuestAgentMenuText.clipboardLine(clipboardActivity()), to: statusMenu)
+        statusMenuItem.submenu = statusMenu
+        menu.addItem(statusMenuItem)
 
         menu.addItem(.separator())
 
@@ -152,11 +167,12 @@ final class GuestAgentStatusItemController: NSObject, NSMenuDelegate {
         KernovaVersionComparison.updateState(own: version, hostBundled: hostBundledVersion())
     }
 
-    /// Appends a disabled, informational (non-actionable) line.
-    private func addInfoItem(_ title: String) {
+    /// Appends a disabled, informational (non-actionable) line to `destination`
+    /// (the main dropdown by default, or a submenu when one is passed).
+    private func addInfoItem(_ title: String, to destination: NSMenu? = nil) {
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         item.isEnabled = false
-        menu.addItem(item)
+        (destination ?? menu).addItem(item)
     }
 
     @objc private func quitTapped() {

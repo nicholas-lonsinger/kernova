@@ -1794,7 +1794,7 @@ struct VsockGuestClipboardAgentTests {
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
         let initial = await MainActor.run { agent.clipboardActivity }
-        #expect(initial == .idle)
+        #expect(initial == .enabled)
 
         pasteboard.setString("hello", forType: .string)
         await MainActor.run { agent.checkClipboardChange() }
@@ -1828,6 +1828,77 @@ struct VsockGuestClipboardAgentTests {
 
         let after = await MainActor.run { agent.clipboardActivity }
         #expect(after == .receivedFromHost)
+    }
+
+    @Test("an inbound host offer sets clipboard activity to .offeredFromHost")
+    func inboundOfferSetsActivity() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        // Registering the promise (and setting the activity) happen together in
+        // handleOffer; once the promise is observable the activity is set too.
+        try hostChannel.send(makeTextOfferFrame(generation: 1, text: "payload"))
+        try await waitUntil { pasteboard.promisedTypesForTesting.contains(.string) }
+
+        let after = await MainActor.run { agent.clipboardActivity }
+        #expect(after == .offeredFromHost)
+    }
+
+    @Test("a host request for the guest's clipboard sets activity to .sentToHost")
+    func outboundRequestSetsActivity() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        pasteboard.setString("hello from guest", forType: .string)
+        await MainActor.run { agent.checkClipboardChange() }
+        let offer = try await awaitOffer(on: hostChannel)
+        let info = try #require(offer.repInfo.first)
+
+        let transferID: UInt64 = (offer.generation << 16) | 0
+        try hostChannel.send(
+            makeRequestFrame(generation: offer.generation, transferID: transferID, uti: info.uti))
+        // Once the streamed transfer is collected, handleRequest has run on main
+        // (Begin can't precede startTransfer), so the activity is set.
+        _ = try await collectOutboundTransfer(transferID: transferID, from: hostChannel)
+
+        let after = await MainActor.run { agent.clipboardActivity }
+        #expect(after == .sentToHost)
+    }
+
+    @Test("setEnabled(false) sets activity to .disabled; re-enabling resets to .enabled")
+    func setEnabledTogglesActivity() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+        try await startAgentAndWaitForLiveChannel(agent: agent)  // leaves it enabled
+        #expect(await MainActor.run { agent.clipboardActivity } == .enabled)
+
+        agent.setEnabled(false)
+        try await waitUntil { DispatchQueue.main.sync { agent.isEnabledForTesting } == false }
+        #expect(await MainActor.run { agent.clipboardActivity } == .disabled)
+
+        agent.setEnabled(true)
+        try await waitUntil { DispatchQueue.main.sync { agent.isEnabledForTesting } == true }
+        #expect(await MainActor.run { agent.clipboardActivity } == .enabled)
     }
 
     private func lazyPull(

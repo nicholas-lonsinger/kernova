@@ -28,12 +28,23 @@ enum GuestAgentMenuText {
         }
     }
 
-    /// Most-recent clipboard activity line.
+    /// Title of the submenu grouping the host-driven capability lines.
+    static func statusSubmenu() -> String { "Status" }
+
+    /// Log-forwarding capability line.
+    static func logForwardingLine(_ enabled: Bool) -> String {
+        "Log Forwarding: \(enabled ? "enabled" : "disabled")"
+    }
+
+    /// Clipboard sharing state line.
     static func clipboardLine(_ activity: ClipboardActivity) -> String {
         switch activity {
-        case .idle: return "Clipboard: idle"
+        case .enabled: return "Clipboard: enabled"
         case .offeredToHost: return "Clipboard: shared with host"
+        case .offeredFromHost: return "Clipboard: shared from host"
+        case .sentToHost: return "Clipboard: sent to host"
         case .receivedFromHost: return "Clipboard: received from host"
+        case .disabled: return "Clipboard: disabled"
         }
     }
 
