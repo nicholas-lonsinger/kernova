@@ -451,9 +451,14 @@ extension VMSettingsViewController {
         addSection(buildNetworkSection())
         addSection(buildAudioSection())
         if isGuestAgentSectionVisible(guestOS: instance.configuration.guestOS) {
+            // macOS: clipboard rides the agent's vsock channel, so it joins the
+            // agent group as a nested row rather than a sibling section.
             addSection(buildGuestAgentSection())
+        } else {
+            // Linux: clipboard is SPICE-based and independent of the Kernova
+            // guest agent, so it stays a standalone section.
+            addSection(buildClipboardSection())
         }
-        addSection(buildClipboardSection())
         addSection(buildSerialRelaySection())
     }
 
@@ -775,16 +780,43 @@ extension VMSettingsViewController {
 
     // MARK: Guest Agent
 
+    /// Caption shown beneath the macOS Guest Agent card.
+    ///
+    /// Makes the cohort's shared dependency legible at a glance; extracted so
+    /// tests can assert it verbatim.
+    static let agentDependencyCaption =
+        "Clipboard sharing and log forwarding require the Kernova guest agent. Kernova offers to install it from the clipboard window."
+
+    /// Guest Agent group for **macOS** guests.
+    ///
+    /// Holds the two agent-management toggles plus Clipboard Sharing, which
+    /// rides the agent's vsock channel and is therefore agent-dependent.
+    /// Grouping them under a dependency caption makes it obvious which features
+    /// go inert when the agent isn't installed or connected. Linux clipboard is
+    /// SPICE-based — see `buildClipboardSection()`.
     private func buildGuestAgentSection() -> NSView {
         logForwardingSwitch = makeSwitch(action: #selector(logForwardingToggled))
         installReminderSwitch = makeSwitch(action: #selector(installReminderToggled))
-        // Not lockable — both toggles take effect live.
+        clipboardSwitch = makeSwitch(action: #selector(clipboardToggled))
+        // Not lockable — every toggle here takes effect live. Future
+        // agent-backed features belong in this group too, so the cohort that
+        // depends on the guest agent stays intact rather than spawning new
+        // top-level sections.
+        // Capability toggles first (the cohort the caption names), then the
+        // install-reminder nudge control last.
         let card = makeGroupedFormCard(rows: [
             makeToggleRowWithInfo(
                 "Forward guest logs", control: logForwardingSwitch,
                 paragraphs: [
                     .body(
                         "Streams `os.Logger` records from the macOS guest agent to the host so they appear in Console.app under `app.kernova.guest`. Off by default; can be toggled while the VM is running."
+                    )
+                ]),
+            makeToggleRowWithInfo(
+                "Clipboard Sharing", control: clipboardSwitch,
+                paragraphs: [
+                    .body(
+                        "Exchanges clipboard text between host and guest. Uses the bundled Kernova guest agent."
                     )
                 ]),
             makeToggleRowWithInfo(
@@ -795,11 +827,16 @@ extension VMSettingsViewController {
                     )
                 ]),
         ])
-        return makeSection([makeHeader("Guest Agent"), card])
+        return makeSection([
+            makeHeader("Guest Agent"), card, makeGroupedFormCaption(Self.agentDependencyCaption),
+        ])
     }
 
     // MARK: Clipboard
 
+    /// Standalone Clipboard section for **Linux** guests, whose clipboard rides
+    /// SPICE (`spice-vdagent`) and is independent of the Kernova guest agent.
+    /// macOS clipboard is agent-dependent and lives in `buildGuestAgentSection()`.
     private func buildClipboardSection() -> NSView {
         clipboardSwitch = makeSwitch(action: #selector(clipboardToggled))
         let caption = makeGroupedFormCaption(
@@ -808,14 +845,9 @@ extension VMSettingsViewController {
         caption.isHidden = true
         clipboardCaption = caption
 
-        let body: InfoPopoverParagraph =
-            instance.configuration.guestOS == .linux
-            ? .body(
-                "Exchanges clipboard text between host and guest. Requires `spice-vdagent` installed in the guest via its package manager."
-            )
-            : .body(
-                "Exchanges clipboard text between host and guest. Uses the bundled Kernova guest agent — Kernova will offer to install or update it from the clipboard window."
-            )
+        let body: InfoPopoverParagraph = .body(
+            "Exchanges clipboard text between host and guest. Requires `spice-vdagent` installed in the guest via its package manager."
+        )
         return makeSection([
             makeHeader("Clipboard", paragraphs: [body]),
             makeGroupedFormCard(rows: [makeGroupedFormCardRow("Clipboard Sharing", control: clipboardSwitch)]),

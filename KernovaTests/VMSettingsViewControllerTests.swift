@@ -102,6 +102,30 @@ struct VMSettingsViewControllerTests {
         #expect(!containsLabel("Forward guest logs", in: vc.view))
     }
 
+    // MARK: - Agent-dependent grouping (#398)
+
+    @Test("Clipboard Sharing is reachable for both guest OSes")
+    func clipboardReachableForBothGuestOSes() {
+        // macOS: nested as a row in the agent group. Linux: its own SPICE section.
+        let (macVC, _, _) = makeController(guestOS: .macOS, isReadOnly: false)
+        #expect(containsLabel("Clipboard Sharing", in: macVC.view))
+
+        let (linuxVC, _, _) = makeController(guestOS: .linux, isReadOnly: false)
+        #expect(containsLabel("Clipboard Sharing", in: linuxVC.view))
+    }
+
+    @Test("Agent-dependency caption appears for macOS but not Linux")
+    func agentDependencyCaptionMacOSOnly() {
+        let caption = VMSettingsViewController.agentDependencyCaption
+
+        let (macVC, _, _) = makeController(guestOS: .macOS, isReadOnly: false)
+        #expect(containsLabel(caption, in: macVC.view))
+
+        // Linux clipboard is SPICE-based, so the agent-dependency cue must not appear.
+        let (linuxVC, _, _) = makeController(guestOS: .linux, isReadOnly: false)
+        #expect(!containsLabel(caption, in: linuxVC.view))
+    }
+
     // MARK: - Read-only lock behavior
 
     @Test("Read-only disables lockable controls but not hot-toggleable ones")
