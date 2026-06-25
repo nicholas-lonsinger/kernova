@@ -59,7 +59,9 @@ func externalAttachmentPaths(for configuration: VMConfiguration) -> Set<String> 
 /// Whether the Guest Agent settings section applies to a guest OS.
 ///
 /// The guest agent ships only for macOS guests, so the section is hidden for
-/// Linux.
+/// Linux. On macOS this also gates whether clipboard sharing is nested inside
+/// the agent group (it rides the agent's vsock channel); on Linux clipboard is
+/// SPICE-based and renders as its own standalone section.
 func isGuestAgentSectionVisible(guestOS: VMGuestOS) -> Bool {
     guestOS == .macOS
 }
