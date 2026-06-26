@@ -41,6 +41,9 @@ final class ClipboardCopyProviderRegistry {
         Self.logger.debug(
             "Retained \(providers.count, privacy: .public) Copy-to-Mac provider(s) (live: \(self.live.count, privacy: .public))"
         )
+        #if DEBUG
+        onChangeForTesting?()
+        #endif
     }
 
     /// Drops the strong reference to a single provider the pasteboard is done
@@ -49,6 +52,9 @@ final class ClipboardCopyProviderRegistry {
         live.remove(provider)
         Self.logger.debug(
             "Released a finished Copy-to-Mac provider (live: \(self.live.count, privacy: .public))")
+        #if DEBUG
+        onChangeForTesting?()
+        #endif
     }
 
     #if DEBUG
@@ -58,6 +64,13 @@ final class ClipboardCopyProviderRegistry {
     /// Lets a test assert the retain-on-write / drop-on-finished lifecycle
     /// without reaching into `private` state.
     var countForTesting: Int { live.count }
+
+    /// Fired after every `retain`/`release`, so a test can drive an `AsyncGate`
+    /// off the registration/finish signal instead of polling `countForTesting` on
+    /// the MainActor — the timing-sensitive poll the `ci-test-timings` flakes
+    /// trace back to. `releaseAllForTesting` is teardown-only and deliberately
+    /// doesn't fire it (no waiter is armed during a test's `defer`).
+    var onChangeForTesting: (() -> Void)?
 
     /// Releases every retained provider.
     ///

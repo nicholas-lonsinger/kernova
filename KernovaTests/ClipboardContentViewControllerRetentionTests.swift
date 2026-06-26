@@ -36,11 +36,29 @@ struct ClipboardContentViewControllerRetentionTests {
         return VMInstance(configuration: config, bundleURL: bundleURL)
     }
 
+    /// Fresh per-test "Copy to Mac" harness: a private destination pasteboard, an
+    /// isolated provider registry, and an `AsyncGate` already wired to the
+    /// registry's retain/release signal so a test awaits the registration event
+    /// rather than polling `countForTesting` — the one-shot effect a starved CI
+    /// MainActor can miss inside a poll deadline (memory `ci-test-timings`).
+    ///
+    /// The caller still owns teardown (`pasteboard.releaseGlobally()` and
+    /// `registry.releaseAllForTesting()` in `defer`), since a `defer` only fires
+    /// at the end of the scope that declares it.
+    private func makeCopyToMacHarness() -> (
+        pasteboard: NSPasteboard, registry: ClipboardCopyProviderRegistry, retained: AsyncGate
+    ) {
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("KernovaTest-\(UUID().uuidString)"))
+        let registry = ClipboardCopyProviderRegistry()
+        let retained = AsyncGate()
+        registry.onChangeForTesting = { retained.notify() }
+        return (pasteboard, registry, retained)
+    }
+
     @Test("copyToMac retains a provider per item in the registry and serves its bytes")
     func retainsProviderAndServesBytes() async throws {
-        let pasteboard = NSPasteboard(name: NSPasteboard.Name("KernovaTest-\(UUID().uuidString)"))
+        let (pasteboard, registry, retained) = makeCopyToMacHarness()
         defer { pasteboard.releaseGlobally() }
-        let registry = ClipboardCopyProviderRegistry()
         // The promise is never finished in-test, so break the registry↔provider
         // cycle by hand (production breaks it on pasteboardFinishedWithDataProvider).
         defer { registry.releaseAllForTesting() }
@@ -59,20 +77,21 @@ struct ClipboardContentViewControllerRetentionTests {
         vc.copy(nil)
 
         // Exactly one inline item → one retained provider once the write lands.
-        try await waitUntil { registry.countForTesting == 1 }
+        try await retained.wait { registry.countForTesting == 1 }
 
-        // The retained provider serves the inline bytes on demand — the provider
-        // path is in use (an eager `setData` write would create no provider, so
-        // the count would be 0) and a destination read returns the bytes.
+        // `retain()` runs immediately after a successful `writeObjects` in the same
+        // synchronous step, so once the gate fires the promise is already on the
+        // pasteboard and a destination read is served synchronously by the retained
+        // provider — the provider path is in use (an eager `setData` write would
+        // create no provider, leaving the count 0) and the read returns the bytes.
         let textType = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
-        try await waitUntil { pasteboard.data(forType: textType) == Data("lazy bytes".utf8) }
+        #expect(pasteboard.data(forType: textType) == Data("lazy bytes".utf8))
     }
 
     @Test("a copied provider outlives the controller (survives window close before paste)")
     func providerOutlivesController() async throws {
-        let pasteboard = NSPasteboard(name: NSPasteboard.Name("KernovaTest-\(UUID().uuidString)"))
+        let (pasteboard, registry, retained) = makeCopyToMacHarness()
         defer { pasteboard.releaseGlobally() }
-        let registry = ClipboardCopyProviderRegistry()
         // The promise is never finished in-test, so break the registry↔provider
         // cycle by hand (production breaks it on pasteboardFinishedWithDataProvider).
         defer { registry.releaseAllForTesting() }
@@ -87,20 +106,24 @@ struct ClipboardContentViewControllerRetentionTests {
                 writePasteboard: pasteboard, providerRegistry: registry)
             weakVC = vc
             vc.copy(nil)
-            // The copy Task uses the controller (weakly), so keep a strong ref
-            // until the provider has been retained in the registry.
-            try await waitUntil { registry.countForTesting == 1 }
+            // The copy Task holds the controller only weakly, so `vc` (alive to the
+            // end of this Debug-build `do` scope) is the strong ref that keeps it
+            // around until the provider has been retained.
+            try await retained.wait { registry.countForTesting == 1 }
         }
 
-        // The controller (its window, in production) is now torn down…
-        try await waitUntil { weakVC == nil }
+        // The gate fired from inside the copy Task's final synchronous step, which
+        // then returned and dropped its strong `self` before this continuation
+        // resumed; the `do` scope just dropped the last strong ref (`vc`), so the
+        // controller (its window, in production) is now deterministically torn down.
+        #expect(weakVC == nil)
 
         // …yet the registry kept the provider alive, so a paste still serves the
         // bytes. The regression this guards against — providers owned by the VC —
         // would vend empty here once the window closed.
         #expect(registry.countForTesting == 1)
         let textType = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
-        try await waitUntil { pasteboard.data(forType: textType) == Data("durable bytes".utf8) }
+        #expect(pasteboard.data(forType: textType) == Data("durable bytes".utf8))
     }
 }
 
