@@ -64,6 +64,18 @@ enum ClipboardContentDescriber {
         return "\(primary) · \(size)"
     }
 
+    /// Hash-free indicator for the live editor buffer, byte-identical to
+    /// `indicatorText(for: ClipboardContent(text:))` for the single plain-text rep
+    /// the editor produces.
+    ///
+    /// The per-keystroke path uses this so the indicator never has to build a
+    /// `ClipboardContent` (and SHA-256 the whole buffer) just to render a label
+    /// (CLIPBOARD.md §8); the off-actor commit owns the real content/digest.
+    static func indicatorText(forPlainText text: String) -> String {
+        if text.isEmpty { return "Empty" }
+        return "Plain text · \(DataFormatters.formatBytes(UInt64(text.utf8.count)))"
+    }
+
     /// Per-representation lines for the summary view, capped at
     /// `maxSummaryRows` plus an "and N more" tail.
     static func summaryRows(for representations: [ClipboardContent.Representation]) -> [String] {

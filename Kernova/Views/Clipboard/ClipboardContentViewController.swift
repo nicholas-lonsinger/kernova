@@ -70,6 +70,24 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     /// writes.
     private var lastAppliedDigest: Data?
 
+    /// Debounced off-actor commit of the editor buffer.
+    ///
+    /// `textDidChange` does only cheap, hash-free work per keystroke (CLIPBOARD.md
+    /// §8) and schedules this; after `editDebounceInterval` of quiet the buffer is
+    /// hashed off the main actor and written to the model. `editSeq` bumps per
+    /// keystroke so an in-flight commit can tell it was superseded; `hasPendingEdit`
+    /// records that a keystroke has not yet reached the model, so `flushPendingEdit`
+    /// can commit the latest text synchronously before a grab/copy.
+    private var editDebounceTask: Task<Void, Never>?
+    private var editSeq: UInt64 = 0
+    private var hasPendingEdit = false
+
+    /// Quiet period before a keystroke burst commits off-actor.
+    ///
+    /// Injectable so tests drive the commit deterministically instead of waiting
+    /// out 200 ms.
+    private let editDebounceInterval: Duration
+
     /// Last transfer issue already shown as a transient.
     ///
     /// Tracked so re-observation doesn't re-show it; compared by value
@@ -143,12 +161,14 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     init(
         instance: VMInstance, viewModel: VMLibraryViewModel,
         writePasteboard: NSPasteboard = .general,
-        providerRegistry: ClipboardCopyProviderRegistry = .shared
+        providerRegistry: ClipboardCopyProviderRegistry = .shared,
+        editDebounceInterval: Duration = .milliseconds(200)
     ) {
         self.instance = instance
         self.viewModel = viewModel
         self.writePasteboard = writePasteboard
         self.providerRegistry = providerRegistry
+        self.editDebounceInterval = editDebounceInterval
 
         let textView = ClipboardEditorTextView()
         textView.isEditable = true
@@ -309,21 +329,93 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     // MARK: - NSTextViewDelegate
 
     func textDidChange(_ notification: Notification) {
-        guard let service = instance.clipboardService else {
+        guard instance.clipboardService != nil else {
             Self.logger.warning(
                 "Clipboard edit ignored — clipboardService is nil for VM '\(self.instance.name, privacy: .public)'")
             return
         }
-        let edited = ClipboardContent(text: textView.string)
-        // Pre-set the digest so the observation pass triggered by the model
-        // write recognizes the content as already displayed (the editor IS
-        // the source) and doesn't rebuild the view out from under the user.
+        // Per keystroke: only cheap, hash-free work (CLIPBOARD.md §8). The
+        // indicator and button state derive from the live string; the buffer's
+        // content/digest is committed off-actor by the debounced `commitEdit`.
+        let text = textView.string
+        editSeq &+= 1
+        hasPendingEdit = true
+        indicatorView.setText(ClipboardContentDescriber.indicatorText(forPlainText: text))
+        commandBar.copyButton.isEnabled = !text.isEmpty && !isCopyingToMac
+        commandBar.clearButton.isEnabled = !text.isEmpty
+        scheduleEditCommit(text: text, seq: editSeq)
+    }
+
+    /// Schedules the off-actor commit of `text` after a quiet period, replacing
+    /// any still-pending commit (mirrors `VMDirectoryWatcher.scheduleReconciliation`).
+    private func scheduleEditCommit(text: String, seq: UInt64) {
+        editDebounceTask?.cancel()
+        editDebounceTask = Task { [weak self] in
+            try? await Task.sleep(for: self?.editDebounceInterval ?? .milliseconds(200))
+            guard !Task.isCancelled else { return }
+            await self?.commitEdit(text: text, seq: seq)
+        }
+    }
+
+    /// Hashes the editor buffer off the main actor and writes it to the model,
+    /// unless a newer keystroke or a guest update superseded this edit.
+    private func commitEdit(text: String, seq: UInt64) async {
+        guard let service = instance.clipboardService else { return }
+        let edited = await ClipboardContent.makeOffActor(text: text)
+        // A newer keystroke (seq) or a guest update that rebuilt the editor while
+        // the hash ran (string mismatch) supersedes this commit; dropping it is
+        // safe — the newer writer owns the model.
+        guard seq == editSeq, textView.string == text else { return }
+        hasPendingEdit = false
+        // Prime the digest before the write so the resulting observation pass
+        // recognizes the content as already displayed (the editor IS the source)
+        // and doesn't rebuild the view out from under the user.
         lastAppliedDigest = edited.digest
         service.clipboardContent = edited
-        indicatorView.setText(ClipboardContentDescriber.indicatorText(for: edited))
-        commandBar.copyButton.isEnabled = !edited.isEmpty && !isCopyingToMac
-        commandBar.clearButton.isEnabled = !edited.isEmpty
     }
+
+    /// Synchronously commits the live editor text if a keystroke has not yet
+    /// reached the model, so a grab/copy/close offers the latest text.
+    ///
+    /// A no-op in the common case (the debounced commit already landed), so no
+    /// hash is paid; when an edit is pending it pays a single synchronous hash on
+    /// a discrete user action — acceptable under §8 (it is not per keystroke).
+    func flushPendingEdit() {
+        editDebounceTask?.cancel()
+        editDebounceTask = nil
+        guard hasPendingEdit, let service = instance.clipboardService else { return }
+        hasPendingEdit = false
+        let edited = ClipboardContent(text: textView.string)
+        lastAppliedDigest = edited.digest
+        service.clipboardContent = edited
+    }
+
+    /// Drops any pending edit without committing it.
+    ///
+    /// Called when an external update rebuilds the editor, so a superseded
+    /// in-progress edit can't later flush stale text over the new content.
+    private func cancelPendingEdit() {
+        editDebounceTask?.cancel()
+        editDebounceTask = nil
+        hasPendingEdit = false
+    }
+
+    #if DEBUG
+    /// Simulates a keystroke burst landing `text` in the editor — sets the
+    /// text view and fires the delegate callback — so tests drive the
+    /// debounced off-actor commit without synthesizing real key events.
+    func setEditorTextForTesting(_ text: String) {
+        textView.string = text
+        textDidChange(Notification(name: NSText.didChangeNotification, object: textView))
+    }
+
+    /// Runs one UI/observation pass, as the service-change observer would, so
+    /// tests can drive the external-update rebuild path (which cancels a
+    /// pending edit) deterministically.
+    func simulateObservationForTesting() {
+        updateUI()
+    }
+    #endif
 
     // MARK: - Observation
 
@@ -362,6 +454,11 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         if let service {
             let content = service.clipboardContent
             if content.digest != lastAppliedDigest {
+                // An external update (guest content, paste) is replacing the
+                // editor; drop any debounced edit so it can't later flush stale
+                // text over this content. (Our own primed writes match the digest
+                // and never reach this branch.)
+                cancelPendingEdit()
                 lastAppliedDigest = content.digest
                 apply(content: content)
                 indicatorView.setText(ClipboardContentDescriber.indicatorText(for: content))
@@ -511,6 +608,9 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     }
 
     @objc private func copyToMac(_: Any?) {
+        // Commit any keystroke still inside the debounce window so an immediate
+        // type-then-Copy offers the latest text (and passes the emptiness guard).
+        flushPendingEdit()
         guard let service = instance.clipboardService else { return }
         guard !service.clipboardContent.isEmpty else { return }
         // A pull landing mid-copy republishes clipboardContent, firing the

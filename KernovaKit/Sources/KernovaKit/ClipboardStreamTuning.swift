@@ -40,6 +40,17 @@ public enum ClipboardStreamTuning {
     /// Hard cap on the credit window: 2 MiB.
     public static let maxWindowBytes = 2 * 1024 * 1024
 
+    /// Upper bound on how much an inline reassembly buffer pre-reserves: 64 MiB.
+    ///
+    /// Reserving toward the sender's declared `total_bytes` (rather than the 2 MiB
+    /// credit window) lets a large inline rep grow in one allocation instead of the
+    /// geometric reallocations a 2 MiB reserve forces. The 64 MiB cap keeps an
+    /// attacker-declared `total_bytes` from forcing an unbounded up-front
+    /// allocation — beyond it the buffer still grows geometrically, and the rep
+    /// spills to disk at `maxResidentInlineBytes` (256 MiB) anyway, so this sits
+    /// deliberately below that spill point.
+    public static let maxInlineReserveBytes = 64 * 1024 * 1024
+
     /// Margin kept free above a transfer's size when checking disk space, so a
     /// transfer never fills the staging volume to the last byte.
     public static let freeSpaceMargin = 64 * 1024 * 1024

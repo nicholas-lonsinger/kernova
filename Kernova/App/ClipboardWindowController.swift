@@ -15,10 +15,18 @@ final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
     let instance: VMInstance
     private var statusObservation: ObservationLoop?
 
+    /// The hosted content controller, retained so blur/close can flush a pending
+    /// editor edit before the service grabs the clipboard.
+    ///
+    /// Named distinctly from the inherited `NSWindowController.contentViewController`,
+    /// which is typed `NSViewController?`.
+    private let clipboardContentVC: ClipboardContentViewController
+
     init(instance: VMInstance, viewModel: VMLibraryViewModel) {
         self.instance = instance
 
         let viewController = ClipboardContentViewController(instance: instance, viewModel: viewModel)
+        self.clipboardContentVC = viewController
         // Tall enough for the content area plus the command bar and the
         // agent status bar; the min keeps both bars and a few text lines
         // visible. Autosave name is unchanged so existing saved frames win.
@@ -59,6 +67,7 @@ final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         // Flush any pending edits before the window goes away
         if instance.status == .running || instance.status == .paused {
+            clipboardContentVC.flushPendingEdit()
             instance.clipboardService?.grabIfChanged()
         }
         statusObservation?.cancel()
@@ -67,6 +76,7 @@ final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func windowDidResignKey(_ notification: Notification) {
+        clipboardContentVC.flushPendingEdit()
         instance.clipboardService?.grabIfChanged()
     }
 

@@ -134,10 +134,13 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
                 }
             } else {
                 // A small inline rep reassembles in RAM, matching native (the
-                // consuming app holds the bytes in RAM too).
+                // consuming app holds the bytes in RAM too). Reserve toward the
+                // declared size (capped) so a large inline rep grows in one
+                // allocation rather than geometric reallocations off the 2 MiB
+                // window.
                 transfer.buffer = Data()
                 transfer.buffer?.reserveCapacity(
-                    min(transfer.totalBytes, ClipboardStreamTuning.maxWindowBytes))
+                    min(transfer.totalBytes, ClipboardStreamTuning.maxInlineReserveBytes))
             }
             // Go-signal: tell the sender we're ready and advertise the window.
             self.sendAck(transfer)

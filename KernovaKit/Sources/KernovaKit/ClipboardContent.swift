@@ -281,6 +281,23 @@ public struct ClipboardContent: Equatable, Sendable {
         }
     }
 
+    /// Content holding a single UTF-8 plain-text representation, built off the
+    /// caller's actor.
+    ///
+    /// The off-actor twin of `init(text:)` for the editor commit path: a large
+    /// pasted-then-edited buffer must not pay the UTF-8 copy *or* the SHA-256
+    /// digest on the `@MainActor` per keystroke (CLIPBOARD.md §8). Because this is
+    /// a non-isolated `async` factory, awaiting it from the main actor runs both
+    /// the `Data(text.utf8)` conversion and `makeOffActor(representations:)`'s hash
+    /// on the cooperative executor, resuming with the finished `Sendable` value.
+    /// The empty string normalizes to `.empty`, identically to `init(text:)`.
+    public static func makeOffActor(text: String, isConcealed: Bool = false) async -> ClipboardContent {
+        guard !text.isEmpty else { return .empty }
+        return await makeOffActor(
+            representations: [Representation(uti: utf8TextUTI, data: Data(text.utf8))],
+            isConcealed: isConcealed)
+    }
+
     /// `true` when there are no representations.
     public var isEmpty: Bool { representations.isEmpty }
 

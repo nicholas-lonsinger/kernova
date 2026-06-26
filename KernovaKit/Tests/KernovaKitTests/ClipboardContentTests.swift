@@ -322,6 +322,22 @@ struct ClipboardContentTests {
         #expect(offMain.representations.map(\.inMemoryData) == sync.representations.map(\.inMemoryData))
         #expect(offMain.representations.map(\.filename) == sync.representations.map(\.filename))
     }
+
+    @Test("makeOffActor(text:) matches init(text:) for empty, small, and large text")
+    func makeOffActorTextMatchesSyncInit() async {
+        // The editor commit path relies on these being identical so the off-actor
+        // commit and the synchronous flush produce the same content/digest.
+        let large = String(repeating: "swift clipboard ", count: 4096)  // ~64 KiB
+        for text in ["", "hello", large] {
+            let sync = ClipboardContent(text: text)
+            let offMain = await ClipboardContent.makeOffActor(text: text)
+            #expect(offMain == sync)  // digest-based equality
+            #expect(offMain.digest == sync.digest)
+            #expect(offMain.representations.map(\.inMemoryData) == sync.representations.map(\.inMemoryData))
+        }
+        // The empty string normalizes to `.empty`, identically to init(text:).
+        #expect(await ClipboardContent.makeOffActor(text: "") == .empty)
+    }
 }
 
 @Suite("ClipboardSnapshotPolicy")

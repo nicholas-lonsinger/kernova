@@ -413,7 +413,13 @@ private final class InMemoryChunkReader: ChunkReader {
         guard offset < end else { return Data() }
         let slice = data[offset..<end]
         offset = end
-        return Data(slice)
+        // RATIONALE: `Data.SubSequence` is `Data`, so returning the slice avoids a
+        // per-chunk 64 KiB alloc+copy. It aliases `data`, which this reader already
+        // retains for the whole transfer, so there is no extra retention. The slice
+        // has a non-zero `startIndex`; the consumers handle that — `hasher.update`
+        // and the protobuf `bytes` field accept it, and `serializedData()` copies
+        // it into the wire buffer regardless.
+        return slice
     }
     func close() {}
 }
