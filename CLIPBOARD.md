@@ -19,7 +19,13 @@ Guiding principles for host↔guest clipboard sharing in Kernova.
   not constrain the macOS↔macOS design.
 - **The reference target is native macOS.** The yardstick for every decision is: *what would
   this copy/paste do if both ends were the same Mac?* We match that on capability and aim to
-  match or beat it on resource cost.
+  match or beat it on resource cost. For the *cross-boundary behavior* — host and guest are two
+  separate machines — the closest model is Apple's own **Universal Clipboard** between two
+  devices: advertise lightweight **metadata** on copy, then transfer the bytes **on demand at
+  paste** — asynchronously, with progress, and with no blocking deadline. Never an eager
+  broadcast of the content, never a synchronous blocking pull. §2 (File Provider for files) and
+  §3 (pay on consume) are how we match that; the synchronous pasteboard provider is reserved for
+  inline content that comfortably fits the OS paste deadline.
 
 ---
 
