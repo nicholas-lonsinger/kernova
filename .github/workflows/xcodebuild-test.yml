@@ -55,7 +55,7 @@ jobs:
             -scheme Kernova \
             -destination 'platform=macOS' \
             -derivedDataPath DerivedData \
-            -resultBundlePath TestResults.xcresult \
+            -resultBundlePath artifacts/TestResults.xcresult \
             -skipPackagePluginValidation \
             CODE_SIGN_IDENTITY="-" \
             CODE_SIGNING_REQUIRED=NO \
@@ -68,5 +68,13 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: test-results
-          path: TestResults.xcresult
+          # RATIONALE: upload the PARENT dir, not the `.xcresult` bundle directly.
+          # upload-artifact roots the archive at the lowest common ancestor of the
+          # matched files, so pointing it at the bundle drops the `.xcresult`
+          # wrapper — the download then unpacks as a bare Info.plist + Data/ that
+          # xcresulttool can't open without first renaming it back. Uploading the
+          # enclosing `artifacts/` keeps `TestResults.xcresult/` intact in the
+          # download (matching the `-resultBundlePath artifacts/TestResults.xcresult`
+          # above), so `gh run download` yields a directly-usable result bundle.
+          path: artifacts/
           retention-days: 7
