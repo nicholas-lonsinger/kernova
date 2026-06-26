@@ -800,7 +800,7 @@
 				DEVELOPMENT_TEAM = 8MT4P4GZL2;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Kernova/App/Info.plist;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright 2025 Kernova. All rights reserved.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright 2025–2026 Nicholas Lonsinger. All rights reserved.";
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
 				INFOPLIST_PREFIX_HEADER = "$(DERIVED_FILE_DIR)/KernovaBuildNumber.h";
 				INFOPLIST_PREPROCESS = YES;
@@ -829,7 +829,7 @@
 				DEVELOPMENT_TEAM = 8MT4P4GZL2;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Kernova/App/Info.plist;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright 2025 Kernova. All rights reserved.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright 2025–2026 Nicholas Lonsinger. All rights reserved.";
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
 				INFOPLIST_PREFIX_HEADER = "$(DERIVED_FILE_DIR)/KernovaBuildNumber.h";
 				INFOPLIST_PREPROCESS = YES;

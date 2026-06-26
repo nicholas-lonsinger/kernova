@@ -112,4 +112,4 @@ Each VM is stored as a directory under `~/Library/Application Support/Kernova/VM
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details.
+Kernova is **source-available** under the [Functional Source License (FSL-1.1-ALv2)](LICENSE): you're free to use, modify, and redistribute it for any purpose **except** offering a competing commercial product or service. Internal use, non-commercial education, and non-commercial research are explicitly permitted. Each release converts to Apache 2.0 two years after its publication. See [LICENSE](LICENSE) for the full terms.
