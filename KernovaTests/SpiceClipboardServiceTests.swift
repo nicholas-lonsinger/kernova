@@ -1,6 +1,6 @@
 import Testing
 import Foundation
-import KernovaProtocol
+import KernovaKit
 @testable import Kernova
 
 @Suite("SpiceClipboardService Tests")

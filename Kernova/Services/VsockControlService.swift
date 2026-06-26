@@ -1,5 +1,5 @@
 import Foundation
-import KernovaProtocol
+import KernovaKit
 import os
 
 /// Snapshot of the toggle state delivered to the guest agent via `PolicyUpdate` on the control channel.

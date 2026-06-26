@@ -1,5 +1,5 @@
 import Foundation
-import KernovaProtocol
+import KernovaKit
 
 /// Pure text mappers for the guest agent's menu-bar dropdown.
 ///

@@ -10,9 +10,9 @@
 		A10000F1 /* DiskTemplates in Resources */ = {isa = PBXBuildFile; fileRef = A10000F0 /* DiskTemplates */; };
 		A100010B /* KernovaRelaunchHelper in Embed Helpers */ = {isa = PBXBuildFile; fileRef = A1000100 /* KernovaRelaunchHelper */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		A100040D /* KernovaQuickLook.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = A1000400 /* KernovaQuickLook.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		A2000001 /* KernovaProtocol in Frameworks */ = {isa = PBXBuildFile; productRef = A2000002 /* KernovaProtocol */; };
-		A2000004 /* KernovaProtocol in Frameworks */ = {isa = PBXBuildFile; productRef = A2000005 /* KernovaProtocol */; };
-		A2000006 /* KernovaProtocol in Frameworks */ = {isa = PBXBuildFile; productRef = A2000007 /* KernovaProtocol */; };
+		A2000001 /* KernovaKit in Frameworks */ = {isa = PBXBuildFile; productRef = A2000002 /* KernovaKit */; };
+		A2000004 /* KernovaKit in Frameworks */ = {isa = PBXBuildFile; productRef = A2000005 /* KernovaKit */; };
+		A2000006 /* KernovaKit in Frameworks */ = {isa = PBXBuildFile; productRef = A2000007 /* KernovaKit */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -86,7 +86,7 @@
 		A1000200 /* Kernova Guest Agent.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Kernova Guest Agent.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000300 /* KernovaGuestAgentTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KernovaGuestAgentTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000400 /* KernovaQuickLook.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = KernovaQuickLook.appex; sourceTree = BUILT_PRODUCTS_DIR; };
-		B62FC33F2FAFDBB1003775B7 /* KernovaProtocol */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = KernovaProtocol; sourceTree = "<group>"; };
+		B62FC33F2FAFDBB1003775B7 /* KernovaKit */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = KernovaKit; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -189,7 +189,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A2000001 /* KernovaProtocol in Frameworks */,
+				A2000001 /* KernovaKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -211,7 +211,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A2000004 /* KernovaProtocol in Frameworks */,
+				A2000004 /* KernovaKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -219,7 +219,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A2000006 /* KernovaProtocol in Frameworks */,
+				A2000006 /* KernovaKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -242,7 +242,7 @@
 				A1000201 /* KernovaGuestAgent */,
 				A1000302 /* KernovaGuestAgentTests */,
 				A1000401 /* KernovaQuickLook */,
-				B62FC33F2FAFDBB1003775B7 /* KernovaProtocol */,
+				B62FC33F2FAFDBB1003775B7 /* KernovaKit */,
 				A10000F0 /* DiskTemplates */,
 				A1000021 /* Products */,
 			);
@@ -288,7 +288,7 @@
 			);
 			name = Kernova;
 			packageProductDependencies = (
-				A2000002 /* KernovaProtocol */,
+				A2000002 /* KernovaKit */,
 			);
 			productName = Kernova;
 			productReference = A1000004 /* Kernova.app */;
@@ -356,7 +356,7 @@
 			);
 			name = KernovaGuestAgent;
 			packageProductDependencies = (
-				A2000005 /* KernovaProtocol */,
+				A2000005 /* KernovaKit */,
 			);
 			productName = KernovaGuestAgent;
 			productReference = A1000200 /* Kernova Guest Agent.app */;
@@ -381,7 +381,7 @@
 			);
 			name = KernovaGuestAgentTests;
 			packageProductDependencies = (
-				A2000007 /* KernovaProtocol */,
+				A2000007 /* KernovaKit */,
 			);
 			productName = KernovaGuestAgentTests;
 			productReference = A1000300 /* KernovaGuestAgentTests.xctest */;
@@ -1099,17 +1099,17 @@
 /* End XCConfigurationList section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		A2000002 /* KernovaProtocol */ = {
+		A2000002 /* KernovaKit */ = {
 			isa = XCSwiftPackageProductDependency;
-			productName = KernovaProtocol;
+			productName = KernovaKit;
 		};
-		A2000005 /* KernovaProtocol */ = {
+		A2000005 /* KernovaKit */ = {
 			isa = XCSwiftPackageProductDependency;
-			productName = KernovaProtocol;
+			productName = KernovaKit;
 		};
-		A2000007 /* KernovaProtocol */ = {
+		A2000007 /* KernovaKit */ = {
 			isa = XCSwiftPackageProductDependency;
-			productName = KernovaProtocol;
+			productName = KernovaKit;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

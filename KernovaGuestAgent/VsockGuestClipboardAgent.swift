@@ -1,6 +1,6 @@
 import AppKit
 import Foundation
-import KernovaProtocol
+import KernovaKit
 import UniformTypeIdentifiers
 
 // MARK: - Pasteboard protocol

@@ -1,5 +1,5 @@
 import AppKit
-import KernovaProtocol
+import KernovaKit
 import UniformTypeIdentifiers
 
 /// Several copied or dropped files shown as a count + total-size header above a

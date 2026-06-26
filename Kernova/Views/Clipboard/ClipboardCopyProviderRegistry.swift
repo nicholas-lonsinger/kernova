@@ -1,5 +1,5 @@
 import AppKit
-import KernovaProtocol
+import KernovaKit
 import os
 
 /// Process-lifetime owner of the live "Copy to Mac" pasteboard data providers.

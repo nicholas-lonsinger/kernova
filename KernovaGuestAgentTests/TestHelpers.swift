@@ -1,7 +1,7 @@
 import CryptoKit
 import Foundation
 import Darwin
-import KernovaProtocol
+import KernovaKit
 
 // MARK: - TestFailure
 

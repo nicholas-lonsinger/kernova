@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@testable import KernovaProtocol
+@testable import KernovaKit
 
 @Suite("ClipboardDirectoryArchive")
 struct ClipboardDirectoryArchiveTests {

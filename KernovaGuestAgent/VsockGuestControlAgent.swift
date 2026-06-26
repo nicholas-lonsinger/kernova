@@ -1,5 +1,5 @@
 import Foundation
-import KernovaProtocol
+import KernovaKit
 import os
 
 /// Guest-side control-channel agent that talks to the host's `VsockControlService`

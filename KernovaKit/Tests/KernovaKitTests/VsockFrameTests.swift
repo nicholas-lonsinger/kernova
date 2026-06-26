@@ -1,6 +1,6 @@
 import Testing
 import Foundation
-@testable import KernovaProtocol
+@testable import KernovaKit
 
 @Suite("VsockFrame")
 struct VsockFrameTests {

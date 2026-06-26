@@ -44,7 +44,7 @@ struct LogPrivacy: Sendable {
 /// NOTE: This type currently lives only inside the `KernovaGuestAgent`
 /// target. If a future use case needs the same wrapper on the host or in
 /// another target, relocate this file (and `KernovaLogger.swift`) into
-/// the `KernovaProtocol` Swift Package and update the consuming targets'
+/// the `KernovaKit` Swift Package and update the consuming targets'
 /// dependencies.
 struct KernovaLogMessage: ExpressibleByStringInterpolation, ExpressibleByStringLiteral, Sendable {
     struct StringInterpolation: StringInterpolationProtocol {

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Regenerate Swift bindings for kernova.proto.
 #
-# Run this after any edit to KernovaProtocol/Proto/kernova.proto. The generated
+# Run this after any edit to KernovaKit/Proto/kernova.proto. The generated
 # files are checked into the repo so the SPM package builds with no external
 # tooling step in the normal dev loop.
 #
@@ -10,8 +10,8 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PROTO_DIR="${REPO_ROOT}/KernovaProtocol/Proto"
-OUT_DIR="${REPO_ROOT}/KernovaProtocol/Sources/KernovaProtocol/Generated"
+PROTO_DIR="${REPO_ROOT}/KernovaKit/Proto"
+OUT_DIR="${REPO_ROOT}/KernovaKit/Sources/KernovaKit/Generated"
 
 if ! command -v protoc >/dev/null 2>&1; then
     echo "ERROR: protoc not found on PATH. Run 'brew install protobuf'." >&2

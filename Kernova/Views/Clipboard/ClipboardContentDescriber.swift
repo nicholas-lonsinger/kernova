@@ -1,6 +1,6 @@
 import Foundation
 import ImageIO
-import KernovaProtocol
+import KernovaKit
 import UniformTypeIdentifiers
 
 /// Pure string derivation for the clipboard window's content-type indicator and summary rows.

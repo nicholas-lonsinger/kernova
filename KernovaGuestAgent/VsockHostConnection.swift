@@ -1,5 +1,5 @@
 import Foundation
-import KernovaProtocol
+import KernovaKit
 import os
 
 /// Forwards guest-emitted log records to the host on `KernovaVsockPort.log`

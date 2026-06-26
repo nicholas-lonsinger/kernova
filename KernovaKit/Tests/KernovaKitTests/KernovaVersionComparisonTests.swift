@@ -1,6 +1,6 @@
 import Testing
 
-@testable import KernovaProtocol
+@testable import KernovaKit
 
 @Suite("KernovaVersionComparison")
 struct KernovaVersionComparisonTests {

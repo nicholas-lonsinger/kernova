@@ -1,5 +1,5 @@
 import Foundation
-import KernovaProtocol
+import KernovaKit
 import os
 
 /// Republishes a guest agent's emitted log records into the host's logging

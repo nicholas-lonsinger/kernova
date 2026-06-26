@@ -1,5 +1,5 @@
 import AppKit
-import KernovaProtocol
+import KernovaKit
 import UniformTypeIdentifiers
 import os
 

@@ -1,5 +1,5 @@
 import Foundation
-import KernovaProtocol
+import KernovaKit
 import Testing
 import UniformTypeIdentifiers
 

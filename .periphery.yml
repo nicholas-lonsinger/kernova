@@ -13,7 +13,7 @@ schemes:
   - KernovaGuestAgent
   - KernovaRelaunchHelper
 
-# `KernovaProtocol` is a closed monorepo package — every consumer (the
+# `KernovaKit` is a closed monorepo package — every consumer (the
 # `Kernova` app and `KernovaGuestAgent`) lives in this same project, so
 # Periphery's cross-target index can resolve real usage of public symbols.
 # We let it surface unused public declarations rather than retaining them

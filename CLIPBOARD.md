@@ -12,7 +12,7 @@ Guiding principles for host↔guest clipboard sharing in Kernova.
 ## Scope
 
 - **In scope:** macOS host ↔ **macOS guest** clipboard sharing over the vsock streaming
-  transport (`VsockClipboardService` / `VsockGuestClipboardAgent` and the `KernovaProtocol`
+  transport (`VsockClipboardService` / `VsockGuestClipboardAgent` and the `KernovaKit`
   stream engine).
 - **Out of scope (for now):** Linux guests (the separate text-only SPICE path) and Windows
   guests. Size and behavior targets for other guests are **to be determined later** and must

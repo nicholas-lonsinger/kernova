@@ -1,5 +1,5 @@
 import Foundation
-import KernovaProtocol
+import KernovaKit
 import os
 
 /// Drop-in replacement for `os.Logger` that, in addition to writing to the
@@ -25,7 +25,7 @@ import os
 ///
 /// NOTE: Lives inside the `KernovaGuestAgent` target. If a future use
 /// case needs the same wrapper on the host or in another target, relocate
-/// this file (and `KernovaLogMessage.swift`) into the `KernovaProtocol`
+/// this file (and `KernovaLogMessage.swift`) into the `KernovaKit`
 /// Swift Package.
 struct KernovaLogger: Sendable {
     let subsystem: String

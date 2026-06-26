@@ -2,7 +2,7 @@ import AppKit
 import Foundation
 import Testing
 
-@testable import KernovaProtocol
+@testable import KernovaKit
 
 /// Exercises the shared `LazyClipboardDataProvider`.
 ///

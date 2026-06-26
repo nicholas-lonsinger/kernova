@@ -36,9 +36,9 @@
     {
       "parallelizable" : true,
       "target" : {
-        "containerPath" : "container:KernovaProtocol",
-        "identifier" : "KernovaProtocolTests",
-        "name" : "KernovaProtocolTests"
+        "containerPath" : "container:KernovaKit",
+        "identifier" : "KernovaKitTests",
+        "name" : "KernovaKitTests"
       }
     }
   ],

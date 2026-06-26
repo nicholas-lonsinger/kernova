@@ -2,7 +2,7 @@ import Testing
 import Foundation
 import Darwin
 import CryptoKit
-import KernovaProtocol
+import KernovaKit
 import UniformTypeIdentifiers
 @testable import Kernova
 
