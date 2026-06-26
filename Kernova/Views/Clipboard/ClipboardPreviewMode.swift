@@ -1,5 +1,5 @@
 import Foundation
-import KernovaProtocol
+import KernovaKit
 
 /// One file's metadata for the multi-file preview chip list (`.files`).
 ///

@@ -23,7 +23,7 @@ XCODEBUILD_FLAGS := -project $(PROJECT) \
 # swift-format ships with the Xcode toolchain (Xcode 26+); use xcrun so the
 # command resolves the same binary in CI and locally without a brew install.
 SWIFT_FORMAT      := xcrun swift-format
-SWIFT_SOURCE_DIRS := Kernova KernovaTests KernovaGuestAgent KernovaGuestAgentTests KernovaProtocol KernovaQuickLook KernovaRelaunchHelper
+SWIFT_SOURCE_DIRS := Kernova KernovaTests KernovaGuestAgent KernovaGuestAgentTests KernovaKit KernovaQuickLook KernovaRelaunchHelper
 
 .DEFAULT_GOAL := help
 .PHONY: help build test test-suite test-package clean format lint install-hooks check-hooks
@@ -34,7 +34,7 @@ help:
 	@printf '  make test                Run the full test suite (all three test targets via Kernova.xctestplan)\n'
 	@printf '  make test-suite SUITE=X  Run a single test suite (Target/Suite form)\n'
 	@printf '                           (e.g. SUITE=KernovaTests/VMConfigurationTests)\n'
-	@printf '  make test-package        Run only the KernovaProtocol SwiftPM package tests\n'
+	@printf '  make test-package        Run only the KernovaKit SwiftPM package tests\n'
 	@printf '  make format              Rewrite Swift sources in place via swift-format\n'
 	@printf '  make lint                Check Swift sources with swift-format (--strict)\n'
 	@printf '  make install-hooks       Point git at .githooks/ (runs lint on pre-push)\n'
@@ -51,7 +51,7 @@ test: check-hooks
 # `xcrun` so the toolchain matches the one selected via `xcode-select`
 # (same rationale as the `xcrun swift-format` invocation above).
 test-package:
-	xcrun swift test --package-path KernovaProtocol
+	xcrun swift test --package-path KernovaKit
 
 test-suite:
 	@if [ -z "$(SUITE)" ]; then \

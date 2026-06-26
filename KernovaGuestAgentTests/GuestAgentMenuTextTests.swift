@@ -1,6 +1,6 @@
 import Testing
 
-import KernovaProtocol
+import KernovaKit
 
 @Suite("GuestAgentMenuText")
 struct GuestAgentMenuTextTests {

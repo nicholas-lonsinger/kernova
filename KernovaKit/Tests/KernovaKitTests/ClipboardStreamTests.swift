@@ -2,7 +2,7 @@ import CryptoKit
 import Foundation
 import Testing
 
-@testable import KernovaProtocol
+@testable import KernovaKit
 
 @Suite("ClipboardStream")
 struct ClipboardStreamTests {

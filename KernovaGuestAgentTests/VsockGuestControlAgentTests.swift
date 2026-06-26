@@ -1,7 +1,7 @@
 import Testing
 import Foundation
 import Darwin
-import KernovaProtocol
+import KernovaKit
 
 @Suite("VsockGuestControlAgent")
 struct VsockGuestControlAgentTests {

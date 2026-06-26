@@ -1,5 +1,5 @@
 import Foundation
-import KernovaProtocol
+import KernovaKit
 
 /// Common surface shared by every clipboard transport.
 ///

@@ -1,5 +1,5 @@
 import Foundation
-import KernovaProtocol
+import KernovaKit
 import os
 
 /// Manages SPICE clipboard sharing between the host and a single guest VM.

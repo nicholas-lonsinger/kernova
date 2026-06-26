@@ -15,7 +15,7 @@ import System
 /// SHA-256. Symlinks are stored, not followed, and AppleArchive confines
 /// extraction beneath the destination directory (a `../` entry can't escape).
 /// No logging — callers (host service / guest agent) log at their own
-/// subsystem, matching the other log-free `KernovaProtocol` stream/staging
+/// subsystem, matching the other log-free `KernovaKit` stream/staging
 /// types.
 public enum ClipboardDirectoryArchive {
     /// A stream in the archive pipeline could not be opened, or the field-key
@@ -144,7 +144,7 @@ extension ClipboardDirectoryArchive {
     /// The folder name (not the `.aar`) rides in `filename`, the UTI is
     /// `directoryUTI`, and `isDirectory` is set, so the receiver extracts it back
     /// into a real folder. Shared by the host intake and the guest agent — both
-    /// import `KernovaProtocol` — so the archive/UTI/sizing rules live in one
+    /// import `KernovaKit` — so the archive/UTI/sizing rules live in one
     /// place and can't drift between the two ends. Throws the underlying archive
     /// error so the caller can log it at its own subsystem (this package stays
     /// log-free).

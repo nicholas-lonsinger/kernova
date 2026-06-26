@@ -1,7 +1,7 @@
 import Testing
 import Foundation
 import Darwin
-@testable import KernovaProtocol
+@testable import KernovaKit
 
 @Suite("VsockChannel")
 struct VsockChannelTests {

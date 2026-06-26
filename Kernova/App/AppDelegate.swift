@@ -1,5 +1,5 @@
 import Cocoa
-import KernovaProtocol
+import KernovaKit
 import os
 
 @main

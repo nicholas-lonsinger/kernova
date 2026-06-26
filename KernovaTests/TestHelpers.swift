@@ -1,7 +1,7 @@
 import Foundation
 import Darwin
 import Observation
-import KernovaProtocol
+import KernovaKit
 
 // Shared timing/test primitives for the KernovaTests bundle. Mirrors the
 // shape of `KernovaGuestAgentTests/TestHelpers.swift` so the two bundles

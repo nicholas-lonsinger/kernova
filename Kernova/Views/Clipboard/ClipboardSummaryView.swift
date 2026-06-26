@@ -1,5 +1,5 @@
 import AppKit
-import KernovaProtocol
+import KernovaKit
 
 /// Non-editable generic representation of clipboard content.
 ///

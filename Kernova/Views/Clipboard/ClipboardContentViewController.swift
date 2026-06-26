@@ -1,5 +1,5 @@
 import Cocoa
-import KernovaProtocol
+import KernovaKit
 import os
 
 /// Pure AppKit view controller for the clipboard sharing window content.

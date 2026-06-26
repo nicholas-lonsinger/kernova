@@ -1,5 +1,5 @@
 import AppKit
-import KernovaProtocol
+import KernovaKit
 import os
 
 /// Owns the agent's menu-bar `NSStatusItem` and its dropdown.

@@ -1,7 +1,7 @@
 import Darwin
 import Foundation
 
-@testable import KernovaProtocol
+@testable import KernovaKit
 
 /// A test failure with a message, thrown by the streaming-engine test helpers.
 struct StreamTestFailure: Error, CustomStringConvertible {
