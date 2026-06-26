@@ -166,6 +166,89 @@ struct ClipboardCopyProviderRegistryTests {
     }
 }
 
+/// Verifies the editor commit path (#394): per-keystroke work is hash-free and
+/// the buffer is committed off-actor on a debounce, while blur/copy/close flush a
+/// still-pending edit and an external update cancels a superseded one.
+@Suite("ClipboardContentViewController editor commit")
+@MainActor
+struct ClipboardContentViewControllerEditTests {
+    private func makeViewModel() -> VMLibraryViewModel {
+        VMLibraryViewModel(
+            storageService: MockVMStorageService(),
+            diskImageService: MockDiskImageService(),
+            virtualizationService: MockVirtualizationService(),
+            installService: MockMacOSInstallService(),
+            ipswService: MockIPSWService(),
+            usbDeviceService: MockUSBDeviceService()
+        )
+    }
+
+    private func makeInstance() -> VMInstance {
+        let config = VMConfiguration(name: "Clipboard VM", guestOS: .linux, bootMode: .efi)
+        let bundleURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(config.id.uuidString, isDirectory: true)
+        return VMInstance(configuration: config, bundleURL: bundleURL)
+    }
+
+    private func makeController(
+        service: FakeClipboardService, debounce: Duration
+    ) -> ClipboardContentViewController {
+        let instance = makeInstance()
+        instance.clipboardService = service
+        return ClipboardContentViewController(
+            instance: instance, viewModel: makeViewModel(), editDebounceInterval: debounce)
+    }
+
+    @Test("a keystroke burst commits the buffer to the model off-actor after the debounce")
+    func debouncedCommitLandsInModel() async throws {
+        let service = FakeClipboardService(content: .empty)
+        let vc = makeController(service: service, debounce: .milliseconds(1))
+
+        vc.setEditorTextForTesting("hello off-actor")
+
+        try await waitUntil { service.clipboardContent == ClipboardContent(text: "hello off-actor") }
+    }
+
+    @Test("flushPendingEdit commits the latest text before the debounce fires")
+    func flushCommitsPendingEdit() {
+        // A debounce long enough that it never fires during the test, so the only
+        // path to the model is the synchronous flush.
+        let service = FakeClipboardService(content: .empty)
+        let vc = makeController(service: service, debounce: .seconds(60))
+
+        vc.setEditorTextForTesting("typed then copied")
+        #expect(service.clipboardContent.isEmpty)  // not yet committed by the debounce
+
+        vc.flushPendingEdit()
+        #expect(service.clipboardContent == ClipboardContent(text: "typed then copied"))
+    }
+
+    @Test("flushPendingEdit is a no-op with nothing pending")
+    func flushWithoutPendingEditIsNoOp() {
+        let service = FakeClipboardService(content: ClipboardContent(text: "guest content"))
+        let vc = makeController(service: service, debounce: .seconds(60))
+
+        vc.flushPendingEdit()  // no keystroke happened
+        #expect(service.clipboardContent == ClipboardContent(text: "guest content"))
+    }
+
+    @Test("an external update cancels a pending edit so a later flush can't resurrect stale text")
+    func externalUpdateCancelsPendingEdit() {
+        let service = FakeClipboardService(content: .empty)
+        let vc = makeController(service: service, debounce: .seconds(60))
+
+        // The user types, then a guest update lands and rebuilds the editor before
+        // the debounce fires.
+        vc.setEditorTextForTesting("stale user edit")
+        service.clipboardContent = ClipboardContent(text: "guest content")
+        vc.simulateObservationForTesting()  // updateUI rebuild branch cancels the pending edit
+
+        // Blur/close now flushes — and must NOT overwrite the guest content.
+        vc.flushPendingEdit()
+        #expect(service.clipboardContent == ClipboardContent(text: "guest content"))
+    }
+}
+
 /// Minimal in-memory `ClipboardServicing` for driving the controller without a
 /// live VM transport.
 @MainActor

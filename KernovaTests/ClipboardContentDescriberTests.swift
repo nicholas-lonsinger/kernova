@@ -31,6 +31,18 @@ struct ClipboardContentDescriberTests {
         #expect(ClipboardContentDescriber.indicatorText(for: content) == "Plain text · \(size)")
     }
 
+    @Test("the hash-free forPlainText indicator matches the full-content indicator")
+    func plainTextIndicatorMatchesFullContent() {
+        // The per-keystroke editor path uses forPlainText; it must render exactly
+        // what the full ClipboardContent path would for that single text rep.
+        let large = String(repeating: "x", count: 5000)
+        for text in ["", "hello", "héllo · ünïcode", large] {
+            let viaText = ClipboardContentDescriber.indicatorText(forPlainText: text)
+            let viaContent = ClipboardContentDescriber.indicatorText(for: ClipboardContent(text: text))
+            #expect(viaText == viaContent, "mismatch for \(text.count)-char string")
+        }
+    }
+
     @Test("extra representations are disclosed in the indicator")
     func extraRepsDisclosed() {
         // Plain text wins the preview; the two non-rich siblings are disclosed

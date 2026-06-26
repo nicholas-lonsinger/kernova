@@ -48,6 +48,33 @@ struct ClipboardStreamTests {
         #expect(harness.collector.abortCount == 0)
     }
 
+    @Test("an inline payload larger than the 2 MiB window round-trips (exercises the inline reserve cap)")
+    func largeInlineRoundTrip() async throws {
+        // Production 64 KiB chunks + 1 MiB window; a ~3 MiB inline rep stays RAM-
+        // resident (< maxResidentInlineBytes) and reassembles through the larger
+        // reserve path — min(totalBytes, maxInlineReserveBytes) — rather than the
+        // old 2 MiB window reserve. Also exercises the sender's slice-aliasing read.
+        let harness = try StreamHarness(
+            chunkSize: ClipboardStreamTuning.defaultChunkPayloadSize,
+            windowBytes: ClipboardStreamTuning.defaultWindowBytes,
+            freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
+        defer { harness.tearDown() }
+
+        let count = 3 * 1024 * 1024 + 777  // > 2 MiB, deliberately not chunk-aligned
+        let bytes = Data((0..<count).map { UInt8((($0 &* 31) &+ 7) & 0xFF) })
+        let rep = ClipboardContent.Representation(uti: "public.utf8-plain-text", data: bytes)
+
+        harness.sender.startTransfer(
+            transferID: 1, generation: 1, representation: rep, maxAcceptByteCount: .max,
+            isInline: true, isCurrent: { _ in true })
+
+        try await harness.collector.gate.wait { harness.collector.representation(1) != nil }
+        let received = try #require(harness.collector.representation(1))
+        #expect(received.inMemoryData == bytes)
+        #expect(received.fileURL == nil)  // stayed inline — no disk spill
+        #expect(harness.collector.abortCount == 0)
+    }
+
     @Test("a file payload round-trips to a temp file with the streamed sha256")
     func fileRoundTrip() async throws {
         let harness = try roomyHarness()
