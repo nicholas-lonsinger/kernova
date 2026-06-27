@@ -9,12 +9,14 @@
     }
   ],
   "defaultOptions" : {
+    "maximumTestRepetitions" : 2,
     "performanceAntipatternCheckerEnabled" : true,
     "targetForVariableExpansion" : {
       "containerPath" : "container:Kernova.xcodeproj",
       "identifier" : "A1000003",
       "name" : "Kernova"
-    }
+    },
+    "testRepetitionMode" : "retryOnFailure"
   },
   "testTargets" : [
     {
