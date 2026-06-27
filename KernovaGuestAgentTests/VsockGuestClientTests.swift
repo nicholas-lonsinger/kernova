@@ -59,6 +59,12 @@ struct VsockGuestClientTests {
 
         _ = try await awaitFirst(enteredStream)
 
+        // RATIONALE: liveChannel exposes the SUT's own connection state — a
+        // lock-protected currentChannel published by the detached reconnect loop and
+        // cleared on socket EOF — not an @Observable property or a test-owned double,
+        // so there is no signal to await. Event-driving these waits would require
+        // adding notify() plumbing to VsockGuestClient (out of scope); polling is the
+        // correct seam. See CLAUDE.md "Async waits in tests".
         try await waitUntil { client.liveChannel != nil }
         #expect(client.liveChannel != nil)
 
@@ -282,8 +288,10 @@ struct VsockGuestClientTests {
 
         client.start { _ in }
 
-        // Wait for the loop to reach terminal state.
-        try await Task.sleep(for: .milliseconds(300))
+        // Wait (event-driven) for the provider to be invoked once; the
+        // permanent failure terminates the loop, so the count never climbs
+        // past 1.
+        try await provideCounter.changed.wait { provideCounter.value >= 1 }
         #expect(provideCounter.value == 1)
 
         // Re-start — must be a no-op because stopped == true.

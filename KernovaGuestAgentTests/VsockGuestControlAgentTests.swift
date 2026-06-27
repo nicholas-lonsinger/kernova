@@ -66,7 +66,8 @@ struct VsockGuestControlAgentTests {
         heartbeatInterval: Duration? = nil,
         unresponsiveAfter: Duration? = nil,
         terminateAfter: Duration? = nil,
-        onPolicy: (@Sendable (Kernova_V1_PolicyUpdate) -> Void)? = nil
+        onPolicy: (@Sendable (Kernova_V1_PolicyUpdate) -> Void)? = nil,
+        onStateChange: (@Sendable (HostConnectionState) -> Void)? = nil
     ) -> VsockGuestControlAgent {
         let provided = AtomicInt()
         let client = VsockGuestClient(
@@ -81,7 +82,8 @@ struct VsockGuestControlAgentTests {
             heartbeatInterval: heartbeatInterval ?? Self.testHeartbeat,
             unresponsiveAfter: unresponsiveAfter ?? Self.watchdogDisabledUnresponsive,
             terminateAfter: terminateAfter ?? Self.watchdogDisabledTerminate,
-            onPolicy: onPolicy
+            onPolicy: onPolicy,
+            onStateChange: onStateChange
         )
     }
 
@@ -243,11 +245,13 @@ struct VsockGuestControlAgentTests {
 
         // Short unresponsive window, long terminate window: the watchdog flags
         // "unresponsive" without tearing the channel down during the test.
+        let states = StateBox()
         let agent = makeAgent(
             agentFd: agentFd,
             heartbeatInterval: .milliseconds(50),
             unresponsiveAfter: .milliseconds(150),
-            terminateAfter: .seconds(3_600))
+            terminateAfter: .seconds(3_600),
+            onStateChange: { states.record($0) })
         defer { agent.stop() }
         agent.start()
 
@@ -255,7 +259,7 @@ struct VsockGuestControlAgentTests {
         // Host stays silent (sends nothing): liveness needs a first inbound frame
         // to start its clock, so send one Hello, then go quiet.
         try host.send(makeHostHelloFrame())
-        try await waitUntil { agent.connectionState == .unresponsive }
+        try await states.changed.wait { states.value == .unresponsive }
     }
 
     // MARK: - Liveness teardown + reconnect
@@ -329,6 +333,20 @@ struct VsockGuestControlAgentTests {
             changed.notify()
         }
         var value: Kernova_V1_PolicyUpdate? { lock.withLock { storedValue } }
+    }
+
+    /// Lock-protected box recording the latest connection state delivered via
+    /// the agent's `onStateChange` callback.
+    private final class StateBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var storedValue: HostConnectionState?
+        /// Fires on every `record`; await it instead of polling `value`.
+        let changed = AsyncGate()
+        func record(_ s: HostConnectionState) {
+            lock.withLock { storedValue = s }
+            changed.notify()
+        }
+        var value: HostConnectionState? { lock.withLock { storedValue } }
     }
 
     @Test("Inbound PolicyUpdate is forwarded to the onPolicy callback")
