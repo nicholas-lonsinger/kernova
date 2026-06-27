@@ -81,6 +81,18 @@ Preferred mechanisms, in order:
    *inline* data that would otherwise risk the OS paste deadline) may we stage to disk and serve
    via a memory-mapped read.
 
+**A serialized container (a directory archive) is no exception.** Moving a directory requires
+serializing the tree (§6 fidelity, §11 AppleArchive), but the serialization must *itself* stream —
+source-tree → archive bytes → wire → extracted destination-tree — with **no full-size archive ever
+landing whole on disk** at either end, and never the extracted tree left coexisting with its own
+archive. A folder archived eagerly at copy (a standing duplicate of the source) and a received `.aar`
+staged in full before extraction are both the "reflexive intermediate copy" forbidden above; at worst
+they stack a complete copy of the payload on *both* sides on top of the destination write. **Kernova's
+own on-disk footprint for any transfer must approach zero beyond the destination file** — an
+intermediate that scales with payload size is a defect to dissolve, not a shortcut to keep (the §12
+"smarter software earns its keep" case). Integrity (§7) is kept by hashing **inline** as bytes stream,
+not by materializing the whole archive to hash it.
+
 Honest caveats this principle does **not** waive:
 
 - A **file paste must produce a real file at the destination.** That write is disk — but native
@@ -93,7 +105,7 @@ Honest caveats this principle does **not** waive:
 
 ### 3. Pay on consume (laziness is the rule)
 
-**Never read, hash, copy, or materialize a payload until something actually consumes it.**
+**Never read, hash, copy, archive, or materialize a payload until something actually consumes it.**
 Inbound content is published as a metadata-only placeholder; bytes are pulled only when a
 destination pastes that representation, or when the window must render a preview (a separate,
 bounded pull — see §5).
@@ -102,6 +114,9 @@ bounded pull — see §5).
   never pastes is forbidden.
 - This applies in **both directions**, including host "Copy to Mac": the host pasteboard write
   must be lazy (a provider), not an eager read at the moment the button is clicked.
+- **Serializing a directory into an archive is materialization.** Building a folder's `.aar` at
+  copy time — a standing, full-size on-disk duplicate of the source paid before any paste — is the
+  forbidden eager case, not an exception to it. Defer the archive to consume, and stream it (§2).
 
 ### 4. One data plane; gating is a checkpoint, not a fork
 
@@ -267,6 +282,7 @@ fix, not just whether to fix it. (macOS-guest issues only; Linux/Windows out of 
 | **#394** — inline payloads SHA-256'd redundantly and on the main thread | §8 Keep the thread free, §7 Integrity | Remove the **redundant** hashes and move the unavoidable one off the main actor (§8). Do **not** drop the end-to-end verify hash (§7) — redundant work goes, the only integrity check stays. |
 | **#377** — throughput is software-bound; validate on real vsock, then cut per-chunk overhead | Ordering (marginal overhead), Engineering practices | Capability is already met; this is pure §-ordering step 2. **Measure on real vsock first** (verify at the seam), then cut the avoidable per-chunk copy. Never ship a chunk-size bump without co-scaling the window. |
 | **#376** — File Provider domain for large-file paste (no 60 s deadline) | §2 Disk-as-fallback (on-demand), §13 OS deadlines, §11 Sandbox-forward | This is the canonical §2 mechanism: instant placeholder, on-demand `fetchContents`, write once at the destination, native progress, no deadline. Also kills #371's 2×-disk. Extension can't open vsock — relay through the agent (§11). |
+| **#422** — a directory crosses as a fully materialized archive, staged whole on **both** sides (≈3N peak disk) | §2 (no reflexive intermediate copy), §3 (pay on consume), ordering (bounded peak), §12 (smarter wins) | Stream the (de)serialization both ways and hash **inline** (§7); defer source archiving to paste via a negotiated offer that doesn't need exact size/SHA up front. Kernova's own disk for the transfer must approach zero beyond the destination. Sequence **after** the File Provider arc (#376 + D2). |
 | **#354** — clipboard transfer progress UI (bar + ring) | §13 Legibility, §9 bidirectional, §5 preview-only | Drive both indicators off existing transport progress, both directions; clear on terminal states. Progress is a window affordance — it must not touch the data path (§5). |
 | **#82** — opt-in automatic clipboard passthrough | §4 One data plane | Passthrough is the gate-less mode of the **same** path. Implement it as a change to *when consume is authorized*, not as a parallel transport. |
 | **#145** — per-VM auth on the vsock listener | §10 Trust boundary | Required before non-trusted guest workloads; the host must authenticate the guest per VM. |
