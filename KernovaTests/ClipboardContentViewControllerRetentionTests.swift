@@ -40,7 +40,7 @@ struct ClipboardContentViewControllerRetentionTests {
     /// isolated provider registry, and an `AsyncGate` already wired to the
     /// registry's retain/release signal so a test awaits the registration event
     /// rather than polling `countForTesting` — the one-shot effect a starved CI
-    /// MainActor can miss inside a poll deadline (memory `ci-test-timings`).
+    /// MainActor can miss inside a poll deadline (CLAUDE.md "Async waits in tests").
     ///
     /// The caller still owns teardown (`pasteboard.releaseGlobally()` and
     /// `registry.releaseAllForTesting()` in `defer`), since a `defer` only fires

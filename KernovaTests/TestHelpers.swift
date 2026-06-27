@@ -42,7 +42,7 @@ func makeRawSocketPair() throws -> (Int32, Int32) {
 /// Polls `predicate` every 50 ms until it returns `true` or `timeout` elapses.
 ///
 /// Default deadline is generous (5 s) to absorb MainActor scheduling jitter on
-/// CI runners. See memory `ci-test-timings`. Prefer the
+/// CI runners. See CLAUDE.md "Async waits in tests". Prefer the
 /// event-driven `AsyncGate` below for new timing-sensitive waits — polling is
 /// retained for predicates with no underlying signal to await; the 50 ms tick
 /// (up from 10 ms) keeps idle pollers from adding avoidable MainActor churn.
@@ -217,7 +217,7 @@ final class AsyncGate: @unchecked Sendable {
 /// adds **zero** wake-ups to the shared (and, on CI, contended) MainActor, and
 /// `timeout` is a stuck-condition backstop the happy path never reaches rather
 /// than the success deadline. This is the fix for the poll-budget flakes in the
-/// flaky-CI investigation; see memory `ci-test-timings`.
+/// flaky-CI investigation; see CLAUDE.md "Async waits in tests".
 ///
 /// The predicate must read every value it inspects through an `@Observable`
 /// getter so tracking registers a dependency, and it must be **side-effect-free**
