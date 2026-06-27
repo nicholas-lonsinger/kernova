@@ -1,13 +1,13 @@
 import AppKit
 import Foundation
-import KernovaKit
 import Testing
 
 @testable import Kernova
+@testable import KernovaKit
 
 /// Verifies the host "Copy to Mac" provider-retention lifecycle: each written
 /// item's lazy data provider is retained in the app-scoped
-/// `ClipboardCopyProviderRegistry` (not on the per-window controller) so a later
+/// `LazyClipboardProviderRegistry` (not on the per-window controller) so a later
 /// paste is served by a live object even after the window — and its controller —
 /// is gone, and the bytes are produced on demand.
 ///
@@ -46,10 +46,10 @@ struct ClipboardContentViewControllerRetentionTests {
     /// `registry.releaseAllForTesting()` in `defer`), since a `defer` only fires
     /// at the end of the scope that declares it.
     private func makeCopyToMacHarness() -> (
-        pasteboard: NSPasteboard, registry: ClipboardCopyProviderRegistry, retained: AsyncGate
+        pasteboard: NSPasteboard, registry: LazyClipboardProviderRegistry, retained: AsyncGate
     ) {
         let pasteboard = NSPasteboard(name: NSPasteboard.Name("KernovaTest-\(UUID().uuidString)"))
-        let registry = ClipboardCopyProviderRegistry()
+        let registry = LazyClipboardProviderRegistry()
         let retained = AsyncGate()
         registry.onChangeForTesting = { retained.notify() }
         return (pasteboard, registry, retained)
@@ -125,44 +125,36 @@ struct ClipboardContentViewControllerRetentionTests {
         let textType = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
         #expect(pasteboard.data(forType: textType) == Data("durable bytes".utf8))
     }
-}
 
-/// Focused tests for the registry's retain/release bookkeeping, independent of
-/// the controller and a live pasteboard.
-@Suite("ClipboardCopyProviderRegistry")
-@MainActor
-struct ClipboardCopyProviderRegistryTests {
-    private func makeProvider() -> LazyClipboardDataProvider {
-        LazyClipboardDataProvider(provide: { _ in nil }, onFinished: { _ in })
-    }
+    @Test("a forced pasteboard write failure retains no provider (#405)")
+    func writeFailureRetainsNothing() async throws {
+        let registry = LazyClipboardProviderRegistry()
+        defer { registry.releaseAllForTesting() }
+        // The concrete NSPasteboard can't be made to fail; the write-only seam can.
+        let pasteboard = FakeWritePasteboard()
+        pasteboard.failNextWrite = true
+        let wrote = AsyncGate()
+        pasteboard.onWrite = { wrote.notify() }
 
-    @Test("release drops one provider and leaves the rest")
-    func releaseDropsOne() {
-        let registry = ClipboardCopyProviderRegistry()
-        let a = makeProvider()
-        let b = makeProvider()
-        registry.retain([a, b])
-        #expect(registry.countForTesting == 2)
+        let service = FakeClipboardService(content: ClipboardContent(text: "doomed write"))
+        let instance = makeInstance()
+        instance.clipboardService = service
+        let vc = ClipboardContentViewController(
+            instance: instance, viewModel: makeViewModel(),
+            writePasteboard: pasteboard, providerRegistry: registry)
 
-        registry.release(a)
-        #expect(registry.countForTesting == 1)
-        registry.release(b)
         #expect(registry.countForTesting == 0)
-    }
+        // → copyToMac → finishCopyToMac → clearContents() then writeObjects(→ false).
+        vc.copy(nil)
+        try await wrote.wait { pasteboard.writeAttempts == 1 }
 
-    @Test("a provider's pasteboardFinishedWithDataProvider releases it from the registry")
-    func finishedReleasesFromRegistry() {
-        let registry = ClipboardCopyProviderRegistry()
-        let provider = LazyClipboardDataProvider(
-            provide: { _ in nil },
-            onFinished: { registry.release($0) })
-        registry.retain([provider])
-        #expect(registry.countForTesting == 1)
-
-        // The drop-on-finished wiring the controller relies on, exercised
-        // directly (NSPasteboard fires this on the main run loop in production).
-        provider.pasteboardFinishedWithDataProvider(NSPasteboard.withUniqueName())
+        // retain() runs only after a successful writeObjects, so the failed write
+        // leaves the registry empty — the providers deallocate with the copy Task's
+        // local array, never getting a finish callback (so no rollback is needed).
         #expect(registry.countForTesting == 0)
+        // clearContents ran before the failed write — a latent wipe-on-failure of
+        // the real clipboard, tracked as a follow-up and observable via this seam.
+        #expect(pasteboard.clearCount == 1)
     }
 }
 
@@ -278,4 +270,35 @@ private final class FakeClipboardService: ClipboardServicing {
     func clearBuffer() { clipboardContent = .empty }
     // materializeForPreview / materializeForCopy use the protocol-extension
     // defaults (no-op / return clipboardContent unchanged).
+}
+
+/// A `HostWritePasteboard` whose `writeObjects` can be forced to fail, so the
+/// host "Copy to Mac" write-failure path is exercisable — the concrete
+/// `NSPasteboard` is a class cluster that can't be made to fail.
+///
+/// Not `Sendable`: single-threaded test use driven on the main actor. `onWrite`
+/// fires inside `writeObjects` so a test can await the write attempt event-driven
+/// rather than polling.
+private final class FakeWritePasteboard: HostWritePasteboard {
+    private(set) var clearCount = 0
+    private(set) var writeAttempts = 0
+    var failNextWrite = false
+    var onWrite: (() -> Void)?
+    private var stored: [NSPasteboard.PasteboardType: Data] = [:]
+
+    @discardableResult func clearContents() -> Int {
+        clearCount += 1
+        stored.removeAll()
+        return clearCount
+    }
+
+    func writeObjects(_ objects: [any NSPasteboardWriting]) -> Bool {
+        writeAttempts += 1
+        let shouldFail = failNextWrite
+        failNextWrite = false
+        onWrite?()
+        return !shouldFail
+    }
+
+    func data(forType type: NSPasteboard.PasteboardType) -> Data? { stored[type] }
 }

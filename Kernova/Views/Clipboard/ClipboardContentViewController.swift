@@ -153,18 +153,19 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
     /// Destination pasteboard for "Copy to Mac".
     ///
-    /// `.general` in production; tests inject a private `NSPasteboard(name:)` so
-    /// they exercise the write/retention path without touching the developer's
-    /// real clipboard.
-    private let writePasteboard: NSPasteboard
+    /// `.general` in production; tests inject a private `NSPasteboard(name:)` to
+    /// exercise the write/retention path without touching the developer's real
+    /// clipboard, or a `HostWritePasteboard` fake to force a write failure (the
+    /// concrete `NSPasteboard` can't be made to fail). See `HostWritePasteboard`.
+    private let writePasteboard: any HostWritePasteboard
 
     /// Process-lifetime owner of the lazy data providers a "Copy to Mac" writes.
     ///
     /// RATIONALE: a promised pasteboard item can be pasted long after this
     /// window closes (and the window auto-closes when the VM stops), so the
     /// providers must outlive the controller — they live in this app-scoped
-    /// registry rather than on `self`. See `ClipboardCopyProviderRegistry`.
-    private let providerRegistry: ClipboardCopyProviderRegistry
+    /// registry rather than on `self`. See `LazyClipboardProviderRegistry`.
+    private let providerRegistry: LazyClipboardProviderRegistry
 
     /// First-file-wins gate shared by one promise receipt's per-file
     /// completions (the buffer models a single pasteboard item).
@@ -175,8 +176,8 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
     init(
         instance: VMInstance, viewModel: VMLibraryViewModel,
-        writePasteboard: NSPasteboard = .general,
-        providerRegistry: ClipboardCopyProviderRegistry = .shared,
+        writePasteboard: any HostWritePasteboard = NSPasteboard.general,
+        providerRegistry: LazyClipboardProviderRegistry = .shared,
         editDebounceInterval: Duration = .milliseconds(200)
     ) {
         self.instance = instance
@@ -735,13 +736,12 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 let provider = LazyClipboardDataProvider(
                     provide: spec.provide,
                     onFinished: { provider in
-                        // RATIONALE: NSPasteboard fires
-                        // pasteboardFinishedWithDataProvider on the main run loop,
-                        // so this closure already runs on the main actor — assert
-                        // it to drop the retained provider without an async hop.
-                        // Captures the registry, not the VC, so the provider's
-                        // lifetime is decoupled from this controller.
-                        MainActor.assumeIsolated { registry.release(provider) }
+                        // The registry is internally locked, so this nonisolated
+                        // callback (fired by NSPasteboard on the main run loop)
+                        // drops the provider directly. Captures the registry, not
+                        // the VC, so the provider's lifetime is decoupled from this
+                        // controller.
+                        registry.release(provider)
                     })
                 item.setDataProvider(provider, forTypes: spec.types)
                 providers.append(provider)
@@ -792,72 +792,82 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     nonisolated static func hostPasteboardItems(
         for content: ClipboardContent, generation: UInt64, staging: ClipboardFileStaging
     ) async -> [PasteboardItemSpec] {
+        // The grouping decision (one shared inline item; one item per file
+        // payload; UTI dedup) is the shared planner — the single source of truth
+        // both sides of the bridge use. This side maps each planned item to a
+        // lazy `PasteboardItemSpec`, staging file URLs eagerly (the temporary
+        // bridge until the File Provider transport lands) while deferring inline
+        // byte reads to paste time.
+        let descriptors = content.representations.map {
+            ClipboardRepresentationDescriptor(
+                uti: $0.uti, filename: $0.filename,
+                isInline: $0.shouldInlineOnPasteboard, isPromisable: true)
+        }
+        let plan = ClipboardPasteboardItemPlan.plan(for: descriptors)
+
         var specs: [PasteboardItemSpec] = []
+        for item in plan.items {
+            if item.types.contains(where: \.isFileURL) {
+                // A file payload — one item promising exactly one `.fileURL` (plus
+                // inline image bytes for an image file). All of an item's types
+                // share one backing rep. Same-named files get distinct staged URLs
+                // from `ClipboardFileStaging`; the `.fileURL` is resolved now (eager
+                // staging), the image bytes served on demand.
+                let representation = content.representations[item.types[0].representationIndex]
+                var types: [NSPasteboard.PasteboardType] = []
+                // The planner emits the content (image) UTI before `.fileURL` iff the
+                // rep inlines — promise that flavor from the same durable staged file.
+                let imageType = item.types.first { !$0.isFileURL }
+                    .map { NSPasteboard.PasteboardType($0.uti) }
+                if let imageType { types.append(imageType) }
 
-        // One inline item promising every inline (filename-less) representation.
-        // The bytes are read lazily — only when a destination pastes that type.
-        var inlineByType: [NSPasteboard.PasteboardType: ClipboardContent.Representation] = [:]
-        var inlineTypes: [NSPasteboard.PasteboardType] = []
-        for representation in content.inlineRepresentations
-        where representation.shouldInlineOnPasteboard {
-            let type = NSPasteboard.PasteboardType(rawValue: representation.uti)
-            // First representation per UTI wins (representations are richest-first),
-            // matching the guest agent's `promisedItems` dedup direction so the same
-            // content yields the same pasteboard item on both sides of the bridge.
-            if inlineByType[type] == nil {
-                inlineByType[type] = representation
-                inlineTypes.append(type)
-            }
-        }
-        if !inlineTypes.isEmpty {
-            // Snapshot to a `let` so the @Sendable provider closure captures an
-            // immutable map rather than the mutable `var` built above.
-            let inlineReps = inlineByType
-            specs.append(
-                PasteboardItemSpec(types: inlineTypes) { type in
-                    inlineReps[type].flatMap(inlineData(for:))
-                })
-        }
+                // Stage the bytes into the window's launch-swept root and promise
+                // THAT url: a file payload arrives as a `.file` whose `fileURL`
+                // points into the service's transient staging (swept on VM stop),
+                // whereas the adopted `stagedURL` outlives the VM connection. The
+                // image flavor must read the same durable file — reading
+                // `representation.fileURL` lazily would vend empty image bytes once
+                // the transient file is swept, the very window-survival case the
+                // provider registry exists to support.
+                let stagedURL = stagedFileURL(
+                    for: representation, generation: generation, staging: staging)
+                let fileURLData = stagedURL.map { Data($0.absoluteString.utf8) }
+                if fileURLData != nil { types.append(.fileURL) }
 
-        // One item per file payload — each promises exactly one `.fileURL` (plus
-        // inline image bytes for an image file). Same-named files get distinct
-        // staged URLs from `ClipboardFileStaging`. The `.fileURL` is resolved now
-        // (eager staging); the image bytes are served on demand.
-        for representation in content.filePayloads {
-            var types: [NSPasteboard.PasteboardType] = []
-            let imageType: NSPasteboard.PasteboardType? =
-                representation.shouldInlineOnPasteboard
-                ? NSPasteboard.PasteboardType(rawValue: representation.uti) : nil
-            if let imageType { types.append(imageType) }
-
-            // Stage the bytes into the window's launch-swept root now and promise
-            // THAT url: a file payload arrives as a `.file` whose `fileURL` points
-            // into the service's transient staging (swept on VM stop), whereas the
-            // adopted `stagedURL` outlives the VM connection. The image flavor must
-            // read the same durable file — reading `representation.fileURL` lazily
-            // would vend empty image bytes once the transient file is swept, in the
-            // very window-survival case the provider registry exists to support.
-            let stagedURL = stagedFileURL(
-                for: representation, generation: generation, staging: staging)
-            let fileURLData = stagedURL.map { Data($0.absoluteString.utf8) }
-            if fileURLData != nil { types.append(.fileURL) }
-
-            guard !types.isEmpty else { continue }
-            specs.append(
-                PasteboardItemSpec(types: types) { type in
-                    if type == .fileURL { return fileURLData }
-                    if type == imageType {
-                        if let stagedURL,
-                            let data = try? Data(contentsOf: stagedURL, options: .mappedIfSafe)
-                        {
-                            return data
+                guard !types.isEmpty else { continue }
+                specs.append(
+                    PasteboardItemSpec(types: types) { type in
+                        if type == .fileURL { return fileURLData }
+                        if type == imageType {
+                            if let stagedURL,
+                                let data = try? Data(contentsOf: stagedURL, options: .mappedIfSafe)
+                            {
+                                return data
+                            }
+                            // Staging produced no durable file — fall back to the
+                            // rep's own bytes (resident, or a best-effort URL read).
+                            return inlineData(for: representation)
                         }
-                        // Staging produced no durable file — fall back to the rep's
-                        // own bytes (resident, or a best-effort read of its URL).
-                        return inlineData(for: representation)
-                    }
-                    return nil
-                })
+                        return nil
+                    })
+            } else {
+                // The shared inline item: promise every inline rep's content UTI,
+                // reading the bytes lazily only when a destination pastes that type.
+                var inlineByType: [NSPasteboard.PasteboardType: ClipboardContent.Representation] = [:]
+                var inlineTypes: [NSPasteboard.PasteboardType] = []
+                for promised in item.types {
+                    let type = NSPasteboard.PasteboardType(promised.uti)
+                    inlineByType[type] = content.representations[promised.representationIndex]
+                    inlineTypes.append(type)
+                }
+                // Snapshot to a `let` so the @Sendable provider closure captures an
+                // immutable map rather than the mutable `var` built above.
+                let inlineReps = inlineByType
+                specs.append(
+                    PasteboardItemSpec(types: inlineTypes) { type in
+                        inlineReps[type].flatMap(inlineData(for:))
+                    })
+            }
         }
         return specs
     }
@@ -1251,3 +1261,20 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         return stack
     }
 }
+
+/// The narrow slice of `NSPasteboard` the "Copy to Mac" write path needs, so a
+/// test can substitute a fake that forces `writeObjects` to fail.
+///
+/// `NSPasteboard` is a class cluster with no public initializer and can't be
+/// subclassed, so its write can't be made to fail from a test. This write-only
+/// seam (clear, an objects-write returning `Bool`, and a read-back for
+/// assertions) is deliberately separate from the guest agent's richer
+/// `Pasteboard` protocol, which also carries poll/read members the host write
+/// path never uses. `NSPasteboard` satisfies all three requirements as-is.
+protocol HostWritePasteboard: AnyObject {
+    @discardableResult func clearContents() -> Int
+    func writeObjects(_ objects: [any NSPasteboardWriting]) -> Bool
+    func data(forType type: NSPasteboard.PasteboardType) -> Data?
+}
+
+extension NSPasteboard: HostWritePasteboard {}
