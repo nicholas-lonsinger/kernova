@@ -67,8 +67,8 @@ final class ClipboardCopyProviderRegistry {
 
     /// Fired after every `retain`/`release`, so a test can drive an `AsyncGate`
     /// off the registration/finish signal instead of polling `countForTesting` on
-    /// the MainActor — the timing-sensitive poll the `ci-test-timings` flakes
-    /// trace back to. `releaseAllForTesting` is teardown-only and deliberately
+    /// the MainActor — the timing-sensitive poll the CI MainActor-jitter
+    /// flakes trace back to. `releaseAllForTesting` is teardown-only and deliberately
     /// doesn't fire it (no waiter is armed during a test's `defer`).
     var onChangeForTesting: (() -> Void)?
 
