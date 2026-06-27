@@ -1142,7 +1142,7 @@ struct VsockClipboardServiceTests {
                     )
                 ],
                 isConcealed: true))
-        try await waitUntil { service.clipboardContent.representations.first?.isPendingRemote == true }
+        try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
 
         // The published content is flagged concealed so the window hides it.
         #expect(service.clipboardContent.isConcealed)

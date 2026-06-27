@@ -202,11 +202,13 @@ struct ClipboardContentViewControllerEditTests {
     @Test("a keystroke burst commits the buffer to the model off-actor after the debounce")
     func debouncedCommitLandsInModel() async throws {
         let service = FakeClipboardService(content: .empty)
+        let committed = AsyncGate()
+        service.onChangeForTesting = { committed.notify() }
         let vc = makeController(service: service, debounce: .milliseconds(1))
 
         vc.setEditorTextForTesting("hello off-actor")
 
-        try await waitUntil { service.clipboardContent == ClipboardContent(text: "hello off-actor") }
+        try await committed.wait { service.clipboardContent == ClipboardContent(text: "hello off-actor") }
     }
 
     @Test("flushPendingEdit commits the latest text before the debounce fires")
@@ -253,7 +255,16 @@ struct ClipboardContentViewControllerEditTests {
 /// live VM transport.
 @MainActor
 private final class FakeClipboardService: ClipboardServicing {
-    var clipboardContent: ClipboardContent
+    var clipboardContent: ClipboardContent {
+        didSet { onChangeForTesting?() }
+    }
+
+    /// Fires after each post-init `clipboardContent` write.
+    ///
+    /// Lets a test `AsyncGate` wake on the controller's debounced off-actor commit
+    /// instead of polling.
+    var onChangeForTesting: (() -> Void)?
+
     var isConnected: Bool = true
     var supportsBinaryRepresentations: Bool = true
     var lastTransferIssue: ClipboardTransferIssue?
