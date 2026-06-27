@@ -43,6 +43,12 @@ final class VsockClipboardService: ClipboardServicing {
     /// successful transfer in either direction.
     private(set) var lastTransferIssue: ClipboardTransferIssue?
 
+    /// The clipboard transfer currently being shown (most-significant in-flight
+    /// transfer past the reveal delay), or `nil`.
+    ///
+    /// Drives the window's bottom bar and the toolbar button's under-bar.
+    private(set) var transferProgress: ClipboardTransferProgress?
+
     var supportsBinaryRepresentations: Bool { true }
 
     // MARK: - Private state
@@ -56,6 +62,27 @@ final class VsockClipboardService: ClipboardServicing {
     ///
     /// Lowered in tests to drive the timeout-resolves-the-pull path.
     private let lazyPullTimeout: Duration
+
+    /// Off-main authority for in-flight transfer byte counts; projected onto
+    /// `transferProgress` via coalesced main-actor hops.
+    private let progress = ClipboardTransferProgressTracker()
+
+    /// Per-transfer reveal timers: a transfer only shows a bar once its timer
+    /// fires while it's still active, so a sub-`progressRevealDelay` transfer
+    /// never flashes.
+    ///
+    /// Cancelled/cleared at each transfer's terminal.
+    private var revealTasks: [UInt64: Task<Void, Never>] = [:]
+
+    /// How long a transfer must keep running before its progress bar appears.
+    ///
+    /// Lowered to `.zero` in tests to drive the shown path, raised to never-fire
+    /// to drive the no-show path.
+    private let progressRevealDelay: Duration
+
+    /// Default reveal delay: long enough that instant clipboard events never flash
+    /// a bar, short enough that a genuinely slow transfer surfaces promptly.
+    static let defaultProgressRevealDelay: Duration = .milliseconds(300)
 
     private var sender: ClipboardStreamSender?
     private var receiver: ClipboardStreamReceiver?
@@ -149,14 +176,18 @@ final class VsockClipboardService: ClipboardServicing {
     ///     `nil` uses the real volume free-space query.
     ///   - lazyPullTimeout: backstop for a pull the peer never answers while the
     ///     channel stays open; defaults to the production value, lowered in tests.
+    ///   - progressRevealDelay: how long a transfer must run before its progress
+    ///     bar appears; defaults to the production value, overridden in tests.
     init(
         channel: VsockChannel, label: String,
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
-        lazyPullTimeout: Duration = ClipboardStreamTuning.lazyPullTimeout
+        lazyPullTimeout: Duration = ClipboardStreamTuning.lazyPullTimeout,
+        progressRevealDelay: Duration = VsockClipboardService.defaultProgressRevealDelay
     ) {
         self.channel = channel
         self.label = label
         self.lazyPullTimeout = lazyPullTimeout
+        self.progressRevealDelay = progressRevealDelay
         self.staging = ClipboardFileStaging(
             label: "host-\(label)", freeSpaceProvider: freeSpaceProvider)
     }
@@ -213,8 +244,76 @@ final class VsockClipboardService: ClipboardServicing {
         pendingOutbound = nil
         currentOutboundGeneration.set(0)
         dropInboundPromise()
+        for task in revealTasks.values { task.cancel() }
+        revealTasks.removeAll()
+        progress.clearAll()
+        transferProgress = nil
         staging.sweep()
         Self.logger.notice("Vsock clipboard service stopped for '\(self.label, privacy: .public)'")
+    }
+
+    // MARK: - Transfer progress
+
+    /// Reacts to a tracker `record` outcome (called off-main from the sender /
+    /// receiver progress callbacks) by scheduling the right main-actor work: arm
+    /// the reveal timer on the first chunk, or run a coalesced flush.
+    nonisolated private func scheduleProgressFollowUp(
+        _ outcome: ClipboardTransferProgressTracker.RecordOutcome, transferID: UInt64
+    ) {
+        switch outcome {
+        case .created:
+            Task { @MainActor [weak self] in self?.armReveal(transferID) }
+        case .updatedScheduleFlush:
+            Task { @MainActor [weak self] in self?.flushTransferProgress() }
+        case .updatedSuppressed:
+            break
+        }
+    }
+
+    /// Arms a transfer's reveal timer once; when it fires the transfer becomes
+    /// visible only if it's still active (a faster transfer already finished, so
+    /// `reveal` returns false and nothing shows).
+    @MainActor private func armReveal(_ id: UInt64) {
+        guard revealTasks[id] == nil else { return }
+        let delay = progressRevealDelay
+        revealTasks[id] = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: delay)
+            guard let self, !Task.isCancelled else { return }
+            // The timer has fired, so it is no longer a pending timer worth
+            // cancelling — drop our own slot. This matters when the reveal Task
+            // raced ahead of `finishProgress` (a sub-delay transfer that finished
+            // first, so `armReveal` ran *after* the terminal cleared the slot):
+            // `reveal` then returns false and nothing shows, but `finishProgress`
+            // won't clear the slot again, so the task must clear it here or
+            // `revealTasks` would accumulate a dead entry per such transfer. In
+            // the common case (terminal cancels a still-pending timer) the guard
+            // above already returned. Keeps `revealTasks` holding only live timers.
+            self.revealTasks[id] = nil
+            if self.progress.reveal(id) { self.refreshTransferProgress() }
+        }
+    }
+
+    /// Coalesced-flush path: clears the conflation flag and republishes.
+    @MainActor private func flushTransferProgress() { publish(progress.consumeFlush()) }
+
+    /// Reveal/finish refresh path: republishes without touching the flush flag.
+    @MainActor private func refreshTransferProgress() { publish(progress.projection()) }
+
+    /// Publishes a new projection, skipping the redundant write (and the spurious
+    /// observation it would fire) when nothing changed.
+    @MainActor private func publish(_ next: ClipboardTransferProgress?) {
+        if next != transferProgress { transferProgress = next }
+    }
+
+    /// Clears a transfer's progress at its terminal (success or abort): the single
+    /// inbound clear-point (after the pull's `await`) and the outbound `onComplete`.
+    ///
+    /// Cancels the reveal timer so a just-finished transfer can't reappear.
+    @MainActor private func finishProgress(_ id: UInt64) {
+        revealTasks[id]?.cancel()
+        revealTasks[id] = nil
+        progress.finish(id)
+        refreshTransferProgress()
     }
 
     // MARK: - Public API
@@ -394,13 +493,27 @@ final class VsockClipboardService: ClipboardServicing {
         }
 
         let generation = currentOutboundGeneration
+        let xid = request.transferID
+        let label = representation.filename.isEmpty ? nil : representation.filename
         sender?.startTransfer(
             transferID: request.transferID,
             generation: request.generation,
             representation: representation,
             maxAcceptByteCount: request.maxAcceptByteCount,
             isInline: representation.shouldInlineOnPasteboard,
-            isCurrent: { generationValue in generation.isCurrent(generationValue) })
+            isCurrent: { generationValue in generation.isCurrent(generationValue) },
+            // Surface outbound (host→guest) progress. No resurrection gate is
+            // needed here: `onProgress` and the terminal `onComplete` fire in
+            // order on the sender's transfer queue, so no chunk can land after it.
+            onProgress: { [weak self] sent, total in
+                guard let self else { return }
+                let outcome = self.progress.record(
+                    xid, direction: .outbound, bytes: sent, total: total, label: label)
+                self.scheduleProgressFollowUp(outcome, transferID: xid)
+            },
+            onComplete: { [weak self] _ in
+                Task { @MainActor [weak self] in self?.finishProgress(xid) }
+            })
         Self.logger.debug(
             "Streaming clipboard rep \(repIndex, privacy: .public) to '\(self.label, privacy: .public)' (gen=\(request.generation, privacy: .public), \(representation.byteCount, privacy: .public) bytes)"
         )
@@ -658,6 +771,7 @@ final class VsockClipboardService: ClipboardServicing {
             ?? ClipboardStreamTuning.unlimitedAcceptByteCount
         let channel = self.channel
         let backstop = lazyPullTimeout
+        let label = info.filename.isEmpty ? nil : info.filename
         let rep: ClipboardContent.Representation? = await withCheckedContinuation { continuation in
             // A single-resume box: the off-main awaiter, the on-main send-failure
             // catch, and the backstop timeout can all race a channel teardown, so
@@ -667,7 +781,15 @@ final class VsockClipboardService: ClipboardServicing {
             // a pull the guest accepts but never streams while the channel stays
             // open — the host counterpart of the guest's `LazyPullCoordinator.pull`
             // backstop.
-            let pull = PullContinuation(continuation)
+            // The progress-recording closure runs *under* the pull's single-resume
+            // lock (in `noteProgress`), so once the pull resolves no late chunk can
+            // resurrect the bar after `finishProgress` clears it below.
+            let pull = PullContinuation(
+                continuation,
+                onLiveRecord: { [weak self] bytes, total in
+                    self?.progress.record(
+                        transferID, direction: .inbound, bytes: bytes, total: total, label: label)
+                })
             receiver.awaitTransfer(
                 transferID,
                 onComplete: { pull.resume($0) },
@@ -683,8 +805,13 @@ final class VsockClipboardService: ClipboardServicing {
                 },
                 // Re-arm the inactivity backstop on each chunk so a large
                 // still-progressing guest→host transfer (e.g. Copy-to-Mac of a
-                // multi-GB file) is never cut off mid-stream. [large-paste]
-                onProgress: { pull.noteProgress() })
+                // multi-GB file) is never cut off mid-stream, and record byte
+                // progress through the resume gate. [large-paste]
+                onProgress: { [weak self] bytes, total in
+                    guard let outcome = pull.noteProgress(bytesReceived: bytes, totalBytes: total)
+                    else { return }
+                    self?.scheduleProgressFollowUp(outcome, transferID: transferID)
+                })
             pull.armTimeout(
                 Task {
                     // Inactivity backstop: `backstop` is a window, not an absolute
@@ -719,6 +846,10 @@ final class VsockClipboardService: ClipboardServicing {
                 pull.resume(nil)
             }
         }
+        // Every inbound terminal — success, abort, disk-full, stall, timeout,
+        // supersession, teardown — funnels through the `await` above, so this one
+        // line clears the bar for all of them.
+        finishProgress(transferID)
         if rep != nil {
             // A healthy pull clears a stale issue, but a disk-full notice stays
             // visible — another rep may still have failed to arrive.
@@ -815,17 +946,35 @@ private final class PullContinuation: @unchecked Sendable {
     /// Set by `noteProgress` (a chunk landed), consumed by the backstop loop at
     /// each window boundary to re-arm instead of firing.
     private var progressed = false
+    /// Records byte progress into the transfer tracker *under `lock`*, atomically
+    /// with the resolved check, so a chunk landing after the pull resolves can't
+    /// resurrect a cleared progress bar.
+    ///
+    /// Returns the tracker's outcome, or `nil`.
+    private let onLiveRecord: (@Sendable (Int, Int) -> ClipboardTransferProgressTracker.RecordOutcome?)?
 
-    init(_ continuation: CheckedContinuation<ClipboardContent.Representation?, Never>) {
+    init(
+        _ continuation: CheckedContinuation<ClipboardContent.Representation?, Never>,
+        onLiveRecord: (@Sendable (Int, Int) -> ClipboardTransferProgressTracker.RecordOutcome?)? = nil
+    ) {
         self.continuation = continuation
+        self.onLiveRecord = onLiveRecord
     }
 
-    /// Records that the transfer made progress so the backstop loop keeps
-    /// waiting past the next window boundary.
+    /// Records that the transfer made progress so the backstop loop keeps waiting
+    /// past the next window boundary, and records byte progress through the
+    /// tracker.
     ///
-    /// No-op once resolved.
-    func noteProgress() {
-        lock.withLock { if continuation != nil { progressed = true } }
+    /// Returns the tracker outcome the caller should act on, or `nil` once the
+    /// pull has resolved (so no resurrecting follow-up runs).
+    func noteProgress(bytesReceived: Int, totalBytes: Int)
+        -> ClipboardTransferProgressTracker.RecordOutcome?
+    {
+        lock.withLock {
+            guard continuation != nil else { return nil }
+            progressed = true
+            return onLiveRecord?(bytesReceived, totalBytes) ?? nil
+        }
     }
 
     /// Returns (and clears) whether progress occurred since the last check, so

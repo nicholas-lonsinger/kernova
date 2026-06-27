@@ -595,4 +595,79 @@ struct ClipboardStreamTests {
         #expect(harness.collector.abortInfos.first?.code == "request.uti")
         #expect(harness.collector.completedCount == 0)
     }
+
+    // MARK: - Sender progress
+
+    /// `Sendable` recorder for the sender's `onProgress`/`onComplete` callbacks.
+    private final class SenderProgressRecorder: @unchecked Sendable {
+        private let lock = NSLock()
+        private var sentValues: [Int] = []
+        private var totalSeen = 0
+        private var completedSuccess: Bool?
+        let gate = AsyncGate()
+
+        func progress(sent: Int, total: Int) {
+            lock.withLock {
+                sentValues.append(sent)
+                totalSeen = total
+            }
+        }
+        func complete(_ success: Bool) {
+            lock.withLock { completedSuccess = success }
+            gate.notify()
+        }
+        var sent: [Int] { lock.withLock { sentValues } }
+        var total: Int { lock.withLock { totalSeen } }
+        var completion: Bool? { lock.withLock { completedSuccess } }
+    }
+
+    @Test("startTransfer reports monotonic byte progress and completes successfully")
+    func senderReportsProgressAndCompletes() async throws {
+        let harness = try roomyHarness()
+        defer { harness.tearDown() }
+
+        var bytes = Data()
+        for i in 0..<(Self.chunk * 5 + 99) { bytes.append(UInt8((i * 13 + 5) & 0xFF)) }
+        let rep = ClipboardContent.Representation(uti: "public.utf8-plain-text", data: bytes)
+
+        let recorder = SenderProgressRecorder()
+        harness.sender.startTransfer(
+            transferID: 1, generation: 1, representation: rep, maxAcceptByteCount: .max,
+            isInline: true, isCurrent: { _ in true },
+            onProgress: { sent, total in recorder.progress(sent: sent, total: total) },
+            onComplete: { success in recorder.complete(success) })
+
+        try await recorder.gate.wait { recorder.completion != nil }
+        #expect(recorder.completion == true)
+        let sent = recorder.sent
+        #expect(!sent.isEmpty)
+        #expect(sent == sent.sorted())  // non-decreasing
+        #expect(sent.last == bytes.count)  // final == total
+        #expect(recorder.total == bytes.count)  // total constant across callbacks
+        #expect(harness.collector.abortCount == 0)
+    }
+
+    @Test("startTransfer fires onComplete(false) when the requester can't accept the payload")
+    func senderCompletesFalseOnRefusal() async throws {
+        let harness = try roomyHarness()
+        defer { harness.tearDown() }
+
+        var bytes = Data()
+        for i in 0..<(Self.chunk * 3) { bytes.append(UInt8(i & 0xFF)) }
+        let rep = ClipboardContent.Representation(uti: "public.data", data: bytes)
+
+        let recorder = SenderProgressRecorder()
+        // A ceiling below the payload size → refused up front with Abort{disk.full}
+        // before any Begin/chunk, so onComplete(false) fires and onProgress never does.
+        harness.sender.startTransfer(
+            transferID: 2, generation: 1, representation: rep,
+            maxAcceptByteCount: UInt64(bytes.count - 1),
+            isInline: false, isCurrent: { _ in true },
+            onProgress: { sent, total in recorder.progress(sent: sent, total: total) },
+            onComplete: { success in recorder.complete(success) })
+
+        try await recorder.gate.wait { recorder.completion != nil }
+        #expect(recorder.completion == false)
+        #expect(recorder.sent.isEmpty)
+    }
 }

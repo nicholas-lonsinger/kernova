@@ -134,6 +134,50 @@ struct VMToolbarManagerTests {
         #expect(display?.subitems.allSatisfy { !$0.isEnabled } == true)
     }
 
+    // MARK: - Clipboard item
+
+    @Test("makeToolbarItem returns clipboard single-item group (native styling)")
+    func clipboardGroupStructure() {
+        let manager = makeManager()
+        let item = manager.makeToolbarItem(for: NSToolbarItem.Identifier("testClipboard"))
+        let group = item as? NSToolbarItemGroup
+        // A native group (like Suspend) so it gets the standard toolbar pill,
+        // hover highlight, and sizing; the transfer bar is composited into its
+        // image, not overlaid as a custom view.
+        #expect(group != nil)
+        #expect(group?.subitems.count == 1)
+        #expect(group?.label == "Clipboard")
+        #expect(group?.autovalidates == false)
+    }
+
+    @Test("updateClipboardItem disables the clipboard item without a running VM")
+    func clipboardItemDisabledForStoppedInstance() {
+        let instance = makeInstance(status: .stopped)
+        let manager = makeManager(instance: instance)
+        let (toolbar, _, _) = makeToolbar(manager: manager)
+
+        manager.updateToolbarItems(in: toolbar)
+
+        let group =
+            toolbar.items.first { $0.itemIdentifier.rawValue == "testClipboard" }
+            as? NSToolbarItemGroup
+        // canShowClipboard is false (a test instance has no VZVirtualMachine).
+        #expect(group?.subitems.first?.isEnabled == false)
+    }
+
+    @Test("updateClipboardItem disables the clipboard item for a nil instance")
+    func clipboardItemDisabledForNilInstance() {
+        let manager = makeManager(instance: nil)
+        let (toolbar, _, _) = makeToolbar(manager: manager)
+
+        manager.updateToolbarItems(in: toolbar)
+
+        let group =
+            toolbar.items.first { $0.itemIdentifier.rawValue == "testClipboard" }
+            as? NSToolbarItemGroup
+        #expect(group?.subitems.first?.isEnabled == false)
+    }
+
     // MARK: - Preparing State
 
     @Test("checksPreparing=true disables all when isPreparing")

@@ -49,6 +49,16 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     /// row (right-aligned) so the command row stays a clean set of buttons.
     private let indicatorView = ClipboardIndicatorView()
 
+    /// Determinate transfer progress bar, pinned just above the status row.
+    ///
+    /// Shown (and collapsed when idle via `transferBarCollapsed`) by
+    /// `updateTransferProgress`.
+    private let transferProgressBar = NSProgressIndicator()
+    /// Active = the bar is collapsed to zero height (the idle resting state);
+    /// deactivated to reveal the bar at its intrinsic system height.
+    private lazy var transferBarCollapsed = transferProgressBar.heightAnchor.constraint(
+        equalToConstant: 0)
+
     /// Every content view stacked in the content area; exactly one is visible.
     /// `scrollView` (the editable plain-text editor) is first — the default.
     private var contentViews: [NSView] {
@@ -95,6 +105,11 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     private var lastShownIssue: ClipboardTransferIssue?
 
     private var serviceObservation: ObservationLoop?
+    /// Drives only the bottom transfer bar, separate from `serviceObservation`.
+    ///
+    /// Chunk-cadence progress flushes then refresh just the bar — not the full
+    /// `updateUI()`. See `observeServiceChanges()`.
+    private var transferProgressObservation: ObservationLoop?
 
     /// Queue handed to `NSFilePromiseReceiver` for writing promised files;
     /// the completion hops back to the main actor before touching state.
@@ -272,12 +287,21 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         statusDivider.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(statusDivider)
 
+        transferProgressBar.style = .bar
+        transferProgressBar.isIndeterminate = false
+        transferProgressBar.minValue = 0
+        transferProgressBar.maxValue = 1
+        transferProgressBar.doubleValue = 0
+        transferProgressBar.isHidden = true
+        transferProgressBar.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(transferProgressBar)
+
         let statusBar = makeStatusBar()
         statusBar.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(statusBar)
 
         // Vertical order: command bar (top) → divider → content → divider →
-        // status row (bottom).
+        // progress bar → status row (bottom).
         var constraints: [NSLayoutConstraint] = [
             commandBar.topAnchor.constraint(equalTo: container.topAnchor),
             commandBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
@@ -299,7 +323,17 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             statusDivider.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             statusDivider.trailingAnchor.constraint(equalTo: container.trailingAnchor),
 
-            statusBar.topAnchor.constraint(equalTo: statusDivider.bottomAnchor),
+            // The progress bar sits between the divider and the status row, inset
+            // to align with the status row's content. Collapsed to zero height at
+            // rest, so the resting layout is pixel-identical to before.
+            transferProgressBar.topAnchor.constraint(equalTo: statusDivider.bottomAnchor),
+            transferProgressBar.leadingAnchor.constraint(
+                equalTo: container.leadingAnchor, constant: Spacing.medium),
+            transferProgressBar.trailingAnchor.constraint(
+                equalTo: container.trailingAnchor, constant: -Spacing.medium),
+            transferBarCollapsed,
+
+            statusBar.topAnchor.constraint(equalTo: transferProgressBar.bottomAnchor),
             statusBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             statusBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             statusBar.bottomAnchor.constraint(equalTo: container.bottomAnchor),
@@ -438,6 +472,47 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 self?.updateUI()
             }
         )
+
+        // The transfer bar updates at chunk-flush cadence — many times a second
+        // for a multi-GB transfer. Drive it from its own lightweight loop so a
+        // progress flush refreshes only the bar, not the full `updateUI()` (which
+        // re-diffs the content digest and re-triggers lazy preview
+        // materialization). Mirrors the toolbar item's dedicated progress loop.
+        transferProgressObservation = observeRecurring(
+            track: { [weak self] in _ = self?.instance.clipboardService?.transferProgress },
+            apply: { [weak self] in
+                guard let self else { return }
+                self.updateTransferProgress(service: self.instance.clipboardService)
+            }
+        )
+    }
+
+    /// Shows/collapses the bottom transfer bar from the service's `transferProgress`.
+    /// `nil` (no active transfer, or cleared on any terminal state) collapses it, so
+    /// the bar can never get stuck.
+    private func updateTransferProgress(service: ClipboardServicing?) {
+        guard let progress = service?.transferProgress else {
+            // Hide first, then reset the value while hidden so the next transfer
+            // starts from 0 instead of animating down from a stale 100%.
+            transferProgressBar.isHidden = true
+            transferProgressBar.doubleValue = 0
+            transferBarCollapsed.isActive = true
+            transferProgressBar.toolTip = nil
+            return
+        }
+        if transferProgressBar.isHidden {
+            transferBarCollapsed.isActive = false
+            transferProgressBar.isHidden = false
+        }
+        transferProgressBar.doubleValue = progress.fractionComplete
+        transferProgressBar.toolTip = Self.transferTooltip(for: progress)
+    }
+
+    private static func transferTooltip(for progress: ClipboardTransferProgress) -> String {
+        let verb = progress.direction == .inbound ? "Receiving" : "Sending"
+        let done = DataFormatters.formatBytes(UInt64(max(0, progress.bytesTransferred)))
+        let total = DataFormatters.formatBytes(UInt64(max(0, progress.totalBytes)))
+        return "\(verb)… \(done) of \(total)"
     }
 
     private func updateUI() {
@@ -450,6 +525,8 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         commandBar.pasteButton.isEnabled = service != nil
         commandBar.copyButton.isEnabled = hasContent && !isCopyingToMac
         commandBar.clearButton.isEnabled = hasContent
+
+        updateTransferProgress(service: service)
 
         if let service {
             let content = service.clipboardContent

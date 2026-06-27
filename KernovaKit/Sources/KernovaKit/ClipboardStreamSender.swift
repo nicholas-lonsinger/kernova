@@ -70,13 +70,20 @@ public final class ClipboardStreamSender: @unchecked Sendable {
     ///     into `ClipboardStreamBegin.is_inline`.
     ///   - isCurrent: supersession check, evaluated off the caller's actor
     ///     between chunks. Must be safe to call from the transfer queue.
+    ///   - onProgress: fired off the caller's actor after each chunk is handed to
+    ///     the socket, carrying the cumulative `(bytesSent, totalBytes)`.
+    ///   - onComplete: fired off the caller's actor exactly once when the transfer
+    ///     ends, with `success` true only when all bytes were streamed (false on
+    ///     any abort/refusal/channel-death). Lets the owner clear progress UI.
     public func startTransfer(
         transferID: UInt64,
         generation: UInt64,
         representation: ClipboardContent.Representation,
         maxAcceptByteCount: UInt64,
         isInline: Bool,
-        isCurrent: @escaping @Sendable (UInt64) -> Bool
+        isCurrent: @escaping @Sendable (UInt64) -> Bool,
+        onProgress: (@Sendable (_ bytesSent: Int, _ totalBytes: Int) -> Void)? = nil,
+        onComplete: (@Sendable (_ success: Bool) -> Void)? = nil
     ) {
         let transfer = OutboundTransfer(
             transferID: transferID, generation: generation, windowBytes: windowBytes)
@@ -95,7 +102,9 @@ public final class ClipboardStreamSender: @unchecked Sendable {
                 representation: representation,
                 maxAcceptByteCount: maxAcceptByteCount,
                 isInline: isInline,
-                isCurrent: isCurrent
+                isCurrent: isCurrent,
+                onProgress: onProgress,
+                onComplete: onComplete
             )
         }
     }
@@ -167,8 +176,15 @@ public final class ClipboardStreamSender: @unchecked Sendable {
         representation: ClipboardContent.Representation,
         maxAcceptByteCount: UInt64,
         isInline: Bool,
-        isCurrent: @escaping @Sendable (UInt64) -> Bool
+        isCurrent: @escaping @Sendable (UInt64) -> Bool,
+        onProgress: (@Sendable (_ bytesSent: Int, _ totalBytes: Int) -> Void)?,
+        onComplete: (@Sendable (_ success: Bool) -> Void)?
     ) {
+        // `onComplete` must fire on every exit path (success or abort) so the
+        // owner can clear any progress UI; it runs *after* `remove` because this
+        // `defer` is declared later (defers run LIFO).
+        var didComplete = false
+        defer { onComplete?(didComplete) }
         defer { remove(transfer.transferID) }
 
         let totalBytes = representation.byteCount
@@ -271,6 +287,9 @@ public final class ClipboardStreamSender: @unchecked Sendable {
                     })
             else { return }  // channel dead
             offset += chunk.count
+            // Report bytes handed to the socket (not yet acked) so the owner can
+            // surface outbound progress.
+            onProgress?(offset, totalBytes)
         }
 
         let digest = Data(hasher.finalize())
@@ -283,6 +302,9 @@ public final class ClipboardStreamSender: @unchecked Sendable {
                     $0.sha256 = digest
                 }
             })
+        // All bytes were streamed; a failed End-send still counts as success here
+        // (delivery becomes the receiver's stall concern, not a send failure).
+        didComplete = true
     }
 
     /// Writes a frame; returns `false` if the channel is dead (the transfer

@@ -221,8 +221,12 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
             self.armStallTimer(transfer)
             // Tell a parked lazy pull the transfer is alive so it re-arms its
             // inactivity backstop instead of timing out a slow-but-progressing
-            // large transfer. [large-paste]
-            self.deliverProgress(transfer.transferID)
+            // large transfer, and carry the cumulative byte counts for progress
+            // surfacing. [large-paste]
+            self.deliverProgress(
+                transfer.transferID,
+                bytesReceived: transfer.receivedBytes,
+                totalBytes: transfer.totalBytes)
         }
     }
 
@@ -369,7 +373,7 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
         _ transferID: UInt64,
         onComplete: @escaping @Sendable (ClipboardContent.Representation) -> Void,
         onAbort: @escaping @Sendable (ClipboardStreamAbortInfo) -> Void,
-        onProgress: (@Sendable () -> Void)? = nil
+        onProgress: (@Sendable (_ bytesReceived: Int, _ totalBytes: Int) -> Void)? = nil
     ) {
         lock.withLock {
             awaiters[transferID] = Awaiter(
@@ -405,14 +409,14 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
 
     /// Notifies a registered per-transfer awaiter that the transfer made
     /// progress (a chunk was durably written), so a parked lazy pull can re-arm
-    /// its inactivity backstop.
+    /// its inactivity backstop and the owner can surface byte progress.
     ///
     /// Peeks the awaiter without removing it — progress fires repeatedly, unlike
     /// the one-shot complete/abort delivery. A transfer with no registered
     /// awaiter (the eager channel-wide path) has nothing to notify.
-    private func deliverProgress(_ id: UInt64) {
+    private func deliverProgress(_ id: UInt64, bytesReceived: Int, totalBytes: Int) {
         let awaiter = lock.withLock { awaiters[id] }
-        awaiter?.onProgress?()
+        awaiter?.onProgress?(bytesReceived, totalBytes)
     }
 
     /// Delivers a failure to a registered per-transfer awaiter, or the
@@ -583,9 +587,11 @@ public struct ClipboardStreamAbortInfo: Sendable, Equatable {
 private struct Awaiter {
     let onComplete: @Sendable (ClipboardContent.Representation) -> Void
     let onAbort: @Sendable (ClipboardStreamAbortInfo) -> Void
-    /// Fired (off the owning actor) on each durably-written chunk so a blocked
-    /// lazy pull can re-arm its inactivity backstop. `nil` for the eager path.
-    let onProgress: (@Sendable () -> Void)?
+    /// Fired (off the owning actor) on each durably-written chunk, carrying the
+    /// cumulative `(bytesReceived, totalBytes)`, so a blocked lazy pull can re-arm
+    /// its inactivity backstop and the owner can surface transfer progress. `nil`
+    /// for the eager path.
+    let onProgress: (@Sendable (_ bytesReceived: Int, _ totalBytes: Int) -> Void)?
 }
 
 // MARK: - Per-transfer state
