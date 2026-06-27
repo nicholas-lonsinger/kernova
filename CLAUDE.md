@@ -73,6 +73,22 @@ When adding new functionality or modifying existing behavior, include unit tests
 - Reuse shared test helpers and factories (e.g., `makeInstance()`) rather than duplicating setup logic across test files
 - Run the full test suite before committing to ensure nothing is broken
 
+#### Async waits in tests
+
+macos-26 CI runners have heavy `@MainActor` scheduling jitter. With a `waitUntil`/`pollUntil` poll loop, the timeout deadline *is* the pass/fail criterion — so a starved scheduler fails a test whose condition would have become true. **When a test waits for async state that has an underlying signal, make the wait event-driven from the start — do not reach for a poll loop.** With event-driven waits the timeout is only a stuck-condition backstop the happy path never reaches.
+
+Pick the seam by what produces the state (helpers live in `KernovaTests/TestHelpers.swift`, `KernovaGuestAgentTests/TestHelpers.swift`, and `KernovaKit/Tests/KernovaKitTests/StreamTestSupport.swift`):
+
+| Seam | Use when | Notes |
+|------|----------|-------|
+| `waitForChange(until:)` | The predicate reads a production `@Observable` property directly (e.g. `service.clipboardContent`, `service.agentStatus`) | KernovaTests only. Built on `withObservationTracking`: the predicate must be side-effect-free and read every inspected value through an `@Observable` getter on the arming pass, or only the deadline wakes it. |
+| `AsyncGate` (`notify()` + `wait(until:)`) | The signal flows through a test-owned double/recorder | Call `notify()` after each relevant mutation. `@MainActor` in KernovaTests; `nonisolated` + `@Sendable` predicate in the GuestAgent/KernovaKit bundles — keep the copies aligned. |
+| `await` the production `Task` | A production `Task` does the work | Expose it via a `#if DEBUG …ForTesting` seam and `await task.value` instead of polling the flag it flips. |
+
+If the condition is driven by a *single* event a starved scheduler can miss (e.g. one heartbeat that latches a terminal state), drive it *continuously* — a wait conversion alone won't fix that.
+
+Polling (`waitUntil` / `pollUntil`) is acceptable **only** for a genuine no-signal predicate: a negative assertion ("prove nothing arrived"), a filesystem-appearance poll, or an exception-catch predicate. There, use a generous cadence, assert end-state not per-iteration, and add a `RATIONALE:` comment so reviews don't re-flag it.
+
 #### Test-only seams
 
 When a test needs to observe state that is `private` in production, pick the tightest exposure that still works:
