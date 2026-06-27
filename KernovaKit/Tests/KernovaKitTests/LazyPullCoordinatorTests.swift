@@ -17,12 +17,26 @@ struct LazyPullCoordinatorTests {
         var abortInfo: ClipboardStreamAbortInfo? { lock.withLock { abort } }
     }
 
-    /// A `Sendable` tally for counting off-actor `onProgress` callbacks.
+    /// A `Sendable` tally for off-actor `onProgress` callbacks that also captures
+    /// the latest `(bytes, total)` and whether the byte counts were monotonic.
     private final class ProgressCounter: @unchecked Sendable {
         private let lock = NSLock()
         private var count = 0
-        func bump() { lock.withLock { count += 1 } }
+        private var lastBytes = 0
+        private var lastTotalBytes = 0
+        private var monotonic = true
+        func bump(bytes: Int, total: Int) {
+            lock.withLock {
+                if bytes < lastBytes { monotonic = false }
+                count += 1
+                lastBytes = bytes
+                lastTotalBytes = total
+            }
+        }
         var value: Int { lock.withLock { count } }
+        var lastBytesReceived: Int { lock.withLock { lastBytes } }
+        var lastTotal: Int { lock.withLock { lastTotalBytes } }
+        var isMonotonic: Bool { lock.withLock { monotonic } }
     }
 
     /// Runs the blocking `pull` on a global queue so the test's cooperative
@@ -260,7 +274,7 @@ struct LazyPullCoordinatorTests {
                 box.setAbort(info)
                 gate.notify()
             },
-            onProgress: { progress.bump() })
+            onProgress: { bytes, total in progress.bump(bytes: bytes, total: total) })
 
         // 3 full chunks + a partial → 4 chunks → 4 progress callbacks, all of
         // which precede onComplete on the transfer's serial queue.
@@ -274,6 +288,11 @@ struct LazyPullCoordinatorTests {
         try await gate.wait { box.representation != nil }
         #expect(box.representation?.inMemoryData == bytes)
         #expect(progress.value == 4)
+        // The callback carries cumulative bytes: monotonic, constant total, final
+        // == the full payload.
+        #expect(progress.isMonotonic)
+        #expect(progress.lastTotal == bytes.count)
+        #expect(progress.lastBytesReceived == bytes.count)
     }
 
     @Test("a registered awaiter receives a peer abort instead of the channel-wide onAbort")

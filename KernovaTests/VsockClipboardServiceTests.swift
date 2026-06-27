@@ -777,6 +777,19 @@ struct VsockClipboardServiceTests {
         /// Every `ClipboardRequest` the host sent, in arrival order.
         private(set) var requests: [Kernova_V1_ClipboardRequest] = []
 
+        /// When `true`, the stream sends Begin + all chunks but parks before `End`
+        /// until `releaseEnd()` — so a test can observe a live, mid-flight transfer
+        /// (the host has received bytes but the pull hasn't resolved).
+        var holdEnd = false
+        private let endGate = AsyncGate()
+        private var endReleased = false
+
+        /// Releases a stream parked by `holdEnd` so it sends its `End`.
+        func releaseEnd() {
+            endReleased = true
+            endGate.notify()
+        }
+
         init(guest: VsockChannel) {
             self.guest = guest
         }
@@ -806,7 +819,7 @@ struct VsockClipboardServiceTests {
                         guard case .clipboardRequest(let req) = frame.payload else { continue }
                         self.requests.append(req)
                         if let reply = self.replies[req.transferID] {
-                            try self.stream(req: req, reply: reply)
+                            try await self.stream(req: req, reply: reply)
                         }
                         self.answered.notify()
                     }
@@ -820,7 +833,7 @@ struct VsockClipboardServiceTests {
         deinit { consumeTask?.cancel() }
 
         /// Streams Begin → Chunk(s) → End for one request's registered reply.
-        private func stream(req: Kernova_V1_ClipboardRequest, reply: Reply) throws {
+        private func stream(req: Kernova_V1_ClipboardRequest, reply: Reply) async throws {
             var begin = Frame()
             begin.protocolVersion = 1
             begin.clipboardStreamBegin = Kernova_V1_ClipboardStreamBegin.with {
@@ -850,6 +863,9 @@ struct VsockClipboardServiceTests {
                 try guest.send(chunkFrame)
                 offset = end
             }
+
+            // Park before End so a test can observe the live, mid-flight transfer.
+            if holdEnd { try await endGate.wait { self.endReleased } }
 
             var endFrame = Frame()
             endFrame.protocolVersion = 1
@@ -1995,5 +2011,152 @@ struct VsockClipboardServiceTests {
         }
         #expect(code == "clipboard.transfer.send.failure")
         #expect(message == "guest could not deliver")
+    }
+
+    // MARK: - Transfer progress
+
+    @Test("an inbound transfer sets transferProgress while in flight and clears it on completion")
+    func inboundTransferProgressSetThenCleared() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        // `.zero` reveal delay → the transfer shows as soon as a chunk lands.
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", progressRevealDelay: .zero)
+        service.start()
+        defer { service.stop() }
+
+        let responder = FakeGuestResponder(guest: guest)
+        let text = String(repeating: "K", count: 120 * 1024)  // multi-chunk inline payload
+        let bytes = Data(text.utf8)
+        responder.register(
+            generation: 5, repIndex: 0, uti: ClipboardContent.utf8TextUTI, bytes: bytes,
+            isInline: true)
+        responder.holdEnd = true  // park before End so the pull stays in flight
+        responder.start()
+        defer { responder.cancel() }
+
+        try guest.send(makeTextOffer(generation: 5, text: text))
+        try await waitForChange {
+            service.clipboardContent.representations.first?.isPendingRemote == true
+        }
+
+        let copyTask = Task { await service.materializeForCopy() }
+
+        // Chunks have landed but End is held → the bar shows, inbound.
+        try await waitForChange { service.transferProgress?.direction == .inbound }
+        #expect(service.transferProgress?.totalBytes == bytes.count)
+        #expect((service.transferProgress?.bytesTransferred ?? 0) > 0)
+
+        responder.releaseEnd()
+        _ = await copyTask.value
+        try await waitForChange { service.transferProgress == nil }
+    }
+
+    @Test("an outbound transfer sets transferProgress while streaming and clears it on completion")
+    func outboundTransferProgressSetThenCleared() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", progressRevealDelay: .zero)
+        service.start()
+        defer { service.stop() }
+
+        // A multi-chunk (> 64 KiB) inline payload so a one-chunk credit window
+        // leaves the sender blocked mid-transfer with progress showing.
+        let text = String(repeating: "K", count: 200 * 1024)
+        let expected = Data(text.utf8)
+        service.clipboardContent = ClipboardContent(text: text)
+        service.grabIfChanged()
+
+        let offerFrame = try await nextFrame(from: guest)
+        guard case .clipboardOffer(let offer) = offerFrame.payload else {
+            Issue.record("Expected clipboardOffer, got \(String(describing: offerFrame.payload))")
+            return
+        }
+        let info = try #require(offer.repInfo.first)
+        let xid = transferID(generation: offer.generation, repIndex: 0)
+        try guest.send(makeRequest(generation: offer.generation, repIndex: 0, uti: info.uti))
+
+        // First ack: a one-chunk window → the host sends a single 64 KiB chunk
+        // then blocks on credit, so progress shows but the transfer isn't done.
+        try sendAck(from: guest, transferID: xid, bytesConsumed: 0, windowBytes: 64 * 1024)
+        try await waitForChange { service.transferProgress?.direction == .outbound }
+        #expect(service.transferProgress?.totalBytes == expected.count)
+        #expect((service.transferProgress?.bytesTransferred ?? 0) > 0)
+
+        // Open the window fully → the rest streams and the transfer completes.
+        try sendAck(from: guest, transferID: xid, bytesConsumed: 0, windowBytes: 2 * 1024 * 1024)
+        try await waitForChange { service.transferProgress == nil }
+    }
+
+    @Test("a transfer that finishes before the reveal delay never shows progress")
+    func transferBelowRevealDelayNeverShows() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        // A reveal delay long enough that the fast transfer completes first.
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", progressRevealDelay: .seconds(3600))
+        service.start()
+        defer { service.stop() }
+
+        let responder = FakeGuestResponder(guest: guest)
+        let text = "small"
+        responder.register(
+            generation: 9, repIndex: 0, uti: ClipboardContent.utf8TextUTI, bytes: Data(text.utf8),
+            isInline: true)
+        responder.start()
+        defer { responder.cancel() }
+
+        try guest.send(makeTextOffer(generation: 9, text: text))
+        try await waitForChange {
+            service.clipboardContent.representations.first?.isPendingRemote == true
+        }
+
+        await service.materializeForPreview()
+        #expect(service.clipboardContent.text == text)  // the transfer completed
+        #expect(service.transferProgress == nil)  // but it never crossed the reveal delay
+    }
+
+    @Test("stop() clears an in-flight transferProgress")
+    func stopClearsTransferProgress() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", progressRevealDelay: .zero)
+        service.start()
+
+        let responder = FakeGuestResponder(guest: guest)
+        let text = String(repeating: "S", count: 120 * 1024)  // multi-chunk inline payload
+        responder.register(
+            generation: 3, repIndex: 0, uti: ClipboardContent.utf8TextUTI, bytes: Data(text.utf8),
+            isInline: true)
+        responder.holdEnd = true
+        responder.start()
+        defer { responder.cancel() }
+
+        try guest.send(makeTextOffer(generation: 3, text: text))
+        try await waitForChange {
+            service.clipboardContent.representations.first?.isPendingRemote == true
+        }
+        let copyTask = Task { await service.materializeForCopy() }
+        try await waitForChange { service.transferProgress != nil }
+
+        service.stop()
+        #expect(service.transferProgress == nil)
+
+        responder.releaseEnd()
+        _ = await copyTask.value
     }
 }

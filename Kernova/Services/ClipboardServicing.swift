@@ -46,6 +46,13 @@ protocol ClipboardServicing: AnyObject {
     /// The window surfaces it as a transient status message.
     var lastTransferIssue: ClipboardTransferIssue? { get }
 
+    /// The clipboard transfer currently being shown, or `nil` when none is.
+    /// Drives the clipboard window's bottom progress bar and the toolbar button's
+    /// under-bar; both read this single source so they cannot disagree. Set once a
+    /// transfer crosses the reveal delay, cleared on every terminal state.
+    /// `nil` for transports without byte-level progress (the default below).
+    var transferProgress: ClipboardTransferProgress? { get }
+
     /// Stops protocol I/O. Idempotent.
     func stop()
 
@@ -81,4 +88,8 @@ protocol ClipboardServicing: AnyObject {
 extension ClipboardServicing {
     func materializeForPreview() async {}
     func materializeForCopy() async -> ClipboardContent { clipboardContent }
+
+    /// Transports without byte-level progress (SPICE text, fakes) never show a
+    /// transfer bar.
+    var transferProgress: ClipboardTransferProgress? { nil }
 }

@@ -924,7 +924,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             onAbort: { abort in coordinator.abort(transferID, abort) },
             // Re-arm the pull's inactivity backstop on every chunk so a large
             // still-streaming file is never timed out mid-transfer. [large-paste]
-            onProgress: { coordinator.heartbeat(transferID) })
+            // The guest has no progress UI, so the byte counts are ignored.
+            onProgress: { _, _ in coordinator.heartbeat(transferID) })
 
         let outcome = lazyCoordinator.pull(transferID: transferID) {
             var request = Frame()

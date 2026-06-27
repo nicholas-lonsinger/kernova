@@ -54,6 +54,20 @@ final class VMToolbarManager: NSObject {
 
     private static let logger = Logger(subsystem: "app.kernova", category: "VMToolbarManager")
 
+    // MARK: - Clipboard transfer-progress state
+
+    private static let clipboardSymbolName = "doc.on.clipboard"
+    /// The plain template clipboard glyph shown when no transfer is in flight.
+    private lazy var clipboardBaseImage = NSImage.systemSymbol(
+        Self.clipboardSymbolName, accessibilityDescription: "Clipboard")
+    /// The VM whose `transferProgress` the clipboard item currently reflects;
+    /// weak so it never keeps an instance alive.
+    ///
+    /// Identity-compared to re-arm the observation only on a real selection swap.
+    private weak var clipboardObservedInstance: VMInstance?
+    private weak var clipboardProgressToolbar: NSToolbar?
+    private var clipboardProgressObservation: ObservationLoop?
+
     // MARK: - Tooltip Constants
 
     private static let startToolTip = "Start the virtual machine"
@@ -132,10 +146,15 @@ final class VMToolbarManager: NSObject {
             )
 
         case configuration.clipboardID:
+            // A native single-item group (identical machinery to Suspend) so it
+            // gets the standard toolbar pill, hover highlight, and sizing. The
+            // Safari-style transfer bar is composited *into* this item's image by
+            // `updateClipboardItem` rather than overlaid as a custom view, which
+            // would forfeit that native styling.
             return makeSingleItemGroup(
                 identifier: identifier,
                 label: "Clipboard",
-                symbol: "doc.on.clipboard",
+                symbol: Self.clipboardSymbolName,
                 action: #selector(AppDelegate.showClipboard(_:)),
                 toolTip: "Open the clipboard sharing window"
             )
@@ -271,17 +290,95 @@ final class VMToolbarManager: NSObject {
     }
 
     private func updateClipboardItem(in toolbar: NSToolbar, instance: VMInstance?) {
+        // Absence is legitimate under user customization — skip silently (matches
+        // the other update* methods).
         guard let clipboardID = configuration.clipboardID,
-            let group = toolbar.items.first(where: { $0.itemIdentifier == clipboardID }) as? NSToolbarItemGroup,
+            let group = toolbar.items.first(where: { $0.itemIdentifier == clipboardID })
+                as? NSToolbarItemGroup,
             let subitem = group.subitems.first
         else { return }
 
-        guard let instance else {
-            subitem.isEnabled = false
-            return
-        }
+        subitem.isEnabled = instance?.canShowClipboard ?? false
 
-        subitem.isEnabled = instance.canShowClipboard
+        // Re-arm the transfer-progress observation onto the current VM so the
+        // item's image picks up the composited Safari-style bar — without
+        // re-running the whole toolbar update on every chunk.
+        if instance !== clipboardObservedInstance {
+            clipboardObservedInstance = instance
+            clipboardProgressToolbar = toolbar
+            clipboardProgressObservation?.cancel()
+            clipboardProgressObservation =
+                instance == nil
+                ? nil
+                : observeRecurring(
+                    track: { [weak self] in
+                        _ = self?.clipboardObservedInstance?.clipboardService?.transferProgress
+                    },
+                    apply: { [weak self] in self?.refreshClipboardProgressImage() })
+        }
+        refreshClipboardProgressImage()
+    }
+
+    /// Swaps the clipboard item's icon between the plain template symbol (idle)
+    /// and a composited glyph + Safari-style transfer bar (in flight).
+    ///
+    /// Compositing into the native group item's image keeps the standard toolbar
+    /// pill, hover highlight, and sizing — which a custom-view item forfeits.
+    private func refreshClipboardProgressImage() {
+        guard let clipboardID = configuration.clipboardID,
+            let toolbar = clipboardProgressToolbar,
+            let group = toolbar.items.first(where: { $0.itemIdentifier == clipboardID })
+                as? NSToolbarItemGroup,
+            let subitem = group.subitems.first
+        else { return }
+
+        if let progress = clipboardObservedInstance?.clipboardService?.transferProgress {
+            subitem.image = clipboardProgressImage(fraction: progress.fractionComplete)
+        } else if subitem.image !== clipboardBaseImage {
+            // Idle: restore the plain glyph, but only when it isn't already shown —
+            // this runs on every VM-state toolbar tick, and re-assigning an
+            // unchanged image needlessly redraws the item (matches the label/image
+            // equality guards used by the other update* methods).
+            subitem.image = clipboardBaseImage
+        }
+    }
+
+    /// Renders the clipboard glyph shrunk into the top of its box with a thin
+    /// rounded accent bar (filled to `fraction`) beneath it, at the same pixel
+    /// size as the plain symbol so the toolbar item never resizes.
+    ///
+    /// Drawn via a `drawingHandler` so the dynamic colors resolve in the current
+    /// appearance.
+    private func clipboardProgressImage(fraction: Double) -> NSImage {
+        let base = clipboardBaseImage
+        let size = base.size
+        let clamped = CGFloat(min(max(fraction, 0), 1))
+        let image = NSImage(size: size, flipped: false) { rect in
+            let barHeight: CGFloat = 2.5
+            let gap: CGFloat = 1.5
+            let scale = max(0, (rect.height - barHeight - gap)) / rect.height
+            let glyphSize = NSSize(width: rect.width * scale, height: rect.height * scale)
+            // Top-aligned (AppKit y-up: maxY is the top), horizontally centered.
+            let glyphRect = NSRect(
+                x: rect.midX - glyphSize.width / 2,
+                y: rect.maxY - glyphSize.height,
+                width: glyphSize.width,
+                height: glyphSize.height)
+            base.draw(in: glyphRect)
+            NSColor.labelColor.set()
+            glyphRect.fill(using: .sourceAtop)  // tint the template glyph
+
+            let radius = barHeight / 2
+            let track = NSRect(x: 0, y: 0, width: rect.width, height: barHeight)
+            NSColor.tertiaryLabelColor.withAlphaComponent(0.3).setFill()
+            NSBezierPath(roundedRect: track, xRadius: radius, yRadius: radius).fill()
+            let fill = NSRect(x: 0, y: 0, width: rect.width * clamped, height: barHeight)
+            NSColor.controlAccentColor.setFill()
+            NSBezierPath(roundedRect: fill, xRadius: radius, yRadius: radius).fill()
+            return true
+        }
+        image.isTemplate = false  // keep the baked accent color (not tinted by the item)
+        return image
     }
 
     private func updateSettingsToggleItem(in toolbar: NSToolbar, instance: VMInstance?) {
