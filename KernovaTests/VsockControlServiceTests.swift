@@ -61,7 +61,7 @@ struct VsockControlServiceTests {
     /// channel closed out from under it — surfacing as an EOF / `.closed` flake.
     /// Sixteen tests inherited those defaults despite not testing liveness; this
     /// makes the watchdog an explicit opt-in instead of an implicit deadline
-    /// coupled to every test's runtime. See `ci-test-timings`.
+    /// coupled to every test's runtime. See CLAUDE.md "Async waits in tests".
     private static let watchdogDisabledUnresponsive: Duration = .seconds(3_600)
     private static let watchdogDisabledTerminate: Duration = .seconds(7_200)
 
@@ -130,7 +130,7 @@ struct VsockControlServiceTests {
         _ = try await nextFrame(from: guest)  // host hello
         try guest.send(makeGuestHello(agentVersion: "0.9.0"))
 
-        try await waitUntil { service.isConnected }
+        try await waitForChange { service.isConnected }
         #expect(service.isConnected)
         #expect(service.agentVersion == "0.9.0")
     }
@@ -164,7 +164,7 @@ struct VsockControlServiceTests {
 
         _ = try await nextFrame(from: guest)
         try guest.send(makeGuestHello(agentVersion: "0.9.0"))
-        try await waitUntil { service.isConnected }
+        try await waitForChange { service.isConnected }
 
         #expect(service.agentStatus == .current(version: "0.9.0"))
     }
@@ -182,7 +182,7 @@ struct VsockControlServiceTests {
 
         _ = try await nextFrame(from: guest)
         try guest.send(makeGuestHello(agentVersion: "0.8.5"))
-        try await waitUntil { service.isConnected }
+        try await waitForChange { service.isConnected }
 
         #expect(service.agentStatus == .outdated(installed: "0.8.5", bundled: "0.9.0"))
     }
@@ -200,7 +200,7 @@ struct VsockControlServiceTests {
 
         _ = try await nextFrame(from: guest)
         try guest.send(makeGuestHello(agentVersion: "1.0.0"))
-        try await waitUntil { service.isConnected }
+        try await waitForChange { service.isConnected }
 
         // Newer-than-bundled should not flag .outdated against the user.
         #expect(service.agentStatus == .current(version: "1.0.0"))
@@ -219,7 +219,7 @@ struct VsockControlServiceTests {
 
         _ = try await nextFrame(from: guest)
         try guest.send(makeGuestHello(agentVersion: "0.9.0"))
-        try await waitUntil { service.isConnected }
+        try await waitForChange { service.isConnected }
 
         // Lexicographic compare would put "0.9.0" > "0.10.0" — wrong.
         #expect(service.agentStatus == .outdated(installed: "0.9.0", bundled: "0.10.0"))
@@ -238,7 +238,7 @@ struct VsockControlServiceTests {
 
         _ = try await nextFrame(from: guest)
         try guest.send(makeGuestHello(agentVersion: "0.5.0"))
-        try await waitUntil { service.isConnected }
+        try await waitForChange { service.isConnected }
 
         // Without a bundled version to compare against, accept the guest's
         // report rather than prompting the user to "update" against missing data.
@@ -257,7 +257,7 @@ struct VsockControlServiceTests {
 
         _ = try await nextFrame(from: guest)
         try guest.send(makeGuestHello(agentVersion: "0.9.0"))
-        try await waitUntil { service.isConnected }
+        try await waitForChange { service.isConnected }
         #expect(service.agentStatus == .current(version: "0.9.0"))
 
         service.stop()
@@ -347,7 +347,7 @@ struct VsockControlServiceTests {
 
         _ = try await nextFrame(from: guest)
         try guest.send(makeGuestHello(agentVersion: "0.9.0"))
-        try await waitUntil { service.isConnected }
+        try await waitForChange { service.isConnected }
 
         // Send heartbeats every 100 ms (well below the 400 ms unresponsive
         // window) for ~800 ms total — twice unresponsiveAfter.
@@ -381,10 +381,10 @@ struct VsockControlServiceTests {
 
         _ = try await nextFrame(from: guest)
         try guest.send(makeGuestHello(agentVersion: "0.9.0"))
-        try await waitUntil { service.isConnected }
+        try await waitForChange { service.isConnected }
 
         // Don't send any further inbound. After ~100ms+ the watchdog flips.
-        try await waitUntil(timeout: .seconds(5)) {
+        try await waitForChange(timeout: .seconds(5)) {
             service.agentStatus == .unresponsive(version: "0.9.0")
         }
         #expect(service.agentStatus == .unresponsive(version: "0.9.0"))
@@ -414,10 +414,10 @@ struct VsockControlServiceTests {
 
         _ = try await nextFrame(from: guest)
         try guest.send(makeGuestHello(agentVersion: "0.9.0"))
-        try await waitUntil { service.isConnected }
+        try await waitForChange { service.isConnected }
 
         // Go silent → unresponsive.
-        try await waitUntil(timeout: .seconds(5)) {
+        try await waitForChange(timeout: .seconds(5)) {
             service.agentStatus == .unresponsive(version: "0.9.0")
         }
 
@@ -440,10 +440,9 @@ struct VsockControlServiceTests {
         }
         defer { resumeHeartbeats.cancel() }
 
-        // Only the recovery → .current transition was the proven CI flake (the
-        // poll budget timed out under jitter), so it alone uses the event-driven
-        // wait; the suite's other agentStatus/isConnected waits stay on the poll
-        // per the project's migrate-on-flake stance.
+        // The recovery → .current transition was the original CI flake (the poll
+        // budget timed out under jitter). This suite's agentStatus/isConnected
+        // waits are all event-driven now; see CLAUDE.md "Async waits in tests".
         try await waitForChange(timeout: .seconds(5)) {
             service.agentStatus == .current(version: "0.9.0")
         }
@@ -473,11 +472,15 @@ struct VsockControlServiceTests {
 
         _ = try await nextFrame(from: guest)  // host hello
         try guest.send(makeGuestHello(agentVersion: "0.9.0"))
-        try await waitUntil { service.isConnected }
+        try await waitForChange { service.isConnected }
 
         // Wait for a few terminateAfter windows. By then `checkLiveness`
         // should have fired and called `channel.close()` on the host side.
         // After teardown, `host.send(...)` raises `VsockChannelError.closed`.
+        // RATIONALE: channel closure is detected by attempting a send and
+        // catching `.closed` — there is no @Observable property or signal to
+        // await (the watchdog closes the socket directly), so this is one of the
+        // sanctioned no-signal polls per CLAUDE.md "Async waits in tests".
         try await waitUntil(timeout: .seconds(5)) {
             do {
                 try host.send(makeHeartbeat(nonce: 1))
@@ -502,7 +505,7 @@ struct VsockControlServiceTests {
 
         _ = try await nextFrame(from: guest)
         try guest.send(makeGuestHello(agentVersion: "0.9.0"))
-        try await waitUntil { service.isConnected }
+        try await waitForChange { service.isConnected }
 
         service.stop()
         #expect(!service.isConnected)
@@ -561,7 +564,7 @@ struct VsockControlServiceTests {
 
         _ = try await nextFrame(from: guest)  // host hello
         try guest.send(makeGuestHello(agentVersion: "0.9.0"))
-        try await waitUntil { service.isConnected }
+        try await waitForChange { service.isConnected }
 
         // Read a few frames; none should be PolicyUpdate. Each read returns as
         // soon as a frame arrives (heartbeats fire every 40 ms), so the timeout
@@ -595,7 +598,7 @@ struct VsockControlServiceTests {
 
         _ = try await nextFrame(from: guest)  // host hello
         try guest.send(makeGuestHello(agentVersion: "0.9.2"))
-        try await waitUntil { service.isConnected }
+        try await waitForChange { service.isConnected }
 
         // The Hello handler runs synchronously after the inbound frame is
         // dispatched on the main actor, so by the time isConnected flips the
@@ -620,7 +623,7 @@ struct VsockControlServiceTests {
 
         _ = try await nextFrame(from: guest)
         try guest.send(makeGuestHello(agentVersion: ""))
-        try await waitUntil { service.isConnected }
+        try await waitForChange { service.isConnected }
 
         // Connection succeeds (isConnected is set unconditionally on Hello),
         // but agentVersion stays nil and the observer must not fire — the
@@ -646,7 +649,7 @@ struct VsockControlServiceTests {
 
         _ = try await nextFrame(from: guest)
         try guest.send(makeGuestHello(agentVersion: "0.9.2"))
-        try await waitUntil { service.isConnected }
+        try await waitForChange { service.isConnected }
         try guest.send(makeGuestHello(agentVersion: "0.9.2"))
 
         // Service fires the closure verbatim each time. Suppressing duplicate
@@ -672,7 +675,7 @@ struct VsockControlServiceTests {
         // guest must Hello with the capability before a clipboard=true policy
         // survives the gate — and the service must have *observed* that Hello.
         try guest.send(makeGuestHello(agentVersion: "0.16.0"))
-        try await waitUntil { service.guestSupportsClipboardStreamingForTesting }
+        try await waitForChange { service.guestSupportsClipboardStreamingForTesting }
 
         service.sendPolicyUpdate(
             AgentPolicySnapshot(logForwardingEnabled: false, clipboardSharingEnabled: true)
