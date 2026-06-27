@@ -286,6 +286,12 @@ struct ClipboardStreamTests {
                 $0.transferID = 1; $0.offset = 0; $0.data = Data(count: Self.chunk)
             })
 
+        // RATIONALE: Filesystem-appearance polls with no gate-able signal. The
+        // receiver creates and deletes the staging partial on its private
+        // per-transfer DispatchQueue; the only test-owned signal
+        // (StreamCollector.gate) fires on onComplete/onAbort, never on partial-file
+        // I/O. Per CLAUDE.md "Async waits in tests", a filesystem-appearance poll is
+        // a sanctioned `pollUntil` use.
         // The partial temp file is created off the transfer queue.
         try await pollUntil {
             materializedFiles(under: harness.stagingTempRoot).contains {
