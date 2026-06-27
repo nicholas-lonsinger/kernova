@@ -62,6 +62,15 @@ struct LazyPullCoordinatorTests {
 
     // MARK: - Slot machinery
 
+    // RATIONALE: The `pollUntil` waits in this section read the SUT's own
+    // `pendingSlotCountForTesting`, a DEBUG getter over an NSLock-guarded dict on
+    // `LazyPullCoordinator` (not @Observable), registered inside `pull()` running on
+    // a background `DispatchQueue`. There is no test-owned signal to await: the
+    // file's `AsyncGate` gates the harness receiver's onComplete/onAbort closures,
+    // not slot registration, and wiring a gate into production `pull()` is out of
+    // scope. Polling the coordinator's own state is correct here. See CLAUDE.md
+    // "Async waits in tests".
+
     @Test("pull blocks until deliver wakes it with the representation")
     func deliverWakesPull() async throws {
         let coordinator = LazyPullCoordinator()
