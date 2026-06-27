@@ -7,28 +7,8 @@ import UniformTypeIdentifiers
 
 @Suite("ClipboardContent AppKit helpers")
 struct ClipboardContentAppKitTests {
-    // MARK: - shouldInlineOnPasteboard
-
-    @Test("non-file content is inlined")
-    func nonFileInlines() {
-        let rep = ClipboardContent.Representation(
-            uti: ClipboardContent.utf8TextUTI, data: Data("hi".utf8))
-        #expect(rep.shouldInlineOnPasteboard)
-    }
-
-    @Test("an image file payload is inlined (so it shows in place)")
-    func imageFileInlines() {
-        let rep = ClipboardContent.Representation(
-            uti: UTType.png.identifier, data: Data([0x89]), filename: "photo.png")
-        #expect(rep.shouldInlineOnPasteboard)
-    }
-
-    @Test("a non-image file payload is file-only, not inlined")
-    func nonImageFileNotInlined() {
-        let rep = ClipboardContent.Representation(
-            uti: UTType.plainText.identifier, data: Data("x".utf8), filename: "note.txt")
-        #expect(!rep.shouldInlineOnPasteboard)
-    }
+    // `shouldInlineOnPasteboard` moved to KernovaKit (shared by host + guest);
+    // its cases live in `ClipboardRepresentationPasteboardTests` in the package.
 
     // MARK: - filePayloads / inlineRepresentations / richTextRepresentation
 

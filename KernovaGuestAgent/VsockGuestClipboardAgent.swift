@@ -151,11 +151,15 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// stream receive, blocking the main thread until bytes land.
     private let lazyCoordinator = LazyPullCoordinator()
 
-    /// Data providers still promised on the pasteboard, kept alive until
-    /// `pasteboardFinishedWithDataProvider` fires (Apple requires it).
+    /// Owner of the data providers still promised on the pasteboard, keeping each
+    /// alive until `pasteboardFinishedWithDataProvider` fires (Apple requires it).
     ///
-    /// Touched only on main.
-    private var liveProviders: Set<LazyClipboardDataProvider> = []
+    /// The shared host↔guest registry; the agent owns its own instance (its
+    /// providers are agent-lifetime, not process-immortal like the host's
+    /// `.shared`). The registry is `@MainActor`, reached via
+    /// `MainActor.assumeIsolated` because all provider bookkeeping here already
+    /// runs on the main queue.
+    private let retainer = LazyClipboardProviderRegistry()
 
     /// Last `NSPasteboard.changeCount` we observed; set after every poll and
     /// every host write so we don't echo our own content.
@@ -341,10 +345,10 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         // A stale in-flight archive's completion checks `liveChannel` and drops
         // itself; clear the flag now so the next connection can archive again.
         archiveInFlight = false
-        // liveProviders are NOT dropped here: Apple requires a data provider stay
-        // alive while its item is still on the pasteboard. They're released when
-        // pasteboardFinishedWithDataProvider fires (a later offer/clear overwrites
-        // the promise).
+        // The retainer's providers are NOT dropped here: Apple requires a data
+        // provider stay alive while its item is still on the pasteboard. They're
+        // released when pasteboardFinishedWithDataProvider fires (a later
+        // offer/clear overwrites the promise).
     }
 
     /// Tears the connection down only if `channel` is still the live one.
@@ -767,7 +771,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             generation: request.generation,
             representation: representation,
             maxAcceptByteCount: request.maxAcceptByteCount,
-            isInline: Self.shouldInline(representation),
+            isInline: representation.shouldInlineOnPasteboard,
             isCurrent: { value in generation.isCurrent(value) })
         // The host pulled our clipboard — the outbound stream is starting. (See
         // `ClipboardActivity` for why this is marked at start, not completion.)
@@ -818,11 +822,10 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                 provide: { [weak self] type in
                     self?.provideData(type, itemTypes: item, generation: generation)
                 },
-                onFinished: { [weak self] provider in self?.providerFinished(provider) })
+                onFinished: { [weak self] provider in self?.retainer.release(provider) })
             newProviders.append(provider)
             return (types: item.map { $0.type }, provider: provider)
         }
-        newProviders.forEach { liveProviders.insert($0) }
 
         pasteboard.clearContents()
         let written = pasteboard.writeItems(writes)
@@ -830,12 +833,17 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         // success, so a partial write can't leave the poll re-offering. [Safeguard 2]
         lastPasteboardChangeCount = pasteboard.changeCount
         guard written else {
+            // The write failed, so the providers were never retained — the local
+            // `newProviders` array drops them and no finish callback fires.
             Self.logger.warning(
                 "Failed to register host clipboard promise (gen=\(generation, privacy: .public))")
-            newProviders.forEach { liveProviders.remove($0) }
             inboundPromise = nil
             return
         }
+        // The promise is live now; hand the providers to the agent-lifetime
+        // registry so each survives until the pasteboard finishes with it. The
+        // local `newProviders` array kept them alive across the synchronous write.
+        retainer.retain(newProviders)
         clipboardActivityStorage = .offeredFromHost
         Self.logger.notice(
             "Registered host clipboard promise (gen=\(generation, privacy: .public), \(items.count, privacy: .public) item(s))"
@@ -1096,11 +1104,6 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         }
     }
 
-    /// Drops the strong reference to a provider the pasteboard no longer needs.
-    private func providerFinished(_ provider: LazyClipboardDataProvider) {
-        liveProviders.remove(provider)
-    }
-
     /// One promised pasteboard item: each pasteboard type it offers paired with
     /// the offer-rep index that backs it.
     ///
@@ -1134,42 +1137,27 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     private static func promisedItems(
         for reps: [Kernova_V1_ClipboardRepresentationInfo]
     ) -> [PromisedItem] {
-        var items: [PromisedItem] = []
-
-        // One shared inline item for all inline-only (filename-less) reps.
-        var inlineItem: PromisedItem = []
-        var seen: Set<String> = []
-        for (index, info) in reps.enumerated() where isPromisable(info) {
-            guard info.filename.isEmpty, info.isInline else { continue }
-            if seen.insert(info.uti).inserted {
-                inlineItem.append((NSPasteboard.PasteboardType(info.uti), index))
+        // The grouping decision (one shared inline item; one item per file rep;
+        // UTI dedup) is the shared planner — the single source of truth both sides
+        // of the bridge use. Map the offer's wire reps to descriptors (trusting the
+        // offered `isInline` bit, applying the receive-side `isPromisable` gate),
+        // then realize each planned type into this side's (type, rep-index) pair so
+        // a `provideData` pull resolves to the right offer rep.
+        let descriptors = reps.map {
+            ClipboardRepresentationDescriptor(
+                uti: $0.uti, filename: $0.filename, isInline: $0.isInline,
+                isPromisable: isPromisable($0))
+        }
+        return ClipboardPasteboardItemPlan.plan(for: descriptors).items.map { item in
+            item.types.map { promised in
+                (
+                    type: promised.isFileURL
+                        ? NSPasteboard.PasteboardType.fileURL
+                        : NSPasteboard.PasteboardType(promised.uti),
+                    repIndex: promised.representationIndex
+                )
             }
         }
-        if !inlineItem.isEmpty { items.append(inlineItem) }
-
-        // One item per file rep (image files also promise their image UTI).
-        for (index, info) in reps.enumerated() where isPromisable(info) {
-            guard !info.filename.isEmpty else { continue }
-            var item: PromisedItem = []
-            if info.isInline {
-                item.append((NSPasteboard.PasteboardType(info.uti), index))
-            }
-            item.append((.fileURL, index))
-            items.append(item)
-        }
-        return items
-    }
-
-    /// Whether a representation's bytes should be written inline (vs. carried
-    /// only as a materialized file URL).
-    ///
-    /// Non-file content and image file
-    /// payloads inline; every other file payload is file-only. A directory is
-    /// always file-only — its bytes are an archive of the tree, never inlined.
-    static func shouldInline(_ representation: ClipboardContent.Representation) -> Bool {
-        if representation.isDirectory { return false }
-        if representation.filename.isEmpty { return true }
-        return UTType(representation.uti)?.conforms(to: .image) == true
     }
 
     private func handleRelease(_ release: Kernova_V1_ClipboardRelease) {
@@ -1196,7 +1184,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             $0.uti = representation.uti
             $0.byteCount = UInt64(representation.byteCount)
             $0.filename = representation.filename
-            $0.isInline = shouldInline(representation)
+            $0.isInline = representation.shouldInlineOnPasteboard
             $0.isDirectory = representation.isDirectory
         }
     }
