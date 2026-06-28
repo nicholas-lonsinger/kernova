@@ -225,7 +225,13 @@ final class ClipboardFileItem: NSObject, NSFileProviderItem, @unchecked Sendable
         super.init()
     }
 
-    var capabilities: NSFileProviderItemCapabilities { [.allowsReading] }
+    // RATIONALE: the clipboard domain is conceptually read-only (it never syncs
+    // edits back), but advertising only `.allowsReading` makes the system present
+    // the item — and the file pasted from it — as **locked** (a padlock badge and
+    // "Item is locked" on delete). Advertise full capabilities so the pasted copy
+    // is an ordinary file the user owns; the mutating extension methods still
+    // reject (the placeholder is transient and copied out, never edited in place).
+    var capabilities: NSFileProviderItemCapabilities { .allowsAll }
     var contentType: UTType { UTType(representationUTI) ?? .data }
     var documentSize: NSNumber? { NSNumber(value: size) }
     // The bytes and metadata of a given (generation, repIndex) item never change,
