@@ -54,6 +54,13 @@ final class GuestAgentAppDelegate: NSObject, NSApplicationDelegate {
     private var controlAgent: VsockGuestControlAgent?
     private var statusItemController: GuestAgentStatusItemController?
 
+    /// Hosts the File Provider XPC relay + clipboard domain (#376).
+    ///
+    /// Gated on host clipboard-sharing policy. Wired bidirectionally with
+    /// `clipboardAgent`: the host pulls through the agent on `fetchContents`; the
+    /// agent publishes a single inbound file rep through the host.
+    private var fileProviderHost: ClipboardFileProviderHost?
+
     /// Retained so the signal sources stay armed for the process lifetime.
     private var sigintSource: DispatchSourceSignal?
     private var sigtermSource: DispatchSourceSignal?
@@ -69,6 +76,13 @@ final class GuestAgentAppDelegate: NSObject, NSApplicationDelegate {
         // before any NSApplication / window-server / status-item setup.
         if CommandLine.arguments.contains("--version") {
             print("kernova-agent \(version) (\(buildNumber))")
+            exit(0)
+        }
+
+        // Teardown helper for host-side iteration (#376) — removes the clipboard
+        // File Provider domain so no Finder location lingers after a test.
+        if CommandLine.arguments.contains("--remove-clipboard-domain") {
+            ClipboardFileProviderHost.removeAllDomainsBlocking()
             exit(0)
         }
 
@@ -94,14 +108,29 @@ final class GuestAgentAppDelegate: NSObject, NSApplicationDelegate {
 
         let clipboardAgent = VsockGuestClipboardAgent()
 
+        // File Provider host (#376): owns the XPC relay + clipboard domain, gated
+        // on clipboard sharing. Wired both ways with the clipboard agent — the host
+        // pulls through the agent on `fetchContents`; the agent publishes a single
+        // inbound file rep through the host. The agent's back-reference is weak.
+        let fileProviderHost = ClipboardFileProviderHost(pullProvider: clipboardAgent)
+        clipboardAgent.fileProvider = fileProviderHost
+
         // Control plane: always-on handshake/heartbeat/policy. `onPolicy` gates the
-        // log + clipboard capabilities; `onStateChange` drives the status-item icon.
+        // log + clipboard + File Provider capabilities; `onStateChange` drives the
+        // status-item icon.
         let controlAgent = VsockGuestControlAgent(
             onPolicy: { [weak self] policy in
                 vsockConnection.setEnabled(policy.logForwardingEnabled)
                 clipboardAgent.setEnabled(policy.clipboardSharingEnabled)
+                // Stands up / tears down the domain + Mach listener with clipboard
+                // sharing, so the team-prefixed listener never starts unless the
+                // host enabled clipboard (notably never in the CI test host).
+                fileProviderHost.setEnabled(policy.clipboardSharingEnabled)
                 Task { @MainActor in
                     self?.updateAppNap(clipboardEnabled: policy.clipboardSharingEnabled)
+                    // A policy change can flip File Provider availability; refresh
+                    // the status item so its enablement affordance stays current.
+                    self?.statusItemController?.connectionStateChanged()
                 }
             },
             onStateChange: { [weak self] _ in
@@ -117,6 +146,7 @@ final class GuestAgentAppDelegate: NSObject, NSApplicationDelegate {
         self.vsockConnection = vsockConnection
         self.clipboardAgent = clipboardAgent
         self.controlAgent = controlAgent
+        self.fileProviderHost = fileProviderHost
 
         self.statusItemController = GuestAgentStatusItemController(
             version: Self.version,
@@ -126,6 +156,9 @@ final class GuestAgentAppDelegate: NSObject, NSApplicationDelegate {
                 vsockConnection?.isLogForwardingEnabled ?? false
             },
             clipboardActivity: { [weak clipboardAgent] in clipboardAgent?.clipboardActivity ?? .disabled },
+            fileProviderAvailability: { [weak fileProviderHost] in
+                fileProviderHost?.availability ?? .inactive
+            },
             onQuit: { NSApp.terminate(nil) }
         )
 
@@ -138,6 +171,9 @@ final class GuestAgentAppDelegate: NSObject, NSApplicationDelegate {
         vsockConnection.start()
         clipboardAgent.start()
         controlAgent.start()
+        // The File Provider host stands itself up when the host's first
+        // PolicyUpdate enables clipboard sharing (via `onPolicy` above) — no
+        // unconditional registration here.
     }
 
     func applicationWillTerminate(_ notification: Notification) {
