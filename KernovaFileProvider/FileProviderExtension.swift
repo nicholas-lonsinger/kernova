@@ -183,7 +183,9 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         for containerItemIdentifier: NSFileProviderItemIdentifier,
         request: NSFileProviderRequest
     ) throws -> NSFileProviderEnumerator {
-        ClipboardEnumerator(container: containerItemIdentifier)
+        Self.logger.notice(
+            "enumerator(for: \(containerItemIdentifier.rawValue, privacy: .public))")
+        return ClipboardEnumerator(container: containerItemIdentifier)
     }
 }
 

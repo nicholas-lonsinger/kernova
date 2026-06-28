@@ -324,11 +324,38 @@ final class ClipboardFileProviderHost: NSObject, NSXPCListenerDelegate, GuestFil
             return nil
         }
         signalEnumerator()
+        // Force the dataless placeholder dirent onto disk by making the system
+        // enumerate the root. `signalEnumerator` alone only refreshes the index /
+        // working set; the on-disk file for a never-browsed child is written only
+        // when the root container is actually read (a `readdir`). Without this the
+        // pasteboard URL points at a path that doesn't exist, so a paste fails with
+        // ENOENT before the kernel's dataless trap can call `fetchContents`.
+        forceRootEnumeration(root: rootURL)
         let url = rootURL.appendingPathComponent(filename)
         Self.logger.notice(
             "FP published item (gen=\(generation, privacy: .public), rep=\(repIndex, privacy: .public)) at \(url.path, privacy: .public)"
         )
         return url
+    }
+
+    /// Reads the domain root directory off-main to trigger a root-container
+    /// enumeration, which writes the offered item's dataless placeholder to disk.
+    ///
+    /// Off-main because the `readdir` blocks on the extension's enumeration
+    /// round-trip; the offer→paste gap (the user switches to the guest and pastes)
+    /// is far longer than the listing, so the placeholder exists by paste time.
+    private func forceRootEnumeration(root: URL) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                let entries = try FileManager.default.contentsOfDirectory(
+                    at: root, includingPropertiesForKeys: nil)
+                Self.logger.notice(
+                    "Forced root enumeration — \(entries.count, privacy: .public) entr(ies) on disk")
+            } catch {
+                Self.logger.error(
+                    "Root enumeration readdir failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
     }
 
     func clearOffer() {
