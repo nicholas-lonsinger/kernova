@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- App-identity entitlement (team-prefixed bundle id). Declared explicitly
+	     because Option A uses profile-less manual signing so the agent runs in any
+	     guest VM without a device-limited provisioning profile. -->
+	<key>com.apple.application-identifier</key>
+	<string>8MT4P4GZL2.app.kernova.agent</string>
+	<!-- Shared with the embedded KernovaFileProvider extension so the sandboxed
+	     extension can reach the agent's XPC relay (an app-group-prefixed Mach
+	     service) and exchange materialized files through the group container.
+	     The agent itself is intentionally NOT sandboxed (it opens vsock); an
+	     app group does not require the App Sandbox. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>8MT4P4GZL2.app.kernova</string>
+	</array>
+</dict>
+</plist>

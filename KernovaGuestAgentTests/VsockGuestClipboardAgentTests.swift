@@ -224,6 +224,45 @@ final class FakePasteboard: Pasteboard, @unchecked Sendable {
     }
 }
 
+// MARK: - File Provider publishing double
+
+/// Records the agent's File Provider publish calls and returns a canned URL.
+///
+/// Lets `handleOffer`'s routing decision be asserted without a real domain.
+final class FakeFileProviderPublisher: GuestFileProviderPublishing, @unchecked Sendable {
+    struct Published: Equatable {
+        let generation: UInt64
+        let repIndex: Int
+        let filename: String
+        let byteCount: UInt64
+        let uti: String
+    }
+
+    private let lock = NSLock()
+    private var publishedStorage: [Published] = []
+    private var clearCountStorage = 0
+    private let urlToReturn: URL?
+
+    init(urlToReturn: URL?) { self.urlToReturn = urlToReturn }
+
+    func publishSingleFile(
+        generation: UInt64, repIndex: Int, filename: String, byteCount: UInt64, uti: String
+    ) -> URL? {
+        lock.withLock {
+            publishedStorage.append(
+                Published(
+                    generation: generation, repIndex: repIndex, filename: filename,
+                    byteCount: byteCount, uti: uti))
+        }
+        return urlToReturn
+    }
+
+    func clearOffer() { lock.withLock { clearCountStorage += 1 } }
+
+    var published: [Published] { lock.withLock { publishedStorage } }
+    var clearCount: Int { lock.withLock { clearCountStorage } }
+}
+
 // MARK: - Test Suite
 
 @Suite("VsockGuestClipboardAgent state machine")
@@ -969,6 +1008,311 @@ struct VsockGuestClipboardAgentTests {
                 .flatMap(URL.init(string:)))
         #expect(staged.lastPathComponent == "notes.txt")
         #expect(try Data(contentsOf: staged) == contents)
+    }
+
+    // MARK: - File Provider relay (async, off-main pull)
+
+    @Test("File Provider relay: fetchStagedFile pulls a file rep off-main and stages it")
+    func fileProviderRelayStagesFile() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
+        let contents = Data("relayed file bytes".utf8)
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 11,
+                reps: [
+                    RepInfo(
+                        uti: txtUTI, byteCount: UInt64(contents.count), filename: "relay.txt",
+                        isInline: false)
+                ]))
+        // Same registration signal the pasteboard path waits on.
+        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
+
+        // The relay entry point blocks on the pull and snapshots state via
+        // `DispatchQueue.main.sync`, so it MUST run off the main actor; the host
+        // streams the bytes concurrently.
+        let pull = Task.detached { agent.fetchStagedFile(generation: 11, repIndex: 0) }
+        try await driveInboundStream(
+            generation: 11, uti: txtUTI, filename: "relay.txt", payload: contents,
+            isInline: false, on: hostChannel)
+
+        let stagedPath = try await pull.value.get()
+        let stagedURL = URL(fileURLWithPath: stagedPath)
+        #expect(stagedURL.lastPathComponent == "relay.txt")
+        #expect(try Data(contentsOf: stagedURL) == contents)
+    }
+
+    @Test("File Provider relay: a stale generation resolves to noCurrentOffer with no request")
+    func fileProviderRelayStaleGeneration() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 11,
+                reps: [
+                    RepInfo(uti: txtUTI, byteCount: 4, filename: "relay.txt", isInline: false)
+                ]))
+        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
+
+        // A generation that isn't the current offer is rejected before any pull,
+        // so no ClipboardRequest goes out.
+        let outcome = await Task.detached {
+            agent.fetchStagedFile(generation: 999, repIndex: 0)
+        }.value
+        guard case .failure(.noCurrentOffer) = outcome else {
+            Issue.record("expected .noCurrentOffer, got \(outcome)")
+            return
+        }
+        try await expectNoRequest(from: hostChannel)
+    }
+
+    @Test("File Provider relay: a host abort mid-pull resolves to .pullFailed")
+    func fileProviderRelayPullFailed() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 11,
+                reps: [
+                    RepInfo(uti: txtUTI, byteCount: 16, filename: "relay.txt", isInline: false)
+                ]))
+        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
+
+        // The host opens the transfer (Begin) then aborts instead of streaming —
+        // the off-main pull wakes with .aborted, so fetchStagedFile reports
+        // .pullFailed (which the relay maps to serverUnreachable).
+        let pull = Task.detached { agent.fetchStagedFile(generation: 11, repIndex: 0) }
+        let req = try await awaitRequest(on: hostChannel)
+        try hostChannel.send(
+            makeBeginFrame(
+                generation: 11, transferID: req.transferID, uti: txtUTI,
+                totalBytes: 16, filename: "relay.txt", isInline: false))
+        try hostChannel.send(
+            makeAbortFrame(transferID: req.transferID, code: "host.abort", message: "no"))
+        let outcome = await pull.value
+        guard case .failure(.pullFailed) = outcome else {
+            Issue.record("expected .pullFailed, got \(outcome)")
+            return
+        }
+    }
+
+    @Test("File Provider relay: a parked pull is woken by teardown, not the backstop timeout")
+    func fileProviderRelayTeardownWakeup() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 11,
+                reps: [
+                    RepInfo(uti: txtUTI, byteCount: 16, filename: "relay.txt", isInline: false)
+                ]))
+        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
+
+        // Park the pull (request sent, awaiting Begin), then drop the connection.
+        // serve()'s EOF handler fails the coordinator off-main, so the pull wakes
+        // promptly — well under the lazy-pull backstop — rather than hanging.
+        let pull = Task.detached { agent.fetchStagedFile(generation: 11, repIndex: 0) }
+        _ = try await awaitRequest(on: hostChannel)
+        let start = ContinuousClock.now
+        hostChannel.close()
+        let outcome = await pull.value
+        #expect(ContinuousClock.now - start < .seconds(5))
+        guard case .failure(.pullFailed) = outcome else {
+            Issue.record("expected .pullFailed after teardown, got \(outcome)")
+            return
+        }
+    }
+
+    // MARK: - handleOffer File Provider routing
+
+    /// Builds an agent with a `FakeFileProviderPublisher` wired in.
+    ///
+    /// The fake is returned alongside so the test can keep its strong reference
+    /// (the agent holds it weakly) and assert against it.
+    private func makeAgentWithPublisher(
+        pasteboard: FakePasteboard, agentFd: Int32, publisherURL: URL?
+    ) -> (agent: VsockGuestClipboardAgent, publisher: FakeFileProviderPublisher) {
+        let publisher = FakeFileProviderPublisher(urlToReturn: publisherURL)
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        agent.fileProvider = publisher
+        return (agent, publisher)
+    }
+
+    @Test("a single file rep is published through the File Provider; its domain URL goes on the pasteboard")
+    func fileProviderSingleFileRouting() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let domainURL = URL(fileURLWithPath: "/Users/Shared/KernovaClipboard/report.pdf")
+        let (agent, publisher) = makeAgentWithPublisher(
+            pasteboard: pasteboard, agentFd: agentFd, publisherURL: domainURL)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 21,
+                reps: [
+                    RepInfo(uti: "com.adobe.pdf", byteCount: 9_000, filename: "report.pdf", isInline: false)
+                ]))
+        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
+
+        // The single file rep was published through the File Provider.
+        #expect(
+            publisher.published == [
+                .init(generation: 21, repIndex: 0, filename: "report.pdf", byteCount: 9_000, uti: "com.adobe.pdf")
+            ])
+        // A `.fileURL` paste returns the domain URL immediately — no host stream
+        // is needed (the bytes page in lazily via the extension's fetchContents).
+        let provided = await lazyPull(pasteboard, forType: .fileURL).value
+        #expect(provided == Data(domainURL.absoluteString.utf8))
+        try await expectNoRequest(from: hostChannel)
+    }
+
+    @Test("a file rep alongside an inline rep: only the file is routed through the File Provider")
+    func fileProviderRoutesOnlyTheFileAmongInline() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let domainURL = URL(fileURLWithPath: "/Users/Shared/KernovaClipboard/report.pdf")
+        let (agent, publisher) = makeAgentWithPublisher(
+            pasteboard: pasteboard, agentFd: agentFd, publisherURL: domainURL)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        // An inline text rep (no filename) plus a non-inline file rep.
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 22,
+                reps: [
+                    RepInfo(uti: ClipboardContent.utf8TextUTI, byteCount: 5, isInline: true),
+                    RepInfo(uti: "com.adobe.pdf", byteCount: 9_000, filename: "report.pdf", isInline: false),
+                ]))
+        try await waitUntil {
+            DispatchQueue.main.sync { agent.inboundPromiseGenerationForTesting } == 22
+        }
+
+        // Only the file rep (index 1) is published; the inline rep stays on the
+        // synchronous provider path.
+        #expect(publisher.published.map(\.repIndex) == [1])
+        #expect(publisher.published.first?.filename == "report.pdf")
+    }
+
+    @Test("a multi-file offer is not routed through the File Provider (D1a is single-file)")
+    func fileProviderMultiFileFallsBack() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let (agent, publisher) = makeAgentWithPublisher(
+            pasteboard: pasteboard, agentFd: agentFd,
+            publisherURL: URL(fileURLWithPath: "/unused"))
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 23,
+                reps: [
+                    RepInfo(uti: "com.adobe.pdf", byteCount: 10, filename: "a.pdf", isInline: false),
+                    RepInfo(uti: "com.adobe.pdf", byteCount: 20, filename: "b.pdf", isInline: false),
+                ]))
+        try await waitUntil {
+            DispatchQueue.main.sync { agent.inboundPromiseGenerationForTesting } == 23
+        }
+
+        // Two file reps → the single-file gate declines → nothing published.
+        #expect(publisher.published.isEmpty)
+    }
+
+    @Test("a superseding offer clears the prior File Provider offer before publishing")
+    func fileProviderSupersessionClears() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let domainURL = URL(fileURLWithPath: "/Users/Shared/KernovaClipboard/a.pdf")
+        let (agent, publisher) = makeAgentWithPublisher(
+            pasteboard: pasteboard, agentFd: agentFd, publisherURL: domainURL)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 1,
+                reps: [RepInfo(uti: "com.adobe.pdf", byteCount: 10, filename: "a.pdf", isInline: false)]
+            ))
+        try await waitUntil {
+            DispatchQueue.main.sync { agent.inboundPromiseGenerationForTesting } == 1
+        }
+        let clearsAfterFirst = publisher.clearCount
+
+        // A superseding offer must retract the prior FP offer (clearOffer fires at
+        // the top of handleOffer) before publishing the new one.
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 2,
+                reps: [RepInfo(uti: "com.adobe.pdf", byteCount: 20, filename: "b.pdf", isInline: false)]
+            ))
+        try await waitUntil {
+            DispatchQueue.main.sync { agent.inboundPromiseGenerationForTesting } == 2
+        }
+        #expect(publisher.clearCount > clearsAfterFirst)
+        #expect(publisher.published.last?.filename == "b.pdf")
     }
 
     @Test("inbound image file: promises both the image UTI and `.fileURL`")
