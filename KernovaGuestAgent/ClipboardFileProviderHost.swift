@@ -359,7 +359,18 @@ final class ClipboardFileProviderHost: NSObject, NSXPCListenerDelegate, GuestFil
     }
 
     func clearOffer() {
-        DispatchQueue.main.async { [weak self] in self?.clearOfferOnMain() }
+        // Runs synchronously on the main queue — all callers (handleOffer,
+        // handleRelease, teardown) are already there. This is load-bearing: in
+        // handleOffer the supersession clear is immediately followed by a
+        // synchronous publishSingleFile, so an async clear would be reordered to
+        // run AFTER the publish and overwrite the just-written item manifest back
+        // to empty (the extension then enumerates 0 items and no placeholder is
+        // created). The async branch is a defensive fallback only.
+        if Thread.isMainThread {
+            clearOfferOnMain()
+        } else {
+            DispatchQueue.main.async { [weak self] in self?.clearOfferOnMain() }
+        }
     }
 
     private func clearOfferOnMain() {
