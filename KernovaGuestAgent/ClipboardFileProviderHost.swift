@@ -94,6 +94,10 @@ final class ClipboardFileProviderHost: NSObject, NSXPCListenerDelegate, GuestFil
     /// Compared by raw value so a newer SDK symbol isn't required.
     private static let domainDisabledCode = -2011
 
+    /// How often availability is re-checked while enabled, so the user flipping
+    /// the System-Settings toggle takes effect without restarting the agent.
+    private static let availabilityPollInterval: TimeInterval = 3
+
     private let pullProvider: ClipboardFileProviderPullProvider
     private let domain: NSFileProviderDomain
 
@@ -106,6 +110,9 @@ final class ClipboardFileProviderHost: NSObject, NSXPCListenerDelegate, GuestFil
     /// (the File Provider path is unused while it's `nil`).
     private var rootURL: URL?
     private var availabilityStorage: GuestFileProviderAvailability = .inactive
+    /// Re-checks `availabilityStorage` while enabled so a live toggle change is
+    /// reflected without a restart.
+    private var availabilityPollTimer: DispatchSourceTimer?
 
     /// Current File Provider usability, for the status item.
     ///
@@ -137,14 +144,33 @@ final class ClipboardFileProviderHost: NSObject, NSXPCListenerDelegate, GuestFil
         if enabled {
             startListenerIfNeeded()
             registerDomain()
+            startAvailabilityPolling()
         } else {
+            stopAvailabilityPolling()
             availabilityStorage = .inactive
-            rootURL = nil
-            domainRegistered = false
+            // Keep the domain registered across a policy off→on cycle: re-adding a
+            // domain re-creates it in the consent-gated OFF state, which would wipe
+            // the user's System-Settings enablement on every restart. Just clear
+            // the offer's items so nothing lingers.
             clearOfferOnMain()
-            Self.removeAllDomains { _ in }
             Self.logger.notice("File Provider disabled by host policy")
         }
+    }
+
+    private func startAvailabilityPolling() {
+        guard availabilityPollTimer == nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(
+            deadline: .now() + Self.availabilityPollInterval,
+            repeating: Self.availabilityPollInterval)
+        timer.setEventHandler { [weak self] in self?.refreshAvailability() }
+        timer.resume()
+        availabilityPollTimer = timer
+    }
+
+    private func stopAvailabilityPolling() {
+        availabilityPollTimer?.cancel()
+        availabilityPollTimer = nil
     }
 
     /// Lazily vends the XPC relay.
@@ -163,32 +189,47 @@ final class ClipboardFileProviderHost: NSObject, NSXPCListenerDelegate, GuestFil
         )
     }
 
-    /// Registers the clipboard domain, then resolves its root URL and probes the
-    /// user-enablement toggle.
+    /// Registers (or idempotently re-registers) the clipboard domain, then
+    /// resolves its root URL and probes the user-enablement toggle.
     ///
-    /// Removes this app's existing domains first so a stale on-disk replication
-    /// directory from a prior run can't fail `add` with `NSFileWriteFileExistsError`.
-    /// (`removeAllDomains` is scoped to this app's own provider.)
+    /// `add` is idempotent for an existing identifier — it updates the domain and
+    /// **preserves the user's enablement**, so a restart never resets the toggle.
+    /// Only a genuinely orphaned replication directory makes `add` fail with
+    /// `NSFileWriteFileExistsError`; that one case clears + retries once.
     private func registerDomain() {
-        Self.removeAllDomains { [weak self] _ in
-            guard let self else { return }
-            NSFileProviderManager.add(self.domain) { error in
-                DispatchQueue.main.async {
-                    if let error {
-                        Self.logger.error(
-                            "Failed to add File Provider domain: \(error.localizedDescription, privacy: .public)"
-                        )
-                        self.domainRegistered = false
-                        self.availabilityStorage = .unavailable
-                        return
-                    }
-                    self.domainRegistered = true
+        addDomain(retryOnExists: true)
+    }
+
+    private func addDomain(retryOnExists: Bool) {
+        NSFileProviderManager.add(domain) { [weak self] error in
+            let nsError = error as NSError?
+            let staleReplicationDir =
+                nsError?.domain == NSCocoaErrorDomain
+                && nsError?.code == NSFileWriteFileExistsError
+            let failure = error?.localizedDescription
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if staleReplicationDir, retryOnExists {
                     Self.logger.notice(
-                        "File Provider domain registered: \(Self.domainIdentifier.rawValue, privacy: .public)"
-                    )
-                    self.resolveRootURL()
-                    self.probeAvailability()
+                        "File Provider replication dir is orphaned; removing domains then retrying add")
+                    Self.removeAllDomains { _ in
+                        DispatchQueue.main.async { self.addDomain(retryOnExists: false) }
+                    }
+                    return
                 }
+                if let failure {
+                    Self.logger.error(
+                        "Failed to add File Provider domain: \(failure, privacy: .public)")
+                    self.domainRegistered = false
+                    self.availabilityStorage = .unavailable
+                    return
+                }
+                self.domainRegistered = true
+                Self.logger.notice(
+                    "File Provider domain registered: \(Self.domainIdentifier.rawValue, privacy: .public)"
+                )
+                self.resolveRootURL()
+                self.refreshAvailability()
             }
         }
     }
@@ -211,21 +252,29 @@ final class ClipboardFileProviderHost: NSObject, NSXPCListenerDelegate, GuestFil
         }
     }
 
-    /// Probes whether the user has enabled the extension by issuing a no-op
+    /// Re-checks whether the user has enabled the extension by issuing a no-op
     /// `signalEnumerator`: `-2011` means the per-extension File-Providers toggle
-    /// is off; any other error means an install/launch problem.
-    private func probeAvailability() {
+    /// is off; success means enabled; any other error means an install/launch
+    /// problem.
+    ///
+    /// Called on registration and on the availability poll timer, so flipping the
+    /// toggle in System Settings takes effect within `availabilityPollInterval`
+    /// without restarting the agent. Logs every transition for diagnosis.
+    private func refreshAvailability() {
         guard let manager = NSFileProviderManager(for: domain) else {
             availabilityStorage = .unavailable
             return
         }
         manager.signalEnumerator(for: .rootContainer) { [weak self] error in
+            let availability = Self.availability(from: error)
             DispatchQueue.main.async {
-                guard let self else { return }
-                self.availabilityStorage = Self.availability(from: error)
-                if self.availabilityStorage == .needsEnabling {
+                guard let self, self.enabled else { return }
+                let previous = self.availabilityStorage
+                self.availabilityStorage = availability
+                if availability != previous {
                     Self.logger.notice(
-                        "File Provider domain is registered but the user has it disabled (toggle off)")
+                        "File Provider availability: \(String(describing: availability), privacy: .public)"
+                    )
                 }
             }
         }
@@ -248,7 +297,19 @@ final class ClipboardFileProviderHost: NSObject, NSXPCListenerDelegate, GuestFil
         // Only advertise a placeholder we can actually materialize: a disabled or
         // not-yet-ready domain would leave a paste that never completes, so fall
         // back to the synchronous provider path in those cases.
-        guard enabled, domainRegistered, availabilityStorage == .ready, let rootURL else {
+        guard enabled, domainRegistered, let rootURL else {
+            Self.logger.debug(
+                "FP publish skipped (enabled=\(self.enabled, privacy: .public), registered=\(self.domainRegistered, privacy: .public), root=\(self.rootURL != nil, privacy: .public)) — using sync path"
+            )
+            return nil
+        }
+        guard availabilityStorage == .ready else {
+            // The domain is registered but the user hasn't enabled it in System
+            // Settings (or the probe hasn't confirmed yet) — fall back so the paste
+            // isn't a placeholder that never downloads. The status item prompts.
+            Self.logger.notice(
+                "FP publish skipped — domain not user-enabled (availability=\(String(describing: self.availabilityStorage), privacy: .public)) — using sync path"
+            )
             return nil
         }
         let item = ClipboardFileProviderManifest.Item(
@@ -263,9 +324,11 @@ final class ClipboardFileProviderHost: NSObject, NSXPCListenerDelegate, GuestFil
             return nil
         }
         signalEnumerator()
-        // Re-probe in the background so a toggle change is reflected next time.
-        probeAvailability()
-        return rootURL.appendingPathComponent(filename)
+        let url = rootURL.appendingPathComponent(filename)
+        Self.logger.notice(
+            "FP published item (gen=\(generation, privacy: .public), rep=\(repIndex, privacy: .public)) at \(url.path, privacy: .public)"
+        )
+        return url
     }
 
     func clearOffer() {

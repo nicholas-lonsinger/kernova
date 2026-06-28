@@ -910,7 +910,14 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             return !info.isInline && !info.isDirectory && !info.filename.isEmpty
                 && Self.isPromisable(info)
         }
-        guard fileRepIndices.count == 1, let repIndex = fileRepIndices.first else { return [:] }
+        guard fileRepIndices.count == 1, let repIndex = fileRepIndices.first else {
+            if !fileRepIndices.isEmpty {
+                Self.logger.notice(
+                    "Inbound offer has \(fileRepIndices.count, privacy: .public) file reps — not routed through the File Provider (D1a is single-file)"
+                )
+            }
+            return [:]
+        }
         let info = reps[repIndex]
         guard
             let url = fileProvider.publishSingleFile(

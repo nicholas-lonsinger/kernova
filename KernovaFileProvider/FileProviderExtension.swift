@@ -252,6 +252,9 @@ final class ClipboardEnumerator: NSObject, NSFileProviderEnumerator {
             let items = ClipboardFileProviderContainer.readManifest().items.map {
                 ClipboardFileItem(manifestItem: $0)
             }
+            FileProviderExtension.logger.notice(
+                "enumerateItems(\(self.container.rawValue, privacy: .public)) → \(items.count, privacy: .public) item(s)"
+            )
             observer.didEnumerate(items)
         }
         observer.finishEnumerating(upTo: nil)
