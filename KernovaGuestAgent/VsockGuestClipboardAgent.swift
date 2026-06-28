@@ -881,6 +881,10 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             Self.logger.warning(
                 "Failed to register host clipboard promise (gen=\(generation, privacy: .public))")
             inboundPromise = nil
+            // Retract any File Provider placeholder this offer just published, so a
+            // failed pasteboard write doesn't leave a dangling item in the domain
+            // (mirrors handleRelease / teardown; clearOffer is idempotent).
+            fileProvider?.clearOffer()
             return
         }
         // The promise is live now; hand the providers to the agent-lifetime
@@ -1294,6 +1298,19 @@ extension VsockGuestClipboardAgent: ClipboardFileProviderPullProvider {
     func fetchStagedFile(
         generation: UInt64, repIndex: Int
     ) -> Result<String, ClipboardFileProviderPullError> {
+        // Enforce the off-main contract: this method does `DispatchQueue.main.sync`
+        // below and then blocks on the pull, so running it on main would deadlock
+        // immediately (sync-to-self). Trap loudly at the offending caller instead.
+        dispatchPrecondition(condition: .notOnQueue(.main))
+        // RATIONALE: the guest-minted transferID is deterministic per
+        // `(generation, repIndex)`, so the `LazyPullCoordinator` slot and the
+        // receiver's awaiter hold one entry per id and cannot represent two
+        // concurrent pulls of the same item. Safe today because (1) `handleOffer`
+        // routes a rep to either the File Provider OR the synchronous `provideData`
+        // path, never both, and (2) the File Provider framework coalesces
+        // concurrent `fetchContents` for a single, constant `itemVersion`. D1b must
+        // preserve single-in-flight-per-id when it extends FP routing to
+        // multi-file/folder reps.
         struct PullContext {
             let promise: InboundPromise
             let channel: VsockChannel

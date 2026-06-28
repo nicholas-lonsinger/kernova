@@ -202,7 +202,7 @@ final class GuestAgentStatusItemController: NSObject, NSMenuDelegate {
     /// across macOS releases, so it tries the extension-point-scoped anchor first
     /// and falls back to the Login Items & Extensions pane; either way the user
     /// lands in System Settings and can enable "Kernova Guest Agent" under File
-    /// Providers. (Verify the exact anchor on the macOS 26 target.)
+    /// Providers. The exact anchor is intentionally non-load-bearing.
     @objc private func enableFileSharingTapped() {
         let candidates = [
             "x-apple.systempreferences:com.apple.ExtensionsPreferences?extensionPointIdentifier=com.apple.fileprovider-nonui",

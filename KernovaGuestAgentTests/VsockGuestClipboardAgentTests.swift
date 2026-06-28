@@ -1086,6 +1086,83 @@ struct VsockGuestClipboardAgentTests {
         try await expectNoRequest(from: hostChannel)
     }
 
+    @Test("File Provider relay: a host abort mid-pull resolves to .pullFailed")
+    func fileProviderRelayPullFailed() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 11,
+                reps: [
+                    RepInfo(uti: txtUTI, byteCount: 16, filename: "relay.txt", isInline: false)
+                ]))
+        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
+
+        // The host opens the transfer (Begin) then aborts instead of streaming —
+        // the off-main pull wakes with .aborted, so fetchStagedFile reports
+        // .pullFailed (which the relay maps to serverUnreachable).
+        let pull = Task.detached { agent.fetchStagedFile(generation: 11, repIndex: 0) }
+        let req = try await awaitRequest(on: hostChannel)
+        try hostChannel.send(
+            makeBeginFrame(
+                generation: 11, transferID: req.transferID, uti: txtUTI,
+                totalBytes: 16, filename: "relay.txt", isInline: false))
+        try hostChannel.send(
+            makeAbortFrame(transferID: req.transferID, code: "host.abort", message: "no"))
+        let outcome = await pull.value
+        guard case .failure(.pullFailed) = outcome else {
+            Issue.record("expected .pullFailed, got \(outcome)")
+            return
+        }
+    }
+
+    @Test("File Provider relay: a parked pull is woken by teardown, not the backstop timeout")
+    func fileProviderRelayTeardownWakeup() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 11,
+                reps: [
+                    RepInfo(uti: txtUTI, byteCount: 16, filename: "relay.txt", isInline: false)
+                ]))
+        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
+
+        // Park the pull (request sent, awaiting Begin), then drop the connection.
+        // serve()'s EOF handler fails the coordinator off-main, so the pull wakes
+        // promptly — well under the lazy-pull backstop — rather than hanging.
+        let pull = Task.detached { agent.fetchStagedFile(generation: 11, repIndex: 0) }
+        _ = try await awaitRequest(on: hostChannel)
+        let start = ContinuousClock.now
+        hostChannel.close()
+        let outcome = await pull.value
+        #expect(ContinuousClock.now - start < .seconds(5))
+        guard case .failure(.pullFailed) = outcome else {
+            Issue.record("expected .pullFailed after teardown, got \(outcome)")
+            return
+        }
+    }
+
     // MARK: - handleOffer File Provider routing
 
     /// Builds an agent with a `FakeFileProviderPublisher` wired in.
@@ -1197,6 +1274,45 @@ struct VsockGuestClipboardAgentTests {
 
         // Two file reps → the single-file gate declines → nothing published.
         #expect(publisher.published.isEmpty)
+    }
+
+    @Test("a superseding offer clears the prior File Provider offer before publishing")
+    func fileProviderSupersessionClears() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let domainURL = URL(fileURLWithPath: "/Users/Shared/KernovaClipboard/a.pdf")
+        let (agent, publisher) = makeAgentWithPublisher(
+            pasteboard: pasteboard, agentFd: agentFd, publisherURL: domainURL)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 1,
+                reps: [RepInfo(uti: "com.adobe.pdf", byteCount: 10, filename: "a.pdf", isInline: false)]
+            ))
+        try await waitUntil {
+            DispatchQueue.main.sync { agent.inboundPromiseGenerationForTesting } == 1
+        }
+        let clearsAfterFirst = publisher.clearCount
+
+        // A superseding offer must retract the prior FP offer (clearOffer fires at
+        // the top of handleOffer) before publishing the new one.
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 2,
+                reps: [RepInfo(uti: "com.adobe.pdf", byteCount: 20, filename: "b.pdf", isInline: false)]
+            ))
+        try await waitUntil {
+            DispatchQueue.main.sync { agent.inboundPromiseGenerationForTesting } == 2
+        }
+        #expect(publisher.clearCount > clearsAfterFirst)
+        #expect(publisher.published.last?.filename == "b.pdf")
     }
 
     @Test("inbound image file: promises both the image UTI and `.fileURL`")

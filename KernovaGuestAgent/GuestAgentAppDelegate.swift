@@ -128,9 +128,6 @@ final class GuestAgentAppDelegate: NSObject, NSApplicationDelegate {
                 fileProviderHost.setEnabled(policy.clipboardSharingEnabled)
                 Task { @MainActor in
                     self?.updateAppNap(clipboardEnabled: policy.clipboardSharingEnabled)
-                    // A policy change can flip File Provider availability; refresh
-                    // the status item so its enablement affordance stays current.
-                    self?.statusItemController?.connectionStateChanged()
                 }
             },
             onStateChange: { [weak self] _ in

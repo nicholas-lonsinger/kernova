@@ -59,7 +59,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         request: NSFileProviderRequest,
         completionHandler: @escaping (URL?, NSFileProviderItem?, Error?) -> Void
     ) -> Progress {
-        Self.logger.notice(
+        Self.logger.debug(
             "fetchContents START (item=\(itemIdentifier.rawValue, privacy: .public))")
         let progress = Progress(totalUnitCount: 100)
 
@@ -183,7 +183,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         for containerItemIdentifier: NSFileProviderItemIdentifier,
         request: NSFileProviderRequest
     ) throws -> NSFileProviderEnumerator {
-        Self.logger.notice(
+        Self.logger.debug(
             "enumerator(for: \(containerItemIdentifier.rawValue, privacy: .public))")
         return ClipboardEnumerator(container: containerItemIdentifier)
     }
@@ -260,7 +260,7 @@ final class ClipboardEnumerator: NSObject, NSFileProviderEnumerator {
             let items = ClipboardFileProviderContainer.readManifest().items.map {
                 ClipboardFileItem(manifestItem: $0)
             }
-            FileProviderExtension.logger.notice(
+            FileProviderExtension.logger.debug(
                 "enumerateItems(\(self.container.rawValue, privacy: .public)) → \(items.count, privacy: .public) item(s)"
             )
             observer.didEnumerate(items)

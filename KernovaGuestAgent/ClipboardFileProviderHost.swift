@@ -157,6 +157,18 @@ final class ClipboardFileProviderHost: NSObject, NSXPCListenerDelegate, GuestFil
         }
     }
 
+    /// Polls availability for the whole enabled lifetime, including while `.ready`.
+    ///
+    // RATIONALE: this is deliberately a continuous poll, not just a wait for the
+    // user to flip the toggle ON. `publishSingleFile` is synchronous and decides
+    // File-Provider-vs-sync-fallback purely from the cached `availabilityStorage`;
+    // it never re-probes (it can't await an async `signalEnumerator`). So the poll
+    // is the *only* thing that refreshes the cache during a session — keeping it
+    // running while `.ready` is what lets a user *disabling* the File-Providers
+    // toggle mid-session be detected, so the next paste falls back to the sync path
+    // instead of publishing a placeholder into a now-disabled domain. (Backing the
+    // poll off to a longer interval once `.ready` is a fair future optimization;
+    // stopping it entirely is not — it would regress the mid-session disable case.)
     private func startAvailabilityPolling() {
         guard availabilityPollTimer == nil else { return }
         let timer = DispatchSource.makeTimerSource(queue: .main)
@@ -280,7 +292,13 @@ final class ClipboardFileProviderHost: NSObject, NSXPCListenerDelegate, GuestFil
         }
     }
 
-    private static func availability(from error: Error?) -> GuestFileProviderAvailability {
+    /// Maps a `signalEnumerator` completion error to availability: no error =
+    /// enabled (`.ready`), `-2011` = the user toggle is off (`.needsEnabling`),
+    /// anything else = an install/launch problem (`.unavailable`).
+    ///
+    /// `internal` (not `private`) so `KernovaGuestAgentTests` can lock the
+    /// hard-coded `-2011` mapping against SDK drift.
+    static func availability(from error: Error?) -> GuestFileProviderAvailability {
         guard let error = error as NSError? else { return .ready }
         if error.domain == NSFileProviderErrorDomain, error.code == Self.domainDisabledCode {
             return .needsEnabling
@@ -307,7 +325,7 @@ final class ClipboardFileProviderHost: NSObject, NSXPCListenerDelegate, GuestFil
             // The domain is registered but the user hasn't enabled it in System
             // Settings (or the probe hasn't confirmed yet) — fall back so the paste
             // isn't a placeholder that never downloads. The status item prompts.
-            Self.logger.notice(
+            Self.logger.debug(
                 "FP publish skipped — domain not user-enabled (availability=\(String(describing: self.availabilityStorage), privacy: .public)) — using sync path"
             )
             return nil
@@ -332,7 +350,7 @@ final class ClipboardFileProviderHost: NSObject, NSXPCListenerDelegate, GuestFil
         // ENOENT before the kernel's dataless trap can call `fetchContents`.
         forceRootEnumeration(root: rootURL)
         let url = rootURL.appendingPathComponent(filename)
-        Self.logger.notice(
+        Self.logger.info(
             "FP published item (gen=\(generation, privacy: .public), rep=\(repIndex, privacy: .public)) at \(url.path, privacy: .public)"
         )
         return url
@@ -347,10 +365,12 @@ final class ClipboardFileProviderHost: NSObject, NSXPCListenerDelegate, GuestFil
     private func forceRootEnumeration(root: URL) {
         DispatchQueue.global(qos: .userInitiated).async {
             do {
+                // `.skipsHiddenFiles` so the diagnostic count reflects user-visible
+                // entries, not bookkeeping dirents (`.Trash`, `.DS_Store`).
                 let entries = try FileManager.default.contentsOfDirectory(
-                    at: root, includingPropertiesForKeys: nil)
-                Self.logger.notice(
-                    "Forced root enumeration — \(entries.count, privacy: .public) entr(ies) on disk")
+                    at: root, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
+                Self.logger.debug(
+                    "Root listing returned \(entries.count, privacy: .public) entr(ies)")
             } catch {
                 Self.logger.error(
                     "Root enumeration readdir failed: \(error.localizedDescription, privacy: .public)")
@@ -403,7 +423,7 @@ final class ClipboardFileProviderHost: NSObject, NSXPCListenerDelegate, GuestFil
         newConnection.exportedInterface = NSXPCInterface(with: ClipboardFileProviderRelay.self)
         newConnection.exportedObject = ClipboardFileProviderRelayService(pullProvider: pullProvider)
         newConnection.resume()
-        Self.logger.notice("Accepted File Provider XPC connection")
+        Self.logger.debug("Accepted File Provider XPC connection")
         return true
     }
 
@@ -458,14 +478,14 @@ final class ClipboardFileProviderRelayService: NSObject, ClipboardFileProviderRe
         generation: UInt64, repIndex: Int,
         reply: @escaping @Sendable (String?, NSError?) -> Void
     ) {
-        Self.logger.notice(
+        Self.logger.debug(
             "Relay fetchFile (gen=\(generation, privacy: .public), rep=\(repIndex, privacy: .public))")
         // Blocks the XPC queue while the agent pulls over vsock — safe, since the
         // File Provider read path has no 60s deadline and the extension's
         // fetchContents is itself blocked on this reply.
         switch pullProvider.fetchStagedFile(generation: generation, repIndex: repIndex) {
         case .success(let path):
-            Self.logger.notice("Relay staged \(path, privacy: .public)")
+            Self.logger.debug("Relay staged \(path, privacy: .public)")
             reply(path, nil)
         case .failure(let error):
             Self.logger.error("Relay fetchFile failed: \(String(describing: error), privacy: .public)")
