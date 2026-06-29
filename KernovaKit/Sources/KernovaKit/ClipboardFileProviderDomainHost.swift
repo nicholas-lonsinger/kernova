@@ -89,8 +89,8 @@ public enum ClipboardFileProviderAvailability: Equatable, Sendable {
 /// `@unchecked Sendable`: registration/manifest/availability state is touched
 /// only on the main queue; `pullProvider`, `config`, `logger`, and `container`
 /// are immutable `let`s the XPC listener delegate reads off-main.
-public final class ClipboardFileProviderDomainHost: NSObject, NSXPCListenerDelegate,
-    ClipboardFileProviderPublishing, @unchecked Sendable
+public final class ClipboardFileProviderDomainHost: NSObject, ClipboardFileProviderPublishing,
+    @unchecked Sendable
 {
     /// Raw value of `NSFileProviderError.Code.domainDisabled` (user toggle off).
     ///
@@ -106,10 +106,17 @@ public final class ClipboardFileProviderDomainHost: NSObject, NSXPCListenerDeleg
     private let container: ClipboardFileProviderContainer
     private let pullProvider: ClipboardFileProviderPullProvider
     private let domain: NSFileProviderDomain
+    /// Vends the relay to the extension — a Mach listener (guest) or the broker
+    /// (host).
+    ///
+    /// The domain host owns the relay *service*; the transport owns *how* it's
+    /// exposed.
+    private let relayTransport: ClipboardFileProviderRelayTransport
+    private let relayService: ClipboardFileProviderRelayService
 
     // MARK: Main-queue state
 
-    private var listener: NSXPCListener?
+    private var relayServingStarted = false
     private var enabled = false
     private var domainRegistered = false
     /// User-visible domain root, resolved after registration; `nil` until then
@@ -129,14 +136,21 @@ public final class ClipboardFileProviderDomainHost: NSObject, NSXPCListenerDeleg
     }
 
     /// Creates a domain host for one direction, pulling bytes through
-    /// `pullProvider` when the extension reads a placeholder.
+    /// `pullProvider` when the extension reads a placeholder, and vending the
+    /// relay through `relayTransport` (Mach listener for the guest, broker for the
+    /// host).
     public init(
-        config: ClipboardFileProviderConfig, pullProvider: ClipboardFileProviderPullProvider
+        config: ClipboardFileProviderConfig,
+        pullProvider: ClipboardFileProviderPullProvider,
+        relayTransport: ClipboardFileProviderRelayTransport
     ) {
         self.config = config
         self.logger = KernovaLogger(subsystem: config.loggerSubsystem, category: "FileProviderHost")
         self.container = ClipboardFileProviderContainer(config: config)
         self.pullProvider = pullProvider
+        self.relayTransport = relayTransport
+        self.relayService = ClipboardFileProviderRelayService(
+            pullProvider: pullProvider, loggerSubsystem: config.loggerSubsystem)
         self.domain = NSFileProviderDomain(
             identifier: NSFileProviderDomainIdentifier(config.domainIdentifier),
             displayName: config.domainDisplayName)
@@ -156,7 +170,7 @@ public final class ClipboardFileProviderDomainHost: NSObject, NSXPCListenerDeleg
         guard self.enabled != enabled else { return }
         self.enabled = enabled
         if enabled {
-            startListenerIfNeeded()
+            startRelayServingIfNeeded()
             registerDomain()
             startAvailabilityPolling()
         } else {
@@ -199,20 +213,15 @@ public final class ClipboardFileProviderDomainHost: NSObject, NSXPCListenerDeleg
         availabilityPollTimer = nil
     }
 
-    /// Lazily vends the XPC relay.
+    /// Lazily begins vending the relay through the injected transport.
     ///
-    /// Deferred to first enable so the team-prefixed Mach listener never starts in
-    /// a context that didn't enable clipboard sharing (notably the CI test host,
-    /// where the service isn't launchd-vended).
-    private func startListenerIfNeeded() {
-        guard listener == nil else { return }
-        let listener = NSXPCListener(machServiceName: config.machServiceName)
-        listener.delegate = self
-        listener.resume()
-        self.listener = listener
-        logger.notice(
-            "File Provider XPC listener started (\(self.config.machServiceName, privacy: .public))"
-        )
+    /// Deferred to first enable so a team-prefixed Mach listener / broker
+    /// registration never starts in a context that didn't enable clipboard
+    /// sharing (notably the CI test host).
+    private func startRelayServingIfNeeded() {
+        guard !relayServingStarted else { return }
+        relayServingStarted = true
+        relayTransport.startServing(relayService)
     }
 
     /// Registers (or idempotently re-registers) the clipboard domain, then
@@ -430,20 +439,6 @@ public final class ClipboardFileProviderDomainHost: NSObject, NSXPCListenerDeleg
         guard let manager = NSFileProviderManager(for: domain) else { return }
         manager.signalEnumerator(for: .workingSet) { _ in }
         manager.signalEnumerator(for: .rootContainer) { _ in }
-    }
-
-    // MARK: - NSXPCListenerDelegate
-
-    /// Accepts an extension connection and exports the relay service to it.
-    public func listener(
-        _ listener: NSXPCListener, shouldAcceptNewConnection newConnection: NSXPCConnection
-    ) -> Bool {
-        newConnection.exportedInterface = NSXPCInterface(with: ClipboardFileProviderRelay.self)
-        newConnection.exportedObject = ClipboardFileProviderRelayService(
-            pullProvider: pullProvider, loggerSubsystem: config.loggerSubsystem)
-        newConnection.resume()
-        logger.debug("Accepted File Provider XPC connection")
-        return true
     }
 
     // MARK: - Teardown helpers

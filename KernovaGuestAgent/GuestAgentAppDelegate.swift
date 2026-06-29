@@ -120,7 +120,10 @@ final class GuestAgentAppDelegate: NSObject, NSApplicationDelegate {
         // pulls through the agent on `fetchContents`; the agent publishes a single
         // inbound file rep through the host. The agent's back-reference is weak.
         let fileProviderHost = ClipboardFileProviderDomainHost(
-            config: .guest, pullProvider: clipboardAgent)
+            config: .guest, pullProvider: clipboardAgent,
+            relayTransport: MachServiceRelayTransport(
+                machServiceName: ClipboardFileProviderConfig.guest.machServiceName,
+                loggerSubsystem: ClipboardFileProviderConfig.guest.loggerSubsystem))
         clipboardAgent.fileProvider = fileProviderHost
 
         // Control plane: always-on handshake/heartbeat/policy. `onPolicy` gates the
