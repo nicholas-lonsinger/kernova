@@ -702,13 +702,13 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         let staging = self.staging
         let generation = stagingGeneration
         stagingGeneration += 1
-        // Pull any not-yet-fetched representations first (lazy mode), then build
-        // the pasteboard pairs off the main actor: a streamed `.file` payload's
-        // temp URL is used as-is; an inline payload's bytes are written inline
-        // (read from disk if file-backed); an inline-and-named payload (image
-        // file) is also staged to a temp file so a Finder paste creates it. A
-        // large read/stage/pull mustn't block the UI, so disable the button until
-        // it resolves.
+        // Classify the copy items, then build the pasteboard pairs off the main
+        // actor. Inline/preview/directory reps are pulled eagerly and grouped by
+        // the shared planner; the single plain file rep is either a File Provider
+        // placeholder (materialized on read, no deadline) or a size-capped lazy
+        // paste. Files are no longer pulled at click — the eager staging bridge is
+        // gone (#424). A large stage mustn't block the UI, so disable the button
+        // until it resolves.
         commandBar.copyButton.isEnabled = false
         Task { @MainActor [weak self] in
             guard let self else { return }
@@ -716,14 +716,39 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 self.isCopyingToMac = false
                 self.commandBar.copyButton.isEnabled = !service.clipboardContent.isEmpty
             }
-            let content = await service.materializeForCopy()
-            guard !content.isEmpty else {
-                self.indicatorView.showTransientMessage(
-                    "Couldn't fetch the clipboard content to copy", style: .error)
+            let copyItems = await service.materializeForCopy()
+            var resolvedReps: [ClipboardContent.Representation] = []
+            var lazyFiles: [(generation: UInt64, repIndex: Int)] = []
+            var droppedFileCount = 0
+            for item in copyItems {
+                switch item {
+                case .resolved(let rep): resolvedReps.append(rep)
+                case .lazyFile(let generation, let repIndex, _, _):
+                    lazyFiles.append((generation, repIndex))
+                case .droppedFile: droppedFileCount += 1
+                }
+            }
+            guard !resolvedReps.isEmpty || !lazyFiles.isEmpty else {
+                let message =
+                    droppedFileCount > 0
+                    ? "Couldn't prepare the clipboard file to copy"
+                    : "Couldn't fetch the clipboard content to copy"
+                self.indicatorView.showTransientMessage(message, style: .error)
                 return
             }
-            let specs = await Self.hostPasteboardItems(
-                for: content, generation: generation, staging: staging)
+            // Eager reps go through the shared planner (inline grouping, image-file
+            // staging, directory extraction). The single lazy file rep gets its own
+            // item whose `.fileURL` is pulled + staged on paste (the File-Provider-
+            // off fallback); only `VsockClipboardService` produces `.lazyFile`.
+            var specs = await Self.hostPasteboardItems(
+                for: ClipboardContent(representations: resolvedReps), generation: generation,
+                staging: staging)
+            if let fileProvider = service as? any HostClipboardFileRepProviding {
+                specs += lazyFiles.map {
+                    Self.lazyFileSpec(
+                        generation: $0.generation, repIndex: $0.repIndex, fileProvider: fileProvider)
+                }
+            }
             // One lazy provider per item: its bytes are read only when a
             // destination pastes that type (the laziness #392 restores). The
             // providers outlive this window — `finishCopyToMac` hands them to the
@@ -747,16 +772,14 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 providers.append(provider)
                 return item
             }
-            // Each successfully staged/extracted file payload yields exactly one
-            // item promising a `.fileURL`; any shortfall is a payload (often a
-            // folder whose extraction failed) silently dropped — surface it rather
-            // than showing an unqualified success.
-            let stagedFileCount = items.filter { $0.types.contains(.fileURL) }.count
-            let droppedFiles = content.filePayloads.count - stagedFileCount
+            // `materializeForCopy` already counted the file payloads it couldn't
+            // serve (over the deadline-safe cap with the File Provider off, an
+            // extra file beyond the single lazy one, or a failed eager pull), so
+            // surface that rather than showing an unqualified success.
             self.finishCopyToMac(
                 items: items, providers: providers,
-                representationCount: content.representations.count,
-                droppedFiles: droppedFiles)
+                representationCount: resolvedReps.count + lazyFiles.count,
+                droppedFiles: droppedFileCount)
         }
     }
 
@@ -764,27 +787,50 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     /// a closure that lazily serves the bytes for each requested type.
     ///
     /// The spec is the lazy counterpart of an eager `[(type, data)]` item — the
-    /// inline byte read is deferred into `provide`, which the
-    /// `LazyClipboardDataProvider` invokes only when a destination actually
-    /// pastes that type. File URLs are resolved eagerly (staging stays the
-    /// temporary bridge until the File Provider transport lands), so a file
-    /// payload's `.fileURL` is captured by the closure but its image bytes are
-    /// still served on demand.
+    /// byte read is deferred into `provide`, which the `LazyClipboardDataProvider`
+    /// invokes only when a destination actually pastes that type. A File Provider
+    /// placeholder or extracted-directory `.fileURL` is a stable URL captured by
+    /// the closure; a File-Provider-off lazy file pulls + stages its bytes inside
+    /// `provide` (see `lazyFileSpec`); inline image bytes are served on demand.
     struct PasteboardItemSpec: Sendable {
         let types: [NSPasteboard.PasteboardType]
         let provide: @Sendable (NSPasteboard.PasteboardType) -> Data?
     }
 
+    /// A pasteboard item for the single lazy file rep served when the host File
+    /// Provider is off: `provide(.fileURL)` pulls + stages the bytes on demand and
+    /// returns the staged file URL.
+    ///
+    /// The pull runs synchronously on the main thread (the pasteboard server's
+    /// `provideData` callback), blocking it while the stream receiver delivers
+    /// off-main — the same `pullStagedFile` bridge the File Provider relay uses.
+    /// The rep was size-capped at copy time (`maxDeadlineSafeFileBytes`) so the
+    /// pull + stage completes within the OS paste deadline.
+    nonisolated private static func lazyFileSpec(
+        generation: UInt64, repIndex: Int, fileProvider: any HostClipboardFileRepProviding
+    ) -> PasteboardItemSpec {
+        PasteboardItemSpec(types: [.fileURL]) { type in
+            guard type == .fileURL else { return nil }
+            guard
+                case .success(let path) = fileProvider.pullStagedFile(
+                    generation: generation, repIndex: repIndex)
+            else { return nil }
+            return Data(URL(fileURLWithPath: path).absoluteString.utf8)
+        }
+    }
+
     /// Builds the per-item provider specs to promise on the host pasteboard for
-    /// `content`, staging file URLs off the main actor while deferring inline
-    /// byte reads to paste time.
+    /// the eagerly-resolved `content`, while deferring inline byte reads to paste
+    /// time.
     ///
     /// A single inline item promises every inline (filename-less) representation;
     /// each file payload becomes its own item promising exactly one `.fileURL`
     /// (and, for an image file, its inline image bytes too). One `.fileURL` per
     /// item is what a Finder paste needs to create N files — a single item holds
     /// only one value per type, so several file URLs in one item would collide.
-    /// Mirrors the guest agent's inbound promise grouping.
+    /// Mirrors the guest agent's inbound promise grouping. (`content` carries only
+    /// resolved reps — the lazy single file rep is added by the caller via
+    /// `lazyFileSpec`.)
     ///
     /// Internal (not `private`) so `@testable import` can exercise this pure
     /// grouping/staging step — and each spec's `provide` closure — directly
@@ -794,10 +840,10 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     ) async -> [PasteboardItemSpec] {
         // The grouping decision (one shared inline item; one item per file
         // payload; UTI dedup) is the shared planner — the single source of truth
-        // both sides of the bridge use. This side maps each planned item to a
-        // lazy `PasteboardItemSpec`, staging file URLs eagerly (the temporary
-        // bridge until the File Provider transport lands) while deferring inline
-        // byte reads to paste time.
+        // both sides of the bridge use. This side maps each planned item to a lazy
+        // `PasteboardItemSpec`: a File Provider placeholder / extracted-directory
+        // `.fileURL` is a stable URL used as-is, an inline-and-named image file is
+        // staged to a sink, and inline byte reads are deferred to paste time.
         let descriptors = content.representations.map {
             ClipboardRepresentationDescriptor(
                 uti: $0.uti, filename: $0.filename,
@@ -821,14 +867,12 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                     .map { NSPasteboard.PasteboardType($0.uti) }
                 if let imageType { types.append(imageType) }
 
-                // Stage the bytes into the window's launch-swept root and promise
-                // THAT url: a file payload arrives as a `.file` whose `fileURL`
-                // points into the service's transient staging (swept on VM stop),
-                // whereas the adopted `stagedURL` outlives the VM connection. The
-                // image flavor must read the same durable file — reading
-                // `representation.fileURL` lazily would vend empty image bytes once
-                // the transient file is swept, the very window-survival case the
-                // provider registry exists to support.
+                // Resolve the pasteboard `.fileURL`: a File Provider placeholder's
+                // stable domain URL, or an inline image file written to a durable
+                // sink. The image flavor reads the SAME staged file — reading
+                // `representation.fileURL` lazily could vend empty bytes once a
+                // transient source is swept, the window-survival case the provider
+                // registry exists to support.
                 let stagedURL = stagedFileURL(
                     for: representation, generation: generation, staging: staging)
                 let fileURLData = stagedURL.map { Data($0.absoluteString.utf8) }
@@ -890,15 +934,12 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         return nil
     }
 
-    /// Stages a file payload's bytes under the window's launch-swept root and
-    /// returns its URL, so the pasteboard `public.file-url` outlives the VM
-    /// teardown.
+    /// Returns the pasteboard `public.file-url` for a resolved file payload.
     ///
     /// A directory payload is extracted from its streamed `.aar` into a real
-    /// folder so a Finder paste recreates the tree. Otherwise re-homes a streamed
-    /// `.file` out of the service's transient staging (swept on VM stop/reconnect)
-    /// via `adopt`, or writes an inline-and-named payload's bytes to a fresh sink.
-    /// [sweep-vs-URL]
+    /// folder under the window's launch-swept root so a Finder paste recreates the
+    /// tree. An inline-and-named payload (image file) is written to a fresh sink so
+    /// its `.fileURL` outlives the VM teardown. [sweep-vs-URL]
     nonisolated private static func stagedFileURL(
         for representation: ClipboardContent.Representation, generation: UInt64,
         staging: ClipboardFileStaging
@@ -912,10 +953,11 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 for: representation, into: staging, generation: generation)
         }
         if let existing = representation.fileURL {
-            let adopted = try? staging.adopt(
-                externalFile: existing, generation: generation,
-                filename: representation.filename)
-            return adopted ?? existing
+            // A File Provider placeholder already has a stable domain URL (its bytes
+            // materialize lazily on read); use it as-is. The eager `adopt()` re-home
+            // of a streamed `.file` into the launch-swept root is gone (#424) — a
+            // rare spilled inline file simply keeps its transient URL.
+            return existing
         }
         guard let data = representation.inMemoryData,
             let sink = try? staging.makeSink(

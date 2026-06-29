@@ -114,6 +114,20 @@ public enum ClipboardStreamTuning {
     /// not double as "unlimited"; a measured-full volume advertising `0` would
     /// otherwise read as "send anything". Unknown capacity maps to this sentinel.
     public static let unlimitedAcceptByteCount = UInt64.max
+
+    /// Largest guest→host file served via the synchronous paste fallback when the
+    /// host File Provider is disabled: 256 MiB.
+    ///
+    /// `RATIONALE:` with the System-Settings File-Providers toggle off there is no
+    /// `fetchContents` escape hatch, so a "Copy to Mac" of a file must pull + stage
+    /// the bytes inside the OS paste deadline — Finder gives up at ~60 s (see the
+    /// `clipboard-paste-finder-60s-deadline` note). 256 MiB completes comfortably
+    /// within that on a same-host vsock link; a larger file is dropped (with an
+    /// enable-File-Sharing affordance) rather than risk a beachballed paste. This
+    /// cap applies *only* to the toggle-off fallback — with the File Provider on,
+    /// `fetchContents` has no deadline and there is no size limit (CLIPBOARD.md §1).
+    /// Validate against measured vsock throughput.
+    public static let maxDeadlineSafeFileBytes = 256 * 1024 * 1024
 }
 
 extension Duration {

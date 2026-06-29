@@ -102,50 +102,6 @@ struct ClipboardHostPasteboardItemsTests {
         #expect(try Data(contentsOf: url) == png)
     }
 
-    @Test("an image file's image bytes survive deletion of its original transient file")
-    func imageFileImageBytesReadFromDurableCopy() async throws {
-        let staging = makeStaging()
-        defer { staging.sweep() }
-
-        let rep = try #require(
-            NSBitmapImageRep(
-                bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 2, bitsPerSample: 8,
-                samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
-                bytesPerRow: 0, bitsPerPixel: 0
-            ))
-        let png = try #require(rep.representation(using: .png, properties: [:]))
-
-        // A file payload streams to disk, so it reaches hostPasteboardItems as a
-        // `.file` source whose URL points into the service's TRANSIENT staging —
-        // not resident bytes. Model that with a real file we delete below.
-        let transient = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(UUID().uuidString)-photo.png")
-        try png.write(to: transient)
-        let content = ClipboardContent(representations: [
-            .init(
-                uti: UTType.png.identifier, fileURL: transient, byteCount: png.count,
-                filename: "photo.png")
-        ])
-
-        let specs = await ClipboardContentViewController.hostPasteboardItems(
-            for: content, generation: 1, staging: staging)
-        #expect(specs.count == 1)
-        let spec = specs[0]
-        let pngType = NSPasteboard.PasteboardType(UTType.png.identifier)
-        #expect(Set(spec.types) == [pngType, .fileURL])
-
-        // Simulate the VM stopping: the service's transient staging is swept, so
-        // the representation's own file URL is gone. The promise is kept alive by
-        // the registry past window close, so a later paste of the image flavor must
-        // still serve the bytes — from the durably-adopted staged copy, not the
-        // swept original. (Reading `representation.fileURL` lazily would vend nil.)
-        try FileManager.default.removeItem(at: transient)
-
-        #expect(spec.provide(pngType) == png)
-        let url = try #require(fileURL(in: spec))
-        #expect(try Data(contentsOf: url) == png)
-    }
-
     @Test("inline content and a file produce one inline item plus one file item")
     func inlinePlusFile() async throws {
         let staging = makeStaging()

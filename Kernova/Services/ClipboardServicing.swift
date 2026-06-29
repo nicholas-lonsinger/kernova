@@ -78,16 +78,46 @@ protocol ClipboardServicing: AnyObject {
     /// eagerly (SPICE text) have nothing to pull.
     func materializeForPreview() async
 
-    /// Pulls every not-yet-fetched representation so the full content can be
-    /// written to the host pasteboard ("Copy to Mac"), returning the resolved
-    /// content. Default returns `clipboardContent` unchanged for eager
-    /// transports.
-    func materializeForCopy() async -> ClipboardContent
+    /// Prepares the items to write to the host pasteboard for "Copy to Mac".
+    ///
+    /// Inline, preview, and directory representations are pulled eagerly and
+    /// returned resolved; a single plain file representation is published as a
+    /// lazy host File Provider placeholder (materialized on read via
+    /// `fetchContents`, no deadline) or, when the File Provider is off, deferred
+    /// to a size-capped synchronous paste (`.lazyFile`); files that can't be
+    /// served are reported as `.droppedFile`. Default maps `clipboardContent`'s
+    /// representations to `.resolved` for eager transports (SPICE text).
+    func materializeForCopy() async -> [CopyToMacItem]
+}
+
+/// One item "Copy to Mac" places on the host pasteboard.
+///
+/// `materializeForCopy()` classifies each offered representation into one of
+/// these; the clipboard window turns them into `NSPasteboardItem`s. A directory
+/// or inline payload is `.resolved` (bytes/URL in hand); the single lazy-eligible
+/// plain file is either `.resolved` with a File Provider placeholder URL or
+/// `.lazyFile` (pulled on paste when the File Provider is off); anything that
+/// can't be served is `.droppedFile`.
+enum CopyToMacItem: Sendable {
+    /// A representation whose bytes are already resolved — an inline/preview rep
+    /// pulled eagerly, an extracted directory, or a File Provider placeholder URL.
+    case resolved(ClipboardContent.Representation)
+    /// The single plain file rep to serve lazily at paste time when the host File
+    /// Provider is off: pulled + staged on demand within the OS paste deadline,
+    /// addressed by its offer coordinates so the paste-time provider can request it.
+    case lazyFile(generation: UInt64, repIndex: Int, uti: String, filename: String)
+    /// A file payload that couldn't be served — over the deadline-safe size cap
+    /// with the File Provider off, an extra file beyond the single lazy-eligible
+    /// one (D2 is single-file), or a failed eager pull. Counted for the user
+    /// "N items couldn't be prepared" warning.
+    case droppedFile
 }
 
 extension ClipboardServicing {
     func materializeForPreview() async {}
-    func materializeForCopy() async -> ClipboardContent { clipboardContent }
+    func materializeForCopy() async -> [CopyToMacItem] {
+        clipboardContent.representations.map { .resolved($0) }
+    }
 
     /// Transports without byte-level progress (SPICE text, fakes) never show a
     /// transfer bar.

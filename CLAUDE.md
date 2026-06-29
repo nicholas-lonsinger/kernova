@@ -53,7 +53,7 @@ Kernova is a pure-AppKit app that manages virtual machines via Apple's `Virtuali
 
 ## Mac App Store Readiness
 
-Kernova is intended for **Mac App Store distribution** eventually, which will require adopting the **App Sandbox** (`com.apple.security.app-sandbox`). The main app is **not sandboxed yet** — `Kernova/Resources/Kernova.entitlements` carries only `com.apple.security.virtualization` and `com.apple.security.device.audio-input`. The virtualization entitlement itself is MAS-compatible (UTM ships a sandboxed `Virtualization.framework` app on the store); the App Sandbox is the gating work, and it will be done deliberately as **one coordinated effort**, not piecemeal.
+Kernova is intended for **Mac App Store distribution** eventually, which will require adopting the **App Sandbox** (`com.apple.security.app-sandbox`). The main app is **not sandboxed yet** — `Kernova/Resources/Kernova.entitlements` carries `com.apple.security.virtualization`, `com.apple.security.device.audio-input`, and a team-prefixed `com.apple.security.application-groups` (added for the host "Copy to Mac" File Provider's shared app-group container, #424 — app-group XPC is the sandbox-forward relay pattern, so this stays MAS-compatible). The virtualization entitlement itself is MAS-compatible (UTM ships a sandboxed `Virtualization.framework` app on the store); the App Sandbox is the gating work, and it will be done deliberately as **one coordinated effort**, not piecemeal.
 
 **The rule for now is simply: don't make that eventual migration bigger.** When you write *new* code, choose the approach that is already sandbox-safe so it won't need reworking later. Do not go the other way and convert existing, working code toward sandbox-compatibility as a side effect of unrelated work.
 

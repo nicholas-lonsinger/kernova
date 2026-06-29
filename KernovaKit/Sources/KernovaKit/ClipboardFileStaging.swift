@@ -180,30 +180,6 @@ public final class ClipboardFileStaging: @unchecked Sendable {
         return Sink(url: url, handle: handle)
     }
 
-    /// Adopts an externally-staged file into this root, returning a URL under it.
-    ///
-    /// Hard-links the source (instant, no byte copy) when it shares this root's
-    /// volume, falling back to a copy across volumes. Used when "Copy to Mac"
-    /// promotes a streamed file — whose bytes live in the *service's* transient
-    /// staging, swept on VM stop/reconnect — into the window's launch-swept root,
-    /// so the `public.file-url` placed on `NSPasteboard.general` outlives the VM
-    /// connection's teardown. [sweep-vs-URL]
-    public func adopt(externalFile url: URL, generation: UInt64, filename: String) throws -> URL {
-        lock.lock()
-        defer { lock.unlock() }
-        let dir = try directory(for: generation)
-        // Uniquify so two same-named files adopted into one generation (e.g. a
-        // multi-file Copy-to-Mac) each get a distinct URL instead of the second
-        // clobbering the first.
-        let dest = Self.uniqueDestination(in: dir, filename: filename)
-        do {
-            try FileManager.default.linkItem(at: url, to: dest)
-        } catch {
-            try FileManager.default.copyItem(at: url, to: dest)
-        }
-        return dest
-    }
-
     /// Reserves an empty child directory named exactly `name` under the
     /// generation directory, for the receiver to extract a directory tree into.
     ///
