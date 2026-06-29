@@ -16,6 +16,7 @@
 		A2000004 /* KernovaKit in Frameworks */ = {isa = PBXBuildFile; productRef = A2000005 /* KernovaKit */; };
 		A2000006 /* KernovaKit in Frameworks */ = {isa = PBXBuildFile; productRef = A2000007 /* KernovaKit */; };
 		A2000009 /* KernovaKit in Frameworks */ = {isa = PBXBuildFile; productRef = A2000008 /* KernovaKit */; };
+		A200000A /* KernovaKit in Frameworks */ = {isa = PBXBuildFile; productRef = A200000B /* KernovaKit */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -283,6 +284,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A200000A /* KernovaKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -512,6 +514,7 @@
 			);
 			name = KernovaClipboardFileProvider;
 			packageProductDependencies = (
+				A200000B /* KernovaKit */,
 			);
 			productName = KernovaClipboardFileProvider;
 			productReference = A1000600 /* KernovaClipboardFileProvider.appex */;
@@ -1430,6 +1433,10 @@
 			productName = KernovaKit;
 		};
 		A2000008 /* KernovaKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = KernovaKit;
+		};
+		A200000B /* KernovaKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = KernovaKit;
 		};

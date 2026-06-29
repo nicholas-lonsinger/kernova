@@ -122,12 +122,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             forEventClass: AEEventClass(kCoreEventClass),
             andEventID: AEEventID(kAEQuitApplication)
         )
-
-        #if DEBUG
-        // SPIKE (#424 Phase 0): stand up the throwaway host File Provider XPC probe
-        // when launched with --clipboard-fileprovider-host-spike. No-op otherwise.
-        HostClipboardFileProviderSpike.runIfRequested()
-        #endif
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
