@@ -27,7 +27,7 @@ final class GuestAgentStatusItemController: NSObject, NSMenuDelegate {
     private let hostBundledVersion: () -> String
     private let logForwardingEnabled: () -> Bool
     private let clipboardActivity: () -> ClipboardActivity
-    private let fileProviderAvailability: () -> GuestFileProviderAvailability
+    private let fileProviderAvailability: () -> ClipboardFileProviderAvailability
     private let onQuit: () -> Void
 
     init(
@@ -36,7 +36,7 @@ final class GuestAgentStatusItemController: NSObject, NSMenuDelegate {
         hostBundledVersion: @escaping () -> String,
         logForwardingEnabled: @escaping () -> Bool,
         clipboardActivity: @escaping () -> ClipboardActivity,
-        fileProviderAvailability: @escaping () -> GuestFileProviderAvailability,
+        fileProviderAvailability: @escaping () -> ClipboardFileProviderAvailability,
         onQuit: @escaping () -> Void
     ) {
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)

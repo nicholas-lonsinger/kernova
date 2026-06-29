@@ -116,7 +116,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// `nil` in tests and whenever the domain isn't usable, in which case every
     /// rep falls back to the synchronous provider path. Set once on main at app
     /// wiring.
-    weak var fileProvider: (any GuestFileProviderPublishing)?
+    weak var fileProvider: (any ClipboardFileProviderPublishing)?
 
     // MARK: - Main-queue state
 
@@ -269,7 +269,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         self.init(
             pasteboard: NSPasteboard.general,
             client: VsockGuestClient(port: KernovaVsockPort.clipboard, label: "clipboard"),
-            stagingTempRoot: ClipboardFileProviderContainer.stagingRootURL()
+            stagingTempRoot: ClipboardFileProviderContainer(config: .guest).stagingRootURL()
                 ?? FileManager.default.temporaryDirectory
         )
     }

@@ -1,28 +1,38 @@
 import FileProvider
 import Foundation
-import KernovaKit
 
-// Guest-side File Provider host (issue #376).
+// Shared clipboard File Provider domain host (issues #376 guest / #424 host).
 //
-// Owns the agent side of the File Provider transport:
+// Owns the container-app side of the File Provider transport, parameterized by
+// a `ClipboardFileProviderConfig` so the guest agent (host→guest paste) and the
+// main app (guest→host "Copy to Mac") share one implementation:
 //  1. The XPC relay the sandboxed extension calls on `fetchContents` — the
-//     extension can't open vsock, so the agent (which does) pulls for it.
+//     extension can't open vsock, so the owning process (which does) pulls for
+//     it.
 //  2. Registration of the clipboard File Provider domain so the system
 //     instantiates the extension and surfaces the domain in Finder.
-//  3. The offer manifest + `signalEnumerator` that declare the current inbound
-//     file rep to the system as a dataless placeholder.
+//  3. The offer manifest + `signalEnumerator` that declare the current file rep
+//     to the system as a dataless placeholder.
 //
-// Gated on host clipboard policy: the domain + listener stand up only once
-// clipboard sharing is enabled, so the team-prefixed Mach listener never starts
-// in a context that didn't enable clipboard (e.g. the CI test host).
+// Gated on clipboard policy: the domain + listener stand up only once clipboard
+// sharing is enabled, so the team-prefixed Mach listener never starts in a
+// context that didn't enable clipboard (e.g. the CI test host).
+//
+// NOTE (#424): the guest vends the relay via the `NSXPCListener` here (its
+// LaunchAgent registers the Mach name). The main app is neither sandboxed nor
+// launchd-managed and cannot register a Mach service (Phase-0 spike proved
+// `.resume()` is refused by launchd), so the host wiring (Phase 2b/3) will route
+// relay vending through an SMAppService broker instead of this listener. The
+// registration/manifest/availability machinery below is direction-agnostic and
+// shared as-is.
 
-// MARK: - Collaboration with the clipboard agent
+// MARK: - Collaboration with the clipboard owner
 
-/// Implemented by the clipboard agent so the relay can pull a file rep.
+/// Implemented by the clipboard owner so the relay can pull a file rep.
 ///
 /// Called off-main on the relay's XPC queue when the extension's `fetchContents`
 /// asks for the bytes.
-protocol ClipboardFileProviderPullProvider: AnyObject, Sendable {
+public protocol ClipboardFileProviderPullProvider: AnyObject, Sendable {
     /// Pulls `(generation, repIndex)` over vsock, stages it into the shared
     /// container, and returns the staged file path (or why it failed).
     func fetchStagedFile(
@@ -31,19 +41,20 @@ protocol ClipboardFileProviderPullProvider: AnyObject, Sendable {
 }
 
 /// Why a relay pull failed, mapped to an `NSFileProviderError` by the relay.
-enum ClipboardFileProviderPullError: Error {
+public enum ClipboardFileProviderPullError: Error {
     /// `(generation, repIndex)` isn't the current offer, or there's no live
     /// connection — a stale-placeholder read.
     case noCurrentOffer
-    /// The vsock pull aborted, timed out, or the host went away mid-transfer.
+    /// The vsock pull aborted, timed out, or the peer went away mid-transfer.
     case pullFailed
 }
 
-/// Implemented by the host so the agent can surface a file rep as a placeholder.
+/// Implemented by the host so the clipboard owner can surface a file rep as a
+/// placeholder.
 ///
-/// Lets the clipboard agent publish a single inbound file rep as a dataless
+/// Lets the clipboard owner publish a single inbound file rep as a dataless
 /// placeholder and get its pasteboard URL. Called only on the main queue.
-protocol GuestFileProviderPublishing: AnyObject, Sendable {
+public protocol ClipboardFileProviderPublishing: AnyObject, Sendable {
     /// Publishes a single file item as the current offer and returns the
     /// `file://` URL to advertise on the pasteboard, or `nil` when the File
     /// Provider isn't usable (sharing off, domain not registered, or the user
@@ -56,8 +67,8 @@ protocol GuestFileProviderPublishing: AnyObject, Sendable {
     func clearOffer()
 }
 
-/// What the agent knows about the File Provider's usability, for the status item.
-enum GuestFileProviderAvailability: Equatable, Sendable {
+/// What the owner knows about the File Provider's usability, for the UI.
+public enum ClipboardFileProviderAvailability: Equatable, Sendable {
     /// Not probed yet, or clipboard sharing is off.
     case inactive
     /// Domain registered and the user has it enabled — working.
@@ -72,32 +83,27 @@ enum GuestFileProviderAvailability: Equatable, Sendable {
 
 // MARK: - Host
 
-/// Hosts the agent's File Provider XPC relay, registers the clipboard domain,
-/// and publishes the current offer's single file item.
+/// Hosts the File Provider XPC relay, registers the clipboard domain, and
+/// publishes the current offer's single file item — for one direction's config.
 ///
 /// `@unchecked Sendable`: registration/manifest/availability state is touched
-/// only on the main queue; `pullProvider` is an immutable `let` the XPC listener
-/// delegate reads off-main.
-final class ClipboardFileProviderHost: NSObject, NSXPCListenerDelegate, GuestFileProviderPublishing,
-    @unchecked Sendable
+/// only on the main queue; `pullProvider`, `config`, `logger`, and `container`
+/// are immutable `let`s the XPC listener delegate reads off-main.
+public final class ClipboardFileProviderDomainHost: NSObject, NSXPCListenerDelegate,
+    ClipboardFileProviderPublishing, @unchecked Sendable
 {
-    private static let logger = KernovaLogger(
-        subsystem: "app.kernova.agent", category: "FileProviderHost")
-
-    /// Stable, hard-coded domain identifier (no `/` or `:`, which the framework
-    /// reserves for path separators / domain qualifiers).
-    private static let domainIdentifier = NSFileProviderDomainIdentifier("kernova-clipboard")
-    private static let domainDisplayName = "Kernova Clipboard"
-
     /// Raw value of `NSFileProviderError.Code.domainDisabled` (user toggle off).
     ///
     /// Compared by raw value so a newer SDK symbol isn't required.
     private static let domainDisabledCode = -2011
 
     /// How often availability is re-checked while enabled, so the user flipping
-    /// the System-Settings toggle takes effect without restarting the agent.
+    /// the System-Settings toggle takes effect without restarting the owner.
     private static let availabilityPollInterval: TimeInterval = 3
 
+    private let config: ClipboardFileProviderConfig
+    private let logger: KernovaLogger
+    private let container: ClipboardFileProviderContainer
     private let pullProvider: ClipboardFileProviderPullProvider
     private let domain: NSFileProviderDomain
 
@@ -109,32 +115,40 @@ final class ClipboardFileProviderHost: NSObject, NSXPCListenerDelegate, GuestFil
     /// User-visible domain root, resolved after registration; `nil` until then
     /// (the File Provider path is unused while it's `nil`).
     private var rootURL: URL?
-    private var availabilityStorage: GuestFileProviderAvailability = .inactive
+    private var availabilityStorage: ClipboardFileProviderAvailability = .inactive
     /// Re-checks `availabilityStorage` while enabled so a live toggle change is
     /// reflected without a restart.
     private var availabilityPollTimer: DispatchSourceTimer?
 
-    /// Current File Provider usability, for the status item.
+    /// Current File Provider usability, for the UI.
     ///
     /// Read on main.
-    var availability: GuestFileProviderAvailability {
+    public var availability: ClipboardFileProviderAvailability {
         dispatchPrecondition(condition: .onQueue(.main))
         return availabilityStorage
     }
 
-    init(pullProvider: ClipboardFileProviderPullProvider) {
+    /// Creates a domain host for one direction, pulling bytes through
+    /// `pullProvider` when the extension reads a placeholder.
+    public init(
+        config: ClipboardFileProviderConfig, pullProvider: ClipboardFileProviderPullProvider
+    ) {
+        self.config = config
+        self.logger = KernovaLogger(subsystem: config.loggerSubsystem, category: "FileProviderHost")
+        self.container = ClipboardFileProviderContainer(config: config)
         self.pullProvider = pullProvider
         self.domain = NSFileProviderDomain(
-            identifier: Self.domainIdentifier, displayName: Self.domainDisplayName)
+            identifier: NSFileProviderDomainIdentifier(config.domainIdentifier),
+            displayName: config.domainDisplayName)
         super.init()
     }
 
-    // MARK: - Enablement (host clipboard policy)
+    // MARK: - Enablement (clipboard policy)
 
-    /// Applies a host clipboard-sharing policy update.
+    /// Applies a clipboard-sharing policy update.
     ///
     /// Stands the domain + listener up on enable, tears the domain down on disable.
-    func setEnabled(_ enabled: Bool) {
+    public func setEnabled(_ enabled: Bool) {
         DispatchQueue.main.async { [weak self] in self?.applyEnabledOnMain(enabled) }
     }
 
@@ -153,7 +167,7 @@ final class ClipboardFileProviderHost: NSObject, NSXPCListenerDelegate, GuestFil
             // the user's System-Settings enablement on every restart. Just clear
             // the offer's items so nothing lingers.
             clearOfferOnMain()
-            Self.logger.notice("File Provider disabled by host policy")
+            logger.notice("File Provider disabled by clipboard policy")
         }
     }
 
@@ -192,12 +206,12 @@ final class ClipboardFileProviderHost: NSObject, NSXPCListenerDelegate, GuestFil
     /// where the service isn't launchd-vended).
     private func startListenerIfNeeded() {
         guard listener == nil else { return }
-        let listener = NSXPCListener(machServiceName: ClipboardFileProviderRelayConfig.machServiceName)
+        let listener = NSXPCListener(machServiceName: config.machServiceName)
         listener.delegate = self
         listener.resume()
         self.listener = listener
-        Self.logger.notice(
-            "File Provider XPC listener started (\(ClipboardFileProviderRelayConfig.machServiceName, privacy: .public))"
+        logger.notice(
+            "File Provider XPC listener started (\(self.config.machServiceName, privacy: .public))"
         )
     }
 
@@ -222,23 +236,23 @@ final class ClipboardFileProviderHost: NSObject, NSXPCListenerDelegate, GuestFil
             DispatchQueue.main.async {
                 guard let self else { return }
                 if staleReplicationDir, retryOnExists {
-                    Self.logger.notice(
+                    self.logger.notice(
                         "File Provider replication dir is orphaned; removing domains then retrying add")
-                    Self.removeAllDomains { _ in
+                    self.removeAllDomains { _ in
                         DispatchQueue.main.async { self.addDomain(retryOnExists: false) }
                     }
                     return
                 }
                 if let failure {
-                    Self.logger.error(
+                    self.logger.error(
                         "Failed to add File Provider domain: \(failure, privacy: .public)")
                     self.domainRegistered = false
                     self.availabilityStorage = .unavailable
                     return
                 }
                 self.domainRegistered = true
-                Self.logger.notice(
-                    "File Provider domain registered: \(Self.domainIdentifier.rawValue, privacy: .public)"
+                self.logger.notice(
+                    "File Provider domain registered: \(self.domain.identifier.rawValue, privacy: .public)"
                 )
                 self.resolveRootURL()
                 self.refreshAvailability()
@@ -255,9 +269,9 @@ final class ClipboardFileProviderHost: NSObject, NSXPCListenerDelegate, GuestFil
                 guard let self else { return }
                 if let url {
                     self.rootURL = url
-                    Self.logger.notice("Clipboard domain visible at: \(url.path, privacy: .public)")
+                    self.logger.notice("Clipboard domain visible at: \(url.path, privacy: .public)")
                 } else if let error {
-                    Self.logger.error(
+                    self.logger.error(
                         "getUserVisibleURL failed: \(error.localizedDescription, privacy: .public)")
                 }
             }
@@ -271,7 +285,7 @@ final class ClipboardFileProviderHost: NSObject, NSXPCListenerDelegate, GuestFil
     ///
     /// Called on registration and on the availability poll timer, so flipping the
     /// toggle in System Settings takes effect within `availabilityPollInterval`
-    /// without restarting the agent. Logs every transition for diagnosis.
+    /// without restarting the owner. Logs every transition for diagnosis.
     private func refreshAvailability() {
         guard let manager = NSFileProviderManager(for: domain) else {
             availabilityStorage = .unavailable
@@ -284,7 +298,7 @@ final class ClipboardFileProviderHost: NSObject, NSXPCListenerDelegate, GuestFil
                 let previous = self.availabilityStorage
                 self.availabilityStorage = availability
                 if availability != previous {
-                    Self.logger.notice(
+                    self.logger.notice(
                         "File Provider availability: \(String(describing: availability), privacy: .public)"
                     )
                 }
@@ -296,9 +310,9 @@ final class ClipboardFileProviderHost: NSObject, NSXPCListenerDelegate, GuestFil
     /// enabled (`.ready`), `-2011` = the user toggle is off (`.needsEnabling`),
     /// anything else = an install/launch problem (`.unavailable`).
     ///
-    /// `internal` (not `private`) so `KernovaGuestAgentTests` can lock the
-    /// hard-coded `-2011` mapping against SDK drift.
-    static func availability(from error: Error?) -> GuestFileProviderAvailability {
+    /// `internal` (not `private`) so `KernovaKitTests` can lock the hard-coded
+    /// `-2011` mapping against SDK drift.
+    static func availability(from error: Error?) -> ClipboardFileProviderAvailability {
         guard let error = error as NSError? else { return .ready }
         if error.domain == NSFileProviderErrorDomain, error.code == Self.domainDisabledCode {
             return .needsEnabling
@@ -306,9 +320,11 @@ final class ClipboardFileProviderHost: NSObject, NSXPCListenerDelegate, GuestFil
         return .unavailable
     }
 
-    // MARK: - GuestFileProviderPublishing
+    // MARK: - ClipboardFileProviderPublishing
 
-    func publishSingleFile(
+    /// Publishes a single file rep as the current offer's placeholder and returns
+    /// its domain URL, or `nil` to fall back to the synchronous provider path.
+    public func publishSingleFile(
         generation: UInt64, repIndex: Int, filename: String, byteCount: UInt64, uti: String
     ) -> URL? {
         dispatchPrecondition(condition: .onQueue(.main))
@@ -316,7 +332,7 @@ final class ClipboardFileProviderHost: NSObject, NSXPCListenerDelegate, GuestFil
         // not-yet-ready domain would leave a paste that never completes, so fall
         // back to the synchronous provider path in those cases.
         guard enabled, domainRegistered, let rootURL else {
-            Self.logger.debug(
+            logger.debug(
                 "FP publish skipped (enabled=\(self.enabled, privacy: .public), registered=\(self.domainRegistered, privacy: .public), root=\(self.rootURL != nil, privacy: .public)) — using sync path"
             )
             return nil
@@ -324,8 +340,8 @@ final class ClipboardFileProviderHost: NSObject, NSXPCListenerDelegate, GuestFil
         guard availabilityStorage == .ready else {
             // The domain is registered but the user hasn't enabled it in System
             // Settings (or the probe hasn't confirmed yet) — fall back so the paste
-            // isn't a placeholder that never downloads. The status item prompts.
-            Self.logger.debug(
+            // isn't a placeholder that never downloads. The UI prompts.
+            logger.debug(
                 "FP publish skipped — domain not user-enabled (availability=\(String(describing: self.availabilityStorage), privacy: .public)) — using sync path"
             )
             return nil
@@ -335,9 +351,9 @@ final class ClipboardFileProviderHost: NSObject, NSXPCListenerDelegate, GuestFil
             byteCount: byteCount, uti: uti)
         let manifest = ClipboardFileProviderManifest(generation: generation, items: [item])
         do {
-            try ClipboardFileProviderContainer.writeManifest(manifest)
+            try container.writeManifest(manifest)
         } catch {
-            Self.logger.error(
+            logger.error(
                 "Failed to write File Provider manifest: \(error.localizedDescription, privacy: .public)")
             return nil
         }
@@ -350,7 +366,7 @@ final class ClipboardFileProviderHost: NSObject, NSXPCListenerDelegate, GuestFil
         // ENOENT before the kernel's dataless trap can call `fetchContents`.
         forceRootEnumeration(root: rootURL)
         let url = rootURL.appendingPathComponent(filename)
-        Self.logger.info(
+        logger.info(
             "FP published item (gen=\(generation, privacy: .public), rep=\(repIndex, privacy: .public)) at \(url.path, privacy: .public)"
         )
         return url
@@ -360,25 +376,26 @@ final class ClipboardFileProviderHost: NSObject, NSXPCListenerDelegate, GuestFil
     /// enumeration, which writes the offered item's dataless placeholder to disk.
     ///
     /// Off-main because the `readdir` blocks on the extension's enumeration
-    /// round-trip; the offer→paste gap (the user switches to the guest and pastes)
-    /// is far longer than the listing, so the placeholder exists by paste time.
+    /// round-trip; the offer→paste gap (the user switches and pastes) is far
+    /// longer than the listing, so the placeholder exists by paste time.
     private func forceRootEnumeration(root: URL) {
-        DispatchQueue.global(qos: .userInitiated).async {
+        DispatchQueue.global(qos: .userInitiated).async { [logger] in
             do {
                 // `.skipsHiddenFiles` so the diagnostic count reflects user-visible
                 // entries, not bookkeeping dirents (`.Trash`, `.DS_Store`).
                 let entries = try FileManager.default.contentsOfDirectory(
                     at: root, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
-                Self.logger.debug(
+                logger.debug(
                     "Root listing returned \(entries.count, privacy: .public) entr(ies)")
             } catch {
-                Self.logger.error(
+                logger.error(
                     "Root enumeration readdir failed: \(error.localizedDescription, privacy: .public)")
             }
         }
     }
 
-    func clearOffer() {
+    /// Clears the current offer's items on supersession/teardown.
+    public func clearOffer() {
         // Runs synchronously on the main queue — all callers (handleOffer,
         // handleRelease, teardown) are already there. This is load-bearing: in
         // handleOffer the supersession clear is immediately followed by a
@@ -398,9 +415,9 @@ final class ClipboardFileProviderHost: NSObject, NSXPCListenerDelegate, GuestFil
         // the container in a context where the File Provider is unused.
         guard domainRegistered else { return }
         do {
-            try ClipboardFileProviderContainer.writeManifest(.empty)
+            try container.writeManifest(.empty)
         } catch {
-            Self.logger.debug(
+            logger.debug(
                 "Failed to clear File Provider manifest: \(error.localizedDescription, privacy: .public)")
         }
         signalEnumerator()
@@ -417,22 +434,24 @@ final class ClipboardFileProviderHost: NSObject, NSXPCListenerDelegate, GuestFil
 
     // MARK: - NSXPCListenerDelegate
 
-    func listener(
+    /// Accepts an extension connection and exports the relay service to it.
+    public func listener(
         _ listener: NSXPCListener, shouldAcceptNewConnection newConnection: NSXPCConnection
     ) -> Bool {
         newConnection.exportedInterface = NSXPCInterface(with: ClipboardFileProviderRelay.self)
-        newConnection.exportedObject = ClipboardFileProviderRelayService(pullProvider: pullProvider)
+        newConnection.exportedObject = ClipboardFileProviderRelayService(
+            pullProvider: pullProvider, loggerSubsystem: config.loggerSubsystem)
         newConnection.resume()
-        Self.logger.debug("Accepted File Provider XPC connection")
+        logger.debug("Accepted File Provider XPC connection")
         return true
     }
 
     // MARK: - Teardown helpers
 
-    private static func removeAllDomains(_ completion: @escaping @Sendable (Error?) -> Void) {
-        NSFileProviderManager.removeAllDomains { error in
+    private func removeAllDomains(_ completion: @escaping @Sendable (Error?) -> Void) {
+        NSFileProviderManager.removeAllDomains { [logger] error in
             if let error {
-                Self.logger.error(
+                logger.error(
                     "Failed to remove File Provider domains: \(error.localizedDescription, privacy: .public)"
                 )
             }
@@ -443,7 +462,7 @@ final class ClipboardFileProviderHost: NSObject, NSXPCListenerDelegate, GuestFil
     /// Removes this app's File Provider domains, blocking until done — for the
     /// `--remove-clipboard-domain` teardown flag so host-side iteration leaves no
     /// lingering Finder location behind.
-    static func removeAllDomainsBlocking() {
+    public static func removeAllDomainsBlocking() {
         let semaphore = DispatchSemaphore(value: 0)
         NSFileProviderManager.removeAllDomains { error in
             if let error {
@@ -461,34 +480,36 @@ final class ClipboardFileProviderHost: NSObject, NSXPCListenerDelegate, GuestFil
 
 /// The XPC-exported relay object.
 ///
-/// Pulls a file rep through the clipboard agent and replies with the staged-file
+/// Pulls a file rep through the clipboard owner and replies with the staged-file
 /// path, never the bytes.
-final class ClipboardFileProviderRelayService: NSObject, ClipboardFileProviderRelay {
-    private static let logger = KernovaLogger(
-        subsystem: "app.kernova.agent", category: "FileProviderRelay")
-
+public final class ClipboardFileProviderRelayService: NSObject, ClipboardFileProviderRelay {
+    private let logger: KernovaLogger
     private let pullProvider: ClipboardFileProviderPullProvider
 
-    init(pullProvider: ClipboardFileProviderPullProvider) {
+    /// Creates the relay service, logging under `loggerSubsystem`.
+    public init(pullProvider: ClipboardFileProviderPullProvider, loggerSubsystem: String) {
+        self.logger = KernovaLogger(subsystem: loggerSubsystem, category: "FileProviderRelay")
         self.pullProvider = pullProvider
         super.init()
     }
 
-    func fetchFile(
+    /// Pulls `(generation, repIndex)` through the owner and replies with the
+    /// staged path, or an `NSFileProviderError` on failure.
+    public func fetchFile(
         generation: UInt64, repIndex: Int,
         reply: @escaping @Sendable (String?, NSError?) -> Void
     ) {
-        Self.logger.debug(
+        logger.debug(
             "Relay fetchFile (gen=\(generation, privacy: .public), rep=\(repIndex, privacy: .public))")
-        // Blocks the XPC queue while the agent pulls over vsock — safe, since the
+        // Blocks the XPC queue while the owner pulls over vsock — safe, since the
         // File Provider read path has no 60s deadline and the extension's
         // fetchContents is itself blocked on this reply.
         switch pullProvider.fetchStagedFile(generation: generation, repIndex: repIndex) {
         case .success(let path):
-            Self.logger.debug("Relay staged \(path, privacy: .public)")
+            logger.debug("Relay staged \(path, privacy: .public)")
             reply(path, nil)
         case .failure(let error):
-            Self.logger.error("Relay fetchFile failed: \(String(describing: error), privacy: .public)")
+            logger.error("Relay fetchFile failed: \(String(describing: error), privacy: .public)")
             reply(nil, Self.nsError(for: error))
         }
     }
