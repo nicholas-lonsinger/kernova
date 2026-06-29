@@ -111,14 +111,10 @@ public final class BrokerRelayTransport: ClipboardFileProviderRelayTransport, @u
         connection.exportedInterface = NSXPCInterface(with: ClipboardFileProviderRelay.self)
         connection.exportedObject = service
         // Framework-enforced peer validation: only the genuine Kernova broker.
-        do {
-            try connection.setCodeSigningRequirement(
-                ClipboardFileProviderBrokerIdentity.brokerRequirement)
-        } catch {
-            logger.error(
-                "Failed to set broker code-signing requirement: \(error.localizedDescription, privacy: .public)"
-            )
-        }
+        // Non-throwing — arms the check so an impostor broker has this
+        // connection's calls invalidated.
+        connection.setCodeSigningRequirement(
+            ClipboardFileProviderBrokerIdentity.brokerRequirement)
         connection.invalidationHandler = { [weak self] in
             guard let self else { return }
             self.lock.lock()

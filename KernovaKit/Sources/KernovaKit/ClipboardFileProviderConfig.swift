@@ -46,6 +46,14 @@ public struct ClipboardFileProviderConfig: Sendable {
     /// `os.Logger` subsystem for the sandboxed extension (a separate process).
     public let extensionLoggerSubsystem: String
 
+    /// Code-signing requirement the extension pins on its relay connection, or
+    /// `nil` to skip peer validation.
+    ///
+    /// The host pins the broker (the relay is reached through it); the guest
+    /// leaves it `nil` — per-VM vsock auth is tracked separately (#145) and the
+    /// team-prefixed Mach name + app-group lookup already gate the guest leg.
+    public let relayCodeSigningRequirement: String?
+
     /// Creates a direction config from its addressing and logging values.
     public init(
         appGroupIdentifier: String,
@@ -54,7 +62,8 @@ public struct ClipboardFileProviderConfig: Sendable {
         domainDisplayName: String,
         containerDirectoryName: String,
         loggerSubsystem: String,
-        extensionLoggerSubsystem: String
+        extensionLoggerSubsystem: String,
+        relayCodeSigningRequirement: String?
     ) {
         self.appGroupIdentifier = appGroupIdentifier
         self.machServiceName = machServiceName
@@ -63,6 +72,7 @@ public struct ClipboardFileProviderConfig: Sendable {
         self.containerDirectoryName = containerDirectoryName
         self.loggerSubsystem = loggerSubsystem
         self.extensionLoggerSubsystem = extensionLoggerSubsystem
+        self.relayCodeSigningRequirement = relayCodeSigningRequirement
     }
 
     /// Host→guest: the guest agent serves the host's copied file to the guest
@@ -76,7 +86,8 @@ public struct ClipboardFileProviderConfig: Sendable {
         domainDisplayName: "Kernova Clipboard",
         containerDirectoryName: "FileProvider",
         loggerSubsystem: "app.kernova.agent",
-        extensionLoggerSubsystem: "app.kernova.agent.fileprovider")
+        extensionLoggerSubsystem: "app.kernova.agent.fileprovider",
+        relayCodeSigningRequirement: nil)
 
     /// Guest→host: the main app serves the guest's copied file to the Mac
     /// ("Copy to Mac", issue #424).
@@ -90,5 +101,6 @@ public struct ClipboardFileProviderConfig: Sendable {
         domainDisplayName: "Kernova Clipboard (Mac)",
         containerDirectoryName: "FileProviderHost",
         loggerSubsystem: "app.kernova",
-        extensionLoggerSubsystem: "app.kernova.clipboard.fileprovider")
+        extensionLoggerSubsystem: "app.kernova.clipboard.fileprovider",
+        relayCodeSigningRequirement: ClipboardFileProviderBrokerIdentity.brokerRequirement)
 }

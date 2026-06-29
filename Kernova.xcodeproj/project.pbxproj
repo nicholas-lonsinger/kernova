@@ -17,6 +17,9 @@
 		A2000006 /* KernovaKit in Frameworks */ = {isa = PBXBuildFile; productRef = A2000007 /* KernovaKit */; };
 		A2000009 /* KernovaKit in Frameworks */ = {isa = PBXBuildFile; productRef = A2000008 /* KernovaKit */; };
 		A200000A /* KernovaKit in Frameworks */ = {isa = PBXBuildFile; productRef = A200000B /* KernovaKit */; };
+		A100070A /* KernovaClipboardRelayAgent in Embed Helpers */ = {isa = PBXBuildFile; fileRef = A1000700 /* KernovaClipboardRelayAgent */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		A100070B /* app.kernova.clipboard.relay.plist in Copy LaunchAgent */ = {isa = PBXBuildFile; fileRef = A100070C /* app.kernova.clipboard.relay.plist */; };
+		A100070E /* KernovaKit in Frameworks */ = {isa = PBXBuildFile; productRef = A200000C /* KernovaKit */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -69,6 +72,13 @@
 			remoteGlobalIDString = A1000604;
 			remoteInfo = KernovaClipboardFileProvider;
 		};
+		A1000708 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A1000002 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A1000702;
+			remoteInfo = KernovaClipboardRelayAgent;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -79,8 +89,20 @@
 			dstSubfolderSpec = 6;
 			files = (
 				A100010B /* KernovaRelaunchHelper in Embed Helpers */,
+				A100070A /* KernovaClipboardRelayAgent in Embed Helpers */,
 			);
 			name = "Embed Helpers";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A100070D /* Copy LaunchAgent */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "Contents/Library/LaunchAgents";
+			dstSubfolderSpec = 1;
+			files = (
+				A100070B /* app.kernova.clipboard.relay.plist in Copy LaunchAgent */,
+			);
+			name = "Copy LaunchAgent";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		A100040E /* Embed Foundation Extensions */ = {
@@ -118,6 +140,8 @@
 		A1000400 /* KernovaQuickLook.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = KernovaQuickLook.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000500 /* KernovaFileProvider.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = KernovaFileProvider.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000600 /* KernovaClipboardFileProvider.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = KernovaClipboardFileProvider.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		A1000700 /* KernovaClipboardRelayAgent */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = KernovaClipboardRelayAgent; sourceTree = BUILT_PRODUCTS_DIR; };
+		A100070C /* app.kernova.clipboard.relay.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; name = "app.kernova.clipboard.relay.plist"; path = "KernovaClipboardRelayAgent/app.kernova.clipboard.relay.plist"; sourceTree = "<group>"; };
 		B62FC33F2FAFDBB1003775B7 /* KernovaKit */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = KernovaKit; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -169,6 +193,13 @@
 				Utilities/UniqueName.swift,
 			);
 			target = A1000404 /* KernovaQuickLook */;
+		};
+		A1000710 /* Exceptions for "KernovaClipboardRelayAgent" folder in "KernovaClipboardRelayAgent" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				app.kernova.clipboard.relay.plist,
+			);
+			target = A1000702 /* KernovaClipboardRelayAgent */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -222,6 +253,14 @@
 		A1000601 /* KernovaClipboardFileProvider */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = KernovaClipboardFileProvider;
+			sourceTree = "<group>";
+		};
+		A1000701 /* KernovaClipboardRelayAgent */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				A1000710 /* Exceptions for "KernovaClipboardRelayAgent" folder in "KernovaClipboardRelayAgent" target */,
+			);
+			path = KernovaClipboardRelayAgent;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -288,6 +327,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A1000704 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A100070E /* KernovaKit in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -302,6 +349,8 @@
 				A1000401 /* KernovaQuickLook */,
 				A1000501 /* KernovaFileProvider */,
 				A1000601 /* KernovaClipboardFileProvider */,
+				A1000701 /* KernovaClipboardRelayAgent */,
+				A100070C /* app.kernova.clipboard.relay.plist */,
 				B62FC33F2FAFDBB1003775B7 /* KernovaKit */,
 				A10000F0 /* DiskTemplates */,
 				A1000021 /* Products */,
@@ -319,6 +368,7 @@
 				A1000400 /* KernovaQuickLook.appex */,
 				A1000500 /* KernovaFileProvider.appex */,
 				A1000600 /* KernovaClipboardFileProvider.appex */,
+				A1000700 /* KernovaClipboardRelayAgent */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -335,6 +385,7 @@
 				A1000010 /* Frameworks */,
 				A1000050 /* Resources */,
 				A100010A /* Embed Helpers */,
+				A100070D /* Copy LaunchAgent */,
 				A100040E /* Embed Foundation Extensions */,
 				A100020A /* Package Guest Agent DMG */,
 			);
@@ -345,6 +396,7 @@
 				A1000206 /* PBXTargetDependency */,
 				A100040C /* PBXTargetDependency */,
 				A100060C /* PBXTargetDependency */,
+				A1000709 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				A1000006 /* Kernova */,
@@ -520,6 +572,28 @@
 			productReference = A1000600 /* KernovaClipboardFileProvider.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
+		A1000702 /* KernovaClipboardRelayAgent */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A1000707 /* Build configuration list for PBXNativeTarget "KernovaClipboardRelayAgent" */;
+			buildPhases = (
+				A1000703 /* Sources */,
+				A1000704 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				A1000701 /* KernovaClipboardRelayAgent */,
+			);
+			name = KernovaClipboardRelayAgent;
+			packageProductDependencies = (
+				A200000C /* KernovaKit */,
+			);
+			productName = KernovaClipboardRelayAgent;
+			productReference = A1000700 /* KernovaClipboardRelayAgent */;
+			productType = "com.apple.product-type.tool";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -555,6 +629,9 @@
 					A1000604 = {
 						CreatedOnToolsVersion = 16.0;
 					};
+					A1000702 = {
+						CreatedOnToolsVersion = 16.0;
+					};
 				};
 			};
 			buildConfigurationList = A1000032 /* Build configuration list for PBXProject "Kernova" */;
@@ -579,6 +656,7 @@
 				A1000404 /* KernovaQuickLook */,
 				A1000504 /* KernovaFileProvider */,
 				A1000604 /* KernovaClipboardFileProvider */,
+				A1000702 /* KernovaClipboardRelayAgent */,
 				A1000060 /* KernovaTests */,
 				A1000303 /* KernovaGuestAgentTests */,
 			);
@@ -803,6 +881,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A1000703 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -815,6 +900,11 @@
 			isa = PBXTargetDependency;
 			target = A1000102 /* KernovaRelaunchHelper */;
 			targetProxy = A1000108 /* PBXContainerItemProxy */;
+		};
+		A1000709 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A1000702 /* KernovaClipboardRelayAgent */;
+			targetProxy = A1000708 /* PBXContainerItemProxy */;
 		};
 		A1000206 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
@@ -1333,6 +1423,44 @@
 			};
 			name = Release;
 		};
+		A1000705 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Manual;
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 8MT4P4GZL2;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 0.9.0;
+				PRODUCT_BUNDLE_IDENTIFIER = app.kernova.clipboard.relay;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		A1000706 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Manual;
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 8MT4P4GZL2;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 0.9.0;
+				PRODUCT_BUNDLE_IDENTIFIER = app.kernova.clipboard.relay;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -1417,6 +1545,15 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		A1000707 /* Build configuration list for PBXNativeTarget "KernovaClipboardRelayAgent" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A1000705 /* Debug */,
+				A1000706 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 /* End XCConfigurationList section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -1437,6 +1574,10 @@
 			productName = KernovaKit;
 		};
 		A200000B /* KernovaKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = KernovaKit;
+		};
+		A200000C /* KernovaKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = KernovaKit;
 		};
