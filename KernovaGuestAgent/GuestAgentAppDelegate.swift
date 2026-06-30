@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import KernovaKit
 
 // KernovaGuestAgent
 //
@@ -59,7 +60,7 @@ final class GuestAgentAppDelegate: NSObject, NSApplicationDelegate {
     /// Gated on host clipboard-sharing policy. Wired bidirectionally with
     /// `clipboardAgent`: the host pulls through the agent on `fetchContents`; the
     /// agent publishes a single inbound file rep through the host.
-    private var fileProviderHost: ClipboardFileProviderHost?
+    private var fileProviderHost: ClipboardFileProviderDomainHost?
 
     /// Retained so the signal sources stay armed for the process lifetime.
     private var sigintSource: DispatchSourceSignal?
@@ -82,7 +83,7 @@ final class GuestAgentAppDelegate: NSObject, NSApplicationDelegate {
         // Teardown helper for host-side iteration (#376) — removes the clipboard
         // File Provider domain so no Finder location lingers after a test.
         if CommandLine.arguments.contains("--remove-clipboard-domain") {
-            ClipboardFileProviderHost.removeAllDomainsBlocking()
+            ClipboardFileProviderDomainHost.removeAllDomainsBlocking()
             exit(0)
         }
 
@@ -99,9 +100,15 @@ final class GuestAgentAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Log forwarding — created and registered with `VsockLogBridge` before the
-        // startup banner so the banner buffers into its pre-connect ring.
+        // startup banner so the banner buffers into its pre-connect ring. The
+        // shared `KernovaLogger` (in KernovaKit) forwards through this sink, which
+        // relays to the host over vsock; the host app leaves the sink `nil`.
         let vsockConnection = VsockHostConnection()
         VsockLogBridge.connection = vsockConnection
+        KernovaLogger.forwardingSink = { level, subsystem, category, message in
+            VsockLogBridge.connection?.forwardLog(
+                level: level, subsystem: subsystem, category: category, message: message)
+        }
         Self.logger.notice(
             "Kernova Guest Agent v\(Self.version, privacy: .public) (\(Self.buildNumber, privacy: .public)) started"
         )
@@ -112,7 +119,11 @@ final class GuestAgentAppDelegate: NSObject, NSApplicationDelegate {
         // on clipboard sharing. Wired both ways with the clipboard agent — the host
         // pulls through the agent on `fetchContents`; the agent publishes a single
         // inbound file rep through the host. The agent's back-reference is weak.
-        let fileProviderHost = ClipboardFileProviderHost(pullProvider: clipboardAgent)
+        let fileProviderHost = ClipboardFileProviderDomainHost(
+            config: .guest, pullProvider: clipboardAgent,
+            relayTransport: MachServiceRelayTransport(
+                machServiceName: ClipboardFileProviderConfig.guest.machServiceName,
+                loggerSubsystem: ClipboardFileProviderConfig.guest.loggerSubsystem))
         clipboardAgent.fileProvider = fileProviderHost
 
         // Control plane: always-on handshake/heartbeat/policy. `onPolicy` gates the

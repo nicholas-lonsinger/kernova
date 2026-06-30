@@ -100,32 +100,6 @@ struct ClipboardFileStagingTests {
         #expect(try Data(contentsOf: urlB) == Data("second".utf8))
     }
 
-    @Test("adopt de-dups a repeated filename in one generation")
-    func adoptDedupsSameName() throws {
-        let staging = makeStaging()
-        defer { staging.sweep() }
-
-        // Two distinct external files that happen to share a name.
-        let extDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(
-            at: extDir.appendingPathComponent("one"), withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(
-            at: extDir.appendingPathComponent("two"), withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: extDir) }
-        let srcA = extDir.appendingPathComponent("one/dup.bin")
-        let srcB = extDir.appendingPathComponent("two/dup.bin")
-        try Data("A".utf8).write(to: srcA)
-        try Data("B".utf8).write(to: srcB)
-
-        let destA = try staging.adopt(externalFile: srcA, generation: 1, filename: "dup.bin")
-        let destB = try staging.adopt(externalFile: srcB, generation: 1, filename: "dup.bin")
-
-        #expect(destA != destB)
-        #expect(try Data(contentsOf: destA) == Data("A".utf8))
-        #expect(try Data(contentsOf: destB) == Data("B".utf8))
-    }
-
     @Test("sweep removes the staging root")
     func sweepRemovesRoot() throws {
         let staging = makeStaging()

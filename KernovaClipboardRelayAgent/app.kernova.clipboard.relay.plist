@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>app.kernova.clipboard.relay</string>
+	<!-- Path to the embedded broker executable, relative to the main app bundle
+	     (copied into Contents/MacOS by the app's "Embed Helpers" phase). -->
+	<key>BundleProgram</key>
+	<string>Contents/MacOS/KernovaClipboardRelayAgent</string>
+	<!-- Tells Login Items & Extensions ("Allow in the Background") which app owns
+	     this job, so it shows Kernova's icon + name rather than a generic one. -->
+	<key>AssociatedBundleIdentifiers</key>
+	<array>
+		<string>app.kernova</string>
+	</array>
+	<!-- launchd registers (and demand-launches the broker on first connection to)
+	     the app-group-prefixed Mach service the sandboxed File Provider extension
+	     looks up. The main app's persistent connection keeps the broker alive
+	     while clipboard sharing is enabled, so no RunAtLoad/KeepAlive is needed. -->
+	<key>MachServices</key>
+	<dict>
+		<key>8MT4P4GZL2.app.kernova.hostrelay</key>
+		<true/>
+	</dict>
+	<key>LimitLoadToSessionType</key>
+	<string>Aqua</string>
+</dict>
+</plist>

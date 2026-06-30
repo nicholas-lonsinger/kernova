@@ -1,5 +1,7 @@
 import Testing
 
+@testable import KernovaKit
+
 @Suite("KernovaLogMessage privacy redaction")
 struct KernovaLogMessageTests {
     // MARK: - .public

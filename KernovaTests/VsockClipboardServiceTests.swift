@@ -1185,7 +1185,7 @@ struct VsockClipboardServiceTests {
         #expect(service.clipboardContent.representations.first?.inMemoryData == bytes)
     }
 
-    @Test("materializeForCopy pulls every remaining rep — files become .file, inline become .inMemory")
+    @Test("materializeForCopy pulls inline reps eagerly and defers the file rep to a lazy pull")
     func copyMaterializesEveryRep() async throws {
         let (guest, host) = try makePair()
         guest.start()
@@ -1218,21 +1218,32 @@ struct VsockClipboardServiceTests {
                 ]))
         try await waitForChange { service.clipboardContent.representations.count == 2 }
 
-        let resolved = await service.materializeForCopy()
+        let items = await service.materializeForCopy()
 
-        // The returned content is fully materialized, in offer order.
-        #expect(resolved.representations.count == 2)
-        let inline = resolved.representations[0]
+        // The inline rep is pulled eagerly; the single plain file rep is deferred
+        // as a lazy item (the File Provider is off in the test host) — not pulled
+        // at copy-click (the eager staging bridge is gone, #424).
+        #expect(items.resolvedReps.count == 1)
+        let inline = try #require(items.resolvedReps.first)
         #expect(!inline.isPendingRemote)
         #expect(inline.inMemoryData == inlineBytes)
 
-        let file = resolved.representations[1]
-        #expect(!file.isPendingRemote)
-        #expect(file.filename == "from-guest.bin")
-        let url = try #require(file.fileURL, "Expected a file-backed representation")
-        #expect(try Data(contentsOf: url) == fileBytes)
-        // The observable buffer mirrors the resolved content.
-        #expect(service.clipboardContent.representations.allSatisfy { !$0.isPendingRemote })
+        #expect(items.lazyFiles.count == 1)
+        let lazy = try #require(items.lazyFiles.first)
+        #expect(lazy.generation == 9)
+        #expect(lazy.repIndex == 1)
+        #expect(lazy.filename == "from-guest.bin")
+
+        // The lazy file pulls + stages its bytes on demand through the shared
+        // bridge (the toggle-off paste path), off the main thread.
+        let outcome = await Task.detached {
+            service.pullStagedFile(generation: 9, repIndex: 1)
+        }.value
+        guard case .success(let path) = outcome else {
+            Issue.record("Expected pullStagedFile to succeed, got \(outcome)")
+            return
+        }
+        #expect(try Data(contentsOf: URL(fileURLWithPath: path)) == fileBytes)
     }
 
     @Test("materializeForCopy re-tags a directory offer's rep as a directory")
@@ -1287,9 +1298,11 @@ struct VsockClipboardServiceTests {
         try guest.send(offer)
         try await waitForChange { service.clipboardContent.representations.count == 1 }
 
-        let resolved = await service.materializeForCopy()
-        #expect(resolved.representations.count == 1)
-        let rep = try #require(resolved.representations.first)
+        // A directory rep stays eager (D2 is single non-directory file): it's
+        // pulled and resolved at copy, re-tagged as a directory.
+        let items = await service.materializeForCopy()
+        #expect(items.resolvedReps.count == 1)
+        let rep = try #require(items.resolvedReps.first)
         // The re-tag carried the directory flag from the offer onto the rep.
         #expect(rep.isDirectory)
         // Its bytes are the streamed `.aar`, ready to extract on Copy-to-Mac.
@@ -1334,15 +1347,119 @@ struct VsockClipboardServiceTests {
         await service.materializeForPreview()
         #expect(responder.requests.count == 1)
 
-        // Copy pulls the remaining file rep only — rep 0 is reused from preview.
-        let resolved = await service.materializeForCopy()
+        // Copy reuses rep 0 from preview (no re-request) and defers the file rep as
+        // a lazy item — so still only the one preview request has gone out.
+        let items = await service.materializeForCopy()
+        #expect(responder.requests.count == 1)
+        #expect(items.resolvedReps.count == 1)
+        #expect(items.resolvedReps.first?.inMemoryData == inlineBytes)
+        #expect(items.lazyFiles.count == 1)
+        #expect(items.lazyFiles.first?.repIndex == 1)
+
+        // The deferred file pulls its bytes on demand through the shared bridge —
+        // now the second request goes out, the file rep was never double-requested.
+        let outcome = await Task.detached {
+            service.pullStagedFile(generation: 6, repIndex: 1)
+        }.value
+        guard case .success(let path) = outcome else {
+            Issue.record("Expected pullStagedFile to succeed, got \(outcome)")
+            return
+        }
+        #expect(try Data(contentsOf: URL(fileURLWithPath: path)) == fileBytes)
         #expect(responder.requests.count == 2)
-        // No rep was requested twice.
         #expect(Set(responder.requests.map(\.transferID)).count == 2)
-        #expect(resolved.representations.count == 2)
-        #expect(resolved.representations[0].inMemoryData == inlineBytes)
-        let copiedFileURL = try #require(resolved.representations[1].fileURL)
-        #expect(try Data(contentsOf: copiedFileURL) == fileBytes)
+    }
+
+    @Test("materializeForCopy drops extra file reps beyond the single lazy-eligible one")
+    func copyDropsExtraFileReps() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        service.start()
+        defer { service.stop() }
+
+        // Two plain file reps — D2 routes only a single file lazily, so with more
+        // than one, none qualifies and all are dropped (no pull is issued).
+        try guest.send(
+            makeOffer(
+                generation: 12,
+                reps: [
+                    (uti: "public.data", byteCount: 10, filename: "a.bin", isInline: false),
+                    (uti: "public.data", byteCount: 20, filename: "b.bin", isInline: false),
+                ]))
+        try await waitForChange { service.clipboardContent.representations.count == 2 }
+
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        responder.start()
+
+        let items = await service.materializeForCopy()
+        #expect(items.resolvedReps.isEmpty)
+        #expect(items.lazyFiles.isEmpty)
+        #expect(items.droppedFileCount == 2)
+        #expect(items.droppedReasons.allSatisfy { $0 == .multipleFiles })
+        #expect(responder.requests.isEmpty)
+    }
+
+    @Test("materializeForCopy drops a single file rep over the deadline-safe cap (File Provider off)")
+    func copyDropsOverCapFileWhenFileProviderOff() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        service.start()
+        defer { service.stop() }
+
+        // A single file rep larger than the deadline-safe cap: with the File
+        // Provider off (the test host), it can't be served within the paste
+        // deadline, so it's dropped rather than offered as a lazy paste.
+        let overCap = UInt64(ClipboardStreamTuning.maxDeadlineSafeFileBytes) + 1
+        try guest.send(
+            makeOffer(
+                generation: 13,
+                reps: [
+                    (uti: "public.data", byteCount: Int(overCap), filename: "huge.bin", isInline: false)
+                ]))
+        try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
+
+        let items = await service.materializeForCopy()
+        #expect(items.resolvedReps.isEmpty)
+        #expect(items.lazyFiles.isEmpty)
+        #expect(items.droppedFileCount == 1)
+        #expect(items.droppedReasons == [.tooLargeWithoutFileProvider])
+    }
+
+    @Test("pullStagedFile for a stale generation returns noCurrentOffer")
+    func pullStagedFileStaleGenerationFails() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        service.start()
+        defer { service.stop() }
+
+        try guest.send(
+            makeOffer(
+                generation: 20,
+                reps: [(uti: "public.data", byteCount: 100, filename: "f.bin", isInline: false)]))
+        try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
+
+        // A pull for a generation that isn't the current offer resolves to
+        // noCurrentOffer (the relay maps it to .noSuchItem), without a vsock pull.
+        let outcome = await Task.detached {
+            service.pullStagedFile(generation: 999, repIndex: 0)
+        }.value
+        guard case .failure(.noCurrentOffer) = outcome else {
+            Issue.record("Expected noCurrentOffer, got \(outcome)")
+            return
+        }
     }
 
     @Test("A newer offer supersedes an in-flight pull — the pull resolves to nothing, new placeholders publish")
@@ -1364,16 +1481,18 @@ struct VsockClipboardServiceTests {
         // the gen=2 offer reaches handleOffer.
         let responder = FakeGuestResponder(guest: guest)
         defer { responder.cancel() }
+        // An inline rep so Copy-to-Mac pulls it eagerly (files now defer to the
+        // lazy path); beginOnly so the pull parks for the supersede to interrupt.
         responder.register(
-            generation: 1, repIndex: 0, uti: "public.data", bytes: Data(count: 4096),
-            filename: "stale.bin", isInline: false, beginOnly: true)
+            generation: 1, repIndex: 0, uti: ClipboardContent.utf8TextUTI, bytes: Data("stale".utf8),
+            isInline: true, beginOnly: true)
         responder.start()
 
-        // First offer (gen=1) — a single non-inline file rep.
+        // First offer (gen=1) — a single inline rep, a placeholder until pulled.
         try guest.send(
             makeOffer(
                 generation: 1,
-                reps: [(uti: "public.data", byteCount: 4096, filename: "stale.bin", isInline: false)]))
+                reps: [(uti: ClipboardContent.utf8TextUTI, byteCount: 5, filename: "", isInline: true)]))
         try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
 
         // Start a copy that issues the gen=1 pull and parks (no End ever arrives).
@@ -1392,10 +1511,9 @@ struct VsockClipboardServiceTests {
                 reps: [(uti: "public.png", byteCount: 64, filename: "new.png", isInline: false)]))
 
         // The superseded copy resolves to nothing materialized for the abandoned
-        // offer — every returned rep is still a placeholder (or the result is
-        // empty), and no rep was committed.
+        // offer — no rep was resolved, and no rep was committed.
         let resolved = await copyTask.value
-        #expect(resolved.representations.allSatisfy { $0.isPendingRemote })
+        #expect(resolved.resolvedReps.isEmpty)
 
         // The new offer's placeholder is what's published.
         try await waitForChange {
@@ -1424,9 +1542,11 @@ struct VsockClipboardServiceTests {
         // newer offer's placeholders if the guard didn't suppress the republish.
         let responder = FakeGuestResponder(guest: guest)
         defer { responder.cancel() }
+        // An inline rep so Copy-to-Mac pulls it through the async `materialize`
+        // path (which the test seam parks); files now defer to the lazy path.
         responder.register(
-            generation: 1, repIndex: 0, uti: "public.data", bytes: Data(count: 4096),
-            filename: "stale.bin", isInline: false)
+            generation: 1, repIndex: 0, uti: ClipboardContent.utf8TextUTI, bytes: Data("stale".utf8),
+            isInline: true)
         responder.start()
 
         // The seam parks the materialize call in the window between the pull
@@ -1446,11 +1566,8 @@ struct VsockClipboardServiceTests {
             try? await release.wait(timeout: .seconds(5)) { released }
         }
 
-        // gen=1 — a single non-inline file rep, a placeholder until pulled.
-        try guest.send(
-            makeOffer(
-                generation: 1,
-                reps: [(uti: "public.data", byteCount: 4096, filename: "stale.bin", isInline: false)]))
+        // gen=1 — a single inline rep, a placeholder until pulled.
+        try guest.send(makeTextOffer(generation: 1, text: "stale"))
         try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
 
         // Copy issues the gen=1 pull; it completes and parks in the seam.
@@ -1493,9 +1610,11 @@ struct VsockClipboardServiceTests {
 
         let responder = FakeGuestResponder(guest: guest)
         defer { responder.cancel() }
+        // An inline rep so Copy-to-Mac pulls it through the async `materialize`
+        // path (which the test seam parks); files now defer to the lazy path.
         responder.register(
-            generation: 1, repIndex: 0, uti: "public.data", bytes: Data(count: 4096),
-            filename: "stale.bin", isInline: false)
+            generation: 1, repIndex: 0, uti: ClipboardContent.utf8TextUTI, bytes: Data("stale".utf8),
+            isInline: true)
         responder.start()
 
         let entered = AsyncGate()
@@ -1511,10 +1630,7 @@ struct VsockClipboardServiceTests {
             try? await release.wait(timeout: .seconds(5)) { released }
         }
 
-        try guest.send(
-            makeOffer(
-                generation: 1,
-                reps: [(uti: "public.data", byteCount: 4096, filename: "stale.bin", isInline: false)]))
+        try guest.send(makeTextOffer(generation: 1, text: "stale"))
         try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
 
         let copyTask = Task { await service.materializeForCopy() }
@@ -1576,7 +1692,7 @@ struct VsockClipboardServiceTests {
         // After release, the promise is gone: materializeForCopy resolves nothing
         // new and never requests the rep.
         let resolved = await service.materializeForCopy()
-        #expect(resolved.representations.allSatisfy { $0.isPendingRemote })
+        #expect(resolved.resolvedReps.isEmpty)
         #expect(responder.requests.isEmpty, "No rep should be requested after release")
     }
 
@@ -1729,15 +1845,15 @@ struct VsockClipboardServiceTests {
         // collects each pull's return value rather than rebuilding from the cache,
         // so a caller that coalesces onto an in-flight pull (and resumes before the
         // owning call commits the cache) no longer silently drops the rep.
-        #expect(copyContent.representations.count == 1)
-        #expect(copyContent.representations.first?.inMemoryData == payload)
+        #expect(copyContent.resolvedReps.count == 1)
+        #expect(copyContent.resolvedReps.first?.inMemoryData == payload)
 
         // With the cache now settled (no in-flight pull), a fresh Copy-to-Mac
         // resolves the rep from the cache without re-requesting it.
         let settledCopy = await service.materializeForCopy()
         #expect(responder.requests.filter { $0.transferID == rep0XID }.count == 1)
-        #expect(settledCopy.representations.count == 1)
-        #expect(settledCopy.representations.first?.inMemoryData == payload)
+        #expect(settledCopy.resolvedReps.count == 1)
+        #expect(settledCopy.resolvedReps.first?.inMemoryData == payload)
     }
 
     @Test("A pull the guest never answers (channel open) resolves via the backstop timeout, not a hang")
@@ -1772,7 +1888,7 @@ struct VsockClipboardServiceTests {
         // Copy issues the pull; with no answer and the channel open, it must
         // resolve (not hang) once the backstop fires — dropping the un-pulled rep.
         let resolved = await service.materializeForCopy()
-        #expect(resolved.representations.isEmpty)
+        #expect(resolved.resolvedReps.isEmpty)
 
         // The request DID go out (proving the pull started and the backstop, not a
         // pre-send failure, resolved it), and the rep stays a placeholder.
@@ -1811,8 +1927,8 @@ struct VsockClipboardServiceTests {
 
         // Copy-to-Mac must copy the edit, never resurrect the guest's offered rep.
         let resolved = await service.materializeForCopy()
-        #expect(resolved.text == "my edit")
-        #expect(resolved.representations.allSatisfy { !$0.isPendingRemote })
+        #expect(ClipboardContent(representations: resolved.resolvedReps).text == "my edit")
+        #expect(resolved.resolvedReps.allSatisfy { !$0.isPendingRemote })
     }
 
     @Test("A failed preview pull is retried on the next call — the generation latch isn't set on failure")
@@ -1881,7 +1997,8 @@ struct VsockClipboardServiceTests {
         // No promise is held: Copy-to-Mac resolves nothing and sends no request
         // (mirrors the guest agent's all-skip handling, not a dangling promise).
         let resolved = await service.materializeForCopy()
-        #expect(resolved.isEmpty)
+        #expect(resolved.resolvedReps.isEmpty)
+        #expect(resolved.lazyFiles.isEmpty)
         #expect(responder.requests.isEmpty)
     }
 
@@ -1898,18 +2015,32 @@ struct VsockClipboardServiceTests {
 
         // beginOnly opens a transfer the host can then abort with disk.full —
         // exercising the awaiter's onAbort issue-surfacing (the same handler the
-        // host's own mid-stream disk-full detection drives via deliverAbort).
+        // host's own mid-stream disk-full detection drives via deliverAbort). A
+        // directory rep is used because Copy-to-Mac still pulls those eagerly
+        // through the async `pull` (plain files now defer to the lazy path, which
+        // surfaces failures through the File Provider, not `lastTransferIssue`).
         let responder = FakeGuestResponder(guest: guest)
         defer { responder.cancel() }
         responder.register(
-            generation: 5, repIndex: 0, uti: "public.data", bytes: Data(count: 4096),
-            filename: "big.bin", isInline: false, beginOnly: true)
+            generation: 5, repIndex: 0, uti: UTType.folder.identifier, bytes: Data(count: 4096),
+            filename: "BigFolder", isInline: false, beginOnly: true)
         responder.start()
 
-        try guest.send(
-            makeOffer(
-                generation: 5,
-                reps: [(uti: "public.data", byteCount: 4096, filename: "big.bin", isInline: false)]))
+        var offer = Frame()
+        offer.protocolVersion = 1
+        offer.clipboardOffer = Kernova_V1_ClipboardOffer.with {
+            $0.generation = 5
+            $0.repInfo = [
+                Kernova_V1_ClipboardRepresentationInfo.with {
+                    $0.uti = UTType.folder.identifier
+                    $0.byteCount = 4096
+                    $0.filename = "BigFolder"
+                    $0.isInline = false
+                    $0.isDirectory = true
+                }
+            ]
+        }
+        try guest.send(offer)
         try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
 
         let copyTask = Task { await service.materializeForCopy() }
@@ -2158,5 +2289,45 @@ struct VsockClipboardServiceTests {
 
         responder.releaseEnd()
         _ = await copyTask.value
+    }
+}
+
+extension [CopyToMacItem] {
+    /// The eagerly-resolved representations, for assertions that previously read
+    /// `materializeForCopy().representations`.
+    fileprivate var resolvedReps: [ClipboardContent.Representation] {
+        compactMap {
+            switch $0 {
+            case .resolved(let rep): rep
+            default: nil
+            }
+        }
+    }
+
+    /// The lazy file items (the File-Provider-off paste fallback), by offer
+    /// coordinates.
+    fileprivate var lazyFiles: [(generation: UInt64, repIndex: Int, uti: String, filename: String)] {
+        compactMap {
+            switch $0 {
+            case .lazyFile(let generation, let repIndex, let uti, let filename):
+                (generation, repIndex, uti, filename)
+            default:
+                nil
+            }
+        }
+    }
+
+    /// Count of file payloads `materializeForCopy` couldn't serve.
+    fileprivate var droppedFileCount: Int { droppedReasons.count }
+
+    /// The reasons file payloads were dropped, for asserting the user-facing
+    /// message routing.
+    fileprivate var droppedReasons: [CopyToMacDropReason] {
+        compactMap {
+            switch $0 {
+            case .droppedFile(let reason): reason
+            default: nil
+            }
+        }
     }
 }

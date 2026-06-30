@@ -110,40 +110,55 @@ public enum ClipboardFileProviderContainerError: Error {
     case containerUnavailable
 }
 
-/// Locates the shared app-group container and reads/writes the offer manifest.
+/// Locates the shared app-group container and reads/writes the offer manifest
+/// for one direction's config.
 ///
 /// `containerURL(forSecurityApplicationGroupIdentifier:)` may return a URL whose
 /// directory isn't actually accessible (per Apple's docs), so writes are
-/// fallible and reads degrade to `.empty`.
-public enum ClipboardFileProviderContainer {
-    private static let directoryName = "FileProvider"
+/// fallible and reads degrade to `.empty`. Direction-bound: the app group and
+/// the subdirectory come from the `ClipboardFileProviderConfig` it's built with,
+/// so the guest and host containers never collide on a shared dev Mac.
+public struct ClipboardFileProviderContainer: Sendable {
     private static let stagingDirectoryName = "staging"
     private static let manifestFilename = "clipboard-manifest.json"
 
-    /// The shared app-group container directory, or `nil` if unavailable.
-    public static func containerURL() -> URL? {
-        FileManager.default.containerURL(
-            forSecurityApplicationGroupIdentifier: ClipboardFileProviderRelayConfig.appGroupIdentifier)
+    private let appGroupIdentifier: String
+    private let directoryName: String
+
+    /// Builds a container for one direction.
+    public init(config: ClipboardFileProviderConfig) {
+        self.appGroupIdentifier = config.appGroupIdentifier
+        self.directoryName = config.containerDirectoryName
     }
 
-    private static func fileProviderDirectoryURL() -> URL? {
+    /// The shared app-group container directory, or `nil` if unavailable.
+    public func containerURL() -> URL? {
+        FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: appGroupIdentifier)
+    }
+
+    private func fileProviderDirectoryURL() -> URL? {
         containerURL()?.appendingPathComponent(directoryName, isDirectory: true)
     }
 
-    /// Root for the agent's inbound File-Provider staging, inside the shared
-    /// container so the sandboxed extension can read the staged bytes. `nil` when
-    /// the container is unavailable.
-    public static func stagingRootURL() -> URL? {
-        fileProviderDirectoryURL()?.appendingPathComponent(stagingDirectoryName, isDirectory: true)
+    /// Root for inbound File-Provider staging, inside the shared container so the
+    /// sandboxed extension can read the staged bytes. `nil` when the container is
+    /// unavailable.
+    public func stagingRootURL() -> URL? {
+        fileProviderDirectoryURL()?.appendingPathComponent(
+            Self.stagingDirectoryName, isDirectory: true)
     }
 
-    private static func manifestURL() -> URL? {
-        fileProviderDirectoryURL()?.appendingPathComponent(manifestFilename, isDirectory: false)
+    private func manifestURL() -> URL? {
+        fileProviderDirectoryURL()?.appendingPathComponent(
+            Self.manifestFilename, isDirectory: false)
     }
 
-    /// Atomically writes the current offer manifest (agent side).
-    public static func writeManifest(_ manifest: ClipboardFileProviderManifest) throws {
-        guard let url = manifestURL() else { throw ClipboardFileProviderContainerError.containerUnavailable }
+    /// Atomically writes the current offer manifest (container-app side).
+    public func writeManifest(_ manifest: ClipboardFileProviderManifest) throws {
+        guard let url = manifestURL() else {
+            throw ClipboardFileProviderContainerError.containerUnavailable
+        }
         try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let data = try JSONEncoder().encode(manifest)
@@ -152,7 +167,7 @@ public enum ClipboardFileProviderContainer {
 
     /// Reads the current offer manifest (extension side); `.empty` when none is
     /// present or it can't be decoded.
-    public static func readManifest() -> ClipboardFileProviderManifest {
+    public func readManifest() -> ClipboardFileProviderManifest {
         guard let url = manifestURL(), let data = try? Data(contentsOf: url),
             let manifest = try? JSONDecoder().decode(ClipboardFileProviderManifest.self, from: data)
         else { return .empty }
