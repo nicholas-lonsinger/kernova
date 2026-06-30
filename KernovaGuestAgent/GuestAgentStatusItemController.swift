@@ -198,17 +198,12 @@ final class GuestAgentStatusItemController: NSObject, NSMenuDelegate {
 
     /// Opens System Settings so the user can enable the File Provider extension.
     ///
-    /// These `x-apple.systempreferences:` deep links are private and unguaranteed
-    /// across macOS releases, so it tries the extension-point-scoped anchor first
-    /// and falls back to the Login Items & Extensions pane; either way the user
+    /// Tries the shared `x-apple.systempreferences:` deep links in order (see
+    /// `ClipboardFileProviderSettings.enablementDeepLinks`); either way the user
     /// lands in System Settings and can enable "Kernova Guest Agent" under File
-    /// Providers. The exact anchor is intentionally non-load-bearing.
+    /// Providers.
     @objc private func enableFileSharingTapped() {
-        let candidates = [
-            "x-apple.systempreferences:com.apple.ExtensionsPreferences?extensionPointIdentifier=com.apple.fileprovider-nonui",
-            "x-apple.systempreferences:com.apple.LoginItems-Settings.extension?ExtensionItems",
-        ]
-        for string in candidates {
+        for string in ClipboardFileProviderSettings.enablementDeepLinks {
             if let url = URL(string: string), NSWorkspace.shared.open(url) { return }
         }
         Self.logger.error("Failed to open File Providers settings deep link")

@@ -74,7 +74,8 @@ public enum ClipboardFileProviderAvailability: Equatable, Sendable {
     /// Domain registered and the user has it enabled — working.
     case ready
     /// Domain registered but the user's System-Settings File-Providers toggle is
-    /// off (`-2011`); large-file paste falls back to the deadline-prone path.
+    /// off (`userEnabled == false`); large-file paste falls back to the
+    /// size-capped synchronous path.
     case needsEnabling
     /// The extension couldn't be found/launched or registration failed — an
     /// install/signing problem, not a user toggle.
@@ -92,11 +93,6 @@ public enum ClipboardFileProviderAvailability: Equatable, Sendable {
 public final class ClipboardFileProviderDomainHost: NSObject, ClipboardFileProviderPublishing,
     @unchecked Sendable
 {
-    /// Raw value of `NSFileProviderError.Code.domainDisabled` (user toggle off).
-    ///
-    /// Compared by raw value so a newer SDK symbol isn't required.
-    private static let domainDisabledCode = -2011
-
     /// How often availability is re-checked while enabled, so the user flipping
     /// the System-Settings toggle takes effect without restarting the owner.
     private static let availabilityPollInterval: TimeInterval = 3
@@ -126,6 +122,11 @@ public final class ClipboardFileProviderDomainHost: NSObject, ClipboardFileProvi
     /// Re-checks `availabilityStorage` while enabled so a live toggle change is
     /// reflected without a restart.
     private var availabilityPollTimer: DispatchSourceTimer?
+    /// Notified on the main queue on every availability transition.
+    ///
+    /// Lets an owner mirror availability into observable UI state. Set on main;
+    /// invoked on main.
+    private var availabilityObserver: (@MainActor (ClipboardFileProviderAvailability) -> Void)?
 
     /// Current File Provider usability, for the UI.
     ///
@@ -133,6 +134,32 @@ public final class ClipboardFileProviderDomainHost: NSObject, ClipboardFileProvi
     public var availability: ClipboardFileProviderAvailability {
         dispatchPrecondition(condition: .onQueue(.main))
         return availabilityStorage
+    }
+
+    /// Registers an observer notified on the main queue whenever `availability`
+    /// changes, and immediately delivers the current value.
+    ///
+    /// The owner mirrors this into observable UI state; the poll keeps it live, so
+    /// a user flipping the System-Settings toggle is reflected without a restart.
+    public func setAvailabilityObserver(
+        _ observer: @escaping @MainActor (ClipboardFileProviderAvailability) -> Void
+    ) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        availabilityObserver = observer
+        MainActor.assumeIsolated { observer(availabilityStorage) }
+    }
+
+    /// Updates the cached availability and notifies the observer on a transition.
+    ///
+    /// Centralizes the storage write + observer notification + transition log so
+    /// every path (registration probe, poll, policy disable) keeps the UI mirror
+    /// in sync. Runs on main.
+    private func setAvailability(_ availability: ClipboardFileProviderAvailability) {
+        guard availabilityStorage != availability else { return }
+        availabilityStorage = availability
+        logger.notice(
+            "File Provider availability: \(String(describing: availability), privacy: .public)")
+        MainActor.assumeIsolated { availabilityObserver?(availability) }
     }
 
     /// Creates a domain host for one direction, pulling bytes through
@@ -175,7 +202,7 @@ public final class ClipboardFileProviderDomainHost: NSObject, ClipboardFileProvi
             startAvailabilityPolling()
         } else {
             stopAvailabilityPolling()
-            availabilityStorage = .inactive
+            setAvailability(.inactive)
             // Keep the domain registered across a policy off→on cycle: re-adding a
             // domain re-creates it in the consent-gated OFF state, which would wipe
             // the user's System-Settings enablement on every restart. Just clear
@@ -287,46 +314,65 @@ public final class ClipboardFileProviderDomainHost: NSObject, ClipboardFileProvi
         }
     }
 
-    /// Re-checks whether the user has enabled the extension by issuing a no-op
-    /// `signalEnumerator`: `-2011` means the per-extension File-Providers toggle
-    /// is off; success means enabled; any other error means an install/launch
-    /// problem.
+    /// Re-checks whether the user has enabled the domain by reading the live
+    /// `userEnabled` flag off the system's copy of the domain.
+    ///
+    /// `NSFileProviderDomain.userEnabled` reflects the macOS System Settings →
+    /// Login Items & Extensions → File Providers toggle directly (it goes `false`
+    /// the moment the user turns the extension off), which is the authoritative
+    /// signal. A `signalEnumerator` probe is unreliable for this: its completion
+    /// reports only that the *signal was delivered*, so it returns success even
+    /// when the domain is disabled — the `-2011` surfaces later, on an actual
+    /// content fetch, too late to gate `publishSingleFile`. The locally-held
+    /// `domain` carries a stale flag, so the live copy is fetched via `domains()`.
     ///
     /// Called on registration and on the availability poll timer, so flipping the
     /// toggle in System Settings takes effect within `availabilityPollInterval`
     /// without restarting the owner. Logs every transition for diagnosis.
     private func refreshAvailability() {
-        guard let manager = NSFileProviderManager(for: domain) else {
-            availabilityStorage = .unavailable
-            return
-        }
-        manager.signalEnumerator(for: .rootContainer) { [weak self] error in
-            let availability = Self.availability(from: error)
+        let identifier = domain.identifier
+        Task { [weak self] in
+            let availability: ClipboardFileProviderAvailability
+            do {
+                let domains = try await NSFileProviderManager.domains()
+                availability = Self.availability(
+                    forDomainMatching: identifier, in: domains, error: nil)
+            } catch {
+                availability = Self.availability(
+                    forDomainMatching: identifier, in: [], error: error)
+            }
             DispatchQueue.main.async {
                 guard let self, self.enabled else { return }
-                let previous = self.availabilityStorage
-                self.availabilityStorage = availability
-                if availability != previous {
-                    self.logger.notice(
-                        "File Provider availability: \(String(describing: availability), privacy: .public)"
-                    )
-                }
+                self.setAvailability(availability)
             }
         }
     }
 
-    /// Maps a `signalEnumerator` completion error to availability: no error =
-    /// enabled (`.ready`), `-2011` = the user toggle is off (`.needsEnabling`),
-    /// anything else = an install/launch problem (`.unavailable`).
+    /// Maps the system's domain registry to availability: a matching domain with
+    /// `userEnabled == true` is `.ready`, a matching domain with `userEnabled ==
+    /// false` is `.needsEnabling` (the System-Settings toggle is off), and a
+    /// lookup error or a missing domain is `.unavailable`.
     ///
-    /// `internal` (not `private`) so `KernovaKitTests` can lock the hard-coded
-    /// `-2011` mapping against SDK drift.
-    static func availability(from error: Error?) -> ClipboardFileProviderAvailability {
-        guard let error = error as NSError? else { return .ready }
-        if error.domain == NSFileProviderErrorDomain, error.code == Self.domainDisabledCode {
-            return .needsEnabling
+    /// `internal` (not `private`) so `KernovaKitTests` can lock the mapping.
+    static func availability(
+        forDomainMatching identifier: NSFileProviderDomainIdentifier,
+        in domains: [NSFileProviderDomain],
+        error: Error?
+    ) -> ClipboardFileProviderAvailability {
+        guard error == nil else { return .unavailable }
+        guard let domain = domains.first(where: { $0.identifier == identifier }) else {
+            return .unavailable
         }
-        return .unavailable
+        return availability(userEnabled: domain.userEnabled)
+    }
+
+    /// Maps a domain's `userEnabled` flag to availability: `true` is `.ready`,
+    /// `false` is `.needsEnabling` (the user's System-Settings toggle is off).
+    ///
+    /// Split out so `KernovaKitTests` can lock the toggle mapping without a live
+    /// `NSFileProviderDomain` (whose `userEnabled` is read-only).
+    static func availability(userEnabled: Bool) -> ClipboardFileProviderAvailability {
+        userEnabled ? .ready : .needsEnabling
     }
 
     // MARK: - ClipboardFileProviderPublishing

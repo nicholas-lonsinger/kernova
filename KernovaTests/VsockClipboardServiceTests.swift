@@ -1400,6 +1400,7 @@ struct VsockClipboardServiceTests {
         #expect(items.resolvedReps.isEmpty)
         #expect(items.lazyFiles.isEmpty)
         #expect(items.droppedFileCount == 2)
+        #expect(items.droppedReasons.allSatisfy { $0 == .multipleFiles })
         #expect(responder.requests.isEmpty)
     }
 
@@ -1430,6 +1431,7 @@ struct VsockClipboardServiceTests {
         #expect(items.resolvedReps.isEmpty)
         #expect(items.lazyFiles.isEmpty)
         #expect(items.droppedFileCount == 1)
+        #expect(items.droppedReasons == [.tooLargeWithoutFileProvider])
     }
 
     @Test("pullStagedFile for a stale generation returns noCurrentOffer")
@@ -2316,11 +2318,15 @@ extension [CopyToMacItem] {
     }
 
     /// Count of file payloads `materializeForCopy` couldn't serve.
-    fileprivate var droppedFileCount: Int {
-        reduce(0) { count, item in
-            switch item {
-            case .droppedFile: count + 1
-            default: count
+    fileprivate var droppedFileCount: Int { droppedReasons.count }
+
+    /// The reasons file payloads were dropped, for asserting the user-facing
+    /// message routing.
+    fileprivate var droppedReasons: [CopyToMacDropReason] {
+        compactMap {
+            switch $0 {
+            case .droppedFile(let reason): reason
+            default: nil
             }
         }
     }

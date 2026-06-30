@@ -758,7 +758,7 @@ final class VsockClipboardService: ClipboardServicing {
             }
             if Self.isLazyEligibleFile(info) {
                 // An extra plain file rep beyond the single lazy-eligible one.
-                items.append(.droppedFile)
+                items.append(.droppedFile(.multipleFiles))
                 continue
             }
             // Inline, previewable, or directory rep — pull eagerly as before.
@@ -766,7 +766,7 @@ final class VsockClipboardService: ClipboardServicing {
                 items.append(.resolved(rep))
             } else if !info.filename.isEmpty {
                 // A file payload (directory or image file) we couldn't pull.
-                items.append(.droppedFile)
+                items.append(.droppedFile(.pullFailed))
             }
         }
         return items
@@ -805,7 +805,7 @@ final class VsockClipboardService: ClipboardServicing {
             Self.logger.notice(
                 "Copy-to-Mac file rep \(index, privacy: .public) is \(info.byteCount, privacy: .public) bytes — over the deadline-safe cap with the File Provider off; dropped"
             )
-            return .droppedFile
+            return .droppedFile(.tooLargeWithoutFileProvider)
         }
         return .lazyFile(
             generation: generation, repIndex: index, uti: info.uti, filename: info.filename)

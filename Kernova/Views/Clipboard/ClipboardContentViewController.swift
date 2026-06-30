@@ -45,6 +45,12 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     private let summaryView = ClipboardSummaryView()
     private let concealedPreview = ClipboardConcealedPreviewView()
     private let commandBar = ClipboardCommandBarView()
+    /// Top-of-window nudge shown only when the host "Copy to Mac" File Provider is
+    /// registered but the user hasn't enabled it in System Settings.
+    private let enablementBanner = ClipboardEnablementBanner()
+    /// Active = the banner is collapsed to zero height (the common case, toggle
+    /// on); deactivated to reveal it when the toggle is off.
+    private lazy var bannerCollapsed = enablementBanner.heightAnchor.constraint(equalToConstant: 0)
     /// Content-type indicator + transient-status surface, placed in the status
     /// row (right-aligned) so the command row stays a clean set of buttons.
     private let indicatorView = ClipboardIndicatorView()
@@ -275,6 +281,11 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             container.addSubview(contentView)
         }
 
+        enablementBanner.translatesAutoresizingMaskIntoConstraints = false
+        enablementBanner.isHidden = true
+        enablementBanner.onEnable = { [weak self] in self?.openFileProviderSettings() }
+        container.addSubview(enablementBanner)
+
         let commandDivider = NSBox()
         commandDivider.boxType = .separator
         commandDivider.translatesAutoresizingMaskIntoConstraints = false
@@ -301,10 +312,15 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         statusBar.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(statusBar)
 
-        // Vertical order: command bar (top) → divider → content → divider →
-        // progress bar → status row (bottom).
+        // Vertical order: enablement banner (top, collapsed when not needed) →
+        // command bar → divider → content → divider → progress bar → status row.
         var constraints: [NSLayoutConstraint] = [
-            commandBar.topAnchor.constraint(equalTo: container.topAnchor),
+            enablementBanner.topAnchor.constraint(equalTo: container.topAnchor),
+            enablementBanner.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            enablementBanner.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            bannerCollapsed,
+
+            commandBar.topAnchor.constraint(equalTo: enablementBanner.bottomAnchor),
             commandBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             commandBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
 
@@ -468,6 +484,9 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 _ = clipService?.lastTransferIssue
                 _ = self.instance.vsockControlService?.agentStatus
                 _ = self.instance.agentStatus
+                // The host "Copy to Mac" File Provider's enablement, so the
+                // top-of-window banner reacts when the user flips the toggle.
+                _ = HostClipboardFileProvider.shared.availability
             },
             apply: { [weak self] in
                 self?.updateUI()
@@ -548,7 +567,30 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         }
 
         applyStatus(status, canInstallKernovaAgent: canInstallKernovaAgent)
+        updateEnablementBanner()
         triggerPreviewMaterialization()
+    }
+
+    /// Reveals the top-of-window banner only in the `.needsEnabling` state.
+    ///
+    /// That's the one host "Copy to Mac" File Provider state the user can act on
+    /// (registered but the System-Settings toggle is off); every other state
+    /// (off, ready, or an install problem) keeps it collapsed.
+    private func updateEnablementBanner() {
+        let needsEnabling = HostClipboardFileProvider.shared.availability == .needsEnabling
+        guard enablementBanner.isHidden == needsEnabling else { return }
+        enablementBanner.isHidden = !needsEnabling
+        bannerCollapsed.isActive = !needsEnabling
+    }
+
+    /// Opens System Settings so the user can enable the host File Provider, trying
+    /// the shared deep links in order (see
+    /// `ClipboardFileProviderSettings.enablementDeepLinks`).
+    private func openFileProviderSettings() {
+        for string in ClipboardFileProviderSettings.enablementDeepLinks {
+            if let url = URL(string: string), NSWorkspace.shared.open(url) { return }
+        }
+        Self.logger.error("Failed to open File Providers settings deep link")
     }
 
     /// Pulls the representations the window renders richly for the current guest
@@ -663,6 +705,22 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         }
     }
 
+    /// The message shown when "Copy to Mac" placed nothing on the pasteboard, by
+    /// the most actionable drop reason first.
+    ///
+    /// The over-cap case points the user at enabling the File Provider (the same
+    /// fix the top-of-window banner offers), since that lifts the size cap.
+    private static func dropMessage(for reasons: [CopyToMacDropReason]) -> String {
+        guard !reasons.isEmpty else { return "Couldn't fetch the clipboard content to copy" }
+        if reasons.contains(.tooLargeWithoutFileProvider) {
+            return "File too large to copy to your Mac — enable 'File Provider' in System Settings."
+        }
+        if reasons.contains(.multipleFiles) {
+            return "Only one file can be copied to your Mac at a time"
+        }
+        return "Couldn't prepare the clipboard file to copy"
+    }
+
     // MARK: - Actions
 
     @objc private func pasteFromMac(_: Any?) {
@@ -719,21 +777,18 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             let copyItems = await service.materializeForCopy()
             var resolvedReps: [ClipboardContent.Representation] = []
             var lazyFiles: [(generation: UInt64, repIndex: Int)] = []
-            var droppedFileCount = 0
+            var droppedReasons: [CopyToMacDropReason] = []
             for item in copyItems {
                 switch item {
                 case .resolved(let rep): resolvedReps.append(rep)
                 case .lazyFile(let generation, let repIndex, _, _):
                     lazyFiles.append((generation, repIndex))
-                case .droppedFile: droppedFileCount += 1
+                case .droppedFile(let reason): droppedReasons.append(reason)
                 }
             }
             guard !resolvedReps.isEmpty || !lazyFiles.isEmpty else {
-                let message =
-                    droppedFileCount > 0
-                    ? "Couldn't prepare the clipboard file to copy"
-                    : "Couldn't fetch the clipboard content to copy"
-                self.indicatorView.showTransientMessage(message, style: .error)
+                self.indicatorView.showTransientMessage(
+                    Self.dropMessage(for: droppedReasons), style: .error)
                 return
             }
             // Eager reps go through the shared planner (inline grouping, image-file
@@ -779,7 +834,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             self.finishCopyToMac(
                 items: items, providers: providers,
                 representationCount: resolvedReps.count + lazyFiles.count,
-                droppedFiles: droppedFileCount)
+                droppedFiles: droppedReasons.count)
         }
     }
 

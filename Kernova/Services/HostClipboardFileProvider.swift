@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import Observation
 import ServiceManagement
 import os
 
@@ -19,6 +20,7 @@ import os
 /// Phase-0 spike proved launchd refuses it). No bytes cross XPC; only
 /// `(generation, repIndex)` and a staged app-group path do.
 @MainActor
+@Observable
 final class HostClipboardFileProvider {
     /// The process-wide coordinator.
     static let shared = HostClipboardFileProvider()
@@ -34,9 +36,11 @@ final class HostClipboardFileProvider {
     /// The domain stands up on 0→1 and tears down on 1→0, so the broker
     /// LaunchAgent and File Provider domain exist only while at least one VM has
     /// clipboard sharing on — never in the CI test host, which starts no service.
+    @ObservationIgnored
     private var activeServiceCount = 0
 
     /// `true` once the broker LaunchAgent has been registered this launch.
+    @ObservationIgnored
     private var brokerRegistered = false
 
     /// `true` when running inside the unit-test host.
@@ -53,15 +57,24 @@ final class HostClipboardFileProvider {
     private static let isRunningUnderTests =
         ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
 
+    /// Current File Provider usability, mirrored from the domain host's polled
+    /// availability for the clipboard window's enablement UI.
+    ///
+    /// Observe it for live updates: the domain host polls the System-Settings
+    /// toggle and pushes every transition through `setAvailabilityObserver`, so a
+    /// user enabling (or disabling) the File-Providers toggle while the window is
+    /// open is reflected without a restart.
+    private(set) var availability: ClipboardFileProviderAvailability = .inactive
+
     private init() {
         domainHost = ClipboardFileProviderDomainHost(
             config: .host, pullProvider: router,
             relayTransport: BrokerRelayTransport(
                 loggerSubsystem: ClipboardFileProviderConfig.host.loggerSubsystem))
+        domainHost.setAvailabilityObserver { [weak self] availability in
+            self?.availability = availability
+        }
     }
-
-    /// Current File Provider usability, for the clipboard window's enablement UI.
-    var availability: ClipboardFileProviderAvailability { domainHost.availability }
 
     /// A clipboard service started — stand up the domain on the first one.
     func serviceDidStart() {

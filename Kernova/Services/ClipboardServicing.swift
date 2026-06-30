@@ -106,11 +106,24 @@ enum CopyToMacItem: Sendable {
     /// Provider is off: pulled + staged on demand within the OS paste deadline,
     /// addressed by its offer coordinates so the paste-time provider can request it.
     case lazyFile(generation: UInt64, repIndex: Int, uti: String, filename: String)
-    /// A file payload that couldn't be served — over the deadline-safe size cap
-    /// with the File Provider off, an extra file beyond the single lazy-eligible
-    /// one (D2 is single-file), or a failed eager pull. Counted for the user
-    /// "N items couldn't be prepared" warning.
-    case droppedFile
+    /// A file payload that couldn't be served — the `reason` drives the user-facing
+    /// message (and, for the over-cap case, points the user at enabling the File
+    /// Provider, which lifts the cap).
+    case droppedFile(CopyToMacDropReason)
+}
+
+/// Why a "Copy to Mac" file payload couldn't be placed on the host pasteboard.
+///
+/// Distinguished so the clipboard window can show a specific, actionable message
+/// rather than a generic failure.
+enum CopyToMacDropReason: Sendable, Equatable {
+    /// Over the deadline-safe size cap while the host File Provider is off —
+    /// enabling it routes the file lazily (no cap, no deadline).
+    case tooLargeWithoutFileProvider
+    /// More than one file was offered; "Copy to Mac" serves a single file (D2).
+    case multipleFiles
+    /// An eager pull (a directory or image file) failed.
+    case pullFailed
 }
 
 extension ClipboardServicing {
