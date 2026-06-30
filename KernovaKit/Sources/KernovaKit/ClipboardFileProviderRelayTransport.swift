@@ -122,11 +122,27 @@ public final class BrokerRelayTransport: ClipboardFileProviderRelayTransport, @u
             self.lock.unlock()
             self.logger.notice("Broker connection invalidated; will re-register on next enable")
         }
+        connection.interruptionHandler = { [weak self] in
+            guard let self else { return }
+            self.lock.lock()
+            let connection = self.connection
+            self.lock.unlock()
+            // The broker process exited (its LaunchAgent has no KeepAlive); the
+            // connection stays valid and XPC demand-relaunches the broker on the
+            // next message. The fresh broker starts with no registered provider, so
+            // re-nominate ourselves here — otherwise every later fetchFile would
+            // reply serverUnreachable until the whole app restarts.
+            (connection?.remoteObjectProxy as? ClipboardFileProviderBroker)?.registerProvider()
+            self.logger.notice("Broker connection interrupted; re-registered relay")
+        }
         connection.resume()
         self.connection = connection
         (connection.remoteObjectProxy as? ClipboardFileProviderBroker)?.registerProvider()
+        // Fire-and-forget (registerProvider has no reply): a relaunched broker is
+        // re-nominated from the interruptionHandler above, and a true invalidation
+        // re-registers on the next enable.
         logger.notice(
-            "Registered relay with broker (\(ClipboardFileProviderBrokerIdentity.machServiceName, privacy: .public))"
+            "Sent relay registration to broker (\(ClipboardFileProviderBrokerIdentity.machServiceName, privacy: .public))"
         )
     }
 }

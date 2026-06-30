@@ -22,7 +22,11 @@ import os
 // validated via `NSXPCConnection.setCodeSigningRequirement` before the broker
 // serves them.
 //
-// Usage: launched by launchd (KeepAlive); takes no arguments.
+// Usage: demand-launched by launchd on the first connection to its Mach service;
+// takes no arguments. The plist declares no KeepAlive — the main app's persistent
+// connection keeps this process alive while clipboard sharing is enabled, and the
+// app re-registers itself (BrokerRelayTransport's interruptionHandler) if launchd
+// relaunches this process.
 
 private let logger = Logger(subsystem: "app.kernova.clipboard.relay", category: "Broker")
 
@@ -34,29 +38,35 @@ private let logger = Logger(subsystem: "app.kernova.clipboard.relay", category: 
 /// nominate itself as the backing relay; the extension calls `fetchFile`, which
 /// the broker forwards to that registered relay.
 ///
-/// `@unchecked Sendable`: `provider` is the only mutable state and is read and
-/// written solely under `lock`.
+/// `@unchecked Sendable`: `providerConnection` is the only mutable state and is
+/// read and written solely under `lock`.
 final class BrokerService: NSObject, ClipboardFileProviderBroker, @unchecked Sendable {
     private let lock = NSLock()
-    private var provider: ClipboardFileProviderRelay?
+    /// The main app's connection — kept (rather than a bare `remoteObjectProxy`) so
+    /// each `fetchFile` can build a per-call error-handling proxy.
+    ///
+    /// A plain proxy silently drops the reply block if the app disconnects
+    /// mid-pull, which would hang the extension's deadline-less `fetchContents`
+    /// wait forever.
+    private var providerConnection: NSXPCConnection?
 
-    /// Captures the calling (main-app) connection's `remoteObjectProxy` as the
-    /// backing relay and clears it when that connection invalidates.
+    /// Captures the calling (main-app) connection as the backing relay and clears
+    /// it when that connection invalidates.
     func registerProvider() {
         guard let connection = NSXPCConnection.current() else {
             logger.error("registerProvider called outside an XPC connection")
             return
         }
-        let proxy = connection.remoteObjectProxy as? ClipboardFileProviderRelay
         lock.lock()
-        provider = proxy
+        providerConnection = connection
         lock.unlock()
         // Clear the provider when the main app goes away, so a later fetchFile
-        // fails cleanly instead of forwarding to a dead proxy.
+        // fails cleanly instead of forwarding to a dead connection.
         connection.invalidationHandler = { [weak self] in
             guard let self else { return }
             self.lock.lock()
-            self.provider = nil
+            // Only clear if a newer registration hasn't already replaced it.
+            if self.providerConnection === connection { self.providerConnection = nil }
             self.lock.unlock()
             logger.notice("Provider connection invalidated; cleared")
         }
@@ -64,27 +74,48 @@ final class BrokerService: NSObject, ClipboardFileProviderBroker, @unchecked Sen
     }
 
     /// Forwards `(generation, repIndex)` to the registered main-app relay, or
-    /// replies `serverUnreachable` when no provider is registered.
+    /// replies `serverUnreachable` when no provider is registered or the main app
+    /// disconnects mid-pull.
     func fetchFile(
         generation: UInt64, repIndex: Int,
         reply: @escaping @Sendable (String?, NSError?) -> Void
     ) {
         lock.lock()
-        let provider = self.provider
+        let connection = providerConnection
         lock.unlock()
-        guard let provider else {
+        guard let connection else {
             logger.error("fetchFile with no registered provider")
-            reply(
-                nil,
-                NSError(
-                    domain: NSFileProviderErrorDomain,
-                    code: NSFileProviderError.serverUnreachable.rawValue))
+            reply(nil, Self.serverUnreachable)
+            return
+        }
+        // `remoteObjectProxyWithErrorHandler`, not a plain proxy: if the main-app
+        // connection drops after we forward but before it replies, a plain proxy
+        // would silently drop the reply and the sandboxed extension's deadline-less
+        // `fetchContents` wait would hang forever. The error handler turns that into
+        // a clean serverUnreachable. XPC invokes exactly one of the forwarded reply
+        // or this handler, so `reply` is never called twice.
+        let proxy =
+            connection.remoteObjectProxyWithErrorHandler { error in
+                logger.error(
+                    "Provider fetchFile failed: \(error.localizedDescription, privacy: .public)")
+                reply(nil, Self.serverUnreachable)
+            } as? ClipboardFileProviderRelay
+        guard let proxy else {
+            reply(nil, Self.serverUnreachable)
             return
         }
         logger.debug(
             "Forwarding fetchFile (gen=\(generation, privacy: .public), rep=\(repIndex, privacy: .public))"
         )
-        provider.fetchFile(generation: generation, repIndex: repIndex, reply: reply)
+        proxy.fetchFile(generation: generation, repIndex: repIndex, reply: reply)
+    }
+
+    /// A fresh `serverUnreachable` error for the extension to surface as a failed
+    /// (rather than hung) materialization.
+    private static var serverUnreachable: NSError {
+        NSError(
+            domain: NSFileProviderErrorDomain,
+            code: NSFileProviderError.serverUnreachable.rawValue)
     }
 }
 
@@ -127,6 +158,7 @@ logger.notice(
     "Clipboard relay broker listening on \(ClipboardFileProviderBrokerIdentity.machServiceName, privacy: .public)"
 )
 
-// launchd owns the lifecycle (KeepAlive); `resume()` returns immediately, so keep
-// the process alive to service connections.
+// launchd owns the lifecycle (demand-launched; no KeepAlive — the main app's
+// connection keeps this process alive while clipboard sharing is enabled).
+// `resume()` returns immediately, so keep the process alive to service connections.
 RunLoop.main.run()

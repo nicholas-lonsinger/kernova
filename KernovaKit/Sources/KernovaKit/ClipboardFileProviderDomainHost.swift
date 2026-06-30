@@ -112,7 +112,6 @@ public final class ClipboardFileProviderDomainHost: NSObject, ClipboardFileProvi
 
     // MARK: Main-queue state
 
-    private var relayServingStarted = false
     private var enabled = false
     private var domainRegistered = false
     /// User-visible domain root, resolved after registration; `nil` until then
@@ -197,7 +196,14 @@ public final class ClipboardFileProviderDomainHost: NSObject, ClipboardFileProvi
         guard self.enabled != enabled else { return }
         self.enabled = enabled
         if enabled {
-            startRelayServingIfNeeded()
+            // Vend the relay through the injected transport. Deferred to enable so a
+            // team-prefixed Mach listener / broker connection never starts in a
+            // context that didn't enable clipboard sharing (notably the CI test
+            // host). The transport self-guards idempotency and re-vends after an
+            // invalidation, so this runs on every enable — no outer latch, which
+            // would defeat the transport's documented "re-register on next enable"
+            // recovery (#424).
+            relayTransport.startServing(relayService)
             registerDomain()
             startAvailabilityPolling()
         } else {
@@ -238,17 +244,6 @@ public final class ClipboardFileProviderDomainHost: NSObject, ClipboardFileProvi
     private func stopAvailabilityPolling() {
         availabilityPollTimer?.cancel()
         availabilityPollTimer = nil
-    }
-
-    /// Lazily begins vending the relay through the injected transport.
-    ///
-    /// Deferred to first enable so a team-prefixed Mach listener / broker
-    /// registration never starts in a context that didn't enable clipboard
-    /// sharing (notably the CI test host).
-    private func startRelayServingIfNeeded() {
-        guard !relayServingStarted else { return }
-        relayServingStarted = true
-        relayTransport.startServing(relayService)
     }
 
     /// Registers (or idempotently re-registers) the clipboard domain, then

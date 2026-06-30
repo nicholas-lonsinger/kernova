@@ -125,7 +125,19 @@ final class HostClipboardFileProvider {
         do {
             try service.register()
             brokerRegistered = true
-            Self.logger.notice("Clipboard relay broker LaunchAgent registered")
+            // `register()` returns without throwing even when the background item
+            // still needs the user's approval in System Settings → Login Items &
+            // Extensions; the broker only demand-launches once it's `.enabled`. Log
+            // the real status so a placeholder paste that can't reach the broker
+            // (File-Providers toggle on, but the Login Item not allowed) is
+            // diagnosable rather than a silent serverUnreachable.
+            if service.status == .enabled {
+                Self.logger.notice("Clipboard relay broker LaunchAgent registered and enabled")
+            } else {
+                Self.logger.warning(
+                    "Clipboard relay broker registered but not enabled (status=\(String(describing: service.status), privacy: .public)) — large-file paste needs it allowed in Login Items & Extensions"
+                )
+            }
         } catch {
             // Leave `brokerRegistered` false so the next service start retries.
             // The domain still stands up and the toggle-off synchronous paste
