@@ -28,6 +28,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// File descriptor for the single-instance `flock`, held for the process
     /// lifetime (released automatically on exit). `-1` when no lock is held.
     private var instanceLockFD: Int32 = -1
+
+    /// The menu-bar status item (background-agent role only): the always-visible
+    /// "Kernova is running" affordance and a discoverable way to summon the GUI.
+    private var statusItemController: HostAgentStatusItemController?
     /// Set in `applicationWillBecomeActive` and read in `applicationShouldHandleReopen`
     /// to distinguish a dock click that activates the app from one on an already-active app.
     ///
@@ -209,6 +213,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         listener.start()
         HostClipboardFileProvider.shared.attachRelayTransport(listener)
         hostRelayListener = listener
+
+        // Always-visible menu-bar presence: the agent has no Dock icon while
+        // headless, so the status item is how the user sees it's running and
+        // summons the GUI (mirrors OrbStack/Docker/Tailscale and the guest agent).
+        statusItemController = HostAgentStatusItemController(
+            viewModel: viewModel,
+            onOpen: { [weak self] vmID in
+                if let vmID { self?.viewModel.selectedID = vmID }
+                self?.summonUserInterface()
+            },
+            onQuit: { NSApp.terminate(nil) }
+        )
 
         Self.logger.notice("Kernova background agent ready (headless, .accessory)")
     }
