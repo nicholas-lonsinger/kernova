@@ -49,9 +49,10 @@ public struct ClipboardFileProviderConfig: Sendable {
     /// Code-signing requirement the extension pins on its relay connection, or
     /// `nil` to skip peer validation.
     ///
-    /// The host pins the broker (the relay is reached through it); the guest
-    /// leaves it `nil` — per-VM vsock auth is tracked separately (#145) and the
-    /// team-prefixed Mach name + app-group lookup already gate the guest leg.
+    /// The host pins the main app (which now vends `…xpc` directly as a
+    /// launchd agent); the guest leaves it `nil` — per-VM vsock auth is tracked
+    /// separately (#145) and the team-prefixed Mach name + app-group lookup
+    /// already gate the guest leg.
     public let relayCodeSigningRequirement: String?
 
     /// Creates a direction config from its addressing and logging values.
@@ -96,11 +97,11 @@ public struct ClipboardFileProviderConfig: Sendable {
     /// Mac; reuses the same registered app group.
     public static let host = ClipboardFileProviderConfig(
         appGroupIdentifier: "8MT4P4GZL2.app.kernova",
-        machServiceName: "8MT4P4GZL2.app.kernova.hostrelay",
+        machServiceName: "8MT4P4GZL2.app.kernova.xpc",
         domainIdentifier: "kernova-clipboard-host",
         domainDisplayName: "Kernova Clipboard (Mac)",
         containerDirectoryName: "FileProviderHost",
         loggerSubsystem: "app.kernova",
         extensionLoggerSubsystem: "app.kernova.clipboard.fileprovider",
-        relayCodeSigningRequirement: ClipboardFileProviderBrokerIdentity.brokerRequirement)
+        relayCodeSigningRequirement: KernovaHostRelayIdentity.mainAppRequirement)
 }

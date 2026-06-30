@@ -5,6 +5,10 @@ import os
 @main
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenuDelegate {
+    /// This process's role: the resident agent, or the test host's foreground app.
+    ///
+    /// (The launcher uses its own `LauncherAppDelegate`, never this class.)
+    private let role: KernovaLaunchRole
     private var mainWindowController: MainWindowController?
     private let viewModel: VMLibraryViewModel
     private var clipboardWindows: [UUID: ClipboardWindowController] = [:]
@@ -14,6 +18,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private var terminationObservation: ObservationLoop?
     private let clipboardMenuItem: NSMenuItem
     private var settingsWindowController: SettingsWindowController?
+
+    /// The always-on `…xpc` listener (background-agent role only).
+    ///
+    /// Serves the host clipboard `fetchFile` relay and the launcher's GUI-summon
+    /// verb. Retained so it stays vended for the process lifetime.
+    private var hostRelayListener: HostRelayListener?
+
+    /// File descriptor for the single-instance `flock`, held for the process
+    /// lifetime (released automatically on exit). `-1` when no lock is held.
+    private var instanceLockFD: Int32 = -1
     /// Set in `applicationWillBecomeActive` and read in `applicationShouldHandleReopen`
     /// to distinguish a dock click that activates the app from one on an already-active app.
     ///
@@ -70,13 +84,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     // MARK: - Entry Point
 
     static func main() {
+        let role = KernovaLaunchRole.resolve(
+            arguments: CommandLine.arguments, environment: ProcessInfo.processInfo.environment)
         let app = NSApplication.shared
-        let delegate = AppDelegate()
-        app.delegate = delegate
-        app.run()
+
+        // `NSApplication.delegate` is weak, so the local binding retains the
+        // delegate for the process lifetime (`run()` never returns).
+        switch role {
+        case .launcher:
+            // Headless: register the agent, summon its GUI, exit. No Dock blip.
+            app.setActivationPolicy(.prohibited)
+            let delegate = LauncherAppDelegate()
+            app.delegate = delegate
+            app.run()
+        case .backgroundAgent:
+            // Start headless (no Dock blip / focus steal); dropped to `.accessory`
+            // in `applicationDidFinishLaunching` once the GUI is ready to summon.
+            app.setActivationPolicy(.prohibited)
+            let delegate = AppDelegate(role: .backgroundAgent)
+            app.delegate = delegate
+            app.run()
+        case .foregroundForTesting:
+            let delegate = AppDelegate(role: .foregroundForTesting)
+            app.delegate = delegate
+            app.run()
+        }
     }
 
-    override init() {
+    init(role: KernovaLaunchRole) {
+        self.role = role
         self.viewModel = VMLibraryViewModel()
 
         let clipboardItem = NSMenuItem(
@@ -107,12 +143,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // agent's sweep-on-start.
         ClipboardFileStaging(label: ClipboardContentViewController.stagingLabel).sweep()
 
-        let windowController = MainWindowController(viewModel: viewModel)
-        windowController.showWindow(nil)
-        mainWindowController = windowController
-
-        observeForTermination()
-
         // Intercept the Quit Apple Event to inspect its sender. TCC revocations
         // arrive from System Settings or tccd; Dock Quit, AppleScript, and system
         // shutdown arrive from other senders. This lets us positively identify TCC.
@@ -122,9 +152,139 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             forEventClass: AEEventClass(kCoreEventClass),
             andEventID: AEEventID(kAEQuitApplication)
         )
+
+        switch role {
+        case .backgroundAgent:
+            startBackgroundAgent()
+        case .foregroundForTesting:
+            // Plain foreground app (the unit-test host): show the window and arm
+            // idle-termination exactly as the app behaved before the launch-at-
+            // login agent. None of the launchd/Mach machinery runs here.
+            let windowController = MainWindowController(viewModel: viewModel)
+            windowController.showWindow(nil)
+            mainWindowController = windowController
+            observeForTermination()
+        case .launcher:
+            // Unreachable — the launcher uses LauncherAppDelegate. Guarded so a
+            // future routing change fails loudly instead of standing up a partial
+            // agent.
+            Self.logger.fault("AppDelegate constructed in launcher role")
+            assertionFailure("AppDelegate must not run in the launcher role")
+        }
+    }
+
+    // MARK: - Background Agent Role
+
+    /// Brings up the resident, headless agent: claims the single-instance lock,
+    /// drops to `.accessory`, and vends the always-on `…xpc` listener.
+    ///
+    /// The VM library is already loaded (`VMLibraryViewModel.init`); VMs are
+    /// **not** auto-started — they appear at their last-logout state. No window is
+    /// shown and idle-termination is **not** armed: the agent stays resident until
+    /// an explicit Quit, with any running VMs executing headless.
+    private func startBackgroundAgent() {
+        guard acquireSingleInstanceLock() else {
+            Self.logger.notice("Another Kernova agent already owns the instance lock — exiting")
+            NSApp.terminate(nil)
+            return
+        }
+
+        // From `.prohibited` (launch) to `.accessory`: headless (no Dock icon) but
+        // window-capable and LaunchServices-visible, so a Finder double-click
+        // routes a reopen here instead of spawning a duplicate.
+        NSApp.setActivationPolicy(.accessory)
+
+        // Vend `…xpc` for the agent's whole lifetime: the host clipboard
+        // `fetchFile` relay (registered into it when a VM enables sharing) and the
+        // launcher's GUI-summon verb (live immediately, so a double-click summons
+        // the GUI even at login with no VM running).
+        let listener = HostRelayListener(
+            machServiceName: ClipboardFileProviderConfig.host.machServiceName,
+            inboundCodeSigningRequirement: KernovaHostRelayIdentity.inboundClientRequirement,
+            loggerSubsystem: ClipboardFileProviderConfig.host.loggerSubsystem,
+            onShowUserInterface: { [weak self] in
+                // Invoked off-main on the XPC queue; hop to the main actor.
+                Task { @MainActor in self?.summonUserInterface() }
+            })
+        listener.start()
+        HostClipboardFileProvider.shared.attachRelayTransport(listener)
+        hostRelayListener = listener
+
+        Self.logger.notice("Kernova background agent ready (headless, .accessory)")
+    }
+
+    /// Brings the resident agent's GUI forward: morph to `.regular`, then activate
+    /// and show the library window.
+    ///
+    /// Triggered by the launcher's `showUserInterface` IPC and by a Finder reopen
+    /// (whichever reaches the agent first; both are idempotent).
+    private func summonUserInterface() {
+        // Morph to a regular app so the Dock icon + menu bar appear (no-op if
+        // already `.regular`). Defer the activate + show to the next runloop tick
+        // so the menu bar has refreshed (works around the .accessory→.regular
+        // menu-bar quirk, FB7743313).
+        NSApp.setActivationPolicy(.regular)
+        Task { @MainActor in
+            // RATIONALE: this process was spawned by launchd, not by the user's
+            // click, so cooperative activation would deny it the foreground.
+            // `ignoringOtherApps` forces it — the user explicitly asked for the
+            // window (the modern argument-less `activate()` does not reliably
+            // front a launchd-spawned process).
+            NSApp.activate(ignoringOtherApps: true)
+            self.showLibraryWindow(bringToFront: true)
+        }
+    }
+
+    /// In the background-agent role, re-asserts `.regular` before a window is shown
+    /// so a window can never be presented while the agent is still `.accessory`.
+    ///
+    /// Without this, a re-show racing the last-window-close `.accessory` morph
+    /// (e.g. closing a popped-out display window re-opens the library — see the
+    /// `VMDisplayWindowController` close handler) would strand the agent
+    /// `.accessory` (no Dock icon / menu bar) *with* a visible window. No-op in
+    /// other roles and when already `.regular`.
+    private func ensureRegularActivationIfAgent() {
+        guard role == .backgroundAgent, NSApp.activationPolicy() != .regular else { return }
+        NSApp.setActivationPolicy(.regular)
+    }
+
+    /// Acquires a process-lifetime `flock` in the shared app-group container so a
+    /// second agent can't race the first during the brief `.prohibited` startup
+    /// window. launchd already guarantees one job; this is a cheap backstop.
+    ///
+    /// Returns `true` when the lock is held (or couldn't be attempted — startup
+    /// must not be blocked by a lock-file failure), `false` when another agent
+    /// holds it.
+    private func acquireSingleInstanceLock() -> Bool {
+        guard
+            let container = FileManager.default.containerURL(
+                forSecurityApplicationGroupIdentifier:
+                    ClipboardFileProviderConfig.host.appGroupIdentifier)
+        else {
+            return true
+        }
+        let lockPath = container.appendingPathComponent("agent.lock").path
+        let fd = open(lockPath, O_CREAT | O_RDWR, 0o644)
+        guard fd >= 0 else { return true }
+        if flock(fd, LOCK_EX | LOCK_NB) != 0 {
+            close(fd)
+            return false
+        }
+        instanceLockFD = fd  // held for the process lifetime; released on exit
+        return true
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        // Resident agent: closing the last window drops back to a headless
+        // `.accessory` agent (no Dock icon). Any running VMs keep executing
+        // headless; the process stays resident until an explicit Quit. This is
+        // the OrbStack/Docker "it's still running" behavior.
+        if role == .backgroundAgent {
+            Self.logger.notice("Last window closed — returning to headless accessory agent")
+            NSApp.setActivationPolicy(.accessory)
+            return false
+        }
+
         let hasActiveVMs = viewModel.instances.contains(where: \.isKeepingAppAlive)
 
         // Stay alive if VMs are active or display windows still exist
@@ -156,6 +316,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        // Resident agent: a Finder reopen (double-click routed to the existing
+        // instance) summons the GUI, morphing `.accessory`→`.regular` first. This
+        // is the path taken when LaunchServices reuses the agent instance; the
+        // launcher's `showUserInterface` IPC covers the case where it doesn't.
+        if role == .backgroundAgent {
+            wasJustActivated = false
+            summonUserInterface()
+            return true
+        }
+
         let justActivated = wasJustActivated
         wasJustActivated = false  // Synchronous clear — see wasJustActivated doc comment
 
@@ -348,6 +518,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     private func showLibraryWindow(bringToFront: Bool) {
+        ensureRegularActivationIfAgent()
         if let existingWindow = mainWindowController?.window {
             if bringToFront {
                 Self.logger.debug("showLibrary: focusing existing window")
@@ -483,6 +654,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         factory: (VMInstance) -> C
     ) {
         guard isEligible else { return }
+        ensureRegularActivationIfAgent()
 
         let vmID = instance.instanceID
 
@@ -580,6 +752,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
         // Already showing a display window for this VM
         guard displayWindows[vmID] == nil else { return }
+        ensureRegularActivationIfAgent()
 
         let controller = VMDisplayWindowController(
             instance: instance,
@@ -710,7 +883,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     /// Terminates the app if `isIdle` is true.
+    ///
+    /// No-op in the background-agent role: the resident agent never idle-quits
+    /// (closing the last window drops it to `.accessory` via
+    /// `applicationShouldTerminateAfterLastWindowClosed`, keeping VMs running).
     private func terminateIfIdle() {
+        guard role != .backgroundAgent else { return }
         guard isIdle else { return }
         Self.logger.notice("No visible windows and no active VMs — requesting termination")
         NSApp.terminate(nil)

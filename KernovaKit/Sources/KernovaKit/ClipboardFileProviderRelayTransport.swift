@@ -1,21 +1,31 @@
+import FileProvider
 import Foundation
 
 // How the domain host vends its relay to the sandboxed extension (issues #376
 // guest / #424 host).
 //
-// The guest agent is a LaunchAgent, so it vends the relay directly on a
-// team-prefixed Mach service (`MachServiceRelayTransport`). The main app is
-// neither sandboxed nor launchd-managed and can't register a Mach service, so it
-// connects out to an SMAppService broker and registers itself as the backing
-// relay (`BrokerRelayTransport`). The domain host owns the relay *service*
-// (built from its pull provider) and hands it to whichever transport it was
-// constructed with, keeping its enable/disable lifecycle identical across
-// directions.
+// Both directions vend the relay on a team-prefixed Mach service the sandboxed
+// extension looks up (its name is app-group-prefixed, so the extension is
+// allowed to reach it). The guest agent and the main app are both
+// launchd-managed LaunchAgents whose plist `MachServices` key registers the
+// name, so each can host an `NSXPCListener(machServiceName:)` directly.
+//
+//   • The guest agent uses `MachServiceRelayTransport`: a listener that is
+//     created and torn down with clipboard policy.
+//   • The main app uses `HostRelayListener`: an always-on listener (it also
+//     serves the launcher's GUI-summon verb, which must work even when no VM
+//     has clipboard sharing on) into which the clipboard relay service is
+//     registered while sharing is enabled.
+//
+// The domain host owns the relay *service* (built from its pull provider) and
+// hands it to whichever transport it was constructed with, keeping its
+// enable/disable lifecycle identical across directions.
 
 /// Vends a `ClipboardFileProviderRelay` to the File Provider extension.
 ///
-/// Injected into `ClipboardFileProviderDomainHost` so the guest uses a Mach
-/// listener and the host uses the broker.
+/// Injected into `ClipboardFileProviderDomainHost`; the guest creates its Mach
+/// listener on enable, the host registers its relay service into the agent's
+/// always-on listener.
 public protocol ClipboardFileProviderRelayTransport: AnyObject, Sendable {
     /// Begins vending `service`. Idempotent — called on each enable, vends once.
     func startServing(_ service: ClipboardFileProviderRelay)
@@ -61,8 +71,8 @@ public final class MachServiceRelayTransport: NSObject, NSXPCListenerDelegate,
     ) -> Bool {
         // RATIONALE: the guest leg is not yet peer-validated (per-VM vsock auth is
         // tracked by #145); the team-prefixed Mach name + app-group lookup gate
-        // already restrict who can reach it. The host legs ARE validated via
-        // `setCodeSigningRequirement` (see `BrokerRelayTransport` and the broker).
+        // already restrict who can reach it. The host leg IS validated via
+        // `setCodeSigningRequirement` (see `HostRelayListener`).
         newConnection.exportedInterface = NSXPCInterface(with: ClipboardFileProviderRelay.self)
         newConnection.exportedObject = service
         newConnection.resume()
@@ -71,78 +81,137 @@ public final class MachServiceRelayTransport: NSObject, NSXPCListenerDelegate,
     }
 }
 
-// MARK: - Host: SMAppService broker client
+// MARK: - Host: always-on `…xpc` listener (clipboard + GUI summon)
 
-/// Connects out to the SMAppService broker and registers the main app's relay as
-/// the broker's backing provider (the main app can't vend a Mach service itself).
+/// The object the host agent exports on its `…xpc` Mach service.
 ///
-/// `@unchecked Sendable`: `connection`/`service` are set once on first
-/// `startServing` (on the owner's queue) and read by the invalidation handler.
-public final class BrokerRelayTransport: ClipboardFileProviderRelayTransport, @unchecked Sendable {
-    private let logger: KernovaLogger
+/// Multiplexes the sandboxed extension's `fetchFile` (forwarded to the
+/// registered clipboard relay, or `serverUnreachable` when no VM has sharing on)
+/// and the launcher's `showUserInterface` (forwarded to the injected closure).
+///
+/// `@unchecked Sendable`: `relayProvider` is read/written only under `lock`;
+/// `onShowUserInterface`/`logger` are immutable.
+final class HostRelayService: NSObject, KernovaHostRelay, @unchecked Sendable {
     private let lock = NSLock()
-    private var connection: NSXPCConnection?
-    private var service: ClipboardFileProviderRelay?
+    private var relayProvider: ClipboardFileProviderRelay?
+    private let onShowUserInterface: @Sendable () -> Void
+    private let logger: KernovaLogger
 
-    /// Logs under `loggerSubsystem`.
+    init(loggerSubsystem: String, onShowUserInterface: @escaping @Sendable () -> Void) {
+        self.onShowUserInterface = onShowUserInterface
+        self.logger = KernovaLogger(subsystem: loggerSubsystem, category: "HostRelayService")
+        super.init()
+    }
+
+    /// Registers (or clears) the clipboard relay that backs `fetchFile`.
+    func setRelayProvider(_ provider: ClipboardFileProviderRelay?) {
+        lock.withLock { self.relayProvider = provider }
+    }
+
+    /// Forwards to the registered clipboard relay, or replies `serverUnreachable`
+    /// when none is registered (no VM has clipboard sharing on).
     ///
-    /// The broker LaunchAgent must already be registered (the owner calls
-    /// `SMAppService` before enabling).
-    public init(loggerSubsystem: String) {
-        self.logger = KernovaLogger(subsystem: loggerSubsystem, category: "RelayTransport")
+    /// The provider is an in-process object, so this is a direct call — unlike
+    /// the former cross-process broker there is no connection to drop mid-pull.
+    func fetchFile(
+        generation: UInt64, repIndex: Int,
+        reply: @escaping @Sendable (String?, NSError?) -> Void
+    ) {
+        let provider = lock.withLock { self.relayProvider }
+        guard let provider else {
+            logger.error("fetchFile with no registered relay provider")
+            reply(
+                nil,
+                NSError(
+                    domain: NSFileProviderErrorDomain,
+                    code: NSFileProviderError.serverUnreachable.rawValue))
+            return
+        }
+        provider.fetchFile(generation: generation, repIndex: repIndex, reply: reply)
     }
 
-    /// Connects to the broker and registers the relay on first call; subsequent
-    /// calls are no-ops until the connection invalidates.
-    public func startServing(_ service: ClipboardFileProviderRelay) {
-        lock.lock()
-        defer { lock.unlock() }
-        guard connection == nil else { return }
-        self.service = service
-        connectAndRegisterLocked(service)
+    /// Brings the resident agent's GUI forward, then confirms delivery so the
+    /// launcher can exit.
+    func showUserInterface(reply: @escaping @Sendable () -> Void) {
+        logger.notice("Received showUserInterface request")
+        onShowUserInterface()
+        reply()
+    }
+}
+
+/// Hosts the main app's always-on `…xpc` Mach listener.
+///
+/// Created and `start()`ed once by the agent at launch (independent of clipboard
+/// policy, so GUI-summon works at login). As a `ClipboardFileProviderRelayTransport`
+/// it registers the clipboard relay service as the `fetchFile` backing on enable.
+///
+/// `@unchecked Sendable`: `listener` is set once on `start()` (on the owner's
+/// queue) and read by the XPC delegate thereafter; `service`/`logger` are
+/// immutable, and the service guards its own mutable state.
+public final class HostRelayListener: NSObject, NSXPCListenerDelegate,
+    ClipboardFileProviderRelayTransport, @unchecked Sendable
+{
+    private let machServiceName: String
+    private let inboundRequirement: String
+    private let logger: KernovaLogger
+    private let service: HostRelayService
+    private var listener: NSXPCListener?
+
+    /// Vends on `machServiceName`, validating inbound peers against
+    /// `inboundCodeSigningRequirement`, and forwards `showUserInterface` to
+    /// `onShowUserInterface` (invoked off-main on the XPC queue — the closure
+    /// must hop to the main actor itself).
+    public init(
+        machServiceName: String,
+        inboundCodeSigningRequirement: String,
+        loggerSubsystem: String,
+        onShowUserInterface: @escaping @Sendable () -> Void
+    ) {
+        self.machServiceName = machServiceName
+        self.inboundRequirement = inboundCodeSigningRequirement
+        self.logger = KernovaLogger(subsystem: loggerSubsystem, category: "HostRelayListener")
+        self.service = HostRelayService(
+            loggerSubsystem: loggerSubsystem, onShowUserInterface: onShowUserInterface)
+        super.init()
     }
 
-    /// Caller holds `lock`.
-    private func connectAndRegisterLocked(_ service: ClipboardFileProviderRelay) {
-        let connection = NSXPCConnection(
-            machServiceName: ClipboardFileProviderBrokerIdentity.machServiceName, options: [])
-        connection.remoteObjectInterface = NSXPCInterface(with: ClipboardFileProviderBroker.self)
-        // The broker calls back into this relay to fetch bytes.
-        connection.exportedInterface = NSXPCInterface(with: ClipboardFileProviderRelay.self)
-        connection.exportedObject = service
-        // Framework-enforced peer validation: only the genuine Kernova broker.
-        // Non-throwing — arms the check so an impostor broker has this
-        // connection's calls invalidated.
-        connection.setCodeSigningRequirement(
-            ClipboardFileProviderBrokerIdentity.brokerRequirement)
-        connection.invalidationHandler = { [weak self] in
-            guard let self else { return }
-            self.lock.lock()
-            self.connection = nil
-            self.lock.unlock()
-            self.logger.notice("Broker connection invalidated; will re-register on next enable")
-        }
-        connection.interruptionHandler = { [weak self] in
-            guard let self else { return }
-            self.lock.lock()
-            let connection = self.connection
-            self.lock.unlock()
-            // The broker process exited (its LaunchAgent has no KeepAlive); the
-            // connection stays valid and XPC demand-relaunches the broker on the
-            // next message. The fresh broker starts with no registered provider, so
-            // re-nominate ourselves here — otherwise every later fetchFile would
-            // reply serverUnreachable until the whole app restarts.
-            (connection?.remoteObjectProxy as? ClipboardFileProviderBroker)?.registerProvider()
-            self.logger.notice("Broker connection interrupted; re-registered relay")
-        }
-        connection.resume()
-        self.connection = connection
-        (connection.remoteObjectProxy as? ClipboardFileProviderBroker)?.registerProvider()
-        // Fire-and-forget (registerProvider has no reply): a relaunched broker is
-        // re-nominated from the interruptionHandler above, and a true invalidation
-        // re-registers on the next enable.
+    /// Starts the Mach listener on first call; subsequent calls are no-ops.
+    ///
+    /// Always-on for the agent's lifetime, so the launcher can summon the GUI
+    /// even before any VM enables clipboard sharing.
+    public func start() {
+        guard listener == nil else { return }
+        let listener = NSXPCListener(machServiceName: machServiceName)
+        listener.delegate = self
+        listener.resume()
+        self.listener = listener
         logger.notice(
-            "Sent relay registration to broker (\(ClipboardFileProviderBrokerIdentity.machServiceName, privacy: .public))"
-        )
+            "Host relay Mach listener started (\(self.machServiceName, privacy: .public))")
+    }
+
+    /// Registers the clipboard relay service as the `fetchFile` backing.
+    ///
+    /// `ClipboardFileProviderRelayTransport` conformance, called by the domain
+    /// host on enable. The listener itself is already up from `start()`.
+    public func startServing(_ service: ClipboardFileProviderRelay) {
+        self.service.setRelayProvider(service)
+        logger.notice("Clipboard relay provider registered with host listener")
+    }
+
+    /// Validates the peer (main app launcher or host extension) and exports the
+    /// multiplexed relay.
+    public func listener(
+        _ listener: NSXPCListener, shouldAcceptNewConnection newConnection: NSXPCConnection
+    ) -> Bool {
+        // Framework-enforced peer validation: a peer that isn't the Kernova-team
+        // main app or host File Provider extension has its calls invalidated.
+        // Non-throwing — a malformed requirement *string* raises, which would be a
+        // compile-time-constant bug caught in dev.
+        newConnection.setCodeSigningRequirement(inboundRequirement)
+        newConnection.exportedInterface = NSXPCInterface(with: KernovaHostRelay.self)
+        newConnection.exportedObject = service
+        newConnection.resume()
+        logger.debug("Accepted host relay XPC connection")
+        return true
     }
 }

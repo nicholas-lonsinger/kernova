@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The main Kernova app's launch-at-login background agent. Shipped inside
+	     the app at Contents/Library/LaunchAgents/app.kernova.plist and registered
+	     via SMAppService.agent(plistName:). Being the launchd job's process is
+	     what lets the app host the …xpc Mach service (clipboard relay + GUI
+	     summon) — replacing the standalone broker #424 added. -->
+	<key>Label</key>
+	<string>app.kernova</string>
+	<!-- Runs the app's own executable headless. ProgramArguments[0] is argv[0];
+	     the --background flag (passed ONLY here) selects the resident-agent role —
+	     a Finder double-click launches the same binary without it, landing in the
+	     short-lived launcher role. -->
+	<key>BundleProgram</key>
+	<string>Contents/MacOS/Kernova</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>Kernova</string>
+		<string>--background</string>
+	</array>
+	<!-- Tells Login Items & Extensions ("Allow in the Background") which app owns
+	     this job, so it shows Kernova's icon + name rather than a generic one. -->
+	<key>AssociatedBundleIdentifiers</key>
+	<array>
+		<string>app.kernova</string>
+	</array>
+	<!-- launchd owns the Mach service and hands it to the agent's always-on
+	     NSXPCListener; the name is app-group prefixed so the sandboxed host File
+	     Provider extension is allowed to look it up, and the launcher reaches it
+	     to summon the GUI (connecting demand-launches the agent if it was killed). -->
+	<key>MachServices</key>
+	<dict>
+		<key>8MT4P4GZL2.app.kernova.xpc</key>
+		<true/>
+	</dict>
+	<!-- Start headless at login so clipboard "Copy to Mac" works and VMs are ready
+	     without a window. -->
+	<key>RunAtLoad</key>
+	<true/>
+	<!-- No KeepAlive — deliberate, so the user can genuinely kill the agent
+	     (Activity Monitor). A later double-click / clipboard pull demand-launches
+	     it again via the held Mach port. (A crash loses in-memory VM state either
+	     way, so KeepAlive would buy nothing for headless VMs.) -->
+	<key>LimitLoadToSessionType</key>
+	<string>Aqua</string>
+</dict>
+</plist>
