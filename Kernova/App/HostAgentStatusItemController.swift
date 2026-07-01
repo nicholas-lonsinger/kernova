@@ -57,6 +57,11 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     // MARK: - Icon / tooltip
 
     private func setIcon() {
+        // RATIONALE: deliberately not the shared `NSImage.systemSymbol(_:…)` helper.
+        // Its release fallback is a zero-size `NSImage()`, which would render the
+        // status-item button invisible — and the status item is the *only* way to
+        // find (or quit) the headless agent. This hand-rolled guard degrades to a
+        // visible "K" title instead, so the affordance never disappears.
         guard
             let image = NSImage(
                 systemSymbolName: Self.iconSymbol, accessibilityDescription: "Kernova")

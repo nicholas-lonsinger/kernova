@@ -104,9 +104,10 @@ open class ClipboardFileProviderExtension: NSObject, NSFileProviderReplicatedExt
         let connection = NSXPCConnection(machServiceName: config.machServiceName, options: [])
         connection.remoteObjectInterface = NSXPCInterface(with: ClipboardFileProviderRelay.self)
         // Validate the relay vendor when the direction requires it (the host pins
-        // the broker; the guest leaves it nil — see the config doc and #145).
-        // Non-throwing: arms a framework-enforced check, so an impostor broker has
-        // this connection's calls invalidated below.
+        // the main app, which now vends …xpc directly as a launchd agent; the guest
+        // leaves it nil — see the config doc and #145). Non-throwing: arms a
+        // framework-enforced check, so an impostor vendor has this connection's calls
+        // invalidated below.
         if let requirement = config.relayCodeSigningRequirement {
             connection.setCodeSigningRequirement(requirement)
         }
