@@ -117,25 +117,21 @@ public final class MachServiceRelayTransport: NSObject, NSXPCListenerDelegate,
 ///
 /// Multiplexes the sandboxed extension's `fetchFile` (forwarded to the
 /// registered clipboard relay, or `serverUnreachable` when no VM has sharing on)
-/// and the launcher's `showUserInterface`/`openVMs` (each forwarded to its own
-/// injected closure).
+/// and the launcher's `summon` (forwarded to the injected closure).
 ///
 /// `@unchecked Sendable`: `relayProvider` is read/written only under `lock`;
-/// `onShowUserInterface`/`onOpenVMs`/`logger` are immutable.
+/// `onSummon`/`logger` are immutable.
 final class HostRelayService: NSObject, KernovaHostRelay, @unchecked Sendable {
     private let lock = NSLock()
     private var relayProvider: ClipboardFileProviderRelay?
-    private let onShowUserInterface: @Sendable () -> Void
-    private let onOpenVMs: @Sendable ([String]) -> Void
+    private let onSummon: @Sendable ([String]) -> Void
     private let logger: KernovaLogger
 
     init(
         loggerSubsystem: String,
-        onShowUserInterface: @escaping @Sendable () -> Void,
-        onOpenVMs: @escaping @Sendable ([String]) -> Void
+        onSummon: @escaping @Sendable ([String]) -> Void
     ) {
-        self.onShowUserInterface = onShowUserInterface
-        self.onOpenVMs = onOpenVMs
+        self.onSummon = onSummon
         self.logger = KernovaLogger(subsystem: loggerSubsystem, category: "HostRelayService")
         super.init()
     }
@@ -167,22 +163,15 @@ final class HostRelayService: NSObject, KernovaHostRelay, @unchecked Sendable {
         provider.fetchFile(generation: generation, repIndex: repIndex, reply: reply)
     }
 
-    /// Brings the resident agent's GUI forward, then confirms delivery so the
-    /// launcher can exit.
-    func showUserInterface(reply: @escaping @Sendable () -> Void) {
-        logger.notice("Received showUserInterface request")
-        onShowUserInterface()
-        reply()
-    }
-
-    /// Imports the double-clicked `.kernova` bundles and brings the GUI forward,
-    /// then confirms delivery so the launcher can exit.
+    /// Imports any forwarded `.kernova` bundle paths and brings the resident
+    /// agent's GUI forward, then confirms delivery so the launcher can exit.
     ///
     /// The injected closure does both (import first, then summon) on the main
-    /// actor so the imported VM is selected before the window is shown.
-    func openVMs(paths: [String], reply: @escaping @Sendable () -> Void) {
-        logger.notice("Received openVMs request (\(paths.count, privacy: .public) path(s))")
-        onOpenVMs(paths)
+    /// actor so the imported VM is selected before the window is shown. An
+    /// empty `vmPaths` is a plain summon.
+    func summon(vmPaths: [String], reply: @escaping @Sendable () -> Void) {
+        logger.notice("Received summon request (\(vmPaths.count, privacy: .public) VM path(s))")
+        onSummon(vmPaths)
         reply()
     }
 }
@@ -206,23 +195,19 @@ public final class HostRelayListener: NSObject, NSXPCListenerDelegate,
     private var listener: NSXPCListener?
 
     /// Vends on `machServiceName`, validating inbound peers against
-    /// `inboundCodeSigningRequirement`, and forwards `showUserInterface`/`openVMs`
-    /// to their respective injected closures (each invoked off-main on the XPC
-    /// queue — the closures must hop to the main actor themselves).
+    /// `inboundCodeSigningRequirement`, and forwards `summon` to the injected
+    /// closure (invoked off-main on the XPC queue — the closure must hop to the
+    /// main actor itself).
     public init(
         machServiceName: String,
         inboundCodeSigningRequirement: String,
         loggerSubsystem: String,
-        onShowUserInterface: @escaping @Sendable () -> Void,
-        onOpenVMs: @escaping @Sendable ([String]) -> Void
+        onSummon: @escaping @Sendable ([String]) -> Void
     ) {
         self.machServiceName = machServiceName
         self.inboundRequirement = inboundCodeSigningRequirement
         self.logger = KernovaLogger(subsystem: loggerSubsystem, category: "HostRelayListener")
-        self.service = HostRelayService(
-            loggerSubsystem: loggerSubsystem,
-            onShowUserInterface: onShowUserInterface,
-            onOpenVMs: onOpenVMs)
+        self.service = HostRelayService(loggerSubsystem: loggerSubsystem, onSummon: onSummon)
         super.init()
     }
 

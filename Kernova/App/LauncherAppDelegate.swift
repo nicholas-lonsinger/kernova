@@ -43,7 +43,7 @@ final class LauncherAppDelegate: NSObject, NSApplicationDelegate {
         pendingVMPaths.append(
             contentsOf:
                 urls
-                .filter { $0.pathExtension == VMStorageService.bundleExtension }
+                .filter(VMStorageService.isBundleURL)
                 .map { $0.path(percentEncoded: false) })
     }
 
@@ -61,9 +61,10 @@ final class LauncherAppDelegate: NSObject, NSApplicationDelegate {
         summonAgentGUI(vmPaths: pendingVMPaths)
     }
 
-    /// Asks the resident agent to import any forwarded `.kernova` bundles and/or
+    /// Asks the resident agent to import any forwarded `.kernova` bundles and
     /// show its GUI over its `…xpc` service.
     ///
+    /// An empty `vmPaths` is a plain summon (the Login-Items/relaunch trigger).
     /// Connecting demand-launches the agent via launchd if it was killed.
     private func summonAgentGUI(vmPaths: [String]) {
         let connection = NSXPCConnection(
@@ -81,14 +82,9 @@ final class LauncherAppDelegate: NSObject, NSApplicationDelegate {
             } as? KernovaHostRelay
         guard let proxy else { Self.exitLauncher(1) }
 
-        let onAcknowledged: @Sendable () -> Void = {
+        proxy.summon(vmPaths: vmPaths) {
             Self.logger.notice("Agent acknowledged summon")
             Self.exitLauncher(0)
-        }
-        if vmPaths.isEmpty {
-            proxy.showUserInterface(reply: onAcknowledged)
-        } else {
-            proxy.openVMs(paths: vmPaths, reply: onAcknowledged)
         }
 
         // Backstop: never outlive a wedged round-trip (XPC invokes exactly one of
