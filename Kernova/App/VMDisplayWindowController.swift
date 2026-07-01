@@ -104,6 +104,21 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         observeInstance()
     }
 
+    /// Closes the window as an app-initiated (programmatic) dismissal rather than a
+    /// user close — the single programmatic-close path.
+    ///
+    /// Marks the close programmatic so `AppDelegate`'s display-window close handler
+    /// skips the user-close side effects — reverting `displayPreference` to inline and
+    /// restoring the library window. Used both when the agent dismisses the *whole*
+    /// GUI (a GUI-origin quit) and when the VM stops/errors/cold-pauses out from under
+    /// the window (`observeInstance`). Idempotent via the `closedProgrammatically` guard.
+    func closeForAppDismissal() {
+        guard !closedProgrammatically else { return }
+        lastDisplayID = window?.screen?.displayID
+        closedProgrammatically = true
+        window?.close()
+    }
+
     // MARK: - NSWindowDelegate
 
     func windowWillClose(_ notification: Notification) {
@@ -163,9 +178,9 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
                 guard let self else { return }
                 let status = self.instance.status
                 if status == .stopped || status == .error || self.instance.isColdPaused {
-                    self.lastDisplayID = self.window?.screen?.displayID
-                    self.closedProgrammatically = true
-                    self.window?.close()
+                    // Programmatic close (VM went away out from under the window) — the
+                    // same bookkeeping as a GUI-origin dismissal, so share one helper.
+                    self.closeForAppDismissal()
                 } else {
                     self.backingView.update(
                         virtualMachine: self.instance.virtualMachine,
