@@ -104,6 +104,19 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         observeInstance()
     }
 
+    /// Closes the window as an app-initiated dismissal rather than a user close.
+    ///
+    /// Marks the close programmatic so `AppDelegate`'s display-window close handler
+    /// skips the user-close side effects — reverting `displayPreference` to inline and
+    /// restoring the library window — which is correct when the agent is dismissing
+    /// the *whole* GUI (a GUI-origin quit), not just this one window.
+    func closeForAppDismissal() {
+        guard !closedProgrammatically else { return }
+        lastDisplayID = window?.screen?.displayID
+        closedProgrammatically = true
+        window?.close()
+    }
+
     // MARK: - NSWindowDelegate
 
     func windowWillClose(_ notification: Notification) {
