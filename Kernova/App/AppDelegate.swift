@@ -1,4 +1,5 @@
 import Cocoa
+import Darwin
 import KernovaKit
 import os
 
@@ -56,10 +57,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// downgrading the quit to a GUI close.
     private var userRequestedAgentQuit = false
 
-    /// Set by `handleQuitAppleEvent` when the quit's sender is `loginwindow`
-    /// (logout / restart / shutdown), so a system-initiated quit terminates the
-    /// agent (and saves running VMs) rather than being downgraded to a GUI close —
-    /// the agent must never leave the system waiting on it at logout.
+    /// Set by `handleQuitAppleEvent` via `classifyQuit` for a system power-off or an unattributable sender.
+    ///
+    /// Covers the quit's sender resolving to `loginwindow` (logout / restart /
+    /// shutdown) *or* not being positively classifiable at all (no sender PID
+    /// attribute; the PID no longer resolves to a running process). Either way a
+    /// system-initiated quit terminates the agent (and saves running VMs) rather
+    /// than being downgraded to a GUI close — the agent must never leave the
+    /// system waiting on it at logout, and an unattributable sender fails toward
+    /// saving state rather than vetoing a possible power-off. See `classifyQuit`
+    /// for the full classification matrix.
     ///
     /// Detected synchronously by sender (like `terminationIsTCCRevocation`) rather
     /// than via `NSWorkspace.willPowerOffNotification`: the notification is delivered
@@ -67,9 +74,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// ordering (a deferred observer could set the flag *after* the AE-driven
     /// `applicationShouldTerminate` already ran and vetoed the power-off), and it
     /// would also latch `true` on an *aborted* logout — making a later ⌘Q wrongly
-    /// terminate the agent. Setting it in the same handler that calls `terminate:`
-    /// avoids both: it is set immediately before termination and only when the
-    /// system's quit actually arrives.
+    /// terminate the agent, with no clean "logout aborted" notification to reset it.
+    /// Setting it in the same handler that calls `terminate:` avoids both: it is set
+    /// immediately before termination and only when a quit actually arrives.
     private var systemIsPoweringOff = false
 
     /// Whether a pending quit should actually terminate the resident agent.
@@ -86,7 +93,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     ///
     /// Stable since macOS 13 (Ventura) when System Preferences was replaced by
     /// System Settings with per-pane extensions. May differ on earlier versions.
-    private static let tccSenderBundleIDs: Set<String> = [
+    ///
+    /// `nonisolated` (safe: an immutable `Set<String>` is `Sendable`) so the
+    /// `nonisolated` `classifyQuit` can read it without a MainActor hop.
+    private nonisolated static let tccSenderBundleIDs: Set<String> = [
         "com.apple.settings.PrivacySecurity.extension"
     ]
 
@@ -94,9 +104,68 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// (logout / restart / shutdown). `loginwindow` sends each app a
     /// `kAEQuitApplication` event as it tears the session down; that quit must
     /// terminate the agent, never be downgraded to a GUI close.
-    private static let systemQuitSenderBundleIDs: Set<String> = [
+    ///
+    /// Residual: if `loginwindow` ever resolved to a different (but still valid)
+    /// bundle ID on some macOS version, `classifyQuit` couldn't tell that apart
+    /// from an AppleScript-driven quit by sender alone — the fix would be adding
+    /// that bundle ID here, not more sender heuristics.
+    ///
+    /// `nonisolated` for the same reason as `tccSenderBundleIDs` above.
+    private nonisolated static let systemQuitSenderBundleIDs: Set<String> = [
         "com.apple.loginwindow"
     ]
+
+    /// The outcome `classifyQuit` assigns to a quit Apple Event's sender.
+    enum QuitClassification: Equatable {
+        /// Close the GUI only; the agent stays resident with VMs running headless.
+        case stayResident
+        /// Terminate the agent and save-suspend running VMs.
+        case terminateAndSave
+        /// Terminate the agent, save-suspend running VMs, and relaunch after exit
+        /// (TCC revocation — see `terminationIsTCCRevocation`).
+        case terminateAndRelaunch
+    }
+
+    /// Classifies a quit Apple Event by its sender PID, in isolation from the AE
+    /// itself so the full matrix is unit-testable with injected probes instead of
+    /// a live Apple Event.
+    ///
+    /// ⌘Q, the app-menu Quit item, and the status-item Quit all call `terminate:`
+    /// directly and never reach this classifier (only *external* senders — Dock,
+    /// loginwindow, System Settings/TCC, `osascript` — deliver a quit Apple Event).
+    /// So the `senderPID == getpid()` branch below is defensive, not load-bearing:
+    /// ⌘Q's stay-resident behavior rests on the final fallthrough, not on that check.
+    ///
+    /// Defaults toward `.terminateAndSave` for any sender this can't positively
+    /// identify (no PID, a non-positive PID, or a PID that no longer resolves to a
+    /// live process) — the fail-safe direction for a possible power-off, since
+    /// staying resident risks vetoing a real logout/shutdown. A *live* but
+    /// unclassified sender (Dock, AppleScript's `osascript`, any other app) falls
+    /// through to `.stayResident` instead, since those are known not to be
+    /// system-initiated quits.
+    nonisolated static func classifyQuit(
+        senderPID: pid_t?,
+        bundleIDResolver: (pid_t) -> String?,
+        isProcessAlive: (pid_t) -> Bool
+    ) -> QuitClassification {
+        // No sender PID, or a non-positive PID (kill(≤0) targets process groups,
+        // not a single process, so it can't be probed the same way): unattributable.
+        guard let senderPID, senderPID > 0 else { return .terminateAndSave }
+
+        // Sender process has already exited: unattributable.
+        guard isProcessAlive(senderPID) else { return .terminateAndSave }
+
+        if senderPID == getpid() { return .stayResident }
+
+        // Live sender with no resolvable bundle ID (e.g. `osascript` running an
+        // AppleScript `quit`) — not a system-initiated quit, stay resident.
+        guard let bundleID = bundleIDResolver(senderPID) else { return .stayResident }
+
+        if tccSenderBundleIDs.contains(bundleID) { return .terminateAndRelaunch }
+        if systemQuitSenderBundleIDs.contains(bundleID) { return .terminateAndSave }
+        // Any other live, identifiable sender — the Dock, a script host, etc.
+        return .stayResident
+    }
 
     private static let logger = Logger(subsystem: "app.kernova", category: "AppDelegate")
     private static let guestAgentDiskPath: String? = {
@@ -573,42 +642,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
     }
 
-    /// Handles the `kAEQuitApplication` Apple Event by inspecting the sender.
+    /// Handles the `kAEQuitApplication` Apple Event by classifying its sender.
     ///
-    /// If the sender is System Settings or the TCC daemon, sets `terminationIsTCCRevocation`
-    /// so that `applicationShouldTerminate` knows to launch the relaunch helper.
+    /// Routes through `classifyQuit` and sets the flags
+    /// `applicationShouldTerminate`'s gate reads. Resets both flags on
+    /// `.stayResident` so a vetoed quit never leaves stale state for the next
+    /// quit cycle to misread.
     @objc private func handleQuitAppleEvent(
         _ event: NSAppleEventDescriptor,
         withReplyEvent _: NSAppleEventDescriptor
     ) {
-        // Extract the sender's PID from the Apple Event and resolve its bundle ID.
-        if let senderPIDDescriptor = event.attributeDescriptor(forKeyword: keySenderPIDAttr) {
-            let senderPID = senderPIDDescriptor.int32Value
-            if let senderApp = NSRunningApplication(processIdentifier: senderPID) {
-                if let bundleID = senderApp.bundleIdentifier {
-                    Self.logger.debug(
-                        "Quit Apple Event received from '\(bundleID, privacy: .public)' (PID \(senderPID, privacy: .public))"
-                    )
-                    if Self.tccSenderBundleIDs.contains(bundleID) {
-                        terminationIsTCCRevocation = true
-                    } else if Self.systemQuitSenderBundleIDs.contains(bundleID) {
-                        // Logout / restart / shutdown — authorize the termination so
-                        // the GUI-origin-quit gate doesn't downgrade it and stall the
-                        // power-off.
-                        systemIsPoweringOff = true
-                    }
-                } else {
-                    Self.logger.warning(
-                        "Quit Apple Event: sender PID \(senderPID, privacy: .public) resolved to an application with no bundle identifier — TCC detection may miss this event"
-                    )
-                }
-            } else {
-                Self.logger.warning(
-                    "Quit Apple Event: sender PID \(senderPID, privacy: .public) could not be resolved to a running application (process may have already exited) — TCC detection may miss this event"
-                )
-            }
+        let senderPID = event.attributeDescriptor(forKeyword: keySenderPIDAttr)?.int32Value
+        // Resolved once and fed to `classifyQuit` as fixed values (rather than
+        // letting it re-probe) so the same attribution result also drives the log
+        // level below without a second syscall.
+        let attributablePID: pid_t? = senderPID.flatMap { pid in
+            guard pid > 0, kill(pid, 0) == 0 || errno != ESRCH else { return nil }
+            return pid
+        }
+        let bundleID = attributablePID.flatMap { NSRunningApplication(processIdentifier: $0)?.bundleIdentifier }
+
+        let classification = Self.classifyQuit(
+            senderPID: senderPID,
+            bundleIDResolver: { _ in bundleID },
+            isProcessAlive: { _ in attributablePID != nil }
+        )
+
+        if let attributablePID {
+            Self.logger.debug(
+                "Quit Apple Event from PID \(attributablePID, privacy: .public) (bundle: \(bundleID ?? "none", privacy: .public)) classified as \(String(describing: classification), privacy: .public)"
+            )
         } else {
-            Self.logger.debug("Quit Apple Event received with no sender PID attribute")
+            // The fail-safe path #438 exists for: an unattributable sender. Persisted
+            // (.warning, not .debug) so a stalled-logout post-mortem can confirm this
+            // path was taken rather than the sender simply being unrecognized.
+            Self.logger.warning(
+                "Quit Apple Event sender could not be attributed (PID \(senderPID.map(String.init) ?? "none", privacy: .public)) — failing safe to \(String(describing: classification), privacy: .public)"
+            )
+        }
+
+        switch classification {
+        case .stayResident:
+            systemIsPoweringOff = false
+            terminationIsTCCRevocation = false
+        case .terminateAndSave:
+            systemIsPoweringOff = true
+            terminationIsTCCRevocation = false
+        case .terminateAndRelaunch:
+            systemIsPoweringOff = false
+            terminationIsTCCRevocation = true
         }
 
         NSApp.terminate(nil)
