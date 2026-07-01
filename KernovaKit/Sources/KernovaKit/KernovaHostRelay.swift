@@ -13,7 +13,9 @@ import Foundation
 //     "Copy to Mac" payload (it can't open vsock — CLIPBOARD.md §11); and
 //   • a freshly-spawned foreground launcher process calls `showUserInterface`
 //     to bring the resident agent's GUI forward (the agent rests headless in
-//     `.accessory` until summoned).
+//     `.accessory` until summoned), or `openVMs` when the cold launch was a
+//     double-clicked `.kernova` bundle (issue #439) — it imports the bundles
+//     and then summons, so the launcher makes exactly one round-trip either way.
 //
 // The listener stays up for the agent's whole lifetime — independent of
 // clipboard policy — so a double-click summons the GUI even at login with no VM
@@ -24,10 +26,11 @@ import Foundation
 /// The interface the resident agent exports on its `…xpc` Mach service.
 ///
 /// Inherits `fetchFile` (called by the sandboxed extension) and adds
-/// `showUserInterface` (called by the launcher). One interface serves both
-/// callers — each invokes only the method it needs, mirroring how the extension
-/// connects with the `ClipboardFileProviderRelay` subset while the launcher
-/// connects with the full `KernovaHostRelay`.
+/// `showUserInterface` and `openVMs` (both called by the launcher — the plain
+/// relaunch and document-open cold-launch paths, respectively). One interface
+/// serves both callers — each invokes only the method(s) it needs, mirroring how
+/// the extension connects with the `ClipboardFileProviderRelay` subset while the
+/// launcher connects with the full `KernovaHostRelay`.
 @objc public protocol KernovaHostRelay: ClipboardFileProviderRelay {
     /// Asks the resident agent to bring its GUI forward (morph to `.regular`,
     /// activate, show the library window).
@@ -36,6 +39,18 @@ import Foundation
     /// the user force-killed it, so this one call both resurrects and summons.
     /// The reply lets the short-lived launcher confirm delivery before it exits.
     func showUserInterface(reply: @escaping @Sendable () -> Void)
+
+    /// Imports one or more double-clicked `.kernova` bundles into the resident
+    /// agent's library, then brings the GUI forward with the imported VM
+    /// selected — the cold-launch document-open path (issue #439).
+    ///
+    /// `paths` are filesystem paths, not `NSURL`: NSString/NSArray are in NSXPC's
+    /// default allowed class set, so this needs no `NSXPCInterface.setClasses`
+    /// whitelisting (`[URL]` would require whitelisting NSURL). The agent
+    /// re-validates the `.kernova` extension per path. Like `showUserInterface`,
+    /// connecting demand-launches the agent, and the reply lets the launcher
+    /// confirm delivery before it exits.
+    func openVMs(paths: [String], reply: @escaping @Sendable () -> Void)
 }
 
 /// Identity + code-signing requirements for the host `…xpc` legs, in one

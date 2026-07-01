@@ -7,7 +7,8 @@ import Testing
 /// Unit tests for `HostRelayService` — the object the resident agent exports on
 /// `…xpc`, multiplexing the extension's `fetchFile` (forwarded to the
 /// registered clipboard relay, or `serverUnreachable` when none) and the
-/// launcher's `showUserInterface` (forwarded to the injected closure).
+/// launcher's `showUserInterface`/`openVMs` (each forwarded to its own injected
+/// closure).
 @Suite("HostRelayService")
 struct HostRelayServiceTests {
     /// A `@Sendable`-safe mutable cell so the synchronous XPC-style reply/closure
@@ -46,7 +47,8 @@ struct HostRelayServiceTests {
 
     @Test("fetchFile with no registered provider replies serverUnreachable")
     func noProviderServerUnreachable() {
-        let service = HostRelayService(loggerSubsystem: "app.kernova.test", onShowUserInterface: {})
+        let service = HostRelayService(
+            loggerSubsystem: "app.kernova.test", onShowUserInterface: {}, onOpenVMs: { _ in })
         let path = Box<String?>(nil)
         let error = Box<NSError?>(nil)
         let replied = Box(false)
@@ -66,7 +68,8 @@ struct HostRelayServiceTests {
     @Test("fetchFile forwards (generation, repIndex) to the registered provider")
     func forwardsToProvider() {
         let provider = MockRelay(stagedPath: "/staged/file")
-        let service = HostRelayService(loggerSubsystem: "app.kernova.test", onShowUserInterface: {})
+        let service = HostRelayService(
+            loggerSubsystem: "app.kernova.test", onShowUserInterface: {}, onOpenVMs: { _ in })
         service.setRelayProvider(provider)
         let path = Box<String?>(nil)
 
@@ -79,7 +82,8 @@ struct HostRelayServiceTests {
 
     @Test("Clearing the provider returns to serverUnreachable")
     func clearingProviderResetsToUnreachable() {
-        let service = HostRelayService(loggerSubsystem: "app.kernova.test", onShowUserInterface: {})
+        let service = HostRelayService(
+            loggerSubsystem: "app.kernova.test", onShowUserInterface: {}, onOpenVMs: { _ in })
         service.setRelayProvider(MockRelay(stagedPath: "/staged/file"))
         service.setRelayProvider(nil)
         let error = Box<NSError?>(nil)
@@ -93,12 +97,29 @@ struct HostRelayServiceTests {
     func showUserInterfaceInvokesClosureAndReplies() {
         let summoned = Box(false)
         let service = HostRelayService(
-            loggerSubsystem: "app.kernova.test", onShowUserInterface: { summoned.value = true })
+            loggerSubsystem: "app.kernova.test",
+            onShowUserInterface: { summoned.value = true },
+            onOpenVMs: { _ in })
         let replied = Box(false)
 
         service.showUserInterface { replied.value = true }
 
         #expect(summoned.value)
+        #expect(replied.value)
+    }
+
+    @Test("openVMs forwards the paths to the injected closure and replies")
+    func openVMsForwardsPathsAndReplies() {
+        let received = Box<[String]>([])
+        let service = HostRelayService(
+            loggerSubsystem: "app.kernova.test",
+            onShowUserInterface: {},
+            onOpenVMs: { received.value = $0 })
+        let replied = Box(false)
+
+        service.openVMs(paths: ["/a.kernova", "/b.kernova"]) { replied.value = true }
+
+        #expect(received.value == ["/a.kernova", "/b.kernova"])
         #expect(replied.value)
     }
 
@@ -110,7 +131,8 @@ struct HostRelayServiceTests {
             machServiceName: "app.kernova.test.xpc",
             inboundCodeSigningRequirement: "anchor apple",
             loggerSubsystem: "app.kernova.test",
-            onShowUserInterface: {})
+            onShowUserInterface: {},
+            onOpenVMs: { _ in })
         let service = listener.relayServiceForTesting
 
         // Before serving: no provider → serverUnreachable.

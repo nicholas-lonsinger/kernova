@@ -252,6 +252,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             onShowUserInterface: { [weak self] in
                 // Invoked off-main on the XPC queue; hop to the main actor.
                 Task { @MainActor in self?.summonUserInterface() }
+            },
+            onOpenVMs: { [weak self] paths in
+                // Invoked off-main on the XPC queue; hop to the main actor. Import
+                // first (synchronously appends + selects the phantom row), then
+                // summon so the imported VM is visible/selected when the window
+                // shows (issue #439 — the launcher's cold-launch document-open path).
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.importVMs(from: paths.map { URL(fileURLWithPath: $0, isDirectory: true) })
+                    self.summonUserInterface()
+                }
             })
         listener.start()
         HostClipboardFileProvider.shared.attachRelayTransport(listener)
@@ -639,8 +650,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     // MARK: - Open URLs (Finder double-click / dock icon drop)
 
     func application(_ application: NSApplication, open urls: [URL]) {
-        let vmURLs = urls.filter { $0.pathExtension == VMStorageService.bundleExtension }
-        for url in vmURLs {
+        importVMs(from: urls)
+    }
+
+    /// Filters to `.kernova` bundles and imports each — the direct Finder odoc
+    /// route (agent already running) and the launcher's forwarded `openVMs`
+    /// paths (agent-down cold-launch path, issue #439).
+    private func importVMs(from urls: [URL]) {
+        for url in urls where url.pathExtension == VMStorageService.bundleExtension {
             viewModel.importVM(from: url)
         }
     }
