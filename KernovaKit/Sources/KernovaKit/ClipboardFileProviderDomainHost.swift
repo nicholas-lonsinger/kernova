@@ -209,6 +209,11 @@ public final class ClipboardFileProviderDomainHost: NSObject, ClipboardFileProvi
         } else {
             stopAvailabilityPolling()
             setAvailability(.inactive)
+            // Stop routing to the served relay so a stray fetch while disabled fails
+            // cleanly (host: serverUnreachable; guest: refused connection) instead of
+            // reaching a relay whose offer was just cleared. The listener itself
+            // persists — the host multiplexes GUI-summon on it.
+            relayTransport.stopServing()
             // Keep the domain registered across a policy off→on cycle: re-adding a
             // domain re-creates it in the consent-gated OFF state, which would wipe
             // the user's System-Settings enablement on every restart. Just clear

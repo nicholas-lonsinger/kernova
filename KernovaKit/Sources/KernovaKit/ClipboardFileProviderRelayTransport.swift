@@ -10,12 +10,13 @@ import Foundation
 // launchd-managed LaunchAgents whose plist `MachServices` key registers the
 // name, so each can host an `NSXPCListener(machServiceName:)` directly.
 //
-//   • The guest agent uses `MachServiceRelayTransport`: a listener that is
-//     created and torn down with clipboard policy.
+//   • The guest agent uses `MachServiceRelayTransport`: the listener is created
+//     on first enable and persists; the served relay is set on enable and
+//     cleared on disable (`startServing` / `stopServing`).
 //   • The main app uses `HostRelayListener`: an always-on listener (it also
 //     serves the launcher's GUI-summon verb, which must work even when no VM
 //     has clipboard sharing on) into which the clipboard relay service is
-//     registered while sharing is enabled.
+//     registered while sharing is enabled and cleared when it is disabled.
 //
 // The domain host owns the relay *service* (built from its pull provider) and
 // hands it to whichever transport it was constructed with, keeping its
@@ -27,8 +28,19 @@ import Foundation
 /// listener on enable, the host registers its relay service into the agent's
 /// always-on listener.
 public protocol ClipboardFileProviderRelayTransport: AnyObject, Sendable {
-    /// Begins vending `service`. Idempotent — called on each enable, vends once.
+    /// Begins vending `service`. Idempotent — called on each enable; the
+    /// underlying listener is created once and the served relay is (re)set.
     func startServing(_ service: ClipboardFileProviderRelay)
+
+    /// Stops routing to the served relay (clipboard sharing disabled).
+    ///
+    /// Clears the served relay so a call made while disabled fails cleanly —
+    /// `serverUnreachable` on the host, a refused connection on the guest — rather
+    /// than routing to a relay whose offer has been cleared. The Mach listener
+    /// itself is kept for the process lifetime (the host multiplexes GUI-summon on
+    /// it, and re-vending a launchd Mach name is avoided), so a later enable
+    /// re-arms via `startServing`.
+    func stopServing()
 }
 
 // MARK: - Guest: direct Mach-service listener
@@ -36,13 +48,16 @@ public protocol ClipboardFileProviderRelayTransport: AnyObject, Sendable {
 /// Vends the relay on a team-prefixed Mach service the guest agent's LaunchAgent
 /// plist registers (`MachServices`), which the sandboxed guest extension looks up.
 ///
-/// `@unchecked Sendable`: `listener`/`service` are set once on first
-/// `startServing` (on the owner's queue) and read by the XPC delegate thereafter.
+/// `@unchecked Sendable`: `listener` is created once on first `startServing` (on
+/// the owner's queue) and read by the XPC delegate thereafter; the served
+/// `service` is read/written only under `lock`, so `stopServing` on the owner's
+/// queue and the delegate's connection-accept on the XPC queue can't race.
 public final class MachServiceRelayTransport: NSObject, NSXPCListenerDelegate,
     ClipboardFileProviderRelayTransport, @unchecked Sendable
 {
     private let machServiceName: String
     private let logger: KernovaLogger
+    private let lock = NSLock()
     private var listener: NSXPCListener?
     private var service: ClipboardFileProviderRelay?
 
@@ -53,10 +68,13 @@ public final class MachServiceRelayTransport: NSObject, NSXPCListenerDelegate,
         super.init()
     }
 
-    /// Starts the Mach listener on first call; subsequent calls are no-ops.
+    /// (Re)sets the served relay and starts the Mach listener on first call.
+    ///
+    /// The served relay is updated on every enable; the listener is created once
+    /// and then persists for a later enable after a `stopServing`.
     public func startServing(_ service: ClipboardFileProviderRelay) {
+        lock.withLock { self.service = service }
         guard listener == nil else { return }
-        self.service = service
         let listener = NSXPCListener(machServiceName: machServiceName)
         listener.delegate = self
         listener.resume()
@@ -65,7 +83,15 @@ public final class MachServiceRelayTransport: NSObject, NSXPCListenerDelegate,
             "Relay Mach listener started (\(self.machServiceName, privacy: .public))")
     }
 
-    /// Exports the relay service to a connecting extension.
+    /// Clears the served relay so connections opened while clipboard sharing is
+    /// disabled are refused; the listener persists for a later `startServing`.
+    public func stopServing() {
+        lock.withLock { self.service = nil }
+        logger.notice("Relay service cleared (clipboard disabled); Mach listener kept")
+    }
+
+    /// Exports the relay service to a connecting extension, or refuses the
+    /// connection when no relay is currently served (clipboard disabled).
     public func listener(
         _ listener: NSXPCListener, shouldAcceptNewConnection newConnection: NSXPCConnection
     ) -> Bool {
@@ -73,6 +99,10 @@ public final class MachServiceRelayTransport: NSObject, NSXPCListenerDelegate,
         // tracked by #145); the team-prefixed Mach name + app-group lookup gate
         // already restrict who can reach it. The host leg IS validated via
         // `setCodeSigningRequirement` (see `HostRelayListener`).
+        guard let service = lock.withLock({ self.service }) else {
+            logger.debug("Refused File Provider XPC connection — no relay served (disabled)")
+            return false
+        }
         newConnection.exportedInterface = NSXPCInterface(with: ClipboardFileProviderRelay.self)
         newConnection.exportedObject = service
         newConnection.resume()
@@ -197,6 +227,24 @@ public final class HostRelayListener: NSObject, NSXPCListenerDelegate,
         self.service.setRelayProvider(service)
         logger.notice("Clipboard relay provider registered with host listener")
     }
+
+    /// Clears the `fetchFile` backing when clipboard sharing is disabled.
+    ///
+    /// `ClipboardFileProviderRelayTransport` conformance, called by the domain
+    /// host on disable. The always-on listener stays up (it also serves the
+    /// launcher's GUI-summon), so `fetchFile` now replies `serverUnreachable`
+    /// until the next `startServing`.
+    public func stopServing() {
+        service.setRelayProvider(nil)
+        logger.notice("Clipboard relay provider cleared from host listener")
+    }
+
+    #if DEBUG
+    /// The multiplexed relay service, exposed for `HostRelayServiceTests` to assert
+    /// that `startServing`/`stopServing` toggle the `fetchFile` backing without
+    /// standing up the live Mach listener (`start()` is never called in the test).
+    var relayServiceForTesting: HostRelayService { service }
+    #endif
 
     /// Validates the peer (main app launcher or host extension) and exports the
     /// multiplexed relay.

@@ -101,4 +101,33 @@ struct HostRelayServiceTests {
         #expect(summoned.value)
         #expect(replied.value)
     }
+
+    @Test("HostRelayListener startServing/stopServing toggle the fetchFile backing")
+    func listenerStartStopTogglesFetchBacking() {
+        // start() is intentionally NOT called — the transport's start/stop of the
+        // fetchFile backing is exercised without standing up a live Mach service.
+        let listener = HostRelayListener(
+            machServiceName: "app.kernova.test.xpc",
+            inboundCodeSigningRequirement: "anchor apple",
+            loggerSubsystem: "app.kernova.test",
+            onShowUserInterface: {})
+        let service = listener.relayServiceForTesting
+
+        // Before serving: no provider → serverUnreachable.
+        let before = Box<NSError?>(nil)
+        service.fetchFile(generation: 1, repIndex: 0) { _, e in before.value = e }
+        #expect(before.value?.code == NSFileProviderError.serverUnreachable.rawValue)
+
+        // Enable: forwards to the registered relay.
+        listener.startServing(MockRelay(stagedPath: "/staged/file"))
+        let served = Box<String?>(nil)
+        service.fetchFile(generation: 2, repIndex: 1) { p, _ in served.value = p }
+        #expect(served.value == "/staged/file")
+
+        // Disable: backing cleared → back to serverUnreachable.
+        listener.stopServing()
+        let after = Box<NSError?>(nil)
+        service.fetchFile(generation: 3, repIndex: 2) { _, e in after.value = e }
+        #expect(after.value?.code == NSFileProviderError.serverUnreachable.rawValue)
+    }
 }
