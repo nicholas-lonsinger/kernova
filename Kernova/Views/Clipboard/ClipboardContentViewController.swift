@@ -1364,14 +1364,13 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 ///
 /// `NSPasteboard` is a class cluster with no public initializer and can't be
 /// subclassed, so its write can't be made to fail from a test. This write-only
-/// seam (clear, an objects-write returning `Bool`, and a read-back for
-/// assertions) is deliberately separate from the guest agent's richer
-/// `Pasteboard` protocol, which also carries poll/read members the host write
-/// path never uses. `NSPasteboard` satisfies all three requirements as-is.
+/// seam (clear plus an objects-write returning `Bool`) is deliberately separate
+/// from the guest agent's richer `Pasteboard` protocol, which also carries
+/// poll/read members the host write path never uses. `NSPasteboard` satisfies
+/// both requirements as-is.
 protocol HostWritePasteboard: AnyObject {
     @discardableResult func clearContents() -> Int
     func writeObjects(_ objects: [any NSPasteboardWriting]) -> Bool
-    func data(forType type: NSPasteboard.PasteboardType) -> Data?
 }
 
 extension NSPasteboard: HostWritePasteboard {}

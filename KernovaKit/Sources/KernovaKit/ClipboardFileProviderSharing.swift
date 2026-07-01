@@ -104,7 +104,7 @@ public struct ClipboardFileProviderManifest: Codable, Sendable, Equatable {
 }
 
 /// Failure reaching the shared app-group container.
-public enum ClipboardFileProviderContainerError: Error {
+enum ClipboardFileProviderContainerError: Error {
     /// The app-group container couldn't be resolved (e.g. the entitlement is
     /// absent, as in a CI test host).
     case containerUnavailable

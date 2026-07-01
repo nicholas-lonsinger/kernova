@@ -1,7 +1,5 @@
 import Testing
 
-import KernovaKit
-
 @Suite("GuestAgentMenuText")
 struct GuestAgentMenuTextTests {
     // MARK: - about
