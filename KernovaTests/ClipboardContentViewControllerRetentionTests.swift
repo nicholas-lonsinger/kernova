@@ -284,11 +284,9 @@ private final class FakeWritePasteboard: HostWritePasteboard {
     private(set) var writeAttempts = 0
     var failNextWrite = false
     var onWrite: (() -> Void)?
-    private var stored: [NSPasteboard.PasteboardType: Data] = [:]
 
     @discardableResult func clearContents() -> Int {
         clearCount += 1
-        stored.removeAll()
         return clearCount
     }
 
@@ -299,6 +297,4 @@ private final class FakeWritePasteboard: HostWritePasteboard {
         onWrite?()
         return !shouldFail
     }
-
-    func data(forType type: NSPasteboard.PasteboardType) -> Data? { stored[type] }
 }
