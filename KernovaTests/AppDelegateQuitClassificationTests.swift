@@ -44,6 +44,22 @@ struct AppDelegateQuitClassificationTests {
             ) == .terminateAndSave)
     }
 
+    @Test("A negative sender PID fails toward terminate-and-save without ever being probed")
+    func negativeSenderPID() {
+        // kill(pid, 0) for pid < 0 targets a process GROUP, not a single process —
+        // classifyQuit must reject it before any probe closure is invoked.
+        #expect(
+            AppDelegate.classifyQuit(
+                senderPID: -1,
+                bundleIDResolver: { _ in
+                    Issue.record("should not resolve a bundle ID"); return nil
+                },
+                isProcessAlive: { _ in
+                    Issue.record("should not probe liveness"); return true
+                }
+            ) == .terminateAndSave)
+    }
+
     @Test("A sender PID that no longer resolves to a live process fails toward terminate-and-save")
     func deadSender() {
         #expect(
@@ -102,21 +118,36 @@ struct AppDelegateQuitClassificationTests {
 
     @Test("loginwindow (logout / restart / shutdown) terminates and saves")
     func loginwindow() {
-        #expect(
-            AppDelegate.classifyQuit(
-                senderPID: 999,
-                bundleIDResolver: { _ in Self.loginwindowBundleID },
-                isProcessAlive: { _ in true }
-            ) == .terminateAndSave)
+        // Asserts the pid_t argument too (not just the return value), so a future
+        // regression that calls bundleIDResolver/isProcessAlive with the wrong pid
+        // (e.g. copy-pasted from a different guard) would fail this test even
+        // though every other test's closures ignore their argument. The call is
+        // pulled out of the `#expect(...)` argument — nesting `#expect` inside
+        // another `#expect`'s captured expression recurses in macro expansion.
+        let classification = AppDelegate.classifyQuit(
+            senderPID: 999,
+            bundleIDResolver: { pid in
+                #expect(pid == 999)
+                return Self.loginwindowBundleID
+            },
+            isProcessAlive: { pid in
+                #expect(pid == 999)
+                return true
+            }
+        )
+        #expect(classification == .terminateAndSave)
     }
 
     @Test("System Settings / TCC revocation terminates and relaunches")
     func tccRevocation() {
-        #expect(
-            AppDelegate.classifyQuit(
-                senderPID: 999,
-                bundleIDResolver: { _ in Self.tccBundleID },
-                isProcessAlive: { _ in true }
-            ) == .terminateAndRelaunch)
+        let classification = AppDelegate.classifyQuit(
+            senderPID: 999,
+            bundleIDResolver: { pid in
+                #expect(pid == 999)
+                return Self.tccBundleID
+            },
+            isProcessAlive: { _ in true }
+        )
+        #expect(classification == .terminateAndRelaunch)
     }
 }

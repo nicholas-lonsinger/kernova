@@ -645,9 +645,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// Handles the `kAEQuitApplication` Apple Event by classifying its sender.
     ///
     /// Routes through `classifyQuit` and sets the flags
-    /// `applicationShouldTerminate`'s gate reads. Resets both flags on
-    /// `.stayResident` so a vetoed quit never leaves stale state for the next
-    /// quit cycle to misread.
+    /// `applicationShouldTerminate`'s gate reads. Flags are only ever set to
+    /// `true` here, never reset to `false`: a `true` flag always drives the
+    /// process toward actual termination on the same call that set it (per
+    /// `quitShouldTerminateAgent`'s gate), so there is never a stale `true` left
+    /// over from a quit whose termination didn't happen. Resetting on
+    /// `.stayResident` was considered and rejected — a later, unrelated
+    /// GUI-origin quit arriving while an earlier system-initiated quit's
+    /// `.terminateLater` VM-save is still in flight would clear the very flag
+    /// that save depends on, risking a wrongful veto of an already-accepted
+    /// termination.
     @objc private func handleQuitAppleEvent(
         _ event: NSAppleEventDescriptor,
         withReplyEvent _: NSAppleEventDescriptor
@@ -656,6 +663,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // Resolved once and fed to `classifyQuit` as fixed values (rather than
         // letting it re-probe) so the same attribution result also drives the log
         // level below without a second syscall.
+        //
+        // Residual: `kill` (liveness) and `NSRunningApplication` (identity) are two
+        // separate, non-atomic probes of the same PID — a sender that exits in the
+        // narrow window between them reads as "alive but unidentifiable" and falls
+        // through to `.stayResident` rather than the fail-safe default. Collapsing
+        // to a single probe isn't available: `NSRunningApplication` alone (the old
+        // code's approach) would misclassify a live-but-non-GUI sender like
+        // `osascript` as "dead", the opposite bug. Same class of residual as
+        // `systemQuitSenderBundleIDs`'s doc comment above, now for liveness instead
+        // of identity.
         let attributablePID: pid_t? = senderPID.flatMap { pid in
             guard pid > 0, kill(pid, 0) == 0 || errno != ESRCH else { return nil }
             return pid
@@ -669,9 +686,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         )
 
         if let attributablePID {
-            Self.logger.debug(
-                "Quit Apple Event from PID \(attributablePID, privacy: .public) (bundle: \(bundleID ?? "none", privacy: .public)) classified as \(String(describing: classification), privacy: .public)"
-            )
+            if let bundleID {
+                Self.logger.debug(
+                    "Quit Apple Event from PID \(attributablePID, privacy: .public) (bundle: \(bundleID, privacy: .public)) classified as \(String(describing: classification), privacy: .public)"
+                )
+            } else {
+                // Persisted (not .debug): a live sender we can't identify might be a
+                // TCC/system sender this classifier is failing to recognize.
+                Self.logger.warning(
+                    "Quit Apple Event: sender PID \(attributablePID, privacy: .public) is alive but could not be resolved to an application with a bundle identifier — classified as \(String(describing: classification), privacy: .public)"
+                )
+            }
         } else {
             // The fail-safe path #438 exists for: an unattributable sender. Persisted
             // (.warning, not .debug) so a stalled-logout post-mortem can confirm this
@@ -683,13 +708,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
         switch classification {
         case .stayResident:
-            systemIsPoweringOff = false
-            terminationIsTCCRevocation = false
+            break
         case .terminateAndSave:
             systemIsPoweringOff = true
-            terminationIsTCCRevocation = false
         case .terminateAndRelaunch:
-            systemIsPoweringOff = false
             terminationIsTCCRevocation = true
         }
 
