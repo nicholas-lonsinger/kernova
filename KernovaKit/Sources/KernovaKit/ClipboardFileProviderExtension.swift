@@ -269,7 +269,11 @@ final class ClipboardFileItem: NSObject, NSFileProviderItem, @unchecked Sendable
     // "Item is locked" on delete). Advertise full capabilities so the pasted copy
     // is an ordinary file the user owns; the mutating extension methods still
     // reject (the placeholder is transient and copied out, never edited in place).
-    var capabilities: NSFileProviderItemCapabilities { .allowsAll }
+    // Spelled out explicitly (rather than `.allowsAll`, deprecated in macOS 12) —
+    // this is the exact set `.allowsAll` used to expand to.
+    var capabilities: NSFileProviderItemCapabilities {
+        [.allowsReading, .allowsWriting, .allowsReparenting, .allowsRenaming, .allowsTrashing, .allowsDeleting]
+    }
     var contentType: UTType { UTType(representationUTI) ?? .data }
     var documentSize: NSNumber? { NSNumber(value: size) }
     // The bytes and metadata of a given (generation, repIndex) item never change,

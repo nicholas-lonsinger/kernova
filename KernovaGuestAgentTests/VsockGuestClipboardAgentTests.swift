@@ -514,7 +514,7 @@ struct VsockGuestClipboardAgentTests {
             generation: 3, uti: txtUTI, filename: "notes.txt", payload: contents, isInline: false,
             on: hostChannel)
         let staged = try #require(
-            (try await pull.value).flatMap { String(data: $0, encoding: .utf8) }
+            (await pull.value).flatMap { String(data: $0, encoding: .utf8) }
                 .flatMap(URL.init(string:)))
 
         // Copy [the staged file, a fresh file]: the staging-root file is dropped
@@ -633,7 +633,7 @@ struct VsockGuestClipboardAgentTests {
             generation: 7, uti: UTType.folder.identifier, filename: "Shared", payload: aarBytes,
             isInline: false, on: hostChannel)
         let folderURL = try #require(
-            (try await pull.value).flatMap { String(data: $0, encoding: .utf8) }
+            (await pull.value).flatMap { String(data: $0, encoding: .utf8) }
                 .flatMap(URL.init(string:)))
 
         var isDir: ObjCBool = false
@@ -871,7 +871,7 @@ struct VsockGuestClipboardAgentTests {
         try await driveInboundStream(
             generation: 3, uti: txtUTI, filename: "notes.txt", payload: contents,
             isInline: false, on: hostChannel)
-        let urlData = try await pull.value
+        let urlData = await pull.value
         let staged = try #require(
             urlData.flatMap { String(data: $0, encoding: .utf8) }
                 .flatMap(URL.init(string:)))
@@ -939,7 +939,7 @@ struct VsockGuestClipboardAgentTests {
             #expect(req.generation == 42)
             #expect(req.uti == ClipboardContent.utf8TextUTI)
         }
-        let provided = try await pull.value
+        let provided = await pull.value
         #expect(provided == payload)
     }
 
@@ -967,7 +967,7 @@ struct VsockGuestClipboardAgentTests {
         try await driveInboundStream(
             generation: 7, uti: ClipboardContent.utf8TextUTI, filename: "", payload: payload,
             isInline: true, chunkSize: 64 * 1024, on: hostChannel)
-        let provided = try await pull.value
+        let provided = await pull.value
         #expect(provided == payload)
     }
 
@@ -1002,7 +1002,7 @@ struct VsockGuestClipboardAgentTests {
         try await driveInboundStream(
             generation: 8, uti: txtUTI, filename: "notes.txt", payload: contents,
             isInline: false, on: hostChannel)
-        let urlData = try await pull.value
+        let urlData = await pull.value
         let staged = try #require(
             urlData.flatMap { String(data: $0, encoding: .utf8) }
                 .flatMap(URL.init(string:)))
@@ -1348,13 +1348,13 @@ struct VsockGuestClipboardAgentTests {
         try await driveInboundStream(
             generation: 5, uti: UTType.png.identifier, filename: "shot.png", payload: png,
             isInline: true, on: hostChannel)
-        let imageData = try await imgPull.value
+        let imageData = await imgPull.value
         #expect(imageData == png)
 
         // Then paste `.fileURL` for the SAME rep: it is a cache hit — NO second
         // request is sent — and resolves to a staged file with the same bytes.
         let urlPull = lazyPull(pasteboard, forType: .fileURL)
-        let urlData = try await urlPull.value
+        let urlData = await urlPull.value
         try await expectNoRequest(from: hostChannel)
         let staged = try #require(
             urlData.flatMap { String(data: $0, encoding: .utf8) }
@@ -1392,14 +1392,14 @@ struct VsockGuestClipboardAgentTests {
             generation: 11, uti: UTType.png.identifier, filename: "shot.png", payload: png,
             isInline: true, on: hostChannel)
         let url1 = try #require(
-            (try await pull1.value).flatMap { String(data: $0, encoding: .utf8) }
+            (await pull1.value).flatMap { String(data: $0, encoding: .utf8) }
                 .flatMap(URL.init(string:)))
 
         // A second `.fileURL` pull is a cache hit — NO new request, and the SAME
         // staged URL (not a `shot (2).png` duplicate from the staging de-dup).
         let pull2 = lazyPull(pasteboard, forType: .fileURL)
         let url2 = try #require(
-            (try await pull2.value).flatMap { String(data: $0, encoding: .utf8) }
+            (await pull2.value).flatMap { String(data: $0, encoding: .utf8) }
                 .flatMap(URL.init(string:)))
         try await expectNoRequest(from: hostChannel)
         #expect(url1 == url2)
@@ -1446,7 +1446,7 @@ struct VsockGuestClipboardAgentTests {
             #expect(req.transferID & 0xFFFF == 0)
         }
         let staged0 = try #require(
-            (try await pull0.value).flatMap { String(data: $0, encoding: .utf8) }
+            (await pull0.value).flatMap { String(data: $0, encoding: .utf8) }
                 .flatMap(URL.init(string:)))
         #expect(staged0.lastPathComponent == "a.txt")
         #expect(try Data(contentsOf: staged0) == bodyA)
@@ -1461,7 +1461,7 @@ struct VsockGuestClipboardAgentTests {
             #expect(req.transferID & 0xFFFF == 1)
         }
         let staged1 = try #require(
-            (try await pull1.value).flatMap { String(data: $0, encoding: .utf8) }
+            (await pull1.value).flatMap { String(data: $0, encoding: .utf8) }
                 .flatMap(URL.init(string:)))
         #expect(staged1.lastPathComponent == "b.txt")
         #expect(try Data(contentsOf: staged1) == bodyB)
@@ -1500,11 +1500,11 @@ struct VsockGuestClipboardAgentTests {
         try await driveInboundStream(
             generation: 9, uti: UTType.png.identifier, filename: "img.png", payload: png,
             isInline: true, on: hostChannel)
-        _ = try await firstPull.value
+        _ = await firstPull.value
 
         // Second pull (image UTI, same rep) must NOT send another request.
         let secondPull = lazyPull(pasteboard, forType: pngType)
-        let imageData = try await secondPull.value
+        let imageData = await secondPull.value
         try await expectNoRequest(from: hostChannel)
         #expect(imageData == png)
         #expect(DispatchQueue.main.sync { agent.inboundPromiseGenerationForTesting } == 9)
@@ -1540,7 +1540,7 @@ struct VsockGuestClipboardAgentTests {
                 totalBytes: payload.count, filename: "", isInline: true))
         try hostChannel.send(
             makeAbortFrame(transferID: req.transferID, code: "host.abort", message: "no"))
-        let provided = try await pull.value
+        let provided = await pull.value
         #expect(provided == nil)
     }
 
@@ -1571,7 +1571,7 @@ struct VsockGuestClipboardAgentTests {
         #expect(req.generation == 14)
         try hostChannel.send(
             makeAbortFrame(transferID: req.transferID, code: "request.stale", message: "superseded"))
-        let provided = try await pull.value
+        let provided = await pull.value
         #expect(provided == nil)
     }
 
@@ -1604,9 +1604,15 @@ struct VsockGuestClipboardAgentTests {
         // provideData for the retracted gen-20 provider returns nil (stale
         // generation) and sends NO request — the old promise was dropped.
         let item = NSPasteboardItem()
+        // RATIONALE: NSPasteboardItem / the data provider are non-Sendable AppKit
+        // types, and the provider must run off-main (it does DispatchQueue.main.sync
+        // internally). The continuation joins the closure before `item` is read
+        // below, so the hop is race-free.
+        nonisolated(unsafe) let provider = oldProvider
+        nonisolated(unsafe) let capturedItem = item
         await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
             DispatchQueue.global().async {
-                oldProvider?.pasteboard(nil, item: item, provideDataForType: .string)
+                provider?.pasteboard(nil, item: capturedItem, provideDataForType: .string)
                 cont.resume()
             }
         }
@@ -1661,7 +1667,7 @@ struct VsockGuestClipboardAgentTests {
             // rep (whose UTI would be "public.file-url" if repIndex skipped the gate).
             #expect(req.uti == UTType.png.identifier)
         }
-        let urlData = try await pull.value
+        let urlData = await pull.value
         let staged = try #require(
             urlData.flatMap { String(data: $0, encoding: .utf8) }.flatMap(URL.init(string:)))
         #expect(staged.lastPathComponent == "shot.png")
@@ -1740,7 +1746,7 @@ struct VsockGuestClipboardAgentTests {
         try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
 
         let pull = lazyPull(pasteboard, forType: .fileURL)
-        let provided = try await pull.value
+        let provided = await pull.value
         #expect(provided == nil)
         try await expectNoRequest(from: hostChannel)
     }
@@ -1772,7 +1778,7 @@ struct VsockGuestClipboardAgentTests {
         try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
 
         let pull = lazyPull(pasteboard, forType: .fileURL)
-        #expect(try await pull.value == nil)
+        #expect(await pull.value == nil)
 
         // The guest has no UI, so it tells the host — which surfaces it in the
         // clipboard window — via a `clipboard.*` Error frame (not a request).
