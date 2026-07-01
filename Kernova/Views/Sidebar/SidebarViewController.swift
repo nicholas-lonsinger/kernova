@@ -519,7 +519,7 @@ extension SidebarViewController: NSOutlineViewDataSource {
         else { return false }
 
         var imported = false
-        for url in urls where url.pathExtension == VMStorageService.bundleExtension {
+        for url in urls where VMStorageService.isBundleURL(url) {
             viewModel.importVM(from: url)
             imported = true
         }

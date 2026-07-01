@@ -249,9 +249,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             machServiceName: ClipboardFileProviderConfig.host.machServiceName,
             inboundCodeSigningRequirement: KernovaHostRelayIdentity.inboundClientRequirement,
             loggerSubsystem: ClipboardFileProviderConfig.host.loggerSubsystem,
-            onShowUserInterface: { [weak self] in
-                // Invoked off-main on the XPC queue; hop to the main actor.
-                Task { @MainActor in self?.summonUserInterface() }
+            onSummon: { [weak self] vmPaths in
+                // Invoked off-main on the XPC queue; hop to the main actor. Import
+                // any forwarded paths first (synchronously appends + selects the
+                // phantom row) — a no-op for a plain relaunch's empty array — then
+                // summon so an imported VM is visible/selected when the window
+                // shows (issue #439 — the launcher's cold-launch document-open path).
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.importVMs(from: vmPaths.map { URL(fileURLWithPath: $0, isDirectory: true) })
+                    self.summonUserInterface()
+                }
             })
         listener.start()
         HostClipboardFileProvider.shared.attachRelayTransport(listener)
@@ -639,8 +647,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     // MARK: - Open URLs (Finder double-click / dock icon drop)
 
     func application(_ application: NSApplication, open urls: [URL]) {
-        let vmURLs = urls.filter { $0.pathExtension == VMStorageService.bundleExtension }
-        for url in vmURLs {
+        importVMs(from: urls)
+    }
+
+    /// Filters to `.kernova` bundles and imports each — the direct Finder odoc
+    /// route (agent already running) and the launcher's forwarded `openVMs`
+    /// paths (agent-down cold-launch path, issue #439).
+    private func importVMs(from urls: [URL]) {
+        for url in urls where VMStorageService.isBundleURL(url) {
             viewModel.importVM(from: url)
         }
     }

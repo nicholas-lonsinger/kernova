@@ -117,18 +117,21 @@ public final class MachServiceRelayTransport: NSObject, NSXPCListenerDelegate,
 ///
 /// Multiplexes the sandboxed extension's `fetchFile` (forwarded to the
 /// registered clipboard relay, or `serverUnreachable` when no VM has sharing on)
-/// and the launcher's `showUserInterface` (forwarded to the injected closure).
+/// and the launcher's `summon` (forwarded to the injected closure).
 ///
 /// `@unchecked Sendable`: `relayProvider` is read/written only under `lock`;
-/// `onShowUserInterface`/`logger` are immutable.
+/// `onSummon`/`logger` are immutable.
 final class HostRelayService: NSObject, KernovaHostRelay, @unchecked Sendable {
     private let lock = NSLock()
     private var relayProvider: ClipboardFileProviderRelay?
-    private let onShowUserInterface: @Sendable () -> Void
+    private let onSummon: @Sendable ([String]) -> Void
     private let logger: KernovaLogger
 
-    init(loggerSubsystem: String, onShowUserInterface: @escaping @Sendable () -> Void) {
-        self.onShowUserInterface = onShowUserInterface
+    init(
+        loggerSubsystem: String,
+        onSummon: @escaping @Sendable ([String]) -> Void
+    ) {
+        self.onSummon = onSummon
         self.logger = KernovaLogger(subsystem: loggerSubsystem, category: "HostRelayService")
         super.init()
     }
@@ -160,11 +163,15 @@ final class HostRelayService: NSObject, KernovaHostRelay, @unchecked Sendable {
         provider.fetchFile(generation: generation, repIndex: repIndex, reply: reply)
     }
 
-    /// Brings the resident agent's GUI forward, then confirms delivery so the
-    /// launcher can exit.
-    func showUserInterface(reply: @escaping @Sendable () -> Void) {
-        logger.notice("Received showUserInterface request")
-        onShowUserInterface()
+    /// Imports any forwarded `.kernova` bundle paths and brings the resident
+    /// agent's GUI forward, then confirms delivery so the launcher can exit.
+    ///
+    /// The injected closure does both (import first, then summon) on the main
+    /// actor so the imported VM is selected before the window is shown. An
+    /// empty `vmPaths` is a plain summon.
+    func summon(vmPaths: [String], reply: @escaping @Sendable () -> Void) {
+        logger.notice("Received summon request (\(vmPaths.count, privacy: .public) VM path(s))")
+        onSummon(vmPaths)
         reply()
     }
 }
@@ -188,20 +195,19 @@ public final class HostRelayListener: NSObject, NSXPCListenerDelegate,
     private var listener: NSXPCListener?
 
     /// Vends on `machServiceName`, validating inbound peers against
-    /// `inboundCodeSigningRequirement`, and forwards `showUserInterface` to
-    /// `onShowUserInterface` (invoked off-main on the XPC queue — the closure
-    /// must hop to the main actor itself).
+    /// `inboundCodeSigningRequirement`, and forwards `summon` to the injected
+    /// closure (invoked off-main on the XPC queue — the closure must hop to the
+    /// main actor itself).
     public init(
         machServiceName: String,
         inboundCodeSigningRequirement: String,
         loggerSubsystem: String,
-        onShowUserInterface: @escaping @Sendable () -> Void
+        onSummon: @escaping @Sendable ([String]) -> Void
     ) {
         self.machServiceName = machServiceName
         self.inboundRequirement = inboundCodeSigningRequirement
         self.logger = KernovaLogger(subsystem: loggerSubsystem, category: "HostRelayListener")
-        self.service = HostRelayService(
-            loggerSubsystem: loggerSubsystem, onShowUserInterface: onShowUserInterface)
+        self.service = HostRelayService(loggerSubsystem: loggerSubsystem, onSummon: onSummon)
         super.init()
     }
 
