@@ -60,13 +60,16 @@ final class HostClipboardFileProvider {
     private static let isRunningUnderTests =
         ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
 
-    /// Current File Provider usability, mirrored from the domain host's polled
+    /// Current File Provider usability, mirrored from the domain host's
     /// availability for the clipboard window's enablement UI.
     ///
-    /// Observe it for live updates: the domain host polls the System-Settings
-    /// toggle and pushes every transition through `setAvailabilityObserver`, so a
-    /// user enabling (or disabling) the File-Providers toggle while the window is
-    /// open is reflected without a restart.
+    /// Observe it for live updates: the domain host is event-driven — an
+    /// `NSFileProviderDomainDidChange` observer reacts to the System-Settings
+    /// toggle instantly, with a usage-triggered refresh in `publishSingleFile`
+    /// as a backstop — and pushes every transition through
+    /// `setAvailabilityObserver`, so a user enabling (or disabling) the
+    /// File-Providers toggle while the window is open is reflected without a
+    /// restart.
     private(set) var availability: ClipboardFileProviderAvailability = .inactive
 
     private init() {}
