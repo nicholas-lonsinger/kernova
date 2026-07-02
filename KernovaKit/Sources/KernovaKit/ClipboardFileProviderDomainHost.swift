@@ -107,6 +107,11 @@ public final class ClipboardFileProviderDomainHost: NSObject, ClipboardFileProvi
     private let relayService: ClipboardFileProviderRelayService
     private let notificationCenter: NotificationCenter
     private let fetchDomains: @Sendable () async throws -> [NSFileProviderDomain]
+    /// Guards `domainChangeObserver`, which — unlike the rest of the state
+    /// below — is also read/removed from `deinit`. `deinit` runs on whatever
+    /// thread drops the last strong reference, not necessarily main, so that
+    /// access can't rely on the "Main-queue state" convention.
+    private let domainChangeObserverLock = NSLock()
 
     // MARK: Main-queue state
 
@@ -120,7 +125,12 @@ public final class ClipboardFileProviderDomainHost: NSObject, ClipboardFileProvi
     ///
     /// The primary availability signal while enabled. Removed on disable and in
     /// deinit (deinit-removal pattern, see Kernova/Services/SystemSleepWatcher.swift).
+    /// Guarded by `domainChangeObserverLock`, not the main queue — see that
+    /// property's doc.
     private var domainChangeObserver: (any NSObjectProtocol)?
+    /// Discriminates overlapping `refreshAvailability()` probes so a stale
+    /// completion can't clobber a fresher one applied out of order.
+    private var refreshGeneration: UInt64 = 0
     /// Notified on the main queue on every availability transition.
     ///
     /// Lets an owner mirror availability into observable UI state. Set on main;
@@ -191,9 +201,7 @@ public final class ClipboardFileProviderDomainHost: NSObject, ClipboardFileProvi
     }
 
     deinit {
-        if let domainChangeObserver {
-            notificationCenter.removeObserver(domainChangeObserver)
-        }
+        stopObservingDomainChanges()
     }
 
     // MARK: - Enablement (clipboard policy)
@@ -243,26 +251,33 @@ public final class ClipboardFileProviderDomainHost: NSObject, ClipboardFileProvi
     // enabled lifetime. That's replaced by event/usage-driven refreshes instead of
     // indefinite polling: `NSFileProviderDomainDidChange` (below) is the primary
     // detector for a mid-session System-Settings disable — the system posts it on
-    // a `userEnabled` flip. `publishSingleFile`'s usage-triggered refresh and the
-    // `signalEnumerator` error feedback (see `signalEnumerator()`) are backstops
-    // that bound staleness to at most one publish/offer cycle if a notification is
-    // ever missed, so a disabled domain is caught by the next paste or offer even
-    // without the notification firing.
+    // a `userEnabled` flip. `publishSingleFile`'s usage-triggered refresh is a
+    // backstop that bounds staleness to at most one publish cycle if a
+    // notification is ever missed, so a disabled domain is caught by the next
+    // paste even without the notification firing. `signalEnumerator` error
+    // feedback (see `signalEnumerator()`) is a narrower backstop — per that
+    // method's doc, it does not reliably surface a mid-offer disable, only other
+    // failure modes (e.g. the domain having been removed outright).
     private func startObservingDomainChanges() {
-        guard domainChangeObserver == nil else { return }
-        domainChangeObserver = notificationCenter.addObserver(
-            forName: .fileProviderDomainDidChange, object: nil, queue: .main
-        ) { [weak self] _ in
-            guard let self else { return }
-            self.logger.debug("NSFileProviderDomainDidChange received — re-probing availability")
-            self.refreshAvailability()
+        domainChangeObserverLock.withLock {
+            guard domainChangeObserver == nil else { return }
+            domainChangeObserver = notificationCenter.addObserver(
+                forName: .fileProviderDomainDidChange, object: nil, queue: .main
+            ) { [weak self] _ in
+                guard let self else { return }
+                self.logger.debug(
+                    "NSFileProviderDomainDidChange received — re-probing availability")
+                self.refreshAvailability()
+            }
         }
     }
 
     private func stopObservingDomainChanges() {
-        if let domainChangeObserver {
-            notificationCenter.removeObserver(domainChangeObserver)
-            self.domainChangeObserver = nil
+        domainChangeObserverLock.withLock {
+            if let domainChangeObserver {
+                notificationCenter.removeObserver(domainChangeObserver)
+                self.domainChangeObserver = nil
+            }
         }
     }
 
@@ -342,12 +357,18 @@ public final class ClipboardFileProviderDomainHost: NSObject, ClipboardFileProvi
     /// `domain` carries a stale flag, so the live copy is fetched via `domains()`.
     ///
     /// Called on registration, on an `NSFileProviderDomainDidChange` notification,
-    /// on every `publishSingleFile` usage (self-corrects the cache at the point of
-    /// consumption), and on `signalEnumerator` error feedback — so flipping the
-    /// toggle in System Settings takes effect without restarting the owner, with
-    /// no indefinite polling. Logs every transition for diagnosis.
+    /// on every `publishSingleFile` usage, and on `signalEnumerator` error
+    /// feedback — so flipping the toggle in System Settings takes effect without
+    /// restarting the owner, with no indefinite polling. Each call is async, so
+    /// it only ever lands on a *later* read of `availabilityStorage`, never the
+    /// one in progress when it was triggered; `refreshGeneration` stops a stale
+    /// completion from clobbering a fresher one applied out of order. A no-op
+    /// while disabled. Logs every transition for diagnosis.
     private func refreshAvailability() {
+        guard enabled else { return }
         let identifier = domain.identifier
+        refreshGeneration &+= 1
+        let generation = refreshGeneration
         Task { [weak self, fetchDomains] in
             let availability: ClipboardFileProviderAvailability
             do {
@@ -359,7 +380,7 @@ public final class ClipboardFileProviderDomainHost: NSObject, ClipboardFileProvi
                     forDomainMatching: identifier, in: [], error: error)
             }
             DispatchQueue.main.async {
-                guard let self, self.enabled else { return }
+                guard let self, self.enabled, generation == self.refreshGeneration else { return }
                 self.setAvailability(availability)
             }
         }
@@ -409,8 +430,10 @@ public final class ClipboardFileProviderDomainHost: NSObject, ClipboardFileProvi
             )
             return nil
         }
-        // Self-corrects the cache at the point of consumption — a backstop if a
-        // mid-session disable was missed by the domain-change observer.
+        // Kicks off an async re-probe so a *later* publish self-corrects if a
+        // mid-session disable was missed by the domain-change observer — this
+        // call is synchronous, so the `.ready` guard right below still reads
+        // whatever was cached before this refresh started.
         refreshAvailability()
         guard availabilityStorage == .ready else {
             // The domain is registered but the user hasn't enabled it in System
@@ -502,27 +525,25 @@ public final class ClipboardFileProviderDomainHost: NSObject, ClipboardFileProvi
     /// the offer declared without a Finder window open) and the root container
     /// (so an open Finder window refreshes too).
     ///
-    /// A non-nil completion error (e.g. `-2011` when the domain was disabled
-    /// mid-offer) re-probes availability, so a missed
-    /// `NSFileProviderDomainDidChange` notification is still caught within one
-    /// offer cycle. The completion handler's queue isn't documented, so the
-    /// re-probe hops to main explicitly rather than assuming it's already there.
+    /// A non-nil completion error re-probes availability as a defensive
+    /// backstop — but not for a mid-offer disable specifically: per the note on
+    /// `refreshAvailability`, a `signalEnumerator` completion reports only that
+    /// the signal was delivered, so it won't surface `-2011` for that case
+    /// either. This instead catches other failure modes (e.g. the domain having
+    /// been removed outright) within one offer cycle. The completion handler's
+    /// queue isn't documented, so the re-probe hops to main explicitly rather
+    /// than assuming it's already there.
     private func signalEnumerator() {
         guard let manager = NSFileProviderManager(for: domain) else { return }
-        manager.signalEnumerator(for: .workingSet) { [weak self, logger] error in
+        let handleCompletion: @Sendable (String, Error?) -> Void = { [weak self, logger] target, error in
             guard let error else { return }
             logger.warning(
-                "signalEnumerator(workingSet) failed: \(error.localizedDescription, privacy: .public)"
+                "signalEnumerator(\(target, privacy: .public)) failed: \(error.localizedDescription, privacy: .public)"
             )
             DispatchQueue.main.async { self?.refreshAvailability() }
         }
-        manager.signalEnumerator(for: .rootContainer) { [weak self, logger] error in
-            guard let error else { return }
-            logger.warning(
-                "signalEnumerator(rootContainer) failed: \(error.localizedDescription, privacy: .public)"
-            )
-            DispatchQueue.main.async { self?.refreshAvailability() }
-        }
+        manager.signalEnumerator(for: .workingSet) { handleCompletion("workingSet", $0) }
+        manager.signalEnumerator(for: .rootContainer) { handleCompletion("rootContainer", $0) }
     }
 
     // MARK: - Teardown helpers

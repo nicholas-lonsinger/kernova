@@ -277,4 +277,39 @@ struct ClipboardFileProviderDomainHostEnablementTests {
             domainSource.callCount == 0,
             "the addDomain failure branch writes .unavailable directly — it must not consult fetchDomains")
     }
+
+    @Test("disabling stops observing the domain-change notification; a later post is a no-op")
+    func disablingStopsObservingDomainChanges() async throws {
+        let domainSource = FakeDomainSource()
+        let collector = AvailabilityCollector()
+        let center = NotificationCenter()
+        let host = makeHost(
+            domainIdentifier: "kernova-clipboard-test-\(UUID().uuidString)",
+            domainSource: domainSource, notificationCenter: center)
+        host.setAvailabilityObserver { collector.record($0) }
+
+        host.setEnabled(true)
+        await awaitMainQueueTurn()
+
+        // Let the real (failing, per the suite doc comment) registration land
+        // before disabling, so its async `.unavailable` write can't race with the
+        // post-disable snapshot below.
+        try await collector.gate.wait(timeout: .seconds(20)) {
+            collector.values.contains(.unavailable)
+        }
+
+        host.setEnabled(false)
+        await awaitMainQueueTurn()
+        #expect(host.availability == .inactive)
+
+        let valuesBeforePost = collector.values
+        let callsBeforePost = domainSource.callCount
+        center.post(name: .fileProviderDomainDidChange, object: nil)
+
+        // `setEnabled(false)` runs `stopObservingDomainChanges()`, so the observer
+        // is gone before this post — nothing to deliver to, hence a synchronous
+        // assertion rather than a wait (mirrors `notificationIgnoredWhileNeverEnabled`).
+        #expect(collector.values == valuesBeforePost)
+        #expect(domainSource.callCount == callsBeforePost)
+    }
 }
