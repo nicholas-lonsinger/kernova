@@ -61,6 +61,13 @@ Run `make` with no arguments to see all build, test, format, and lint targets.
 
 The app requires the `com.apple.security.virtualization` entitlement, which is included in the project configuration.
 
+### Running a development build
+
+Kernova ships as a launch-at-login background agent, and a **Debug build never auto-registers** that login agent (only a Release build in `/Applications` does — this keeps a throwaway dev/worktree copy from pinning launchd to a path that later disappears). So a bare Cmd+R run (the launcher role) finds no agent to summon and shows a **"No Background Agent Registered"** dead-end alert instead of a window. Two escape hatches, passed as **Arguments Passed On Launch** in the scheme's Run action:
+
+- `--foreground` — run the GUI directly as a plain app, with no agent and no registration. Best for iterating on the UI.
+- `--register-agent` — register *this* copy as the login agent (overriding the Debug and `/Applications` gates), then exit; afterward a normal launch summons it. The dead-end alert's **"Register This Copy"** button does the same thing in-place.
+
 ## Testing
 
 The project has comprehensive test coverage using [Swift Testing](https://developer.apple.com/documentation/testing/) (`@Test`, `#expect`). All services use protocol-based dependency injection with mock implementations for full testability.

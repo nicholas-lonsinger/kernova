@@ -3,15 +3,21 @@ import KernovaKit
 import ServiceManagement
 import os
 
-/// Registers the main Kernova app as a launchd-managed launch-at-login agent and
-/// reports its enablement.
+/// Wraps the `SMAppService.agent` operations that register the main Kernova app
+/// as a launchd-managed launch-at-login agent and report its enablement.
 ///
 /// Wraps `SMAppService.agent` over the bundled
 /// `Contents/Library/LaunchAgents/app.kernova.plist`, which declares `RunAtLoad`,
 /// `LimitLoadToSessionType = Aqua`, and `MachServices = { …xpc }` and runs
-/// the app's own executable with `--background`. Registration is unconditional on
-/// first launch ("always on once installed"); the user can still disable it in
-/// System Settings → General → Login Items & Extensions.
+/// the app's own executable with `--background`.
+///
+/// This type performs the SMAppService operations but does **not** decide *when*
+/// to register — that policy (Debug never auto-registers; Release auto-registers
+/// only from `/Applications`; the explicit `--register-agent` flag / "Register
+/// This Copy" button override both gates) lives in `LauncherAppDelegate`
+/// (issue #451, prevention of the wrong-copy BTM pin). Call `currentStatus()` to
+/// read enablement without side effects, and `register()` for the intentional
+/// registration act.
 ///
 /// `SMAppService.agent` is the only API that can declare `MachServices`, and the
 /// `BundleProgram` may point at the app's own `Contents/MacOS/Kernova` — being
@@ -24,19 +30,35 @@ enum KernovaBackgroundAgent {
         SMAppService.agent(plistName: KernovaHostRelayIdentity.launchAgentPlistName)
     }
 
-    /// Registers the agent if it isn't already enabled, returning the resulting
-    /// status.
+    /// The agent's current enablement, read with **no side effect**.
+    ///
+    /// `.enabled` (registered and running), `.requiresApproval` (registered but
+    /// the user disabled it in Login Items — there is no `.disabled` case),
+    /// `.notRegistered` (never registered from this bundle path), or `.notFound`.
+    /// The launcher reads this to decide whether it may summon, must prompt for
+    /// approval, or (Debug) has hit a dead end — without ever registering.
+    static func currentStatus() -> SMAppService.Status {
+        service.status
+    }
+
+    /// Registers the agent (unless it is already enabled) and returns the
+    /// resulting status — the intentional-install act.
     ///
     /// `status` (not the result of `register()`) is the source of truth: when the
     /// user has **disabled** the login item in System Settings, `register()`
     /// *throws* "Operation not permitted" while `status` still reports
     /// `.requiresApproval` (verified on-device — there is no `.disabled` case).
     /// So this attempts registration, then reads and returns `status` regardless
-    /// of throw, and the launcher deep-links Settings on `.requiresApproval`.
+    /// of throw, and the caller deep-links Settings on `.requiresApproval`.
+    ///
+    /// Callers gate *whether* to invoke this (see the type doc); this method
+    /// itself always registers when asked, so the explicit `--register-agent` /
+    /// "Register This Copy" paths can override the launch-time policy.
     @discardableResult
-    static func registerIfNeeded() -> SMAppService.Status {
+    static func register() -> SMAppService.Status {
         let service = service
-        // Already enabled (the common case for a re-run launcher) — nothing to do.
+        // Already enabled (a re-run launcher, or a redundant explicit request) —
+        // nothing to do.
         if service.status == .enabled { return .enabled }
         do {
             try service.register()

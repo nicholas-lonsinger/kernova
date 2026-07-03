@@ -204,7 +204,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // delegate for the process lifetime (`run()` never returns).
         switch role {
         case .launcher:
-            // Headless: register the agent, summon its GUI, exit. No Dock blip.
+            // Headless: read the agent status, summon its GUI (gating registration
+            // per issue #451), exit. No Dock blip.
             app.setActivationPolicy(.prohibited)
             let delegate = LauncherAppDelegate()
             app.delegate = delegate
@@ -220,6 +221,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             let delegate = AppDelegate(role: .foregroundForTesting)
             app.delegate = delegate
             app.run()
+        case .foreground:
+            // Developer foreground GUI (`--foreground`): a plain `.regular` app
+            // (no LSUIElement), like the test host but without idle-termination,
+            // so a dev can iterate on the UI with a Debug build that no longer
+            // auto-registers (issue #451).
+            let delegate = AppDelegate(role: .foreground)
+            app.delegate = delegate
+            app.run()
+        case .registerAgent:
+            // Developer one-shot (`--register-agent`): intentionally register this
+            // copy as the login agent — overriding the Debug and `/Applications`
+            // gates — then exit. Feedback is the os.Logger notice/warning/error in
+            // `register()` plus the exit code (0 = registered/awaiting approval,
+            // 1 = failed) for a future `make install` script. No run loop — `exit`
+            // is `Never`, so no `app.run()`.
+            let status = KernovaBackgroundAgent.register()
+            exit(status == .enabled || status == .requiresApproval ? 0 : 1)
         }
     }
 
@@ -268,20 +286,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         switch role {
         case .backgroundAgent:
             startBackgroundAgent()
-        case .foregroundForTesting:
-            // Plain foreground app (the unit-test host): show the window and arm
-            // idle-termination exactly as the app behaved before the launch-at-
-            // login agent. None of the launchd/Mach machinery runs here.
+        case .foregroundForTesting, .foreground:
+            // Plain foreground app: the unit-test host (`.foregroundForTesting`)
+            // and the developer `--foreground` GUI. Both show the library window
+            // and run none of the launchd/Mach/registration machinery; only the
+            // test host arms idle-termination (matching the pre-agent app), so the
+            // dev GUI stays up for UI iteration (issue #451).
             let windowController = MainWindowController(viewModel: viewModel)
             windowController.showWindow(nil)
             mainWindowController = windowController
-            observeForTermination()
-        case .launcher:
-            // Unreachable — the launcher uses LauncherAppDelegate. Guarded so a
-            // future routing change fails loudly instead of standing up a partial
-            // agent.
-            Self.logger.fault("AppDelegate constructed in launcher role")
-            assertionFailure("AppDelegate must not run in the launcher role")
+            if role == .foregroundForTesting { observeForTermination() }
+        case .launcher, .registerAgent:
+            // Unreachable — the launcher uses LauncherAppDelegate, and
+            // `--register-agent` registers and exits in `main()` without ever
+            // constructing an AppDelegate. Guarded so a future routing change fails
+            // loudly instead of standing up a partial agent.
+            Self.logger.fault("AppDelegate constructed in a non-AppDelegate role")
+            assertionFailure("AppDelegate must not run in the launcher or register-agent role")
         }
     }
 

@@ -37,4 +37,50 @@ struct KernovaLaunchRoleTests {
                 arguments: ["Kernova", "--background"], environment: Self.testEnv)
                 == .foregroundForTesting)
     }
+
+    @Test("The --foreground flag selects the developer foreground-GUI role")
+    func foregroundFlagIsForeground() {
+        #expect(
+            KernovaLaunchRole.resolve(arguments: ["Kernova", "--foreground"], environment: [:])
+                == .foreground)
+    }
+
+    @Test("The --register-agent flag selects the explicit register-this-copy role")
+    func registerAgentFlagIsRegisterAgent() {
+        #expect(
+            KernovaLaunchRole.resolve(arguments: ["Kernova", "--register-agent"], environment: [:])
+                == .registerAgent)
+    }
+
+    @Test("Test detection wins over --register-agent so a test run never registers the login agent")
+    func testsBeatRegisterAgentFlag() {
+        #expect(
+            KernovaLaunchRole.resolve(
+                arguments: ["Kernova", "--register-agent"], environment: Self.testEnv)
+                == .foregroundForTesting)
+    }
+
+    @Test("Test detection wins over --foreground")
+    func testsBeatForegroundFlag() {
+        #expect(
+            KernovaLaunchRole.resolve(
+                arguments: ["Kernova", "--foreground"], environment: Self.testEnv)
+                == .foregroundForTesting)
+    }
+
+    @Test("--background outranks --register-agent when both are present")
+    func backgroundOutranksRegisterAgent() {
+        #expect(
+            KernovaLaunchRole.resolve(
+                arguments: ["Kernova", "--register-agent", "--background"], environment: [:])
+                == .backgroundAgent)
+    }
+
+    @Test("--register-agent outranks --foreground when both are present")
+    func registerAgentOutranksForeground() {
+        #expect(
+            KernovaLaunchRole.resolve(
+                arguments: ["Kernova", "--foreground", "--register-agent"], environment: [:])
+                == .registerAgent)
+    }
 }
