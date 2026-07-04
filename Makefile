@@ -26,7 +26,7 @@ SWIFT_FORMAT      := xcrun swift-format
 SWIFT_SOURCE_DIRS := Kernova KernovaTests KernovaGuestAgent KernovaGuestAgentTests KernovaKit KernovaQuickLook KernovaRelaunchHelper KernovaFileProvider KernovaClipboardFileProvider
 
 .DEFAULT_GOAL := help
-.PHONY: help build test test-suite test-package clean format lint install-hooks check-hooks
+.PHONY: help build test test-suite test-package clean format lint install-hooks check-hooks doctor
 
 help:
 	@printf 'Kernova build targets:\n\n'
@@ -38,6 +38,7 @@ help:
 	@printf '  make format              Rewrite Swift sources in place via swift-format\n'
 	@printf '  make lint                Check Swift sources with swift-format (--strict)\n'
 	@printf '  make install-hooks       Point git at .githooks/ (runs lint on pre-push)\n'
+	@printf '  make doctor              Check the local toolchain (macOS, Xcode, Swift, swift-format, hooks)\n'
 	@printf '  make clean               Remove the DerivedData directory\n'
 	@printf '\n'
 	@printf '  Append CONFIGURATION=Release to build/test in Release (default: Debug)\n'
@@ -83,6 +84,13 @@ check-hooks:
 	if [ "$$hp" != ".githooks" ]; then \
 		printf 'Note: pre-push lint hook is not installed. Run `make install-hooks` (one-time per clone) to catch swift-format issues locally.\n' >&2; \
 	fi
+
+# Environment sanity check: verifies the local toolchain (macOS, Xcode, Swift,
+# swift-format) and repo setup (git hooks) match what Kernova needs to build,
+# lint, and push. A starting point — extend Tools/doctor.sh with more checks
+# over time. Exits non-zero if any required check fails, so it's CI-usable too.
+doctor:
+	@Tools/doctor.sh
 
 clean:
 	rm -rf $(DERIVED_DATA)

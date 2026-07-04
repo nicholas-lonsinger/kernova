@@ -255,6 +255,7 @@ KernovaKit/                        # SPM package: the **shared host <-> guest mo
                                         #   StreamTestSupport.swift holds the shared helpers (channel pairs, AsyncGate, frame factories)
 
 Tools/
+├── doctor.sh                           # `make doctor` — checks the local toolchain (macOS/Xcode/Swift/swift-format) + git hooks
 └── regen-proto.sh                      # Regenerates kernova.pb.swift via protoc + protoc-gen-swift
 
 KernovaTests/
