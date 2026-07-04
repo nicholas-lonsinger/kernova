@@ -58,8 +58,7 @@ final class HostClipboardFileProvider {
     /// stays directly testable. (The `domainHost` object exists here even in the
     /// test host, but it is inert until `setEnabled(true)`, which this guard
     /// prevents — so no File Provider domain is ever registered under test.)
-    private static let isRunningUnderTests =
-        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+    private static let isRunningUnderTests = ProcessInfo.processInfo.isRunningXCTests
 
     /// Current File Provider usability, mirrored from the domain host's
     /// availability for the clipboard window's enablement UI.

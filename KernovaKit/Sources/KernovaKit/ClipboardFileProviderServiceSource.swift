@@ -28,6 +28,15 @@ final class ClipboardFileProviderServiceSource: NSObject, NSFileProviderServiceS
     /// well under Finder's ~60 s paste deadline so a missing owner fails cleanly.
     private static let connectTimeout: TimeInterval = 30
 
+    /// Bounded wait for the owner's byte-pull *reply* once a connection is live.
+    ///
+    /// The XPC error handler only fires on connection failure, not on a live-but-
+    /// silent owner (e.g. a stalled vsock pull), so without a bound that owner
+    /// would pin a File Provider worker thread indefinitely. This runs off Finder's
+    /// clock (the placeholder already returned), so it can be generous — long
+    /// enough for any real pull, finite so a hung owner can't strand the worker.
+    private static let fetchReplyTimeout: TimeInterval = 120
+
     private let config: ClipboardFileProviderConfig
     private let logger: Logger
     private let listener: NSXPCListener
@@ -81,6 +90,7 @@ final class ClipboardFileProviderServiceSource: NSObject, NSFileProviderServiceS
         newConnection.resume()
 
         condition.lock()
+        let previous = acceptedConnection
         acceptedConnection = newConnection
         // `broadcast`, not `signal`: several `fetchContents` threads can be blocked
         // in `waitForConnection` at once (e.g. the eager copy-time read racing a
@@ -89,6 +99,12 @@ final class ClipboardFileProviderServiceSource: NSObject, NSFileProviderServiceS
         // timeout. Wake them all; every one can use the shared connection.
         condition.broadcast()
         condition.unlock()
+        // Defensive: the owner holds one connection at a time and now invalidates
+        // dropped ones, so a still-live previous is not expected — but if one
+        // lingers, release it so an abandoned connection can't leak via its
+        // retained handler blocks. Its invalidation handler no-ops (it only clears
+        // when still current, and we just replaced it).
+        previous?.invalidate()
         logger.debug("Accepted owner servicing connection")
         return true
     }
@@ -133,7 +149,15 @@ final class ClipboardFileProviderServiceSource: NSObject, NSFileProviderServiceS
             outcome.error = error
             semaphore.signal()
         }
-        semaphore.wait()
+        // Bounded: a live-but-silent owner (stalled pull) never signals via the XPC
+        // error handler, so cap the wait rather than pinning this worker forever. A
+        // reply arriving after the timeout harmlessly signals a semaphore no one
+        // waits on; the orphaned staged file is reclaimed by the owner's sweep.
+        guard semaphore.wait(timeout: .now() + Self.fetchReplyTimeout) == .success else {
+            logger.error(
+                "fetchStagedFile reply timed out after \(Int(Self.fetchReplyTimeout), privacy: .public)s")
+            return .failure(Self.serverUnreachable)
+        }
 
         if let path = outcome.path { return .success(path) }
         return .failure(outcome.error ?? Self.serverUnreachable)

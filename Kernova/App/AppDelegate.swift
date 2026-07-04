@@ -202,7 +202,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     // MARK: - Entry Point
 
     static func main() {
-        let isTestHost = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        let isTestHost = ProcessInfo.processInfo.isRunningXCTests
         let app = NSApplication.shared
 
         // Resident app: start headless in `.accessory` (no Dock blip / focus
@@ -335,6 +335,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             resolveColdLaunch(didBecomeActive: true)
             return
         }
+        // RATIONALE: no public API distinguishes a login launch from a manual one
+        // (FB10207829), so a fixed settle window is inherent to the heuristic, not a
+        // tunable bug. The common manual-launch case resolves immediately via the
+        // `NSApp.isActive` fast path above or an early `applicationDidBecomeActive`;
+        // this timer only decides the case where neither has fired yet. If a manual
+        // launch's activation is delayed past the window it latches headless and the
+        // window doesn't auto-show — but the app is never unreachable: the
+        // always-present status item summons the GUI on demand. Longer would delay
+        // the (correct) headless outcome of a genuine login launch for no gain.
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(1.5))
             self?.resolveColdLaunch(didBecomeActive: false)
@@ -768,16 +777,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     func application(_ application: NSApplication, open urls: [URL]) {
         importVMs(from: urls)
+        // Opening a document is an explicit request to see the app, so summon the
+        // GUI. The cold-launch heuristic covers only a fresh launch; a double-click
+        // while the app is already resident+headless gets no activation-driven
+        // summon (the heuristic already latched, and macOS sends no reopen for a
+        // document open), so surface the window here. Idempotent; skipped in the
+        // test host, which manages its own window.
+        if !isTestHost {
+            summonUserInterface()
+        }
     }
 
     /// Filters to `.kernova` bundles and imports each.
     ///
     /// AppKit delivers the odoc event to the single running instance in both the
     /// cold-launch and already-running cases, so this one path covers both — no
-    /// launcher→XPC forwarding is needed (#460 dropped the launcher; #439). On a
-    /// cold document-open the launch activates the app, so the cold-launch
-    /// heuristic shows the window; `viewModel` exists from `init`, so importing
-    /// this early is safe.
+    /// launcher→XPC forwarding is needed (#460 dropped the launcher; #439).
+    /// `viewModel` exists from `init`, so importing this early is safe; the caller
+    /// summons the GUI (the heuristic alone only covers a cold launch).
     private func importVMs(from urls: [URL]) {
         for url in urls where VMStorageService.isBundleURL(url) {
             viewModel.importVM(from: url)

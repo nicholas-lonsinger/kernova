@@ -76,6 +76,22 @@ public final class ClipboardFileProviderServicingConnector: NSObject,
     private var connecting = false
     /// Observes the reconnect doorbell while armed.
     private var reconnectObserver: DarwinNotificationObserver?
+    /// Consecutive failed connect attempts in the current retry burst.
+    ///
+    /// Reset on a successful connect, on a live connection dropping, and on any
+    /// external (re)connect trigger; incremented on each transient failure. Bounds
+    /// the retry loop so a permanently unreachable extension can't spin.
+    private var connectAttempts = 0
+
+    /// Upper bound on transient connect retries before giving up.
+    ///
+    /// A relaunching extension is usually reachable within a second or two; past
+    /// that the extension's own bounded `fetchContents` wait returns
+    /// `serverUnreachable`, and a later doorbell or publish starts a fresh burst.
+    private static let maxConnectAttempts = 5
+    /// Delay between transient connect retries (well under the extension's 30 s
+    /// `fetchContents` wait, so several retries fit inside one blocked paste).
+    private static let connectRetryDelay: DispatchTimeInterval = .seconds(1)
 
     /// Creates a connector for one direction from its config.
     public init(config: ClipboardFileProviderConfig) {
@@ -123,7 +139,11 @@ public final class ClipboardFileProviderServicingConnector: NSObject,
     /// Caches the domain root URL and proactively (re)establishes the control
     /// connection if not already connected.
     public func ensureConnected(rootURL: URL) {
-        lock.withLock { self.rootURL = rootURL }
+        // An explicit (re)connect request restarts the retry budget.
+        lock.withLock {
+            self.rootURL = rootURL
+            connectAttempts = 0
+        }
         connectIfNeeded()
     }
 
@@ -131,11 +151,19 @@ public final class ClipboardFileProviderServicingConnector: NSObject,
 
     private func handleReconnectDoorbell() {
         logger.notice("Reconnect doorbell received — (re)establishing servicing connection")
+        // The extension is actively waiting on us → grant a fresh retry budget so a
+        // doorbell that lands mid-burst isn't starved by an exhausted counter.
+        lock.withLock { connectAttempts = 0 }
         connectIfNeeded()
     }
 
     /// Claims the connect slot and dispatches the handshake off-queue, or no-ops
     /// when already connected/connecting, disarmed, or the root URL is unknown.
+    ///
+    /// Coalescing a trigger that arrives while a connect is in flight (`connecting
+    /// == true`) is safe: that in-flight attempt either succeeds, or fails and
+    /// retries via `finishFailedConnect`, so the coalesced request's intent — be
+    /// connected — is still satisfied without a lost edge.
     private func connectIfNeeded() {
         let root: URL? = lock.withLock {
             guard connection == nil, !connecting else { return nil }
@@ -156,14 +184,14 @@ public final class ClipboardFileProviderServicingConnector: NSObject,
                 self.logger.error(
                     "getFileProviderServicesForItem failed: \(error.localizedDescription, privacy: .public)"
                 )
-                self.clearConnecting()
+                self.finishFailedConnect()
                 return
             }
             guard let service = services?[self.serviceName] else {
                 self.logger.error(
                     "Servicing endpoint '\(self.serviceName.rawValue, privacy: .public)' not offered by the extension"
                 )
-                self.clearConnecting()
+                self.finishFailedConnect()
                 return
             }
             service.getFileProviderConnection { connection, error in
@@ -171,7 +199,7 @@ public final class ClipboardFileProviderServicingConnector: NSObject,
                     self.logger.error(
                         "getFileProviderConnection failed: \(error?.localizedDescription ?? "nil connection", privacy: .public)"
                     )
-                    self.clearConnecting()
+                    self.finishFailedConnect()
                     return
                 }
                 self.configureAndResume(connection)
@@ -182,17 +210,9 @@ public final class ClipboardFileProviderServicingConnector: NSObject,
     /// Exports the relay, pins the extension, and resumes — storing the
     /// connection before `resume()` so an immediate invalidation reconnects.
     private func configureAndResume(_ connection: NSXPCConnection) {
-        let relay: ClipboardFileProviderRelay? = lock.withLock { self.relayService }
-        guard let relay else {
-            // Disabled between the connect start and now — drop it.
-            connection.invalidate()
-            clearConnecting()
-            return
-        }
         // The owner only EXPORTS the relay — it never calls the extension — so no
         // `remoteObjectInterface` here (inverted wiring, #460).
         connection.exportedInterface = NSXPCInterface(with: ClipboardFileProviderRelay.self)
-        connection.exportedObject = relay
         // Pin the extension when the direction requires it (host pins the host
         // extension; guest leaves it nil — per-VM vsock auth is tracked by #145).
         if let extensionRequirement {
@@ -200,16 +220,61 @@ public final class ClipboardFileProviderServicingConnector: NSObject,
         }
         connection.invalidationHandler = { [weak self] in self?.handleConnectionDropped(connection) }
         connection.interruptionHandler = { [weak self] in self?.handleConnectionDropped(connection) }
-        lock.withLock {
+
+        // Read the relay and store the connection under ONE lock hold. `stopServing`
+        // can clear `relayService` on another thread while this connect is in flight
+        // (its completion runs on a framework callback thread); a separate
+        // read-then-store would let a just-disabled connector still end up with a
+        // live connection exporting the relay. Re-checking here means a concurrent
+        // disable reliably drops this connection instead of racing past it.
+        let armed: Bool = lock.withLock {
+            guard let relay = relayService else { return false }
+            connection.exportedObject = relay
             self.connection = connection
             self.connecting = false
+            self.connectAttempts = 0
+            return true
+        }
+        guard armed else {
+            connection.invalidate()
+            finishFailedConnect()
+            return
         }
         connection.resume()
         logger.notice("Servicing control connection established")
     }
 
-    private func clearConnecting() {
-        lock.withLock { self.connecting = false }
+    /// Settles a failed connect attempt.
+    ///
+    /// Releases the connect slot, then retries a bounded number of times (the
+    /// extension may be mid-relaunch) or gives up so a permanently unreachable
+    /// extension can't spin. On giving up, the extension's own bounded
+    /// `fetchContents` wait returns `serverUnreachable`; a later doorbell or publish
+    /// then starts a fresh burst.
+    ///
+    /// Also the settle path when a connect completes but the connector was disabled
+    /// meanwhile (`relayService == nil`) — the guards below simply schedule no retry.
+    private func finishFailedConnect() {
+        var attempt = 0
+        let retryRoot: URL? = lock.withLock {
+            connecting = false
+            guard connection == nil, relayService != nil, let rootURL else { return nil }
+            connectAttempts += 1
+            guard connectAttempts < Self.maxConnectAttempts else {
+                connectAttempts = 0
+                return nil
+            }
+            attempt = connectAttempts
+            connecting = true  // hold the slot for the scheduled retry
+            return rootURL
+        }
+        guard let retryRoot else { return }
+        logger.notice(
+            "Servicing connect failed — retry \(attempt, privacy: .public)/\(Self.maxConnectAttempts - 1, privacy: .public) scheduled"
+        )
+        queue.asyncAfter(deadline: .now() + Self.connectRetryDelay) { [weak self] in
+            self?.connect(rootURL: retryRoot)
+        }
     }
 
     /// Clears a dropped connection (only if still current) and reconnects while
@@ -221,8 +286,16 @@ public final class ClipboardFileProviderServicingConnector: NSObject,
         let shouldReconnect: Bool = lock.withLock {
             guard self.connection === connection else { return false }
             self.connection = nil
+            connectAttempts = 0  // a live connection dropped → fresh retry budget
             return relayService != nil && rootURL != nil
         }
+        // Invalidate the dropped connection whether or not it was still current.
+        // On the invalidation path this is a documented no-op; on the interruption
+        // path (extension crash/relaunch, which does NOT auto-invalidate) it breaks
+        // the connection↔handler-block retain cycle so the old connection is freed
+        // instead of leaking one per relaunch. Done outside the lock — `invalidate`
+        // can run handlers synchronously.
+        connection.invalidate()
         guard shouldReconnect else { return }
         logger.notice("Servicing connection dropped — reconnecting")
         connectIfNeeded()

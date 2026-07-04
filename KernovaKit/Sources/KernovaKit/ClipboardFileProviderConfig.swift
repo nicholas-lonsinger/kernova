@@ -112,16 +112,24 @@ public struct ClipboardFileProviderConfig: Sendable {
         self.extensionCodeSigningRequirement = extensionCodeSigningRequirement
     }
 
+    /// Builds a code-signing requirement pinning a specific bundle `identifier` to
+    /// the Kernova team.
+    ///
+    /// `anchor apple generic` + the team OU holds for both Apple Development and
+    /// Developer ID signing — and team `8MT4P4GZL2` is the certificate OU, not the
+    /// CN parenthetical (a known footgun). Both peer pins below share this shape, so
+    /// the anchor/team clause lives here once and can't drift between them.
+    private static func teamSignedRequirement(identifier: String) -> String {
+        "identifier \"\(identifier)\" "
+            + "and anchor apple generic "
+            + "and certificate leaf[subject.OU] = \"8MT4P4GZL2\""
+    }
+
     /// Code-signing requirement matching the main Kernova app (`app.kernova`).
     ///
     /// The host extension pins this on the connecting owner so a rogue process
-    /// can't impersonate the app that exports the relay. `anchor apple generic` +
-    /// the team OU holds for both Apple Development and Developer ID signing (team
-    /// `8MT4P4GZL2` is the cert OU, not the CN parenthetical — a known footgun).
-    public static let mainAppRequirement =
-        "identifier \"app.kernova\" "
-        + "and anchor apple generic "
-        + "and certificate leaf[subject.OU] = \"8MT4P4GZL2\""
+    /// can't impersonate the app that exports the relay.
+    public static let mainAppRequirement = teamSignedRequirement(identifier: "app.kernova")
 
     /// Code-signing requirement matching the host File Provider extension
     /// (`app.kernova.clipboard.fileprovider`).
@@ -130,9 +138,7 @@ public struct ClipboardFileProviderConfig: Sendable {
     /// connection so it only exports the relay to the genuine Kernova-team
     /// extension.
     public static let hostExtensionRequirement =
-        "identifier \"app.kernova.clipboard.fileprovider\" "
-        + "and anchor apple generic "
-        + "and certificate leaf[subject.OU] = \"8MT4P4GZL2\""
+        teamSignedRequirement(identifier: "app.kernova.clipboard.fileprovider")
 
     /// Host→guest: the guest agent serves the host's copied file to the guest
     /// (issue #376).

@@ -148,6 +148,7 @@ Kernova/
 │   ├── UniqueName.swift                # `UniqueName.firstAvailable(prefix:existing:)` — shared collision-free name generation backing both `StorageDisk.uniqueLabel` (bare numeric suffix) and `VMConfiguration.generateCloneName` (" Copy" infix)
 │   ├── NSImageExtensions.swift         # Nil-safe SF Symbol image loading
 │   ├── NSViewExtensions.swift          # Full-size subview constraint helper
+│   ├── ProcessInfo+Testing.swift       # `ProcessInfo.isRunningXCTests` — single source of truth for the XCTest-host check, shared by `AppDelegate` (test-host vs resident split) and `HostClipboardFileProvider` (suppresses File Provider registration under test)
 │   ├── NSOpenPanelExtensions.swift     # Pre-configured disk-image browser (`NSOpenPanel`) returning the selected URLs
 │   ├── InlineRenameSizing.swift        # Shared sizing for inline-rename boxes that hug their text (sidebar VM rows, storage-disk rows, Settings name field size identically)
 │   ├── PathValidation.swift            # Shared resolve-symlinks → exists → type → permissions validation for user-supplied paths (used by ConfigurationBuilder and USBDeviceService; unit-tested)
@@ -488,7 +489,7 @@ SystemSleepWatcher ──sleep/wake──→ VMLibraryViewModel ──pause/resu
 
 ### Utilities
 
-**Files:** `AppPreferences.swift`, `ClipboardContent+AppKit.swift`, `DataFormatters.swift`, `DesignTokens.swift`, `DetailAlertsPresenter.swift`, `DiskSubtitle.swift`, `InlineRenameSizing.swift`, `NSImageExtensions.swift`, `NSOpenPanelExtensions.swift`, `NSViewExtensions.swift`, `ObservationLoop.swift`, `PathValidation.swift`, `PopoverPresenter.swift`, `SheetAlert.swift`, `SheetPresenter.swift`, `UniqueName.swift` (most are described by their Directory Structure entries above)
+**Files:** `AppPreferences.swift`, `ClipboardContent+AppKit.swift`, `DataFormatters.swift`, `DesignTokens.swift`, `DetailAlertsPresenter.swift`, `DiskSubtitle.swift`, `InlineRenameSizing.swift`, `NSImageExtensions.swift`, `NSOpenPanelExtensions.swift`, `NSViewExtensions.swift`, `ObservationLoop.swift`, `PathValidation.swift`, `PopoverPresenter.swift`, `ProcessInfo+Testing.swift`, `SheetAlert.swift`, `SheetPresenter.swift`, `UniqueName.swift` (most are described by their Directory Structure entries above)
 
 - `DataFormatters` — human-readable formatting for bytes (e.g., "107.4 GB"), CPU counts, etc.
 - `DiskSubtitle` — Foundation-only `diskSubtitle(…)` attachment-size formatters (`"2.1 GB (on disk) / 100 GB (allocated)"`), shared by the settings list, the Boot Order sheet, and the Quick Look extension's Storage row; the `sizes:`-taking overload formats already-read figures so a caller needing the raw numbers stats the file once
