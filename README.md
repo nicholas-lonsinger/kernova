@@ -10,7 +10,9 @@ A macOS GUI application for creating and managing virtual machines using Apple's
 - **Full VM lifecycle** — Start, stop, pause, resume, suspend, and restore
 - **VM cloning** — Clone existing VMs with automatic naming
 - **Bundle import** — Import VM bundles (`.kernova`) via double-click or drag-and-drop
-- **Graceful shutdown** — Suspends running VMs automatically on app termination
+- **Recovery mode** — Boot macOS guests into Recovery
+- **Headless operation** — The app runs as a launch-at-login background agent, so quitting the window keeps VMs running headless
+- **Graceful shutdown** — Save-suspends running VMs automatically when the background agent itself terminates (explicit Quit, logout, or shutdown)
 
 ### Guest Configuration
 
@@ -20,6 +22,7 @@ A macOS GUI application for creating and managing virtual machines using Apple's
 - **Shared directories** — Host-to-guest directory sharing via VirtioFS (read-only or read-write)
 - **Display settings** — Configurable resolution and DPI (width, height, PPI)
 - **Network** — MAC address management with persistent, stable addresses
+- **Audio** — Per-VM audio output and microphone passthrough toggles
 - **ASIF disk images** — Apple Sparse Image Format for near-native SSD performance with space-efficient storage
 
 ### Display and Console
@@ -28,11 +31,19 @@ A macOS GUI application for creating and managing virtual machines using Apple's
 - **Fullscreen mode** — Dedicated fullscreen window per VM
 - **Serial console** — Terminal window for serial port access
 
+### Clipboard & File Sharing
+
+- **Clipboard sync** — Host↔guest clipboard sharing for text, rich text, images, files, and folders, chunk-streamed with no size cap and live transfer progress
+- **Guest agent** — In-guest menu-bar agent for macOS guests (vsock transport), installed from an attachable installer disk; Linux guests sync via spice-vdagent
+- **Copy to Mac** — Lazy guest→host file transfer backed by a host File Provider, so pasted files materialize on demand
+- **Large-file paste** — A guest File Provider transport materializes large host files inside the guest on demand
+
 ### Management
 
 - **VM renaming** — Inline rename or via menu
 - **Sleep integration** — Auto-pauses running VMs on system sleep, resumes on wake
 - **Directory watching** — Monitors the VMs directory for external filesystem changes
+- **Quick Look** — Preview `.kernova` bundles from Finder with the bundled Quick Look extension
 
 ## Requirements
 
@@ -84,6 +95,8 @@ Kernova/
 ├── ViewModels/   # Observable view models
 └── Utilities/    # Formatters, extensions
 ```
+
+Alongside the app target, the repo contains the in-guest menu-bar agent (`KernovaGuestAgent/`), the shared SwiftPM package (`KernovaKit/`), the Quick Look extension (`KernovaQuickLook/`), the guest and host clipboard File Provider extensions (`KernovaFileProvider/`, `KernovaClipboardFileProvider/`), and the relaunch helper (`KernovaRelaunchHelper/`) — see [ARCHITECTURE.md](ARCHITECTURE.md) for the full map.
 
 ### Key Components
 
