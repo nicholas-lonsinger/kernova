@@ -14,15 +14,15 @@ import Foundation
 //  3. The offer manifest + `signalEnumerator` that declare the current file rep
 //     to the system as a dataless placeholder.
 //
-// Gated on clipboard policy: the domain + listener stand up only once clipboard
-// sharing is enabled, so the team-prefixed Mach listener never starts in a
-// context that didn't enable clipboard (e.g. the CI test host).
+// Gated on clipboard policy: the domain stands up only once clipboard sharing is
+// enabled, so nothing registers a domain in a context that didn't enable
+// clipboard (e.g. the CI test host).
 //
-// NOTE (#424): the guest vends the relay via the `NSXPCListener` here (its
-// LaunchAgent registers the Mach name). The main app is neither sandboxed nor
-// launchd-managed and cannot register a Mach service (Phase-0 spike proved
-// `.resume()` is refused by launchd), so the host wiring (Phase 2b/3) will route
-// relay vending through an SMAppService broker instead of this listener. The
+// Host↔extension IPC uses the canonical `NSFileProviderServicing` anonymous-XPC
+// pattern (#460): the domain host injects a `ClipboardFileProviderServicingConnector`
+// that exports the relay to the extension so the extension can call it back at
+// `fetchContents`. Both directions share this one connector — the only
+// differences come from `ClipboardFileProviderConfig`. The
 // registration/manifest/availability machinery below is direction-agnostic and
 // shared as-is.
 
@@ -98,11 +98,11 @@ public final class ClipboardFileProviderDomainHost: NSObject, ClipboardFileProvi
     private let container: ClipboardFileProviderContainer
     private let pullProvider: ClipboardFileProviderPullProvider
     private let domain: NSFileProviderDomain
-    /// Vends the relay to the extension — a Mach listener (guest) or the broker
-    /// (host).
+    /// Connects to the extension and exports the relay so the extension can call
+    /// it back at `fetchContents` (the servicing connector, #460).
     ///
-    /// The domain host owns the relay *service*; the transport owns *how* it's
-    /// exposed.
+    /// The domain host owns the relay *service*; the transport owns the XPC
+    /// connection to the extension.
     private let relayTransport: ClipboardFileProviderRelayTransport
     private let relayService: ClipboardFileProviderRelayService
     private let notificationCenter: NotificationCenter
@@ -173,13 +173,16 @@ public final class ClipboardFileProviderDomainHost: NSObject, ClipboardFileProvi
     }
 
     /// Creates a domain host for one direction, pulling bytes through
-    /// `pullProvider` when the extension reads a placeholder, and vending the
-    /// relay through `relayTransport` (Mach listener for the guest, broker for the
-    /// host).
+    /// `pullProvider` when the extension reads a placeholder, and exporting the
+    /// relay through `relayTransport`.
+    ///
+    /// `relayTransport` defaults to a `ClipboardFileProviderServicingConnector`
+    /// built from `config` — production callers omit it; tests inject a no-op so
+    /// they never stand up a live anonymous-XPC connection.
     public init(
         config: ClipboardFileProviderConfig,
         pullProvider: ClipboardFileProviderPullProvider,
-        relayTransport: ClipboardFileProviderRelayTransport,
+        relayTransport: ClipboardFileProviderRelayTransport? = nil,
         notificationCenter: NotificationCenter = .default,
         fetchDomains: @escaping @Sendable () async throws -> [NSFileProviderDomain] = {
             try await NSFileProviderManager.domains()
@@ -189,7 +192,8 @@ public final class ClipboardFileProviderDomainHost: NSObject, ClipboardFileProvi
         self.logger = KernovaLogger(subsystem: config.loggerSubsystem, category: "FileProviderHost")
         self.container = ClipboardFileProviderContainer(config: config)
         self.pullProvider = pullProvider
-        self.relayTransport = relayTransport
+        self.relayTransport =
+            relayTransport ?? ClipboardFileProviderServicingConnector(config: config)
         self.relayService = ClipboardFileProviderRelayService(
             pullProvider: pullProvider, loggerSubsystem: config.loggerSubsystem)
         self.domain = NSFileProviderDomain(
@@ -217,23 +221,22 @@ public final class ClipboardFileProviderDomainHost: NSObject, ClipboardFileProvi
         guard self.enabled != enabled else { return }
         self.enabled = enabled
         if enabled {
-            // Vend the relay through the injected transport. Deferred to enable so a
-            // team-prefixed Mach listener / broker connection never starts in a
-            // context that didn't enable clipboard sharing (notably the CI test
-            // host). The transport self-guards idempotency and re-vends after an
+            // Arm the connector with the relay service. Deferred to enable so no
+            // servicing connection / doorbell observer is armed in a context that
+            // didn't enable clipboard sharing (notably the CI test host). The
+            // connector self-guards idempotency and reconnects after an
             // invalidation, so this runs on every enable — no outer latch, which
-            // would defeat the transport's documented "re-register on next enable"
-            // recovery (#424).
+            // would defeat the connector's "re-arm on next enable" recovery.
             relayTransport.startServing(relayService)
             registerDomain()
             startObservingDomainChanges()
         } else {
             stopObservingDomainChanges()
             setAvailability(.inactive)
-            // Stop routing to the served relay so a stray fetch while disabled fails
-            // cleanly (host: serverUnreachable; guest: refused connection) instead of
-            // reaching a relay whose offer was just cleared. The listener itself
-            // persists — the host multiplexes GUI-summon on it.
+            // Disarm the connector: drop the control connection and stop observing
+            // the doorbell so a stray fetch while disabled fails cleanly
+            // (serverUnreachable) instead of reaching a relay whose offer was just
+            // cleared.
             relayTransport.stopServing()
             // Keep the domain registered across a policy off→on cycle: re-adding a
             // domain re-creates it in the consent-gated OFF state, which would wipe
@@ -327,7 +330,17 @@ public final class ClipboardFileProviderDomainHost: NSObject, ClipboardFileProvi
     }
 
     /// Caches the user-visible root URL so an offer can construct `root/filename`
-    /// for the pasteboard without a per-item round-trip.
+    /// for the pasteboard without a per-item round-trip, and warms the servicing
+    /// connection now that the root URL is known.
+    ///
+    /// Connecting at registration (not only at publish) is load-bearing for the
+    /// reconnect doorbell: the connector can only act on the doorbell once it has
+    /// the root URL, and after an owner relaunch a paste of a still-on-disk
+    /// placeholder (the domain stays registered across restarts) rings the doorbell
+    /// with no offer having been published yet — without this the connector would
+    /// have no root URL to reconnect through and the read would hang to the
+    /// extension's timeout (#460). Idempotent with the publish-time
+    /// `ensureConnected`; the connector runs the connect off its own queue.
     private func resolveRootURL() {
         guard let manager = NSFileProviderManager(for: domain) else { return }
         manager.getUserVisibleURL(for: .rootContainer) { [weak self] url, error in
@@ -336,6 +349,9 @@ public final class ClipboardFileProviderDomainHost: NSObject, ClipboardFileProvi
                 if let url {
                     self.rootURL = url
                     self.logger.notice("Clipboard domain visible at: \(url.path, privacy: .public)")
+                    if self.enabled {
+                        self.relayTransport.ensureConnected(rootURL: url)
+                    }
                 } else if let error {
                     self.logger.error(
                         "getUserVisibleURL failed: \(error.localizedDescription, privacy: .public)")
@@ -444,6 +460,16 @@ public final class ClipboardFileProviderDomainHost: NSObject, ClipboardFileProvi
             )
             return nil
         }
+        // Warm the servicing control connection PROACTIVELY (not an optimization):
+        // useractivityd/sharingd fire `fetchContents` on copy, before any paste
+        // (clipboard-universal-clipboard-eager-read). With the pipe already up, that
+        // eager read doesn't race the doorbell handshake inside `fetchContents` and
+        // blow Finder's ~60s deadline (clipboard-paste-finder-60s-deadline). The
+        // connection carries NO bytes — the vsock pull stays fully lazy, running only
+        // when `fetchContents` is actually invoked. The connector runs the connect on
+        // its own queue, so this call doesn't block main. #460.
+        relayTransport.ensureConnected(rootURL: rootURL)
+
         let item = ClipboardFileProviderManifest.Item(
             generation: generation, repIndex: repIndex, filename: filename,
             byteCount: byteCount, uti: uti)

@@ -1,6 +1,7 @@
 import KernovaKit
 
-// KernovaClipboardFileProvider — host "Copy to Mac" File Provider extension (#424).
+// KernovaClipboardFileProvider — host "Copy to Mac" File Provider extension
+// (#424 / #460 servicing migration).
 //
 // The principal class for the host appex (`NSExtensionPrincipalClass =
 // $(PRODUCT_MODULE_NAME).HostFileProviderExtension`). All logic lives in the
@@ -8,10 +9,10 @@ import KernovaKit
 // selects the host direction, keeping the principal class in the appex module
 // where its runtime name is stable.
 //
-// The host relay is vended by the SMAppService broker (Phase 2b), not by the
-// main app directly — the Phase-0 spike proved a non-sandboxed, non-launchd app
-// can't register a Mach service. Until the broker lands, `fetchContents` fails
-// cleanly with `serverUnreachable`.
+// The main app reaches this extension through the canonical
+// `NSFileProviderServicing` anonymous-XPC pipe (#460): the base vends a service
+// source the app connects to and exports the relay on, so the extension calls
+// the app back at `fetchContents`. No Mach service and no broker are involved.
 final class HostFileProviderExtension: ClipboardFileProviderExtension {
     override class var directionConfig: ClipboardFileProviderConfig { .host }
 }

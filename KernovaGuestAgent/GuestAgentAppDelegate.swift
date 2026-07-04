@@ -115,15 +115,14 @@ final class GuestAgentAppDelegate: NSObject, NSApplicationDelegate {
 
         let clipboardAgent = VsockGuestClipboardAgent()
 
-        // File Provider host (#376): owns the XPC relay + clipboard domain, gated
-        // on clipboard sharing. Wired both ways with the clipboard agent — the host
-        // pulls through the agent on `fetchContents`; the agent publishes a single
-        // inbound file rep through the host. The agent's back-reference is weak.
+        // File Provider host (#376): owns the servicing connection + clipboard
+        // domain, gated on clipboard sharing. Wired both ways with the clipboard
+        // agent — the host pulls through the agent on `fetchContents`; the agent
+        // publishes a single inbound file rep through the host. The domain host
+        // builds its default `NSFileProviderServicing` connector from `.guest`
+        // (#460). The agent's back-reference is weak.
         let fileProviderHost = ClipboardFileProviderDomainHost(
-            config: .guest, pullProvider: clipboardAgent,
-            relayTransport: MachServiceRelayTransport(
-                machServiceName: ClipboardFileProviderConfig.guest.machServiceName,
-                loggerSubsystem: ClipboardFileProviderConfig.guest.loggerSubsystem))
+            config: .guest, pullProvider: clipboardAgent)
         clipboardAgent.fileProvider = fileProviderHost
 
         // Control plane: always-on handshake/heartbeat/policy. `onPolicy` gates the
@@ -133,9 +132,9 @@ final class GuestAgentAppDelegate: NSObject, NSApplicationDelegate {
             onPolicy: { [weak self] policy in
                 vsockConnection.setEnabled(policy.logForwardingEnabled)
                 clipboardAgent.setEnabled(policy.clipboardSharingEnabled)
-                // Stands up / tears down the domain + Mach listener with clipboard
-                // sharing, so the team-prefixed listener never starts unless the
-                // host enabled clipboard (notably never in the CI test host).
+                // Stands up / tears down the domain + servicing connection with
+                // clipboard sharing, so nothing connects unless the host enabled
+                // clipboard (notably never in the CI test host).
                 fileProviderHost.setEnabled(policy.clipboardSharingEnabled)
                 Task { @MainActor in
                     self?.updateAppNap(clipboardEnabled: policy.clipboardSharingEnabled)

@@ -17,7 +17,6 @@
 		A2000006 /* KernovaKit in Frameworks */ = {isa = PBXBuildFile; productRef = A2000007 /* KernovaKit */; };
 		A2000009 /* KernovaKit in Frameworks */ = {isa = PBXBuildFile; productRef = A2000008 /* KernovaKit */; };
 		A200000A /* KernovaKit in Frameworks */ = {isa = PBXBuildFile; productRef = A200000B /* KernovaKit */; };
-		A100070B /* app.kernova.plist in Copy LaunchAgent */ = {isa = PBXBuildFile; fileRef = A100070C /* app.kernova.plist */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -84,17 +83,6 @@
 			name = "Embed Helpers";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		A100070D /* Copy LaunchAgent */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = "Contents/Library/LaunchAgents";
-			dstSubfolderSpec = 1;
-			files = (
-				A100070B /* app.kernova.plist in Copy LaunchAgent */,
-			);
-			name = "Copy LaunchAgent";
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 		A100040E /* Embed Foundation Extensions */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
@@ -130,7 +118,6 @@
 		A1000400 /* KernovaQuickLook.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = KernovaQuickLook.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000500 /* KernovaFileProvider.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = KernovaFileProvider.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000600 /* KernovaClipboardFileProvider.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = KernovaClipboardFileProvider.appex; sourceTree = BUILT_PRODUCTS_DIR; };
-		A100070C /* app.kernova.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "app.kernova.plist"; sourceTree = "<group>"; };
 		B62FC33F2FAFDBB1003775B7 /* KernovaKit */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = KernovaKit; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -315,7 +302,6 @@
 				A1000401 /* KernovaQuickLook */,
 				A1000501 /* KernovaFileProvider */,
 				A1000601 /* KernovaClipboardFileProvider */,
-				A100070C /* app.kernova.plist */,
 				B62FC33F2FAFDBB1003775B7 /* KernovaKit */,
 				A10000F0 /* DiskTemplates */,
 				A1000021 /* Products */,
@@ -349,7 +335,6 @@
 				A1000010 /* Frameworks */,
 				A1000050 /* Resources */,
 				A100010A /* Embed Helpers */,
-				A100070D /* Copy LaunchAgent */,
 				A100040E /* Embed Foundation Extensions */,
 				A100020A /* Package Guest Agent DMG */,
 			);
@@ -1114,7 +1099,7 @@
 				INFOPLIST_FILE = KernovaGuestAgent/Info.plist;
 				INFOPLIST_PREFIX_HEADER = "$(DERIVED_FILE_DIR)/AgentBuildNumber.h";
 				INFOPLIST_PREPROCESS = YES;
-				MARKETING_VERSION = 0.29.4;
+				MARKETING_VERSION = 0.30.0;
 				EXECUTABLE_NAME = KernovaGuestAgent;
 				PRODUCT_BUNDLE_IDENTIFIER = app.kernova.agent;
 				PRODUCT_MODULE_NAME = KernovaGuestAgent;
@@ -1137,7 +1122,7 @@
 				INFOPLIST_FILE = KernovaGuestAgent/Info.plist;
 				INFOPLIST_PREFIX_HEADER = "$(DERIVED_FILE_DIR)/AgentBuildNumber.h";
 				INFOPLIST_PREPROCESS = YES;
-				MARKETING_VERSION = 0.29.4;
+				MARKETING_VERSION = 0.30.0;
 				EXECUTABLE_NAME = KernovaGuestAgent;
 				PRODUCT_BUNDLE_IDENTIFIER = app.kernova.agent;
 				PRODUCT_MODULE_NAME = KernovaGuestAgent;
@@ -1252,7 +1237,7 @@
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.29.4;
+				MARKETING_VERSION = 0.30.0;
 				PRODUCT_BUNDLE_IDENTIFIER = app.kernova.agent.fileprovider;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -1281,7 +1266,7 @@
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.29.4;
+				MARKETING_VERSION = 0.30.0;
 				PRODUCT_BUNDLE_IDENTIFIER = app.kernova.agent.fileprovider;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;

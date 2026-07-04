@@ -16,7 +16,7 @@ struct VMStorageService: Sendable {
     /// Whether `url` looks like a `.kernova` bundle, by extension.
     ///
     /// The single source of truth for the odoc/drag-and-drop filter shared by
-    /// `LauncherAppDelegate`, `AppDelegate`, and `SidebarViewController`.
+    /// `AppDelegate` and `SidebarViewController`.
     static func isBundleURL(_ url: URL) -> Bool {
         url.pathExtension == bundleExtension
     }

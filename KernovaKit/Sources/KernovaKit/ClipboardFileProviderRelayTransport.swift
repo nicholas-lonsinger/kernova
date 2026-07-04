@@ -1,271 +1,230 @@
 import FileProvider
 import Foundation
 
-// How the domain host vends its relay to the sandboxed extension (issues #376
-// guest / #424 host).
+// How the domain host connects to the sandboxed extension to serve its relay
+// (issues #376 guest / #424 host / #460 servicing migration).
 //
-// Both directions vend the relay on a team-prefixed Mach service the sandboxed
-// extension looks up (its name is app-group-prefixed, so the extension is
-// allowed to reach it). The guest agent and the main app are both
-// launchd-managed LaunchAgents whose plist `MachServices` key registers the
-// name, so each can host an `NSXPCListener(machServiceName:)` directly.
-//
-//   • The guest agent uses `MachServiceRelayTransport`: the listener is created
-//     on first enable and persists; the served relay is set on enable and
-//     cleared on disable (`startServing` / `stopServing`).
-//   • The main app uses `HostRelayListener`: an always-on listener (it also
-//     serves the launcher's GUI-summon verb, which must work even when no VM
-//     has clipboard sharing on) into which the clipboard relay service is
-//     registered while sharing is enabled and cleared when it is disabled.
+// Both directions use the canonical `NSFileProviderServicing` anonymous-XPC
+// pattern. INVERTED wiring vs. the old Mach design: the *owner* (the guest agent
+// or the main app) is the XPC **client** — it reaches the extension's vended
+// endpoint via `FileManager.getFileProviderServicesForItem(at:)` →
+// `NSFileProviderService.getFileProviderConnection`, then **exports** the relay
+// object so the extension can call it back at `fetchContents`. The extension can
+// neither initiate nor launch a connection, so the owner connects proactively at
+// publish time and re-connects when the extension rings the Darwin doorbell.
 //
 // The domain host owns the relay *service* (built from its pull provider) and
-// hands it to whichever transport it was constructed with, keeping its
-// enable/disable lifecycle identical across directions.
+// hands it to the connector, keeping its enable/disable lifecycle identical
+// across directions. Host and guest now share ONE connector implementation —
+// the only differences (service name, doorbell name, code-signing pins) come
+// from `ClipboardFileProviderConfig`.
 
-/// Vends a `ClipboardFileProviderRelay` to the File Provider extension.
+/// Connects the domain host to its File Provider extension so the extension can
+/// call the relay back.
 ///
-/// Injected into `ClipboardFileProviderDomainHost`; the guest creates its Mach
-/// listener on enable, the host registers its relay service into the agent's
-/// always-on listener.
+/// Injected into `ClipboardFileProviderDomainHost`; the default is a
+/// `ClipboardFileProviderServicingConnector`, and tests inject a no-op.
 public protocol ClipboardFileProviderRelayTransport: AnyObject, Sendable {
-    /// Begins vending `service`. Idempotent — called on each enable; the
-    /// underlying listener is created once and the served relay is (re)set.
+    /// Arms the connector with the relay `service` to export, and starts
+    /// listening for the reconnect doorbell. Idempotent — called on each enable.
     func startServing(_ service: ClipboardFileProviderRelay)
 
-    /// Stops routing to the served relay (clipboard sharing disabled).
-    ///
-    /// Clears the served relay so a call made while disabled fails cleanly —
-    /// `serverUnreachable` on the host, a refused connection on the guest — rather
-    /// than routing to a relay whose offer has been cleared. The Mach listener
-    /// itself is kept for the process lifetime (the host multiplexes GUI-summon on
-    /// it, and re-vending a launchd Mach name is avoided), so a later enable
-    /// re-arms via `startServing`.
+    /// Disarms the connector (clipboard sharing disabled): clears the served
+    /// relay, drops any live connection, and stops observing the doorbell so a
+    /// call made while disabled can't reach a stale relay.
     func stopServing()
+
+    /// Proactively (re)establishes the control connection to the extension that
+    /// manages `rootURL` — the domain root user-visible URL (never a dataless
+    /// file placeholder, which could deadlock; see #460). Idempotent: a live or
+    /// in-flight connection short-circuits. Runs the connect off the caller's
+    /// thread so it can't block.
+    func ensureConnected(rootURL: URL)
 }
 
-// MARK: - Guest: direct Mach-service listener
+// MARK: - Servicing connector
 
-/// Vends the relay on a team-prefixed Mach service the guest agent's LaunchAgent
-/// plist registers (`MachServices`), which the sandboxed guest extension looks up.
+/// The single `ClipboardFileProviderRelayTransport` implementation: reaches the
+/// extension's `NSFileProviderServicing` endpoint, exports the relay, and keeps
+/// the control connection warm (reconnecting on the Darwin doorbell or an XPC
+/// invalidation).
 ///
-/// `@unchecked Sendable`: `listener` is created once on first `startServing` (on
-/// the owner's queue) and read by the XPC delegate thereafter; the served
-/// `service` is read/written only under `lock`, so `stopServing` on the owner's
-/// queue and the delegate's connection-accept on the XPC queue can't race.
-public final class MachServiceRelayTransport: NSObject, NSXPCListenerDelegate,
+/// `@unchecked Sendable`: all mutable state is guarded by `lock`; the immutable
+/// addressing/logging values are set once in `init`. The exported relay carries
+/// no bytes — only `(generation, repIndex)` crosses, and the reply is a staged
+/// app-group path.
+public final class ClipboardFileProviderServicingConnector: NSObject,
     ClipboardFileProviderRelayTransport, @unchecked Sendable
 {
-    private let machServiceName: String
+    private let serviceName: NSFileProviderServiceName
+    private let reconnectNotificationName: String
+    private let extensionRequirement: String?
     private let logger: KernovaLogger
-    private let lock = NSLock()
-    private var listener: NSXPCListener?
-    private var service: ClipboardFileProviderRelay?
+    /// Serializes the connect handshake and the doorbell handler off the main
+    /// queue (the connect must never block the owner's main actor).
+    private let queue = DispatchQueue(label: "app.kernova.fileprovider.connector")
 
-    /// Vends on `machServiceName`, logging under `loggerSubsystem`.
-    public init(machServiceName: String, loggerSubsystem: String) {
-        self.machServiceName = machServiceName
-        self.logger = KernovaLogger(subsystem: loggerSubsystem, category: "RelayTransport")
+    private let lock = NSLock()
+    /// The relay object exported to the extension; `nil` while disabled.
+    private var relayService: ClipboardFileProviderRelay?
+    /// The domain root URL to connect through, cached from `ensureConnected`.
+    private var rootURL: URL?
+    /// The live control connection, or `nil` when not connected.
+    private var connection: NSXPCConnection?
+    /// `true` while a connect handshake is in flight (coalesces concurrent
+    /// attempts).
+    private var connecting = false
+    /// Observes the reconnect doorbell while armed.
+    private var reconnectObserver: DarwinNotificationObserver?
+
+    /// Creates a connector for one direction from its config.
+    public init(config: ClipboardFileProviderConfig) {
+        self.serviceName = config.serviceName
+        self.reconnectNotificationName = config.reconnectNotificationName
+        self.extensionRequirement = config.extensionCodeSigningRequirement
+        self.logger = KernovaLogger(
+            subsystem: config.loggerSubsystem, category: "ServicingConnector")
         super.init()
     }
 
-    /// (Re)sets the served relay and starts the Mach listener on first call.
-    ///
-    /// The served relay is updated on every enable; the listener is created once
-    /// and then persists for a later enable after a `stopServing`.
+    // MARK: - ClipboardFileProviderRelayTransport
+
+    /// Arms the connector with the relay to export and starts observing the
+    /// reconnect doorbell.
     public func startServing(_ service: ClipboardFileProviderRelay) {
-        lock.withLock { self.service = service }
-        guard listener == nil else { return }
-        let listener = NSXPCListener(machServiceName: machServiceName)
-        listener.delegate = self
-        listener.resume()
-        self.listener = listener
-        logger.notice(
-            "Relay Mach listener started (\(self.machServiceName, privacy: .public))")
-    }
-
-    /// Clears the served relay so connections opened while clipboard sharing is
-    /// disabled are refused; the listener persists for a later `startServing`.
-    public func stopServing() {
-        lock.withLock { self.service = nil }
-        logger.notice("Relay service cleared (clipboard disabled); Mach listener kept")
-    }
-
-    /// Exports the relay service to a connecting extension, or refuses the
-    /// connection when no relay is currently served (clipboard disabled).
-    public func listener(
-        _ listener: NSXPCListener, shouldAcceptNewConnection newConnection: NSXPCConnection
-    ) -> Bool {
-        // RATIONALE: the guest leg is not yet peer-validated (per-VM vsock auth is
-        // tracked by #145); the team-prefixed Mach name + app-group lookup gate
-        // already restrict who can reach it. The host leg IS validated via
-        // `setCodeSigningRequirement` (see `HostRelayListener`).
-        guard let service = lock.withLock({ self.service }) else {
-            logger.debug("Refused File Provider XPC connection — no relay served (disabled)")
-            return false
+        lock.withLock {
+            self.relayService = service
+            if reconnectObserver == nil {
+                reconnectObserver = DarwinNotificationObserver(
+                    name: reconnectNotificationName, queue: queue
+                ) { [weak self] in
+                    self?.handleReconnectDoorbell()
+                }
+            }
         }
-        newConnection.exportedInterface = NSXPCInterface(with: ClipboardFileProviderRelay.self)
-        newConnection.exportedObject = service
-        newConnection.resume()
-        logger.debug("Accepted File Provider XPC connection")
-        return true
-    }
-}
-
-// MARK: - Host: always-on `…xpc` listener (clipboard + GUI summon)
-
-/// The object the host agent exports on its `…xpc` Mach service.
-///
-/// Multiplexes the sandboxed extension's `fetchFile` (forwarded to the
-/// registered clipboard relay, or `serverUnreachable` when no VM has sharing on)
-/// and the launcher's `summon` (forwarded to the injected closure).
-///
-/// `@unchecked Sendable`: `relayProvider` is read/written only under `lock`;
-/// `onSummon`/`logger` are immutable.
-final class HostRelayService: NSObject, KernovaHostRelay, @unchecked Sendable {
-    private let lock = NSLock()
-    private var relayProvider: ClipboardFileProviderRelay?
-    private let onSummon: @Sendable ([String]) -> Void
-    private let logger: KernovaLogger
-
-    init(
-        loggerSubsystem: String,
-        onSummon: @escaping @Sendable ([String]) -> Void
-    ) {
-        self.onSummon = onSummon
-        self.logger = KernovaLogger(subsystem: loggerSubsystem, category: "HostRelayService")
-        super.init()
+        logger.notice("Servicing connector armed (relay set; doorbell observer active)")
     }
 
-    /// Registers (or clears) the clipboard relay that backs `fetchFile`.
-    func setRelayProvider(_ provider: ClipboardFileProviderRelay?) {
-        lock.withLock { self.relayProvider = provider }
+    /// Disarms the connector: clears the relay, drops the connection, and stops
+    /// observing the doorbell.
+    public func stopServing() {
+        let dropped: NSXPCConnection? = lock.withLock {
+            self.relayService = nil
+            reconnectObserver?.cancel()
+            reconnectObserver = nil
+            let live = self.connection
+            self.connection = nil
+            return live
+        }
+        dropped?.invalidate()
+        logger.notice("Servicing connector disarmed (clipboard disabled)")
     }
 
-    /// Forwards to the registered clipboard relay, or replies `serverUnreachable`
-    /// when none is registered (no VM has clipboard sharing on).
-    ///
-    /// The provider is an in-process object, so this is a direct call — unlike
-    /// the former cross-process broker there is no connection to drop mid-pull.
-    func fetchFile(
-        generation: UInt64, repIndex: Int,
-        reply: @escaping @Sendable (String?, NSError?) -> Void
-    ) {
-        let provider = lock.withLock { self.relayProvider }
-        guard let provider else {
-            logger.error("fetchFile with no registered relay provider")
-            reply(
-                nil,
-                NSError(
-                    domain: NSFileProviderErrorDomain,
-                    code: NSFileProviderError.serverUnreachable.rawValue))
+    /// Caches the domain root URL and proactively (re)establishes the control
+    /// connection if not already connected.
+    public func ensureConnected(rootURL: URL) {
+        lock.withLock { self.rootURL = rootURL }
+        connectIfNeeded()
+    }
+
+    // MARK: - Connection lifecycle
+
+    private func handleReconnectDoorbell() {
+        logger.notice("Reconnect doorbell received — (re)establishing servicing connection")
+        connectIfNeeded()
+    }
+
+    /// Claims the connect slot and dispatches the handshake off-queue, or no-ops
+    /// when already connected/connecting, disarmed, or the root URL is unknown.
+    private func connectIfNeeded() {
+        let root: URL? = lock.withLock {
+            guard connection == nil, !connecting else { return nil }
+            guard relayService != nil, let rootURL else { return nil }
+            connecting = true
+            return rootURL
+        }
+        guard let root else { return }
+        queue.async { [weak self] in self?.connect(rootURL: root) }
+    }
+
+    private func connect(rootURL: URL) {
+        // Root is a real directory (never a dataless file placeholder) so this
+        // can't trigger reentrant materialization → deadlock (P1b, #460).
+        FileManager.default.getFileProviderServicesForItem(at: rootURL) { [weak self] services, error in
+            guard let self else { return }
+            if let error {
+                self.logger.error(
+                    "getFileProviderServicesForItem failed: \(error.localizedDescription, privacy: .public)"
+                )
+                self.clearConnecting()
+                return
+            }
+            guard let service = services?[self.serviceName] else {
+                self.logger.error(
+                    "Servicing endpoint '\(self.serviceName.rawValue, privacy: .public)' not offered by the extension"
+                )
+                self.clearConnecting()
+                return
+            }
+            service.getFileProviderConnection { connection, error in
+                guard let connection else {
+                    self.logger.error(
+                        "getFileProviderConnection failed: \(error?.localizedDescription ?? "nil connection", privacy: .public)"
+                    )
+                    self.clearConnecting()
+                    return
+                }
+                self.configureAndResume(connection)
+            }
+        }
+    }
+
+    /// Exports the relay, pins the extension, and resumes — storing the
+    /// connection before `resume()` so an immediate invalidation reconnects.
+    private func configureAndResume(_ connection: NSXPCConnection) {
+        let relay: ClipboardFileProviderRelay? = lock.withLock { self.relayService }
+        guard let relay else {
+            // Disabled between the connect start and now — drop it.
+            connection.invalidate()
+            clearConnecting()
             return
         }
-        provider.fetchFile(generation: generation, repIndex: repIndex, reply: reply)
+        // The owner only EXPORTS the relay — it never calls the extension — so no
+        // `remoteObjectInterface` here (inverted wiring, #460).
+        connection.exportedInterface = NSXPCInterface(with: ClipboardFileProviderRelay.self)
+        connection.exportedObject = relay
+        // Pin the extension when the direction requires it (host pins the host
+        // extension; guest leaves it nil — per-VM vsock auth is tracked by #145).
+        if let extensionRequirement {
+            connection.setCodeSigningRequirement(extensionRequirement)
+        }
+        connection.invalidationHandler = { [weak self] in self?.handleConnectionDropped(connection) }
+        connection.interruptionHandler = { [weak self] in self?.handleConnectionDropped(connection) }
+        lock.withLock {
+            self.connection = connection
+            self.connecting = false
+        }
+        connection.resume()
+        logger.notice("Servicing control connection established")
     }
 
-    /// Imports any forwarded `.kernova` bundle paths and brings the resident
-    /// agent's GUI forward, then confirms delivery so the launcher can exit.
+    private func clearConnecting() {
+        lock.withLock { self.connecting = false }
+    }
+
+    /// Clears a dropped connection (only if still current) and reconnects while
+    /// armed.
     ///
-    /// The injected closure does both (import first, then summon) on the main
-    /// actor so the imported VM is selected before the window is shown. An
-    /// empty `vmPaths` is a plain summon.
-    func summon(vmPaths: [String], reply: @escaping @Sendable () -> Void) {
-        logger.notice("Received summon request (\(vmPaths.count, privacy: .public) VM path(s))")
-        onSummon(vmPaths)
-        reply()
-    }
-}
-
-/// Hosts the main app's always-on `…xpc` Mach listener.
-///
-/// Created and `start()`ed once by the agent at launch (independent of clipboard
-/// policy, so GUI-summon works at login). As a `ClipboardFileProviderRelayTransport`
-/// it registers the clipboard relay service as the `fetchFile` backing on enable.
-///
-/// `@unchecked Sendable`: `listener` is set once on `start()` (on the owner's
-/// queue) and read by the XPC delegate thereafter; `service`/`logger` are
-/// immutable, and the service guards its own mutable state.
-public final class HostRelayListener: NSObject, NSXPCListenerDelegate,
-    ClipboardFileProviderRelayTransport, @unchecked Sendable
-{
-    private let machServiceName: String
-    private let inboundRequirement: String
-    private let logger: KernovaLogger
-    private let service: HostRelayService
-    private var listener: NSXPCListener?
-
-    /// Vends on `machServiceName`, validating inbound peers against
-    /// `inboundCodeSigningRequirement`, and forwards `summon` to the injected
-    /// closure (invoked off-main on the XPC queue — the closure must hop to the
-    /// main actor itself).
-    public init(
-        machServiceName: String,
-        inboundCodeSigningRequirement: String,
-        loggerSubsystem: String,
-        onSummon: @escaping @Sendable ([String]) -> Void
-    ) {
-        self.machServiceName = machServiceName
-        self.inboundRequirement = inboundCodeSigningRequirement
-        self.logger = KernovaLogger(subsystem: loggerSubsystem, category: "HostRelayListener")
-        self.service = HostRelayService(loggerSubsystem: loggerSubsystem, onSummon: onSummon)
-        super.init()
-    }
-
-    /// Starts the Mach listener on first call; subsequent calls are no-ops.
-    ///
-    /// Always-on for the agent's lifetime, so the launcher can summon the GUI
-    /// even before any VM enables clipboard sharing.
-    public func start() {
-        guard listener == nil else { return }
-        let listener = NSXPCListener(machServiceName: machServiceName)
-        listener.delegate = self
-        listener.resume()
-        self.listener = listener
-        logger.notice(
-            "Host relay Mach listener started (\(self.machServiceName, privacy: .public))")
-    }
-
-    /// Registers the clipboard relay service as the `fetchFile` backing.
-    ///
-    /// `ClipboardFileProviderRelayTransport` conformance, called by the domain
-    /// host on enable. The listener itself is already up from `start()`.
-    public func startServing(_ service: ClipboardFileProviderRelay) {
-        self.service.setRelayProvider(service)
-        logger.notice("Clipboard relay provider registered with host listener")
-    }
-
-    /// Clears the `fetchFile` backing when clipboard sharing is disabled.
-    ///
-    /// `ClipboardFileProviderRelayTransport` conformance, called by the domain
-    /// host on disable. The always-on listener stays up (it also serves the
-    /// launcher's GUI-summon), so `fetchFile` now replies `serverUnreachable`
-    /// until the next `startServing`.
-    public func stopServing() {
-        service.setRelayProvider(nil)
-        logger.notice("Clipboard relay provider cleared from host listener")
-    }
-
-    #if DEBUG
-    /// The multiplexed relay service, exposed for `HostRelayServiceTests` to assert
-    /// that `startServing`/`stopServing` toggle the `fetchFile` backing without
-    /// standing up the live Mach listener (`start()` is never called in the test).
-    var relayServiceForTesting: HostRelayService { service }
-    #endif
-
-    /// Validates the peer (main app launcher or host extension) and exports the
-    /// multiplexed relay.
-    public func listener(
-        _ listener: NSXPCListener, shouldAcceptNewConnection newConnection: NSXPCConnection
-    ) -> Bool {
-        // Framework-enforced peer validation: a peer that isn't the Kernova-team
-        // main app or host File Provider extension has its calls invalidated.
-        // Non-throwing — a malformed requirement *string* raises, which would be a
-        // compile-time-constant bug caught in dev.
-        newConnection.setCodeSigningRequirement(inboundRequirement)
-        newConnection.exportedInterface = NSXPCInterface(with: KernovaHostRelay.self)
-        newConnection.exportedObject = service
-        newConnection.resume()
-        logger.debug("Accepted host relay XPC connection")
-        return true
+    /// A relaunched extension also rings the doorbell, so this and the doorbell are
+    /// complementary recovery paths.
+    private func handleConnectionDropped(_ connection: NSXPCConnection) {
+        let shouldReconnect: Bool = lock.withLock {
+            guard self.connection === connection else { return false }
+            self.connection = nil
+            return relayService != nil && rootURL != nil
+        }
+        guard shouldReconnect else { return }
+        logger.notice("Servicing connection dropped — reconnecting")
+        connectIfNeeded()
     }
 }

@@ -4,7 +4,7 @@ import Observation
 import os
 
 /// App-level coordinator that owns the single host "Copy to Mac" File Provider
-/// domain (issue #424).
+/// domain (issue #424 / #460 servicing migration).
 ///
 /// Clipboard services are per-VM (`VMInstance` creates one per live macOS guest),
 /// but the Mac has ONE global pasteboard and ONE File Provider manifest (the
@@ -14,11 +14,11 @@ import os
 /// provider when an earlier VM re-published.
 ///
 /// The sandboxed File Provider extension can't open vsock, so a byte pull is
-/// relayed — extension → the app's always-on `…xpc` listener → here → the
-/// publishing service. The main app vends `…xpc` itself because it is a
-/// launchd-managed background agent; the agent injects its `HostRelayListener`
-/// via `attachRelayTransport(_:)`. No bytes cross XPC; only `(generation,
-/// repIndex)` and a staged app-group path do.
+/// relayed — extension → the domain host's `NSFileProviderServicing` connection →
+/// here → the publishing service (#460). The domain host builds its default
+/// servicing connector from `.host`; no separate broker or Mach service is
+/// involved. No bytes cross XPC; only `(generation, repIndex)` and a staged
+/// app-group path do.
 @MainActor
 @Observable
 final class HostClipboardFileProvider {
@@ -27,14 +27,15 @@ final class HostClipboardFileProvider {
 
     private let router = HostClipboardPullRouter()
 
-    /// The host File Provider domain, built once the agent injects its relay
-    /// listener via `attachRelayTransport(_:)`.
+    /// The host File Provider domain host, built in `init` with its default
+    /// servicing connector.
     ///
-    /// `nil` until then — notably in the unit-test host and the short-lived
-    /// launcher process, which never attach a transport, so every method below
-    /// no-ops (the synchronous size-capped paste fallback still works).
+    /// Inert until `setEnabled(true)` (the first clipboard service starting), so
+    /// constructing it here registers no system state — notably never in the
+    /// unit-test host, where `serviceDidStart`/`serviceDidStop` short-circuit on
+    /// `isRunningUnderTests` before enabling it.
     @ObservationIgnored
-    private var domainHost: ClipboardFileProviderDomainHost?
+    private let domainHost: ClipboardFileProviderDomainHost
 
     /// Number of live clipboard services that have called `serviceDidStart`.
     ///
@@ -54,9 +55,9 @@ final class HostClipboardFileProvider {
     /// activation out of test runs — mirroring how the guest agent wires its File
     /// Provider host from the production app delegate, never from the agent's
     /// `start()`. The pull bridge itself (`pullStagedFile`) is unaffected and
-    /// stays directly testable. (The test host also never calls
-    /// `attachRelayTransport(_:)`, so `domainHost` is `nil` there regardless;
-    /// this guard documents intent and avoids churning `activeServiceCount`.)
+    /// stays directly testable. (The `domainHost` object exists here even in the
+    /// test host, but it is inert until `setEnabled(true)`, which this guard
+    /// prevents — so no File Provider domain is ever registered under test.)
     private static let isRunningUnderTests =
         ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
 
@@ -72,23 +73,12 @@ final class HostClipboardFileProvider {
     /// restart.
     private(set) var availability: ClipboardFileProviderAvailability = .inactive
 
-    private init() {}
-
-    /// Wires the resident agent's always-on `…xpc` listener as the domain
-    /// host's relay transport.
-    ///
-    /// Called once by `AppDelegate` in the background-agent role before any
-    /// clipboard service can start. Idempotent. The listener is already serving
-    /// (its `start()` runs at agent launch); enabling clipboard later registers
-    /// this domain host's relay service into it.
-    func attachRelayTransport(_ transport: any ClipboardFileProviderRelayTransport) {
-        guard domainHost == nil else { return }
-        let host = ClipboardFileProviderDomainHost(
-            config: .host, pullProvider: router, relayTransport: transport)
+    private init() {
+        let host = ClipboardFileProviderDomainHost(config: .host, pullProvider: router)
+        domainHost = host
         host.setAvailabilityObserver { [weak self] availability in
             self?.availability = availability
         }
-        domainHost = host
     }
 
     /// A clipboard service started — stand up the domain on the first one.
@@ -96,7 +86,7 @@ final class HostClipboardFileProvider {
         guard !Self.isRunningUnderTests else { return }
         activeServiceCount += 1
         guard activeServiceCount == 1 else { return }
-        domainHost?.setEnabled(true)
+        domainHost.setEnabled(true)
     }
 
     /// A clipboard service stopped — tear the domain down when the last one goes.
@@ -105,7 +95,7 @@ final class HostClipboardFileProvider {
         guard !Self.isRunningUnderTests else { return }
         activeServiceCount = max(0, activeServiceCount - 1)
         guard activeServiceCount == 0 else { return }
-        domainHost?.setEnabled(false)
+        domainHost.setEnabled(false)
     }
 
     /// Publishes a single file rep from `source` as the current File Provider offer.
@@ -118,7 +108,7 @@ final class HostClipboardFileProvider {
         generation: UInt64, repIndex: Int, filename: String, byteCount: UInt64, uti: String
     ) -> URL? {
         router.setSource(source)
-        return domainHost?.publishSingleFile(
+        return domainHost.publishSingleFile(
             generation: generation, repIndex: repIndex, filename: filename,
             byteCount: byteCount, uti: uti)
     }
@@ -127,7 +117,7 @@ final class HostClipboardFileProvider {
     /// it — so a stopping service doesn't wipe a newer service's live offer.
     func clearOffer(from source: any HostClipboardFileRepProviding) {
         guard router.isCurrent(source) else { return }
-        domainHost?.clearOffer()
+        domainHost.clearOffer()
     }
 }
 

@@ -130,14 +130,15 @@ struct ClipboardFileProviderDomainHostEnablementTests {
     }
 
     /// No-op transport — these tests exercise availability wiring, not the relay
-    /// XPC path, so `startServing`/`stopServing` need no real Mach listener
-    /// (mirrors `HostRelayServiceTests`, which never calls `HostRelayListener.start()`
-    /// either).
+    /// servicing path, so `startServing`/`stopServing`/`ensureConnected` need no
+    /// real anonymous-XPC connection (mirrors the servicing-relay tests, which
+    /// exercise `ClipboardFileProviderRelayService` without a live connection).
     private final class NoOpRelayTransport: ClipboardFileProviderRelayTransport,
         @unchecked Sendable
     {
         func startServing(_ service: ClipboardFileProviderRelay) {}
         func stopServing() {}
+        func ensureConnected(rootURL: URL) {}
     }
 
     private struct FakeFetchError: Error {}
@@ -150,13 +151,15 @@ struct ClipboardFileProviderDomainHostEnablementTests {
     ) -> ClipboardFileProviderDomainHost {
         let config = ClipboardFileProviderConfig(
             appGroupIdentifier: "8MT4P4GZL2.app.kernova.test",
-            machServiceName: "8MT4P4GZL2.app.kernova.test.relay",
+            serviceName: NSFileProviderServiceName("app.kernova.clipboard.test.relay"),
+            reconnectNotificationName: "app.kernova.clipboard.test.reconnect",
             domainIdentifier: domainIdentifier,
             domainDisplayName: "Kernova Clipboard (Test)",
             containerDirectoryName: "FileProviderTest",
             loggerSubsystem: "app.kernova.test",
             extensionLoggerSubsystem: "app.kernova.test.fileprovider",
-            relayCodeSigningRequirement: nil)
+            ownerCodeSigningRequirement: nil,
+            extensionCodeSigningRequirement: nil)
         return ClipboardFileProviderDomainHost(
             config: config,
             pullProvider: NeverCalledPullProvider(),

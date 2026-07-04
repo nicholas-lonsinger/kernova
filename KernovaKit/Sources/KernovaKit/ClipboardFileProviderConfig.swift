@@ -1,7 +1,8 @@
+import FileProvider
 import Foundation
 
 // Direction configuration for the shared clipboard File Provider machinery
-// (issues #376 guest / #424 host).
+// (issues #376 guest / #424 host / #460 servicing migration).
 //
 // The guest agent (host→guest paste) and the main app (guest→host "Copy to
 // Mac") run the *same* domain host + extension logic; only the addressing and
@@ -9,24 +10,48 @@ import Foundation
 // implementation serves both, with the constants for each direction defined
 // once here (the single source of truth).
 //
+// Host↔extension IPC uses the canonical `NSFileProviderServicing` anonymous-XPC
+// pattern (#460): the extension vends a listener endpoint under a per-direction
+// `NSFileProviderServiceName`, the owner connects via
+// `FileManager.getFileProviderServicesForItem(at:)` and exports the relay so the
+// extension can call back at `fetchContents`, and a per-direction Darwin
+// notification is the reconnect doorbell. There is no Mach service.
+//
+// The team-ID-prefixed app group (`8MT4P4GZL2.app.kernova`) is retained for the
+// shared staging container: macOS grants a `<TeamID>.*` app group implicitly to
+// a team-signed process, so it works under the project's profile-less manual
+// signing ("Option A") — the guest agent must run in any VM without a
+// device-limited provisioning profile, and a plain `group.*` group would demand
+// one. (The team prefix was never about Mach-service lookup, which is now gone.)
+//
 // Guest and host deliberately share the registered app group but use distinct
-// Mach service names, domain identifiers, and container subpaths, so a dev Mac
-// running both the guest agent (host-local) and the main app never collides
-// (in production they're separate machines / OS instances).
+// service names, domain identifiers, container subpaths, and Darwin doorbell
+// names, so a dev Mac running both the guest agent (host-local) and the main app
+// never collides (in production they're separate machines / OS instances).
 
 /// Per-direction configuration for the clipboard File Provider transport.
 public struct ClipboardFileProviderConfig: Sendable {
     /// App group shared by the container app and its sandboxed extension.
     ///
-    /// Team-ID-prefixed (macOS-style) so macOS grants implicit access without a
-    /// device-limited provisioning profile.
+    /// Scopes the shared staging container the owner writes into and the
+    /// extension APFS-clones out of. Team-ID-prefixed so macOS grants it
+    /// implicitly under profile-less manual signing (a plain `group.*` group would
+    /// require a provisioning profile); no longer used for any Mach-service lookup.
     public let appGroupIdentifier: String
 
-    /// The Mach service the relay is vended on and the extension connects to.
+    /// The `NSFileProviderServiceName` the extension vends its anonymous XPC
+    /// endpoint under and the owner selects when connecting.
     ///
-    /// Must be prefixed by `appGroupIdentifier` so the sandboxed extension can
-    /// look it up.
-    public let machServiceName: String
+    /// Reverse-DNS by convention; per-direction so a dev Mac running both host
+    /// and guest never crosses wires.
+    public let serviceName: NSFileProviderServiceName
+
+    /// The Darwin notification name the extension posts (reconnect doorbell) and
+    /// the owner observes to re-establish the control connection.
+    ///
+    /// Darwin names are a flat global namespace with no app-group prefix (that
+    /// rule is Mach-service-only); per-direction, reverse-DNS by convention.
+    public let reconnectNotificationName: String
 
     /// Stable File Provider domain identifier (no `/` or `:`, which the
     /// framework reserves for path separators / domain qualifiers).
@@ -46,62 +71,97 @@ public struct ClipboardFileProviderConfig: Sendable {
     /// `os.Logger` subsystem for the sandboxed extension (a separate process).
     public let extensionLoggerSubsystem: String
 
-    /// Code-signing requirement the extension pins on its relay connection, or
-    /// `nil` to skip peer validation.
+    /// Code-signing requirement the **extension** pins on the connecting
+    /// **owner** in `shouldAcceptNewConnection`, or `nil` to skip peer
+    /// validation.
     ///
-    /// The host pins the main app (which now vends `…xpc` directly as a
-    /// launchd agent); the guest leaves it `nil` — per-VM vsock auth is tracked
-    /// separately (#145) and the team-prefixed Mach name + app-group lookup
-    /// already gate the guest leg.
-    public let relayCodeSigningRequirement: String?
+    /// The host pins the main app (the only process allowed to export the relay);
+    /// the guest leaves it `nil` — per-VM vsock auth is tracked separately (#145)
+    /// and both guest processes run inside the same VM.
+    public let ownerCodeSigningRequirement: String?
+
+    /// Code-signing requirement the **owner** pins on the **extension** for its
+    /// `getFileProviderConnection` control connection, or `nil` to skip.
+    ///
+    /// The host pins the host File Provider extension; the guest leaves it `nil`
+    /// (same rationale as `ownerCodeSigningRequirement`).
+    public let extensionCodeSigningRequirement: String?
 
     /// Creates a direction config from its addressing and logging values.
     public init(
         appGroupIdentifier: String,
-        machServiceName: String,
+        serviceName: NSFileProviderServiceName,
+        reconnectNotificationName: String,
         domainIdentifier: String,
         domainDisplayName: String,
         containerDirectoryName: String,
         loggerSubsystem: String,
         extensionLoggerSubsystem: String,
-        relayCodeSigningRequirement: String?
+        ownerCodeSigningRequirement: String?,
+        extensionCodeSigningRequirement: String?
     ) {
         self.appGroupIdentifier = appGroupIdentifier
-        self.machServiceName = machServiceName
+        self.serviceName = serviceName
+        self.reconnectNotificationName = reconnectNotificationName
         self.domainIdentifier = domainIdentifier
         self.domainDisplayName = domainDisplayName
         self.containerDirectoryName = containerDirectoryName
         self.loggerSubsystem = loggerSubsystem
         self.extensionLoggerSubsystem = extensionLoggerSubsystem
-        self.relayCodeSigningRequirement = relayCodeSigningRequirement
+        self.ownerCodeSigningRequirement = ownerCodeSigningRequirement
+        self.extensionCodeSigningRequirement = extensionCodeSigningRequirement
     }
+
+    /// Code-signing requirement matching the main Kernova app (`app.kernova`).
+    ///
+    /// The host extension pins this on the connecting owner so a rogue process
+    /// can't impersonate the app that exports the relay. `anchor apple generic` +
+    /// the team OU holds for both Apple Development and Developer ID signing (team
+    /// `8MT4P4GZL2` is the cert OU, not the CN parenthetical — a known footgun).
+    public static let mainAppRequirement =
+        "identifier \"app.kernova\" "
+        + "and anchor apple generic "
+        + "and certificate leaf[subject.OU] = \"8MT4P4GZL2\""
+
+    /// Code-signing requirement matching the host File Provider extension
+    /// (`app.kernova.clipboard.fileprovider`).
+    ///
+    /// The main app pins this on its `getFileProviderConnection` control
+    /// connection so it only exports the relay to the genuine Kernova-team
+    /// extension.
+    public static let hostExtensionRequirement =
+        "identifier \"app.kernova.clipboard.fileprovider\" "
+        + "and anchor apple generic "
+        + "and certificate leaf[subject.OU] = \"8MT4P4GZL2\""
 
     /// Host→guest: the guest agent serves the host's copied file to the guest
     /// (issue #376).
-    ///
-    /// Preserves D1a's shipped identifiers verbatim.
     public static let guest = ClipboardFileProviderConfig(
         appGroupIdentifier: "8MT4P4GZL2.app.kernova",
-        machServiceName: "8MT4P4GZL2.app.kernova.relay",
+        serviceName: NSFileProviderServiceName("app.kernova.clipboard.guest.relay"),
+        reconnectNotificationName: "app.kernova.clipboard.guest.reconnect",
         domainIdentifier: "kernova-clipboard",
         domainDisplayName: "Kernova Clipboard",
         containerDirectoryName: "FileProvider",
         loggerSubsystem: "app.kernova.agent",
         extensionLoggerSubsystem: "app.kernova.agent.fileprovider",
-        relayCodeSigningRequirement: nil)
+        ownerCodeSigningRequirement: nil,
+        extensionCodeSigningRequirement: nil)
 
     /// Guest→host: the main app serves the guest's copied file to the Mac
     /// ("Copy to Mac", issue #424).
     ///
-    /// Distinct Mach/domain/subpath from the guest so both can coexist on a dev
-    /// Mac; reuses the same registered app group.
+    /// Distinct service/domain/subpath/doorbell from the guest so both can
+    /// coexist on a dev Mac; reuses the same registered app group.
     public static let host = ClipboardFileProviderConfig(
         appGroupIdentifier: "8MT4P4GZL2.app.kernova",
-        machServiceName: "8MT4P4GZL2.app.kernova.xpc",
+        serviceName: NSFileProviderServiceName("app.kernova.clipboard.host.relay"),
+        reconnectNotificationName: "app.kernova.clipboard.host.reconnect",
         domainIdentifier: "kernova-clipboard-host",
         domainDisplayName: "Kernova Clipboard (Mac)",
         containerDirectoryName: "FileProviderHost",
         loggerSubsystem: "app.kernova",
         extensionLoggerSubsystem: "app.kernova.clipboard.fileprovider",
-        relayCodeSigningRequirement: KernovaHostRelayIdentity.mainAppRequirement)
+        ownerCodeSigningRequirement: ClipboardFileProviderConfig.mainAppRequirement,
+        extensionCodeSigningRequirement: ClipboardFileProviderConfig.hostExtensionRequirement)
 }
