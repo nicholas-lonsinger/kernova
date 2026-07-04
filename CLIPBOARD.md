@@ -112,10 +112,11 @@ Honest caveats this principle does **not** waive:
   clock, not Kernova, bounds the fallback), exists only on the toggle-off path, and vanishes
   entirely once the File Provider is enabled — `fetchContents` has no deadline and no size
   limit.
-- **Host "Copy to Mac" routes only a single plain-file rep lazily (D2 scope).** Extra
-  plain-file reps beyond the one lazy-eligible file are dropped, regardless of the toggle.
-  Unlike the deadline cap, this is not OS-derived — it is a remaining scope limit of the File
-  Provider arc, a §6 fidelity gap still to dissolve, not a sanctioned end state.
+- **Host "Copy to Mac" routes a plain-file rep lazily only when exactly one is offered (D2
+  scope).** If two or more plain-file reps are present, all of them are dropped (the user sees
+  "Only one file can be copied to your Mac at a time"), regardless of the toggle. Unlike the
+  deadline cap, this is not OS-derived — it is a remaining scope limit of the File Provider arc,
+  a §6 fidelity gap still to dissolve, not a sanctioned end state.
 
 ### 3. Pay on consume (laziness is the rule)
 
@@ -275,9 +276,11 @@ These are not negotiable mechanics for *how* clipboard changes ship:
   backpressure, abort, and digest/size mismatch. Off-actor concurrency guards get deterministic
   tests. Use **event-driven waits**, never timing-based sleeps, to avoid CI flakes.
 - **Evolve by capability negotiation, not legacy shims.** Protocol changes are gated by the Hello
-  exchange's `capabilities` list and `service_version`; frames carrying an unsupported
-  `Frame.protocol_version` are dropped, and `version.unsupported` is the error code for a version
-  mismatch (`bundled_agent_version` only drives the guest's update prompt — it gates nothing).
+  exchange's `capabilities` list; frames carrying an unsupported `Frame.protocol_version` are
+  silently dropped (no error frame is sent). The other Hello version fields are advertised but
+  gate nothing today — `service_version` is diagnostic-only and `bundled_agent_version` just
+  drives the guest's update prompt; `version.unsupported` is a machine-readable error code the
+  proto reserves as an example, but no path constructs it yet.
   There is **no legacy fallback**. Any behavior change that requires a guest reinstall **bumps
   the guest agent version**. Greenfield — do not add back-compat decode paths for data that does
   not exist.
@@ -298,8 +301,8 @@ fix, not just whether to fix it. (macOS-guest issues only; Linux/Windows out of 
 | **#392** — make host "Copy to Mac" write the pasteboard lazily | §3 Pay on consume | The one place inbound content is still eager. Convert to a provider so bytes are read only when the destination pastes — in both directions, laziness is the rule. ✓ **Resolved** — the host pasteboard write is a lazy provider (#408); the single-file rep is now a host File Provider placeholder (#434). |
 | **#394** — inline payloads SHA-256'd redundantly and on the main thread | §8 Keep the thread free, §7 Integrity | Remove the **redundant** hashes and move the unavoidable one off the main actor (§8). Do **not** drop the end-to-end verify hash (§7) — redundant work goes, the only integrity check stays. ✓ **Resolved** — editor hashing moved off the main actor on a debounce (#413). |
 | **#377** — throughput is software-bound; validate on real vsock, then cut per-chunk overhead | Ordering (marginal overhead), Engineering practices | Capability is already met; this is pure §-ordering step 2. **Measure on real vsock first** (verify at the seam), then cut the avoidable per-chunk copy. Never ship a chunk-size bump without co-scaling the window. |
-| **#376** — File Provider domain for large-file paste (no 60 s deadline) | §2 Disk-as-fallback (on-demand), §13 OS deadlines, §11 Sandbox-forward | This is the canonical §2 mechanism: instant placeholder, on-demand `fetchContents`, write once at the destination, native progress, no deadline. Also killed #371's 2×-disk. Extension can't open vsock — relay through the agent (§11). **Partially shipped** — D1a (guest transport) in #425, the host "Copy to Mac" mirror (D2) in #434; remaining phases tracked on the issue. |
-| **#422** — a directory crosses as a fully materialized archive, staged whole on **both** sides (≈3N peak disk) | §2 (no reflexive intermediate copy), §3 (pay on consume), ordering (bounded peak), §12 (smarter wins) | Stream the (de)serialization both ways and hash **inline** (§7); defer source archiving to paste via a negotiated offer that doesn't need exact size/SHA up front. Kernova's own disk for the transfer must approach zero beyond the destination. The File Provider arc it was sequenced after (#376 D1a + D2) has landed (#425, #434) — no longer blocked. |
+| **#376** — File Provider domain for large-file paste (no 60 s deadline) | §2 Disk-as-fallback (on-demand), §13 OS deadlines, §11 Sandbox-forward | This is the canonical §2 mechanism: instant placeholder, on-demand `fetchContents`, write once at the destination, native progress, no deadline. Also killed #371's 2×-disk. Extension can't open vsock — relay through the agent (§11). **Partially shipped** — D1a (guest transport) landed in #425; the host-side "Copy to Mac" mirror (D2) is the separate issue #424, shipped in #434. Remaining #376 phases tracked on the issue. |
+| **#422** — a directory crosses as a fully materialized archive, staged whole on **both** sides (≈3N peak disk) | §2 (no reflexive intermediate copy), §3 (pay on consume), ordering (bounded peak), §12 (smarter wins) | Stream the (de)serialization both ways and hash **inline** (§7); defer source archiving to paste via a negotiated offer that doesn't need exact size/SHA up front. Kernova's own disk for the transfer must approach zero beyond the destination. The File Provider arc it was sequenced after has landed — #376 D1a (#425) and the #424 host mirror (#434) — no longer blocked. |
 | **#354** — clipboard transfer progress UI (bar + ring) | §13 Legibility, §9 bidirectional, §5 preview-only | Drive both indicators off existing transport progress, both directions; clear on terminal states. Progress is a window affordance — it must not touch the data path (§5). ✓ **Resolved** — progress bar + ring driven off transport progress (#417). |
 | **#82** — opt-in automatic clipboard passthrough | §4 One data plane | Passthrough is the gate-less mode of the **same** path. Implement it as a change to *when consume is authorized*, not as a parallel transport. |
 | **#145** — per-VM auth on the vsock listener | §10 Trust boundary | Required before non-trusted guest workloads; the host must authenticate the guest per VM. |

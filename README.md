@@ -12,7 +12,7 @@ A macOS GUI application for creating and managing virtual machines using Apple's
 - **Bundle import** — Import VM bundles (`.kernova`) via double-click or drag-and-drop
 - **Recovery mode** — Boot macOS guests into Recovery
 - **Headless operation** — The app runs as a launch-at-login background agent, so quitting the window keeps VMs running headless
-- **Graceful shutdown** — Save-suspends running VMs automatically when the background agent itself terminates (explicit Quit, logout, or shutdown)
+- **Graceful shutdown** — Save-suspends running VMs automatically when the background agent itself terminates (status-item Quit, logout, or shutdown)
 
 ### Guest Configuration
 
@@ -33,8 +33,8 @@ A macOS GUI application for creating and managing virtual machines using Apple's
 
 ### Clipboard & File Sharing
 
-- **Clipboard sync** — Host↔guest clipboard sharing for text, rich text, images, files, and folders, chunk-streamed with no size cap and live transfer progress
-- **Guest agent** — In-guest menu-bar agent for macOS guests (vsock transport), installed from an attachable installer disk; Linux guests sync via spice-vdagent
+- **Clipboard sync** — Host↔guest clipboard sharing for text, rich text, images, files, and folders — chunk-streamed with no size cap and live transfer progress on macOS guests (via the vsock guest agent); Linux guests sync clipboard text only (spice-vdagent)
+- **Guest agent** — In-guest menu-bar agent for macOS guests (vsock transport), installed from an attachable installer disk
 - **Copy to Mac** — Lazy guest→host file transfer backed by a host File Provider, so pasted files materialize on demand
 - **Large-file paste** — A guest File Provider transport materializes large host files inside the guest on demand
 
