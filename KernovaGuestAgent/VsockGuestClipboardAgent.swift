@@ -166,9 +166,9 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     ///
     /// The shared host↔guest registry; the agent owns its own instance (its
     /// providers are agent-lifetime, not process-immortal like the host's
-    /// `.shared`). The registry is `@MainActor`, reached via
-    /// `MainActor.assumeIsolated` because all provider bookkeeping here already
-    /// runs on the main queue.
+    /// `.shared`). The registry is lock-based `@unchecked Sendable`, so the
+    /// agent calls `retain`/`release` directly from its main-queue provider
+    /// bookkeeping — no actor hop.
     private let retainer = LazyClipboardProviderRegistry()
 
     /// Last `NSPasteboard.changeCount` we observed; set after every poll and

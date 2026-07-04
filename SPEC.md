@@ -23,8 +23,8 @@ Design philosophy and guidelines for Kernova.
 
 - AppKit owns the entire view layer — `NSSplitViewController`, `NSToolbar`, `NSWindow`, and concrete `NSViewController`s render all content (no SwiftUI / `NSHostingController`).
 - Main window: 1100×700 default, 800×500 minimum.
-- Sidebar: 200–350pt width.
-- Creation wizard sheet: 550×480.
+- Sidebar: 212–400pt width.
+- Creation wizard sheet: 720×540 (`WizardStyle.width`/`height`).
 
 ### Typography
 
@@ -34,7 +34,7 @@ Use `NSFont.preferredFont(forTextStyle:)` so type scales with the system setting
 - `.headline` — important labels and step indicators (`CalloutStyle.headlineFont`)
 - `.body` — primary form content (`Typography.body`)
 - `.caption1` / `.caption2` — secondary text, metadata, step numbers
-- monospaced `.caption1` (`NSFont.monospacedSystemFont`) — code snippets and paths (`CalloutStyle.makeCalloutCode`)
+- monospaced `.callout` (`NSFont.monospacedSystemFont` at the `.callout` point size) — code snippets and paths (`CalloutStyle.makeCalloutCode`)
 
 ### Spacing
 
@@ -51,7 +51,6 @@ Set `NSStackView.spacing` from the `Spacing` token scale (`Utilities/DesignToken
 - Status mapping lives in the `StatusColor` palette (`Utilities/DesignTokens.swift`): `inactive` = `.secondaryLabelColor` (stopped / agent idle), `warning` = `.systemOrange` (preparing/starting/saving/restoring/installing/suspended), `running` = `.systemGreen`, `pausedInMemory` = `.systemYellow`, `error` = `.systemRed`.
 - Use semantic `NSColor`s (`.labelColor`, `.secondaryLabelColor`, `.controlAccentColor`) — no hardcoded RGB values.
 - Destructive actions: `.systemRed` foreground.
-- Selection highlights: `.controlAccentColor` at 0.1 opacity fill, 0.3 opacity border.
 
 ### Controls
 
@@ -65,9 +64,8 @@ Set `NSStackView.spacing` from the `Spacing` token scale (`Utilities/DesignToken
 
 - `NSVisualEffectView` for temporary state overlays (pause, saving/restoring).
 - `NSAnimationContext` (0.25s) for overlay transitions.
-- Large hero icons (64pt) centered on overlays.
+- Large hero icons (52pt, `NSImage.SymbolConfiguration`) centered on overlays (`VMDisplayBackingView.makePauseOverlay`).
 
 ### Cards and Containers
 
-- Selection cards: layer-backed `NSView` with `cornerRadius: 12`, accent-tinted fill when selected.
-- Code blocks: `CalloutStyle.makeCalloutCode` — quaternary fill, `cornerRadius: 4`, `Spacing.standard` padding, monospaced font.
+- Code blocks: `CalloutStyle.makeCalloutCode` — monospaced, selectable `NSTextField` for copy-worthy snippets.

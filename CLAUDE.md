@@ -35,7 +35,7 @@ The `-derivedDataPath DerivedData` flag ensures build output goes to a determini
 
 ### Build version
 
-`CFBundleVersion` is `git rev-list --count HEAD` (the total commit count), substituted into the source `Info.plist` via `INFOPLIST_PREPROCESS`. The `Set Build Number from Git` build phase generates `KernovaBuildNumber.h` with `#define KERNOVA_BUILD_NUMBER N`, and `Kernova/App/Info.plist` references the symbol directly (`<string>KERNOVA_BUILD_NUMBER</string>`). Substitution happens inside `ProcessInfoPlistFile` so build-graph reordering can't clobber it. The `KernovaGuestAgent` target uses the same pattern with its own `AGENT_BUILD_NUMBER` (scoped to `git rev-list --count HEAD -- KernovaGuestAgent/`). The `KernovaQuickLook` extension replicates the app's pattern verbatim (unscoped total count → `KERNOVA_BUILD_NUMBER` in its own `DERIVED_FILE_DIR`) so the embedded appex's version always matches its host app. The `KernovaFileProvider` extension (embedded in the guest agent) shares the agent's `AGENT_BUILD_NUMBER` the same way — its own `Set Build Number from Git` phase + `AgentBuildNumber.h` — so its version always matches the agent. When adding a new top-level target that needs a dynamic build number, replicate this pattern instead of patching the built `Info.plist` after the fact.
+`CFBundleVersion` is `git rev-list --count HEAD` (the total commit count), substituted into the source `Info.plist` via `INFOPLIST_PREPROCESS`. The `Set Build Number from Git` build phase generates `KernovaBuildNumber.h` with `#define KERNOVA_BUILD_NUMBER N`, and `Kernova/App/Info.plist` references the symbol directly (`<string>KERNOVA_BUILD_NUMBER</string>`). Substitution happens inside `ProcessInfoPlistFile` so build-graph reordering can't clobber it. The `KernovaGuestAgent` target uses the same pattern with its own `AGENT_BUILD_NUMBER` (scoped to `git rev-list --count HEAD -- KernovaGuestAgent/`). The `KernovaQuickLook` extension replicates the app's pattern verbatim (unscoped total count → `KERNOVA_BUILD_NUMBER` in its own `DERIVED_FILE_DIR`) so the embedded appex's version always matches its host app. The `KernovaClipboardFileProvider` extension (the host "Copy to Mac" File Provider, also embedded in the app) replicates the same unscoped `KERNOVA_BUILD_NUMBER` pattern. The `KernovaFileProvider` extension (embedded in the guest agent) shares the agent's `AGENT_BUILD_NUMBER` the same way — its own `Set Build Number from Git` phase + `AgentBuildNumber.h` — so its version always matches the agent. When adding a new top-level target that needs a dynamic build number, replicate this pattern instead of patching the built `Info.plist` after the fact.
 
 Requires the toolchain listed under [Requirements](README.md#requirements) in the README. The app is Apple Silicon-only (`ARCHS = arm64` at the project level) — Virtualization.framework's macOS-guest and save/restore APIs don't exist on x86_64, and macOS 26 is the last Intel release, so no Intel slice is built and `#if arch(arm64)` guards are unnecessary. The app uses the `com.apple.security.virtualization` entitlement.
 
@@ -55,7 +55,7 @@ Kernova is a pure-AppKit app that manages virtual machines via Apple's `Virtuali
 
 Kernova is intended for **Mac App Store distribution** eventually, which will require adopting the **App Sandbox** (`com.apple.security.app-sandbox`). The main app is **not sandboxed yet** — `Kernova/Resources/Kernova.entitlements` carries `com.apple.security.virtualization`, `com.apple.security.device.audio-input`, and a team-prefixed `com.apple.security.application-groups` (added for the host "Copy to Mac" File Provider's shared app-group container, #424 — app-group XPC is the sandbox-forward relay pattern, so this stays MAS-compatible). The virtualization entitlement itself is MAS-compatible (UTM ships a sandboxed `Virtualization.framework` app on the store); the App Sandbox is the gating work, and it will be done deliberately as **one coordinated effort**, not piecemeal.
 
-**Launch model — the app is a launchd-managed launch-at-login background agent.** The main app ships a `Contents/Library/LaunchAgents/app.kernova.plist` and self-registers via `SMAppService.agent`; the same binary branches on a `--background` argv flag (passed only by that plist) into the resident-agent role, otherwise the short-lived launcher role (`KernovaLaunchRole`). Because it is launchd-managed it hosts the `8MT4P4GZL2.app.kernova.xpc` Mach service **itself** — so the standalone `KernovaClipboardRelayAgent` broker #424 added is **gone** (collapsed into the app's always-on `HostRelayListener`). `SMAppService.agent` + the team-prefixed (already sandbox-clean) Mach name are permitted for sandboxed apps, so this doesn't *block* MAS — but making the heavyweight, vsock-opening app the launchd Mach vendor (vs. the former minimal broker) does **grow** the eventual sandbox surface. That trade is accepted because "keep VMs running headless" already forces the app to be the resident launchd process; given that, the broker was redundant. Sandboxing remains a separate future effort.
+**Launch model — the app is a launchd-managed launch-at-login background agent.** The main app ships a `Contents/Library/LaunchAgents/app.kernova.plist` and self-registers via `SMAppService.agent`; the same binary branches on a `--background` argv flag (passed only by that plist) into the resident-agent role, otherwise the short-lived launcher role (`KernovaLaunchRole`). Because it is launchd-managed, the app **itself** hosts the `8MT4P4GZL2.app.kernova.xpc` Mach service via its always-on `HostRelayListener` — there is no separate broker process (the standalone `KernovaClipboardRelayAgent` broker #424 introduced was collapsed into the app in #436). `SMAppService.agent` + the team-prefixed (already sandbox-clean) Mach name are permitted for sandboxed apps, so this doesn't *block* MAS — but making the heavyweight, vsock-opening app the launchd Mach vendor (rather than a minimal broker) does **grow** the eventual sandbox surface. That trade is accepted because "keep VMs running headless" already forces the app to be the resident launchd process, which made a separate broker redundant. Sandboxing remains a separate future effort.
 
 **The rule for now is simply: don't make that eventual migration bigger.** When you write *new* code, choose the approach that is already sandbox-safe so it won't need reworking later. Do not go the other way and convert existing, working code toward sandbox-compatibility as a side effect of unrelated work.
 
@@ -98,7 +98,7 @@ When a test needs to observe state that is `private` in production, pick the tig
 1. **`private(set) var x`** — internal getter, private setter. The idiomatic choice when production code reading the state is harmless; tests reach it via `@testable import`, no extra accessor needed.
 2. **`#if DEBUG`-gated read accessor** — when the state is a test-only implementation detail that production code should *not* read. Keep the field `private` and add a `…ForTesting` computed getter wrapped in `#if DEBUG`, so the seam is physically absent from Release builds and test-only access becomes a compile-time guarantee rather than a naming convention. Place `#if DEBUG` before the doc comment and `#endif` after the accessor.
 
-`AttachmentFileMonitor.watchedParentsForTesting` is the canonical example; the `…ForTesting` accessors in `VsockClipboardService`, `VsockGuestClipboardAgent`, and `VsockHostConnection` follow the same pattern. Because this rationale is shared, the gate itself is the documentation — don't repeat a "DEBUG-only so it can't leak" note at each site.
+`AttachmentFileMonitor.watchedParentsForTesting` is the canonical example; the `…ForTesting` accessors in `VsockClipboardService` and `VsockGuestClipboardAgent` follow the same pattern. Because this rationale is shared, the gate itself is the documentation — don't repeat a "DEBUG-only so it can't leak" note at each site.
 
 ### Logging
 
@@ -192,6 +192,7 @@ EOF
 | `review-debt/performance` | Inefficient code paths, unnecessary allocations |
 | `review-debt/refactor` | Code smells, duplication, poor abstractions |
 | `review-debt/test-gap` | Missing or insufficient tests for critical code |
+| `review-debt/dead-code` | Dead code surfaced by the Periphery scan (applied automatically by `dead-code.yml`; use for manually-filed dead-code findings too) |
 
 **Guidelines:**
 - **File issues immediately** — do not list qualifying findings as "skipped" and wait for the user to ask. If a finding meets the severity criteria above, create the issue as part of the review flow before summarizing results.
@@ -287,14 +288,22 @@ refactor/extract-lifecycle-coordinator
 
 ```bash
 git push -u origin HEAD:<type>/<short-description>   # remote/PR gets the clean name; local stays worktree-…
-git push                                              # later pushes follow the upstream — no refspec needed
+git push origin HEAD:<type>/<short-description>      # every later push: same refspec (add -f after a rebase)
 ```
 
 The local↔remote name mismatch is deliberate: the local `worktree-` branch is a
 throwaway that `ExitWorktree` deletes on exit, so only the remote name — the one
-humans and GitHub see — has to be clean. After the first `-u` push sets the
-upstream to `origin/<type>/<short-description>`, plain `git push` and
-`git push -f` (after a rebase) follow it, so you spell the refspec out only once.
+humans and GitHub see — has to be clean. The cost of the mismatch is that
+**every push must spell the refspec**: with `push.default` unset (git's default
+is `simple`) and the local/remote names differing, a bare `git push` refuses to
+push — depending on git version/config it fails loudly (`fatal: The upstream
+branch of your current branch does not match…`) or prints only an easy-to-miss
+hint, but either way nothing is pushed. The `-u`
+on the first push doesn't change that; it exists so `git status -sb` tracks the
+remote branch. So push with `git push origin HEAD:<type>/<short-description>`
+every time (add `-f` after a rebase), pass `--head <type>/<short-description>`
+to `gh pr create`, and verify after each push with `git status -sb` — no
+`[ahead N]` means the push landed.
 **Always push before exiting the worktree** so the work is safe on origin:
 `ExitWorktree(remove)` discards the local commit, and it drops *unpushed* commits
 silently.
