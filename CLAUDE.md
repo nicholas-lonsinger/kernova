@@ -18,6 +18,7 @@ make test-package        # Run only the KernovaKit SwiftPM package tests
 make format              # Rewrite Swift sources in place via swift-format
 make lint                # Check Swift sources with swift-format --strict
 make install-hooks       # One-time: enable .githooks/pre-push (runs `make lint` before push)
+make doctor              # Check the local toolchain (macOS, Xcode, Swift, swift-format) and git hooks
 make clean               # Remove DerivedData/
 ```
 

@@ -62,6 +62,8 @@ make install-hooks
 
 This points the repo at the checked-in `.githooks/` directory so a pre-push hook runs `make lint` locally and matches the swift-format check enforced on `main`. It's a one-time setup per clone (Git does not auto-activate checked-in hooks). Bypass an individual push with `git push --no-verify`.
 
+Run `make doctor` to confirm your local toolchain (macOS, Xcode, Swift, swift-format) and git hooks match what Kernova needs before building.
+
 Run `make` with no arguments to see all build, test, format, and lint targets.
 
 ## Building
