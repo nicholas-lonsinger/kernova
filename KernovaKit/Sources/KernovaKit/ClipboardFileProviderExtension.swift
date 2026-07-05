@@ -133,31 +133,50 @@ open class ClipboardFileProviderExtension: NSObject, NSFileProviderReplicatedExt
         // sandboxed extension can't open vsock (CLIPBOARD.md §11). INVERTED wiring:
         // the owner is the XPC client and exported the relay; we call it back
         // through the accepted connection (`serviceSource`). If no owner connection
-        // is live, the source rings the Darwin doorbell and blocks (bounded) for a
-        // reconnect. The system calls fetchContents off-thread with no deadline, so
-        // blocking on the reply is safe and lets the completion handler run
-        // synchronously here.
-        let stagedPath: String
-        switch serviceSource.fetchStagedFile(
-            generation: decoded.generation, repIndex: decoded.repIndex)
-        {
-        case .success(let path):
-            stagedPath = path
-        case .failure(let error):
-            logger.error(
-                "fetchContents relay failed: \(error.localizedDescription, privacy: .public)")
-            completionHandler(nil, nil, error)
-            return progress
+        // is live, the source rings the Darwin doorbell and completes once the owner
+        // reconnects. This MUST stay async — see `ClipboardFileProviderServiceSource`:
+        // the framework serialises the owner's `getFileProviderConnection` behind an
+        // in-flight `fetchContents`, so blocking here would deadlock the very
+        // reconnect we're waiting for. Return `progress` now; complete when the
+        // staged path (or an error) lands.
+        serviceSource.fetchStagedFile(
+            generation: decoded.generation, repIndex: decoded.repIndex
+        ) { [weak self] result in
+            guard let self else {
+                completionHandler(nil, nil, NSFileProviderError(.providerNotFound))
+                return
+            }
+            switch result {
+            case .success(let stagedPath):
+                self.materialize(
+                    stagedPath: stagedPath, manifestItem: manifestItem, progress: progress,
+                    completionHandler: completionHandler)
+            case .failure(let error):
+                self.logger.error(
+                    "fetchContents relay failed: \(error.localizedDescription, privacy: .public)")
+                completionHandler(nil, nil, error)
+            }
         }
+        return progress
+    }
 
-        // Clone the owner-staged file (shared app-group container) into the
-        // domain's temporary directory, which is guaranteed to be on the same
-        // volume so the system can clone it into its replicated store. A same-
-        // volume copy is an APFS clonefile — near-free — and hands the system a
-        // disposable file, leaving the owner's staging cache free to evict.
+    /// Clones the owner-staged file into the domain's temporary directory and hands
+    /// it to the system, completing the fetch.
+    ///
+    /// Split out of `fetchContents` because the byte pull is now asynchronous, so
+    /// materialization runs in the pull's completion rather than inline.
+    private func materialize(
+        stagedPath: String, manifestItem: ClipboardFileProviderManifest.Item, progress: Progress,
+        completionHandler: @escaping (URL?, NSFileProviderItem?, Error?) -> Void
+    ) {
+        // Clone the owner-staged file (shared app-group container) into the domain's
+        // temporary directory, which is guaranteed to be on the same volume so the
+        // system can clone it into its replicated store. A same-volume copy is an
+        // APFS clonefile — near-free — and hands the system a disposable file,
+        // leaving the owner's staging cache free to evict.
         guard let manager = NSFileProviderManager(for: domain) else {
             completionHandler(nil, nil, NSFileProviderError(.providerNotFound))
-            return progress
+            return
         }
         do {
             let tempDir = try manager.temporaryDirectoryURL()
@@ -170,7 +189,6 @@ open class ClipboardFileProviderExtension: NSObject, NSFileProviderReplicatedExt
             logger.error("fetchContents clone failed: \(error.localizedDescription, privacy: .public)")
             completionHandler(nil, nil, error)
         }
-        return progress
     }
 
     // The clipboard domain is read-only — mutating operations are unsupported.

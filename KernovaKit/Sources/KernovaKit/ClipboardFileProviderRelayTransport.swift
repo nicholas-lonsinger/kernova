@@ -85,13 +85,13 @@ public final class ClipboardFileProviderServicingConnector: NSObject,
 
     /// Upper bound on transient connect retries before giving up.
     ///
-    /// A relaunching extension is usually reachable within a second or two; past
-    /// that the extension's own bounded `fetchContents` wait returns
-    /// `serverUnreachable`, and a later doorbell or publish starts a fresh burst.
-    private static let maxConnectAttempts = 5
-    /// Delay between transient connect retries (well under the extension's 30 s
-    /// `fetchContents` wait, so several retries fit inside one blocked paste).
-    private static let connectRetryDelay: DispatchTimeInterval = .seconds(1)
+    /// Sized so `maxConnectAttempts × connectRetryDelay` (~30 s) spans the
+    /// extension's own `fetchContents` connect wait, so a slow-relaunching extension
+    /// is still caught within the window the paste is waiting — rather than the owner
+    /// giving up after a few seconds while the extension keeps waiting.
+    private static let maxConnectAttempts = 15
+    /// Delay between transient connect retries.
+    private static let connectRetryDelay: DispatchTimeInterval = .seconds(2)
 
     /// Creates a connector for one direction from its config.
     public init(config: ClipboardFileProviderConfig) {
@@ -150,11 +150,23 @@ public final class ClipboardFileProviderServicingConnector: NSObject,
     // MARK: - Connection lifecycle
 
     private func handleReconnectDoorbell() {
-        logger.notice("Reconnect doorbell received — (re)establishing servicing connection")
-        // The extension is actively waiting on us → grant a fresh retry budget so a
-        // doorbell that lands mid-burst isn't starved by an exhausted counter.
-        lock.withLock { connectAttempts = 0 }
-        connectIfNeeded()
+        logger.notice("Reconnect doorbell received")
+        // The doorbell means the extension has no accepted connection. Reset the
+        // retry budget (it's actively waiting on us) and act on our cached state:
+        let existing: NSXPCConnection? = lock.withLock {
+            connectAttempts = 0
+            return self.connection
+        }
+        if let existing {
+            // We think we're connected. Re-send the activation handshake rather than
+            // tearing the connection down: on a live connection it's a harmless
+            // re-acknowledge, and on a secretly-dead one the handshake's error
+            // handler drops it and reconnects. This avoids killing a healthy
+            // connection whose just-drained pulls are mid-flight.
+            activate(existing)
+        } else {
+            connectIfNeeded()
+        }
     }
 
     /// Claims the connect slot and dispatches the handshake off-queue, or no-ops
@@ -210,9 +222,11 @@ public final class ClipboardFileProviderServicingConnector: NSObject,
     /// Exports the relay, pins the extension, and resumes — storing the
     /// connection before `resume()` so an immediate invalidation reconnects.
     private func configureAndResume(_ connection: NSXPCConnection) {
-        // The owner only EXPORTS the relay — it never calls the extension — so no
-        // `remoteObjectInterface` here (inverted wiring, #460).
+        // We EXPORT the relay (the extension calls it back) and REMOTE the control
+        // interface (we call `ownerDidConnect` to activate the connection). Mirror of
+        // the extension's `ClipboardFileProviderServiceSource` (inverted wiring, #460).
         connection.exportedInterface = NSXPCInterface(with: ClipboardFileProviderRelay.self)
+        connection.remoteObjectInterface = NSXPCInterface(with: ClipboardFileProviderControl.self)
         // Pin the extension when the direction requires it (host pins the host
         // extension; guest leaves it nil — per-VM vsock auth is tracked by #145).
         if let extensionRequirement {
@@ -241,7 +255,20 @@ public final class ClipboardFileProviderServicingConnector: NSObject,
             return
         }
         connection.resume()
+        // Activate the connection so the extension's listener accepts it (it delivers
+        // shouldAcceptNewConnection only on our first message — see the control doc).
+        activate(connection)
         logger.notice("Servicing control connection established")
+    }
+
+    /// Sends the `ownerDidConnect` activation handshake on `connection`; a delivery
+    /// error means the connection is already dead, so drop it and reconnect.
+    private func activate(_ connection: NSXPCConnection) {
+        let control =
+            connection.remoteObjectProxyWithErrorHandler { [weak self] _ in
+                self?.handleConnectionDropped(connection)
+            } as? ClipboardFileProviderControl
+        control?.ownerDidConnect {}
     }
 
     /// Settles a failed connect attempt.

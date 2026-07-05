@@ -13,36 +13,68 @@ import os
 // `getFileProviderServicesForItem`.
 //
 // The extension can't reach its owner on its own, so on `fetchContents` with no
-// live owner connection it rings the Darwin doorbell and blocks (bounded) until
-// the owner connects; the timeout returns `serverUnreachable` so Finder is never
-// blocked indefinitely when the owner isn't running or the domain is disabled.
+// live owner connection it rings the Darwin doorbell and waits for the owner to
+// connect. Crucially the wait is **non-blocking**: `fetchStagedFile` enqueues the
+// pull and returns immediately, so the extension's `fetchContents` returns its
+// `Progress` without holding a worker thread. This is load-bearing — the File
+// Provider framework serialises `supportedServiceSources` / the owner's
+// `getFileProviderConnection` *behind* an in-flight `fetchContents`, so a blocking
+// wait here would deadlock the very reconnect it is waiting for (the owner could
+// not connect until the wait timed out). The enqueued pull is drained the instant
+// the owner connects; a bounded timer fails it with `serverUnreachable` if the
+// owner never appears (not running / domain disabled).
 
 /// One long-lived anonymous-XPC service source for a File Provider extension.
 ///
-/// `@unchecked Sendable`: the accepted connection and the wait state are guarded
-/// by `condition`; `config`/`logger`/`listener` are immutable after `init`.
+/// `@unchecked Sendable`: `acceptedConnection` and `pendingPulls` are guarded by
+/// `lock`; `config`/`logger`/`listener`/`queue` are immutable after `init`.
 final class ClipboardFileProviderServiceSource: NSObject, NSFileProviderServiceSource,
-    NSXPCListenerDelegate, @unchecked Sendable
+    NSXPCListenerDelegate, ClipboardFileProviderControl, @unchecked Sendable
 {
-    /// Bounded wait for the owner to connect after the doorbell is rung, kept
-    /// well under Finder's ~60 s paste deadline so a missing owner fails cleanly.
+    /// Bounded wait for the owner to connect after the doorbell is rung, kept well
+    /// under Finder's ~60 s paste deadline so a missing owner fails cleanly.
     private static let connectTimeout: TimeInterval = 30
 
     /// Bounded wait for the owner's byte-pull *reply* once a connection is live.
     ///
     /// The XPC error handler only fires on connection failure, not on a live-but-
-    /// silent owner (e.g. a stalled vsock pull), so without a bound that owner
-    /// would pin a File Provider worker thread indefinitely. This runs off Finder's
-    /// clock (the placeholder already returned), so it can be generous — long
-    /// enough for any real pull, finite so a hung owner can't strand the worker.
+    /// silent owner (e.g. a stalled vsock pull), so without a bound that pull would
+    /// never complete. This runs off Finder's clock (the placeholder already
+    /// returned), so it can be generous — long enough for any real pull, finite so
+    /// a hung owner can't strand the fetch forever.
     private static let fetchReplyTimeout: TimeInterval = 120
 
     private let config: ClipboardFileProviderConfig
     private let logger: Logger
     private let listener: NSXPCListener
-    /// Guards `acceptedConnection` and wakes the bounded wait in `fetchStagedFile`.
-    private let condition = NSCondition()
+    /// Serialises timers and async pull work off the caller's thread.
+    private let queue = DispatchQueue(label: "app.kernova.fileprovider.servicesource")
+
+    private let lock = NSLock()
     private var acceptedConnection: NSXPCConnection?
+    /// Byte-pulls awaiting a live owner connection, drained on accept.
+    private var pendingPulls: [PendingPull] = []
+
+    /// A byte-pull waiting for the owner to connect.
+    ///
+    /// Reference type so the connect-timeout `DispatchWorkItem` and the accept-time
+    /// drain can identify the same pull by identity when racing to fulfil it.
+    private final class PendingPull {
+        let generation: UInt64
+        let repIndex: Int
+        let completion: (Result<String, NSError>) -> Void
+        /// Fires `serverUnreachable` if no owner connects in time; cancelled on drain.
+        var connectTimeout: DispatchWorkItem?
+
+        init(
+            generation: UInt64, repIndex: Int,
+            completion: @escaping (Result<String, NSError>) -> Void
+        ) {
+            self.generation = generation
+            self.repIndex = repIndex
+            self.completion = completion
+        }
+    }
 
     init(config: ClipboardFileProviderConfig, logger: Logger) {
         self.config = config
@@ -57,8 +89,8 @@ final class ClipboardFileProviderServiceSource: NSObject, NSFileProviderServiceS
 
     var serviceName: NSFileProviderServiceName { config.serviceName }
 
-    /// The clipboard domain is read-only and single-purpose, so it has nothing
-    /// to restrict — the owner code-signing pin (below) is the real gate.
+    /// The clipboard domain is read-only and single-purpose, so it has nothing to
+    /// restrict — the owner code-signing pin (below) is the real gate.
     var isRestricted: Bool { false }
 
     /// Returns the single long-lived anonymous endpoint.
@@ -71,13 +103,20 @@ final class ClipboardFileProviderServiceSource: NSObject, NSFileProviderServiceS
 
     // MARK: - NSXPCListenerDelegate
 
-    /// Accepts the owner's connection, pins it, and retains it so `fetchContents`
-    /// (a different thread) can call back over it.
+    /// Accepts the owner's connection, pins it, retains it for `fetchContents`
+    /// call-backs, and drains any pulls that were waiting for a connection.
+    ///
+    /// Fires when the owner sends its `ownerDidConnect()` handshake (an
+    /// `NSXPCListener` only delivers this delegate on the client's first message —
+    /// hence the handshake; see `ClipboardFileProviderControl`).
     func listener(
         _ listener: NSXPCListener, shouldAcceptNewConnection newConnection: NSXPCConnection
     ) -> Bool {
-        // The owner EXPORTS the relay; we call it back — so this is the *remote*
-        // interface from our side.
+        // Bidirectional: we EXPORT the control object (so the owner's handshake
+        // lands) and set the relay as our REMOTE interface (so we can call the owner
+        // back). The owner mirrors this — exports the relay, remotes the control.
+        newConnection.exportedInterface = NSXPCInterface(with: ClipboardFileProviderControl.self)
+        newConnection.exportedObject = self
         newConnection.remoteObjectInterface = NSXPCInterface(with: ClipboardFileProviderRelay.self)
         // Pin the owner when the direction requires it (the host pins the main
         // app; the guest leaves it nil — see the config doc and #145). Non-throwing:
@@ -87,110 +126,161 @@ final class ClipboardFileProviderServiceSource: NSObject, NSFileProviderServiceS
         }
         newConnection.invalidationHandler = { [weak self] in self?.clearConnection(newConnection) }
         newConnection.interruptionHandler = { [weak self] in self?.clearConnection(newConnection) }
-        newConnection.resume()
 
-        condition.lock()
-        let previous = acceptedConnection
-        acceptedConnection = newConnection
-        // `broadcast`, not `signal`: several `fetchContents` threads can be blocked
-        // in `waitForConnection` at once (e.g. the eager copy-time read racing a
-        // real paste), and the owner establishes only ONE connection — so a single
-        // `signal` would wake just one waiter and strand the rest until their
-        // timeout. Wake them all; every one can use the shared connection.
-        condition.broadcast()
-        condition.unlock()
-        // Defensive: the owner holds one connection at a time and now invalidates
-        // dropped ones, so a still-live previous is not expected — but if one
-        // lingers, release it so an abandoned connection can't leak via its
-        // retained handler blocks. Its invalidation handler no-ops (it only clears
-        // when still current, and we just replaced it).
+        // Publish `acceptedConnection` BEFORE resuming, so an invalidation that lands
+        // during/just after resume finds the connection current and clears it (rather
+        // than `clearConnection` no-op'ing on a not-yet-published connection and
+        // leaving a dead one cached — mirrors the owner-side store-before-resume).
+        let (previous, drained): (NSXPCConnection?, [PendingPull]) = lock.withLock {
+            let prev = acceptedConnection
+            acceptedConnection = newConnection
+            let waiting = pendingPulls
+            pendingPulls = []
+            return (prev, waiting)
+        }
+        newConnection.resume()
+        // Defensive: the owner holds one connection at a time and invalidates dropped
+        // ones, so a still-live previous is not expected — but if one lingers, release
+        // it so an abandoned connection can't leak via its retained handler blocks.
+        // Its invalidation handler no-ops (it only clears when still current, and we
+        // just replaced it).
         previous?.invalidate()
-        logger.debug("Accepted owner servicing connection")
+        logger.debug(
+            "Accepted owner servicing connection (draining \(drained.count, privacy: .public) pending)")
+        for pull in drained {
+            pull.connectTimeout?.cancel()
+            pull.connectTimeout = nil  // break the pull↔work-item retain cycle
+            performPull(over: newConnection, pull: pull)
+        }
         return true
     }
 
-    /// Clears the retained connection only if it is still the current one (a
-    /// newer connection may already have replaced it).
+    /// Clears the retained connection only if it is still the current one (a newer
+    /// connection may already have replaced it).
     private func clearConnection(_ connection: NSXPCConnection) {
-        condition.lock()
-        if acceptedConnection === connection { acceptedConnection = nil }
-        condition.unlock()
+        lock.withLock { if acceptedConnection === connection { acceptedConnection = nil } }
+    }
+
+    // MARK: - ClipboardFileProviderControl (activation handshake)
+
+    /// The owner's post-connect handshake.
+    ///
+    /// Its arrival is what drives `shouldAcceptNewConnection` (already run by the
+    /// time this dispatches), so the body only needs to acknowledge — acceptance and
+    /// draining happen there.
+    func ownerDidConnect(reply: @escaping @Sendable () -> Void) {
+        reply()
     }
 
     // MARK: - Byte pull (called from the extension's fetchContents)
 
-    /// Pulls `(generation, repIndex)` through the owner and returns the staged
-    /// file path, or an `NSFileProviderError` on failure.
+    /// Pulls `(generation, repIndex)` through the owner and completes with the
+    /// staged file path or an `NSFileProviderError`.
     ///
-    /// Blocks the calling (fetchContents) thread: the File Provider read path has
-    /// no per-call deadline, so waiting on the owner is safe. Rings the reconnect
-    /// doorbell and waits (bounded) when no owner connection is live.
-    func fetchStagedFile(generation: UInt64, repIndex: Int) -> Result<String, NSError> {
-        guard let connection = waitForConnection() else {
-            return .failure(Self.serverUnreachable)
+    /// **Non-blocking** (see the type doc): completes on the fast path if a
+    /// connection is already live, otherwise rings the doorbell, enqueues the pull,
+    /// and returns — completing asynchronously when the owner connects or the
+    /// bounded `connectTimeout` elapses. `completion` runs exactly once, on an
+    /// arbitrary queue.
+    func fetchStagedFile(
+        generation: UInt64, repIndex: Int,
+        completion: @escaping (Result<String, NSError>) -> Void
+    ) {
+        let pull = PendingPull(generation: generation, repIndex: repIndex, completion: completion)
+        // Arm the connect timeout BEFORE publishing the pull to `pendingPulls`, so
+        // its assignment happens-before the append (and thus before any drainer can
+        // read it under the lock) — otherwise `connectTimeout` is written outside the
+        // lock while the accept-drain reads it, a data race.
+        let timeout = DispatchWorkItem { [weak self] in
+            self?.failPending(pull, reason: "owner connect timeout")
         }
+        pull.connectTimeout = timeout
+        let liveConnection: NSXPCConnection? = lock.withLock {
+            if let connection = acceptedConnection { return connection }
+            pendingPulls.append(pull)  // enqueue atomically vs. a concurrent accept
+            return nil
+        }
+        if let liveConnection {
+            // Fast path: the timeout is never scheduled, so nil it to break the
+            // pull↔work-item retain cycle (an unscheduled work item is never released
+            // by GCD, so the cycle would otherwise leak the pull + its completion).
+            pull.connectTimeout = nil
+            performPull(over: liveConnection, pull: pull)
+            return
+        }
+        // No live connection: ring the doorbell and start the bounded connect timeout.
+        logger.notice("No live owner connection — posting reconnect doorbell")
+        queue.asyncAfter(deadline: .now() + Self.connectTimeout, execute: timeout)
+        DarwinNotification.post(config.reconnectNotificationName)
+    }
 
-        final class Outcome: @unchecked Sendable {
-            var path: String?
-            var error: NSError?
+    /// Removes `pull` from the pending queue and fails it once with `serverUnreachable`.
+    ///
+    /// A no-op if it was already drained by an accept — the lock-guarded removal is
+    /// the single arbiter of who completes it.
+    private func failPending(_ pull: PendingPull, reason: String) {
+        let claimed: Bool = lock.withLock {
+            guard let index = pendingPulls.firstIndex(where: { $0 === pull }) else { return false }
+            pendingPulls.remove(at: index)
+            return true
         }
-        let outcome = Outcome()
-        let semaphore = DispatchSemaphore(value: 0)
+        guard claimed else { return }
+        logger.error("Timed out waiting for owner connection after doorbell (\(reason, privacy: .public))")
+        pull.completion(.failure(Self.serverUnreachable))
+    }
+
+    /// Runs the XPC byte-pull over `connection`, completing `pull` exactly once —
+    /// whichever of the reply, the connection error, or the reply timeout fires
+    /// first wins.
+    private func performPull(over connection: NSXPCConnection, pull: PendingPull) {
+        let once = OnceCompletion(pull.completion)
+        // Bound the reply: a live-but-silent owner never fires the XPC error handler.
+        // No cancel token — if the reply or an error arrives first, `OnceCompletion`
+        // makes this a harmless no-op when it eventually fires. (A cancellable
+        // `DispatchWorkItem` can't be captured in the XPC `@Sendable` closures below.)
+        queue.asyncAfter(deadline: .now() + Self.fetchReplyTimeout) {
+            once.fire(.failure(Self.serverUnreachable))
+        }
 
         let proxy =
             connection.remoteObjectProxyWithErrorHandler { error in
-                outcome.error = error as NSError
-                semaphore.signal()
+                once.fire(.failure(error as NSError))
             } as? ClipboardFileProviderRelay
-        guard let proxy else { return .failure(Self.serverUnreachable) }
-
-        proxy.fetchFile(generation: generation, repIndex: repIndex) { path, error in
-            outcome.path = path
-            outcome.error = error
-            semaphore.signal()
+        guard let proxy else {
+            once.fire(.failure(Self.serverUnreachable))
+            return
         }
-        // Bounded: a live-but-silent owner (stalled pull) never signals via the XPC
-        // error handler, so cap the wait rather than pinning this worker forever. A
-        // reply arriving after the timeout harmlessly signals a semaphore no one
-        // waits on; the orphaned staged file is reclaimed by the owner's sweep.
-        guard semaphore.wait(timeout: .now() + Self.fetchReplyTimeout) == .success else {
-            logger.error(
-                "fetchStagedFile reply timed out after \(Int(Self.fetchReplyTimeout), privacy: .public)s")
-            return .failure(Self.serverUnreachable)
+        proxy.fetchFile(generation: pull.generation, repIndex: pull.repIndex) { path, error in
+            if let path {
+                once.fire(.success(path))
+            } else {
+                once.fire(.failure(error ?? Self.serverUnreachable))
+            }
         }
-
-        if let path = outcome.path { return .success(path) }
-        return .failure(outcome.error ?? Self.serverUnreachable)
-    }
-
-    /// Returns a live owner connection, ringing the doorbell and waiting (bounded)
-    /// when none exists. `nil` on timeout (owner not running / domain disabled).
-    private func waitForConnection() -> NSXPCConnection? {
-        condition.lock()
-        if let existing = acceptedConnection {
-            condition.unlock()
-            return existing
-        }
-        condition.unlock()
-
-        logger.notice("No live owner connection — posting reconnect doorbell")
-        DarwinNotification.post(config.reconnectNotificationName)
-
-        let deadline = Date().addingTimeInterval(Self.connectTimeout)
-        condition.lock()
-        while acceptedConnection == nil {
-            // `wait(until:)` returns false on timeout; loop guards spurious wakeups.
-            if !condition.wait(until: deadline) { break }
-        }
-        let connection = acceptedConnection
-        condition.unlock()
-
-        if connection == nil {
-            logger.error("Timed out waiting for owner connection after doorbell")
-        }
-        return connection
     }
 
     private static let serverUnreachable = NSError(
         domain: NSFileProviderErrorDomain, code: NSFileProviderError.serverUnreachable.rawValue)
+}
+
+/// Invokes a `(Result<String, NSError>) -> Void` completion exactly once, even when
+/// the reply, a connection error, and a timeout all race to fulfil it.
+///
+/// `@unchecked Sendable`: the stored completion is guarded by `lock`.
+private final class OnceCompletion: @unchecked Sendable {
+    private let lock = NSLock()
+    private var completion: ((Result<String, NSError>) -> Void)?
+
+    init(_ completion: @escaping (Result<String, NSError>) -> Void) {
+        self.completion = completion
+    }
+
+    func fire(_ result: Result<String, NSError>) {
+        let once: ((Result<String, NSError>) -> Void)? = lock.withLock {
+            let pending = completion
+            completion = nil
+            return pending
+        }
+        once?(result)
+    }
 }

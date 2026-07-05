@@ -33,3 +33,21 @@ import Foundation
         generation: UInt64, repIndex: Int,
         reply: @escaping @Sendable (_ stagedPath: String?, _ error: NSError?) -> Void)
 }
+
+/// The XPC interface the File Provider extension exports to the container app.
+///
+/// An `NSXPCListener` only delivers `shouldAcceptNewConnection` when the *client*
+/// sends its first message. In the inverted relay the owner (client) otherwise
+/// sends nothing — it only exports `ClipboardFileProviderRelay` and waits to be
+/// called back — so the extension's listener would never accept the connection and
+/// could never call back. The owner calls `ownerDidConnect()` immediately after it
+/// connects to drive that acceptance (the "app calls the service" message the
+/// servicing pattern relies on). This is also the owner's liveness probe: a call
+/// that errors means the cached connection is dead and must be replaced.
+@objc public protocol ClipboardFileProviderControl {
+    /// Activation handshake: the owner calls this right after connecting and
+    /// exporting its relay, so the extension accepts the connection and can call
+    /// the relay back. The body is intentionally trivial — the send itself is the
+    /// signal.
+    func ownerDidConnect(reply: @escaping @Sendable () -> Void)
+}
