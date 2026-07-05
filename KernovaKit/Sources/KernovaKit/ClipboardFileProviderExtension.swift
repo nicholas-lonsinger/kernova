@@ -139,9 +139,9 @@ open class ClipboardFileProviderExtension: NSObject, NSFileProviderReplicatedExt
         // in-flight `fetchContents`, so blocking here would deadlock the very
         // reconnect we're waiting for. Return `progress` now; complete when the
         // staged path (or an error) lands.
-        serviceSource.fetchStagedFile(
+        let cancellation = serviceSource.fetchStagedFile(
             generation: decoded.generation, repIndex: decoded.repIndex
-        ) { [weak self] result in
+        ) { [weak self, weak progress] result in
             guard let self else {
                 completionHandler(nil, nil, NSFileProviderError(.providerNotFound))
                 return
@@ -152,11 +152,24 @@ open class ClipboardFileProviderExtension: NSObject, NSFileProviderReplicatedExt
                     stagedPath: stagedPath, manifestItem: manifestItem, progress: progress,
                     completionHandler: completionHandler)
             case .failure(let error):
-                self.logger.error(
-                    "fetchContents relay failed: \(error.localizedDescription, privacy: .public)")
+                // A user cancellation (Finder's cancel button → `progress.cancel()`)
+                // completes with Cocoa's `NSUserCancelledError`; log it at debug, not
+                // error — it's an expected outcome, not a fetch failure.
+                if error.domain == NSCocoaErrorDomain && error.code == NSUserCancelledError {
+                    self.logger.debug("fetchContents cancelled by user")
+                } else {
+                    self.logger.error(
+                        "fetchContents relay failed: \(error.localizedDescription, privacy: .public)")
+                }
                 completionHandler(nil, nil, error)
             }
         }
+        // Wire Finder's cancel button to the pull. RATIONALE: the completion closure
+        // above captures `progress` WEAKLY so this handler — which strongly holds
+        // `cancellation` → the pull → that completion — can't form a retain cycle back
+        // through `progress`. `progress` is alive whenever the completion runs (the
+        // system owns it until the fetch completes), so the weak ref is never nil there.
+        progress.cancellationHandler = { cancellation.cancel() }
         return progress
     }
 
@@ -165,8 +178,12 @@ open class ClipboardFileProviderExtension: NSObject, NSFileProviderReplicatedExt
     ///
     /// Split out of `fetchContents` because the byte pull is now asynchronous, so
     /// materialization runs in the pull's completion rather than inline.
+    ///
+    /// `progress` is weak at the call site (to avoid a cancellation retain cycle —
+    /// see `fetchContents`), so it's optional here; it's non-nil on the success path
+    /// in practice because the system owns it until the fetch completes.
     private func materialize(
-        stagedPath: String, manifestItem: ClipboardFileProviderManifest.Item, progress: Progress,
+        stagedPath: String, manifestItem: ClipboardFileProviderManifest.Item, progress: Progress?,
         completionHandler: @escaping (URL?, NSFileProviderItem?, Error?) -> Void
     ) {
         // Clone the owner-staged file (shared app-group container) into the domain's
@@ -183,7 +200,7 @@ open class ClipboardFileProviderExtension: NSObject, NSFileProviderReplicatedExt
             let destination = tempDir.appendingPathComponent(UUID().uuidString)
             try FileManager.default.copyItem(at: URL(fileURLWithPath: stagedPath), to: destination)
             logger.notice("fetchContents materialized \(manifestItem.byteCount, privacy: .public) bytes")
-            progress.completedUnitCount = 100
+            progress?.completedUnitCount = 100
             completionHandler(destination, ClipboardFileItem(manifestItem: manifestItem), nil)
         } catch {
             logger.error("fetchContents clone failed: \(error.localizedDescription, privacy: .public)")
