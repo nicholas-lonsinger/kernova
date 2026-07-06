@@ -194,7 +194,6 @@ final class ClipboardFileProviderServiceSource: NSObject, NSFileProviderServiceS
     /// and returns — completing asynchronously when the owner connects or the
     /// bounded `connectTimeout` elapses. `completion` runs exactly once, on an
     /// arbitrary queue.
-    @discardableResult
     func fetchStagedFile(
         generation: UInt64, repIndex: Int,
         completion: @escaping (Result<String, NSError>) -> Void

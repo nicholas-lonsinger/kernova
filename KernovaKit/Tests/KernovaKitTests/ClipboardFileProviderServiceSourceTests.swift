@@ -16,17 +16,6 @@ import os
 /// the assertions don't need to wait.
 @Suite("ClipboardFileProviderServiceSource cancellation")
 struct ClipboardFileProviderServiceSourceTests {
-    /// A `@Sendable`-safe mutable cell for the completion closure to record into.
-    private final class Box<T>: @unchecked Sendable {
-        private let lock = NSLock()
-        private var stored: T
-        init(_ value: T) { stored = value }
-        var value: T {
-            get { lock.withLock { stored } }
-            set { lock.withLock { stored = newValue } }
-        }
-    }
-
     /// A config with no code-signing pins and a test app group / service name, so a
     /// source can be constructed without touching production identifiers.
     ///

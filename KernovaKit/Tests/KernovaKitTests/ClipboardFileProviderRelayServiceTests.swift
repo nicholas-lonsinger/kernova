@@ -12,18 +12,6 @@ import Testing
 /// failure) without standing up a live anonymous-XPC connection.
 @Suite("ClipboardFileProviderRelayService")
 struct ClipboardFileProviderRelayServiceTests {
-    /// A `@Sendable`-safe mutable cell so the synchronous reply closure can record
-    /// what it observed.
-    private final class Box<T>: @unchecked Sendable {
-        private let lock = NSLock()
-        private var stored: T
-        init(_ value: T) { stored = value }
-        var value: T {
-            get { lock.withLock { stored } }
-            set { lock.withLock { stored = newValue } }
-        }
-    }
-
     /// Records the `(generation, repIndex)` it was asked for and returns a fixed
     /// result, so forwarding and result mapping can be asserted.
     private final class MockPullProvider: ClipboardFileProviderPullProvider, @unchecked Sendable {
