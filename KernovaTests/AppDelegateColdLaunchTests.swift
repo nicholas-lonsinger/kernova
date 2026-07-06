@@ -1,41 +1,88 @@
+import Cocoa
 import Testing
 
 @testable import Kernova
 
-/// Unit tests for the pure cold-launch activation decision (#460).
+/// Unit tests for the pure cold-launch decisions (#460).
 ///
-/// `AppDelegate.coldLaunchOutcome(didBecomeActive:alreadyResolved:)`: a manual
-/// launch activates the app (→ show the window); a login launch never activates
-/// during the settle window (→ stay headless); and once resolved the decision is
-/// inert so later ordinary activations don't re-trigger it. The AppKit timing
-/// itself is verified manually.
-@Suite("AppDelegate.coldLaunchOutcome")
+/// `AppDelegate.launchProvenance(eventID:launchPropData:)` classifies the launch
+/// Apple event — a login-item launch carries `keyAELaunchedAsLogInItem`, a plain
+/// `oapp` is a manual launch, and anything unreadable falls back to the
+/// activation heuristic. `AppDelegate.coldLaunchOutcome(showWindow:alreadyResolved:)`
+/// latches the resolution so later ordinary activations don't re-trigger it. The
+/// AppKit timing itself is verified manually.
+@Suite("AppDelegate cold-launch decisions")
 struct AppDelegateColdLaunchTests {
-    @Test("first resolution with activation shows the window (manual launch)")
-    func activatedShowsWindow() {
+    // MARK: - launchProvenance
+
+    @Test("an oapp event with the login-item property classifies as a login launch")
+    func loginItemEventClassifiesLoginItem() {
         #expect(
-            AppDelegate.coldLaunchOutcome(didBecomeActive: true, alreadyResolved: false)
+            AppDelegate.launchProvenance(
+                eventID: AEEventID(kAEOpenApplication),
+                launchPropData: OSType(keyAELaunchedAsLogInItem))
+                == .loginItem)
+    }
+
+    @Test("a plain oapp event classifies as a manual launch")
+    func plainOpenEventClassifiesManual() {
+        #expect(
+            AppDelegate.launchProvenance(
+                eventID: AEEventID(kAEOpenApplication), launchPropData: nil)
+                == .manual)
+    }
+
+    @Test("an oapp event with an unrelated property value classifies as manual")
+    func unrelatedPropDataClassifiesManual() {
+        #expect(
+            AppDelegate.launchProvenance(
+                eventID: AEEventID(kAEOpenApplication), launchPropData: 0)
+                == .manual)
+    }
+
+    @Test("a non-oapp event is indeterminate (heuristic fallback)")
+    func nonOpenEventIsIndeterminate() {
+        #expect(
+            AppDelegate.launchProvenance(
+                eventID: AEEventID(kAEOpenDocuments),
+                launchPropData: OSType(keyAELaunchedAsLogInItem))
+                == .indeterminate)
+    }
+
+    @Test("a missing launch event is indeterminate (heuristic fallback)")
+    func missingEventIsIndeterminate() {
+        #expect(
+            AppDelegate.launchProvenance(eventID: nil, launchPropData: nil)
+                == .indeterminate)
+    }
+
+    // MARK: - coldLaunchOutcome
+
+    @Test("first resolution with a show signal shows the window (manual launch)")
+    func showSignalShowsWindow() {
+        #expect(
+            AppDelegate.coldLaunchOutcome(showWindow: true, alreadyResolved: false)
                 == .showWindow)
     }
 
-    @Test("first resolution without activation stays headless (login launch)")
-    func notActivatedStaysHeadless() {
+    @Test("first resolution without a show signal stays headless (login launch)")
+    func noShowSignalStaysHeadless() {
         #expect(
-            AppDelegate.coldLaunchOutcome(didBecomeActive: false, alreadyResolved: false)
+            AppDelegate.coldLaunchOutcome(showWindow: false, alreadyResolved: false)
                 == .stayHeadless)
     }
 
     @Test("once resolved, a later activation is ignored")
     func resolvedIgnoresActivation() {
         #expect(
-            AppDelegate.coldLaunchOutcome(didBecomeActive: true, alreadyResolved: true)
+            AppDelegate.coldLaunchOutcome(showWindow: true, alreadyResolved: true)
                 == .alreadyResolved)
     }
 
     @Test("once resolved, the settle-window fallback is ignored")
     func resolvedIgnoresFallback() {
         #expect(
-            AppDelegate.coldLaunchOutcome(didBecomeActive: false, alreadyResolved: true)
+            AppDelegate.coldLaunchOutcome(showWindow: false, alreadyResolved: true)
                 == .alreadyResolved)
     }
 }

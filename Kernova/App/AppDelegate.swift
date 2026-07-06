@@ -30,14 +30,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// headless.
     private var statusItemController: HostAgentStatusItemController?
 
-    /// Cold-launch activation-heuristic latch (#460).
+    /// Cold-launch resolution latch (#460).
     ///
-    /// No public API distinguishes a login launch from a manual launch (Apple
-    /// FB10207829), so the resident app starts headless and resolves exactly once:
-    /// it shows its window if `applicationDidBecomeActive` fires (a manual launch
-    /// activates the app), or stays headless if a short settle window elapses with
-    /// no activation (assumed login launch). This latch makes the resolution
-    /// idempotent so later ordinary activations don't re-trigger it.
+    /// The resident app starts headless and resolves exactly once: the launch
+    /// Apple event's login-item property classifies most launches deterministically
+    /// (`resolveColdLaunch(from:)`), and an unreadable event falls back to the
+    /// activation-settle heuristic — show the window if the app activates (manual
+    /// launch), stay headless if a short settle window elapses without activation
+    /// (assumed login launch). This latch makes the resolution idempotent so later
+    /// ordinary activations don't re-trigger it.
     private var coldLaunchResolved = false
     /// Set in `applicationWillBecomeActive` and read in `applicationShouldHandleReopen`
     /// to distinguish a dock click that activates the app from one on an already-active app.
@@ -206,11 +207,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let app = NSApplication.shared
 
         // Resident app: start headless in `.accessory` (no Dock blip / focus
-        // steal). An accessory app can still become frontmost, so a manual launch
-        // fires `applicationDidBecomeActive` and the cold-launch heuristic shows
-        // the window, while a login launch (background, unactivated) stays
-        // headless. The unit-test host stays a plain `.regular` foreground app so
-        // the existing suite that launches `Kernova.app` is unaffected.
+        // steal). Whether the window then shows is decided by the launch Apple
+        // event's provenance (manual → show, login item → stay headless), with the
+        // activation heuristic as fallback — see `resolveColdLaunch(from:)`. The
+        // unit-test host stays a plain `.regular` foreground app so the existing
+        // suite that launches `Kernova.app` is unaffected.
         if !isTestHost {
             app.setActivationPolicy(.accessory)
         }
@@ -282,13 +283,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     // MARK: - Resident App
 
     /// Brings up the resident, headless app: stands up the menu-bar status item
-    /// and arms the cold-launch activation heuristic.
+    /// and resolves the cold launch.
     ///
     /// The VM library is already loaded (`VMLibraryViewModel.init`); VMs are
     /// **not** auto-started — they appear at their last-logout state. Idle
     /// termination is not armed: the app stays resident until an explicit
     /// status-item Quit, with any running VMs executing headless. Whether a window
-    /// shows at launch is decided by the activation heuristic.
+    /// shows at launch is decided by the launch event's provenance (with the
+    /// activation heuristic as fallback).
     private func startResidentApp() {
         // No legacy-agent migration (#460): the old launch-at-login agent's
         // registration can only be unregistered while its `app.kernova.plist` is
@@ -314,16 +316,71 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             }
         )
 
-        // Cold-launch activation heuristic (#460): a manual launch activates the
-        // app → show the window; a login launch stays headless.
-        armColdLaunchActivationHeuristic()
+        // Cold-launch resolution (#460): the launch Apple event classifies most
+        // launches deterministically (manual → show the window; login item → stay
+        // headless); an unreadable event falls back to the activation heuristic.
+        resolveColdLaunch(from: NSAppleEventManager.shared().currentAppleEvent)
 
         Self.logger.notice("Kernova resident app ready (headless, .accessory)")
     }
 
-    // MARK: - Cold-launch activation heuristic
+    // MARK: - Cold-launch resolution
 
-    /// Arms the cold-launch heuristic: resolve immediately if the app is already
+    /// How the process was launched, as told by the launch Apple event.
+    enum LaunchProvenance: Equatable {
+        /// The `oapp` event carries `keyAELaunchedAsLogInItem` — a login-item launch.
+        case loginItem
+        /// A plain `oapp` event without the login-item property — a manual launch
+        /// (Finder double-click, Dock, `open`, LaunchServices on another app's behalf).
+        case manual
+        /// No readable `oapp` event — fall back to the activation heuristic.
+        case indeterminate
+    }
+
+    /// Classifies the launch Apple event, factored out pure for unit testing
+    /// (mirrors `coldLaunchOutcome`).
+    ///
+    /// Takes the event's already-extracted `(eventID, keyAEPropData enum code)`
+    /// rather than the descriptor so tests don't have to construct Apple events.
+    nonisolated static func launchProvenance(
+        eventID: AEEventID?, launchPropData: OSType?
+    ) -> LaunchProvenance {
+        guard eventID == AEEventID(kAEOpenApplication) else { return .indeterminate }
+        return launchPropData == OSType(keyAELaunchedAsLogInItem) ? .loginItem : .manual
+    }
+
+    /// Resolves the cold launch from the launch Apple event, falling back to the
+    /// activation-settle heuristic when the event is unreadable.
+    ///
+    /// The `oapp` event's `keyAEPropData` property carries
+    /// `keyAELaunchedAsLogInItem` for a login-item launch — legacy-documented
+    /// (Cocoa Scripting Guide, "may contain") and field-proven against
+    /// `SMAppService.mainApp` login items (Electron ≥ 29.4 ships the same check).
+    /// There is no modern purpose-built API for launch provenance (FB10207829),
+    /// and Apple never re-documented the property for `SMAppService` — hence the
+    /// heuristic fallback for an unreadable event rather than trusting silence.
+    /// Must run while the launch event is still current (i.e. from
+    /// `applicationDidFinishLaunching`'s call stack); later, `currentAppleEvent`
+    /// is nil and this degrades gracefully to the heuristic.
+    private func resolveColdLaunch(from launchEvent: NSAppleEventDescriptor?) {
+        let provenance = Self.launchProvenance(
+            eventID: launchEvent?.eventID,
+            launchPropData: launchEvent?.paramDescriptor(forKeyword: AEKeyword(keyAEPropData))?
+                .enumCodeValue)
+        switch provenance {
+        case .loginItem:
+            Self.logger.notice("Launch event carries the login-item property")
+            resolveColdLaunch(showWindow: false)
+        case .manual:
+            Self.logger.notice("Launch event is a plain open (manual launch)")
+            resolveColdLaunch(showWindow: true)
+        case .indeterminate:
+            Self.logger.notice("No readable launch event — falling back to activation heuristic")
+            armColdLaunchActivationHeuristic()
+        }
+    }
+
+    /// Arms the fallback heuristic: resolve immediately if the app is already
     /// active (a fast manual launch can activate before this runs), otherwise wait
     /// a short settle window and assume a login launch → stay headless.
     ///
@@ -332,12 +389,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// resolves earlier via `applicationDidBecomeActive`.
     private func armColdLaunchActivationHeuristic() {
         if NSApp.isActive {
-            resolveColdLaunch(didBecomeActive: true)
+            resolveColdLaunch(showWindow: true)
             return
         }
-        // RATIONALE: no public API distinguishes a login launch from a manual one
-        // (FB10207829), so a fixed settle window is inherent to the heuristic, not a
-        // tunable bug. The common manual-launch case resolves immediately via the
+        // RATIONALE: this fallback only runs when the launch Apple event was
+        // unreadable (`launchProvenance` → `.indeterminate`), where no API-derived
+        // signal remains (FB10207829) — so a fixed settle window is inherent to the
+        // heuristic, not a tunable bug. A manual launch resolves via the
         // `NSApp.isActive` fast path above or an early `applicationDidBecomeActive`;
         // this timer only decides the case where neither has fired yet. If a manual
         // launch's activation is delayed past the window it latches headless and the
@@ -346,47 +404,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // the (correct) headless outcome of a genuine login launch for no gain.
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(1.5))
-            self?.resolveColdLaunch(didBecomeActive: false)
+            self?.resolveColdLaunch(showWindow: false)
         }
     }
 
     /// The cold-launch decision, factored out pure for unit testing.
     enum ColdLaunchOutcome: Equatable {
-        /// First resolution, app was activated (manual launch) → show the window.
+        /// First resolution, manual launch (event- or activation-signalled) →
+        /// show the window.
         case showWindow
-        /// First resolution, no activation (login launch) → stay headless.
+        /// First resolution, login launch (event-signalled or settle-window
+        /// elapsed) → stay headless.
         case stayHeadless
         /// Already resolved — ignore (a later ordinary activation).
         case alreadyResolved
     }
 
-    /// Given whether the app became active during the settle window and whether
-    /// the heuristic already resolved, returns what to do — exactly once.
+    /// Given the resolved show/stay signal and whether the cold launch already
+    /// resolved, returns what to do — exactly once.
     ///
     /// `nonisolated` + pure so it is unit-testable without the AppKit timing
     /// (mirrors `classifyQuit`).
     nonisolated static func coldLaunchOutcome(
-        didBecomeActive: Bool, alreadyResolved: Bool
+        showWindow: Bool, alreadyResolved: Bool
     ) -> ColdLaunchOutcome {
         guard !alreadyResolved else { return .alreadyResolved }
-        return didBecomeActive ? .showWindow : .stayHeadless
+        return showWindow ? .showWindow : .stayHeadless
     }
 
     /// Applies `coldLaunchOutcome`, latching the resolution so later ordinary
     /// activations don't re-trigger it.
-    private func resolveColdLaunch(didBecomeActive: Bool) {
+    private func resolveColdLaunch(showWindow: Bool) {
         switch Self.coldLaunchOutcome(
-            didBecomeActive: didBecomeActive, alreadyResolved: coldLaunchResolved)
+            showWindow: showWindow, alreadyResolved: coldLaunchResolved)
         {
         case .alreadyResolved:
             return
         case .showWindow:
             coldLaunchResolved = true
-            Self.logger.notice("Cold launch: app activated — showing window")
+            Self.logger.notice("Cold launch resolved: showing window (manual launch)")
             summonUserInterface()
         case .stayHeadless:
             coldLaunchResolved = true
-            Self.logger.notice("Cold launch settled headless (assumed login launch)")
+            Self.logger.notice("Cold launch resolved: staying headless (login launch)")
         }
     }
 
@@ -525,12 +585,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
-        // The cold-launch heuristic's positive signal: a manual launch activates
-        // the app, so its first activation resolves the heuristic by showing the
-        // window (idempotent thereafter — later ordinary activations are ignored).
-        // No-op in the test host, which shows its window in didFinishLaunching.
+        // The fallback heuristic's positive signal: a manual launch activates the
+        // app, so its first activation resolves the cold launch by showing the
+        // window (idempotent thereafter — the event-based resolution or a prior
+        // activation has usually latched it already, and later ordinary
+        // activations are ignored). No-op in the test host, which shows its
+        // window in didFinishLaunching.
         guard !isTestHost else { return }
-        resolveColdLaunch(didBecomeActive: true)
+        resolveColdLaunch(showWindow: true)
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
