@@ -22,18 +22,18 @@ import Foundation
 /// extension wraps it. The `clipfile` prefix distinguishes a per-rep file item
 /// from the framework's reserved container identifiers (root / working-set /
 /// trash). Avoids `/` and `:`, which the framework reserves.
-public enum ClipboardFileProviderItemIdentifier {
+enum ClipboardFileProviderItemIdentifier {
     private static let prefix = "clipfile"
     private static let separator: Character = "."
 
     /// Encodes `(generation, repIndex)` into an item identifier string.
-    public static func make(generation: UInt64, repIndex: Int) -> String {
+    static func make(generation: UInt64, repIndex: Int) -> String {
         "\(prefix)\(separator)\(generation)\(separator)\(repIndex)"
     }
 
     /// Decodes an identifier string back to `(generation, repIndex)`, or `nil`
     /// when it isn't one this provider minted.
-    public static func decode(_ identifier: String) -> (generation: UInt64, repIndex: Int)? {
+    static func decode(_ identifier: String) -> (generation: UInt64, repIndex: Int)? {
         let parts = identifier.split(separator: separator, omittingEmptySubsequences: false)
         guard parts.count == 3, parts[0] == prefix,
             let generation = UInt64(parts[1]),

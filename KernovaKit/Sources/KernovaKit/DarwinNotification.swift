@@ -18,9 +18,9 @@ import Foundation
 // SDK's Swift module map, so the CoreFoundation Darwin API is used instead.
 
 /// Posts a payload-free Darwin notification by name.
-public enum DarwinNotification {
+enum DarwinNotification {
     /// Posts `name` to every registered observer across the sandbox boundary.
-    public static func post(_ name: String) {
+    static func post(_ name: String) {
         CFNotificationCenterPostNotification(
             CFNotificationCenterGetDarwinNotifyCenter(),
             CFNotificationName(name as CFString),
@@ -36,13 +36,13 @@ public enum DarwinNotification {
 /// `self`, so it must be cancelled (which `deinit` does) before `self` is freed.
 ///
 /// `@unchecked Sendable`: `handler`/`queue`/`name` are immutable after `init`.
-public final class DarwinNotificationObserver: @unchecked Sendable {
+final class DarwinNotificationObserver: @unchecked Sendable {
     private let name: String
     private let queue: DispatchQueue
     private let handler: @Sendable () -> Void
 
     /// Registers for `name`, delivering each post to `handler` on `queue`.
-    public init(name: String, queue: DispatchQueue, handler: @escaping @Sendable () -> Void) {
+    init(name: String, queue: DispatchQueue, handler: @escaping @Sendable () -> Void) {
         self.name = name
         self.queue = queue
         self.handler = handler
@@ -65,7 +65,7 @@ public final class DarwinNotificationObserver: @unchecked Sendable {
     /// Removes the registration.
     ///
     /// Idempotent — a second remove is a no-op.
-    public func cancel() {
+    func cancel() {
         CFNotificationCenterRemoveObserver(
             CFNotificationCenterGetDarwinNotifyCenter(),
             Unmanaged.passUnretained(self).toOpaque(),
