@@ -10,6 +10,21 @@ struct StreamTestFailure: Error, CustomStringConvertible {
     var description: String { message }
 }
 
+/// A `@Sendable`-safe mutable cell — lets a synchronous test closure record what it
+/// observed from a concurrency-checked context.
+///
+/// Shared across the package test suites (`@testable import` visibility) so the
+/// lock-guarded cell has one source of truth.
+final class Box<T>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: T
+    init(_ value: T) { stored = value }
+    var value: T {
+        get { lock.withLock { stored } }
+        set { lock.withLock { stored = newValue } }
+    }
+}
+
 // MARK: - AsyncGate (package-test copy)
 
 /// Resumes its continuation at most once across the `notify()`/timeout race.

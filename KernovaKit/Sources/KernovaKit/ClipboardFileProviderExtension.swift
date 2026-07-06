@@ -3,19 +3,25 @@ import Foundation
 import UniformTypeIdentifiers
 import os
 
-// Shared clipboard File Provider extension (issues #376 guest / #424 host).
+// Shared clipboard File Provider extension (issues #376 guest / #424 host /
+// #460 servicing migration).
 //
 // Serves clipboard *file* pastes as on-demand, dataless placeholders so a paste
 // returns instantly and the bytes materialize on read via `fetchContents` —
 // escaping Finder's 60s pasteboard-promise deadline (CLIPBOARD.md §2/§13).
 //
 // The extension is sandboxed and can't open a vsock, so it relays the byte pull
-// to the owning process (the guest agent, or the main app via its broker) over
-// an app-group Mach service. The current offer's items come from a manifest the
-// owner writes into the shared app-group container; the extension enumerates
-// from it and `fetchContents` clones the owner-staged file (also in the shared
-// container) into the domain's temporary directory before handing it to the
-// system.
+// to the owning process (the guest agent or the main app) over the canonical
+// `NSFileProviderServicing` anonymous-XPC pipe: this extension conforms to
+// `NSFileProviderServicing` and vends a `ClipboardFileProviderServiceSource`
+// whose anonymous listener endpoint the owner connects to. INVERTED wiring vs.
+// the old Mach design — the owner is the XPC client and exports the relay; the
+// extension calls it back through the accepted connection at `fetchContents`
+// time (see `ClipboardFileProviderServiceSource`). The current offer's items
+// come from a manifest the owner writes into the shared app-group container; the
+// extension enumerates from it and `fetchContents` clones the owner-staged file
+// (also in the shared container) into the domain's temporary directory before
+// handing it to the system.
 //
 // Direction-agnostic: all addressing comes from `directionConfig`. Each appex
 // subclasses this and overrides `directionConfig` with its direction; the
@@ -30,7 +36,9 @@ import os
 /// Obj-C exposure the framework needs) live on the conforming type; subclasses
 /// inherit the conformance, all method implementations, and the
 /// `required init(domain:)`, and supply only their direction.
-open class ClipboardFileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
+open class ClipboardFileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
+    NSFileProviderServicing
+{
     /// The direction this extension serves.
     ///
     /// Abstract — every concrete appex subclass must override it (the base is
@@ -45,15 +53,23 @@ open class ClipboardFileProviderExtension: NSObject, NSFileProviderReplicatedExt
     let config: ClipboardFileProviderConfig
     let store: ClipboardFileProviderContainer
     let logger: Logger
+    /// The single servicing endpoint vended to the owner.
+    ///
+    /// Created once so its anonymous listener endpoint is stable across
+    /// `makeListenerEndpoint()` calls, and reachable from `fetchContents` for the
+    /// byte-pull callback.
+    let serviceSource: ClipboardFileProviderServiceSource
 
     /// Instantiated by the system per registered domain; configures itself from
     /// the subclass's `directionConfig`.
     public required init(domain: NSFileProviderDomain) {
         let config = Self.directionConfig
+        let logger = Logger(subsystem: config.extensionLoggerSubsystem, category: "Extension")
         self.domain = domain
         self.config = config
         self.store = ClipboardFileProviderContainer(config: config)
-        self.logger = Logger(subsystem: config.extensionLoggerSubsystem, category: "Extension")
+        self.logger = logger
+        self.serviceSource = ClipboardFileProviderServiceSource(config: config, logger: logger)
         super.init()
         logger.notice(
             "FileProviderExtension init (domain=\(domain.identifier.rawValue, privacy: .public))")
@@ -61,6 +77,22 @@ open class ClipboardFileProviderExtension: NSObject, NSFileProviderReplicatedExt
 
     open func invalidate() {
         logger.notice("FileProviderExtension invalidate")
+    }
+
+    // MARK: - NSFileProviderServicing
+
+    /// Vends the single anonymous-XPC service source the owner connects to so it
+    /// can be called back at `fetchContents` (#460).
+    ///
+    /// Domain-wide, so the per-item `itemIdentifier` is ignored.
+    open func supportedServiceSources(
+        for itemIdentifier: NSFileProviderItemIdentifier,
+        completionHandler: @escaping ([NSFileProviderServiceSource]?, Error?) -> Void
+    ) -> Progress {
+        logger.debug(
+            "supportedServiceSources(for: \(itemIdentifier.rawValue, privacy: .public))")
+        completionHandler([serviceSource], nil)
+        return Progress()
     }
 
     open func item(
@@ -97,76 +129,83 @@ open class ClipboardFileProviderExtension: NSObject, NSFileProviderReplicatedExt
             return progress
         }
 
-        // Relay the byte pull to the owner — the sandboxed extension can't open
-        // vsock (CLIPBOARD.md §11). The system calls fetchContents off-thread with
-        // no 60s deadline, so blocking on the reply is safe and lets the completion
-        // handler run synchronously here.
-        let connection = NSXPCConnection(machServiceName: config.machServiceName, options: [])
-        connection.remoteObjectInterface = NSXPCInterface(with: ClipboardFileProviderRelay.self)
-        // Validate the relay vendor when the direction requires it (the host pins
-        // the main app, which now vends …xpc directly as a launchd agent; the guest
-        // leaves it nil — see the config doc and #145). Non-throwing: arms a
-        // framework-enforced check, so an impostor vendor has this connection's calls
-        // invalidated below.
-        if let requirement = config.relayCodeSigningRequirement {
-            connection.setCodeSigningRequirement(requirement)
+        // Relay the byte pull to the owner over the servicing connection — the
+        // sandboxed extension can't open vsock (CLIPBOARD.md §11). INVERTED wiring:
+        // the owner is the XPC client and exported the relay; we call it back
+        // through the accepted connection (`serviceSource`). If no owner connection
+        // is live, the source rings the Darwin doorbell and completes once the owner
+        // reconnects. This MUST stay async — see `ClipboardFileProviderServiceSource`:
+        // the framework serialises the owner's `getFileProviderConnection` behind an
+        // in-flight `fetchContents`, so blocking here would deadlock the very
+        // reconnect we're waiting for. Return `progress` now; complete when the
+        // staged path (or an error) lands.
+        let cancellation = serviceSource.fetchStagedFile(
+            generation: decoded.generation, repIndex: decoded.repIndex
+        ) { [weak self, weak progress] result in
+            guard let self else {
+                completionHandler(nil, nil, NSFileProviderError(.providerNotFound))
+                return
+            }
+            switch result {
+            case .success(let stagedPath):
+                self.materialize(
+                    stagedPath: stagedPath, manifestItem: manifestItem, progress: progress,
+                    completionHandler: completionHandler)
+            case .failure(let error):
+                // A user cancellation (Finder's cancel button → `progress.cancel()`)
+                // completes with Cocoa's `NSUserCancelledError`; log it at debug, not
+                // error — it's an expected outcome, not a fetch failure.
+                if error.domain == NSCocoaErrorDomain && error.code == NSUserCancelledError {
+                    self.logger.debug("fetchContents cancelled by user")
+                } else {
+                    self.logger.error(
+                        "fetchContents relay failed: \(error.localizedDescription, privacy: .public)")
+                }
+                completionHandler(nil, nil, error)
+            }
         }
-        connection.resume()
-        defer { connection.invalidate() }
+        // Wire Finder's cancel button to the pull. RATIONALE: the completion closure
+        // above captures `progress` WEAKLY so this handler — which strongly holds
+        // `cancellation` → the pull → that completion — can't form a retain cycle back
+        // through `progress`. `progress` is alive whenever the completion runs (the
+        // system owns it until the fetch completes), so the weak ref is never nil there.
+        progress.cancellationHandler = { cancellation.cancel() }
+        return progress
+    }
 
-        final class Outcome: @unchecked Sendable {
-            var path: String?
-            var error: Error?
-        }
-        let outcome = Outcome()
-        let semaphore = DispatchSemaphore(value: 0)
-
-        let proxy =
-            connection.remoteObjectProxyWithErrorHandler { error in
-                outcome.error = error
-                semaphore.signal()
-            } as? ClipboardFileProviderRelay
-        guard let proxy else {
-            completionHandler(nil, nil, NSFileProviderError(.serverUnreachable))
-            return progress
-        }
-
-        proxy.fetchFile(generation: decoded.generation, repIndex: decoded.repIndex) { path, error in
-            outcome.path = path
-            outcome.error = error
-            semaphore.signal()
-        }
-        semaphore.wait()
-
-        guard let stagedPath = outcome.path else {
-            logger.error(
-                "fetchContents relay failed: \(outcome.error?.localizedDescription ?? "unknown", privacy: .public)"
-            )
-            completionHandler(nil, nil, outcome.error ?? NSFileProviderError(.serverUnreachable))
-            return progress
-        }
-
-        // Clone the owner-staged file (shared app-group container) into the
-        // domain's temporary directory, which is guaranteed to be on the same
-        // volume so the system can clone it into its replicated store. A same-
-        // volume copy is an APFS clonefile — near-free — and hands the system a
-        // disposable file, leaving the owner's staging cache free to evict.
+    /// Clones the owner-staged file into the domain's temporary directory and hands
+    /// it to the system, completing the fetch.
+    ///
+    /// Split out of `fetchContents` because the byte pull is now asynchronous, so
+    /// materialization runs in the pull's completion rather than inline.
+    ///
+    /// `progress` is weak at the call site (to avoid a cancellation retain cycle —
+    /// see `fetchContents`), so it's optional here; it's non-nil on the success path
+    /// in practice because the system owns it until the fetch completes.
+    private func materialize(
+        stagedPath: String, manifestItem: ClipboardFileProviderManifest.Item, progress: Progress?,
+        completionHandler: @escaping (URL?, NSFileProviderItem?, Error?) -> Void
+    ) {
+        // Clone the owner-staged file (shared app-group container) into the domain's
+        // temporary directory, which is guaranteed to be on the same volume so the
+        // system can clone it into its replicated store. A same-volume copy is an
+        // APFS clonefile — near-free — and hands the system a disposable file,
+        // leaving the owner's staging cache free to evict.
         guard let manager = NSFileProviderManager(for: domain) else {
             completionHandler(nil, nil, NSFileProviderError(.providerNotFound))
-            return progress
+            return
         }
         do {
             let tempDir = try manager.temporaryDirectoryURL()
             let destination = tempDir.appendingPathComponent(UUID().uuidString)
             try FileManager.default.copyItem(at: URL(fileURLWithPath: stagedPath), to: destination)
             logger.notice("fetchContents materialized \(manifestItem.byteCount, privacy: .public) bytes")
-            progress.completedUnitCount = 100
+            progress?.completedUnitCount = 100
             completionHandler(destination, ClipboardFileItem(manifestItem: manifestItem), nil)
         } catch {
             logger.error("fetchContents clone failed: \(error.localizedDescription, privacy: .public)")
             completionHandler(nil, nil, error)
         }
-        return progress
     }
 
     // The clipboard domain is read-only — mutating operations are unsupported.

@@ -16,14 +16,9 @@
 	<array>
 		<string>__INSTALL_DIR__/Kernova Guest Agent.app/Contents/MacOS/KernovaGuestAgent</string>
 	</array>
-	<!-- Vends the agent↔File Provider extension XPC relay (#376). launchd owns the
-	     Mach service and hands it to the agent's NSXPCListener; the name is app-group
-	     prefixed so the sandboxed extension is allowed to look it up. -->
-	<key>MachServices</key>
-	<dict>
-		<key>8MT4P4GZL2.app.kernova.relay</key>
-		<true/>
-	</dict>
+	<!-- No MachServices: the agent↔File Provider extension IPC uses the canonical
+	     NSFileProviderServicing anonymous-XPC pattern (#460), not a launchd-vended
+	     Mach service. -->
 	<key>RunAtLoad</key>
 	<true/>
 	<key>KeepAlive</key>

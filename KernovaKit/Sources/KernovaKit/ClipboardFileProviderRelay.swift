@@ -1,18 +1,16 @@
 import Foundation
 
 // Shared container-app ↔ File Provider extension XPC contract (issues #376
-// guest / #424 host).
+// guest / #424 host / #460 servicing migration).
 //
 // The File Provider extension is sandboxed and cannot open a vsock, so on
 // `fetchContents` it relays the byte pull to the process that owns the vsock
 // clipboard connection — the guest agent (host→guest) or the main app
-// (guest→host) — over an app-group-scoped Mach service (CLIPBOARD.md §11). The
-// guest agent vends the service directly via its LaunchAgent plist's
-// `MachServices` key; the main app, which is neither sandboxed nor
-// launchd-managed, cannot register a Mach service itself, so an SMAppService
-// LaunchAgent broker vends it and forwards to the app (#424 Phase 2b). Either
-// way the sandboxed extension may look the service up because its name is
-// prefixed by an app group both processes share.
+// (guest→host) — over the canonical `NSFileProviderServicing` anonymous-XPC pipe
+// (CLIPBOARD.md §11). The owner is the XPC client and *exports* this interface;
+// the extension calls it *back* through the accepted connection (inverted vs. the
+// old Mach design). See `ClipboardFileProviderServiceSource` (extension side) and
+// `ClipboardFileProviderServicingConnector` (owner side).
 //
 // The relay carries only the addressing `(generation, repIndex)` and replies
 // with a *path* — never the bytes. The owning process pulls the rep over vsock
@@ -22,8 +20,7 @@ import Foundation
 // before handing it to the system, so no payload ever crosses the XPC boundary
 // and the staging cache is decoupled from the system's clone timing.
 
-/// The XPC interface the container app (or its broker) exports to the File
-/// Provider extension.
+/// The XPC interface the container app exports to the File Provider extension.
 @objc public protocol ClipboardFileProviderRelay {
     /// Pulls the file representation addressed by `(generation, repIndex)` over
     /// vsock, stages it into the shared app-group container, and replies with the
@@ -35,4 +32,22 @@ import Foundation
     func fetchFile(
         generation: UInt64, repIndex: Int,
         reply: @escaping @Sendable (_ stagedPath: String?, _ error: NSError?) -> Void)
+}
+
+/// The XPC interface the File Provider extension exports to the container app.
+///
+/// An `NSXPCListener` only delivers `shouldAcceptNewConnection` when the *client*
+/// sends its first message. In the inverted relay the owner (client) otherwise
+/// sends nothing — it only exports `ClipboardFileProviderRelay` and waits to be
+/// called back — so the extension's listener would never accept the connection and
+/// could never call back. The owner calls `ownerDidConnect()` immediately after it
+/// connects to drive that acceptance (the "app calls the service" message the
+/// servicing pattern relies on). This is also the owner's liveness probe: a call
+/// that errors means the cached connection is dead and must be replaced.
+@objc public protocol ClipboardFileProviderControl {
+    /// Activation handshake: the owner calls this right after connecting and
+    /// exporting its relay, so the extension accepts the connection and can call
+    /// the relay back. The body is intentionally trivial — the send itself is the
+    /// signal.
+    func ownerDidConnect(reply: @escaping @Sendable () -> Void)
 }
