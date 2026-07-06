@@ -16,11 +16,12 @@ import os
 // live owner connection it rings the Darwin doorbell and waits for the owner to
 // connect. Crucially the wait is **non-blocking**: `fetchStagedFile` enqueues the
 // pull and returns immediately, so the extension's `fetchContents` returns its
-// `Progress` without holding a worker thread. This is load-bearing — the File
-// Provider framework serialises `supportedServiceSources` / the owner's
-// `getFileProviderConnection` *behind* an in-flight `fetchContents`, so a blocking
-// wait here would deadlock the very reconnect it is waiting for (the owner could
-// not connect until the wait timed out). The enqueued pull is drained the instant
+// `Progress` without holding a worker thread. This is load-bearing — observed
+// empirically (no Apple doc pins it): the File Provider framework serialises
+// `supportedServiceSources` / the owner's `getFileProviderConnection` *behind* an
+// in-flight `fetchContents`, so a blocking wait here would deadlock the very
+// reconnect it is waiting for (the owner could not connect until the wait timed
+// out; reproduced on macOS 26). The enqueued pull is drained the instant
 // the owner connects; a bounded timer fails it with `serverUnreachable` if the
 // owner never appears (not running / domain disabled).
 
@@ -57,15 +58,13 @@ final class ClipboardFileProviderServiceSource: NSObject, NSFileProviderServiceS
 
     /// A byte-pull waiting for the owner to connect.
     ///
-    /// Reference type so the connect-timeout `DispatchWorkItem` and the accept-time
-    /// drain can identify the same pull by identity when racing to fulfil it.
+    /// Reference type so the connect-timeout timer and the accept-time drain can
+    /// identify the same pull by identity when racing to claim it from
+    /// `pendingPulls` — the lock-guarded removal is the single claim arbiter.
     ///
-    /// `@unchecked Sendable`: captured strongly by the cancellation handle (a
-    /// `@Sendable` closure). `once` is internally synchronized; `connectTimeout` is
-    /// only mutated pre-publication (exclusive ownership) and thereafter by the
-    /// single party that atomically claims the pull via the lock-guarded
-    /// `pendingPulls` removal (drain, connect-timeout, or cancel) — never concurrently.
-    private final class PendingPull: @unchecked Sendable {
+    /// Genuinely `Sendable`: every stored member is immutable, and `once` is
+    /// internally synchronized.
+    private final class PendingPull: Sendable {
         let generation: UInt64
         let repIndex: Int
         /// One-shot completion — the single arbiter across every racer that can
@@ -74,9 +73,6 @@ final class ClipboardFileProviderServiceSource: NSObject, NSFileProviderServiceS
         ///
         /// Whoever fires first wins; the rest no-op.
         let once: OnceCompletion
-        /// Fires `serverUnreachable` if no owner connects in time; cancelled on drain
-        /// or user cancellation.
-        var connectTimeout: DispatchWorkItem?
 
         init(
             generation: UInt64, repIndex: Int,
@@ -160,8 +156,8 @@ final class ClipboardFileProviderServiceSource: NSObject, NSFileProviderServiceS
         logger.debug(
             "Accepted owner servicing connection (draining \(drained.count, privacy: .public) pending)")
         for pull in drained {
-            pull.connectTimeout?.cancel()
-            pull.connectTimeout = nil  // break the pull↔work-item retain cycle
+            // Each drained pull's connect timer (if armed) fires later and no-ops —
+            // the removal from `pendingPulls` above already claimed the pull.
             performPull(over: newConnection, pull: pull)
         }
         return true
@@ -206,30 +202,24 @@ final class ClipboardFileProviderServiceSource: NSObject, NSFileProviderServiceS
         let cancellation = ClipboardFileProviderPullCancellation { [weak self] in
             self?.cancelPull(pull)
         }
-        // Arm the connect timeout BEFORE publishing the pull to `pendingPulls`, so
-        // its assignment happens-before the append (and thus before any drainer can
-        // read it under the lock) — otherwise `connectTimeout` is written outside the
-        // lock while the accept-drain reads it, a data race.
-        let timeout = DispatchWorkItem { [weak self] in
-            self?.failPending(pull, reason: "owner connect timeout")
-        }
-        pull.connectTimeout = timeout
         let liveConnection: NSXPCConnection? = lock.withLock {
             if let connection = acceptedConnection { return connection }
             pendingPulls.append(pull)  // enqueue atomically vs. a concurrent accept
             return nil
         }
         if let liveConnection {
-            // Fast path: the timeout is never scheduled, so nil it to break the
-            // pull↔work-item retain cycle (an unscheduled work item is never released
-            // by GCD, so the cycle would otherwise leak the pull + its completion).
-            pull.connectTimeout = nil
             performPull(over: liveConnection, pull: pull)
             return cancellation
         }
-        // No live connection: ring the doorbell and start the bounded connect timeout.
+        // No live connection: ring the doorbell and arm the bounded connect timeout.
+        // The timer holds `pull` weakly so it can't extend the pull's lifetime, and
+        // it is never cancelled: if it fires after the pull was drained or
+        // cancelled, `failPending`'s lock-guarded claim makes it a no-op.
         logger.notice("No live owner connection — posting reconnect doorbell")
-        queue.asyncAfter(deadline: .now() + Self.connectTimeout, execute: timeout)
+        queue.asyncAfter(deadline: .now() + Self.connectTimeout) { [weak self, weak pull] in
+            guard let self, let pull else { return }
+            self.failPending(pull, reason: "owner connect timeout")
+        }
         DarwinNotification.post(config.reconnectNotificationName)
         return cancellation
     }
@@ -237,24 +227,19 @@ final class ClipboardFileProviderServiceSource: NSObject, NSFileProviderServiceS
     /// Cancels an in-progress pull — wired to Finder's cancel button through the
     /// `fetchContents` `Progress`.
     ///
-    /// Dequeues the pull if it's still waiting for an owner connection (and cancels
-    /// its connect timeout), then completes it once with `NSUserCancelledError`. A
-    /// no-op if the pull already finished: the one-shot dedups, and any owner reply
-    /// still in flight lands harmlessly on the spent completion. Thread-safe and
-    /// idempotent.
+    /// Dequeues the pull if it's still waiting for an owner connection, then
+    /// completes it once with `NSUserCancelledError`. A no-op if the pull already
+    /// finished: the one-shot dedups, and any owner reply still in flight lands
+    /// harmlessly on the spent completion. Thread-safe and idempotent.
     ///
     /// This frees the extension's fetch immediately but does **not** abort the
     /// owner's in-flight vsock transfer — a completed-but-unread staged file is left
     /// for the owner's staging cache to evict (tracked as a follow-up).
     private func cancelPull(_ pull: PendingPull) {
-        let claimed: Bool = lock.withLock {
-            guard let index = pendingPulls.firstIndex(where: { $0 === pull }) else { return false }
-            pendingPulls.remove(at: index)
-            return true
-        }
-        if claimed {
-            pull.connectTimeout?.cancel()
-            pull.connectTimeout = nil  // break the pull↔work-item retain cycle
+        lock.withLock {
+            if let index = pendingPulls.firstIndex(where: { $0 === pull }) {
+                pendingPulls.remove(at: index)
+            }
         }
         if pull.once.fire(.failure(Self.cancelled)) {
             logger.debug("fetchContents pull cancelled by user")
@@ -272,12 +257,6 @@ final class ClipboardFileProviderServiceSource: NSObject, NSFileProviderServiceS
             return true
         }
         guard claimed else { return }
-        // Break the pull↔work-item retain cycle, matching the drain/fast-path/cancel
-        // terminals. We're running *inside* the fired work item, so `.cancel()` would
-        // be a no-op — just drop `pull`'s strong reference to it, otherwise the work
-        // item (which strongly captures `pull`) keeps the pull alive for the process
-        // lifetime once GCD releases its own post-fire reference.
-        pull.connectTimeout = nil
         logger.error("Timed out waiting for owner connection after doorbell (\(reason, privacy: .public))")
         pull.once.fire(.failure(Self.serverUnreachable))
     }

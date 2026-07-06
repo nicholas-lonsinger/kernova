@@ -1099,7 +1099,7 @@
 				INFOPLIST_FILE = KernovaGuestAgent/Info.plist;
 				INFOPLIST_PREFIX_HEADER = "$(DERIVED_FILE_DIR)/AgentBuildNumber.h";
 				INFOPLIST_PREPROCESS = YES;
-				MARKETING_VERSION = 0.30.1;
+				MARKETING_VERSION = 0.30.2;
 				EXECUTABLE_NAME = KernovaGuestAgent;
 				PRODUCT_BUNDLE_IDENTIFIER = app.kernova.agent;
 				PRODUCT_MODULE_NAME = KernovaGuestAgent;
@@ -1122,7 +1122,7 @@
 				INFOPLIST_FILE = KernovaGuestAgent/Info.plist;
 				INFOPLIST_PREFIX_HEADER = "$(DERIVED_FILE_DIR)/AgentBuildNumber.h";
 				INFOPLIST_PREPROCESS = YES;
-				MARKETING_VERSION = 0.30.1;
+				MARKETING_VERSION = 0.30.2;
 				EXECUTABLE_NAME = KernovaGuestAgent;
 				PRODUCT_BUNDLE_IDENTIFIER = app.kernova.agent;
 				PRODUCT_MODULE_NAME = KernovaGuestAgent;
@@ -1237,7 +1237,7 @@
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.30.1;
+				MARKETING_VERSION = 0.30.2;
 				PRODUCT_BUNDLE_IDENTIFIER = app.kernova.agent.fileprovider;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -1266,7 +1266,7 @@
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.30.1;
+				MARKETING_VERSION = 0.30.2;
 				PRODUCT_BUNDLE_IDENTIFIER = app.kernova.agent.fileprovider;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
