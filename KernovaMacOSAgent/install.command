@@ -64,7 +64,8 @@ if [[ "${choice}" =~ ^[Yy]$ ]]; then
 
     echo "Installing..."
 
-    # Stop any running agent (current or legacy — same label) before replacing it.
+    # Stop any running agent under the current label before replacing it (a
+    # pre-rename install ran under app.kernova.agent and is booted out below).
     launchctl bootout "gui/$(id -u)/${LABEL}" 2>/dev/null || true
 
     # Copy the app bundle with ditto so its code signature and layout survive — a
@@ -76,8 +77,8 @@ if [[ "${choice}" =~ ^[Yy]$ ]]; then
     # Strip quarantine defensively so launchd/syspolicyd never blocks first exec.
     xattr -dr com.apple.quarantine "${APP_DEST}" 2>/dev/null || true
 
-    # Remove the legacy bare-binary install if present (its LaunchAgent shared
-    # this label and is replaced below).
+    # Remove the legacy bare-binary install if present (it ran under the pre-rename
+    # app.kernova.agent label, booted out below).
     rm -f "${LEGACY_BINARY}"
     rmdir "${LEGACY_DIR}" 2>/dev/null || true
 
