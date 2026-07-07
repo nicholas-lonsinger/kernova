@@ -26,7 +26,7 @@ SWIFT_FORMAT      := xcrun swift-format
 SWIFT_SOURCE_DIRS := Kernova KernovaTests KernovaMacOSAgent KernovaMacOSAgentTests KernovaKit KernovaQuickLook KernovaRelaunchHelper KernovaMacOSAgentFileProvider KernovaFileProvider
 
 .DEFAULT_GOAL := help
-.PHONY: help build test test-suite test-package clean format lint install-hooks check-hooks doctor
+.PHONY: help build test test-suite test-package clean format lint install-hooks check-hooks doctor ghosts clean-ghosts
 
 help:
 	@printf 'Kernova build targets:\n\n'
@@ -39,6 +39,8 @@ help:
 	@printf '  make lint                Check Swift sources with swift-format (--strict)\n'
 	@printf '  make install-hooks       Point git at .githooks/ (runs lint on pre-push)\n'
 	@printf '  make doctor              Check the local toolchain (macOS, Xcode, Swift, swift-format, hooks)\n'
+	@printf '  make ghosts              Report stale Kernova Launch Services/process/worktree registrations\n'
+	@printf '  make clean-ghosts        Same as ghosts, but also unregisters/kills/prunes what it finds\n'
 	@printf '  make clean               Remove the DerivedData directory\n'
 	@printf '\n'
 	@printf '  Append CONFIGURATION=Release to build/test in Release (default: Debug)\n'
@@ -91,6 +93,16 @@ check-hooks:
 # over time. Exits non-zero if any required check fails, so it's CI-usable too.
 doctor:
 	@Tools/doctor.sh
+
+# Diagnoses ghost Launch Services registrations, orphaned processes, and
+# prunable git worktrees left behind when a worktree is torn down by hand
+# instead of through Claude Code's ExitWorktree unregister hook. `ghosts` only
+# reports; `clean-ghosts` also unregisters/kills/prunes what it finds.
+ghosts:
+	@Tools/ghosts.sh
+
+clean-ghosts:
+	@Tools/ghosts.sh --fix
 
 clean:
 	rm -rf $(DERIVED_DATA)
