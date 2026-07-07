@@ -785,7 +785,7 @@ final class VMInstance {
         // auto-eject the installer disk. Placed *after* the version-changed
         // guard so a same-version reconnect (e.g. while the disk is mounted to
         // run uninstall.command) never yanks the disk out from under the user.
-        if AgentStatus.isObservedVersionCurrent(reportedVersion, bundled: KernovaGuestAgentInfo.bundledVersion) {
+        if AgentStatus.isObservedVersionCurrent(reportedVersion, bundled: KernovaMacOSAgentInfo.bundledVersion) {
             onAgentBecameCurrent?()
         }
     }

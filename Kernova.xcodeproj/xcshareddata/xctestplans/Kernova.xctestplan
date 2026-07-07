@@ -32,7 +32,7 @@
       "target" : {
         "containerPath" : "container:Kernova.xcodeproj",
         "identifier" : "A1000303",
-        "name" : "KernovaGuestAgentTests"
+        "name" : "KernovaMacOSAgentTests"
       }
     },
     {

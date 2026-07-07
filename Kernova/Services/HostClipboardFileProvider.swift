@@ -35,7 +35,7 @@ final class HostClipboardFileProvider {
     /// unit-test host, where `serviceDidStart`/`serviceDidStop` short-circuit on
     /// `isRunningUnderTests` before enabling it.
     @ObservationIgnored
-    private let domainHost: ClipboardFileProviderDomainHost
+    private let domainHost: FileProviderDomainHost
 
     /// Number of live clipboard services that have called `serviceDidStart`.
     ///
@@ -70,10 +70,10 @@ final class HostClipboardFileProvider {
     /// `setAvailabilityObserver`, so a user enabling (or disabling) the
     /// File-Providers toggle while the window is open is reflected without a
     /// restart.
-    private(set) var availability: ClipboardFileProviderAvailability = .inactive
+    private(set) var availability: FileProviderAvailability = .inactive
 
     private init() {
-        let host = ClipboardFileProviderDomainHost(config: .host, pullProvider: router)
+        let host = FileProviderDomainHost(config: .host, pullProvider: router)
         domainHost = host
         host.setAvailabilityObserver { [weak self] availability in
             self?.availability = availability
@@ -126,7 +126,7 @@ final class HostClipboardFileProvider {
 /// `@unchecked Sendable`: `source` is read and written only under `lock` — the
 /// relay calls `fetchStagedFile` off-main on the broker's XPC queue, while the
 /// coordinator sets/clears the source on the main actor.
-final class HostClipboardPullRouter: ClipboardFileProviderPullProvider, @unchecked Sendable {
+final class HostClipboardPullRouter: FileProviderPullProvider, @unchecked Sendable {
     private let lock = NSLock()
     private weak var source: (any HostClipboardFileRepProviding)?
 
@@ -144,7 +144,7 @@ final class HostClipboardPullRouter: ClipboardFileProviderPullProvider, @uncheck
 
     func fetchStagedFile(
         generation: UInt64, repIndex: Int
-    ) -> Result<String, ClipboardFileProviderPullError> {
+    ) -> Result<String, FileProviderPullError> {
         let source = lock.withLock { self.source }
         guard let source else { return .failure(.noCurrentOffer) }
         return source.pullStagedFile(generation: generation, repIndex: repIndex)
@@ -164,5 +164,5 @@ protocol HostClipboardFileRepProviding: AnyObject, Sendable {
     /// and is woken off-main by the stream receiver.
     func pullStagedFile(
         generation: UInt64, repIndex: Int
-    ) -> Result<String, ClipboardFileProviderPullError>
+    ) -> Result<String, FileProviderPullError>
 }

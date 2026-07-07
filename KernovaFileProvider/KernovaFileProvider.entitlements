@@ -4,12 +4,18 @@
 <dict>
 	<!-- App-identity entitlement the system uses to launch/identify the sandboxed
 	     extension. A provisioning profile normally injects this; with profile-less
-	     manual signing (Option A) we must declare it explicitly (team-prefixed
-	     bundle id), mirroring Xcode's File Provider extension template. -->
+	     manual signing (Option A) we declare it explicitly (team-prefixed bundle id),
+	     mirroring KernovaMacOSAgentFileProvider. -->
 	<key>com.apple.application-identifier</key>
-	<string>8MT4P4GZL2.app.kernova.agent.fileprovider</string>
+	<string>8MT4P4GZL2.app.kernova.fileprovider</string>
 	<key>com.apple.security.app-sandbox</key>
 	<true/>
+	<!-- Shares the group the host app registers so the sandboxed extension can read
+	     the files the app stages into the group container (addressing is via
+	     NSFileProviderServicing, not a Mach service, #460). Stays team-ID-prefixed
+	     so it is granted implicitly under profile-less manual signing. Host uses a
+	     distinct domain id / container subpath, so sharing the same group never
+	     collides with the guest. -->
 	<key>com.apple.security.application-groups</key>
 	<array>
 		<string>8MT4P4GZL2.app.kernova</string>

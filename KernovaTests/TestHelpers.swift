@@ -4,7 +4,7 @@ import Observation
 import KernovaKit
 
 // Shared timing/test primitives for the KernovaTests bundle. Mirrors the
-// shape of `KernovaGuestAgentTests/TestHelpers.swift` so the two bundles
+// shape of `KernovaMacOSAgentTests/TestHelpers.swift` so the two bundles
 // give the same diagnostic detail (timeout vs EOF) when frame waits fail.
 //
 // Xcode 16 synchronized folders make each bundle's files target-private,

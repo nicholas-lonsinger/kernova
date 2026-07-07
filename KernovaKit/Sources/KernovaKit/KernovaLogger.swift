@@ -9,8 +9,8 @@ import os
 /// Construction matches `os.Logger`:
 ///
 ///     private static let logger = KernovaLogger(
-///         subsystem: "app.kernova.agent",
-///         category: "GuestAgent"
+///         subsystem: "app.kernova.macosagent",
+///         category: "Agent"
 ///     )
 ///
 /// Call-site syntax is identical too — including privacy attributes:

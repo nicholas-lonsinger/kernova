@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>app.kernova.macosagent</string>
+	<!-- Tells Login Items & Extensions ("Allow in the Background") which app
+	     bundle owns this job, so it shows Kernova Guest Agent.app's icon + display
+	     name instead of a generic icon. Required because we install this plist
+	     into ~/Library/LaunchAgents directly rather than via SMAppService. -->
+	<key>AssociatedBundleIdentifiers</key>
+	<array>
+		<string>app.kernova.macosagent</string>
+	</array>
+	<key>ProgramArguments</key>
+	<array>
+		<string>__INSTALL_DIR__/Kernova Guest Agent.app/Contents/MacOS/KernovaMacOSAgent</string>
+	</array>
+	<!-- No MachServices: the agent↔File Provider extension IPC uses the canonical
+	     NSFileProviderServicing anonymous-XPC pattern (#460), not a launchd-vended
+	     Mach service. -->
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>LimitLoadToSessionType</key>
+	<string>Aqua</string>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+</dict>
+</plist>
