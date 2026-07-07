@@ -7,7 +7,7 @@
 	     manual signing (Option A) we declare it explicitly (team-prefixed bundle id),
 	     mirroring KernovaMacOSAgentFileProvider. -->
 	<key>com.apple.application-identifier</key>
-	<string>8MT4P4GZL2.app.kernova.clipboard.fileprovider</string>
+	<string>8MT4P4GZL2.app.kernova.fileprovider</string>
 	<key>com.apple.security.app-sandbox</key>
 	<true/>
 	<!-- Shares the group the host app registers so the sandboxed extension can read

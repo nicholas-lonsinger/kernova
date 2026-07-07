@@ -7,7 +7,7 @@
 	<key>com.apple.security.device.audio-input</key>
 	<true/>
 	<!-- Shared with the embedded host File Provider extension
-	     (KernovaClipboardFileProvider) so the sandboxed extension can read the
+	     (KernovaFileProvider) so the sandboxed extension can read the
 	     materialized files the app stages into the group container. Host↔extension
 	     addressing now uses NSFileProviderServicing (no Mach service, #460), but the
 	     app group stays TEAM-ID-PREFIXED: macOS grants a <TeamID>.* group implicitly

@@ -132,13 +132,13 @@ public struct FileProviderConfig: Sendable {
     public static let mainAppRequirement = teamSignedRequirement(identifier: "app.kernova")
 
     /// Code-signing requirement matching the host File Provider extension
-    /// (`app.kernova.clipboard.fileprovider`).
+    /// (`app.kernova.fileprovider`).
     ///
     /// The main app pins this on its `getFileProviderConnection` control
     /// connection so it only exports the relay to the genuine Kernova-team
     /// extension.
     public static let hostExtensionRequirement =
-        teamSignedRequirement(identifier: "app.kernova.clipboard.fileprovider")
+        teamSignedRequirement(identifier: "app.kernova.fileprovider")
 
     /// Host→guest: the guest agent serves the host's copied file to the guest
     /// (issue #376).
@@ -167,7 +167,7 @@ public struct FileProviderConfig: Sendable {
         domainDisplayName: "Kernova Clipboard (Mac)",
         containerDirectoryName: "FileProviderHost",
         loggerSubsystem: "app.kernova",
-        extensionLoggerSubsystem: "app.kernova.clipboard.fileprovider",
+        extensionLoggerSubsystem: "app.kernova.fileprovider",
         ownerCodeSigningRequirement: FileProviderConfig.mainAppRequirement,
         extensionCodeSigningRequirement: FileProviderConfig.hostExtensionRequirement)
 }

@@ -1,6 +1,6 @@
 import KernovaKit
 
-// KernovaClipboardFileProvider — host "Copy to Mac" File Provider extension
+// KernovaFileProvider — host "Copy to Mac" File Provider extension
 // (#424 / #460 servicing migration).
 //
 // The principal class for the host appex (`NSExtensionPrincipalClass =

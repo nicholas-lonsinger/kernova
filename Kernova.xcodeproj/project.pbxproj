@@ -11,7 +11,7 @@
 		A100010B /* KernovaRelaunchHelper in Embed Helpers */ = {isa = PBXBuildFile; fileRef = A1000100 /* KernovaRelaunchHelper */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		A100040D /* KernovaQuickLook.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = A1000400 /* KernovaQuickLook.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		A100050D /* KernovaMacOSAgentFileProvider.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = A1000500 /* KernovaMacOSAgentFileProvider.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		A100060D /* KernovaClipboardFileProvider.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = A1000600 /* KernovaClipboardFileProvider.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		A100060D /* KernovaFileProvider.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = A1000600 /* KernovaFileProvider.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		A2000001 /* KernovaKit in Frameworks */ = {isa = PBXBuildFile; productRef = A2000002 /* KernovaKit */; };
 		A2000004 /* KernovaKit in Frameworks */ = {isa = PBXBuildFile; productRef = A2000005 /* KernovaKit */; };
 		A2000006 /* KernovaKit in Frameworks */ = {isa = PBXBuildFile; productRef = A2000007 /* KernovaKit */; };
@@ -67,7 +67,7 @@
 			containerPortal = A1000002 /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = A1000604;
-			remoteInfo = KernovaClipboardFileProvider;
+			remoteInfo = KernovaFileProvider;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -90,7 +90,7 @@
 			dstSubfolderSpec = 13;
 			files = (
 				A100040D /* KernovaQuickLook.appex in Embed Foundation Extensions */,
-				A100060D /* KernovaClipboardFileProvider.appex in Embed Foundation Extensions */,
+				A100060D /* KernovaFileProvider.appex in Embed Foundation Extensions */,
 			);
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -117,7 +117,7 @@
 		A1000300 /* KernovaMacOSAgentTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KernovaMacOSAgentTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000400 /* KernovaQuickLook.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = KernovaQuickLook.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000500 /* KernovaMacOSAgentFileProvider.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = KernovaMacOSAgentFileProvider.appex; sourceTree = BUILT_PRODUCTS_DIR; };
-		A1000600 /* KernovaClipboardFileProvider.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = KernovaClipboardFileProvider.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		A1000600 /* KernovaFileProvider.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = KernovaFileProvider.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		B62FC33F2FAFDBB1003775B7 /* KernovaKit */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = KernovaKit; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -219,9 +219,9 @@
 			path = KernovaMacOSAgentFileProvider;
 			sourceTree = "<group>";
 		};
-		A1000601 /* KernovaClipboardFileProvider */ = {
+		A1000601 /* KernovaFileProvider */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = KernovaClipboardFileProvider;
+			path = KernovaFileProvider;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -301,7 +301,7 @@
 				A1000302 /* KernovaMacOSAgentTests */,
 				A1000401 /* KernovaQuickLook */,
 				A1000501 /* KernovaMacOSAgentFileProvider */,
-				A1000601 /* KernovaClipboardFileProvider */,
+				A1000601 /* KernovaFileProvider */,
 				B62FC33F2FAFDBB1003775B7 /* KernovaKit */,
 				A10000F0 /* DiskTemplates */,
 				A1000021 /* Products */,
@@ -318,7 +318,7 @@
 				A1000300 /* KernovaMacOSAgentTests.xctest */,
 				A1000400 /* KernovaQuickLook.appex */,
 				A1000500 /* KernovaMacOSAgentFileProvider.appex */,
-				A1000600 /* KernovaClipboardFileProvider.appex */,
+				A1000600 /* KernovaFileProvider.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -497,9 +497,9 @@
 			productReference = A1000500 /* KernovaMacOSAgentFileProvider.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
-		A1000604 /* KernovaClipboardFileProvider */ = {
+		A1000604 /* KernovaFileProvider */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = A1000607 /* Build configuration list for PBXNativeTarget "KernovaClipboardFileProvider" */;
+			buildConfigurationList = A1000607 /* Build configuration list for PBXNativeTarget "KernovaFileProvider" */;
 			buildPhases = (
 				A100060F /* Set Build Number from Git */,
 				A1000602 /* Sources */,
@@ -510,14 +510,14 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				A1000601 /* KernovaClipboardFileProvider */,
+				A1000601 /* KernovaFileProvider */,
 			);
-			name = KernovaClipboardFileProvider;
+			name = KernovaFileProvider;
 			packageProductDependencies = (
 				A200000B /* KernovaKit */,
 			);
-			productName = KernovaClipboardFileProvider;
-			productReference = A1000600 /* KernovaClipboardFileProvider.appex */;
+			productName = KernovaFileProvider;
+			productReference = A1000600 /* KernovaFileProvider.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
@@ -578,7 +578,7 @@
 				A1000204 /* KernovaMacOSAgent */,
 				A1000404 /* KernovaQuickLook */,
 				A1000504 /* KernovaMacOSAgentFileProvider */,
-				A1000604 /* KernovaClipboardFileProvider */,
+				A1000604 /* KernovaFileProvider */,
 				A1000060 /* KernovaTests */,
 				A1000303 /* KernovaMacOSAgentTests */,
 			);
@@ -838,7 +838,7 @@
 		};
 		A100060C /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = A1000604 /* KernovaClipboardFileProvider */;
+			target = A1000604 /* KernovaFileProvider */;
 			targetProxy = A100060B /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
@@ -1278,7 +1278,7 @@
 		A1000605 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_ENTITLEMENTS = KernovaClipboardFileProvider/KernovaClipboardFileProvider.entitlements;
+				CODE_SIGN_ENTITLEMENTS = KernovaFileProvider/KernovaFileProvider.entitlements;
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Manual;
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -1287,7 +1287,7 @@
 				DEVELOPMENT_TEAM = 8MT4P4GZL2;
 				ENABLE_DEBUG_DYLIB = NO;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = KernovaClipboardFileProvider/Info.plist;
+				INFOPLIST_FILE = KernovaFileProvider/Info.plist;
 				INFOPLIST_PREFIX_HEADER = "$(DERIVED_FILE_DIR)/KernovaBuildNumber.h";
 				INFOPLIST_PREPROCESS = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -1296,7 +1296,7 @@
 					"@loader_path/../Frameworks",
 				);
 				MARKETING_VERSION = 0.9.0;
-				PRODUCT_BUNDLE_IDENTIFIER = app.kernova.clipboard.fileprovider;
+				PRODUCT_BUNDLE_IDENTIFIER = app.kernova.fileprovider;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -1307,7 +1307,7 @@
 		A1000606 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_ENTITLEMENTS = KernovaClipboardFileProvider/KernovaClipboardFileProvider.entitlements;
+				CODE_SIGN_ENTITLEMENTS = KernovaFileProvider/KernovaFileProvider.entitlements;
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Manual;
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -1316,7 +1316,7 @@
 				DEVELOPMENT_TEAM = 8MT4P4GZL2;
 				ENABLE_DEBUG_DYLIB = NO;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = KernovaClipboardFileProvider/Info.plist;
+				INFOPLIST_FILE = KernovaFileProvider/Info.plist;
 				INFOPLIST_PREFIX_HEADER = "$(DERIVED_FILE_DIR)/KernovaBuildNumber.h";
 				INFOPLIST_PREPROCESS = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -1325,7 +1325,7 @@
 					"@loader_path/../Frameworks",
 				);
 				MARKETING_VERSION = 0.9.0;
-				PRODUCT_BUNDLE_IDENTIFIER = app.kernova.clipboard.fileprovider;
+				PRODUCT_BUNDLE_IDENTIFIER = app.kernova.fileprovider;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -1408,7 +1408,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		A1000607 /* Build configuration list for PBXNativeTarget "KernovaClipboardFileProvider" */ = {
+		A1000607 /* Build configuration list for PBXNativeTarget "KernovaFileProvider" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				A1000605 /* Debug */,
