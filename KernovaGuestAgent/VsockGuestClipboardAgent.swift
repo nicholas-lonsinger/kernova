@@ -116,7 +116,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// `nil` in tests and whenever the domain isn't usable, in which case every
     /// rep falls back to the synchronous provider path. Set once on main at app
     /// wiring.
-    weak var fileProvider: (any ClipboardFileProviderPublishing)?
+    weak var fileProvider: (any FileProviderPublishing)?
 
     // MARK: - Main-queue state
 
@@ -269,7 +269,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         self.init(
             pasteboard: NSPasteboard.general,
             client: VsockGuestClient(port: KernovaVsockPort.clipboard, label: "clipboard"),
-            stagingTempRoot: ClipboardFileProviderContainer(config: .guest).stagingRootURL()
+            stagingTempRoot: FileProviderContainer(config: .guest).stagingRootURL()
                 ?? FileManager.default.temporaryDirectory
         )
     }
@@ -1284,7 +1284,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
 
 // MARK: - File Provider relay pull
 
-extension VsockGuestClipboardAgent: ClipboardFileProviderPullProvider {
+extension VsockGuestClipboardAgent: FileProviderPullProvider {
     /// Off-main entry point for the File Provider relay: pulls the file rep
     /// `(generation, repIndex)` and returns the path of its staged file in the
     /// shared app-group container, which the sandboxed extension then clones into
@@ -1297,7 +1297,7 @@ extension VsockGuestClipboardAgent: ClipboardFileProviderPullProvider {
     /// agent's main thread (unlike the synchronous `provideData` path).
     func fetchStagedFile(
         generation: UInt64, repIndex: Int
-    ) -> Result<String, ClipboardFileProviderPullError> {
+    ) -> Result<String, FileProviderPullError> {
         // Enforce the off-main contract: this method does `DispatchQueue.main.sync`
         // below and then blocks on the pull, so running it on main would deadlock
         // immediately (sync-to-self). Trap loudly at the offending caller instead.

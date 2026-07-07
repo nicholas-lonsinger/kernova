@@ -4,29 +4,29 @@ import Testing
 
 @testable import KernovaKit
 
-/// Unit tests for `ClipboardFileProviderRelayService` — the relay the owner
+/// Unit tests for `FileProviderRelayService` — the relay the owner
 /// exports over the `NSFileProviderServicing` connection (#460).
 ///
 /// The extension calls `fetchFile` back on it at `fetchContents`; this exercises
 /// the reply contract (staged path on success, mapped `NSFileProviderError` on
 /// failure) without standing up a live anonymous-XPC connection.
-@Suite("ClipboardFileProviderRelayService")
-struct ClipboardFileProviderRelayServiceTests {
+@Suite("FileProviderRelayService")
+struct FileProviderRelayServiceTests {
     /// Records the `(generation, repIndex)` it was asked for and returns a fixed
     /// result, so forwarding and result mapping can be asserted.
-    private final class MockPullProvider: ClipboardFileProviderPullProvider, @unchecked Sendable {
+    private final class MockPullProvider: FileProviderPullProvider, @unchecked Sendable {
         private let lock = NSLock()
         private var lastCallStorage: (UInt64, Int)?
         var lastCall: (UInt64, Int)? { lock.withLock { lastCallStorage } }
-        let result: Result<String, ClipboardFileProviderPullError>
+        let result: Result<String, FileProviderPullError>
 
-        init(result: Result<String, ClipboardFileProviderPullError>) {
+        init(result: Result<String, FileProviderPullError>) {
             self.result = result
         }
 
         func fetchStagedFile(
             generation: UInt64, repIndex: Int
-        ) -> Result<String, ClipboardFileProviderPullError> {
+        ) -> Result<String, FileProviderPullError> {
             lock.withLock { lastCallStorage = (generation, repIndex) }
             return result
         }
@@ -35,7 +35,7 @@ struct ClipboardFileProviderRelayServiceTests {
     @Test("fetchFile forwards (generation, repIndex) and replies with the staged path on success")
     func successRepliesWithStagedPath() {
         let provider = MockPullProvider(result: .success("/staged/file"))
-        let service = ClipboardFileProviderRelayService(
+        let service = FileProviderRelayService(
             pullProvider: provider, loggerSubsystem: "app.kernova.test")
         let path = Box<String?>(nil)
         let error = Box<NSError?>(nil)
@@ -53,7 +53,7 @@ struct ClipboardFileProviderRelayServiceTests {
 
     @Test("a noCurrentOffer pull failure maps to NSFileProviderError.noSuchItem")
     func noCurrentOfferMapsToNoSuchItem() {
-        let service = ClipboardFileProviderRelayService(
+        let service = FileProviderRelayService(
             pullProvider: MockPullProvider(result: .failure(.noCurrentOffer)),
             loggerSubsystem: "app.kernova.test")
         let path = Box<String?>("unset")
@@ -71,7 +71,7 @@ struct ClipboardFileProviderRelayServiceTests {
 
     @Test("a pullFailed failure maps to NSFileProviderError.serverUnreachable")
     func pullFailedMapsToServerUnreachable() {
-        let service = ClipboardFileProviderRelayService(
+        let service = FileProviderRelayService(
             pullProvider: MockPullProvider(result: .failure(.pullFailed)),
             loggerSubsystem: "app.kernova.test")
         let error = Box<NSError?>(nil)

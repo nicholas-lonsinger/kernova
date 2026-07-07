@@ -17,11 +17,11 @@ import KernovaKit
 
 @main
 @MainActor
-final class GuestAgentAppDelegate: NSObject, NSApplicationDelegate {
+final class AgentAppDelegate: NSObject, NSApplicationDelegate {
     // `nonisolated` so the (Sendable) signal handler can log without main-actor
     // isolation; `KernovaLogger` is `Sendable`, so this is safe.
     nonisolated private static let logger = KernovaLogger(
-        subsystem: "app.kernova.agent", category: "GuestAgent")
+        subsystem: "app.kernova.agent", category: "Agent")
 
     // MARK: - Version
 
@@ -53,14 +53,14 @@ final class GuestAgentAppDelegate: NSObject, NSApplicationDelegate {
     private var vsockConnection: VsockHostConnection?
     private var clipboardAgent: VsockGuestClipboardAgent?
     private var controlAgent: VsockGuestControlAgent?
-    private var statusItemController: GuestAgentStatusItemController?
+    private var statusItemController: AgentStatusItemController?
 
     /// Hosts the File Provider XPC relay + clipboard domain (#376).
     ///
     /// Gated on host clipboard-sharing policy. Wired bidirectionally with
     /// `clipboardAgent`: the host pulls through the agent on `fetchContents`; the
     /// agent publishes a single inbound file rep through the host.
-    private var fileProviderHost: ClipboardFileProviderDomainHost?
+    private var fileProviderHost: FileProviderDomainHost?
 
     /// Retained so the signal sources stay armed for the process lifetime.
     private var sigintSource: DispatchSourceSignal?
@@ -83,7 +83,7 @@ final class GuestAgentAppDelegate: NSObject, NSApplicationDelegate {
         // Teardown helper for host-side iteration (#376) — removes the clipboard
         // File Provider domain so no Finder location lingers after a test.
         if CommandLine.arguments.contains("--remove-clipboard-domain") {
-            ClipboardFileProviderDomainHost.removeAllDomainsBlocking()
+            FileProviderDomainHost.removeAllDomainsBlocking()
             exit(0)
         }
 
@@ -91,7 +91,7 @@ final class GuestAgentAppDelegate: NSObject, NSApplicationDelegate {
         // Menu-bar-only: no Dock icon, no app-switcher entry. `LSUIElement` in the
         // Info.plist is the primary mechanism; this is belt-and-suspenders.
         app.setActivationPolicy(.accessory)
-        let delegate = GuestAgentAppDelegate()
+        let delegate = AgentAppDelegate()
         app.delegate = delegate
         app.run()
     }
@@ -121,7 +121,7 @@ final class GuestAgentAppDelegate: NSObject, NSApplicationDelegate {
         // publishes a single inbound file rep through the host. The domain host
         // builds its default `NSFileProviderServicing` connector from `.guest`
         // (#460). The agent's back-reference is weak.
-        let fileProviderHost = ClipboardFileProviderDomainHost(
+        let fileProviderHost = FileProviderDomainHost(
             config: .guest, pullProvider: clipboardAgent)
         clipboardAgent.fileProvider = fileProviderHost
 
@@ -155,7 +155,7 @@ final class GuestAgentAppDelegate: NSObject, NSApplicationDelegate {
         self.controlAgent = controlAgent
         self.fileProviderHost = fileProviderHost
 
-        self.statusItemController = GuestAgentStatusItemController(
+        self.statusItemController = AgentStatusItemController(
             version: Self.version,
             connectionState: { [weak controlAgent] in controlAgent?.connectionState ?? .connecting },
             hostBundledVersion: { [weak controlAgent] in controlAgent?.hostBundledAgentVersion ?? "" },

@@ -209,7 +209,7 @@ final class VsockClipboardService: ClipboardServicing {
         self.staging = ClipboardFileStaging(
             label: "host-\(label)",
             tempRoot: stagingTempRoot
-                ?? ClipboardFileProviderContainer(config: .host).stagingRootURL()
+                ?? FileProviderContainer(config: .host).stagingRootURL()
                 ?? FileManager.default.temporaryDirectory,
             freeSpaceProvider: freeSpaceProvider)
     }
@@ -1187,7 +1187,7 @@ extension VsockClipboardService: HostClipboardFileRepProviding {
     /// blocking main is safe — the stream receive runs on its own queue.
     nonisolated func pullStagedFile(
         generation: UInt64, repIndex: Int
-    ) -> Result<String, ClipboardFileProviderPullError> {
+    ) -> Result<String, FileProviderPullError> {
         let snapshot: LazyPullSnapshot? =
             Thread.isMainThread
             ? MainActor.assumeIsolated {

@@ -30,7 +30,7 @@ import Foundation
 // never collides (in production they're separate machines / OS instances).
 
 /// Per-direction configuration for the clipboard File Provider transport.
-public struct ClipboardFileProviderConfig: Sendable {
+public struct FileProviderConfig: Sendable {
     /// App group shared by the container app and its sandboxed extension.
     ///
     /// Scopes the shared staging container the owner writes into and the
@@ -142,7 +142,7 @@ public struct ClipboardFileProviderConfig: Sendable {
 
     /// Host→guest: the guest agent serves the host's copied file to the guest
     /// (issue #376).
-    public static let guest = ClipboardFileProviderConfig(
+    public static let guest = FileProviderConfig(
         appGroupIdentifier: "8MT4P4GZL2.app.kernova",
         serviceName: NSFileProviderServiceName("app.kernova.clipboard.guest.relay"),
         reconnectNotificationName: "app.kernova.clipboard.guest.reconnect",
@@ -159,7 +159,7 @@ public struct ClipboardFileProviderConfig: Sendable {
     ///
     /// Distinct service/domain/subpath/doorbell from the guest so both can
     /// coexist on a dev Mac; reuses the same registered app group.
-    public static let host = ClipboardFileProviderConfig(
+    public static let host = FileProviderConfig(
         appGroupIdentifier: "8MT4P4GZL2.app.kernova",
         serviceName: NSFileProviderServiceName("app.kernova.clipboard.host.relay"),
         reconnectNotificationName: "app.kernova.clipboard.host.reconnect",
@@ -168,6 +168,6 @@ public struct ClipboardFileProviderConfig: Sendable {
         containerDirectoryName: "FileProviderHost",
         loggerSubsystem: "app.kernova",
         extensionLoggerSubsystem: "app.kernova.clipboard.fileprovider",
-        ownerCodeSigningRequirement: ClipboardFileProviderConfig.mainAppRequirement,
-        extensionCodeSigningRequirement: ClipboardFileProviderConfig.hostExtensionRequirement)
+        ownerCodeSigningRequirement: FileProviderConfig.mainAppRequirement,
+        extensionCodeSigningRequirement: FileProviderConfig.hostExtensionRequirement)
 }

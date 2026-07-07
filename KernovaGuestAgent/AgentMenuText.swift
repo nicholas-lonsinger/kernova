@@ -2,9 +2,9 @@ import Foundation
 
 /// Pure text mappers for the guest agent's menu-bar dropdown.
 ///
-/// Free of AppKit so they're trivially unit-testable; `GuestAgentStatusItemController`
+/// Free of AppKit so they're trivially unit-testable; `AgentStatusItemController`
 /// calls them when (re)building menu lines in `menuNeedsUpdate`.
-enum GuestAgentMenuText {
+enum AgentMenuText {
     /// "About" command title — opens the standard About panel, which carries
     /// the identity, version/build, and copyright moved out of the dropdown.
     static func about() -> String { "About Kernova Guest Agent" }

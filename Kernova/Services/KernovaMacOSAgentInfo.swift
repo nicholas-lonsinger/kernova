@@ -10,8 +10,8 @@ import os
 /// `Kernova.app/Contents/Resources/KernovaGuestAgentVersion.txt`. Reading from
 /// that sidecar at runtime guarantees the host can never claim to bundle a
 /// version different from what actually ships in the DMG.
-enum KernovaGuestAgentInfo {
-    private static let logger = Logger(subsystem: "app.kernova", category: "KernovaGuestAgentInfo")
+enum KernovaMacOSAgentInfo {
+    private static let logger = Logger(subsystem: "app.kernova", category: "KernovaMacOSAgentInfo")
 
     /// Filename of the version sidecar in `Kernova.app/Contents/Resources/`.
     private static let versionResourceName = "KernovaGuestAgentVersion"

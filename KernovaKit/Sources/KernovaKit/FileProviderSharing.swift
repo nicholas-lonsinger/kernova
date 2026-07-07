@@ -22,7 +22,7 @@ import Foundation
 /// extension wraps it. The `clipfile` prefix distinguishes a per-rep file item
 /// from the framework's reserved container identifiers (root / working-set /
 /// trash). Avoids `/` and `:`, which the framework reserves.
-enum ClipboardFileProviderItemIdentifier {
+enum FileProviderItemIdentifier {
     private static let prefix = "clipfile"
     private static let separator: Character = "."
 
@@ -47,7 +47,7 @@ enum ClipboardFileProviderItemIdentifier {
 /// extension's enumerator.
 ///
 /// One entry per File-Provider-served file rep.
-public struct ClipboardFileProviderManifest: Codable, Sendable, Equatable {
+public struct FileProviderManifest: Codable, Sendable, Equatable {
     /// One enumerable file item: its `(generation, repIndex)` identity plus the
     /// metadata the enumerator needs to build a dataless `NSFileProviderItem`.
     public struct Item: Codable, Sendable, Equatable {
@@ -75,7 +75,7 @@ public struct ClipboardFileProviderManifest: Codable, Sendable, Equatable {
 
         /// The File Provider item identifier string for this entry.
         public var itemIdentifier: String {
-            ClipboardFileProviderItemIdentifier.make(generation: generation, repIndex: repIndex)
+            FileProviderItemIdentifier.make(generation: generation, repIndex: repIndex)
         }
     }
 
@@ -91,12 +91,12 @@ public struct ClipboardFileProviderManifest: Codable, Sendable, Equatable {
     }
 
     /// No current offer — an empty working set.
-    public static let empty = ClipboardFileProviderManifest(generation: 0, items: [])
+    public static let empty = FileProviderManifest(generation: 0, items: [])
 
     /// The item matching an identifier, or `nil` if it isn't in the current offer
     /// (a stale identifier from a superseded generation).
     public func item(for identifier: String) -> Item? {
-        guard let decoded = ClipboardFileProviderItemIdentifier.decode(identifier) else { return nil }
+        guard let decoded = FileProviderItemIdentifier.decode(identifier) else { return nil }
         return items.first {
             $0.generation == decoded.generation && $0.repIndex == decoded.repIndex
         }
@@ -104,7 +104,7 @@ public struct ClipboardFileProviderManifest: Codable, Sendable, Equatable {
 }
 
 /// Failure reaching the shared app-group container.
-enum ClipboardFileProviderContainerError: Error {
+enum FileProviderContainerError: Error {
     /// The app-group container couldn't be resolved (e.g. the entitlement is
     /// absent, as in a CI test host).
     case containerUnavailable
@@ -116,9 +116,9 @@ enum ClipboardFileProviderContainerError: Error {
 /// `containerURL(forSecurityApplicationGroupIdentifier:)` may return a URL whose
 /// directory isn't actually accessible (per Apple's docs), so writes are
 /// fallible and reads degrade to `.empty`. Direction-bound: the app group and
-/// the subdirectory come from the `ClipboardFileProviderConfig` it's built with,
+/// the subdirectory come from the `FileProviderConfig` it's built with,
 /// so the guest and host containers never collide on a shared dev Mac.
-public struct ClipboardFileProviderContainer: Sendable {
+public struct FileProviderContainer: Sendable {
     private static let stagingDirectoryName = "staging"
     private static let manifestFilename = "clipboard-manifest.json"
 
@@ -126,7 +126,7 @@ public struct ClipboardFileProviderContainer: Sendable {
     private let directoryName: String
 
     /// Builds a container for one direction.
-    public init(config: ClipboardFileProviderConfig) {
+    public init(config: FileProviderConfig) {
         self.appGroupIdentifier = config.appGroupIdentifier
         self.directoryName = config.containerDirectoryName
     }
@@ -155,9 +155,9 @@ public struct ClipboardFileProviderContainer: Sendable {
     }
 
     /// Atomically writes the current offer manifest (container-app side).
-    public func writeManifest(_ manifest: ClipboardFileProviderManifest) throws {
+    public func writeManifest(_ manifest: FileProviderManifest) throws {
         guard let url = manifestURL() else {
-            throw ClipboardFileProviderContainerError.containerUnavailable
+            throw FileProviderContainerError.containerUnavailable
         }
         try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -167,9 +167,9 @@ public struct ClipboardFileProviderContainer: Sendable {
 
     /// Reads the current offer manifest (extension side); `.empty` when none is
     /// present or it can't be decoded.
-    public func readManifest() -> ClipboardFileProviderManifest {
+    public func readManifest() -> FileProviderManifest {
         guard let url = manifestURL(), let data = try? Data(contentsOf: url),
-            let manifest = try? JSONDecoder().decode(ClipboardFileProviderManifest.self, from: data)
+            let manifest = try? JSONDecoder().decode(FileProviderManifest.self, from: data)
         else { return .empty }
         return manifest
     }

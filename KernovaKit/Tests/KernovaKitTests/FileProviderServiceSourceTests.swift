@@ -5,7 +5,7 @@ import os
 
 @testable import KernovaKit
 
-/// Unit tests for `ClipboardFileProviderServiceSource` cancellation — the handle
+/// Unit tests for `FileProviderServiceSource` cancellation — the handle
 /// returned by `fetchStagedFile` that wires Finder's cancel button (via the
 /// `fetchContents` `Progress`) to an in-progress pull.
 ///
@@ -14,14 +14,14 @@ import os
 /// cancel handle drives the completion deterministically without standing up an
 /// anonymous-XPC round trip. Cancellation fires its completion synchronously, so
 /// the assertions don't need to wait.
-@Suite("ClipboardFileProviderServiceSource cancellation")
-struct ClipboardFileProviderServiceSourceTests {
+@Suite("FileProviderServiceSource cancellation")
+struct FileProviderServiceSourceTests {
     /// A config with no code-signing pins and a test app group / service name, so a
     /// source can be constructed without touching production identifiers.
     ///
     /// The source stands up an anonymous listener in `init` (harmless in a test
     /// process) but never accepts a connection here, keeping every pull pending.
-    private static let testConfig = ClipboardFileProviderConfig(
+    private static let testConfig = FileProviderConfig(
         appGroupIdentifier: "8MT4P4GZL2.app.kernova.test",
         serviceName: NSFileProviderServiceName("app.kernova.clipboard.test.relay"),
         reconnectNotificationName: "app.kernova.clipboard.test.reconnect",
@@ -33,8 +33,8 @@ struct ClipboardFileProviderServiceSourceTests {
         ownerCodeSigningRequirement: nil,
         extensionCodeSigningRequirement: nil)
 
-    private func makeSource() -> ClipboardFileProviderServiceSource {
-        ClipboardFileProviderServiceSource(
+    private func makeSource() -> FileProviderServiceSource {
+        FileProviderServiceSource(
             config: Self.testConfig,
             logger: Logger(subsystem: "app.kernova.test", category: "ServiceSourceTest"))
     }

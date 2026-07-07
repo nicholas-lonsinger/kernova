@@ -445,7 +445,7 @@ struct VMLibraryViewModelTests {
     @Test("externalAttachments excludes the bundled Guest Agent DMG")
     func externalAttachmentsExcludesGuestAgentDMG() throws {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let agentPath = try #require(KernovaGuestAgentInfo.installerDiskImageURL)
+        let agentPath = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
             .path(percentEncoded: false)
         let instance = makeInstance()
         instance.configuration.removableMedia = [
@@ -466,7 +466,7 @@ struct VMLibraryViewModelTests {
     @Test("externalAttachments is empty when the only external is the Guest Agent DMG")
     func externalAttachmentsEmptyForGuestAgentOnly() throws {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let agentPath = try #require(KernovaGuestAgentInfo.installerDiskImageURL)
+        let agentPath = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
             .path(percentEncoded: false)
         let instance = makeInstance()
         instance.configuration.removableMedia = [
@@ -482,7 +482,7 @@ struct VMLibraryViewModelTests {
     @Test("deleteConfirmed never trashes the Guest Agent DMG even if its id is selected")
     func deleteConfirmedNeverTrashesGuestAgentDMG() throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let agentPath = try #require(KernovaGuestAgentInfo.installerDiskImageURL)
+        let agentPath = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
             .path(percentEncoded: false)
         let agentID = UUID()
         let instance = makeInstance()
@@ -2642,7 +2642,7 @@ struct VMLibraryViewModelTests {
 
     @Test("mountGuestAgentInstaller appends DMG to removableMedia and shows alert")
     func mountGuestAgentInstallerAppendsAndShowsAlert() async throws {
-        let installerURL = try #require(KernovaGuestAgentInfo.installerDiskImageURL)
+        let installerURL = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
         let mock = MockUSBDeviceService()
         let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
         let instance = makeInstance()
@@ -2666,7 +2666,7 @@ struct VMLibraryViewModelTests {
 
     @Test("mountGuestAgentInstaller is a no-op when DMG already in removableMedia, but still surfaces alert")
     func mountGuestAgentInstallerAlreadyMountedSurfacesAlert() throws {
-        let installerURL = try #require(KernovaGuestAgentInfo.installerDiskImageURL)
+        let installerURL = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
         let mock = MockUSBDeviceService()
         let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
         let instance = makeInstance()
@@ -2686,7 +2686,7 @@ struct VMLibraryViewModelTests {
 
     @Test("unmountGuestAgentInstaller is no-op when DMG not in removableMedia")
     func unmountGuestAgentInstallerNoOpWhenNotPresent() async throws {
-        _ = try #require(KernovaGuestAgentInfo.installerDiskImageURL)
+        _ = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
         let mock = MockUSBDeviceService()
         let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
         let instance = makeInstance()
@@ -2705,7 +2705,7 @@ struct VMLibraryViewModelTests {
 
     @Test("unmountGuestAgentInstaller removes DMG entry and triggers detach")
     func unmountGuestAgentInstallerRemovesEntry() async throws {
-        let installerURL = try #require(KernovaGuestAgentInfo.installerDiskImageURL)
+        let installerURL = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
         let mock = MockUSBDeviceService()
         let (viewModel, _, _, _, _) = makeViewModel(usbDeviceService: mock)
         let instance = makeInstance()
@@ -2727,7 +2727,7 @@ struct VMLibraryViewModelTests {
 
     @Test("mountGuestAgentInstaller forwards the .manage purpose to the alert")
     func mountGuestAgentInstallerManagePurpose() throws {
-        _ = try #require(KernovaGuestAgentInfo.installerDiskImageURL)
+        _ = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
         let (viewModel, _, _, _, _) = makeViewModel()
         let instance = makeInstance()
         instance.status = .running
@@ -2740,7 +2740,7 @@ struct VMLibraryViewModelTests {
 
     @Test("isGuestAgentInstallerMounted reflects whether the bundled DMG is attached")
     func isGuestAgentInstallerMountedReflectsState() throws {
-        let installerURL = try #require(KernovaGuestAgentInfo.installerDiskImageURL)
+        let installerURL = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
         let (viewModel, _, _, _, _) = makeViewModel()
         let instance = makeInstance()
         viewModel.instances.append(instance)
@@ -2761,7 +2761,7 @@ struct VMLibraryViewModelTests {
 
     @Test("onAgentBecameCurrent (wired by loadVMs) auto-ejects the installer disk")
     func onAgentBecameCurrentAutoEjectsInstaller() throws {
-        let installerURL = try #require(KernovaGuestAgentInfo.installerDiskImageURL)
+        let installerURL = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
         let storage = MockVMStorageService()
         var config = VMConfiguration(name: "Wired VM", guestOS: .linux, bootMode: .efi)
         config.removableMedia = [
@@ -3338,7 +3338,7 @@ struct VMLibraryViewModelTests {
     @Test("removeRemovableMedia with trashFile=true never trashes the Guest Agent DMG")
     func removeRemovableMediaNeverTrashesGuestAgent() throws {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let agentPath = try #require(KernovaGuestAgentInfo.installerDiskImageURL)
+        let agentPath = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
             .path(percentEncoded: false)
         let instance = makeInstance()
         let item = RemovableMediaItem(path: agentPath, readOnly: true, label: "Kernova Guest Agent")
@@ -3397,7 +3397,7 @@ struct VMLibraryViewModelTests {
     @Test("isGuestAgentInstaller matches the bundled DMG path only")
     func isGuestAgentInstallerMatches() throws {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let agentPath = try #require(KernovaGuestAgentInfo.installerDiskImageURL)
+        let agentPath = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
             .path(percentEncoded: false)
         #expect(viewModel.isGuestAgentInstaller(RemovableMediaItem(path: agentPath, readOnly: true)))
         #expect(!viewModel.isGuestAgentInstaller(RemovableMediaItem(path: "/tmp/other.iso", readOnly: true)))

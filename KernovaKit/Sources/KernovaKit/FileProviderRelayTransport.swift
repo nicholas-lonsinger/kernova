@@ -17,17 +17,17 @@ import Foundation
 // hands it to the connector, keeping its enable/disable lifecycle identical
 // across directions. Host and guest now share ONE connector implementation —
 // the only differences (service name, doorbell name, code-signing pins) come
-// from `ClipboardFileProviderConfig`.
+// from `FileProviderConfig`.
 
 /// Connects the domain host to its File Provider extension so the extension can
 /// call the relay back.
 ///
-/// Injected into `ClipboardFileProviderDomainHost`; the default is a
-/// `ClipboardFileProviderServicingConnector`, and tests inject a no-op.
-public protocol ClipboardFileProviderRelayTransport: AnyObject, Sendable {
+/// Injected into `FileProviderDomainHost`; the default is a
+/// `FileProviderServicingConnector`, and tests inject a no-op.
+public protocol FileProviderRelayTransport: AnyObject, Sendable {
     /// Arms the connector with the relay `service` to export, and starts
     /// listening for the reconnect doorbell. Idempotent — called on each enable.
-    func startServing(_ service: ClipboardFileProviderRelay)
+    func startServing(_ service: FileProviderRelay)
 
     /// Disarms the connector (clipboard sharing disabled): clears the served
     /// relay, drops any live connection, and stops observing the doorbell so a
@@ -44,7 +44,7 @@ public protocol ClipboardFileProviderRelayTransport: AnyObject, Sendable {
 
 // MARK: - Servicing connector
 
-/// The single `ClipboardFileProviderRelayTransport` implementation: reaches the
+/// The single `FileProviderRelayTransport` implementation: reaches the
 /// extension's `NSFileProviderServicing` endpoint, exports the relay, and keeps
 /// the control connection warm (reconnecting on the Darwin doorbell or an XPC
 /// invalidation).
@@ -53,8 +53,8 @@ public protocol ClipboardFileProviderRelayTransport: AnyObject, Sendable {
 /// addressing/logging values are set once in `init`. The exported relay carries
 /// no bytes — only `(generation, repIndex)` crosses, and the reply is a staged
 /// app-group path.
-public final class ClipboardFileProviderServicingConnector: NSObject,
-    ClipboardFileProviderRelayTransport, @unchecked Sendable
+public final class FileProviderServicingConnector: NSObject,
+    FileProviderRelayTransport, @unchecked Sendable
 {
     private let serviceName: NSFileProviderServiceName
     private let reconnectNotificationName: String
@@ -66,7 +66,7 @@ public final class ClipboardFileProviderServicingConnector: NSObject,
 
     private let lock = NSLock()
     /// The relay object exported to the extension; `nil` while disabled.
-    private var relayService: ClipboardFileProviderRelay?
+    private var relayService: FileProviderRelay?
     /// The domain root URL to connect through, cached from `ensureConnected`.
     private var rootURL: URL?
     /// The live control connection, or `nil` when not connected.
@@ -94,7 +94,7 @@ public final class ClipboardFileProviderServicingConnector: NSObject,
     private static let connectRetryDelay: DispatchTimeInterval = .seconds(2)
 
     /// Creates a connector for one direction from its config.
-    public init(config: ClipboardFileProviderConfig) {
+    public init(config: FileProviderConfig) {
         self.serviceName = config.serviceName
         self.reconnectNotificationName = config.reconnectNotificationName
         self.extensionRequirement = config.extensionCodeSigningRequirement
@@ -103,11 +103,11 @@ public final class ClipboardFileProviderServicingConnector: NSObject,
         super.init()
     }
 
-    // MARK: - ClipboardFileProviderRelayTransport
+    // MARK: - FileProviderRelayTransport
 
     /// Arms the connector with the relay to export and starts observing the
     /// reconnect doorbell.
-    public func startServing(_ service: ClipboardFileProviderRelay) {
+    public func startServing(_ service: FileProviderRelay) {
         lock.withLock {
             self.relayService = service
             if reconnectObserver == nil {
@@ -224,9 +224,9 @@ public final class ClipboardFileProviderServicingConnector: NSObject,
     private func configureAndResume(_ connection: NSXPCConnection) {
         // We EXPORT the relay (the extension calls it back) and REMOTE the control
         // interface (we call `ownerDidConnect` to activate the connection). Mirror of
-        // the extension's `ClipboardFileProviderServiceSource` (inverted wiring, #460).
-        connection.exportedInterface = NSXPCInterface(with: ClipboardFileProviderRelay.self)
-        connection.remoteObjectInterface = NSXPCInterface(with: ClipboardFileProviderControl.self)
+        // the extension's `FileProviderServiceSource` (inverted wiring, #460).
+        connection.exportedInterface = NSXPCInterface(with: FileProviderRelay.self)
+        connection.remoteObjectInterface = NSXPCInterface(with: FileProviderControl.self)
         // Pin the extension when the direction requires it (host pins the host
         // extension; guest leaves it nil — per-VM vsock auth is tracked by #145).
         if let extensionRequirement {
@@ -267,7 +267,7 @@ public final class ClipboardFileProviderServicingConnector: NSObject,
         let control =
             connection.remoteObjectProxyWithErrorHandler { [weak self] _ in
                 self?.handleConnectionDropped(connection)
-            } as? ClipboardFileProviderControl
+            } as? FileProviderControl
         control?.ownerDidConnect {}
     }
 

@@ -129,7 +129,7 @@ final class VsockControlService {
     init(
         channel: VsockChannel,
         label: String,
-        bundledAgentVersion: String? = KernovaGuestAgentInfo.bundledVersion,
+        bundledAgentVersion: String? = KernovaMacOSAgentInfo.bundledVersion,
         heartbeatInterval: Duration = .seconds(5),
         unresponsiveAfter: Duration = .seconds(15),
         terminateAfter: Duration = .seconds(30),

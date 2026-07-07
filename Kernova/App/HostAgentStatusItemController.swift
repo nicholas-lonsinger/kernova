@@ -9,7 +9,7 @@ import os
 /// "Open Kernova", lists the VMs running headless (click one to open the library
 /// on it), and ends with Quit; it is rebuilt from live view-model state each time
 /// it opens. A live tooltip reflects the running count. Mirrors the guest agent's
-/// `GuestAgentStatusItemController`.
+/// `AgentStatusItemController`.
 @MainActor
 final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     private static let logger = Logger(subsystem: "app.kernova", category: "HostAgentStatusItem")

@@ -229,7 +229,7 @@ final class FakePasteboard: Pasteboard, @unchecked Sendable {
 /// Records the agent's File Provider publish calls and returns a canned URL.
 ///
 /// Lets `handleOffer`'s routing decision be asserted without a real domain.
-final class FakeFileProviderPublisher: ClipboardFileProviderPublishing, @unchecked Sendable {
+final class FakeFileProviderPublisher: FileProviderPublishing, @unchecked Sendable {
     struct Published: Equatable {
         let generation: UInt64
         let repIndex: Int

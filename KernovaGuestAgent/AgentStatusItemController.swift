@@ -16,8 +16,8 @@ import os
 /// via `connectionStateChanged()` so it tracks the connection even while the
 /// menu is closed.
 @MainActor
-final class GuestAgentStatusItemController: NSObject, NSMenuDelegate {
-    private static let logger = Logger(subsystem: "app.kernova.agent", category: "GuestAgentStatusItem")
+final class AgentStatusItemController: NSObject, NSMenuDelegate {
+    private static let logger = Logger(subsystem: "app.kernova.agent", category: "AgentStatusItem")
 
     private let statusItem: NSStatusItem
     private let menu = NSMenu()
@@ -27,7 +27,7 @@ final class GuestAgentStatusItemController: NSObject, NSMenuDelegate {
     private let hostBundledVersion: () -> String
     private let logForwardingEnabled: () -> Bool
     private let clipboardActivity: () -> ClipboardActivity
-    private let fileProviderAvailability: () -> ClipboardFileProviderAvailability
+    private let fileProviderAvailability: () -> FileProviderAvailability
     private let onQuit: () -> Void
 
     init(
@@ -36,7 +36,7 @@ final class GuestAgentStatusItemController: NSObject, NSMenuDelegate {
         hostBundledVersion: @escaping () -> String,
         logForwardingEnabled: @escaping () -> Bool,
         clipboardActivity: @escaping () -> ClipboardActivity,
-        fileProviderAvailability: @escaping () -> ClipboardFileProviderAvailability,
+        fileProviderAvailability: @escaping () -> FileProviderAvailability,
         onQuit: @escaping () -> Void
     ) {
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -106,7 +106,7 @@ final class GuestAgentStatusItemController: NSObject, NSMenuDelegate {
         // Lead with live status. Identity + version/build are reached through
         // the About item below; only an actionable pending update surfaces here.
         if case .updateAvailable(let bundled) = updateState() {
-            addInfoItem(GuestAgentMenuText.updateAvailableLine(bundled: bundled))
+            addInfoItem(AgentMenuText.updateAvailableLine(bundled: bundled))
             menu.addItem(.separator())
         }
 
@@ -115,38 +115,38 @@ final class GuestAgentStatusItemController: NSObject, NSMenuDelegate {
         // toggle is off), which is the one File-Provider state that needs the
         // user to act before large-file paste works.
         if fileProviderAvailability() == .needsEnabling {
-            addInfoItem(GuestAgentMenuText.fileProviderNeedsEnablingLine())
+            addInfoItem(AgentMenuText.fileProviderNeedsEnablingLine())
             let enable = NSMenuItem(
-                title: GuestAgentMenuText.fileProviderEnableCommand(),
+                title: AgentMenuText.fileProviderEnableCommand(),
                 action: #selector(enableFileSharingTapped), keyEquivalent: "")
             enable.target = self
             menu.addItem(enable)
             menu.addItem(.separator())
         }
 
-        addInfoItem(GuestAgentMenuText.hostStatusLine(connectionState()))
+        addInfoItem(AgentMenuText.hostStatusLine(connectionState()))
 
         // Group the two host-driven capability states under a "Status" submenu,
         // log forwarding first. The connection line above stays at the top level
         // (it's the headline health and drives the icon).
         let statusMenuItem = NSMenuItem(
-            title: GuestAgentMenuText.statusSubmenu(), action: nil, keyEquivalent: "")
+            title: AgentMenuText.statusSubmenu(), action: nil, keyEquivalent: "")
         let statusMenu = NSMenu()
         statusMenu.autoenablesItems = false
-        addInfoItem(GuestAgentMenuText.logForwardingLine(logForwardingEnabled()), to: statusMenu)
-        addInfoItem(GuestAgentMenuText.clipboardLine(clipboardActivity()), to: statusMenu)
+        addInfoItem(AgentMenuText.logForwardingLine(logForwardingEnabled()), to: statusMenu)
+        addInfoItem(AgentMenuText.clipboardLine(clipboardActivity()), to: statusMenu)
         statusMenuItem.submenu = statusMenu
         menu.addItem(statusMenuItem)
 
         menu.addItem(.separator())
 
         let about = NSMenuItem(
-            title: GuestAgentMenuText.about(), action: #selector(aboutTapped), keyEquivalent: "")
+            title: AgentMenuText.about(), action: #selector(aboutTapped), keyEquivalent: "")
         about.target = self
         menu.addItem(about)
 
         let quit = NSMenuItem(
-            title: GuestAgentMenuText.quit(), action: #selector(quitTapped), keyEquivalent: "")
+            title: AgentMenuText.quit(), action: #selector(quitTapped), keyEquivalent: "")
         quit.target = self
         menu.addItem(quit)
     }
@@ -166,7 +166,7 @@ final class GuestAgentStatusItemController: NSObject, NSMenuDelegate {
         var options: [NSApplication.AboutPanelOptionKey: Any] = [:]
         if case .updateAvailable(let bundled) = updateState() {
             options[.credits] = NSAttributedString(
-                string: GuestAgentMenuText.updateAvailableLine(bundled: bundled))
+                string: AgentMenuText.updateAvailableLine(bundled: bundled))
         }
         #if DEBUG
         let buildNumber = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? ""

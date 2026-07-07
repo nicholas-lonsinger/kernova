@@ -617,7 +617,7 @@ final class VMLibraryViewModel {
     /// it is never a user-owned file. Surfacing it in the delete sheet is
     /// meaningless, and trashing it would corrupt the app bundle and break
     /// Guest Agent installation for every VM in the library. Identified by
-    /// path equality with `KernovaGuestAgentInfo.installerDiskImageURL`,
+    /// path equality with `KernovaMacOSAgentInfo.installerDiskImageURL`,
     /// the same mechanism ``unmountGuestAgentInstaller(from:)`` uses.
     ///
     /// Existence is **not** resolved here — every attachment's
@@ -728,7 +728,7 @@ final class VMLibraryViewModel {
     /// resource to protect. Mirrors the path-equality identity used by
     /// ``mountGuestAgentInstaller(on:purpose:)`` / ``unmountGuestAgentInstaller(from:)``.
     private static var guestAgentInstallerPath: String? {
-        KernovaGuestAgentInfo.installerDiskImageURL?.path(percentEncoded: false)
+        KernovaMacOSAgentInfo.installerDiskImageURL?.path(percentEncoded: false)
     }
 
     /// `true` when the bundled Guest Agent installer DMG is currently in this
@@ -1265,7 +1265,7 @@ final class VMLibraryViewModel {
     func mountGuestAgentInstaller(
         on instance: VMInstance, purpose: GuestAgentInstallerPurpose = .install
     ) {
-        guard let url = KernovaGuestAgentInfo.installerDiskImageURL else {
+        guard let url = KernovaMacOSAgentInfo.installerDiskImageURL else {
             Self.logger.fault("Guest agent installer DMG missing from app bundle")
             assertionFailure("KernovaGuestAgent.dmg missing — check 'Package Guest Agent DMG' build phase outputs")
             return
@@ -1308,12 +1308,12 @@ final class VMLibraryViewModel {
     /// `removableMedia` if currently present.
     ///
     /// Identified by path equality with
-    /// `KernovaGuestAgentInfo.installerDiskImageURL`. The reconcile flow
+    /// `KernovaMacOSAgentInfo.installerDiskImageURL`. The reconcile flow
     /// performs the runtime detach. Reached three ways: the menubar item's
     /// eject mode, the user-driven "Eject" in Settings, and the post-install
     /// auto-eject wired in ``wirePersistence(for:)``.
     func unmountGuestAgentInstaller(from instance: VMInstance) {
-        guard let url = KernovaGuestAgentInfo.installerDiskImageURL else { return }
+        guard let url = KernovaMacOSAgentInfo.installerDiskImageURL else { return }
         guard isGuestAgentInstallerMounted(on: instance) else { return }
         let path = url.path(percentEncoded: false)
         Self.logger.notice("Unmounting guest agent installer from '\(instance.name, privacy: .public)'")

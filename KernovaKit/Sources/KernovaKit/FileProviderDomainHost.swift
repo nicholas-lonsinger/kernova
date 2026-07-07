@@ -4,7 +4,7 @@ import Foundation
 // Shared clipboard File Provider domain host (issues #376 guest / #424 host).
 //
 // Owns the container-app side of the File Provider transport, parameterized by
-// a `ClipboardFileProviderConfig` so the guest agent (host→guest paste) and the
+// a `FileProviderConfig` so the guest agent (host→guest paste) and the
 // main app (guest→host "Copy to Mac") share one implementation:
 //  1. The XPC relay the sandboxed extension calls on `fetchContents` — the
 //     extension can't open vsock, so the owning process (which does) pulls for
@@ -19,10 +19,10 @@ import Foundation
 // clipboard (e.g. the CI test host).
 //
 // Host↔extension IPC uses the canonical `NSFileProviderServicing` anonymous-XPC
-// pattern (#460): the domain host injects a `ClipboardFileProviderServicingConnector`
+// pattern (#460): the domain host injects a `FileProviderServicingConnector`
 // that exports the relay to the extension so the extension can call it back at
 // `fetchContents`. Both directions share this one connector — the only
-// differences come from `ClipboardFileProviderConfig`. The
+// differences come from `FileProviderConfig`. The
 // registration/manifest/availability machinery below is direction-agnostic and
 // shared as-is.
 
@@ -32,16 +32,16 @@ import Foundation
 ///
 /// Called off-main on the relay's XPC queue when the extension's `fetchContents`
 /// asks for the bytes.
-public protocol ClipboardFileProviderPullProvider: AnyObject, Sendable {
+public protocol FileProviderPullProvider: AnyObject, Sendable {
     /// Pulls `(generation, repIndex)` over vsock, stages it into the shared
     /// container, and returns the staged file path (or why it failed).
     func fetchStagedFile(
         generation: UInt64, repIndex: Int
-    ) -> Result<String, ClipboardFileProviderPullError>
+    ) -> Result<String, FileProviderPullError>
 }
 
 /// Why a relay pull failed, mapped to an `NSFileProviderError` by the relay.
-public enum ClipboardFileProviderPullError: Error {
+public enum FileProviderPullError: Error {
     /// `(generation, repIndex)` isn't the current offer, or there's no live
     /// connection — a stale-placeholder read.
     case noCurrentOffer
@@ -54,7 +54,7 @@ public enum ClipboardFileProviderPullError: Error {
 ///
 /// Lets the clipboard owner publish a single inbound file rep as a dataless
 /// placeholder and get its pasteboard URL. Called only on the main queue.
-public protocol ClipboardFileProviderPublishing: AnyObject, Sendable {
+public protocol FileProviderPublishing: AnyObject, Sendable {
     /// Publishes a single file item as the current offer and returns the
     /// `file://` URL to advertise on the pasteboard, or `nil` when the File
     /// Provider isn't usable (sharing off, domain not registered, or the user
@@ -68,7 +68,7 @@ public protocol ClipboardFileProviderPublishing: AnyObject, Sendable {
 }
 
 /// What the owner knows about the File Provider's usability, for the UI.
-public enum ClipboardFileProviderAvailability: Equatable, Sendable {
+public enum FileProviderAvailability: Equatable, Sendable {
     /// Not probed yet, or clipboard sharing is off.
     case inactive
     /// Domain registered and the user has it enabled — working.
@@ -90,21 +90,21 @@ public enum ClipboardFileProviderAvailability: Equatable, Sendable {
 /// `@unchecked Sendable`: registration/manifest/availability state is touched
 /// only on the main queue; `pullProvider`, `config`, `logger`, and `container`
 /// are immutable `let`s the XPC listener delegate reads off-main.
-public final class ClipboardFileProviderDomainHost: NSObject, ClipboardFileProviderPublishing,
+public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     @unchecked Sendable
 {
-    private let config: ClipboardFileProviderConfig
+    private let config: FileProviderConfig
     private let logger: KernovaLogger
-    private let container: ClipboardFileProviderContainer
-    private let pullProvider: ClipboardFileProviderPullProvider
+    private let container: FileProviderContainer
+    private let pullProvider: FileProviderPullProvider
     private let domain: NSFileProviderDomain
     /// Connects to the extension and exports the relay so the extension can call
     /// it back at `fetchContents` (the servicing connector, #460).
     ///
     /// The domain host owns the relay *service*; the transport owns the XPC
     /// connection to the extension.
-    private let relayTransport: ClipboardFileProviderRelayTransport
-    private let relayService: ClipboardFileProviderRelayService
+    private let relayTransport: FileProviderRelayTransport
+    private let relayService: FileProviderRelayService
     private let notificationCenter: NotificationCenter
     private let fetchDomains: @Sendable () async throws -> [NSFileProviderDomain]
     /// Guards `domainChangeObserver`, which — unlike the rest of the state
@@ -120,7 +120,7 @@ public final class ClipboardFileProviderDomainHost: NSObject, ClipboardFileProvi
     /// User-visible domain root, resolved after registration; `nil` until then
     /// (the File Provider path is unused while it's `nil`).
     private var rootURL: URL?
-    private var availabilityStorage: ClipboardFileProviderAvailability = .inactive
+    private var availabilityStorage: FileProviderAvailability = .inactive
     /// Token for the `NSFileProviderDomainDidChange` observer.
     ///
     /// The primary availability signal while enabled. Removed on disable and in
@@ -135,12 +135,12 @@ public final class ClipboardFileProviderDomainHost: NSObject, ClipboardFileProvi
     ///
     /// Lets an owner mirror availability into observable UI state. Set on main;
     /// invoked on main.
-    private var availabilityObserver: (@MainActor (ClipboardFileProviderAvailability) -> Void)?
+    private var availabilityObserver: (@MainActor (FileProviderAvailability) -> Void)?
 
     /// Current File Provider usability, for the UI.
     ///
     /// Read on main.
-    public var availability: ClipboardFileProviderAvailability {
+    public var availability: FileProviderAvailability {
         dispatchPrecondition(condition: .onQueue(.main))
         return availabilityStorage
     }
@@ -152,7 +152,7 @@ public final class ClipboardFileProviderDomainHost: NSObject, ClipboardFileProvi
     /// observer keeps it live, so a user flipping the System-Settings toggle is
     /// reflected without a restart.
     public func setAvailabilityObserver(
-        _ observer: @escaping @MainActor (ClipboardFileProviderAvailability) -> Void
+        _ observer: @escaping @MainActor (FileProviderAvailability) -> Void
     ) {
         dispatchPrecondition(condition: .onQueue(.main))
         availabilityObserver = observer
@@ -164,7 +164,7 @@ public final class ClipboardFileProviderDomainHost: NSObject, ClipboardFileProvi
     /// Centralizes the storage write + observer notification + transition log so
     /// every path (registration probe, domain-change notification, usage-trigger,
     /// policy disable) keeps the UI mirror in sync. Runs on main.
-    private func setAvailability(_ availability: ClipboardFileProviderAvailability) {
+    private func setAvailability(_ availability: FileProviderAvailability) {
         guard availabilityStorage != availability else { return }
         availabilityStorage = availability
         logger.notice(
@@ -176,13 +176,13 @@ public final class ClipboardFileProviderDomainHost: NSObject, ClipboardFileProvi
     /// `pullProvider` when the extension reads a placeholder, and exporting the
     /// relay through `relayTransport`.
     ///
-    /// `relayTransport` defaults to a `ClipboardFileProviderServicingConnector`
+    /// `relayTransport` defaults to a `FileProviderServicingConnector`
     /// built from `config` — production callers omit it; tests inject a no-op so
     /// they never stand up a live anonymous-XPC connection.
     public init(
-        config: ClipboardFileProviderConfig,
-        pullProvider: ClipboardFileProviderPullProvider,
-        relayTransport: ClipboardFileProviderRelayTransport? = nil,
+        config: FileProviderConfig,
+        pullProvider: FileProviderPullProvider,
+        relayTransport: FileProviderRelayTransport? = nil,
         notificationCenter: NotificationCenter = .default,
         fetchDomains: @escaping @Sendable () async throws -> [NSFileProviderDomain] = {
             try await NSFileProviderManager.domains()
@@ -190,11 +190,11 @@ public final class ClipboardFileProviderDomainHost: NSObject, ClipboardFileProvi
     ) {
         self.config = config
         self.logger = KernovaLogger(subsystem: config.loggerSubsystem, category: "FileProviderHost")
-        self.container = ClipboardFileProviderContainer(config: config)
+        self.container = FileProviderContainer(config: config)
         self.pullProvider = pullProvider
         self.relayTransport =
-            relayTransport ?? ClipboardFileProviderServicingConnector(config: config)
-        self.relayService = ClipboardFileProviderRelayService(
+            relayTransport ?? FileProviderServicingConnector(config: config)
+        self.relayService = FileProviderRelayService(
             pullProvider: pullProvider, loggerSubsystem: config.loggerSubsystem)
         self.domain = NSFileProviderDomain(
             identifier: NSFileProviderDomainIdentifier(config.domainIdentifier),
@@ -386,7 +386,7 @@ public final class ClipboardFileProviderDomainHost: NSObject, ClipboardFileProvi
         refreshGeneration &+= 1
         let generation = refreshGeneration
         Task { [weak self, fetchDomains] in
-            let availability: ClipboardFileProviderAvailability
+            let availability: FileProviderAvailability
             do {
                 let domains = try await fetchDomains()
                 availability = Self.availability(
@@ -412,7 +412,7 @@ public final class ClipboardFileProviderDomainHost: NSObject, ClipboardFileProvi
         forDomainMatching identifier: NSFileProviderDomainIdentifier,
         in domains: [NSFileProviderDomain],
         error: Error?
-    ) -> ClipboardFileProviderAvailability {
+    ) -> FileProviderAvailability {
         guard error == nil else { return .unavailable }
         guard let domain = domains.first(where: { $0.identifier == identifier }) else {
             return .unavailable
@@ -425,11 +425,11 @@ public final class ClipboardFileProviderDomainHost: NSObject, ClipboardFileProvi
     ///
     /// Split out so `KernovaKitTests` can lock the toggle mapping without a live
     /// `NSFileProviderDomain` (whose `userEnabled` is read-only).
-    static func availability(userEnabled: Bool) -> ClipboardFileProviderAvailability {
+    static func availability(userEnabled: Bool) -> FileProviderAvailability {
         userEnabled ? .ready : .needsEnabling
     }
 
-    // MARK: - ClipboardFileProviderPublishing
+    // MARK: - FileProviderPublishing
 
     /// Publishes a single file rep as the current offer's placeholder and returns
     /// its domain URL, or `nil` to fall back to the synchronous provider path.
@@ -470,10 +470,10 @@ public final class ClipboardFileProviderDomainHost: NSObject, ClipboardFileProvi
         // its own queue, so this call doesn't block main. #460.
         relayTransport.ensureConnected(rootURL: rootURL)
 
-        let item = ClipboardFileProviderManifest.Item(
+        let item = FileProviderManifest.Item(
             generation: generation, repIndex: repIndex, filename: filename,
             byteCount: byteCount, uti: uti)
-        let manifest = ClipboardFileProviderManifest(generation: generation, items: [item])
+        let manifest = FileProviderManifest(generation: generation, items: [item])
         do {
             try container.writeManifest(manifest)
         } catch {
@@ -608,12 +608,12 @@ public final class ClipboardFileProviderDomainHost: NSObject, ClipboardFileProvi
 ///
 /// Pulls a file rep through the clipboard owner and replies with the staged-file
 /// path, never the bytes.
-public final class ClipboardFileProviderRelayService: NSObject, ClipboardFileProviderRelay {
+public final class FileProviderRelayService: NSObject, FileProviderRelay {
     private let logger: KernovaLogger
-    private let pullProvider: ClipboardFileProviderPullProvider
+    private let pullProvider: FileProviderPullProvider
 
     /// Creates the relay service, logging under `loggerSubsystem`.
-    public init(pullProvider: ClipboardFileProviderPullProvider, loggerSubsystem: String) {
+    public init(pullProvider: FileProviderPullProvider, loggerSubsystem: String) {
         self.logger = KernovaLogger(subsystem: loggerSubsystem, category: "FileProviderRelay")
         self.pullProvider = pullProvider
         super.init()
@@ -640,7 +640,7 @@ public final class ClipboardFileProviderRelayService: NSObject, ClipboardFilePro
         }
     }
 
-    private static func nsError(for error: ClipboardFileProviderPullError) -> NSError {
+    private static func nsError(for error: FileProviderPullError) -> NSError {
         let code: NSFileProviderError.Code
         switch error {
         case .noCurrentOffer: code = .noSuchItem

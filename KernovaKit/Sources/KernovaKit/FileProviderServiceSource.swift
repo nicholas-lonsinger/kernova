@@ -29,8 +29,8 @@ import os
 ///
 /// `@unchecked Sendable`: `acceptedConnection` and `pendingPulls` are guarded by
 /// `lock`; `config`/`logger`/`listener`/`queue` are immutable after `init`.
-final class ClipboardFileProviderServiceSource: NSObject, NSFileProviderServiceSource,
-    NSXPCListenerDelegate, ClipboardFileProviderControl, @unchecked Sendable
+final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
+    NSXPCListenerDelegate, FileProviderControl, @unchecked Sendable
 {
     /// Bounded wait for the owner to connect after the doorbell is rung, kept well
     /// under Finder's ~60 s paste deadline so a missing owner fails cleanly.
@@ -45,7 +45,7 @@ final class ClipboardFileProviderServiceSource: NSObject, NSFileProviderServiceS
     /// a hung owner can't strand the fetch forever.
     private static let fetchReplyTimeout: TimeInterval = 120
 
-    private let config: ClipboardFileProviderConfig
+    private let config: FileProviderConfig
     private let logger: Logger
     private let listener: NSXPCListener
     /// Serialises timers and async pull work off the caller's thread.
@@ -84,7 +84,7 @@ final class ClipboardFileProviderServiceSource: NSObject, NSFileProviderServiceS
         }
     }
 
-    init(config: ClipboardFileProviderConfig, logger: Logger) {
+    init(config: FileProviderConfig, logger: Logger) {
         self.config = config
         self.logger = logger
         self.listener = NSXPCListener.anonymous()
@@ -116,16 +116,16 @@ final class ClipboardFileProviderServiceSource: NSObject, NSFileProviderServiceS
     ///
     /// Fires when the owner sends its `ownerDidConnect()` handshake (an
     /// `NSXPCListener` only delivers this delegate on the client's first message —
-    /// hence the handshake; see `ClipboardFileProviderControl`).
+    /// hence the handshake; see `FileProviderControl`).
     func listener(
         _ listener: NSXPCListener, shouldAcceptNewConnection newConnection: NSXPCConnection
     ) -> Bool {
         // Bidirectional: we EXPORT the control object (so the owner's handshake
         // lands) and set the relay as our REMOTE interface (so we can call the owner
         // back). The owner mirrors this — exports the relay, remotes the control.
-        newConnection.exportedInterface = NSXPCInterface(with: ClipboardFileProviderControl.self)
+        newConnection.exportedInterface = NSXPCInterface(with: FileProviderControl.self)
         newConnection.exportedObject = self
-        newConnection.remoteObjectInterface = NSXPCInterface(with: ClipboardFileProviderRelay.self)
+        newConnection.remoteObjectInterface = NSXPCInterface(with: FileProviderRelay.self)
         // Pin the owner when the direction requires it (the host pins the main
         // app; the guest leaves it nil — see the config doc and #145). Non-throwing:
         // arms a framework-enforced check, so an impostor owner's calls invalidate.
@@ -169,7 +169,7 @@ final class ClipboardFileProviderServiceSource: NSObject, NSFileProviderServiceS
         lock.withLock { if acceptedConnection === connection { acceptedConnection = nil } }
     }
 
-    // MARK: - ClipboardFileProviderControl (activation handshake)
+    // MARK: - FileProviderControl (activation handshake)
 
     /// The owner's post-connect handshake.
     ///
@@ -193,13 +193,13 @@ final class ClipboardFileProviderServiceSource: NSObject, NSFileProviderServiceS
     func fetchStagedFile(
         generation: UInt64, repIndex: Int,
         completion: @escaping (Result<String, NSError>) -> Void
-    ) -> ClipboardFileProviderPullCancellation {
+    ) -> FileProviderPullCancellation {
         let pull = PendingPull(generation: generation, repIndex: repIndex, completion: completion)
         // The cancel handle the extension wires to `fetchContents`' `Progress`. It
         // strongly holds `pull` (but only weakly `self`), so a cancel after this
         // source is gone is a harmless no-op; `cancelPull` funnels through the pull's
         // one-shot, so a cancel racing the real completion can't double-fire.
-        let cancellation = ClipboardFileProviderPullCancellation { [weak self] in
+        let cancellation = FileProviderPullCancellation { [weak self] in
             self?.cancelPull(pull)
         }
         let liveConnection: NSXPCConnection? = lock.withLock {
@@ -277,7 +277,7 @@ final class ClipboardFileProviderServiceSource: NSObject, NSFileProviderServiceS
         let proxy =
             connection.remoteObjectProxyWithErrorHandler { error in
                 once.fire(.failure(error as NSError))
-            } as? ClipboardFileProviderRelay
+            } as? FileProviderRelay
         guard let proxy else {
             once.fire(.failure(Self.serverUnreachable))
             return
@@ -340,7 +340,7 @@ private final class OnceCompletion: @unchecked Sendable {
 /// already completed is a no-op.
 ///
 /// Genuinely `Sendable`: the sole stored member is an immutable `@Sendable` closure.
-final class ClipboardFileProviderPullCancellation: Sendable {
+final class FileProviderPullCancellation: Sendable {
     private let onCancel: @Sendable () -> Void
 
     init(_ onCancel: @escaping @Sendable () -> Void) {

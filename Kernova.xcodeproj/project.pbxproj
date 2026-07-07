@@ -134,7 +134,7 @@
 			membershipExceptions = (
 				app.kernova.agent.plist,
 				Assets.xcassets,
-				GuestAgentAppDelegate.swift,
+				AgentAppDelegate.swift,
 				Info.plist,
 				install.command,
 				uninstall.command,

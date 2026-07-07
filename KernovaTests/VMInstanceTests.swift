@@ -836,7 +836,7 @@ struct VMInstanceTests {
 
     @Test("recordObservedAgentVersion fires onAgentBecameCurrent for a current version")
     func recordObservedFiresBecameCurrentOnCurrentVersion() throws {
-        let bundled = try #require(KernovaGuestAgentInfo.bundledVersion)
+        let bundled = try #require(KernovaMacOSAgentInfo.bundledVersion)
         // lastSeen must differ from the reported version so the persist guard
         // doesn't short-circuit before the auto-eject hook.
         let instance = makeMacOSInstanceWithAgentInstalled(lastSeen: "0.0.0")
@@ -851,7 +851,7 @@ struct VMInstanceTests {
 
     @Test("recordObservedAgentVersion does not fire onAgentBecameCurrent for an outdated version")
     func recordObservedSkipsBecameCurrentOnOutdated() throws {
-        let bundled = try #require(KernovaGuestAgentInfo.bundledVersion)
+        let bundled = try #require(KernovaMacOSAgentInfo.bundledVersion)
         // Only meaningful when the bundled version is strictly newer than the
         // sentinel, so "0.0.1" genuinely classifies as outdated.
         try #require(bundled.compare("0.0.1", options: .numeric) == .orderedDescending)
@@ -867,7 +867,7 @@ struct VMInstanceTests {
 
     @Test("recordObservedAgentVersion does not fire onAgentBecameCurrent on an unchanged-version reconnect")
     func recordObservedSkipsBecameCurrentWhenUnchanged() throws {
-        let bundled = try #require(KernovaGuestAgentInfo.bundledVersion)
+        let bundled = try #require(KernovaMacOSAgentInfo.bundledVersion)
         // Same version as last seen → the persist guard short-circuits, so a
         // disk mounted to run uninstall.command is never yanked out by a
         // same-version reconnect.

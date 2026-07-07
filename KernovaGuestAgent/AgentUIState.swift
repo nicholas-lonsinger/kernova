@@ -3,9 +3,9 @@ import Foundation
 /// State surfaced by the agent's background services to its menu-bar UI.
 ///
 /// These are produced by the always-on control agent and the clipboard agent and
-/// consumed by `GuestAgentStatusItemController` (pulled when the menu opens,
+/// consumed by `AgentStatusItemController` (pulled when the menu opens,
 /// pushed to update the status-item icon). Kept here, separate from the services
-/// that mutate them, so the pure menu-text mappers in `GuestAgentMenuText` and
+/// that mutate them, so the pure menu-text mappers in `AgentMenuText` and
 /// their tests can depend on the state without depending on the services.
 
 /// Connection state of the always-on control channel to the host.

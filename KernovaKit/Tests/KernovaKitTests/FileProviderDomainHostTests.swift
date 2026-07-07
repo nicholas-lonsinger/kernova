@@ -4,11 +4,11 @@ import Testing
 
 @testable import KernovaKit
 
-@Suite("ClipboardFileProviderDomainHost availability mapping")
-struct ClipboardFileProviderDomainHostAvailabilityTests {
+@Suite("FileProviderDomainHost availability mapping")
+struct FileProviderDomainHostAvailabilityTests {
     @Test("userEnabled == true maps to .ready")
     func userEnabledIsReady() {
-        #expect(ClipboardFileProviderDomainHost.availability(userEnabled: true) == .ready)
+        #expect(FileProviderDomainHost.availability(userEnabled: true) == .ready)
     }
 
     @Test("userEnabled == false maps to .needsEnabling (the System-Settings toggle is off)")
@@ -16,14 +16,14 @@ struct ClipboardFileProviderDomainHostAvailabilityTests {
         // Locks the authoritative mapping: a registered-but-disabled domain must
         // route paste to the size-capped sync fallback, not publish a placeholder
         // the disabled extension can never materialize.
-        #expect(ClipboardFileProviderDomainHost.availability(userEnabled: false) == .needsEnabling)
+        #expect(FileProviderDomainHost.availability(userEnabled: false) == .needsEnabling)
     }
 
     @Test("a lookup error maps to .unavailable")
     func lookupErrorIsUnavailable() {
         let error = NSError(domain: NSFileProviderErrorDomain, code: -1004)
         #expect(
-            ClipboardFileProviderDomainHost.availability(
+            FileProviderDomainHost.availability(
                 forDomainMatching: NSFileProviderDomainIdentifier("any"), in: [], error: error)
                 == .unavailable)
     }
@@ -33,7 +33,7 @@ struct ClipboardFileProviderDomainHostAvailabilityTests {
         let other = NSFileProviderDomain(
             identifier: NSFileProviderDomainIdentifier("other"), displayName: "Other")
         #expect(
-            ClipboardFileProviderDomainHost.availability(
+            FileProviderDomainHost.availability(
                 forDomainMatching: NSFileProviderDomainIdentifier("wanted"), in: [other], error: nil)
                 == .unavailable)
     }
@@ -47,9 +47,9 @@ struct ClipboardFileProviderDomainHostAvailabilityTests {
         let identifier = NSFileProviderDomainIdentifier("matched")
         let domain = NSFileProviderDomain(identifier: identifier, displayName: "Matched")
         #expect(
-            ClipboardFileProviderDomainHost.availability(
+            FileProviderDomainHost.availability(
                 forDomainMatching: identifier, in: [domain], error: nil)
-                == ClipboardFileProviderDomainHost.availability(userEnabled: domain.userEnabled))
+                == FileProviderDomainHost.availability(userEnabled: domain.userEnabled))
     }
 }
 
@@ -69,9 +69,9 @@ struct ClipboardFileProviderDomainHostAvailabilityTests {
 /// `registrationFailureReportsUnavailable` below exercises. Every fake domain
 /// identifier is a fresh UUID so the (failing) registration attempts from
 /// different tests can never collide.
-@Suite("ClipboardFileProviderDomainHost enablement & availability wiring")
+@Suite("FileProviderDomainHost enablement & availability wiring")
 @MainActor
-struct ClipboardFileProviderDomainHostEnablementTests {
+struct FileProviderDomainHostEnablementTests {
     // MARK: - Fakes
 
     /// Stands in for `NSFileProviderManager.domains()`, returning (or throwing)
@@ -106,25 +106,25 @@ struct ClipboardFileProviderDomainHostEnablementTests {
     /// off-main would trip.
     private final class AvailabilityCollector: @unchecked Sendable {
         private let lock = NSLock()
-        private var valuesStorage: [ClipboardFileProviderAvailability] = []
+        private var valuesStorage: [FileProviderAvailability] = []
         let gate = AsyncGate()
 
-        func record(_ value: ClipboardFileProviderAvailability) {
+        func record(_ value: FileProviderAvailability) {
             lock.withLock { valuesStorage.append(value) }
             gate.notify()
         }
 
-        var values: [ClipboardFileProviderAvailability] { lock.withLock { valuesStorage } }
+        var values: [FileProviderAvailability] { lock.withLock { valuesStorage } }
     }
 
     /// Never asked to pull a file in these tests (none call `publishSingleFile`),
     /// so a fixed failure reply is fine.
-    private final class NeverCalledPullProvider: ClipboardFileProviderPullProvider,
+    private final class NeverCalledPullProvider: FileProviderPullProvider,
         @unchecked Sendable
     {
         func fetchStagedFile(
             generation: UInt64, repIndex: Int
-        ) -> Result<String, ClipboardFileProviderPullError> {
+        ) -> Result<String, FileProviderPullError> {
             .failure(.noCurrentOffer)
         }
     }
@@ -132,11 +132,11 @@ struct ClipboardFileProviderDomainHostEnablementTests {
     /// No-op transport — these tests exercise availability wiring, not the relay
     /// servicing path, so `startServing`/`stopServing`/`ensureConnected` need no
     /// real anonymous-XPC connection (mirrors the servicing-relay tests, which
-    /// exercise `ClipboardFileProviderRelayService` without a live connection).
-    private final class NoOpRelayTransport: ClipboardFileProviderRelayTransport,
+    /// exercise `FileProviderRelayService` without a live connection).
+    private final class NoOpRelayTransport: FileProviderRelayTransport,
         @unchecked Sendable
     {
-        func startServing(_ service: ClipboardFileProviderRelay) {}
+        func startServing(_ service: FileProviderRelay) {}
         func stopServing() {}
         func ensureConnected(rootURL: URL) {}
     }
@@ -148,8 +148,8 @@ struct ClipboardFileProviderDomainHostEnablementTests {
     private func makeHost(
         domainIdentifier: String, domainSource: FakeDomainSource,
         notificationCenter: NotificationCenter
-    ) -> ClipboardFileProviderDomainHost {
-        let config = ClipboardFileProviderConfig(
+    ) -> FileProviderDomainHost {
+        let config = FileProviderConfig(
             appGroupIdentifier: "8MT4P4GZL2.app.kernova.test",
             serviceName: NSFileProviderServiceName("app.kernova.clipboard.test.relay"),
             reconnectNotificationName: "app.kernova.clipboard.test.reconnect",
@@ -160,7 +160,7 @@ struct ClipboardFileProviderDomainHostEnablementTests {
             extensionLoggerSubsystem: "app.kernova.test.fileprovider",
             ownerCodeSigningRequirement: nil,
             extensionCodeSigningRequirement: nil)
-        return ClipboardFileProviderDomainHost(
+        return FileProviderDomainHost(
             config: config,
             pullProvider: NeverCalledPullProvider(),
             relayTransport: NoOpRelayTransport(),
@@ -199,7 +199,7 @@ struct ClipboardFileProviderDomainHostEnablementTests {
         // defaults to `false` for a freshly constructed instance (there is no
         // public initializer that sets it `true`), so a match here always lands
         // `.needsEnabling`. The `userEnabled == true → .ready` mapping is already
-        // locked directly by `ClipboardFileProviderDomainHostAvailabilityTests`
+        // locked directly by `FileProviderDomainHostAvailabilityTests`
         // above, since no live domain constructible here can produce it.
         let matching = NSFileProviderDomain(
             identifier: NSFileProviderDomainIdentifier(domainIdentifierString),

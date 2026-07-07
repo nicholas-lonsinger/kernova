@@ -13,11 +13,11 @@ import os
 // The extension is sandboxed and can't open a vsock, so it relays the byte pull
 // to the owning process (the guest agent or the main app) over the canonical
 // `NSFileProviderServicing` anonymous-XPC pipe: this extension conforms to
-// `NSFileProviderServicing` and vends a `ClipboardFileProviderServiceSource`
+// `NSFileProviderServicing` and vends a `FileProviderServiceSource`
 // whose anonymous listener endpoint the owner connects to. INVERTED wiring vs.
 // the old Mach design — the owner is the XPC client and exports the relay; the
 // extension calls it back through the accepted connection at `fetchContents`
-// time (see `ClipboardFileProviderServiceSource`). The current offer's items
+// time (see `FileProviderServiceSource`). The current offer's items
 // come from a manifest the owner writes into the shared app-group container; the
 // extension enumerates from it and `fetchContents` clones the owner-staged file
 // (also in the shared container) into the domain's temporary directory before
@@ -36,29 +36,29 @@ import os
 /// Obj-C exposure the framework needs) live on the conforming type; subclasses
 /// inherit the conformance, all method implementations, and the
 /// `required init(domain:)`, and supply only their direction.
-open class ClipboardFileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
+open class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
     NSFileProviderServicing
 {
     /// The direction this extension serves.
     ///
     /// Abstract — every concrete appex subclass must override it (the base is
     /// never the principal class).
-    open class var directionConfig: ClipboardFileProviderConfig {
+    open class var directionConfig: FileProviderConfig {
         preconditionFailure(
-            "ClipboardFileProviderExtension subclasses must override directionConfig")
+            "FileProviderExtension subclasses must override directionConfig")
     }
 
     /// The File Provider domain the system instantiated this extension for.
     public let domain: NSFileProviderDomain
-    let config: ClipboardFileProviderConfig
-    let store: ClipboardFileProviderContainer
+    let config: FileProviderConfig
+    let store: FileProviderContainer
     let logger: Logger
     /// The single servicing endpoint vended to the owner.
     ///
     /// Created once so its anonymous listener endpoint is stable across
     /// `makeListenerEndpoint()` calls, and reachable from `fetchContents` for the
     /// byte-pull callback.
-    let serviceSource: ClipboardFileProviderServiceSource
+    let serviceSource: FileProviderServiceSource
 
     /// Instantiated by the system per registered domain; configures itself from
     /// the subclass's `directionConfig`.
@@ -67,9 +67,9 @@ open class ClipboardFileProviderExtension: NSObject, NSFileProviderReplicatedExt
         let logger = Logger(subsystem: config.extensionLoggerSubsystem, category: "Extension")
         self.domain = domain
         self.config = config
-        self.store = ClipboardFileProviderContainer(config: config)
+        self.store = FileProviderContainer(config: config)
         self.logger = logger
-        self.serviceSource = ClipboardFileProviderServiceSource(config: config, logger: logger)
+        self.serviceSource = FileProviderServiceSource(config: config, logger: logger)
         super.init()
         logger.notice(
             "FileProviderExtension init (domain=\(domain.identifier.rawValue, privacy: .public))")
@@ -122,7 +122,7 @@ open class ClipboardFileProviderExtension: NSObject, NSFileProviderReplicatedExt
 
         // The identifier carries the addressing; the manifest carries the metadata
         // for the returned item. A superseded item is gone from both → noSuchItem.
-        guard let decoded = ClipboardFileProviderItemIdentifier.decode(itemIdentifier.rawValue),
+        guard let decoded = FileProviderItemIdentifier.decode(itemIdentifier.rawValue),
             let manifestItem = store.readManifest().item(for: itemIdentifier.rawValue)
         else {
             completionHandler(nil, nil, NSFileProviderError(.noSuchItem))
@@ -134,7 +134,7 @@ open class ClipboardFileProviderExtension: NSObject, NSFileProviderReplicatedExt
         // the owner is the XPC client and exported the relay; we call it back
         // through the accepted connection (`serviceSource`). If no owner connection
         // is live, the source rings the Darwin doorbell and completes once the owner
-        // reconnects. This MUST stay async — see `ClipboardFileProviderServiceSource`:
+        // reconnects. This MUST stay async — see `FileProviderServiceSource`:
         // the framework serialises the owner's `getFileProviderConnection` behind an
         // in-flight `fetchContents`, so blocking here would deadlock the very
         // reconnect we're waiting for. Return `progress` now; complete when the
@@ -183,7 +183,7 @@ open class ClipboardFileProviderExtension: NSObject, NSFileProviderReplicatedExt
     /// see `fetchContents`), so it's optional here; it's non-nil on the success path
     /// in practice because the system owns it until the fetch completes.
     private func materialize(
-        stagedPath: String, manifestItem: ClipboardFileProviderManifest.Item, progress: Progress?,
+        stagedPath: String, manifestItem: FileProviderManifest.Item, progress: Progress?,
         completionHandler: @escaping (URL?, NSFileProviderItem?, Error?) -> Void
     ) {
         // Clone the owner-staged file (shared app-group container) into the domain's
@@ -293,7 +293,7 @@ final class ClipboardFileItem: NSObject, NSFileProviderItem, @unchecked Sendable
     /// `typeIdentifier` would clash with the unavailable requirement.
     let representationUTI: String
 
-    init(manifestItem: ClipboardFileProviderManifest.Item) {
+    init(manifestItem: FileProviderManifest.Item) {
         self.itemIdentifier = NSFileProviderItemIdentifier(manifestItem.itemIdentifier)
         self.parentItemIdentifier = .rootContainer
         self.filename = manifestItem.filename
@@ -326,11 +326,11 @@ final class ClipboardFileItem: NSObject, NSFileProviderItem, @unchecked Sendable
 /// Enumerates the domain's contents from the current offer manifest.
 final class ClipboardEnumerator: NSObject, NSFileProviderEnumerator {
     let container: NSFileProviderItemIdentifier
-    private let store: ClipboardFileProviderContainer
+    private let store: FileProviderContainer
     private let logger: Logger
 
     init(
-        container: NSFileProviderItemIdentifier, store: ClipboardFileProviderContainer,
+        container: NSFileProviderItemIdentifier, store: FileProviderContainer,
         logger: Logger
     ) {
         self.container = container
