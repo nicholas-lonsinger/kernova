@@ -154,7 +154,7 @@ else
         ghost "Prunable worktree: $line"
     done <<< "$prunable"
     if [ "$FIX" = 1 ]; then
-        if git -C "$REPO_ROOT" worktree prune -v >/dev/null 2>&1; then
+        if git -C "$REPO_ROOT" worktree prune >/dev/null 2>&1; then
             fixed 'pruned stale worktree metadata'
         else
             detail 'git worktree prune failed'
