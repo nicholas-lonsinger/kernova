@@ -49,7 +49,7 @@ final class VsockGuestClient: @unchecked Sendable {
         case terminate
     }
 
-    private static let logger = Logger(subsystem: "app.kernova.agent", category: "VsockGuestClient")
+    private static let logger = Logger(subsystem: "app.kernova.macosagent", category: "VsockGuestClient")
     private static let socketTimeoutSeconds: Int = 30
     // RATIONALE: vsock is a local-only transport with no SYN dance, so connect
     // is normally immediate-success or immediate-ECONNREFUSED. 3s is a generous

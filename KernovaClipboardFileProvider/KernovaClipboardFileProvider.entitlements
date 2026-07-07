@@ -5,7 +5,7 @@
 	<!-- App-identity entitlement the system uses to launch/identify the sandboxed
 	     extension. A provisioning profile normally injects this; with profile-less
 	     manual signing (Option A) we declare it explicitly (team-prefixed bundle id),
-	     mirroring KernovaFileProvider. -->
+	     mirroring KernovaMacOSAgentFileProvider. -->
 	<key>com.apple.application-identifier</key>
 	<string>8MT4P4GZL2.app.kernova.clipboard.fileprovider</string>
 	<key>com.apple.security.app-sandbox</key>

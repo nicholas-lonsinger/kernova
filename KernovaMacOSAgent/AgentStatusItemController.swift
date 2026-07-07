@@ -17,7 +17,7 @@ import os
 /// menu is closed.
 @MainActor
 final class AgentStatusItemController: NSObject, NSMenuDelegate {
-    private static let logger = Logger(subsystem: "app.kernova.agent", category: "AgentStatusItem")
+    private static let logger = Logger(subsystem: "app.kernova.macosagent", category: "AgentStatusItem")
 
     private let statusItem: NSStatusItem
     private let menu = NSMenu()

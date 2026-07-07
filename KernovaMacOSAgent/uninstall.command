@@ -9,14 +9,14 @@ echo ""
 echo "This will remove the Kernova guest agent from this Mac."
 echo ""
 echo "  App:         ~/Applications/Kernova Guest Agent.app"
-echo "  LaunchAgent: ~/Library/LaunchAgents/app.kernova.agent.plist"
+echo "  LaunchAgent: ~/Library/LaunchAgents/app.kernova.macosagent.plist"
 echo ""
 read -p "Proceed with uninstall? [y/N] " choice
 if [[ "${choice}" =~ ^[Yy]$ ]]; then
     echo ""
     echo "----------------------------------------"
 
-    LABEL="app.kernova.agent"
+    LABEL="app.kernova.macosagent"
     INSTALL_DIR="${HOME}/Applications"
     APP_NAME="Kernova Guest Agent.app"
     LAUNCHAGENTS_DIR="${HOME}/Library/LaunchAgents"
@@ -38,6 +38,10 @@ if [[ "${choice}" =~ ^[Yy]$ ]]; then
     # Also remove the pre-rename app bundle name if a stale copy lingers.
     rm -rf "${INSTALL_DIR}/KernovaGuestAgent.app"
     rm -f "${LAUNCHAGENTS_DIR}/${PLIST_NAME}"
+
+    # Also boot out and remove the pre-rename LaunchAgent (label app.kernova.agent).
+    launchctl bootout "gui/$(id -u)/app.kernova.agent" 2>/dev/null || true
+    rm -f "${LAUNCHAGENTS_DIR}/app.kernova.agent.plist"
 
     # Remove any leftover legacy bare-binary install.
     rm -f "${LEGACY_BINARY}"

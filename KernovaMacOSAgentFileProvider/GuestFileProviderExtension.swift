@@ -1,6 +1,6 @@
 import KernovaKit
 
-// KernovaFileProvider — guest File Provider extension (issue #376).
+// KernovaMacOSAgentFileProvider — guest File Provider extension (issue #376).
 //
 // The principal class for the guest appex (`NSExtensionPrincipalClass =
 // $(PRODUCT_MODULE_NAME).GuestFileProviderExtension`). All logic lives in the

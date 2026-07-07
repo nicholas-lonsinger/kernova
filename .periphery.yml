@@ -10,11 +10,11 @@
 project: Kernova.xcodeproj
 schemes:
   - Kernova
-  - KernovaGuestAgent
+  - KernovaMacOSAgent
   - KernovaRelaunchHelper
 
 # `KernovaKit` is a closed monorepo package — every consumer (the
-# `Kernova` app and `KernovaGuestAgent`) lives in this same project, so
+# `Kernova` app and `KernovaMacOSAgent`) lives in this same project, so
 # Periphery's cross-target index can resolve real usage of public symbols.
 # We let it surface unused public declarations rather than retaining them
 # wholesale. If a specific public symbol is exported intentionally but

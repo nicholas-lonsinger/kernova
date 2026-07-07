@@ -177,7 +177,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private static let logger = Logger(subsystem: "app.kernova", category: "AppDelegate")
     private static let guestAgentDiskPath: String? = {
         guard
-            let path = Bundle.main.url(forResource: "KernovaGuestAgent", withExtension: "dmg")?.path(
+            let path = Bundle.main.url(forResource: "KernovaMacOSAgent", withExtension: "dmg")?.path(
                 percentEncoded: false)
         else {
             logger.warning("Guest agent disk image not found in app bundle — 'Install Guest Agent' will be unavailable")

@@ -9,7 +9,7 @@ import os
 /// Construction matches `os.Logger`:
 ///
 ///     private static let logger = KernovaLogger(
-///         subsystem: "app.kernova.agent",
+///         subsystem: "app.kernova.macosagent",
 ///         category: "GuestAgent"
 ///     )
 ///

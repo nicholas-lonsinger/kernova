@@ -1248,7 +1248,7 @@ final class VMLibraryViewModel {
 
     // MARK: - Guest Agent Installer
 
-    /// Mounts the bundled `KernovaGuestAgent.dmg` as a read-only USB device so
+    /// Mounts the bundled `KernovaMacOSAgent.dmg` as a read-only USB device so
     /// the user can run `install.command` inside the guest.
     ///
     /// Used by the
@@ -1267,7 +1267,7 @@ final class VMLibraryViewModel {
     ) {
         guard let url = KernovaMacOSAgentInfo.installerDiskImageURL else {
             Self.logger.fault("Guest agent installer DMG missing from app bundle")
-            assertionFailure("KernovaGuestAgent.dmg missing — check 'Package Guest Agent DMG' build phase outputs")
+            assertionFailure("KernovaMacOSAgent.dmg missing — check 'Package Guest Agent DMG' build phase outputs")
             return
         }
         if isGuestAgentInstallerMounted(on: instance) {

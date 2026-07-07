@@ -16,7 +16,7 @@ import os
 /// frames are buffered in a bounded ring (oldest dropped first) and flushed
 /// once the next connection comes up.
 final class VsockHostConnection: @unchecked Sendable {
-    private static let logger = Logger(subsystem: "app.kernova.agent", category: "VsockHostConnection")
+    private static let logger = Logger(subsystem: "app.kernova.macosagent", category: "VsockHostConnection")
 
     /// Maximum number of `LogRecord` frames buffered while the channel is
     /// down.

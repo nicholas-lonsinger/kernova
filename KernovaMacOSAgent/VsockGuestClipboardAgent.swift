@@ -102,7 +102,7 @@ extension NSPasteboard: Pasteboard {
 // @MainActor conversion would impose on the streaming engine's off-main
 // callbacks. The menu-bar UI reads `clipboardActivity` on the same main queue.
 final class VsockGuestClipboardAgent: @unchecked Sendable {
-    private static let logger = KernovaLogger(subsystem: "app.kernova.agent", category: "VsockGuestClipboardAgent")
+    private static let logger = KernovaLogger(subsystem: "app.kernova.macosagent", category: "VsockGuestClipboardAgent")
     private static let pollingInterval: TimeInterval = 0.5
 
     private let client: VsockGuestClient

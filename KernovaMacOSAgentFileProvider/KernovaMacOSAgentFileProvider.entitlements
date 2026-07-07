@@ -7,7 +7,7 @@
 	     manual signing (Option A) we must declare it explicitly (team-prefixed
 	     bundle id), mirroring Xcode's File Provider extension template. -->
 	<key>com.apple.application-identifier</key>
-	<string>8MT4P4GZL2.app.kernova.agent.fileprovider</string>
+	<string>8MT4P4GZL2.app.kernova.macosagent.fileprovider</string>
 	<key>com.apple.security.app-sandbox</key>
 	<true/>
 	<key>com.apple.security.application-groups</key>

@@ -17,7 +17,7 @@
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "A1000204"
                BuildableName = "Kernova Guest Agent.app"
-               BlueprintName = "KernovaGuestAgent"
+               BlueprintName = "KernovaMacOSAgent"
                ReferencedContainer = "container:Kernova.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
@@ -36,8 +36,8 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "A1000303"
-               BuildableName = "KernovaGuestAgentTests.xctest"
-               BlueprintName = "KernovaGuestAgentTests"
+               BuildableName = "KernovaMacOSAgentTests.xctest"
+               BlueprintName = "KernovaMacOSAgentTests"
                ReferencedContainer = "container:Kernova.xcodeproj">
             </BuildableReference>
          </TestableReference>
@@ -60,7 +60,7 @@
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "A1000204"
             BuildableName = "Kernova Guest Agent.app"
-            BlueprintName = "KernovaGuestAgent"
+            BlueprintName = "KernovaMacOSAgent"
             ReferencedContainer = "container:Kernova.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
@@ -78,7 +78,7 @@
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "A1000204"
             BuildableName = "Kernova Guest Agent.app"
-            BlueprintName = "KernovaGuestAgent"
+            BlueprintName = "KernovaMacOSAgent"
             ReferencedContainer = "container:Kernova.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>

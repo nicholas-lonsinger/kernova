@@ -2,7 +2,7 @@ import AppKit
 import Foundation
 import KernovaKit
 
-// KernovaGuestAgent
+// KernovaMacOSAgent
 //
 // A guest-side agent that runs inside macOS virtual machines managed by Kernova.
 // It runs as an `.accessory` menu-bar app (an `NSStatusItem` dropdown, no Dock
@@ -11,9 +11,9 @@ import KernovaKit
 // clipboard (`VsockGuestClipboardAgent`), and log forwarding (`VsockHostConnection`).
 // All reconnect automatically on disconnect.
 //
-// Usage: KernovaGuestAgent [--version]
+// Usage: KernovaMacOSAgent [--version]
 // Designed to run as a macOS LaunchAgent (auto-start on login, auto-restart on
-// crash — see `app.kernova.agent.plist`).
+// crash — see `app.kernova.macosagent.plist`).
 
 @main
 @MainActor
@@ -21,7 +21,7 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
     // `nonisolated` so the (Sendable) signal handler can log without main-actor
     // isolation; `KernovaLogger` is `Sendable`, so this is safe.
     nonisolated private static let logger = KernovaLogger(
-        subsystem: "app.kernova.agent", category: "Agent")
+        subsystem: "app.kernova.macosagent", category: "Agent")
 
     // MARK: - Version
 

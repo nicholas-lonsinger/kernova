@@ -7,7 +7,7 @@ INSTALL_DIR="${HOME}/Applications"
 APP_NAME="Kernova Guest Agent.app"
 APP_SRC="${SCRIPT_DIR}/${APP_NAME}"
 APP_DEST="${INSTALL_DIR}/${APP_NAME}"
-EXEC_REL="Contents/MacOS/KernovaGuestAgent"
+EXEC_REL="Contents/MacOS/KernovaMacOSAgent"
 
 # Legacy (pre-app-bundle) install location, cleaned up on upgrade.
 LEGACY_DIR="${HOME}/Library/Application Support/Kernova"
@@ -49,7 +49,7 @@ else
 fi
 echo ""
 echo "  App:         ~/Applications/Kernova Guest Agent.app"
-echo "  LaunchAgent: ~/Library/LaunchAgents/app.kernova.agent.plist"
+echo "  LaunchAgent: ~/Library/LaunchAgents/app.kernova.macosagent.plist"
 echo ""
 echo "To uninstall later, run uninstall.command from this disk."
 echo ""
@@ -58,7 +58,7 @@ if [[ "${choice}" =~ ^[Yy]$ ]]; then
     echo ""
     echo "----------------------------------------"
 
-    LABEL="app.kernova.agent"
+    LABEL="app.kernova.macosagent"
     LAUNCHAGENTS_DIR="${HOME}/Library/LaunchAgents"
     PLIST_NAME="${LABEL}.plist"
 
@@ -85,6 +85,12 @@ if [[ "${choice}" =~ ^[Yy]$ ]]; then
     # rename to "Kernova Guest Agent.app" doesn't leave a stale second copy and a
     # duplicate Login Items entry behind.
     rm -rf "${INSTALL_DIR}/KernovaGuestAgent.app"
+
+    # Remove the pre-rename LaunchAgent (label app.kernova.agent). Its stale plist
+    # points at the old KernovaGuestAgent executable, so launchd would spawn-fail it
+    # every ThrottleInterval once the bundle's executable is renamed to KernovaMacOSAgent.
+    launchctl bootout "gui/$(id -u)/app.kernova.agent" 2>/dev/null || true
+    rm -f "${LAUNCHAGENTS_DIR}/app.kernova.agent.plist"
 
     # Install the LaunchAgent plist with the resolved install path.
     mkdir -p "${LAUNCHAGENTS_DIR}"

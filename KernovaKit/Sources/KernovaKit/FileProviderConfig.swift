@@ -149,8 +149,8 @@ public struct FileProviderConfig: Sendable {
         domainIdentifier: "kernova-clipboard",
         domainDisplayName: "Kernova Clipboard",
         containerDirectoryName: "FileProvider",
-        loggerSubsystem: "app.kernova.agent",
-        extensionLoggerSubsystem: "app.kernova.agent.fileprovider",
+        loggerSubsystem: "app.kernova.macosagent",
+        extensionLoggerSubsystem: "app.kernova.macosagent.fileprovider",
         ownerCodeSigningRequirement: nil,
         extensionCodeSigningRequirement: nil)
 
