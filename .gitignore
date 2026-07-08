@@ -1,6 +1,9 @@
 # Xcode
 build/
 DerivedData/
+# Written next to the .xcodeproj by Xcode's Relative Derived Data setting
+# (see CLAUDE.md); the suffix is a per-install identifier, hence the glob.
+.derived-data-log-*
 *.pbxuser
 !default.pbxuser
 *.mode1v3
