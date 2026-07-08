@@ -7,7 +7,14 @@
 PROJECT      := Kernova.xcodeproj
 SCHEME       := Kernova
 DESTINATION  := platform=macOS
-DERIVED_DATA := DerivedData
+
+# Xcode's Locations -> Derived Data "Relative" setting doesn't write straight
+# into DerivedData/ — it nests a per-project subfolder (DerivedData/Kernova/).
+# Point the CLI at that same nested path so `make build`/`make test` and an
+# Xcode GUI build share one build dir instead of producing two divergent
+# copies side by side.
+DERIVED_DATA_ROOT := DerivedData
+DERIVED_DATA       := $(DERIVED_DATA_ROOT)/Kernova
 
 # Build configuration, passed explicitly rather than relying on the scheme's
 # per-action default (Debug). Override on the command line to build/test in
@@ -105,4 +112,4 @@ clean-ghosts:
 	@Tools/ghosts.sh --fix
 
 clean:
-	rm -rf $(DERIVED_DATA)
+	rm -rf $(DERIVED_DATA_ROOT)
