@@ -9,12 +9,12 @@ SCHEME       := Kernova
 DESTINATION  := platform=macOS
 
 # Xcode's Locations -> Derived Data "Relative" setting doesn't write straight
-# into DerivedData/ — it nests a per-project subfolder (DerivedData/Kernova/).
-# Point the CLI at that same nested path so `make build`/`make test` and an
-# Xcode GUI build share one build dir instead of producing two divergent
-# copies side by side.
+# into DerivedData/ — it nests a subfolder named after the scheme
+# (DerivedData/Kernova/). Point the CLI at that same nested path so
+# `make build`/`make test` and an Xcode GUI build land their products in one
+# shared location instead of two divergent copies side by side.
 DERIVED_DATA_ROOT := DerivedData
-DERIVED_DATA       := $(DERIVED_DATA_ROOT)/Kernova
+DERIVED_DATA      := $(DERIVED_DATA_ROOT)/$(SCHEME)
 
 # Build configuration, passed explicitly rather than relying on the scheme's
 # per-action default (Debug). Override on the command line to build/test in
