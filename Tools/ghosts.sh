@@ -162,6 +162,31 @@ else
     fi
 fi
 
+# ---- stale File Provider domains ---------------------------------------------
+
+section 'File Provider domains'
+
+# fileproviderd binds each registered domain to its extension by bundle id and
+# caches the launch path. A rebuild that moves or deletes the extension binary —
+# or a competing copy at a different DerivedData path — can wedge the binding
+# (Copy to Mac then beeps, because the extension can't launch), and a torn-down
+# extension can strand a dead-end domain. macOS 26's fileproviderctl can only
+# `dump`, not remove, so this only REPORTS; clear it with `make fp-reset`, which
+# restarts fileproviderd — the app re-registers a fresh domain on next launch.
+# The dead-end check isn't domain-scoped (the dump groups backends per-domain
+# but is awkward to parse), so on a machine with other providers it can
+# over-report; running fp-reset is harmless either way.
+fp_dump=$(fileproviderctl dump 2>/dev/null || true)
+if ! printf '%s\n' "$fp_dump" | grep -qiE "app\.kernova|kernova-clipboard"; then
+    clean 'No Kernova File Provider domains registered'
+elif printf '%s\n' "$fp_dump" | grep -q "DeadEndBackend"; then
+    ghost 'A File Provider domain looks wedged (dead-end backend) with Kernova registered'
+    detail 'Run `make fp-reset`, then relaunch Kernova to re-register a fresh domain.'
+else
+    clean 'Kernova File Provider domain(s) registered, none dead-ended'
+    detail 'If Copy to Mac beeps or hangs, `make fp-reset` clears stale fileproviderd bindings.'
+fi
+
 # ---- summary ------------------------------------------------------------------
 
 section 'Summary'

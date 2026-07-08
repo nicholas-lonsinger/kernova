@@ -53,7 +53,7 @@ SWIFT_FORMAT      := xcrun swift-format
 SWIFT_SOURCE_DIRS := Kernova KernovaTests KernovaMacOSAgent KernovaMacOSAgentTests KernovaKit KernovaQuickLook KernovaRelaunchHelper KernovaMacOSAgentFileProvider KernovaFileProvider
 
 .DEFAULT_GOAL := help
-.PHONY: help build test test-suite test-package clean format lint install-hooks check-hooks doctor ghosts clean-ghosts
+.PHONY: help build test test-suite test-package clean format lint install-hooks check-hooks doctor ghosts clean-ghosts fp-reset
 
 help:
 	@printf 'Kernova build targets:\n\n'
@@ -68,6 +68,7 @@ help:
 	@printf '  make doctor              Check the local toolchain (macOS, Xcode, Swift, swift-format, hooks)\n'
 	@printf '  make ghosts              Report stale Kernova Launch Services/process/worktree registrations\n'
 	@printf '  make clean-ghosts        Same as ghosts, but also unregisters/kills/prunes what it finds\n'
+	@printf '  make fp-reset            Restart fileproviderd to clear stale Kernova File Provider bindings\n'
 	@printf '  make clean               Remove the DerivedData directory\n'
 	@printf '\n'
 	@printf '  Append CONFIGURATION=Release to build/test in Release (default: Debug)\n'
@@ -130,6 +131,18 @@ ghosts:
 
 clean-ghosts:
 	@Tools/ghosts.sh --fix
+
+# Restarts the File Provider daemon to clear stale Kernova domain/extension
+# bindings — e.g. after a rebuild leaves fileproviderd pointing at a deleted or
+# moved extension binary (Copy to Mac then beeps because the extension can't
+# launch), or a domain wedged in a dead-end state. Kept separate from
+# clean-ghosts and opt-in because it briefly interrupts ALL File Providers
+# (iCloud Drive reconnects within seconds). macOS 26's fileproviderctl has no
+# domain-remove command; the app self-heals a dead domain on next launch.
+fp-reset:
+	@printf 'Restarting fileproviderd to clear stale Kernova File Provider bindings...\n'
+	@printf '(briefly interrupts all File Providers; iCloud Drive reconnects in a few seconds)\n'
+	@killall fileproviderd 2>/dev/null && printf 'fileproviderd restarted.\n' || printf 'fileproviderd was not running; it will start on demand.\n'
 
 clean:
 	rm -rf $(DERIVED_DATA_ROOT)
