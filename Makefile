@@ -7,7 +7,34 @@
 PROJECT      := Kernova.xcodeproj
 SCHEME       := Kernova
 DESTINATION  := platform=macOS
-DERIVED_DATA := DerivedData
+
+# Xcode's Locations -> Derived Data "Relative" setting doesn't write straight
+# into DerivedData/ — it nests a subfolder named after the project
+# (DerivedData/Kernova/, whichever scheme is built).
+#
+# When this machine's Xcode is set to Relative (the IDECustomDerivedDataLocation
+# default is exactly "DerivedData") and the workspace carries no per-user
+# derived-data override, OMIT -derivedDataPath: a flag-less xcodebuild reads the
+# same IDE setting and computes the identical build arena as the GUI — same
+# nested location AND same arena identity — so terminal and Xcode builds share
+# incremental state (switching is a null build). Passing -derivedDataPath, even
+# with the identical path, records a different arena identity in the build
+# description, and every CLI<->GUI switch then re-runs the whole compile graph.
+#
+# On machines without the Relative setting (CI, fresh clones), fall back to the
+# explicit flag so output still lands deterministically in the worktree instead
+# of the per-path-hashed ~/Library location. A per-user override set via
+# Xcode's File > Project Settings… also disables the omission: xcodebuild would
+# follow it wherever it points, so the explicit flag is the safer default.
+DERIVED_DATA_ROOT := DerivedData
+DERIVED_DATA      := $(DERIVED_DATA_ROOT)/$(basename $(PROJECT))
+GLOBAL_DD_PREF    := $(shell defaults read com.apple.dt.Xcode IDECustomDerivedDataLocation 2>/dev/null)
+USER_DD_OVERRIDE  := $(shell plutil -extract DerivedDataCustomLocation raw $(PROJECT)/project.xcworkspace/xcuserdata/$(USER).xcuserdatad/WorkspaceSettings.xcsettings -o - 2>/dev/null)
+ifeq ($(GLOBAL_DD_PREF)$(USER_DD_OVERRIDE),DerivedData)
+DERIVED_DATA_FLAG :=
+else
+DERIVED_DATA_FLAG := -derivedDataPath $(DERIVED_DATA)
+endif
 
 # Build configuration, passed explicitly rather than relying on the scheme's
 # per-action default (Debug). Override on the command line to build/test in
@@ -17,7 +44,7 @@ CONFIGURATION ?= Debug
 XCODEBUILD_FLAGS := -project $(PROJECT) \
                     -scheme $(SCHEME) \
                     -destination '$(DESTINATION)' \
-                    -derivedDataPath $(DERIVED_DATA) \
+                    $(DERIVED_DATA_FLAG) \
                     -configuration $(CONFIGURATION)
 
 # swift-format ships with the Xcode toolchain (Xcode 26+); use xcrun so the
@@ -105,4 +132,4 @@ clean-ghosts:
 	@Tools/ghosts.sh --fix
 
 clean:
-	rm -rf $(DERIVED_DATA)
+	rm -rf $(DERIVED_DATA_ROOT)
