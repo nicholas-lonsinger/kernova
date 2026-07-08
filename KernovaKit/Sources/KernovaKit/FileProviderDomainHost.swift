@@ -288,9 +288,14 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     /// resolves its root URL and probes the user-enablement toggle.
     ///
     /// `add` is idempotent for an existing identifier — it updates the domain and
-    /// **preserves the user's enablement**, so a restart never resets the toggle.
-    /// Only a genuinely orphaned replication directory makes `add` fail with
-    /// `NSFileWriteFileExistsError`; that one case clears + retries once.
+    /// **preserves the user's enablement**, so a normal restart never resets the
+    /// toggle. Any `add` *failure*, by contrast, means the domain is registered but
+    /// unusable — an orphaned replication directory (`NSFileWriteFileExistsError`),
+    /// or a dead-end domain wedged after the extension is rebuilt/re-signed
+    /// (`NSFileProviderError` `-2001`) — and `addDomain` self-heals by clearing our
+    /// domains and re-adding once. That clear re-creates the domain in the OFF
+    /// state, so a heal does reset enablement; the trade is acceptable because the
+    /// pre-heal domain was already unusable.
     private func registerDomain() {
         addDomain(retryOnExists: true)
     }

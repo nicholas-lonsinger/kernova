@@ -186,18 +186,18 @@ KernovaMacOSAgent/                      # Guest-side menu-bar (.accessory) app f
 ├── Info.plist                          # App-bundle Info.plist (LSUIElement, NSPrincipalClass) with preprocessor macro for CFBundleVersion
 ├── install.command                     # Guest-side installer: ditto-copies the .app to ~/Applications, registers LaunchAgent
 ├── uninstall.command                   # Guest-side uninstaller: stops agent, removes the .app + plist
-├── KernovaMacOSAgent.entitlements      # Per-config app-group ($(KERNOVA_APP_GROUP): Debug team-prefixed → no profile/consent prompt, Release group.app.kernova); com.apple.application-identifier is injected by the profile under Automatic signing (#463); the agent itself is NOT sandboxed (it opens vsock) but shares the group container with the embedded File Provider appex
+├── KernovaMacOSAgent.entitlements      # Per-config app-group ($(KERNOVA_APP_GROUP): Debug team-prefixed → no profile/consent prompt, Release group.app.kernova); com.apple.application-identifier is declared explicitly for Debug's profile-less Manual signing and injected by the profile on Automatic-signed Release (#463); the agent itself is NOT sandboxed (it opens vsock) but shares the group container with the embedded File Provider appex
 └── app.kernova.macosagent.plist             # LaunchAgent template (__INSTALL_DIR__ replaced at install time; execs the .app's inner binary, KeepAlive only on crash; AssociatedBundleIdentifiers ties it to the bundle so Login Items shows the app icon/name). No MachServices key — the agent↔File-Provider IPC is NSFileProviderServicing anonymous XPC (#460), not a Mach service
 
 KernovaMacOSAgentFileProvider/                    # Guest File Provider extension (.appex embedded in the agent's Contents/PlugIns/) — #376
 ├── GuestFileProviderExtension.swift    # Thin principal-class subclass of KernovaKit's shared FileProviderExtension, selecting the `.guest` FileProviderConfig — the enumerator/fetchContents/XPC-relay/APFS-clone behavior lives on the shared KernovaKit entry below
 ├── Info.plist                          # NSExtension point com.apple.fileprovider-nonui; NSExtensionFileProviderDocumentGroup = $(KERNOVA_APP_GROUP); principal class $(PRODUCT_MODULE_NAME).GuestFileProviderExtension
-└── KernovaMacOSAgentFileProvider.entitlements    # App sandbox (appexes must be sandboxed) + the shared per-config app group ($(KERNOVA_APP_GROUP); application-identifier injected by the profile under Automatic signing, #463; Debug's team-prefixed group needs no profile → no consent prompt in an unregistered guest VM)
+└── KernovaMacOSAgentFileProvider.entitlements    # App sandbox (appexes must be sandboxed) + the shared per-config app group ($(KERNOVA_APP_GROUP); application-identifier declared explicitly for Debug's profile-less Manual signing — without it the domain add fails -2001 — and injected by the profile on Automatic-signed Release, #463; Debug's team-prefixed group needs no profile → no consent prompt in an unregistered guest VM)
 
 KernovaFileProvider/           # Host "Copy to Mac" File Provider extension (.appex embedded in the main app's Contents/PlugIns/) — #424
 ├── HostFileProviderExtension.swift     # Thin principal-class subclass of KernovaKit's shared FileProviderExtension, selecting the `.host` FileProviderConfig
 ├── Info.plist                          # NSExtension point com.apple.fileprovider-nonui; NSExtensionFileProviderDocumentGroup = $(KERNOVA_APP_GROUP); principal class $(PRODUCT_MODULE_NAME).HostFileProviderExtension
-└── KernovaFileProvider.entitlements # App sandbox + the shared per-config app group ($(KERNOVA_APP_GROUP); application-identifier injected by the profile under Automatic signing, #463; mirroring the guest appex — Debug team-prefixed, Release group.app.kernova)
+└── KernovaFileProvider.entitlements # App sandbox + the shared per-config app group ($(KERNOVA_APP_GROUP); application-identifier declared explicitly for Debug's profile-less Manual signing, injected by the profile on Automatic-signed Release, #463; mirroring the guest appex — Debug team-prefixed, Release group.app.kernova)
 
 KernovaQuickLook/                       # Quick Look preview extension (.appex embedded in Contents/PlugIns/)
 ├── PreviewViewController.swift         # NSViewController + QLPreviewingController — pure-AppKit info card in the QL panel

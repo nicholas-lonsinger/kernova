@@ -119,7 +119,7 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         // domain, gated on clipboard sharing. Wired both ways with the clipboard
         // agent — the host pulls through the agent on `fetchContents`; the agent
         // publishes a single inbound file rep through the host. The domain host
-        // builds its default `NSFileProviderServicing` connector from `.guest`
+        // builds its default `NSFileProviderServicing` connector from `.guest()`
         // (#460). The agent's back-reference is weak.
         let fileProviderHost = FileProviderDomainHost(
             config: .guest(), pullProvider: clipboardAgent)
