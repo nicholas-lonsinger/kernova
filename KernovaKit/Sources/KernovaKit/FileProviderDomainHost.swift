@@ -297,16 +297,22 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
 
     private func addDomain(retryOnExists: Bool) {
         NSFileProviderManager.add(domain) { [weak self] error in
-            let nsError = error as NSError?
-            let staleReplicationDir =
-                nsError?.domain == NSCocoaErrorDomain
-                && nsError?.code == NSFileWriteFileExistsError
             let failure = error?.localizedDescription
             DispatchQueue.main.async {
                 guard let self else { return }
-                if staleReplicationDir, retryOnExists {
+                // A failed add almost always means a domain with our identifier is
+                // already registered but unusable, and NSFileProviderManager can't
+                // reconcile it in place. Two ways it happens: an orphaned
+                // replication dir (NSCocoaErrorDomain / NSFileWriteFileExistsError),
+                // or — after the extension is rebuilt/re-signed and the old backing
+                // extension is torn down — a domain wedged in a dead-end state, which
+                // surfaces as NSFileProviderError -2001 "The application cannot be
+                // used right now." Both self-heal by clearing our domains and adding
+                // once more from a clean slate; the `retryOnExists` guard bounds it to
+                // a single retry so a genuinely unrecoverable failure still surfaces.
+                if failure != nil, retryOnExists {
                     self.logger.notice(
-                        "File Provider replication dir is orphaned; removing domains then retrying add")
+                        "add(domain:) failed (\(failure ?? "", privacy: .public)); removing stale domains and retrying")
                     self.removeAllDomains { _ in
                         DispatchQueue.main.async { self.addDomain(retryOnExists: false) }
                     }
