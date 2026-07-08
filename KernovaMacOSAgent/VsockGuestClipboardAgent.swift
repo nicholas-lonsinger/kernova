@@ -269,7 +269,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         self.init(
             pasteboard: NSPasteboard.general,
             client: VsockGuestClient(port: KernovaVsockPort.clipboard, label: "clipboard"),
-            stagingTempRoot: FileProviderContainer(config: .guest).stagingRootURL()
+            stagingTempRoot: FileProviderContainer(config: .guest()).stagingRootURL()
                 ?? FileManager.default.temporaryDirectory
         )
     }

@@ -122,7 +122,7 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         // builds its default `NSFileProviderServicing` connector from `.guest`
         // (#460). The agent's back-reference is weak.
         let fileProviderHost = FileProviderDomainHost(
-            config: .guest, pullProvider: clipboardAgent)
+            config: .guest(), pullProvider: clipboardAgent)
         clipboardAgent.fileProvider = fileProviderHost
 
         // Control plane: always-on handshake/heartbeat/policy. `onPolicy` gates the

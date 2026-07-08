@@ -20,12 +20,14 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>KERNOVA_BUILD_NUMBER</string>
+	<key>KernovaAppGroup</key>
+	<string>$(KERNOVA_APP_GROUP)</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
 	<key>NSExtension</key>
 	<dict>
 		<key>NSExtensionFileProviderDocumentGroup</key>
-		<string>8MT4P4GZL2.app.kernova</string>
+		<string>$(KERNOVA_APP_GROUP)</string>
 		<key>NSExtensionFileProviderSupportsEnumeration</key>
 		<true/>
 		<key>NSExtensionPointIdentifier</key>

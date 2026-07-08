@@ -2,21 +2,31 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- App-identity entitlement (team-prefixed bundle id). Declared explicitly
-	     because Option A uses profile-less manual signing so the agent runs in any
-	     guest VM without a device-limited provisioning profile. -->
+	<!-- App-identity entitlement the system uses to launch/identify the agent and its
+	     embedded extension. A provisioning profile normally injects it; the Debug config
+	     signs profile-less (Manual), so we declare it explicitly (team-prefixed bundle
+	     id). Release signs Automatic and its profile injects the same value. -->
 	<key>com.apple.application-identifier</key>
 	<string>8MT4P4GZL2.app.kernova.macosagent</string>
 	<!-- Shared with the embedded KernovaMacOSAgentFileProvider extension so the sandboxed
 	     extension can exchange materialized files through the group container
-	     (addressing is via NSFileProviderServicing, not a Mach service, #460). Stays
-	     team-ID-prefixed so it is granted implicitly under profile-less manual
-	     signing — the agent runs in any guest VM without a device-limited profile.
-	     The agent itself is intentionally NOT sandboxed (it opens vsock); an app
-	     group does not require the App Sandbox. -->
+	     (addressing is via NSFileProviderServicing, not a Mach service, #460). The
+	     identifier is the per-configuration build setting KERNOVA_APP_GROUP:
+	     • Debug = $(DEVELOPMENT_TEAM).app.kernova — a Team-ID-prefixed group. macOS grants
+	       silent container access when the group prefix matches the signing team (macOS 15
+	       app-group protection, criterion C), so a Debug build needs NO provisioning
+	       profile, no portal registration, and no guest-VM UDID registration. Crucially,
+	       this means the agent no longer shows the one-time per-app-instance "access data
+	       from other apps" consent prompt inside an unregistered guest VM.
+	     • Release = group.app.kernova — the canonical iOS-style identifier, authorized by
+	       an embedded provisioning profile (Automatic signing); the same group the host
+	       app registers. A device-locked Development profile would still prompt in an
+	       unregistered VM, but distribution builds are Developer ID / MAS signed.
+	     The agent itself is intentionally NOT sandboxed (it opens vsock); an app group
+	     does not require the App Sandbox. -->
 	<key>com.apple.security.application-groups</key>
 	<array>
-		<string>8MT4P4GZL2.app.kernova</string>
+		<string>$(KERNOVA_APP_GROUP)</string>
 	</array>
 </dict>
 </plist>

@@ -14,5 +14,5 @@ import KernovaKit
 // source the app connects to and exports the relay on, so the extension calls
 // the app back at `fetchContents`. No Mach service and no broker are involved.
 final class HostFileProviderExtension: FileProviderExtension {
-    override class var directionConfig: FileProviderConfig { .host }
+    override class var directionConfig: FileProviderConfig { .host() }
 }

@@ -74,6 +74,15 @@ Run `make` with no arguments to see all build, test, format, and lint targets.
 
 The app requires the `com.apple.security.virtualization` entitlement, which is included in the project configuration.
 
+### Signing: Debug vs Release
+
+Kernova signs differently per build configuration, driven by the `KERNOVA_APP_GROUP` build setting that scopes the clipboard File Provider's shared container:
+
+- **Debug** uses a Team-ID-prefixed app group (`$(DEVELOPMENT_TEAM).app.kernova`). macOS grants a Team-ID-prefixed group silent container access with **no provisioning profile**, so a Debug build (⌘R, `make build`, `make test`) works with *any* signing team — including the free personal team Xcode's Automatic signing selects on first open. No Apple Developer Program membership or developer-portal setup is needed to build and run, and the guest agent never shows the "access data from other apps" consent prompt in a VM.
+- **Release** uses the canonical `group.app.kernova`. That form is **not** silently authorized: it requires the app group registered on the Apple Developer portal plus an embedded provisioning profile, which in turn requires a paid **Apple Developer Program** membership and a distribution identity — **Developer ID** for direct distribution, or Apple Distribution for the Mac App Store. A Release build fails to sign without them.
+
+Day-to-day development only needs Debug. The Release path matters when cutting a distributable build; see the *Mac App Store Readiness* section of [CLAUDE.md](CLAUDE.md) for the full rationale.
+
 ## Testing
 
 The project has comprehensive test coverage using [Swift Testing](https://developer.apple.com/documentation/testing/) (`@Test`, `#expect`). All services use protocol-based dependency injection with mock implementations for full testability.

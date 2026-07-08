@@ -73,7 +73,7 @@ final class HostClipboardFileProvider {
     private(set) var availability: FileProviderAvailability = .inactive
 
     private init() {
-        let host = FileProviderDomainHost(config: .host, pullProvider: router)
+        let host = FileProviderDomainHost(config: .host(), pullProvider: router)
         domainHost = host
         host.setAvailabilityObserver { [weak self] availability in
             self?.availability = availability
