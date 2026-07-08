@@ -9,17 +9,25 @@
 	<!-- Shared with the embedded host File Provider extension
 	     (KernovaFileProvider) so the sandboxed extension can read the
 	     materialized files the app stages into the group container. Host↔extension
-	     addressing now uses NSFileProviderServicing (no Mach service, #460), but the
-	     app group stays TEAM-ID-PREFIXED: macOS grants a <TeamID>.* group implicitly
-	     under profile-less manual signing, whereas a plain group.* group would
-	     require a provisioning profile. The app is intentionally NOT sandboxed yet
-	     (it opens vsock); an app group does not require the App Sandbox. Shares the
-	     same group the guest agent registers — host and guest never share a machine
-	     in production, and the host side uses a distinct domain id and container
-	     subpath so a dev host running both never collides. -->
+	     addressing uses NSFileProviderServicing (no Mach service, #460). The
+	     identifier is the per-configuration build setting KERNOVA_APP_GROUP:
+	     • Debug = $(DEVELOPMENT_TEAM).app.kernova — a Team-ID-prefixed group. macOS
+	       grants silent container access to a group whose prefix matches the signing
+	       team (macOS 15 app-group protection, criterion C), so a Debug build needs NO
+	       provisioning profile, no developer-portal registration, and no device
+	       (guest-VM UDID) registration — anyone can clone and run, and the guest agent
+	       never triggers the "access data from other apps" consent prompt.
+	     • Release = group.app.kernova — the canonical iOS-style identifier, registered
+	       on the developer portal and authorized by an embedded provisioning profile
+	       (Automatic signing); Apple's recommended, Mac-App-Store-compatible form.
+	     The app is intentionally NOT sandboxed yet (it opens vsock); an app group does
+	     not require the App Sandbox. The guest agent registers the same identifier —
+	     host and guest never share a machine in production, and the host side uses a
+	     distinct domain id and container subpath so a dev host running both never
+	     collides. -->
 	<key>com.apple.security.application-groups</key>
 	<array>
-		<string>8MT4P4GZL2.app.kernova</string>
+		<string>$(KERNOVA_APP_GROUP)</string>
 	</array>
 </dict>
 </plist>

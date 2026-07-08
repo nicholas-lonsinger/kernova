@@ -2,17 +2,26 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- App-identity entitlement the system uses to launch/identify the sandboxed
-	     extension. A provisioning profile normally injects this; with profile-less
-	     manual signing (Option A) we must declare it explicitly (team-prefixed
-	     bundle id), mirroring Xcode's File Provider extension template. -->
+	<!-- App-identity entitlement fileproviderd uses to launch/validate this sandboxed
+	     extension. A provisioning profile normally injects it; the Debug config signs
+	     profile-less (Manual), so we declare it explicitly (team-prefixed bundle id).
+	     Without it, adding the domain fails with NSFileProviderError -2001. Release signs
+	     Automatic and its profile injects the same value. -->
 	<key>com.apple.application-identifier</key>
 	<string>8MT4P4GZL2.app.kernova.macosagent.fileprovider</string>
 	<key>com.apple.security.app-sandbox</key>
 	<true/>
+	<!-- Shares the KERNOVA_APP_GROUP container the guest agent registers so this
+	     sandboxed extension can read the files the agent stages there (addressing is via
+	     NSFileProviderServicing, not a Mach service, #460). The identifier is the
+	     per-configuration build setting: Debug = $(DEVELOPMENT_TEAM).app.kernova
+	     (Team-ID-prefixed, silent access with no provisioning profile — macOS 15
+	     criterion C — so no consent prompt inside an unregistered guest VM); Release =
+	     group.app.kernova (canonical iOS-style, profile-authorized under Automatic
+	     signing). -->
 	<key>com.apple.security.application-groups</key>
 	<array>
-		<string>8MT4P4GZL2.app.kernova</string>
+		<string>$(KERNOVA_APP_GROUP)</string>
 	</array>
 </dict>
 </plist>

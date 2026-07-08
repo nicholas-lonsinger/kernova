@@ -32,6 +32,14 @@ jobs:
           path: DerivedData/SourcePackages
           key: ${{ runner.os }}-spm-${{ env.XCODE_BUILD }}-${{ hashFiles('Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
 
+      # CODE_SIGNING_ALLOWED=NO (not ad-hoc `CODE_SIGN_IDENTITY=-`): CI has no signing
+      # identity and the unit tests never touch the app-group container, so signing buys
+      # nothing here. The Debug config now uses the team-prefixed
+      # `$(DEVELOPMENT_TEAM).app.kernova` group (Release keeps canonical `group.app.kernova`),
+      # which — unlike the profile-required `group.` form — could be ad-hoc signed; we still
+      # skip signing entirely for the reason above. DEVELOPMENT_TEAM stays set in the project,
+      # so `$(KERNOVA_APP_GROUP)` still expands in the Info.plists and the KernovaAppGroup
+      # helper resolves in the Debug test host. Mirrors dead-code.yml.
       - name: Build for testing
         run: |
           set -o pipefail
@@ -41,9 +49,7 @@ jobs:
             -destination 'platform=macOS' \
             -derivedDataPath DerivedData \
             -skipPackagePluginValidation \
-            CODE_SIGN_IDENTITY="-" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=YES \
+            CODE_SIGNING_ALLOWED=NO \
             COMPILER_INDEX_STORE_ENABLE=NO \
             2>&1 | if command -v xcbeautify &>/dev/null; then xcbeautify --renderer github-actions; else cat; fi
 
@@ -57,9 +63,7 @@ jobs:
             -derivedDataPath DerivedData \
             -resultBundlePath artifacts/TestResults.xcresult \
             -skipPackagePluginValidation \
-            CODE_SIGN_IDENTITY="-" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=YES \
+            CODE_SIGNING_ALLOWED=NO \
             COMPILER_INDEX_STORE_ENABLE=NO \
             2>&1 | if command -v xcbeautify &>/dev/null; then xcbeautify --renderer github-actions; else cat; fi
 

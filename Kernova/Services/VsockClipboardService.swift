@@ -209,7 +209,7 @@ final class VsockClipboardService: ClipboardServicing {
         self.staging = ClipboardFileStaging(
             label: "host-\(label)",
             tempRoot: stagingTempRoot
-                ?? FileProviderContainer(config: .host).stagingRootURL()
+                ?? FileProviderContainer(config: .host()).stagingRootURL()
                 ?? FileManager.default.temporaryDirectory,
             freeSpaceProvider: freeSpaceProvider)
     }

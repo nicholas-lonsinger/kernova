@@ -8,5 +8,5 @@ import KernovaKit
 // the guest direction, keeping the principal class in the appex module where its
 // runtime name is stable.
 final class GuestFileProviderExtension: FileProviderExtension {
-    override class var directionConfig: FileProviderConfig { .guest }
+    override class var directionConfig: FileProviderConfig { .guest() }
 }

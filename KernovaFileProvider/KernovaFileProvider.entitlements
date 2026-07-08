@@ -2,23 +2,27 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- App-identity entitlement the system uses to launch/identify the sandboxed
-	     extension. A provisioning profile normally injects this; with profile-less
-	     manual signing (Option A) we declare it explicitly (team-prefixed bundle id),
-	     mirroring KernovaMacOSAgentFileProvider. -->
+	<!-- App-identity entitlement fileproviderd uses to launch/validate this sandboxed
+	     extension. A provisioning profile normally injects it; the Debug config signs
+	     profile-less (Manual), so we declare it explicitly (team-prefixed bundle id).
+	     Without it, adding the File Provider domain fails with NSFileProviderError -2001
+	     ("The application cannot be used right now"). Release signs Automatic and its
+	     profile injects the same value, so the literal is harmless there. -->
 	<key>com.apple.application-identifier</key>
 	<string>8MT4P4GZL2.app.kernova.fileprovider</string>
 	<key>com.apple.security.app-sandbox</key>
 	<true/>
-	<!-- Shares the group the host app registers so the sandboxed extension can read
-	     the files the app stages into the group container (addressing is via
-	     NSFileProviderServicing, not a Mach service, #460). Stays team-ID-prefixed
-	     so it is granted implicitly under profile-less manual signing. Host uses a
-	     distinct domain id / container subpath, so sharing the same group never
-	     collides with the guest. -->
+	<!-- Shares the KERNOVA_APP_GROUP container the host app registers so this sandboxed
+	     extension can read the files the app stages there (addressing is via
+	     NSFileProviderServicing, not a Mach service, #460). The identifier is the
+	     per-configuration build setting: Debug = $(DEVELOPMENT_TEAM).app.kernova
+	     (Team-ID-prefixed, silent access with no provisioning profile — macOS 15
+	     criterion C); Release = group.app.kernova (canonical iOS-style, profile-authorized
+	     under Automatic signing, MAS-compatible). Host uses a distinct domain id /
+	     container subpath, so sharing the same group never collides with the guest. -->
 	<key>com.apple.security.application-groups</key>
 	<array>
-		<string>8MT4P4GZL2.app.kernova</string>
+		<string>$(KERNOVA_APP_GROUP)</string>
 	</array>
 </dict>
 </plist>

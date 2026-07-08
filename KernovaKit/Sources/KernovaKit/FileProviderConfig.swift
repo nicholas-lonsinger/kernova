@@ -17,26 +17,30 @@ import Foundation
 // extension can call back at `fetchContents`, and a per-direction Darwin
 // notification is the reconnect doorbell. There is no Mach service.
 //
-// The team-ID-prefixed app group (`8MT4P4GZL2.app.kernova`) is retained for the
-// shared staging container: macOS grants a `<TeamID>.*` app group implicitly to
-// a team-signed process, so it works under the project's profile-less manual
-// signing ("Option A") — the guest agent must run in any VM without a
-// device-limited provisioning profile, and a plain `group.*` group would demand
-// one. (The team prefix was never about Mach-service lookup, which is now gone.)
+// The app group scopes the shared staging container. Its identifier is
+// per-build-configuration (the `KERNOVA_APP_GROUP` build setting): Debug uses a
+// Team-ID-prefixed group (`$(DEVELOPMENT_TEAM).app.kernova`) that macOS grants
+// silent container access to with no provisioning profile (macOS 15 app-group
+// protection, criterion C), and Release uses the canonical iOS-style
+// `group.app.kernova` authorized by an embedded provisioning profile. Each
+// executable resolves its value from the Info.plist via
+// `KernovaAppGroup.identifier()`, which `host()` / `guest()` read by default.
+// Because Debug is Team-ID-prefixed, the agent no longer hits the one-time macOS
+// "access data from other apps" consent prompt inside an unregistered guest VM.
 //
-// Guest and host deliberately share the registered app group but use distinct
-// service names, domain identifiers, container subpaths, and Darwin doorbell
-// names, so a dev Mac running both the guest agent (host-local) and the main app
-// never collides (in production they're separate machines / OS instances).
+// Guest and host deliberately share the app group but use distinct service names,
+// domain identifiers, container subpaths, and Darwin doorbell names, so a dev Mac
+// running both the guest agent (host-local) and the main app never collides (in
+// production they're separate machines / OS instances).
 
 /// Per-direction configuration for the clipboard File Provider transport.
 public struct FileProviderConfig: Sendable {
     /// App group shared by the container app and its sandboxed extension.
     ///
     /// Scopes the shared staging container the owner writes into and the
-    /// extension APFS-clones out of. Team-ID-prefixed so macOS grants it
-    /// implicitly under profile-less manual signing (a plain `group.*` group would
-    /// require a provisioning profile); no longer used for any Mach-service lookup.
+    /// extension APFS-clones out of. Per-build-configuration (see the file
+    /// header); resolved from the Info.plist by `host()` / `guest()`. No longer
+    /// used for any Mach-service lookup.
     public let appGroupIdentifier: String
 
     /// The `NSFileProviderServiceName` the extension vends its anonymous XPC
@@ -142,32 +146,48 @@ public struct FileProviderConfig: Sendable {
 
     /// Host→guest: the guest agent serves the host's copied file to the guest
     /// (issue #376).
-    public static let guest = FileProviderConfig(
-        appGroupIdentifier: "8MT4P4GZL2.app.kernova",
-        serviceName: NSFileProviderServiceName("app.kernova.clipboard.guest.relay"),
-        reconnectNotificationName: "app.kernova.clipboard.guest.reconnect",
-        domainIdentifier: "kernova-clipboard",
-        domainDisplayName: "Kernova Clipboard",
-        containerDirectoryName: "FileProvider",
-        loggerSubsystem: "app.kernova.macosagent",
-        extensionLoggerSubsystem: "app.kernova.macosagent.fileprovider",
-        ownerCodeSigningRequirement: nil,
-        extensionCodeSigningRequirement: nil)
+    ///
+    /// - Parameter appGroupIdentifier: the shared container's app group;
+    ///   defaults to the running executable's configured value.
+    /// - Returns: a guest-direction config.
+    public static func guest(
+        appGroupIdentifier: String = KernovaAppGroup.identifier()
+    ) -> FileProviderConfig {
+        FileProviderConfig(
+            appGroupIdentifier: appGroupIdentifier,
+            serviceName: NSFileProviderServiceName("app.kernova.clipboard.guest.relay"),
+            reconnectNotificationName: "app.kernova.clipboard.guest.reconnect",
+            domainIdentifier: "kernova-clipboard",
+            domainDisplayName: "Kernova Clipboard",
+            containerDirectoryName: "FileProvider",
+            loggerSubsystem: "app.kernova.macosagent",
+            extensionLoggerSubsystem: "app.kernova.macosagent.fileprovider",
+            ownerCodeSigningRequirement: nil,
+            extensionCodeSigningRequirement: nil)
+    }
 
     /// Guest→host: the main app serves the guest's copied file to the Mac
     /// ("Copy to Mac", issue #424).
     ///
     /// Distinct service/domain/subpath/doorbell from the guest so both can
-    /// coexist on a dev Mac; reuses the same registered app group.
-    public static let host = FileProviderConfig(
-        appGroupIdentifier: "8MT4P4GZL2.app.kernova",
-        serviceName: NSFileProviderServiceName("app.kernova.clipboard.host.relay"),
-        reconnectNotificationName: "app.kernova.clipboard.host.reconnect",
-        domainIdentifier: "kernova-clipboard-host",
-        domainDisplayName: "Kernova Clipboard (Mac)",
-        containerDirectoryName: "FileProviderHost",
-        loggerSubsystem: "app.kernova",
-        extensionLoggerSubsystem: "app.kernova.fileprovider",
-        ownerCodeSigningRequirement: FileProviderConfig.mainAppRequirement,
-        extensionCodeSigningRequirement: FileProviderConfig.hostExtensionRequirement)
+    /// coexist on a dev Mac; reuses the same app group.
+    ///
+    /// - Parameter appGroupIdentifier: the shared container's app group;
+    ///   defaults to the running executable's configured value.
+    /// - Returns: a host-direction config.
+    public static func host(
+        appGroupIdentifier: String = KernovaAppGroup.identifier()
+    ) -> FileProviderConfig {
+        FileProviderConfig(
+            appGroupIdentifier: appGroupIdentifier,
+            serviceName: NSFileProviderServiceName("app.kernova.clipboard.host.relay"),
+            reconnectNotificationName: "app.kernova.clipboard.host.reconnect",
+            domainIdentifier: "kernova-clipboard-host",
+            domainDisplayName: "Kernova Clipboard (Mac)",
+            containerDirectoryName: "FileProviderHost",
+            loggerSubsystem: "app.kernova",
+            extensionLoggerSubsystem: "app.kernova.fileprovider",
+            ownerCodeSigningRequirement: FileProviderConfig.mainAppRequirement,
+            extensionCodeSigningRequirement: FileProviderConfig.hostExtensionRequirement)
+    }
 }
