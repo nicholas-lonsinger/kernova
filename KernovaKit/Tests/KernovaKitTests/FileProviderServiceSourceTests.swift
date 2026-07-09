@@ -17,11 +17,9 @@ import os
 /// deterministically without standing up an anonymous-XPC round trip.
 @Suite("FileProviderServiceSource")
 struct FileProviderServiceSourceTests {
-    /// Builds a source with no code-signing pins, and a fresh, UUID-suffixed
-    /// service name / reconnect notification name per call, so a source can be
-    /// constructed without touching production identifiers and parallel tests
-    /// can never cross-talk (Darwin notification names are a flat,
-    /// process-global namespace).
+    /// Builds a source over a fresh `makeTestFileProviderConfig()` (see
+    /// `StreamTestSupport.swift`), so a source can be constructed without
+    /// touching production identifiers.
     ///
     /// The source stands up an anonymous listener in `init` (harmless in a test
     /// process) but never accepts a connection unless the test does so itself,
@@ -29,20 +27,8 @@ struct FileProviderServiceSourceTests {
     private func makeSource(
         connectTimeout: TimeInterval = 30, fetchReplyTimeout: TimeInterval = 120
     ) -> FileProviderServiceSource {
-        let unique = UUID().uuidString
-        let config = FileProviderConfig(
-            appGroupIdentifier: "8MT4P4GZL2.app.kernova.test",
-            serviceName: NSFileProviderServiceName("app.kernova.clipboard.test.relay.\(unique)"),
-            reconnectNotificationName: "app.kernova.clipboard.test.reconnect.\(unique)",
-            domainIdentifier: "kernova-clipboard-test",
-            domainDisplayName: "Kernova Clipboard (Test)",
-            containerDirectoryName: "FileProviderTest",
-            loggerSubsystem: "app.kernova.test",
-            extensionLoggerSubsystem: "app.kernova.test.fileprovider",
-            ownerCodeSigningRequirement: nil,
-            extensionCodeSigningRequirement: nil)
-        return FileProviderServiceSource(
-            config: config,
+        FileProviderServiceSource(
+            config: makeTestFileProviderConfig(),
             logger: Logger(subsystem: "app.kernova.test", category: "ServiceSourceTest"),
             connectTimeout: connectTimeout, fetchReplyTimeout: fetchReplyTimeout)
     }
@@ -112,7 +98,12 @@ struct FileProviderServiceSourceTests {
 
     @Test("accepting a connection drains a pending pull off the pending queue")
     func acceptDrainsPendingPull() {
-        let source = makeSource()
+        // Small timeouts: this test is fully synchronous (no `await`), so
+        // neither timer can race the assertions below — they just let the
+        // pull's never-cancelled background timers (see the source's docs)
+        // resolve near-instantly instead of lingering for the production
+        // 30s/120s defaults.
+        let source = makeSource(connectTimeout: 0.05, fetchReplyTimeout: 0.05)
 
         // No accepted connection → enqueues and waits.
         _ = source.fetchStagedFile(generation: 3, repIndex: 0) { _ in
@@ -125,12 +116,12 @@ struct FileProviderServiceSourceTests {
         #expect(source.pendingPullCountForTesting == 1)
 
         // `shouldAcceptNewConnection`'s `listener` parameter is unused by the
-        // implementation, so a throwaway value stands in for the
-        // framework-provided one; `newConnection` only needs to be a valid
-        // connection object, since the drain itself never depends on a live peer
-        // answering it.
-        let throwawayConnection = NSXPCConnection(listenerEndpoint: NSXPCListener.anonymous().endpoint)
-        _ = source.listener(NSXPCListener.anonymous(), shouldAcceptNewConnection: throwawayConnection)
+        // implementation, so the same listener stands in for both it and the
+        // endpoint backing `throwawayConnection` — the drain itself never
+        // depends on a live peer answering it.
+        let throwawayListener = NSXPCListener.anonymous()
+        let throwawayConnection = NSXPCConnection(listenerEndpoint: throwawayListener.endpoint)
+        _ = source.listener(throwawayListener, shouldAcceptNewConnection: throwawayConnection)
 
         #expect(source.pendingPullCountForTesting == 0)
         throwawayConnection.invalidate()

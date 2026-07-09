@@ -94,19 +94,24 @@ public final class FileProviderServicingConnector: NSObject,
     /// the retry loop so a permanently unreachable extension can't spin.
     private var connectAttempts = 0
 
+    /// Upper bound on transient connect retries before giving up.
+    ///
+    /// Sized (via `defaultMaxConnectAttempts`/`defaultConnectRetryDelay`) so
+    /// `maxConnectAttempts × connectRetryDelay` (~30 s) spans the extension's own
+    /// `fetchContents` connect wait, so a slow-relaunching extension is still
+    /// caught within the window the paste is waiting — rather than the owner
+    /// giving up after a few seconds while the extension keeps waiting. (#466
+    /// tracks making this coupling more explicit.)
     private let maxConnectAttempts: Int
+    /// Delay between transient connect retries.
     private let connectRetryDelay: DispatchTimeInterval
 
-    /// Upper bound on transient connect retries before giving up, in production.
-    ///
-    /// Sized so `defaultMaxConnectAttempts × defaultConnectRetryDelay` (~30 s)
-    /// spans the extension's own `fetchContents` connect wait, so a
-    /// slow-relaunching extension is still caught within the window the paste is
-    /// waiting — rather than the owner giving up after a few seconds while the
-    /// extension keeps waiting. (#466 tracks making this coupling more explicit.)
-    static let defaultMaxConnectAttempts = 15
-    /// Delay between transient connect retries, in production.
-    static let defaultConnectRetryDelay: DispatchTimeInterval = .seconds(2)
+    /// Production default for `maxConnectAttempts` — see its doc for the ~30s
+    /// coupling with the extension's connect-timeout.
+    private static let defaultMaxConnectAttempts = 15
+    /// Production default for `connectRetryDelay` — see its doc for the ~30s
+    /// coupling with the extension's connect-timeout.
+    private static let defaultConnectRetryDelay: DispatchTimeInterval = .seconds(2)
 
     /// Creates a connector for one direction from its config.
     public convenience init(config: FileProviderConfig) {
@@ -149,19 +154,26 @@ public final class FileProviderServicingConnector: NSObject,
         self.init(
             config: config, connect: operation,
             maxConnectAttempts: Self.defaultMaxConnectAttempts,
-            connectRetryDelay: Self.defaultConnectRetryDelay)
+            connectRetryDelay: Self.defaultConnectRetryDelay, logger: logger)
     }
 
     /// Creates a connector with an injected connect operation and retry budget —
     /// the seam tests use to drive the state machine deterministically.
+    ///
+    /// `logger` lets the convenience init above pass through the logger it
+    /// already built for the default `connect` closure, rather than this
+    /// initializer constructing a second, redundant `KernovaLogger` from the
+    /// same config; test call sites omit it and get one built from `config`.
     init(
         config: FileProviderConfig, connect: @escaping ConnectOperation,
-        maxConnectAttempts: Int, connectRetryDelay: DispatchTimeInterval
+        maxConnectAttempts: Int, connectRetryDelay: DispatchTimeInterval,
+        logger: KernovaLogger? = nil
     ) {
         self.reconnectNotificationName = config.reconnectNotificationName
         self.extensionRequirement = config.extensionCodeSigningRequirement
-        self.logger = KernovaLogger(
-            subsystem: config.loggerSubsystem, category: "ServicingConnector")
+        self.logger =
+            logger
+            ?? KernovaLogger(subsystem: config.loggerSubsystem, category: "ServicingConnector")
         self.connectOperation = connect
         self.maxConnectAttempts = maxConnectAttempts
         self.connectRetryDelay = connectRetryDelay
@@ -254,7 +266,14 @@ public final class FileProviderServicingConnector: NSObject,
 
     private func connect(rootURL: URL) {
         connectOperation(rootURL) { [weak self] connection in
-            guard let self else { return }
+            guard let self else {
+                // The connector went away while the two-hop connect was in
+                // flight — unlike a live connector, there's nothing left to
+                // notify, but a successfully obtained connection must still be
+                // invalidated rather than silently dropped live.
+                connection?.invalidate()
+                return
+            }
             if let connection {
                 self.configureAndResume(connection)
             } else {
@@ -384,10 +403,14 @@ public final class FileProviderServicingConnector: NSObject,
 
     /// Directly invokes the reconnect-doorbell handler.
     ///
+    /// Dispatched onto the connector's private `queue` — the same execution
+    /// context the real doorbell always runs on (see `startServing`'s
+    /// `DarwinNotificationObserver`).
+    ///
     /// The real doorbell relies on `CFNotificationCenter` delivery on a running
     /// main run loop, which the KernovaKit SwiftPM test target does not host (see
     /// `DarwinNotificationTests`) — so tests drive the handler directly instead of
     /// posting a real Darwin notification that would never arrive.
-    func triggerReconnectDoorbellForTesting() { handleReconnectDoorbell() }
+    func triggerReconnectDoorbellForTesting() { queue.sync { handleReconnectDoorbell() } }
     #endif
 }

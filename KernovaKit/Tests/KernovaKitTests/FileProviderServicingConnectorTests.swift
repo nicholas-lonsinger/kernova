@@ -14,11 +14,13 @@ import Testing
 /// `getFileProviderServicesForItem` → `getFileProviderConnection` chain is
 /// collapsed into one seam — `NSFileProviderService` is an opaque,
 /// non-instantiable system type a test can't fabricate) rather than the real
-/// system calls. Every test but one is fully deterministic and XPC-free; the
-/// one exception (the doorbell re-probe re-sending `ownerDidConnect`) stands up
-/// a single in-process anonymous-XPC loopback peer. None of these tests posts a
-/// real Darwin notification: `CFNotificationCenter` only delivers on a running
-/// main run loop, which this SwiftPM test target does not host (see
+/// system calls. Every test is deterministic. One (the doorbell re-probe
+/// re-sending `ownerDidConnect`) stands up a live in-process anonymous-XPC
+/// loopback peer; another (`stopServingRacesSuccessfulConnect`) constructs —
+/// but never resumes — a throwaway `NSXPCConnection`/`NSXPCListener` pair
+/// purely as an inert placeholder value. None of these tests posts a real
+/// Darwin notification: `CFNotificationCenter` only delivers on a running main
+/// run loop, which this SwiftPM test target does not host (see
 /// `DarwinNotificationTests`) — the doorbell is instead triggered directly via
 /// the `#if DEBUG` seam.
 @Suite("FileProviderServicingConnector")
@@ -26,24 +28,6 @@ struct FileProviderServicingConnectorTests {
     /// A placeholder root URL — never touched by a real File Provider API,
     /// since every test replaces the connect operation with a stub.
     private static let testRootURL = URL(fileURLWithPath: "/tmp/kernova-servicing-connector-test-root")
-
-    /// A config with a fresh, UUID-suffixed service name and reconnect
-    /// notification name per call, so parallel tests can never cross-talk
-    /// (Darwin notification names are a flat, process-global namespace).
-    private func makeConfig() -> FileProviderConfig {
-        let unique = UUID().uuidString
-        return FileProviderConfig(
-            appGroupIdentifier: "8MT4P4GZL2.app.kernova.test",
-            serviceName: NSFileProviderServiceName("app.kernova.clipboard.test.relay.\(unique)"),
-            reconnectNotificationName: "app.kernova.clipboard.test.reconnect.\(unique)",
-            domainIdentifier: "kernova-clipboard-test",
-            domainDisplayName: "Kernova Clipboard (Test)",
-            containerDirectoryName: "FileProviderTest",
-            loggerSubsystem: "app.kernova.test",
-            extensionLoggerSubsystem: "app.kernova.test.fileprovider",
-            ownerCodeSigningRequirement: nil,
-            extensionCodeSigningRequirement: nil)
-    }
 
     /// A `FileProviderRelay` that fails the test if ever called — none of these
     /// state-machine tests drive an actual byte pull.
@@ -120,7 +104,7 @@ struct FileProviderServicingConnectorTests {
     {
         private let listener = NSXPCListener.anonymous()
         private let lock = NSLock()
-        private var acceptedConnections: [NSXPCConnection] = []
+        private var acceptedConnection: NSXPCConnection?
         private var ownerDidConnectCountStorage = 0
         let gate = AsyncGate()
 
@@ -138,7 +122,8 @@ struct FileProviderServicingConnectorTests {
         ) -> Bool {
             newConnection.exportedInterface = NSXPCInterface(with: FileProviderControl.self)
             newConnection.exportedObject = self
-            lock.withLock { acceptedConnections.append(newConnection) }
+            newConnection.remoteObjectInterface = NSXPCInterface(with: FileProviderRelay.self)
+            lock.withLock { acceptedConnection = newConnection }
             newConnection.resume()
             return true
         }
@@ -149,9 +134,14 @@ struct FileProviderServicingConnectorTests {
             reply()
         }
 
+        /// Invalidates the accepted connection (breaking the connection↔peer
+        /// retain cycle `exportedObject` holds) and the listener.
         func invalidate() {
-            let connections = lock.withLock { acceptedConnections }
-            connections.forEach { $0.invalidate() }
+            let connection: NSXPCConnection? = lock.withLock {
+                defer { acceptedConnection = nil }
+                return acceptedConnection
+            }
+            connection?.invalidate()
             listener.invalidate()
         }
     }
@@ -169,7 +159,7 @@ struct FileProviderServicingConnectorTests {
     @Test("a second ensureConnected while a connect is in flight coalesces — no second connect call")
     func connectCoalescesWhileInFlight() async throws {
         let stub = ConnectStub(.capture)  // never completes — holds the connect slot
-        let connector = makeConnector(stub: stub, config: makeConfig())
+        let connector = makeConnector(stub: stub, config: makeTestFileProviderConfig())
         connector.startServing(NeverCalledRelay())
 
         connector.ensureConnected(rootURL: Self.testRootURL)
@@ -186,7 +176,8 @@ struct FileProviderServicingConnectorTests {
     func retryBudgetGivesUpAfterMaxAttempts() async throws {
         let stub = ConnectStub(.immediate(nil))
         let connector = makeConnector(
-            stub: stub, maxConnectAttempts: 3, connectRetryDelay: .milliseconds(5), config: makeConfig())
+            stub: stub, maxConnectAttempts: 3, connectRetryDelay: .milliseconds(5),
+            config: makeTestFileProviderConfig())
         connector.startServing(NeverCalledRelay())
 
         connector.ensureConnected(rootURL: Self.testRootURL)
@@ -207,7 +198,7 @@ struct FileProviderServicingConnectorTests {
     @Test("stopServing before a captured connect completes successfully refuses to adopt the connection")
     func stopServingRacesSuccessfulConnect() async throws {
         let stub = ConnectStub(.capture)
-        let connector = makeConnector(stub: stub, config: makeConfig())
+        let connector = makeConnector(stub: stub, config: makeTestFileProviderConfig())
         connector.startServing(NeverCalledRelay())
         connector.ensureConnected(rootURL: Self.testRootURL)
         try await stub.gate.wait { stub.callCount == 1 }
@@ -227,7 +218,7 @@ struct FileProviderServicingConnectorTests {
     @Test("stopServing before a captured connect completes with failure settles with no retry")
     func stopServingRacesFailedConnect() async throws {
         let stub = ConnectStub(.capture)
-        let connector = makeConnector(stub: stub, config: makeConfig())
+        let connector = makeConnector(stub: stub, config: makeTestFileProviderConfig())
         connector.startServing(NeverCalledRelay())
         connector.ensureConnected(rootURL: Self.testRootURL)
         try await stub.gate.wait { stub.callCount == 1 }
@@ -245,7 +236,7 @@ struct FileProviderServicingConnectorTests {
     func doorbellReprobesLiveConnection() async throws {
         let peer = LoopbackControlPeer()
         let stub = ConnectStub(.immediate(NSXPCConnection(listenerEndpoint: peer.endpoint)))
-        let connector = makeConnector(stub: stub, config: makeConfig())
+        let connector = makeConnector(stub: stub, config: makeTestFileProviderConfig())
         connector.startServing(NeverCalledRelay())
         connector.ensureConnected(rootURL: Self.testRootURL)
 
@@ -265,11 +256,16 @@ struct FileProviderServicingConnectorTests {
         peer.invalidate()
     }
 
-    @Test("the reconnect doorbell reconnects when no connection is live")
-    func doorbellReconnectsWhenDisconnected() async throws {
+    @Test("the reconnect doorbell retries a connect attempt when no connection is live")
+    func doorbellRetriesConnectWhenDisconnected() async throws {
+        // The stub always fails, so this proves the doorbell's disconnected
+        // branch triggers a fresh `connectIfNeeded()` call — not that a
+        // reconnect actually succeeds (the successful-adopt path is
+        // `doorbellReprobesLiveConnection` above).
         let stub = ConnectStub(.immediate(nil))
         let connector = makeConnector(
-            stub: stub, maxConnectAttempts: 1, connectRetryDelay: .seconds(2), config: makeConfig())
+            stub: stub, maxConnectAttempts: 1, connectRetryDelay: .seconds(2),
+            config: makeTestFileProviderConfig())
         connector.startServing(NeverCalledRelay())
         connector.ensureConnected(rootURL: Self.testRootURL)
 
