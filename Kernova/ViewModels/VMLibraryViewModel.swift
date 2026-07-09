@@ -68,21 +68,6 @@ final class VMLibraryViewModel {
     /// `true` when any instance is mid-clone or mid-import.
     var hasPreparing: Bool { instances.contains(where: \.isPreparing) }
 
-    /// Chains successive `importVMs(fromDroppedURLs:)` batches so a second import
-    /// trigger (e.g. a Finder double-click arriving while a drag-and-drop batch is
-    /// still mid-copy) queues behind the first instead of racing it (#487).
-    private var importTail: Task<Void, Never>?
-
-    /// Set once app termination begins.
-    ///
-    /// A batch still queued behind `importTail` — not yet registered as a phantom row, so
-    /// invisible to `hasPreparing`/`instances` and to `AppDelegate`'s termination-time
-    /// preparing sweep — checks this and skips starting its copy instead of silently
-    /// beginning one, unsupervised, after the app has already committed to quitting (#487).
-    /// Doesn't affect a copy already in flight — cancellation there is handled the same
-    /// best-effort way it always was, via each phantom's own `preparingState`.
-    private var isTerminating = false
-
     /// Current VM ordering used by sortInstances(); synchronized with UserDefaults via persistOrder().
     private var customOrder: [UUID] = []
 
@@ -994,73 +979,43 @@ final class VMLibraryViewModel {
         }
     }
 
-    /// Imports a batch of bundles.
-    ///
-    /// Reserves every destination synchronously up front (so all phantom rows appear at once and
-    /// can't collide, #444/#487), then awaits the copies — which run concurrently, so cancelling
-    /// one bundle mid-copy can't stall the rest (#486). A failed import surfaces its own error and
-    /// leaves the others unaffected.
-    ///
-    /// Private for the same reason as ``importVM(from:)`` (#492).
-    private func importVMs(from sourceURLs: [URL]) async {
-        guard !sourceURLs.isEmpty else {
-            Self.logger.debug("importVMs: no bundles to import")
-            return
-        }
-        Self.logger.notice("Importing \(sourceURLs.count, privacy: .public) bundle(s)")
-        let tasks = sourceURLs.compactMap { importVM(from: $0) }
-        for task in tasks {
-            await task.value
-        }
-    }
-
-    /// Filters `urls` to `.kernova` bundles and imports the batch off a chained Task.
+    /// Filters `urls` to `.kernova` bundles and imports the batch.
     ///
     /// Keeps a synchronous AppKit callback (an odoc handler, a drag-drop `acceptDrop`) from
     /// blocking. Shared by `AppDelegate` (Finder open) and `SidebarViewController`
-    /// (drag-and-drop) so the filter/spawn sequence isn't duplicated per caller.
+    /// (drag-and-drop) so the filter sequence isn't duplicated per caller.
     ///
-    /// Each call's batch is chained behind `importTail` — the prior call's batch, if any —
-    /// rather than spawned as an independent Task. Without this, two overlapping triggers
-    /// (e.g. a drag-and-drop batch still mid-copy on bundle 3 of 5 when a Finder double-click
-    /// of another bundle arrives) would run as separate concurrent Tasks and could observe
-    /// each other's in-flight phantom rows while computing destination-collision filenames
-    /// (#487). Chaining serializes every trigger's bundles through the same sequential-await
-    /// path `importVMs(from:)` already gives one batch (#444).
+    /// Each bundle's destination is reserved and its phantom row registered synchronously (see
+    /// ``importVM(from:)``), so two overlapping triggers — e.g. a drag-and-drop batch still
+    /// copying bundle 3 of 5 when a Finder double-click of another bundle arrives — never collide
+    /// on a destination name (the second trigger's reservation sees the first's phantoms in
+    /// `instances`) and never wait behind each other's copies (#487/#491). The copies then run
+    /// concurrently in the background.
     ///
-    /// Returns whether any bundle was accepted for import — `true` means a batch was queued,
-    /// not that every import in it will succeed.
+    /// Returns whether any bundle was accepted for import — `true` means at least one `.kernova`
+    /// bundle was reserved, not that every import will succeed.
     @discardableResult
     func importVMs(fromDroppedURLs urls: [URL]) -> Bool {
         let bundles = urls.filter { VMStorageService.isBundleURL($0) }
         guard !bundles.isEmpty else { return false }
-        let previous = importTail
-        importTail = Task { [weak self] in
-            await previous?.value
-            guard let self, !self.isTerminating else { return }
-            await self.importVMs(from: bundles)
+        Self.logger.notice("Importing \(bundles.count, privacy: .public) bundle(s)")
+        for url in bundles {
+            _ = importVM(from: url)
         }
         return true
     }
 
-    /// Stops any import batch still queued behind `importTail` from starting its copy.
-    ///
-    /// Called once, early in app termination (`AppDelegate.applicationShouldTerminate`).
-    /// A queued-but-not-yet-started batch has no phantom row yet, so it's invisible to
-    /// `hasPreparing`/`instances` and to the termination-time preparing sweep
-    /// (`cancelAndCleanupPreparingInstances`) — without this, such a batch could silently
-    /// start an unsupervised `FileManager.copyItem` after the app has already committed to
-    /// quitting (#487). Idempotent and permanent for the view model's remaining lifetime;
-    /// doesn't touch a copy already in flight, which the existing per-phantom cleanup path
-    /// still handles best-effort.
-    func cancelPendingImportBatches() {
-        isTerminating = true
-    }
-
     #if DEBUG
-    /// Test-only seam onto the current import chain tail, so tests can await every queued
-    /// batch (including ones queued by a prior call) without polling.
-    var importTailForTesting: Task<Void, Never>? { importTail }
+    /// Test-only seam awaiting every in-flight preparing (clone/import) copy task.
+    ///
+    /// One snapshot of `instances` suffices: reservation registers every phantom synchronously
+    /// before `importVMs(fromDroppedURLs:)` returns, so no new phantom appears after the caller
+    /// regains control.
+    func awaitPreparingForTesting() async {
+        for task in instances.compactMap({ $0.preparingState?.task }) {
+            await task.value
+        }
+    }
     #endif
 
     // MARK: - Rename

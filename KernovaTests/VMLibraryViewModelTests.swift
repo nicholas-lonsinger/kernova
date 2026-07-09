@@ -2222,7 +2222,7 @@ struct VMLibraryViewModelTests {
         defer { try? FileManager.default.removeItem(at: source.url.deletingLastPathComponent()) }
 
         _ = viewModel.importVMs(fromDroppedURLs: [source.url])
-        await viewModel.importTailForTesting?.value
+        await viewModel.awaitPreparingForTesting()
 
         #expect(viewModel.instances.count == 1)
         let imported = viewModel.instances.first
@@ -2250,7 +2250,7 @@ struct VMLibraryViewModelTests {
         }
 
         _ = viewModel.importVMs(fromDroppedURLs: sources.map(\.url))
-        await viewModel.importTailForTesting?.value
+        await viewModel.awaitPreparingForTesting()
 
         // Pre-fix, a synchronous loop over `importVM` only imported the first bundle and
         // rejected the rest with a "preparing operation in progress" error.
@@ -2273,7 +2273,7 @@ struct VMLibraryViewModelTests {
         }
 
         _ = viewModel.importVMs(fromDroppedURLs: [first.url, second.url])
-        await viewModel.importTailForTesting?.value
+        await viewModel.awaitPreparingForTesting()
 
         // The second bundle's destination must not collide with the first's — reservation consults
         // in-flight phantoms in `instances`, not just on-disk state, so the not-yet-copied first
@@ -2297,7 +2297,7 @@ struct VMLibraryViewModelTests {
         storage.bundles[source.url] = existing.configuration
 
         _ = viewModel.importVMs(fromDroppedURLs: [source.url])
-        await viewModel.importTailForTesting?.value
+        await viewModel.awaitPreparingForTesting()
 
         #expect(viewModel.instances.count == 1)
     }
@@ -2313,7 +2313,7 @@ struct VMLibraryViewModelTests {
         viewModel.instances.append(existing)
 
         _ = viewModel.importVMs(fromDroppedURLs: [bundleURL])
-        await viewModel.importTailForTesting?.value
+        await viewModel.awaitPreparingForTesting()
 
         #expect(viewModel.instances.count == 1)
         #expect(viewModel.selectedID == existing.id)
@@ -2336,7 +2336,7 @@ struct VMLibraryViewModelTests {
         }
 
         _ = viewModel.importVMs(fromDroppedURLs: [first.url, duplicate.url, third.url])
-        await viewModel.importTailForTesting?.value
+        await viewModel.awaitPreparingForTesting()
 
         // The duplicate is a synchronous no-op (select-existing) that must not stall the batch.
         #expect(viewModel.instances.count == 3)
@@ -2354,7 +2354,7 @@ struct VMLibraryViewModelTests {
         let source = try makeImportSource(name: "Missing Source", storage: storage, createOnDisk: false)
 
         _ = viewModel.importVMs(fromDroppedURLs: [source.url])
-        await viewModel.importTailForTesting?.value
+        await viewModel.awaitPreparingForTesting()
 
         #expect(viewModel.instances.isEmpty)
         #expect(presenter.showError == true)
@@ -2373,7 +2373,7 @@ struct VMLibraryViewModelTests {
         }
 
         _ = viewModel.importVMs(fromDroppedURLs: [first.url, failing.url, third.url])
-        await viewModel.importTailForTesting?.value
+        await viewModel.awaitPreparingForTesting()
 
         #expect(viewModel.instances.count == 2)
         let importedIDs = Set(viewModel.instances.map(\.configuration.id))
@@ -2392,15 +2392,15 @@ struct VMLibraryViewModelTests {
         defer { try? FileManager.default.removeItem(at: source.url.deletingLastPathComponent()) }
 
         _ = viewModel.importVMs(fromDroppedURLs: [source.url])
-        await viewModel.importTailForTesting?.value
+        await viewModel.awaitPreparingForTesting()
 
         #expect(viewModel.instances.count == 2)
         #expect(viewModel.instances.contains { $0.configuration.id == source.config.id })
         #expect(presenter.showError == false)
     }
 
-    @Test("importVMs(fromDroppedURLs:) serializes batches across independent invocations (#487)")
-    func importVMsBatchesSerializeAcrossInvocations() async throws {
+    @Test("importVMs(fromDroppedURLs:) — two overlapping triggers both import without collision (#487)")
+    func importVMsOverlappingTriggersAllImportWithoutCollision() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let firstBatch = try [
             makeImportSource(name: "Trigger A VM 1", storage: storage),
@@ -2422,32 +2422,16 @@ struct VMLibraryViewModelTests {
         _ = viewModel.importVMs(fromDroppedURLs: firstBatch.map(\.url))
         _ = viewModel.importVMs(fromDroppedURLs: secondBatch.map(\.url))
 
-        await viewModel.importTailForTesting?.value
+        await viewModel.awaitPreparingForTesting()
 
-        // Pre-fix, the second trigger's bundle could observe the first trigger's
-        // still-preparing rows and be rejected with "operation in progress" instead of
-        // importing.
+        // The second trigger reserves synchronously against the first trigger's already-registered
+        // phantoms in `instances`, so every bundle imports with a distinct destination — no
+        // collision and no waiting behind the other batch's copies.
         #expect(viewModel.instances.count == allSources.count)
         let importedIDs = Set(viewModel.instances.map(\.configuration.id))
         #expect(importedIDs == Set(allSources.map(\.config.id)))
         #expect(viewModel.instances.allSatisfy { !$0.isPreparing })
         #expect(presenter.showError == false)
-    }
-
-    @Test("cancelPendingImportBatches stops a queued batch from starting (#487)")
-    func cancelPendingImportBatchesSkipsQueuedBatch() async throws {
-        let (viewModel, storage, _, _, _) = makeViewModel()
-        let source = try makeImportSource(name: "Never Imported", storage: storage)
-        defer { try? FileManager.default.removeItem(at: source.url.deletingLastPathComponent()) }
-
-        // Mirrors AppDelegate.applicationShouldTerminate calling this before any queued
-        // batch (invisible to hasPreparing/instances until it starts) gets a chance to run.
-        viewModel.cancelPendingImportBatches()
-        _ = viewModel.importVMs(fromDroppedURLs: [source.url])
-
-        await viewModel.importTailForTesting?.value
-
-        #expect(viewModel.instances.isEmpty)
     }
 
     @Test("registerPhantom preserves selection of an instance the user is already watching prepare (#487)")
@@ -2462,7 +2446,7 @@ struct VMLibraryViewModelTests {
         defer { try? FileManager.default.removeItem(at: source.url.deletingLastPathComponent()) }
 
         _ = viewModel.importVMs(fromDroppedURLs: [source.url])
-        await viewModel.importTailForTesting?.value
+        await viewModel.awaitPreparingForTesting()
 
         // A second, unrelated import shouldn't steal the sidebar's focus from the
         // instance the user is already watching prepare.

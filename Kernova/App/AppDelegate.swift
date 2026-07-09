@@ -703,9 +703,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             Self.logger.notice(
                 "Termination save complete: \(savedCount, privacy: .public) saved, \(failedCount, privacy: .public) failed of \(runningInstances.count, privacy: .public) total"
             )
-            // A multi-bundle import batch (#444) awaits each bundle's copy in sequence, so a
-            // later bundle's phantom can start preparing only after the first sweep above ran —
-            // sweep again right before the deferred reply so it isn't orphaned on disk.
+            // A drop/odoc delivered during the async save window above can register a fresh
+            // phantom (import reservation is synchronous and no longer gated by termination),
+            // so sweep again right before the deferred reply so such a bundle isn't orphaned on
+            // disk (#491).
             self.cancelAndCleanupPreparingInstances()
             NSApplication.shared.reply(toApplicationShouldTerminate: true)
         }
@@ -716,12 +717,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// Cancels every preparing instance's task and trashes its partial bundle.
     ///
     /// Best effort, since `FileManager.copyItem` isn't interruptible (the copy already in
-    /// flight keeps writing until it finishes or fails on its own). Also stops any import
-    /// batch still queued behind `VMLibraryViewModel.importTail` — not yet a visible phantom
-    /// row, so invisible to the sweep below — from starting a fresh, unsupervised copy after
-    /// termination has begun (#487).
+    /// flight keeps writing until it finishes or fails on its own). Every accepted import bundle
+    /// registers its phantom row synchronously, so this sweep sees them all (#491).
     private func cancelAndCleanupPreparingInstances() {
-        viewModel.cancelPendingImportBatches()
         viewModel.instances.removeAll { instance in
             guard instance.isPreparing else { return false }
 
