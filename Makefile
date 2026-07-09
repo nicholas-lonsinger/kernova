@@ -53,7 +53,7 @@ SWIFT_FORMAT      := xcrun swift-format
 SWIFT_SOURCE_DIRS := Kernova KernovaTests KernovaMacOSAgent KernovaMacOSAgentTests KernovaKit KernovaQuickLook KernovaRelaunchHelper KernovaMacOSAgentFileProvider KernovaFileProvider
 
 .DEFAULT_GOAL := help
-.PHONY: help build test test-suite test-package clean format lint install-hooks check-hooks doctor ghosts clean-ghosts fp-reset
+.PHONY: help build test test-suite test-package clean format lint install-hooks check-hooks doctor ghosts clean-ghosts fp-reset ls-reset
 
 help:
 	@printf 'Kernova build targets:\n\n'
@@ -69,6 +69,7 @@ help:
 	@printf '  make ghosts              Report stale Kernova Launch Services/process/worktree registrations\n'
 	@printf '  make clean-ghosts        Same as ghosts, but also unregisters/kills/prunes what it finds\n'
 	@printf '  make fp-reset            Restart fileproviderd to clear stale Kernova File Provider bindings\n'
+	@printf '  make ls-reset            Clear legacy com.kernova.app ghost Launch Services registrations\n'
 	@printf '  make clean               Remove the DerivedData directory\n'
 	@printf '\n'
 	@printf '  Append CONFIGURATION=Release to build/test in Release (default: Debug)\n'
@@ -143,6 +144,16 @@ fp-reset:
 	@printf 'Restarting fileproviderd to clear stale Kernova File Provider bindings...\n'
 	@printf '(briefly interrupts all File Providers; iCloud Drive reconnects in a few seconds)\n'
 	@killall fileproviderd 2>/dev/null && printf 'fileproviderd restarted.\n' || printf 'fileproviderd was not running; it will start on demand.\n'
+
+# Clears ghost Launch Services registrations left under the legacy
+# pre-#471-rename `com.kernova.app` identifier — a gap `clean-ghosts` can't
+# see, since Tools/ghosts.sh's Launch Services check only pattern-matches the
+# current `app.kernova` identifier. Kept as its own target (rather than folded
+# into ghosts.sh) until the legacy-identifier era is retired; see
+# Tools/ls-reset.sh for why this isn't the system-wide rebuild its name might
+# suggest (`-kill` no longer exists in lsregister, and turns out unnecessary).
+ls-reset:
+	@Tools/ls-reset.sh
 
 clean:
 	rm -rf $(DERIVED_DATA_ROOT)
