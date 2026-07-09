@@ -1083,6 +1083,13 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                 code: "clipboard.paste.timeout",
                 message: "The clipboard transfer to the guest timed out", on: channel)
         case .cancelled:
+            // `.debug`, not `.warning`: `.cancelled` also covers benign
+            // teardown/supersession (`failAll`), which is deliberately silent
+            // elsewhere (see `ClipboardStreamReceiver.teardown`'s doc) — this
+            // is only a diagnostic trace for the consumer-cancel case
+            // (`LazyPullCoordinator.cancelBeforeStart`), not a warning-worthy
+            // anomaly like `.aborted`/`.timedOut`.
+            Self.logger.debug("Inbound clipboard pull \(transferID, privacy: .public) cancelled")
             receiver.cancelAwait(transferID)
         }
         return nil
@@ -1337,5 +1344,31 @@ extension VsockGuestClipboardAgent: FileProviderPullProvider {
             let url = representation.fileURL
         else { return .failure(.pullFailed) }
         return .success(url.path)
+    }
+
+    /// Aborts an in-flight `fetchStagedFile` for `(generation, repIndex)` (#464).
+    ///
+    /// Off-main only, like `fetchStagedFile` (the relay's XPC queue is the only
+    /// caller). Addresses the transfer purely by its deterministic `transferID` —
+    /// not by re-validating `generation` against the current offer — so a cancel
+    /// that arrives after a newer offer superseded this one still reaches the
+    /// (already superseded, but possibly still-live) receiver's bookkeeping for
+    /// that id.
+    ///
+    /// Also marks the id pre-cancelled on `lazyCoordinator` so a cancel that
+    /// arrives before `pullRepresentation` has even called `coordinator.pull`
+    /// (the fetch is dispatched onto the relay's own concurrent queue and may
+    /// not have started yet) still takes effect instead of being silently lost —
+    /// closing the race `receiver.cancel(transferID:)` alone can't, since it has
+    /// nothing to tear down until a Begin/awaiter exists.
+    func cancelStagedPull(generation: UInt64, repIndex: Int) {
+        dispatchPrecondition(condition: .notOnQueue(.main))
+        let transferID = ClipboardTransferID.make(
+            generation: generation, repIndex: repIndex, hostMinted: false)
+        let receiver: ClipboardStreamReceiver? = DispatchQueue.main.sync { self.receiver }
+        Self.logger.notice(
+            "Cancelling file clipboard pull \(transferID, privacy: .public) on consumer request")
+        receiver?.cancel(transferID: transferID)
+        lazyCoordinator.cancelBeforeStart(transferID)
     }
 }

@@ -127,6 +127,10 @@ struct FileProviderDomainHostEnablementTests {
         ) -> Result<String, FileProviderPullError> {
             .failure(.noCurrentOffer)
         }
+
+        func cancelStagedPull(generation: UInt64, repIndex: Int) {
+            Issue.record("cancelStagedPull should never be called in these availability-wiring tests")
+        }
     }
 
     /// No-op transport — these tests exercise availability wiring, not the relay

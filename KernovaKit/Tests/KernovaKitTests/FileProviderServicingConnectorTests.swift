@@ -39,6 +39,10 @@ struct FileProviderServicingConnectorTests {
             Issue.record("fetchFile should never be called in FileProviderServicingConnector tests")
             reply(nil, NSError(domain: NSCocoaErrorDomain, code: -1))
         }
+
+        func cancelFetch(generation: UInt64, repIndex: Int) {
+            Issue.record("cancelFetch should never be called in FileProviderServicingConnector tests")
+        }
     }
 
     /// A `FileProviderServicingConnector.ConnectOperation` test double.

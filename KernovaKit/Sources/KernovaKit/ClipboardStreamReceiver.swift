@@ -361,6 +361,26 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
         failAwaiters { _ in true }
     }
 
+    /// Consumer-requested cancel of one lazy pull (#464 — e.g. Finder's cancel
+    /// button, relayed through the File Provider extension to the owner).
+    ///
+    /// Unlike `cancel(generation:)`/`cancelAll()` (silent teardown on
+    /// supersession — the channel-wide path never surfaced those as a user-visible
+    /// abort), this is a *consumer* asking to stop, so it also tells the sender to
+    /// give up the remaining bytes via a `ClipboardStreamAbort` frame — the same
+    /// wire message `fail(_:code:message:)` sends on a genuine receive failure.
+    /// Idempotent: a transfer already finished, or an unknown `transferID`, is a
+    /// harmless no-op (the abort frame is still sent best-effort; a stale/finished
+    /// transfer_id on the sender side is itself a no-op there).
+    public func cancel(transferID: UInt64) {
+        sendAbortFrame(transferID, code: "cancelled", message: "Fetch cancelled by consumer")
+        if let transfer = transfer(transferID) {
+            teardown(transfer)
+        } else {
+            failAwaiters { $0 == transferID }
+        }
+    }
+
     /// Registers an off-actor delivery handler for a single transfer.
     ///
     /// Called by `LazyPullCoordinator` before the `ClipboardRequest` is sent.

@@ -48,6 +48,14 @@ public final class LazyPullCoordinator: @unchecked Sendable {
 
     private let lock = NSLock()
     private var slots: [UInt64: Slot] = [:]
+    /// Transfer ids cancelled (#464) before `pull` registered a slot for them.
+    ///
+    /// One-shot: `pull` consumes (removes) its own id the moment it runs,
+    /// whether or not it was present — so this can never grow unboundedly, and
+    /// a `transferID` that's never pulled leaves at most one stale entry (freed
+    /// the next time that same id happens to be pulled, or simply harmless
+    /// dead weight for the coordinator's lifetime otherwise).
+    private var preCancelled: Set<UInt64> = []
 
     /// Creates an idle coordinator.
     public init() {}
@@ -84,7 +92,18 @@ public final class LazyPullCoordinator: @unchecked Sendable {
         send: () -> Void
     ) -> LazyPullOutcome {
         let slot = Slot()
-        lock.withLock { slots[transferID] = slot }
+        // Consume any pre-cancel mark atomically with registering the slot: a
+        // `cancelBeforeStart` that raced ahead of this call (#464 — a consumer
+        // cancelling before the request was even sent) is honored here instead
+        // of registering a slot nothing will ever resolve until the backstop
+        // timeout, and `send` never runs — the request never goes out over the
+        // wire for a fetch the consumer already gave up on.
+        let alreadyCancelled: Bool = lock.withLock {
+            if preCancelled.remove(transferID) != nil { return true }
+            slots[transferID] = slot
+            return false
+        }
+        if alreadyCancelled { return .cancelled }
         send()
         while true {
             // The wait blocks one window; the slot's flags — not the wait result —
@@ -152,6 +171,25 @@ public final class LazyPullCoordinator: @unchecked Sendable {
         for slot in pending { resolveSlot(slot, .cancelled) }
     }
 
+    /// Cancels the pull for `transferID` (#464) whether or not it has reached
+    /// `pull` yet.
+    ///
+    /// If a slot is already registered, resolves it immediately with
+    /// `.cancelled` — the same effect as `abort`/`failAll`, just addressed by
+    /// id. If `pull` hasn't been called yet for this id, marks it so the
+    /// upcoming `pull` call resolves to `.cancelled` on arrival instead of
+    /// registering a slot and sending a request the consumer already gave up
+    /// on. Idempotent: a repeated or late call for an id with no slot and no
+    /// pending mark just re-marks it, consumed by the next `pull` as usual.
+    public func cancelBeforeStart(_ transferID: UInt64) {
+        let slot: Slot? = lock.withLock {
+            if let existing = slots[transferID] { return existing }
+            preCancelled.insert(transferID)
+            return nil
+        }
+        if let slot { resolveSlot(slot, .cancelled) }
+    }
+
     // MARK: - Private
 
     private func resolve(_ transferID: UInt64, _ outcome: LazyPullOutcome) {
@@ -174,5 +212,10 @@ public final class LazyPullCoordinator: @unchecked Sendable {
     ///
     /// Test-only.
     var pendingSlotCountForTesting: Int { lock.withLock { slots.count } }
+
+    /// Number of pre-cancel marks awaiting a `pull` call to consume them.
+    ///
+    /// Test-only.
+    var preCancelledCountForTesting: Int { lock.withLock { preCancelled.count } }
     #endif
 }

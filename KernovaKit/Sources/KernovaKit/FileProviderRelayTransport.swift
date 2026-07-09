@@ -97,21 +97,23 @@ public final class FileProviderServicingConnector: NSObject,
     /// Upper bound on transient connect retries before giving up.
     ///
     /// Sized (via `defaultMaxConnectAttempts`/`defaultConnectRetryDelay`) so
-    /// `maxConnectAttempts × connectRetryDelay` (~30 s) spans the extension's own
-    /// `fetchContents` connect wait, so a slow-relaunching extension is still
-    /// caught within the window the paste is waiting — rather than the owner
-    /// giving up after a few seconds while the extension keeps waiting. (#466
-    /// tracks making this coupling more explicit.)
+    /// `maxConnectAttempts × connectRetryDelay` spans the extension's own
+    /// `fetchContents` connect wait (`FileProviderServiceSource.connectTimeout`),
+    /// so a slow-relaunching extension is still caught within the window the
+    /// paste is waiting — rather than the owner giving up after a few seconds
+    /// while the extension keeps waiting. The coupling is structural (#466):
+    /// both defaults derive from `FileProviderServicingTiming`, so editing one
+    /// side's constant re-derives the other rather than silently misaligning.
     private let maxConnectAttempts: Int
     /// Delay between transient connect retries.
     private let connectRetryDelay: DispatchTimeInterval
 
-    /// Production default for `maxConnectAttempts` — see its doc for the ~30s
+    /// Production default for `maxConnectAttempts` — see its doc for the
     /// coupling with the extension's connect-timeout.
-    private static let defaultMaxConnectAttempts = 15
-    /// Production default for `connectRetryDelay` — see its doc for the ~30s
+    private static let defaultMaxConnectAttempts = FileProviderServicingTiming.maxConnectAttempts
+    /// Production default for `connectRetryDelay` — see its doc for the
     /// coupling with the extension's connect-timeout.
-    private static let defaultConnectRetryDelay: DispatchTimeInterval = .seconds(2)
+    private static let defaultConnectRetryDelay = FileProviderServicingTiming.connectRetryDelay
 
     /// Creates a connector for one direction from its config.
     public convenience init(config: FileProviderConfig) {
