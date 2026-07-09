@@ -2261,6 +2261,29 @@ struct VMLibraryViewModelTests {
         #expect(presenter.showError == false)
     }
 
+    @Test("importVMs batch with two identically-named bundles reserves distinct destinations (#487)")
+    func importVMsBatchDuplicateFilenamesImportsBoth() async throws {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        // Two sources with the same leaf name but distinct parents (and distinct UUIDs).
+        let first = try makeImportSource(name: "Same Name", storage: storage)
+        let second = try makeImportSource(name: "Same Name", storage: storage)
+        defer {
+            try? FileManager.default.removeItem(at: first.url.deletingLastPathComponent())
+            try? FileManager.default.removeItem(at: second.url.deletingLastPathComponent())
+        }
+
+        _ = viewModel.importVMs(fromDroppedURLs: [first.url, second.url])
+        await viewModel.importTailForTesting?.value
+
+        // The second bundle's destination must not collide with the first's — reservation consults
+        // in-flight phantoms in `instances`, not just on-disk state, so the not-yet-copied first
+        // phantom is visible to the second's collision check (pre-fix, `fileExists` alone missed it).
+        #expect(viewModel.instances.count == 2)
+        let names = Set(viewModel.instances.map { $0.bundleURL.lastPathComponent })
+        #expect(names == ["Same Name.kernova", "Same Name 2.kernova"])
+        #expect(presenter.showError == false)
+    }
+
     @Test("importVM selects the existing instance when a VM with the same UUID is already in the library")
     func importVMDuplicateUUIDSelectsExisting() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()

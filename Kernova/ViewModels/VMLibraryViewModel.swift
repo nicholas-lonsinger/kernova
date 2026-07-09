@@ -841,14 +841,16 @@ final class VMLibraryViewModel {
     /// deallocated / cancelled / failure cleanup both clone and import need around a
     /// preparing row's file copy.
     ///
-    /// Returns the `Task` so an async caller can await it: `importVM(from:)` awaits the
-    /// result so its own copy finishes before a batch import moves to its next bundle
-    /// (#444). `cloneVM(_:)` discards it and stays fire-and-forget — a clone's UUID-named
-    /// bundle (`storageService.bundleURL(for:)`) can never collide with another clone or an
-    /// import, so it needs no self-awaited serialization. If a future feature ever clones
-    /// several VMs in one batch, it should run those clones concurrently rather than
-    /// copying import's sequential-await shape — mirroring import's `await` here would
-    /// import(!) a constraint clone doesn't actually have.
+    /// Returns the `Task` so `importVMs(from:)` can spawn a whole batch's copies up front and then
+    /// await them together — they run concurrently, so cancelling one can't stall the rest
+    /// (#444/#486). `cloneVM(_:)` discards it and stays fire-and-forget.
+    ///
+    /// `copyWork` runs on a detached `Task` and is uninterruptible (a blocking `FileManager`
+    /// call), so a user cancel (`cancelPreparingConfirmed`) cancels this outer `Task` but the copy
+    /// keeps writing until it finishes on its own. Both completion branches below therefore check
+    /// `Task.isCancelled`: on cancel the phantom row is already gone, so trash the (now-settled)
+    /// bundle here — deferred from cancel time so it never races the in-flight copy — and stay
+    /// silent instead of logging a phantom success.
     @discardableResult
     private func prepareBundle(
         _ phantom: VMInstance,
@@ -864,6 +866,10 @@ final class VMLibraryViewModel {
                 // Clear preparing state regardless of whether the view model is still alive —
                 // the phantom row's UI should always reflect completion.
                 phantom.preparingState = nil
+                if Task.isCancelled {
+                    Self.trashPartialBundle(at: phantom.bundleURL)
+                    return
+                }
                 guard self != nil else {
                     Self.logger.warning(
                         "\(operation.displayNoun, privacy: .public) completed but view model was deallocated — VM '\(phantom.name, privacy: .public)' exists on disk but was not added to library"
@@ -872,9 +878,14 @@ final class VMLibraryViewModel {
                 }
                 onSuccess()
             } catch {
+                phantom.preparingState = nil
+                if Task.isCancelled {
+                    // Row already removed by `cancelPreparingConfirmed`; trash the partial bundle.
+                    Self.trashPartialBundle(at: phantom.bundleURL)
+                    return
+                }
                 guard let self else {
-                    // Clear preparing state and trash partial bundle even without the view model.
-                    phantom.preparingState = nil
+                    // Trash the partial bundle even without the view model.
                     Self.trashPartialBundle(at: phantom.bundleURL)
                     Self.logger.error(
                         "\(operation.displayNoun, privacy: .public) failed and view model was deallocated — trashed partial bundle '\(phantom.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
@@ -882,12 +893,10 @@ final class VMLibraryViewModel {
                     return
                 }
                 self.cleanupPhantomInstance(phantom)
-                if !Task.isCancelled {
-                    Self.logger.error(
-                        "Failed to \(operation.displayNoun.lowercased(), privacy: .public) VM '\(phantom.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-                    )
-                    self.presentError(error)
-                }
+                Self.logger.error(
+                    "Failed to \(operation.displayNoun.lowercased(), privacy: .public) VM '\(phantom.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                )
+                self.presentError(error)
             }
         }
         phantom.preparingState = VMInstance.PreparingState(operation: operation, task: task)
@@ -896,20 +905,42 @@ final class VMLibraryViewModel {
 
     // MARK: - Import
 
-    /// Imports a `.kernova` VM bundle from an external location (Finder double-click, drag-and-drop).
+    /// A collision-free destination bundle URL under `vmsDir` for a bundle named like `sourceURL`.
     ///
-    /// If the bundle is already inside the VMs directory, it is simply selected.
-    /// If a VM with the same UUID already exists in the library, that instance is selected.
-    /// Otherwise, the bundle is copied into the VMs directory asynchronously with a phantom row.
+    /// Checks the candidate name against BOTH on-disk bundles (`fileExists`) AND the reserved
+    /// `bundleURL`s of already-registered phantoms in `instances` — because under synchronous
+    /// reservation a prior bundle's copy hasn't run yet, so `fileExists` alone can't see it. That
+    /// in-flight check is what lets a whole batch (and two overlapping triggers) reserve distinct
+    /// names atomically without serializing behind each other's copies (#487).
+    private func reserveDestination(for sourceURL: URL, in vmsDir: URL) -> URL {
+        let reserved = Set(instances.map { $0.bundleURL.standardizedFileURL.path(percentEncoded: false) })
+        func isTaken(_ url: URL) -> Bool {
+            FileManager.default.fileExists(atPath: url.path(percentEncoded: false))
+                || reserved.contains(url.standardizedFileURL.path(percentEncoded: false))
+        }
+        let candidate = vmsDir.appendingPathComponent(sourceURL.lastPathComponent, isDirectory: true)
+        guard isTaken(candidate) else { return candidate }
+        let stem = sourceURL.deletingPathExtension().lastPathComponent
+        let ext = sourceURL.pathExtension
+        var counter = 2
+        var url: URL
+        repeat {
+            url = vmsDir.appendingPathComponent("\(stem) \(counter).\(ext)", isDirectory: true)
+            counter += 1
+        } while isTaken(url)
+        return url
+    }
+
+    /// Reserves a collision-free destination for a `.kernova` bundle, registers its phantom row
+    /// synchronously, and spawns the file copy — returning that copy's `Task` (or `nil` for a
+    /// no-op: the source is already in the library by UUID, or already inside the VMs directory).
     ///
-    /// `async` so callers importing a batch (``importVMs(from:)``) can await each bundle before
-    /// starting the next — its own copy finishes before a multi-bundle batch moves to the next
-    /// bundle (#444), and `importTail` chains successive batches the same way across
-    /// independent import triggers (#487).
-    ///
-    /// Private: every import routes through ``importVMs(fromDroppedURLs:)`` so batches
-    /// serialize behind `importTail` (#492).
-    private func importVM(from sourceURL: URL) async {
+    /// Reservation is synchronous through phantom registration (no `await` before the copy `Task`
+    /// is spawned), so a batch's reservations — and two overlapping triggers' — run atomically on
+    /// the MainActor and see each other's phantoms in `instances`; the copies then run
+    /// concurrently (#444, #486). Private: every import routes through
+    /// ``importVMs(fromDroppedURLs:)`` (#492).
+    private func importVM(from sourceURL: URL) -> Task<Void, Never>? {
         do {
             let vmsDir = try storageService.vmsDirectory
 
@@ -918,7 +949,7 @@ final class VMLibraryViewModel {
                 let config = try storageService.loadConfiguration(from: sourceURL)
                 if let existing = instances.first(where: { $0.id == config.id }) {
                     selectedID = existing.id
-                    return
+                    return nil
                 }
             }
 
@@ -929,36 +960,20 @@ final class VMLibraryViewModel {
                 selectedID = existing.id
                 Self.logger.info(
                     "VM '\(config.name, privacy: .public)' already in library — selected existing instance")
-                return
+                return nil
             }
 
             // Check save file from source bundle (destination doesn't exist yet)
             let sourceLayout = VMBundleLayout(bundleURL: sourceURL)
             let initialStatus = Self.initialStatus(for: config, layout: sourceLayout)
 
-            // Determine destination, avoiding filename collisions
-            let destinationURL: URL = {
-                let candidate = vmsDir.appendingPathComponent(sourceURL.lastPathComponent, isDirectory: true)
-                guard FileManager.default.fileExists(atPath: candidate.path(percentEncoded: false)) else {
-                    return candidate
-                }
-                let stem = sourceURL.deletingPathExtension().lastPathComponent
-                let ext = sourceURL.pathExtension
-                var counter = 2
-                var url: URL
-                repeat {
-                    url = vmsDir.appendingPathComponent("\(stem) \(counter).\(ext)", isDirectory: true)
-                    counter += 1
-                } while FileManager.default.fileExists(atPath: url.path(percentEncoded: false))
-                return url
-            }()
-            // Create phantom row immediately
+            // Reserve the destination and register the phantom row synchronously, so the next
+            // reservation in this batch (and any overlapping trigger) sees it in `instances`.
+            let destinationURL = reserveDestination(for: sourceURL, in: vmsDir)
             let phantom = VMInstance(configuration: config, bundleURL: destinationURL, status: initialStatus)
 
-            // Launch async file copy and await it, so this import's copy finishes before
-            // this method returns (see `prepareBundle`'s doc comment for why import awaits
-            // and clone doesn't).
-            let task = prepareBundle(
+            // Spawn the copy and return its Task; the copy runs concurrently (see `prepareBundle`).
+            return prepareBundle(
                 phantom, operation: .importing,
                 copyWork: {
                     try await Task.detached {
@@ -970,20 +985,21 @@ final class VMLibraryViewModel {
                         "Imported VM '\(config.name, privacy: .public)' from \(sourceURL.lastPathComponent, privacy: .public)"
                     )
                 })
-            await task.value
         } catch {
             Self.logger.error(
                 "Failed to import VM from \(sourceURL.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)"
             )
             presentError(error)
+            return nil
         }
     }
 
-    /// Imports a batch of bundles sequentially.
+    /// Imports a batch of bundles.
     ///
-    /// Each import awaits the prior one's copy before the next starts, so every bundle in the
-    /// batch imports (#444) instead of racing the next bundle's destination-collision check. A
-    /// failed import surfaces its own error and the batch continues to the next bundle.
+    /// Reserves every destination synchronously up front (so all phantom rows appear at once and
+    /// can't collide, #444/#487), then awaits the copies — which run concurrently, so cancelling
+    /// one bundle mid-copy can't stall the rest (#486). A failed import surfaces its own error and
+    /// leaves the others unaffected.
     ///
     /// Private for the same reason as ``importVM(from:)`` (#492).
     private func importVMs(from sourceURLs: [URL]) async {
@@ -992,8 +1008,9 @@ final class VMLibraryViewModel {
             return
         }
         Self.logger.notice("Importing \(sourceURLs.count, privacy: .public) bundle(s)")
-        for url in sourceURLs {
-            await importVM(from: url)
+        let tasks = sourceURLs.compactMap { importVM(from: $0) }
+        for task in tasks {
+            await task.value
         }
     }
 
@@ -2105,20 +2122,33 @@ final class VMLibraryViewModel {
     func cancelPreparingConfirmed(_ instance: VMInstance) {
         let operationLabel = instance.preparingState?.operation.displayLabel ?? "preparing"
 
+        // Cancel the task and drop the row now, but leave the on-disk bundle to the copy task: the
+        // copy is uninterruptible, so trashing it here would race the still-writing copy. The task
+        // trashes the bundle once the copy settles (see `prepareBundle`, #486).
         instance.preparingState?.task.cancel()
-        cleanupPhantomInstance(instance)
+        removePhantomRow(instance)
 
         Self.logger.notice("Cancelled \(operationLabel, privacy: .public) for '\(instance.name, privacy: .public)'")
     }
 
-    /// Removes a phantom instance from the library, clears its preparing state, and trashes its partial bundle.
-    private func cleanupPhantomInstance(_ phantom: VMInstance) {
+    /// Removes a phantom row from the library and clears its preparing state, without touching the
+    /// on-disk bundle.
+    ///
+    /// Split out from `cleanupPhantomInstance` so `cancelPreparingConfirmed` can drop the row
+    /// immediately while deferring the bundle trash to the copy task, instead of racing the
+    /// in-flight copy (#486).
+    private func removePhantomRow(_ phantom: VMInstance) {
         instances.removeAll { $0.id == phantom.id }
         persistOrder()
         if selectedID == phantom.id {
             selectedID = instances.first?.id
         }
         phantom.preparingState = nil
+    }
+
+    /// Removes a phantom instance from the library, clears its preparing state, and trashes its partial bundle.
+    private func cleanupPhantomInstance(_ phantom: VMInstance) {
+        removePhantomRow(phantom)
         Self.trashPartialBundle(at: phantom.bundleURL)
     }
 
