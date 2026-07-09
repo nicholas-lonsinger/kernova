@@ -430,4 +430,35 @@ struct LazyPullCoordinatorTests {
         try await gate.wait { box.abortInfo != nil }
         #expect(box.abortInfo?.code == "cancelled")
     }
+
+    @Test("cancel(transferID:) wakes an awaiter whose transfer never produced a Begin (#464)")
+    func cancelTransferIDDrainsAwaiter() async throws {
+        let harness = try StreamHarness(
+            chunkSize: 4096, windowBytes: 16384,
+            freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
+        defer { harness.tearDown() }
+
+        let box = RepBox()
+        let gate = AsyncGate()
+        let transferID = ClipboardTransferID.make(generation: 3, repIndex: 1, hostMinted: true)
+        harness.receiver.awaitTransfer(
+            transferID,
+            onComplete: {
+                box.setRep($0)
+                gate.notify()
+            },
+            onAbort: {
+                box.setAbort($0)
+                gate.notify()
+            })
+
+        // A per-transfer cancel — unlike `cancel(generation:)`/`cancelAll()` — is
+        // scoped to one id, so it must still wake an awaiter that has no
+        // `transfers` entry yet (never produced a Begin), same as the
+        // generation/channel-wide paths above.
+        harness.receiver.cancel(transferID: transferID)
+
+        try await gate.wait { box.abortInfo != nil }
+        #expect(box.abortInfo?.code == "cancelled")
+    }
 }

@@ -17,6 +17,68 @@ import os
 /// deterministically without standing up an anonymous-XPC round trip.
 @Suite("FileProviderServiceSource")
 struct FileProviderServiceSourceTests {
+    /// A fake owner relay: never replies to `fetchFile` (so a pull can be
+    /// observed "in flight"), and records `cancelFetch` calls.
+    ///
+    /// Owns its own anonymous listener and is its own `NSXPCListenerDelegate` —
+    /// mirroring `FileProviderServicingConnectorTests.LoopbackControlPeer` —
+    /// rather than a separate delegate object, since `NSXPCListener.delegate` is
+    /// `weak` and a standalone delegate with no other owner would be
+    /// deallocated immediately. This is the "owner" side backing the
+    /// `NSXPCConnection` the test hands directly to
+    /// `source.listener(_:shouldAcceptNewConnection:)` (mirroring
+    /// `acceptDrainsPendingPull`'s pattern, but with a real, working peer
+    /// instead of an inert placeholder, since this test needs `performPull`'s
+    /// `remoteObjectProxy` call to actually reach it).
+    private final class RecordingRelay: NSObject, NSXPCListenerDelegate, FileProviderRelay,
+        @unchecked Sendable
+    {
+        private let listener = NSXPCListener.anonymous()
+        private let lock = NSLock()
+        private var cancelCallStorage: (UInt64, Int)?
+        private var fetchFileEnteredStorage = false
+        var cancelCall: (UInt64, Int)? { lock.withLock { cancelCallStorage } }
+        var fetchFileHasEntered: Bool { lock.withLock { fetchFileEnteredStorage } }
+        let fetchFileEntered = AsyncGate()
+        let cancelFetchCalled = AsyncGate()
+
+        override init() {
+            super.init()
+            listener.delegate = self
+            listener.resume()
+        }
+
+        var endpoint: NSXPCListenerEndpoint { listener.endpoint }
+
+        func listener(
+            _ listener: NSXPCListener, shouldAcceptNewConnection newConnection: NSXPCConnection
+        ) -> Bool {
+            newConnection.exportedInterface = NSXPCInterface(with: FileProviderRelay.self)
+            newConnection.exportedObject = self
+            newConnection.resume()
+            return true
+        }
+
+        func fetchFile(
+            generation: UInt64, repIndex: Int,
+            reply: @escaping @Sendable (String?, NSError?) -> Void
+        ) {
+            // Deliberately never replies — the test cancels while this "pull" is
+            // still in flight, then tears the connection down.
+            lock.withLock { fetchFileEnteredStorage = true }
+            fetchFileEntered.notify()
+        }
+
+        func cancelFetch(generation: UInt64, repIndex: Int) {
+            lock.withLock { cancelCallStorage = (generation, repIndex) }
+            cancelFetchCalled.notify()
+        }
+
+        func invalidate() {
+            listener.invalidate()
+        }
+    }
+
     /// Builds a source over a fresh `makeTestFileProviderConfig()` (see
     /// `StreamTestSupport.swift`), so a source can be constructed without
     /// touching production identifiers.
@@ -125,5 +187,53 @@ struct FileProviderServiceSourceTests {
 
         #expect(source.pendingPullCountForTesting == 0)
         throwawayConnection.invalidate()
+    }
+
+    @Test("cancelling a pull already dispatched to the owner asks the owner to abort it (#464)")
+    func cancelDispatchedPullAsksOwnerToAbort() async throws {
+        // Short reply timeout: the relay below never replies, so this just
+        // bounds how long the (already-cancelled, harmless) background timer
+        // lingers rather than sitting at the 120s production default.
+        let source = makeSource(fetchReplyTimeout: 2)
+        let relay = RecordingRelay()
+        defer { relay.invalidate() }
+
+        // A connection whose remote peer is `relay`'s own listener — handed
+        // directly to `shouldAcceptNewConnection`, exactly like
+        // `acceptDrainsPendingPull`, so the source treats it as its one live
+        // owner connection.
+        let connection = NSXPCConnection(listenerEndpoint: relay.endpoint)
+        defer { connection.invalidate() }
+        _ = source.listener(NSXPCListener.anonymous(), shouldAcceptNewConnection: connection)
+
+        let result = Box<Result<String, NSError>?>(nil)
+        // A live connection exists, so this dispatches immediately over it
+        // (the fast path) rather than enqueueing — `relay.fetchFile` is called
+        // synchronously within this call.
+        let cancellation = source.fetchStagedFile(generation: 11, repIndex: 2) { outcome in
+            result.value = outcome
+        }
+
+        try await relay.fetchFileEntered.wait { relay.fetchFileHasEntered }
+
+        cancellation.cancel()
+
+        // The local completion fires immediately with the user-cancelled
+        // sentinel — this much also holds for a still-*pending* pull (see
+        // `cancelPendingPullCompletesWithUserCancelled` above, where no
+        // connection exists at all and the owner-abort branch is simply
+        // unreachable). What's new here is the owner round trip below.
+        guard case .failure(let error)? = result.value else {
+            Issue.record(
+                "expected a failure result after cancel, got \(String(describing: result.value))")
+            return
+        }
+        #expect(error.domain == NSCocoaErrorDomain)
+        #expect(error.code == NSUserCancelledError)
+
+        // The owner must be told to stop streaming bytes nobody will read (#464).
+        try await relay.cancelFetchCalled.wait { relay.cancelCall != nil }
+        #expect(relay.cancelCall?.0 == 11)
+        #expect(relay.cancelCall?.1 == 2)
     }
 }

@@ -149,6 +149,11 @@ final class HostClipboardPullRouter: FileProviderPullProvider, @unchecked Sendab
         guard let source else { return .failure(.noCurrentOffer) }
         return source.pullStagedFile(generation: generation, repIndex: repIndex)
     }
+
+    func cancelStagedPull(generation: UInt64, repIndex: Int) {
+        let source = lock.withLock { self.source }
+        source?.cancelStagedPull(generation: generation, repIndex: repIndex)
+    }
 }
 
 /// Implemented by a clipboard service so the host File Provider coordinator — and
@@ -165,4 +170,10 @@ protocol HostClipboardFileRepProviding: AnyObject, Sendable {
     func pullStagedFile(
         generation: UInt64, repIndex: Int
     ) -> Result<String, FileProviderPullError>
+
+    /// Aborts an in-flight `pullStagedFile` for `(generation, repIndex)` (#464):
+    /// stops the vsock transfer and wakes the blocked pull. Best-effort and
+    /// idempotent — a cancel for an unknown or already-finished transfer is a
+    /// no-op. Called off-main on the File Provider relay's XPC queue.
+    func cancelStagedPull(generation: UInt64, repIndex: Int)
 }

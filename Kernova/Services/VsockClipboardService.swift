@@ -1204,6 +1204,27 @@ extension VsockClipboardService: HostClipboardFileRepProviding {
         }
         return .success(url.path)
     }
+
+    /// Aborts an in-flight `pullStagedFile` for `(generation, repIndex)` (#464).
+    ///
+    /// Thread-aware like `pullStagedFile`: reads the current receiver directly on
+    /// main, or via `DispatchQueue.main.sync` off-main (the relay's XPC queue).
+    /// Addresses the transfer purely by its deterministic `transferID` — not by
+    /// re-validating `generation` against the current offer — so a cancel that
+    /// arrives after a newer offer superseded this one still reaches the (already
+    /// superseded, but possibly still-live) receiver's bookkeeping for that id.
+    nonisolated func cancelStagedPull(generation: UInt64, repIndex: Int) {
+        let transferID = ClipboardTransferID.make(
+            generation: generation, repIndex: repIndex, hostMinted: true)
+        let receiver: ClipboardStreamReceiver? =
+            Thread.isMainThread
+            ? MainActor.assumeIsolated { self.receiver }
+            : DispatchQueue.main.sync { MainActor.assumeIsolated { self.receiver } }
+        guard let receiver else { return }
+        Self.logger.notice(
+            "Cancelling file clipboard pull \(transferID, privacy: .public) on consumer request")
+        receiver.cancel(transferID: transferID)
+    }
 }
 
 /// Single-resume bridge from one inbound pull's three possible resumers — the

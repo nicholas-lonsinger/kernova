@@ -27,11 +27,26 @@ import Foundation
     /// staged file's path (which the sandboxed extension can read), or an
     /// `NSError` mapped to an `NSFileProviderError` on failure.
     ///
-    /// Called on `fetchContents`; the File Provider read path has no 60s deadline,
-    /// so blocking on the reply is safe. `repIndex` is a non-negative `Int`.
+    /// Called on `fetchContents`; the File Provider read path has no 60s deadline.
+    /// The owner's implementation dispatches the pull off the XPC delivery queue
+    /// and replies asynchronously — see `cancelFetch` for why blocking it is not
+    /// safe. `repIndex` is a non-negative `Int`.
     func fetchFile(
         generation: UInt64, repIndex: Int,
         reply: @escaping @Sendable (_ stagedPath: String?, _ error: NSError?) -> Void)
+
+    /// Best-effort abort of an in-flight `fetchFile` for `(generation, repIndex)`,
+    /// so the owner stops streaming bytes a cancelled fetch will never read
+    /// (#464). One-way (no reply) and idempotent — a cancel for an unknown or
+    /// already-finished transfer is a no-op.
+    ///
+    /// Delivered on the same per-connection serial queue as `fetchFile`
+    /// (`NSXPCConnection` delivers every incoming call and reply block on one
+    /// private serial queue per connection — WWDC 2012 session 241). Because
+    /// `fetchFile`'s owner-side implementation must not block that queue for the
+    /// whole pull, this call can reach the owner while a fetch is still in
+    /// flight.
+    func cancelFetch(generation: UInt64, repIndex: Int)
 }
 
 /// The XPC interface the File Provider extension exports to the container app.

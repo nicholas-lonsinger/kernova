@@ -38,6 +38,12 @@ public protocol FileProviderPullProvider: AnyObject, Sendable {
     func fetchStagedFile(
         generation: UInt64, repIndex: Int
     ) -> Result<String, FileProviderPullError>
+
+    /// Aborts an in-flight `fetchStagedFile` for `(generation, repIndex)` (#464):
+    /// stops the vsock transfer and wakes the blocked pull. Best-effort and
+    /// idempotent — a cancel for an unknown or already-finished transfer is a
+    /// no-op.
+    func cancelStagedPull(generation: UInt64, repIndex: Int)
 }
 
 /// Why a relay pull failed, mapped to an `NSFileProviderError` by the relay.
@@ -622,6 +628,17 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
 public final class FileProviderRelayService: NSObject, FileProviderRelay {
     private let logger: KernovaLogger
     private let pullProvider: FileProviderPullProvider
+    /// Runs each `fetchFile` pull off the XPC delivery queue.
+    ///
+    /// `NSXPCConnection` delivers every incoming exported-object call — including
+    /// `cancelFetch` — on one private *serial* queue per connection (WWDC 2012
+    /// session 241), so blocking that queue for the whole vsock pull (as `fetchFile`
+    /// used to) would starve any `cancelFetch` for the very fetch it's trying to
+    /// abort. Dispatching here frees the delivery queue immediately; `.concurrent`
+    /// also lets independent multi-file pulls actually run in parallel, which the
+    /// receiver/coordinator already support.
+    private let pullQueue = DispatchQueue(
+        label: "app.kernova.fileprovider.relay.pull", attributes: .concurrent)
 
     /// Creates the relay service, logging under `loggerSubsystem`.
     public init(pullProvider: FileProviderPullProvider, loggerSubsystem: String) {
@@ -638,17 +655,32 @@ public final class FileProviderRelayService: NSObject, FileProviderRelay {
     ) {
         logger.debug(
             "Relay fetchFile (gen=\(generation, privacy: .public), rep=\(repIndex, privacy: .public))")
-        // Blocks the XPC queue while the owner pulls over vsock — safe, since the
-        // File Provider read path has no 60s deadline and the extension's
-        // fetchContents is itself blocked on this reply.
-        switch pullProvider.fetchStagedFile(generation: generation, repIndex: repIndex) {
-        case .success(let path):
-            logger.debug("Relay staged \(path, privacy: .public)")
-            reply(path, nil)
-        case .failure(let error):
-            logger.error("Relay fetchFile failed: \(String(describing: error), privacy: .public)")
-            reply(nil, Self.nsError(for: error))
+        // Off the XPC delivery queue: the File Provider read path has no 60s
+        // deadline so a long block is safe, but it must not be *this* queue — see
+        // `pullQueue`'s doc for why.
+        pullQueue.async { [pullProvider, logger] in
+            switch pullProvider.fetchStagedFile(generation: generation, repIndex: repIndex) {
+            case .success(let path):
+                logger.debug("Relay staged \(path, privacy: .public)")
+                reply(path, nil)
+            case .failure(let error):
+                logger.error(
+                    "Relay fetchFile failed: \(String(describing: error), privacy: .public)")
+                reply(nil, Self.nsError(for: error))
+            }
         }
+    }
+
+    /// Relays a best-effort cancel to the owner's pull provider.
+    ///
+    /// Runs on the connection's serial delivery queue (now free — see
+    /// `fetchFile`) and must stay non-blocking itself: it only signals the
+    /// in-flight pull to stop, it does not wait for it to finish.
+    public func cancelFetch(generation: UInt64, repIndex: Int) {
+        logger.debug(
+            "Relay cancelFetch (gen=\(generation, privacy: .public), rep=\(repIndex, privacy: .public))"
+        )
+        pullProvider.cancelStagedPull(generation: generation, repIndex: repIndex)
     }
 
     private static func nsError(for error: FileProviderPullError) -> NSError {

@@ -237,17 +237,26 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
     /// finished: the one-shot dedups, and any owner reply still in flight lands
     /// harmlessly on the spent completion. Thread-safe and idempotent.
     ///
-    /// This frees the extension's fetch immediately but does **not** abort the
-    /// owner's in-flight vsock transfer — a completed-but-unread staged file is left
-    /// for the owner's staging cache to evict (tracked as a follow-up).
+    /// This frees the extension's fetch immediately. If the pull had already been
+    /// dispatched to the owner (vs. still waiting for a connection), also asks the
+    /// owner to abort its in-flight vsock transfer (#464) via `cancelFetch` — a
+    /// one-way, best-effort call the owner's relay can now receive even while its
+    /// `fetchFile` for this same pull is still in flight (see `FileProviderRelay`'s
+    /// doc on the shared serial delivery queue).
     private func cancelPull(_ pull: PendingPull) {
-        lock.withLock {
+        let dispatchedTo: NSXPCConnection? = lock.withLock {
             if let index = pendingPulls.firstIndex(where: { $0 === pull }) {
                 pendingPulls.remove(at: index)
+                return nil  // Never sent to the owner — nothing to abort there.
             }
+            return acceptedConnection
         }
         if pull.once.fire(.failure(Self.cancelled)) {
             logger.debug("fetchContents pull cancelled by user")
+        }
+        if let dispatchedTo {
+            (dispatchedTo.remoteObjectProxy as? FileProviderRelay)?
+                .cancelFetch(generation: pull.generation, repIndex: pull.repIndex)
         }
     }
 

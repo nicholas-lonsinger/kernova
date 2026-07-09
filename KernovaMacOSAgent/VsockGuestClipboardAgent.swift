@@ -1338,4 +1338,23 @@ extension VsockGuestClipboardAgent: FileProviderPullProvider {
         else { return .failure(.pullFailed) }
         return .success(url.path)
     }
+
+    /// Aborts an in-flight `fetchStagedFile` for `(generation, repIndex)` (#464).
+    ///
+    /// Off-main only, like `fetchStagedFile` (the relay's XPC queue is the only
+    /// caller). Addresses the transfer purely by its deterministic `transferID` —
+    /// not by re-validating `generation` against the current offer — so a cancel
+    /// that arrives after a newer offer superseded this one still reaches the
+    /// (already superseded, but possibly still-live) receiver's bookkeeping for
+    /// that id.
+    func cancelStagedPull(generation: UInt64, repIndex: Int) {
+        dispatchPrecondition(condition: .notOnQueue(.main))
+        let transferID = ClipboardTransferID.make(
+            generation: generation, repIndex: repIndex, hostMinted: false)
+        let receiver: ClipboardStreamReceiver? = DispatchQueue.main.sync { self.receiver }
+        guard let receiver else { return }
+        Self.logger.notice(
+            "Cancelling file clipboard pull \(transferID, privacy: .public) on consumer request")
+        receiver.cancel(transferID: transferID)
+    }
 }
