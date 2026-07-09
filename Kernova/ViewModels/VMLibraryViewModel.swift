@@ -810,7 +810,11 @@ final class VMLibraryViewModel {
     /// If the bundle is already inside the VMs directory, it is simply selected.
     /// If a VM with the same UUID already exists in the library, that instance is selected.
     /// Otherwise, the bundle is copied into the VMs directory asynchronously with a phantom row.
-    func importVM(from sourceURL: URL) {
+    ///
+    /// `async` so callers importing a batch (``importVMs(from:)``) can await each bundle before
+    /// starting the next — `hasPreparing` is false again by the time this returns, so a
+    /// multi-bundle batch never trips the guard below on its own later bundles (#444).
+    func importVM(from sourceURL: URL) async {
         do {
             let vmsDir = try storageService.vmsDirectory
 
@@ -907,12 +911,48 @@ final class VMLibraryViewModel {
                 }
             }
             phantom.preparingState = VMInstance.PreparingState(operation: .importing, task: task)
+            await task.value
         } catch {
             Self.logger.error(
                 "Failed to import VM from \(sourceURL.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)"
             )
             presentError(error)
         }
+    }
+
+    /// Imports a batch of bundles sequentially.
+    ///
+    /// Each import awaits the prior one's copy, so `hasPreparing` is false between bundles and
+    /// the per-import serialization guard never trips within a batch — every bundle imports
+    /// (#444), unlike a synchronous loop over the non-async form. A failed import surfaces its
+    /// own error and the batch continues to the next bundle.
+    func importVMs(from sourceURLs: [URL]) async {
+        guard !sourceURLs.isEmpty else {
+            Self.logger.debug("importVMs: no bundles to import")
+            return
+        }
+        Self.logger.notice("Importing \(sourceURLs.count, privacy: .public) bundle(s)")
+        for url in sourceURLs {
+            await importVM(from: url)
+        }
+    }
+
+    /// Filters `urls` to `.kernova` bundles and imports the batch off a spawned Task.
+    ///
+    /// Keeps a synchronous AppKit callback (an odoc handler, a drag-drop `acceptDrop`) from
+    /// blocking. Shared by `AppDelegate` (Finder open) and `SidebarViewController`
+    /// (drag-and-drop) so the filter/guard/spawn sequence isn't duplicated per caller.
+    ///
+    /// Returns whether any bundle was accepted for import — `true` means a batch was queued via
+    /// a spawned Task, not that every import in it will succeed.
+    @discardableResult
+    func importVMs(fromDroppedURLs urls: [URL]) -> Bool {
+        let bundles = urls.filter { VMStorageService.isBundleURL($0) }
+        guard !bundles.isEmpty else { return false }
+        Task { [weak self] in
+            await self?.importVMs(from: bundles)
+        }
+        return true
     }
 
     // MARK: - Rename

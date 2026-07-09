@@ -2189,6 +2189,184 @@ struct VMLibraryViewModelTests {
         #expect(viewModel.sleepPausedInstanceIDs.isEmpty)
     }
 
+    // MARK: - Import
+
+    /// Builds a `.kernova`-shaped source bundle URL under a per-call-unique temp parent.
+    ///
+    /// The parent keeps parallel tests from colliding. Registers the configuration with
+    /// `storage` so the mocked `loadConfiguration(from:)` succeeds. When `createOnDisk` is true
+    /// (the default), also creates the directory on disk — `importVM` copies real files via
+    /// `FileManager`, so tests exercising a successful copy need an actual source directory;
+    /// tests modeling a missing/never-copied source (duplicate-UUID short-circuit,
+    /// copy-failure) pass `false` and have nothing to clean up. Callers that do create on disk
+    /// must remove the returned URL's *parent* directory (`url.deletingLastPathComponent()`),
+    /// not just the leaf `.kernova` directory this returns.
+    private func makeImportSource(
+        name: String, storage: MockVMStorageService, createOnDisk: Bool = true
+    ) throws -> (url: URL, config: VMConfiguration) {
+        let config = VMConfiguration(name: name, guestOS: .linux, bootMode: .efi)
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ImportSource-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("\(name).kernova", isDirectory: true)
+        if createOnDisk {
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        }
+        storage.bundles[url] = config
+        return (url, config)
+    }
+
+    @Test("importVM imports a single bundle and adds a non-preparing instance")
+    func importVMSingleBundle() async throws {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let source = try makeImportSource(name: "Imported VM", storage: storage)
+        defer { try? FileManager.default.removeItem(at: source.url.deletingLastPathComponent()) }
+
+        await viewModel.importVM(from: source.url)
+
+        #expect(viewModel.instances.count == 1)
+        let imported = viewModel.instances.first
+        #expect(imported?.configuration.id == source.config.id)
+        #expect(imported?.isPreparing == false)
+        #expect(viewModel.selectedID == imported?.id)
+        if let imported {
+            #expect(FileManager.default.fileExists(atPath: imported.bundleURL.path(percentEncoded: false)))
+        }
+        #expect(presenter.showError == false)
+    }
+
+    @Test("importVMs imports every bundle in a multi-select batch (#444)")
+    func importVMsBatchImportsAll() async throws {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let sources = try [
+            makeImportSource(name: "Batch VM 1", storage: storage),
+            makeImportSource(name: "Batch VM 2", storage: storage),
+            makeImportSource(name: "Batch VM 3", storage: storage),
+        ]
+        defer {
+            for source in sources {
+                try? FileManager.default.removeItem(at: source.url.deletingLastPathComponent())
+            }
+        }
+
+        await viewModel.importVMs(from: sources.map(\.url))
+
+        // Pre-fix, a synchronous loop over `importVM` only imported the first bundle and
+        // rejected the rest with a "preparing operation in progress" error.
+        #expect(viewModel.instances.count == 3)
+        let importedIDs = Set(viewModel.instances.map(\.configuration.id))
+        #expect(importedIDs == Set(sources.map(\.config.id)))
+        #expect(viewModel.instances.allSatisfy { !$0.isPreparing })
+        #expect(presenter.showError == false)
+    }
+
+    @Test("importVM selects the existing instance when a VM with the same UUID is already in the library")
+    func importVMDuplicateUUIDSelectsExisting() async throws {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let existing = makeInstance(name: "Existing VM")
+        viewModel.instances.append(existing)
+
+        // Source lives elsewhere on disk (never copied — the duplicate-UUID short-circuit
+        // returns before the copy) but shares the same config UUID.
+        let source = try makeImportSource(
+            name: existing.configuration.name, storage: storage, createOnDisk: false)
+        storage.bundles[source.url] = existing.configuration
+
+        await viewModel.importVM(from: source.url)
+
+        #expect(viewModel.instances.count == 1)
+    }
+
+    @Test("importVM selects the existing instance when the source is already inside the VMs directory")
+    func importVMSourceAlreadyInVMsDirectory() async throws {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let vmsDir = try storage.vmsDirectory
+        let config = VMConfiguration(name: "Already There", guestOS: .linux, bootMode: .efi)
+        let bundleURL = vmsDir.appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
+        storage.bundles[bundleURL] = config
+        let existing = VMInstance(configuration: config, bundleURL: bundleURL)
+        viewModel.instances.append(existing)
+
+        await viewModel.importVM(from: bundleURL)
+
+        #expect(viewModel.instances.count == 1)
+        #expect(viewModel.selectedID == existing.id)
+    }
+
+    @Test("importVMs batch with a duplicate in the middle still imports the surrounding bundles")
+    func importVMsBatchWithDuplicateInMiddle() async throws {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let existing = makeInstance(name: "Already Imported")
+        viewModel.instances.append(existing)
+
+        let first = try makeImportSource(name: "Batch VM 1", storage: storage)
+        let duplicate = try makeImportSource(
+            name: existing.configuration.name, storage: storage, createOnDisk: false)
+        storage.bundles[duplicate.url] = existing.configuration
+        let third = try makeImportSource(name: "Batch VM 3", storage: storage)
+        defer {
+            try? FileManager.default.removeItem(at: first.url.deletingLastPathComponent())
+            try? FileManager.default.removeItem(at: third.url.deletingLastPathComponent())
+        }
+
+        await viewModel.importVMs(from: [first.url, duplicate.url, third.url])
+
+        // The duplicate is a synchronous no-op (select-existing) that must not stall the batch.
+        #expect(viewModel.instances.count == 3)
+        let importedIDs = Set(viewModel.instances.map(\.configuration.id))
+        #expect(importedIDs == [existing.configuration.id, first.config.id, third.config.id])
+        #expect(presenter.showError == false)
+        #expect(viewModel.selectedID == third.config.id)
+    }
+
+    @Test("importVM removes the phantom and surfaces an error when the copy fails")
+    func importVMCopyFailureRemovesPhantom() async throws {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        // Registered with the mock but never created on disk, so the real `FileManager.copyItem`
+        // fails with "no such file."
+        let source = try makeImportSource(name: "Missing Source", storage: storage, createOnDisk: false)
+
+        await viewModel.importVM(from: source.url)
+
+        #expect(viewModel.instances.isEmpty)
+        #expect(presenter.showError == true)
+        #expect(presenter.errorMessage != nil)
+    }
+
+    @Test("importVMs batch continues past a single failed import")
+    func importVMsBatchContinuesAfterFailure() async throws {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let first = try makeImportSource(name: "Batch VM 1", storage: storage)
+        let failing = try makeImportSource(name: "Missing Source", storage: storage, createOnDisk: false)
+        let third = try makeImportSource(name: "Batch VM 3", storage: storage)
+        defer {
+            try? FileManager.default.removeItem(at: first.url.deletingLastPathComponent())
+            try? FileManager.default.removeItem(at: third.url.deletingLastPathComponent())
+        }
+
+        await viewModel.importVMs(from: [first.url, failing.url, third.url])
+
+        #expect(viewModel.instances.count == 2)
+        let importedIDs = Set(viewModel.instances.map(\.configuration.id))
+        #expect(importedIDs == [first.config.id, third.config.id])
+        #expect(presenter.showError == true)
+    }
+
+    @Test("importVM is rejected while a clone is preparing (serialization guard kept)")
+    func importVMRejectedWhilePreparing() async throws {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let existing = makeInstance(name: "Cloning VM")
+        markPreparing(existing)
+        viewModel.instances.append(existing)
+
+        let source = try makeImportSource(name: "Blocked Import", storage: storage)
+        defer { try? FileManager.default.removeItem(at: source.url.deletingLastPathComponent()) }
+
+        await viewModel.importVM(from: source.url)
+
+        #expect(viewModel.instances.count == 1)
+        #expect(presenter.showError == true)
+    }
+
     // MARK: - Clone
 
     /// Helper to mark an instance as preparing with a no-op task.

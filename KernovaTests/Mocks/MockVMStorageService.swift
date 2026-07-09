@@ -1,13 +1,25 @@
 import Foundation
 @testable import Kernova
 
-/// In-memory mock for `VMStorageProviding` that tracks operations without touching disk.
+/// In-memory mock for `VMStorageProviding` that tracks operations without touching disk —
+/// except `vmsDirectory`, which import/clone tests need as a real, writable directory since
+/// `VMLibraryViewModel.importVM(from:)` does a raw `FileManager.copyItem` into it rather than
+/// going through this protocol. `baseDirectory` is unique per instance (suffixed with a UUID) so
+/// parallel/`.serialized` tests copying real bundles into it can't collide or leak state into
+/// each other.
 final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
     // MARK: - Storage
 
     var bundles: [URL: VMConfiguration] = [:]
     private let baseDirectory = FileManager.default.temporaryDirectory
-        .appendingPathComponent("MockVMs", isDirectory: true)
+        .appendingPathComponent("MockVMs-\(UUID().uuidString)", isDirectory: true)
+
+    deinit {
+        // `vmsDirectory` creates `baseDirectory` on every access (see below); reclaim it here so
+        // every test — not just the ones that exercise a real copy — doesn't leak a directory
+        // into the system temp folder on every run.
+        try? FileManager.default.removeItem(at: baseDirectory)
+    }
 
     // MARK: - Call Tracking
 
@@ -31,7 +43,12 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
     // MARK: - VMStorageProviding
 
     var vmsDirectory: URL {
-        get throws { baseDirectory }
+        get throws {
+            // Mirrors production `VMStorageService.vmsDirectory`, which creates the directory
+            // when missing — `copyItem`'s destination parent must already exist.
+            try FileManager.default.createDirectory(at: baseDirectory, withIntermediateDirectories: true)
+            return baseDirectory
+        }
     }
 
     func bundleURL(for configuration: VMConfiguration) throws -> URL {

@@ -511,6 +511,11 @@ extension SidebarViewController: NSOutlineViewDataSource {
         return target
     }
 
+    /// Filters the drop to `.kernova` bundles and imports the batch.
+    ///
+    /// `VMLibraryViewModel.importVMs(fromDroppedURLs:)` spawns the actual import off its own
+    /// Task so this synchronous drag-drop delegate callback isn't blocked, and awaits each
+    /// bundle in turn so every bundle in the batch imports rather than only the first (#444).
     private func acceptImport(info: NSDraggingInfo) -> Bool {
         guard
             let urls = info.draggingPasteboard.readObjects(
@@ -518,12 +523,7 @@ extension SidebarViewController: NSOutlineViewDataSource {
             ) as? [URL]
         else { return false }
 
-        var imported = false
-        for url in urls where VMStorageService.isBundleURL(url) {
-            viewModel.importVM(from: url)
-            imported = true
-        }
-        return imported
+        return viewModel.importVMs(fromDroppedURLs: urls)
     }
 }
 
