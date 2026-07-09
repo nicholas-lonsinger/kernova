@@ -226,6 +226,69 @@ struct LazyPullCoordinatorTests {
         #expect(coordinator.pendingSlotCountForTesting == 0)
     }
 
+    @Test(
+        "a second pull for the same id supersedes the first, waking it immediately instead of parking it to its own timeout (#500)"
+    )
+    func pullSupersedesInFlightPullForSameID() async throws {
+        let coordinator = LazyPullCoordinator()
+        async let first = runPull(coordinator, transferID: 7, timeout: .seconds(5))
+        try await pollUntil { coordinator.pendingSlotCountForTesting == 1 }
+
+        async let second = runPull(coordinator, transferID: 7, timeout: .seconds(5))
+        // The registration itself resolves the displaced pull — no need to
+        // wait for a timeout window (CLIPBOARD.md §9: wake immediately).
+        guard case .superseded = await first else {
+            Issue.record("Expected .superseded for the displaced first pull")
+            return
+        }
+        // The dict still holds exactly one entry for the id — the
+        // successor's, not the displaced one's.
+        #expect(coordinator.pendingSlotCountForTesting == 1)
+
+        coordinator.deliver(7, inlineRep("from the retry"))
+        guard case .delivered(let rep) = await second else {
+            Issue.record("Expected .delivered for the surviving second pull")
+            return
+        }
+        #expect(rep.inMemoryData == Data("from the retry".utf8))
+        #expect(coordinator.pendingSlotCountForTesting == 0)
+    }
+
+    @Test("a chain of supersessions never evicts the final survivor's registration (#500)")
+    func supersededPullCleanupDoesNotEvictSuccessor() async throws {
+        // Regression guard for the identity-checked removal: without it, each
+        // displaced pull's own wait-loop cleanup (`slots[transferID] = nil`)
+        // would unconditionally evict whatever slot currently occupies that
+        // key — including a later successor's — leaving `deliver` unable to
+        // reach anyone.
+        let coordinator = LazyPullCoordinator()
+        async let first = runPull(coordinator, transferID: 7, timeout: .seconds(5))
+        try await pollUntil { coordinator.pendingSlotCountForTesting == 1 }
+
+        async let second = runPull(coordinator, transferID: 7, timeout: .seconds(5))
+        guard case .superseded = await first else {
+            Issue.record("Expected .superseded for the first pull")
+            return
+        }
+
+        async let third = runPull(coordinator, transferID: 7, timeout: .seconds(5))
+        guard case .superseded = await second else {
+            Issue.record("Expected .superseded for the second pull")
+            return
+        }
+        // Two supersessions have each run their own identity-checked cleanup;
+        // the dict must still hold exactly the third (surviving) slot.
+        #expect(coordinator.pendingSlotCountForTesting == 1)
+
+        coordinator.deliver(7, inlineRep("the survivor"))
+        guard case .delivered(let rep) = await third else {
+            Issue.record("Expected .delivered for the surviving third pull")
+            return
+        }
+        #expect(rep.inMemoryData == Data("the survivor".utf8))
+        #expect(coordinator.pendingSlotCountForTesting == 0)
+    }
+
     // MARK: - Receiver wiring
 
     @Test("a registered awaiter receives the transfer instead of the channel-wide onComplete")
@@ -261,6 +324,60 @@ struct LazyPullCoordinatorTests {
         // transfer.
         #expect(harness.collector.representation(1) == nil)
         #expect(harness.collector.completedCount == 0)
+    }
+
+    @Test(
+        "end-to-end: a retried fetch for the same transfer id supersedes the original attempt and streams to completion (#500)"
+    )
+    func concurrentPullsForSameIDSupersedeCleanly() async throws {
+        // Mirrors the real #500 trigger: `FileProviderRelayService.fetchFile`'s
+        // `.concurrent` pullQueue lets a retry (the extension re-dispatching
+        // `fetchContents` after its owner connection dropped mid-pull) run a
+        // second `awaitTransfer` + `pull` for the identical id while the first
+        // attempt is still parked — exercised here through the real receiver
+        // and sender, not just the coordinator in isolation.
+        let harness = try StreamHarness(
+            chunkSize: 4096, windowBytes: 16384,
+            freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
+        defer { harness.tearDown() }
+
+        let coordinator = LazyPullCoordinator()
+        let transferID = ClipboardTransferID.make(generation: 1, repIndex: 0, hostMinted: true)
+
+        // Both attempts' awaiters simply forward to the coordinator, exactly
+        // like `VsockGuestClipboardAgent.pullRepresentation` /
+        // `VsockClipboardService.performBlockingPull`.
+        harness.receiver.awaitTransfer(
+            transferID,
+            onComplete: { rep in coordinator.deliver(transferID, rep) },
+            onAbort: { info in coordinator.abort(transferID, info) })
+
+        async let firstAttempt = runPull(coordinator, transferID: transferID, timeout: .seconds(5))
+        try await pollUntil { coordinator.pendingSlotCountForTesting == 1 }
+
+        // The retry: a second concurrent pull for the identical id.
+        async let secondAttempt = runPull(coordinator, transferID: transferID, timeout: .seconds(5))
+        guard case .superseded = await firstAttempt else {
+            Issue.record("Expected .superseded for the displaced first attempt")
+            return
+        }
+
+        // Only now does the stream actually run — the retry is the sole live
+        // pull, and its awaiter (still registered under the same id) delivers
+        // the real transfer to the coordinator.
+        var bytes = Data()
+        for i in 0..<(4096 * 2 + 9) { bytes.append(UInt8((i * 29 + 3) & 0xFF)) }
+        let rep = ClipboardContent.Representation(uti: ClipboardContent.utf8TextUTI, data: bytes)
+        harness.sender.startTransfer(
+            transferID: transferID, generation: 1, representation: rep, maxAcceptByteCount: .max,
+            isInline: true, isCurrent: { _ in true })
+
+        guard case .delivered(let received) = await secondAttempt else {
+            Issue.record("Expected .delivered for the surviving second attempt")
+            return
+        }
+        #expect(received.inMemoryData == bytes)
+        #expect(coordinator.pendingSlotCountForTesting == 0)
     }
 
     @Test("awaitTransfer fires onProgress once per durably-written chunk")
@@ -460,6 +577,84 @@ struct LazyPullCoordinatorTests {
 
         try await gate.wait { box.abortInfo != nil }
         #expect(box.abortInfo?.code == "cancelled")
+    }
+
+    @Test(
+        "a straggler abort for attempt #1 lands on attempt #2's awaiter when both share an id, but leaves no orphaned state behind (#499)"
+    )
+    func staleAbortCollidesWithReusedAwaiterButTableStaysConsistent() async throws {
+        // `ClipboardTransferID` is intentionally reproducible from
+        // (generation, repIndex, direction), so a retried pull of the identical
+        // offer/rep registers under the SAME id as the attempt it's retrying.
+        // `awaitTransfer` has no existence guard, so attempt #2's registration
+        // silently overwrites attempt #1's — and a delayed abort meant for #1
+        // (a reordered wire frame, or a local cancel that raced the retry) is
+        // keyed purely on that id, so it lands on #2 instead. This test pins
+        // the CURRENT, accepted behavior — a bounded, benign collision (#2
+        // observes a spurious abort it can retry from), not a crash, hang, or
+        // corrupted registration table. See `ClipboardTransferID`'s doc for why
+        // a per-attempt discriminator was deferred rather than implemented.
+        let harness = try StreamHarness(
+            chunkSize: 4096, windowBytes: 16384,
+            freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
+        defer { harness.tearDown() }
+
+        let transferID = ClipboardTransferID.make(generation: 11, repIndex: 0, hostMinted: true)
+
+        let firstBox = RepBox()
+        harness.receiver.awaitTransfer(
+            transferID,
+            onComplete: { _ in Issue.record("attempt #1's awaiter was overwritten — must never fire") },
+            onAbort: { firstBox.setAbort($0) })
+
+        let secondBox = RepBox()
+        let secondGate = AsyncGate()
+        harness.receiver.awaitTransfer(
+            transferID,
+            onComplete: {
+                secondBox.setRep($0)
+                secondGate.notify()
+            },
+            onAbort: {
+                secondBox.setAbort($0)
+                secondGate.notify()
+            })
+
+        // The straggler: attempt #1's delayed cancel/abort signal, arriving now
+        // that attempt #2 owns the registration for this id.
+        harness.receiver.handleAbort(
+            .with {
+                $0.transferID = transferID
+                $0.code = "cancelled"
+                $0.message = "stale abort from attempt #1"
+            })
+
+        try await secondGate.wait { secondBox.abortInfo != nil }
+        #expect(secondBox.abortInfo?.code == "cancelled")
+        #expect(firstBox.abortInfo == nil)  // #1's own onAbort never fired — it was already overwritten
+
+        // The table is left fully consistent: a THIRD attempt reusing the
+        // identical id — the normal "restart after abort is cheap, no
+        // orphaned state" case (CLIPBOARD.md §9) — completes cleanly.
+        let thirdBox = RepBox()
+        let thirdGate = AsyncGate()
+        harness.receiver.awaitTransfer(
+            transferID,
+            onComplete: {
+                thirdBox.setRep($0)
+                thirdGate.notify()
+            },
+            onAbort: {
+                thirdBox.setAbort($0)
+                thirdGate.notify()
+            })
+        let rep = inlineRep("attempt three")
+        harness.sender.startTransfer(
+            transferID: transferID, generation: 11, representation: rep, maxAcceptByteCount: .max,
+            isInline: true, isCurrent: { _ in true })
+
+        try await thirdGate.wait { thirdBox.representation != nil }
+        #expect(thirdBox.representation?.inMemoryData == Data("attempt three".utf8))
     }
 
     // MARK: - cancelBeforeStart (#464 review fix)

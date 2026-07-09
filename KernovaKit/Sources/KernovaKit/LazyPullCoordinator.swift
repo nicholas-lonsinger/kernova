@@ -13,6 +13,12 @@ public enum LazyPullOutcome: Sendable {
     /// The pull was cancelled by `failAll` (channel close / supersession /
     /// release).
     case cancelled
+    /// A newer `pull` call for the identical `transferID` displaced this one
+    /// before it resolved (#500 — e.g. a File Provider fetch retried after its
+    /// owner connection dropped mid-pull). The retry owns the id now; this
+    /// caller must not touch any state keyed by `transferID` (unlike
+    /// `.cancelled`, which the caller's own cleanup would otherwise do).
+    case superseded
 }
 
 /// Bridges a synchronous, blocking consume (an `NSPasteboardItemDataProvider`
@@ -98,10 +104,27 @@ public final class LazyPullCoordinator: @unchecked Sendable {
         // of registering a slot nothing will ever resolve until the backstop
         // timeout, and `send` never runs — the request never goes out over the
         // wire for a fetch the consumer already gave up on.
-        let alreadyCancelled: Bool = lock.withLock {
-            if preCancelled.remove(transferID) != nil { return true }
+        //
+        // A pre-existing slot for the same id (#500 — e.g. a File Provider
+        // fetch retried after its owner connection dropped mid-pull, so a
+        // second concurrent `pull` for the identical `(generation, repIndex)`
+        // registers) is captured and displaced here rather than silently
+        // overwritten: the retry is always the live registration going
+        // forward (the prior caller's connection is dead and can't deliver
+        // its result), so per CLIPBOARD.md §9 the displaced pull is woken
+        // immediately with `.superseded` instead of parking to its own
+        // backstop timeout.
+        let (alreadyCancelled, displaced): (Bool, Slot?) = lock.withLock {
+            if preCancelled.remove(transferID) != nil { return (true, nil) }
+            let prior = slots[transferID]
             slots[transferID] = slot
-            return false
+            return (false, prior)
+        }
+        if let displaced {
+            // `resolveSlot` no-ops if `displaced` already resolved on its own
+            // (e.g. it delivered a beat before being displaced) — its real
+            // outcome wins, not a spurious supersede.
+            resolveSlot(displaced, .superseded)
         }
         if alreadyCancelled { return .cancelled }
         send()
@@ -115,7 +138,11 @@ public final class LazyPullCoordinator: @unchecked Sendable {
                 // signaling, so it's observed here whether the wait was signaled or
                 // raced the deadline.
                 if slot.resolved {
-                    slots[transferID] = nil
+                    // Identity-checked: if a later `pull` has since superseded
+                    // this slot, `slots[transferID]` already points at ITS
+                    // slot — removing unconditionally here would evict the
+                    // successor's live registration out from under it (#500).
+                    if slots[transferID] === slot { slots[transferID] = nil }
                     return slot.outcome
                 }
                 // The window elapsed with no terminal outcome. If a chunk landed
@@ -126,7 +153,7 @@ public final class LazyPullCoordinator: @unchecked Sendable {
                 }
                 slot.resolved = true
                 slot.outcome = .timedOut
-                slots[transferID] = nil
+                if slots[transferID] === slot { slots[transferID] = nil }
                 return .timedOut
             }
             if let outcome { return outcome }

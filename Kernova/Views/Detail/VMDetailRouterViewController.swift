@@ -85,7 +85,7 @@ final class VMDetailRouterViewController: NSViewController {
     private func apply() {
         guard isViewLoaded else { return }
         let route = DetailRoute.resolve(
-            preparingLabel: instance.preparingState?.operation.displayLabel,
+            preparingLabel: instance.preparingState?.displayLabel,
             status: instance.status,
             hasInstallState: instance.installState != nil,
             detailPaneMode: instance.detailPaneMode)

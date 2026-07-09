@@ -317,6 +317,10 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
     }
 
     /// Tears down an inbound transfer on a peer `ClipboardStreamAbort`.
+    ///
+    /// RATIONALE: teardown is keyed purely on the bare `transfer_id` — see
+    /// `ClipboardTransferID`'s doc for why a straggler abort for a
+    /// since-reused id (#499) is bounded-benign rather than a hazard here.
     public func handleAbort(_ abort: Kernova_V1_ClipboardStreamAbort) {
         guard let transfer = transfer(abort.transferID) else {
             // No in-flight transfer for this id — the sender aborted *before*
