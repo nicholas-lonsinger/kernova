@@ -26,15 +26,20 @@ public enum FileProviderServicingTiming {
 
     /// `connectRetryDelaySeconds` as a `DispatchTimeInterval`, for the connector.
     public static var connectRetryDelay: DispatchTimeInterval {
-        .milliseconds(Int(connectRetryDelaySeconds * 1000))
+        .seconds(Int(connectRetryDelaySeconds))
     }
 
-    /// Upper bound on the owner's transient connect retries: the fewest attempts
-    /// whose cumulative delay spans `connectWait`.
+    /// Upper bound on the owner's transient connect retries: the fewest
+    /// attempts whose cumulative *inter-attempt delay* spans `connectWait`.
     ///
-    /// Derived, not a separately-maintained literal — editing either constant
-    /// above re-derives this (15 today: 30 / 2).
+    /// The owner's first connect attempt fires immediately (no preceding
+    /// delay) — only the retries after a failure wait `connectRetryDelay` — so
+    /// N attempts span only `(N - 1) × connectRetryDelaySeconds` of real time,
+    /// one delay short of `N × connectRetryDelaySeconds`. The `+ 1` corrects
+    /// for that: derived, not a separately-maintained literal — editing either
+    /// constant above re-derives this (16 today: `⌈30 / 2⌉ + 1`, giving 15
+    /// actual retry delays = 30s, matching `connectWait` exactly).
     public static var maxConnectAttempts: Int {
-        max(1, Int((connectWait / connectRetryDelaySeconds).rounded(.up)))
+        max(1, Int((connectWait / connectRetryDelaySeconds).rounded(.up)) + 1)
     }
 }
