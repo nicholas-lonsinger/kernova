@@ -462,6 +462,84 @@ struct LazyPullCoordinatorTests {
         #expect(box.abortInfo?.code == "cancelled")
     }
 
+    @Test(
+        "a straggler abort for attempt #1 lands on attempt #2's awaiter when both share an id, but leaves no orphaned state behind (#499)"
+    )
+    func staleAbortCollidesWithReusedAwaiterButTableStaysConsistent() async throws {
+        // `ClipboardTransferID` is intentionally reproducible from
+        // (generation, repIndex, direction), so a retried pull of the identical
+        // offer/rep registers under the SAME id as the attempt it's retrying.
+        // `awaitTransfer` has no existence guard, so attempt #2's registration
+        // silently overwrites attempt #1's — and a delayed abort meant for #1
+        // (a reordered wire frame, or a local cancel that raced the retry) is
+        // keyed purely on that id, so it lands on #2 instead. This test pins
+        // the CURRENT, accepted behavior — a bounded, benign collision (#2
+        // observes a spurious abort it can retry from), not a crash, hang, or
+        // corrupted registration table. See `ClipboardTransferID`'s doc for why
+        // a per-attempt discriminator was deferred rather than implemented.
+        let harness = try StreamHarness(
+            chunkSize: 4096, windowBytes: 16384,
+            freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
+        defer { harness.tearDown() }
+
+        let transferID = ClipboardTransferID.make(generation: 11, repIndex: 0, hostMinted: true)
+
+        let firstBox = RepBox()
+        harness.receiver.awaitTransfer(
+            transferID,
+            onComplete: { _ in Issue.record("attempt #1's awaiter was overwritten — must never fire") },
+            onAbort: { firstBox.setAbort($0) })
+
+        let secondBox = RepBox()
+        let secondGate = AsyncGate()
+        harness.receiver.awaitTransfer(
+            transferID,
+            onComplete: {
+                secondBox.setRep($0)
+                secondGate.notify()
+            },
+            onAbort: {
+                secondBox.setAbort($0)
+                secondGate.notify()
+            })
+
+        // The straggler: attempt #1's delayed cancel/abort signal, arriving now
+        // that attempt #2 owns the registration for this id.
+        harness.receiver.handleAbort(
+            .with {
+                $0.transferID = transferID
+                $0.code = "cancelled"
+                $0.message = "stale abort from attempt #1"
+            })
+
+        try await secondGate.wait { secondBox.abortInfo != nil }
+        #expect(secondBox.abortInfo?.code == "cancelled")
+        #expect(firstBox.abortInfo == nil)  // #1's own onAbort never fired — it was already overwritten
+
+        // The table is left fully consistent: a THIRD attempt reusing the
+        // identical id — the normal "restart after abort is cheap, no
+        // orphaned state" case (CLIPBOARD.md §9) — completes cleanly.
+        let thirdBox = RepBox()
+        let thirdGate = AsyncGate()
+        harness.receiver.awaitTransfer(
+            transferID,
+            onComplete: {
+                thirdBox.setRep($0)
+                thirdGate.notify()
+            },
+            onAbort: {
+                thirdBox.setAbort($0)
+                thirdGate.notify()
+            })
+        let rep = inlineRep("attempt three")
+        harness.sender.startTransfer(
+            transferID: transferID, generation: 11, representation: rep, maxAcceptByteCount: .max,
+            isInline: true, isCurrent: { _ in true })
+
+        try await thirdGate.wait { thirdBox.representation != nil }
+        #expect(thirdBox.representation?.inMemoryData == Data("attempt three".utf8))
+    }
+
     // MARK: - cancelBeforeStart (#464 review fix)
 
     @Test(

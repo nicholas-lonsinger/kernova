@@ -21,6 +21,26 @@ import Foundation
 /// existing `transfer_id & 0xFFFF` rep-index extraction is unaffected.
 /// `RATIONALE:` bit 63 is reserved for direction, so this assumes a generation
 /// never reaches 2^47 (one per local copy — unreachable in practice).
+///
+/// `RATIONALE:` the id is **intentionally** reproducible from
+/// `(generation, repIndex, direction)` alone — both `cancelStagedPull` sites
+/// (`VsockClipboardService`, `VsockGuestClipboardAgent`) re-derive it from
+/// those three values rather than remembering the id they minted, and
+/// `FileProviderServiceSource.cancelPull`'s race-win guard depends on the same
+/// `(generation, repIndex)` always yielding the same id. A per-attempt
+/// discriminator (considered for #499, a stale cancel/abort racing a re-pull
+/// of the identical offer) was deferred: it would break this determinism
+/// invariant everywhere it's relied on, to close a window normal Finder/File
+/// Provider behavior doesn't produce and that is already bounded-benign — a
+/// local stale cancel is caught by `cancelPull`'s one-shot race guard (shared
+/// by host and guest), and a straggler wire `ClipboardStreamAbort` for a
+/// since-reused id is caught by the sender/receiver `[L4]` dedup guards plus
+/// the End-time SHA-256 verify (worst case: one spurious re-abort/retry, never
+/// corruption — see `LazyPullCoordinatorTests.staleAbortCollidesWithReusedAwaiterButTableStaysConsistent`
+/// for the regression coverage). If this window ever must be closed for real, the
+/// mechanism is a capability-gated `epoch` field on `ClipboardStreamBegin` /
+/// `ClipboardStreamAbort` (guest-agent version bump) — not an id-format
+/// change, which would ripple through every re-derivation site above.
 public enum ClipboardTransferID {
     /// High bit marking a transfer the **host** receives (guest→host direction).
     public static let hostReceivesBit: UInt64 = 1 << 63
