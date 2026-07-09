@@ -34,11 +34,14 @@ struct FileProviderServiceSourceTests {
         @unchecked Sendable
     {
         private let listener = NSXPCListener.anonymous()
-        private let lock = NSLock()
-        private var cancelCallStorage: (UInt64, Int)?
-        private var fetchFileEnteredStorage = false
-        var cancelCall: (UInt64, Int)? { lock.withLock { cancelCallStorage } }
-        var fetchFileHasEntered: Bool { lock.withLock { fetchFileEnteredStorage } }
+        private let cancelCallBox = Box<(UInt64, Int)?>(nil)
+        private let fetchFileEnteredBox = Box(false)
+        /// When `true`, `fetchFile` replies immediately with a fixed staged
+        /// path instead of the default "never reply" behavior — lets a test
+        /// exercise the fast-path-already-succeeded scenario.
+        let repliesImmediately = Box(false)
+        var cancelCall: (UInt64, Int)? { cancelCallBox.value }
+        var fetchFileHasEntered: Bool { fetchFileEnteredBox.value }
         let fetchFileEntered = AsyncGate()
         let cancelFetchCalled = AsyncGate()
 
@@ -63,14 +66,17 @@ struct FileProviderServiceSourceTests {
             generation: UInt64, repIndex: Int,
             reply: @escaping @Sendable (String?, NSError?) -> Void
         ) {
-            // Deliberately never replies — the test cancels while this "pull" is
-            // still in flight, then tears the connection down.
-            lock.withLock { fetchFileEnteredStorage = true }
+            fetchFileEnteredBox.value = true
             fetchFileEntered.notify()
+            // Default: deliberately never reply — the test cancels while this
+            // "pull" is still in flight, then tears the connection down.
+            if repliesImmediately.value {
+                reply("/staged/path", nil)
+            }
         }
 
         func cancelFetch(generation: UInt64, repIndex: Int) {
-            lock.withLock { cancelCallStorage = (generation, repIndex) }
+            cancelCallBox.value = (generation, repIndex)
             cancelFetchCalled.notify()
         }
 
@@ -235,5 +241,75 @@ struct FileProviderServiceSourceTests {
         try await relay.cancelFetchCalled.wait { relay.cancelCall != nil }
         #expect(relay.cancelCall?.0 == 11)
         #expect(relay.cancelCall?.1 == 2)
+    }
+
+    @Test(
+        "cancelling a pull that already succeeded via the fast path does not send a phantom cancelFetch"
+    )
+    func cancelAfterFastPathSuccessDoesNotAskOwnerToAbort() async throws {
+        let source = makeSource()
+        let relay = RecordingRelay()
+        defer { relay.invalidate() }
+        relay.repliesImmediately.value = true
+
+        let connection = NSXPCConnection(listenerEndpoint: relay.endpoint)
+        defer { connection.invalidate() }
+        _ = source.listener(NSXPCListener.anonymous(), shouldAcceptNewConnection: connection)
+
+        let result = Box<Result<String, NSError>?>(nil)
+        let completionGate = AsyncGate()
+        // A live connection exists, so this dispatches immediately over it (the
+        // fast path) and the relay replies right away — the pull is fully
+        // resolved before `cancel()` is ever called below.
+        let cancellation = source.fetchStagedFile(generation: 25, repIndex: 0) { outcome in
+            result.value = outcome
+            completionGate.notify()
+        }
+        try await completionGate.wait { result.value != nil }
+        guard case .success? = result.value else {
+            Issue.record("expected the fast-path pull to succeed first")
+            return
+        }
+
+        // A late cancel — e.g. `Progress.cancellationHandler` firing after the
+        // fetch already finished — must not phantom-cancel a transfer the
+        // owner already completed and (per its own doc) has no record of.
+        cancellation.cancel()
+        #expect(relay.cancelCall == nil)
+    }
+
+    @Test(
+        "a late cancel after the connect-timeout already failed the pull does not ask a since-connected owner to abort"
+    )
+    func cancelAfterConnectTimeoutDoesNotAskOwnerToAbort() async throws {
+        let source = makeSource(connectTimeout: 0.05)
+        let relay = RecordingRelay()
+        defer { relay.invalidate() }
+
+        let result = Box<Result<String, NSError>?>(nil)
+        let completionGate = AsyncGate()
+        // No accepted connection yet → enqueues; the connect-timeout fails it
+        // with serverUnreachable before any owner ever receives a fetchFile.
+        let cancellation = source.fetchStagedFile(generation: 30, repIndex: 0) { outcome in
+            result.value = outcome
+            completionGate.notify()
+        }
+        try await completionGate.wait { result.value != nil }
+        guard case .failure(let error)? = result.value else {
+            Issue.record("expected the connect timeout to fail the pull first")
+            return
+        }
+        #expect(error.code == NSFileProviderError.serverUnreachable.rawValue)
+
+        // An unrelated reconnect happens afterward.
+        let connection = NSXPCConnection(listenerEndpoint: relay.endpoint)
+        defer { connection.invalidate() }
+        _ = source.listener(NSXPCListener.anonymous(), shouldAcceptNewConnection: connection)
+
+        // A late/duplicate cancel for the already-failed pull must not send a
+        // phantom cancelFetch to the newly-connected owner, which never
+        // received a fetchFile for this (generation, repIndex) at all.
+        cancellation.cancel()
+        #expect(relay.cancelCall == nil)
     }
 }

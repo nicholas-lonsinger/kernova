@@ -243,11 +243,22 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
     /// harmlessly on the spent completion. Thread-safe and idempotent.
     ///
     /// This frees the extension's fetch immediately. If the pull had already been
-    /// dispatched to the owner (vs. still waiting for a connection), also asks the
-    /// owner to abort its in-flight vsock transfer (#464) via `cancelFetch` — a
+    /// dispatched to the owner (vs. still waiting for a connection) AND this call
+    /// is the one that actually wins the race to resolve it, also asks the owner
+    /// to abort its in-flight vsock transfer (#464) via `cancelFetch` — a
     /// one-way, best-effort call the owner's relay can now receive even while its
     /// `fetchFile` for this same pull is still in flight (see `FileProviderRelay`'s
     /// doc on the shared serial delivery queue).
+    ///
+    /// Gating on the race win matters: a pull absent from `pendingPulls` isn't
+    /// necessarily still in flight at the owner — it may have already succeeded
+    /// via the fast path in `fetchStagedFile`, or already failed via
+    /// `failPending`'s connect timeout, either of which resolves `pull.once`
+    /// before this call ever runs. Without the gate, a late/duplicate cancel in
+    /// either state would send a phantom `cancelFetch` for a `(generation,
+    /// repIndex)` the owner never received (or already finished) a `fetchFile`
+    /// for — which could spuriously abort an unrelated later pull that reuses
+    /// the same deterministic transferID.
     private func cancelPull(_ pull: PendingPull) {
         let dispatchedTo: NSXPCConnection? = lock.withLock {
             if let index = pendingPulls.firstIndex(where: { $0 === pull }) {
@@ -256,10 +267,11 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
             }
             return acceptedConnection
         }
-        if pull.once.fire(.failure(Self.cancelled)) {
+        let wonRace = pull.once.fire(.failure(Self.cancelled))
+        if wonRace {
             logger.debug("fetchContents pull cancelled by user")
         }
-        if let dispatchedTo {
+        if wonRace, let dispatchedTo {
             (dispatchedTo.remoteObjectProxy as? FileProviderRelay)?
                 .cancelFetch(generation: pull.generation, repIndex: pull.repIndex)
         }

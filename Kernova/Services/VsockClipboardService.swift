@@ -1112,6 +1112,18 @@ final class VsockClipboardService: ClipboardServicing {
             Self.logger.warning("File clipboard pull \(transferID, privacy: .public) timed out")
             return nil
         case .cancelled:
+            // `.debug`, not `.warning`: `.cancelled` also covers benign
+            // teardown/supersession (`failAll`), which is deliberately silent
+            // elsewhere (see `ClipboardStreamReceiver.teardown`'s doc) — this
+            // is only a diagnostic trace for the consumer-cancel case
+            // (`LazyPullCoordinator.cancelBeforeStart`), not a warning-worthy
+            // anomaly like `.aborted`/`.timedOut`.
+            Self.logger.debug("File clipboard pull \(transferID, privacy: .public) cancelled")
+            // Mirrors the `.timedOut` branch: nothing will ever deliver/abort
+            // this transferID now (no request was sent, or the request was
+            // pre-empted before it went out — see `LazyPullCoordinator.cancelBeforeStart`),
+            // so release the registered awaiter rather than leaking it.
+            receiver.cancelAwait(transferID)
             return nil
         }
     }
@@ -1213,6 +1225,13 @@ extension VsockClipboardService: HostClipboardFileRepProviding {
     /// re-validating `generation` against the current offer — so a cancel that
     /// arrives after a newer offer superseded this one still reaches the (already
     /// superseded, but possibly still-live) receiver's bookkeeping for that id.
+    ///
+    /// Also marks the id pre-cancelled on `lazyCoordinator` so a cancel that
+    /// arrives before `performBlockingPull` has even called `coordinator.pull`
+    /// (the fetch is dispatched onto the relay's own concurrent queue and may
+    /// not have started yet) still takes effect instead of being silently lost —
+    /// closing the race `receiver.cancel(transferID:)` alone can't, since it has
+    /// nothing to tear down until a Begin/awaiter exists.
     nonisolated func cancelStagedPull(generation: UInt64, repIndex: Int) {
         let transferID = ClipboardTransferID.make(
             generation: generation, repIndex: repIndex, hostMinted: true)
@@ -1220,10 +1239,10 @@ extension VsockClipboardService: HostClipboardFileRepProviding {
             Thread.isMainThread
             ? MainActor.assumeIsolated { self.receiver }
             : DispatchQueue.main.sync { MainActor.assumeIsolated { self.receiver } }
-        guard let receiver else { return }
         Self.logger.notice(
             "Cancelling file clipboard pull \(transferID, privacy: .public) on consumer request")
-        receiver.cancel(transferID: transferID)
+        receiver?.cancel(transferID: transferID)
+        lazyCoordinator.cancelBeforeStart(transferID)
     }
 }
 

@@ -461,4 +461,82 @@ struct LazyPullCoordinatorTests {
         try await gate.wait { box.abortInfo != nil }
         #expect(box.abortInfo?.code == "cancelled")
     }
+
+    // MARK: - cancelBeforeStart (#464 review fix)
+
+    @Test(
+        "cancelBeforeStart marks a transferID so pull() resolves .cancelled without ever calling send"
+    )
+    func cancelBeforeStartPreventsSend() async throws {
+        // Closes the race a review found: a consumer cancel (#464) that arrives
+        // before the owner's `pull` call has even registered a slot — because
+        // the fetch is dispatched onto a concurrent queue and hasn't started
+        // yet — used to be silently lost, so the request went out over vsock
+        // regardless. This proves it no longer does.
+        let coordinator = LazyPullCoordinator()
+        let sendCalled = Box(false)
+
+        coordinator.cancelBeforeStart(42)
+        #expect(coordinator.preCancelledCountForTesting == 1)
+
+        let outcome = await runPull(coordinator, transferID: 42, timeout: .seconds(5)) {
+            sendCalled.value = true
+        }
+
+        guard case .cancelled = outcome else {
+            Issue.record("expected .cancelled, got \(outcome)")
+            return
+        }
+        #expect(sendCalled.value == false)
+        // One-shot: the mark is consumed, not left to leak or double-apply to a
+        // later, unrelated pull that reuses the same transferID.
+        #expect(coordinator.preCancelledCountForTesting == 0)
+        #expect(coordinator.pendingSlotCountForTesting == 0)
+    }
+
+    @Test("cancelBeforeStart resolves an already-registered slot immediately with .cancelled")
+    func cancelBeforeStartResolvesParkedPull() async throws {
+        let coordinator = LazyPullCoordinator()
+        let sendRan = Box(false)
+        let gate = AsyncGate()
+
+        let pullTask = Task {
+            await runPull(coordinator, transferID: 7, timeout: .seconds(5)) {
+                sendRan.value = true
+                gate.notify()
+            }
+        }
+
+        // `send` only runs after the slot is registered, so this proves the
+        // pull is genuinely parked before cancelling it.
+        try await gate.wait { sendRan.value }
+        #expect(coordinator.pendingSlotCountForTesting == 1)
+
+        coordinator.cancelBeforeStart(7)
+
+        let outcome = await pullTask.value
+        guard case .cancelled = outcome else {
+            Issue.record("expected .cancelled, got \(outcome)")
+            return
+        }
+        #expect(coordinator.pendingSlotCountForTesting == 0)
+        #expect(coordinator.preCancelledCountForTesting == 0)
+    }
+
+    @Test("cancelBeforeStart for an unrelated transferID does not affect a different in-flight pull")
+    func cancelBeforeStartIsScopedToItsOwnTransferID() async throws {
+        let coordinator = LazyPullCoordinator()
+
+        coordinator.cancelBeforeStart(999)
+
+        let outcome = await runPull(coordinator, transferID: 1, timeout: .seconds(5)) {
+            coordinator.deliver(1, ClipboardContent.Representation(uti: "public.data", data: Data()))
+        }
+
+        guard case .delivered = outcome else {
+            Issue.record("expected the unrelated transfer to deliver normally, got \(outcome)")
+            return
+        }
+        #expect(coordinator.preCancelledCountForTesting == 1)  // still pending for id 999
+    }
 }

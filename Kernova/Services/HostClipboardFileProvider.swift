@@ -123,12 +123,43 @@ final class HostClipboardFileProvider {
 /// Routes the File Provider relay's byte pulls to the clipboard service that
 /// published the current offer.
 ///
-/// `@unchecked Sendable`: `source` is read and written only under `lock` — the
-/// relay calls `fetchStagedFile` off-main on the broker's XPC queue, while the
-/// coordinator sets/clears the source on the main actor.
+/// `@unchecked Sendable`: `source`/`dispatchedSources` are read and written
+/// only under `lock` — the relay calls `fetchStagedFile`/`cancelStagedPull`
+/// off-main on the broker's XPC queue, while the coordinator sets/clears the
+/// source on the main actor.
 final class HostClipboardPullRouter: FileProviderPullProvider, @unchecked Sendable {
+    /// Addresses one in-flight pull the same way a wire `transferID` does —
+    /// `(generation, repIndex)` — since two reps of the *same* generation can
+    /// legitimately be in flight at once (the relay dispatches pulls onto its
+    /// own concurrent queue precisely so independent multi-file pulls can
+    /// overlap), and keying on `generation` alone would let one rep's
+    /// completion evict the dispatch record for a sibling rep still in flight.
+    private struct PullKey: Hashable {
+        let generation: UInt64
+        let repIndex: Int
+    }
+
     private let lock = NSLock()
     private weak var source: (any HostClipboardFileRepProviding)?
+    /// The service each in-flight `(generation, repIndex)` was dispatched to,
+    /// so a cancel reaches the VM that actually owns the pull rather than
+    /// whichever VM happens to be `source` *now* (#464).
+    ///
+    /// `HostClipboardFileProvider` is a single app-wide singleton router shared
+    /// across every VM ("the last Copy to Mac wins" — see its doc), and a slow
+    /// pull can run for a long time (that's the whole reason #464 exists), so
+    /// another VM's publish can freely reassign `source` while an earlier VM's
+    /// pull is still in flight. Without this, `cancelStagedPull` would forward
+    /// to the new `source` — a VM that never received the `fetchFile` this
+    /// cancel is for, and whose `(generation, repIndex)` numbering can
+    /// trivially collide with the original VM's (both are small per-VM
+    /// counters starting at 1), so the misrouted cancel is either a silent
+    /// no-op (the real transfer keeps streaming, wasting vsock bandwidth — the
+    /// exact regression #464 fixes) or an incorrect abort of the new VM's own
+    /// unrelated live transfer. Entries are removed once their dispatched fetch
+    /// returns, so this never grows past the number of genuinely in-flight
+    /// pulls.
+    private var dispatchedSources: [PullKey: any HostClipboardFileRepProviding] = [:]
 
     func setSource(_ source: any HostClipboardFileRepProviding) {
         lock.withLock { self.source = source }
@@ -145,13 +176,24 @@ final class HostClipboardPullRouter: FileProviderPullProvider, @unchecked Sendab
     func fetchStagedFile(
         generation: UInt64, repIndex: Int
     ) -> Result<String, FileProviderPullError> {
-        let source = lock.withLock { self.source }
+        let key = PullKey(generation: generation, repIndex: repIndex)
+        let source: (any HostClipboardFileRepProviding)? = lock.withLock {
+            guard let current = self.source else { return nil }
+            dispatchedSources[key] = current
+            return current
+        }
         guard let source else { return .failure(.noCurrentOffer) }
+        defer { lock.withLock { dispatchedSources.removeValue(forKey: key) } }
         return source.pullStagedFile(generation: generation, repIndex: repIndex)
     }
 
     func cancelStagedPull(generation: UInt64, repIndex: Int) {
-        let source = lock.withLock { self.source }
+        // Prefer the service this (generation, repIndex) was actually
+        // dispatched to; fall back to whichever is current for a cancel that
+        // arrives before (or without ever) being recorded — matching
+        // `fetchStagedFile`'s own fallback behavior for an unknown/stale pull.
+        let key = PullKey(generation: generation, repIndex: repIndex)
+        let source = lock.withLock { dispatchedSources[key] ?? self.source }
         source?.cancelStagedPull(generation: generation, repIndex: repIndex)
     }
 }

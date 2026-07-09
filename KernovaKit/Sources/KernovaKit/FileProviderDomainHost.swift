@@ -628,15 +628,17 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
 public final class FileProviderRelayService: NSObject, FileProviderRelay {
     private let logger: KernovaLogger
     private let pullProvider: FileProviderPullProvider
-    /// Runs each `fetchFile` pull off the XPC delivery queue.
+    /// Runs each `fetchFile` pull, and each `cancelFetch` signal, off the XPC
+    /// delivery queue.
     ///
     /// `NSXPCConnection` delivers every incoming exported-object call — including
     /// `cancelFetch` — on one private *serial* queue per connection (WWDC 2012
     /// session 241), so blocking that queue for the whole vsock pull (as `fetchFile`
     /// used to) would starve any `cancelFetch` for the very fetch it's trying to
-    /// abort. Dispatching here frees the delivery queue immediately; `.concurrent`
-    /// also lets independent multi-file pulls actually run in parallel, which the
-    /// receiver/coordinator already support.
+    /// abort — and `cancelFetch` itself can block on a stalled peer's vsock write,
+    /// so it needs the same treatment. Dispatching here frees the delivery queue
+    /// immediately; `.concurrent` also lets independent multi-file pulls actually
+    /// run in parallel, which the receiver/coordinator already support.
     private let pullQueue = DispatchQueue(
         label: "app.kernova.fileprovider.relay.pull", attributes: .concurrent)
 
@@ -673,14 +675,21 @@ public final class FileProviderRelayService: NSObject, FileProviderRelay {
 
     /// Relays a best-effort cancel to the owner's pull provider.
     ///
-    /// Runs on the connection's serial delivery queue (now free — see
-    /// `fetchFile`) and must stay non-blocking itself: it only signals the
-    /// in-flight pull to stop, it does not wait for it to finish.
+    /// Dispatched onto `pullQueue`, the same as `fetchFile`, rather than run
+    /// directly on the connection's serial delivery queue: `cancelStagedPull`
+    /// bottoms out in a vsock write (`ClipboardStreamReceiver.cancel(transferID:)`
+    /// sending a `ClipboardStreamAbort`) that can block for real time against a
+    /// stalled peer, and this delivery queue is shared with every other
+    /// `fetchFile`/`cancelFetch` on the connection — blocking it here would
+    /// reintroduce exactly the starvation problem moving `fetchFile` off the
+    /// queue was meant to solve.
     public func cancelFetch(generation: UInt64, repIndex: Int) {
         logger.debug(
             "Relay cancelFetch (gen=\(generation, privacy: .public), rep=\(repIndex, privacy: .public))"
         )
-        pullProvider.cancelStagedPull(generation: generation, repIndex: repIndex)
+        pullQueue.async { [pullProvider] in
+            pullProvider.cancelStagedPull(generation: generation, repIndex: repIndex)
+        }
     }
 
     private static func nsError(for error: FileProviderPullError) -> NSError {

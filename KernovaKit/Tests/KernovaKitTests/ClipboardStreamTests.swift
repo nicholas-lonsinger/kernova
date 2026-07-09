@@ -606,6 +606,10 @@ struct ClipboardStreamTests {
 
         try await awaiterGate.wait { abortBox.value != nil }
         #expect(abortBox.value?.code == "cancelled")
+        // RATIONALE: filesystem-appearance poll (mirrors `cancelDeletesPartial`
+        // above) — the partial's deletion has no test-owned signal to gate on
+        // (the awaiter's `onAbort`, already awaited above, fires before
+        // `teardown` deletes the file on its own transfer queue).
         try await pollUntil {
             !materializedFiles(under: harness.stagingTempRoot).contains {
                 $0.lastPathComponent == "cancel-me.bin"

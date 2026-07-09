@@ -11,21 +11,22 @@ import Testing
 /// the reply contract (staged path on success, mapped `NSFileProviderError` on
 /// failure) without standing up a live anonymous-XPC connection.
 ///
-/// `fetchFile` dispatches the pull onto its own `pullQueue` and replies
-/// asynchronously (#464 — so `cancelFetch` for the same fetch is never stuck
-/// behind it on a shared serial queue, mirroring `NSXPCConnection`'s real
-/// per-connection delivery queue). Every test below waits for the reply via
-/// `AsyncGate` rather than asserting immediately after the call returns.
+/// Both `fetchFile` and `cancelFetch` dispatch their actual work onto the
+/// relay's own `pullQueue` and return immediately (#464 — so neither is ever
+/// stuck behind the other on a shared serial queue, mirroring
+/// `NSXPCConnection`'s real per-connection delivery queue). Every test below
+/// waits for the provider-side effect via `AsyncGate` rather than asserting
+/// immediately after the call returns.
 @Suite("FileProviderRelayService")
 struct FileProviderRelayServiceTests {
     /// Records the `(generation, repIndex)` it was asked for and returns a fixed
     /// result, so forwarding and result mapping can be asserted.
     private final class MockPullProvider: FileProviderPullProvider, @unchecked Sendable {
-        private let lock = NSLock()
-        private var lastFetchCallStorage: (UInt64, Int)?
-        private var lastCancelCallStorage: (UInt64, Int)?
-        var lastFetchCall: (UInt64, Int)? { lock.withLock { lastFetchCallStorage } }
-        var lastCancelCall: (UInt64, Int)? { lock.withLock { lastCancelCallStorage } }
+        private let lastFetchCallBox = Box<(UInt64, Int)?>(nil)
+        private let lastCancelCallBox = Box<(UInt64, Int)?>(nil)
+        var lastFetchCall: (UInt64, Int)? { lastFetchCallBox.value }
+        var lastCancelCall: (UInt64, Int)? { lastCancelCallBox.value }
+        let cancelled = AsyncGate()
         let result: Result<String, FileProviderPullError>
 
         init(result: Result<String, FileProviderPullError>) {
@@ -35,12 +36,13 @@ struct FileProviderRelayServiceTests {
         func fetchStagedFile(
             generation: UInt64, repIndex: Int
         ) -> Result<String, FileProviderPullError> {
-            lock.withLock { lastFetchCallStorage = (generation, repIndex) }
+            lastFetchCallBox.value = (generation, repIndex)
             return result
         }
 
         func cancelStagedPull(generation: UInt64, repIndex: Int) {
-            lock.withLock { lastCancelCallStorage = (generation, repIndex) }
+            lastCancelCallBox.value = (generation, repIndex)
+            cancelled.notify()
         }
     }
 
@@ -63,24 +65,25 @@ struct FileProviderRelayServiceTests {
     /// actually started.
     private final class BlockingPullProvider: FileProviderPullProvider, @unchecked Sendable {
         private let releaseSemaphore = DispatchSemaphore(value: 0)
-        private let lock = NSLock()
-        private var hasEnteredStorage = false
-        private var lastCancelCallStorage: (UInt64, Int)?
+        private let hasEnteredBox = Box(false)
+        private let lastCancelCallBox = Box<(UInt64, Int)?>(nil)
         let entered = AsyncGate()
-        var hasEntered: Bool { lock.withLock { hasEnteredStorage } }
-        var lastCancelCall: (UInt64, Int)? { lock.withLock { lastCancelCallStorage } }
+        let cancelled = AsyncGate()
+        var hasEntered: Bool { hasEnteredBox.value }
+        var lastCancelCall: (UInt64, Int)? { lastCancelCallBox.value }
 
         func fetchStagedFile(
             generation: UInt64, repIndex: Int
         ) -> Result<String, FileProviderPullError> {
-            lock.withLock { hasEnteredStorage = true }
+            hasEnteredBox.value = true
             entered.notify()
             releaseSemaphore.wait()
             return .success("/staged/file")
         }
 
         func cancelStagedPull(generation: UInt64, repIndex: Int) {
-            lock.withLock { lastCancelCallStorage = (generation, repIndex) }
+            lastCancelCallBox.value = (generation, repIndex)
+            cancelled.notify()
         }
 
         /// Lets the parked `fetchStagedFile` call return.
@@ -151,13 +154,18 @@ struct FileProviderRelayServiceTests {
     }
 
     @Test("cancelFetch forwards (generation, repIndex) to the pull provider")
-    func cancelFetchForwardsToProvider() {
+    func cancelFetchForwardsToProvider() async throws {
         let provider = MockPullProvider(result: .success("/staged/file"))
         let service = FileProviderRelayService(
             pullProvider: provider, loggerSubsystem: "app.kernova.test")
 
+        // `cancelFetch` dispatches onto `pullQueue` and returns immediately
+        // (same reasoning as `fetchFile` — see the relay's own doc), so this
+        // must wait for the provider-side effect rather than asserting right
+        // after the call returns.
         service.cancelFetch(generation: 4, repIndex: 1)
 
+        try await provider.cancelled.wait { provider.lastCancelCall != nil }
         #expect(provider.lastCancelCall?.0 == 4)
         #expect(provider.lastCancelCall?.1 == 1)
     }
@@ -184,8 +192,11 @@ struct FileProviderRelayServiceTests {
 
         // The pull is now genuinely in flight (parked in `fetchStagedFile`).
         // `cancelFetch` must still reach the provider — proving it isn't queued
-        // behind the still-running `fetchFile` call.
+        // behind the still-running `fetchFile` call (both run concurrently on
+        // `pullQueue`, so this doesn't deadlock waiting on the same serial
+        // queue the parked pull occupies).
         service.cancelFetch(generation: 2, repIndex: 0)
+        try await provider.cancelled.wait { provider.lastCancelCall != nil }
         #expect(provider.lastCancelCall?.0 == 2)
         #expect(provider.lastCancelCall?.1 == 0)
 
