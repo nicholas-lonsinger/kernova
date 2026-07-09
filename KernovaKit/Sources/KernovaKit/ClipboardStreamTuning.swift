@@ -24,6 +24,14 @@ import Foundation
 /// deeper. On a same-host link the bandwidth-delay product is microscopic, so
 /// the window is headroom rather than the throughput limiter — going bigger only
 /// pins more un-acked RAM per stream.
+///
+/// The window is deliberately larger than the ~512 KiB socket send buffer, so
+/// a sender with open credit can still fill the buffer and block inside
+/// `write(2)`. That's fine: `VsockChannel`'s write and inbound-decode paths use
+/// separate locks (#457), so a blocked write never starves the acks that would
+/// advance the window, and channel teardown unblocks a parked write via
+/// `shutdown(2)`. Shrinking the window wouldn't remove the blocking possibility
+/// anyway — a single chunk write to an already-full buffer can still park.
 public enum ClipboardStreamTuning {
     /// Default per-chunk payload size: 64 KiB (the shared vsock packet cap).
     public static let defaultChunkPayloadSize = 64 * 1024

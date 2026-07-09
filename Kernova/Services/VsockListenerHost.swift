@@ -83,16 +83,22 @@ final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate {
     ///
     /// RATIONALE: the host previously built the channel from the duped fd with no
     /// send timeout, so a guest that stops draining could hang a `writeFramed`
-    /// (under the channel lock) forever. The *real* bound is the clipboard
-    /// streaming engine's credit window — the host holds at most one window
-    /// (≤ the socket send buffer) of un-acked bytes, so it never tries to write
-    /// past what the buffer can hold — plus the engine's per-transfer no-ack
-    /// deadline. `SO_SNDTIMEO` is a belt-and-suspenders backstop; Apple does not
-    /// document whether it is honoured on a vsock fd (it may be a no-op, hence
-    /// the credit window doing the real work). The `setsockopt` return is
-    /// checked and logged so an ineffective option is visible; if it proves
-    /// ineffective in practice the streaming write path can move to a
-    /// non-blocking fd + `poll(POLLOUT)` (vsock(4)'s canonical approach).
+    /// forever. Correcting an earlier version of this rationale: the streaming
+    /// credit window (1–2 MiB, `ClipboardStreamTuning`) does **not** bound a
+    /// `writeFramed` call to the socket send buffer (~512 KiB XNU default) — the
+    /// window is deliberately larger than the buffer, so a `write(2)` can still
+    /// block. What actually keeps a blocked write from wedging the channel is
+    /// `VsockChannel`'s split write/state lock (#457): a stalled peer's blocked
+    /// write holds only the write lock, never the lock inbound decode needs, so
+    /// acks and control frames keep flowing and the streaming engine's own
+    /// no-ack (sender) / inbound-stall (receiver) deadlines can still fire and
+    /// tear the channel down — which `shutdown(2)`s the fd first, unblocking the
+    /// parked write. `SO_SNDTIMEO` is a belt-and-suspenders backstop on top of
+    /// that; Apple does not document whether it is honoured on a vsock fd (it
+    /// may be a no-op). The `setsockopt` return is checked and logged so an
+    /// ineffective option is visible; if it proves ineffective in practice the
+    /// streaming write path can move to a non-blocking fd + `poll(POLLOUT)`
+    /// (vsock(4)'s canonical approach).
     private func applySendTimeout(_ fd: Int32) {
         var timeout = timeval(tv_sec: Self.sendTimeoutSeconds, tv_usec: 0)
         let rc = setsockopt(

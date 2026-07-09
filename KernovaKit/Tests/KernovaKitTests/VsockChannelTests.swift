@@ -25,6 +25,35 @@ struct VsockChannelTests {
         )
     }
 
+    /// Creates a `VsockChannel` (started) paired with the *raw* fd of its peer,
+    /// so a test can withhold reads on the peer side directly instead of going
+    /// through another `VsockChannel`.
+    ///
+    /// Used to reproduce #457: a peer that stops draining lets a
+    /// `VsockChannel.writeFramed` call park inside `write(2)`. Both ends'
+    /// socket buffers are shrunk to a tiny, deterministic size (rather than
+    /// relying on the platform's default, which can vary) so a modest write
+    /// reliably blocks instead of being buffered away.
+    private func makeChannelWithRawPeer() throws -> (channel: VsockChannel, rawPeerFd: Int32) {
+        var fds: [Int32] = [-1, -1]
+        let rc = fds.withUnsafeMutableBufferPointer { buf in
+            socketpair(AF_UNIX, SOCK_STREAM, 0, buf.baseAddress)
+        }
+        guard rc == 0 else {
+            throw POSIXError(.init(rawValue: errno) ?? .EIO)
+        }
+        var enable: Int32 = 1
+        _ = setsockopt(fds[1], SOL_SOCKET, SO_NOSIGPIPE, &enable, socklen_t(MemoryLayout<Int32>.size))
+        var tinyBuffer: Int32 = 4096
+        for fd in fds {
+            _ = setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &tinyBuffer, socklen_t(MemoryLayout<Int32>.size))
+            _ = setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &tinyBuffer, socklen_t(MemoryLayout<Int32>.size))
+        }
+        let channel = VsockChannel(fileDescriptor: fds[0])
+        channel.start()
+        return (channel, fds[1])
+    }
+
     /// Awaits the next frame from a channel's `incoming` stream, failing if it doesn't
     /// arrive within `timeout`.
     private func waitForNextFrame(
@@ -286,6 +315,93 @@ struct VsockChannelTests {
             if case .write = channelError { return true }
             return false
         }
+    }
+
+    @Test("Inbound decode proceeds while a write is blocked on a stalled peer (#457)")
+    func inboundDecodeProceedsWhileWriteIsBlocked() async throws {
+        let (channel, rawPeerFd) = try makeChannelWithRawPeer()
+        defer {
+            channel.close()
+            Darwin.close(rawPeerFd)
+        }
+
+        // Comfortably exceeds the tiny 4 KiB SO_SNDBUF/SO_RCVBUF the helper set
+        // on both ends, so — since `rawPeerFd` is never read in this test —
+        // `writeFramed` parks inside `write(2)` for the rest of the test. On
+        // the pre-#457 single-lock implementation this holds the lock
+        // `handleChunk` also needs, so the Hello sent below would never decode
+        // and this test would time out.
+        let bigBlob = Data(count: 1024 * 1024)
+        let writeTask = Task<Void, Never> {
+            _ = try? channel.writeFramed(bigBlob)
+        }
+        defer { writeTask.cancel() }
+
+        // Courtesy delay only — not the pass/fail signal. The write blocks
+        // permanently once the buffer fills (the peer never drains), so this
+        // just biases toward the write already being parked before we probe;
+        // `waitForNextFrame`'s own timeout below is the real gate.
+        try await Task.sleep(for: .milliseconds(50))
+
+        let helloBytes = try VsockChannel.serializeFramed(makeHello(serviceVersion: 42))
+        try helloBytes.withUnsafeBytes { (buffer: UnsafeRawBufferPointer) in
+            var written = 0
+            while written < buffer.count {
+                let rc = Darwin.write(rawPeerFd, buffer.baseAddress!.advanced(by: written), buffer.count - written)
+                guard rc > 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+                written += rc
+            }
+        }
+
+        let received = try await waitForNextFrame(on: channel)
+        if case .hello(let hello) = received?.payload {
+            #expect(hello.serviceVersion == 42)
+        } else {
+            Issue.record("Expected hello payload, got \(String(describing: received?.payload))")
+        }
+    }
+
+    @Test("Teardown unblocks a write parked on a stalled peer (#457)")
+    func teardownUnblocksParkedWrite() async throws {
+        let (channel, rawPeerFd) = try makeChannelWithRawPeer()
+        defer { Darwin.close(rawPeerFd) }
+
+        let bigBlob = Data(count: 1024 * 1024)
+        let finished = Box<Bool>(false)
+        let writeTask = Task<VsockChannelError?, Never> {
+            defer { finished.value = true }
+            do {
+                try channel.writeFramed(bigBlob)
+                return nil
+            } catch let error as VsockChannelError {
+                return error
+            } catch {
+                return nil
+            }
+        }
+
+        // Sanity check: the write is genuinely still parked before teardown —
+        // not the pass/fail signal (see the courtesy-delay note above).
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(finished.value == false)
+
+        channel.close()
+
+        let outcome = try await withThrowingTaskGroup(of: VsockChannelError?.self) { group in
+            group.addTask { await writeTask.value }
+            group.addTask {
+                try await Task.sleep(for: .seconds(5))
+                throw TestTimeout()
+            }
+            let result = try await group.next()!
+            group.cancelAll()
+            return result
+        }
+        // The parked write unblocks and surfaces as a write failure once
+        // `close()` shuts the descriptor down out from under it. On pre-#457
+        // code `close()` blocks forever waiting on the same lock the parked
+        // write holds, so this `outcome` fetch itself would time out.
+        #expect(outcome == .write(POSIXError(.EPIPE)))
     }
 
     @Test("send throws .write when the underlying FileHandle write fails")
