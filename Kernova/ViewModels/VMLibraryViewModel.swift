@@ -922,29 +922,32 @@ final class VMLibraryViewModel {
 
     /// A collision-free destination bundle URL under `vmsDir` for a bundle named like `sourceURL`.
     ///
-    /// Checks the candidate name against BOTH on-disk bundles (`fileExists`) AND the reserved
-    /// `bundleURL`s of already-registered phantoms in `instances` — because under synchronous
-    /// reservation a prior bundle's copy hasn't run yet, so `fileExists` alone can't see it. That
-    /// in-flight check is what lets a whole batch (and two overlapping triggers) reserve distinct
-    /// names atomically without serializing behind each other's copies (#487).
+    /// The taken names are the union of on-disk `.kernova` bundles in `vmsDir` AND the reserved
+    /// names of already-registered phantoms there — the in-flight set is essential because under
+    /// synchronous reservation a prior bundle's copy hasn't run yet, so a disk listing alone can't
+    /// see it. That lets a whole batch (and two overlapping triggers) reserve distinct names
+    /// atomically without serializing behind each other's copies (#487). Delegates the
+    /// "Name / Name 2 / …" climb to `UniqueName` (shared with clone), matched case-insensitively to
+    /// mirror the default case-insensitive APFS volume (#498).
     private func reserveDestination(for sourceURL: URL, in vmsDir: URL) -> URL {
-        let reserved = Set(instances.map { $0.bundleURL.standardizedFileURL.path(percentEncoded: false) })
-        func isTaken(_ url: URL) -> Bool {
-            // Cheap in-memory reserved-set check first; only stat the disk if it isn't reserved.
-            reserved.contains(url.standardizedFileURL.path(percentEncoded: false))
-                || FileManager.default.fileExists(atPath: url.path(percentEncoded: false))
+        let onDiskStems =
+            (try? FileManager.default.contentsOfDirectory(
+                at: vmsDir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]))?
+            .filter { VMStorageService.isBundleURL($0) }
+            .map { $0.deletingPathExtension().lastPathComponent } ?? []
+        let vmsDirPath = vmsDir.standardizedFileURL.path(percentEncoded: false)
+        let inFlightStems = instances.compactMap { phantom -> String? in
+            let url = phantom.bundleURL
+            guard url.deletingLastPathComponent().standardizedFileURL.path(percentEncoded: false) == vmsDirPath
+            else { return nil }
+            return url.deletingPathExtension().lastPathComponent
         }
-        let candidate = vmsDir.appendingPathComponent(sourceURL.lastPathComponent, isDirectory: true)
-        guard isTaken(candidate) else { return candidate }
-        let stem = sourceURL.deletingPathExtension().lastPathComponent
-        let ext = sourceURL.pathExtension
-        var counter = 2
-        var url: URL
-        repeat {
-            url = vmsDir.appendingPathComponent("\(stem) \(counter).\(ext)", isDirectory: true)
-            counter += 1
-        } while isTaken(url)
-        return url
+        let name = UniqueName.firstAvailable(
+            prefix: sourceURL.deletingPathExtension().lastPathComponent,
+            existing: onDiskStems + inFlightStems,
+            caseInsensitive: true)
+        return vmsDir.appendingPathComponent(
+            "\(name).\(VMStorageService.bundleExtension)", isDirectory: true)
     }
 
     /// Reserves a collision-free destination for one `.kernova` bundle, registers its phantom row
