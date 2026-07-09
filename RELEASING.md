@@ -110,7 +110,7 @@ install.)
 ## Release flow
 
 1. **Version.** Decide whether to bump `MARKETING_VERSION` for the app
-   (currently `0.9.0`). The guest agent has its **own** version (currently
+   (currently `0.9.1`). The guest agent has its **own** version (currently
    `0.31.2`) — bump it only when agent behavior changed, per the guest-agent
    versioning conventions in CLAUDE.md. `CFBundleVersion` is automatic (git
    commit count) and needs no manual edit.
