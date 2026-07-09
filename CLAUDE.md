@@ -157,11 +157,29 @@ When reviewing code — via review tools (`/simplify`, `/review-pr`, etc.), post
 | **Annotate** | Add a `RATIONALE:` comment (see [Intentional Pattern Annotations](#intentional-pattern-annotations)) for human/automated reviewer findings, or a `// periphery:ignore - <reason>` directive (see [Periphery Directives](#periphery-directives)) for dead-code scan false positives | Code looks wrong or unconventional but is correct for a project-specific reason |
 | **Dismiss** | No action needed | Pure style nits, cosmetic preferences, trivial improvements with negligible impact |
 
+#### The severity bar — Dismiss and Annotate are real options
+
+A finding earns **Fix now** or **Fix later** only if **both** hold:
+
+1. **Reachable** — a user doing normal things (or a supported automated flow) can actually hit it.
+2. **Consequential** — the outcome is worse than a transient cosmetic glitch, a logged self-recovering retry, or a state an obvious user action recovers from.
+
+Findings with these signatures default to **Dismiss** (or **Annotate** with `RATIONALE:` when the code would otherwise be re-flagged every review):
+
+- **Hypothetical future code** — "a future caller/method could bypass X." Unwritten code can't be defended against with access control; document the invariant where it lives instead.
+- **Adversarial scheduling** — races requiring timing no real user/system flow produces, with a bounded, benign outcome (e.g. one spurious retry). If unsure whether the flow can produce it, that investigation is the triage — do it before filing, not after.
+- **Degenerate inputs** — inputs no real workflow produces (e.g. same-name-differing-only-by-case bundles dropped together), failing recoverably.
+- **Pre-existing behavior surfaced by an unrelated diff** — verify against the merge base before attributing: it's a finding against *this* change only if the change introduced or worsened it. Otherwise it's at most a new issue on its own merits, judged by the same bar — not part of this review's loop.
+
+**Stop-the-chain rule:** when a finding is about the *fix for a previous review finding* and severity is declining across the chain (#487 → #490 → #492 → #493 is the canonical example — ending at "`private` doesn't stop a hypothetical future method in the same class"), do not file the next link. Dismiss or Annotate. A review that has moved from defects in the code to meta-findings about prior fixes has run out of real defects.
+
+**Matching review effort to the diff:** `/code-review low` for trivial/mechanical diffs; `medium` (precision-biased — "findings a maintainer would act on") as the default for bug fixes; `high`/`xhigh` (recall-biased — "err on the side of surfacing", uncertain findings expected by design) for features, redesigns, and the clipboard/File-Provider/vsock subsystems where theoretical races are often real. Findings from recall-biased runs especially must clear the severity bar above before being filed.
+
 #### Review Debt Tracking
 
 Valid findings that are **out of scope** for the current task must be captured as GitHub issues rather than silently dropped.
 
-**What to capture** (important + moderate severity):
+**What to capture** (important + moderate severity, and clearing [the severity bar](#the-severity-bar--dismiss-and-annotate-are-real-options) above):
 - Bugs, correctness problems, or logic errors
 - Security concerns
 - Performance issues
