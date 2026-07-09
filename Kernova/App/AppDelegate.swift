@@ -850,16 +850,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
     }
 
-    /// Filters to `.kernova` bundles and imports each.
+    /// Filters to `.kernova` bundles and imports the batch sequentially.
     ///
     /// AppKit delivers the odoc event to the single running instance in both the
     /// cold-launch and already-running cases, so this one path covers both — no
     /// launcher→XPC forwarding is needed (#460 dropped the launcher; #439).
     /// `viewModel` exists from `init`, so importing this early is safe; the caller
-    /// summons the GUI (the heuristic alone only covers a cold launch).
+    /// summons the GUI (the heuristic alone only covers a cold launch). Imports run
+    /// off a detached `Task` so a multi-select batch doesn't block this synchronous
+    /// delegate callback — `importVMs(from:)` awaits each bundle in turn so every
+    /// bundle in the batch imports rather than only the first (#444).
     private func importVMs(from urls: [URL]) {
-        for url in urls where VMStorageService.isBundleURL(url) {
-            viewModel.importVM(from: url)
+        let bundles = urls.filter { VMStorageService.isBundleURL($0) }
+        guard !bundles.isEmpty else { return }
+        Task { @MainActor in
+            await viewModel.importVMs(from: bundles)
         }
     }
 

@@ -810,7 +810,11 @@ final class VMLibraryViewModel {
     /// If the bundle is already inside the VMs directory, it is simply selected.
     /// If a VM with the same UUID already exists in the library, that instance is selected.
     /// Otherwise, the bundle is copied into the VMs directory asynchronously with a phantom row.
-    func importVM(from sourceURL: URL) {
+    ///
+    /// `async` so callers importing a batch (``importVMs(from:)``) can await each bundle before
+    /// starting the next — `hasPreparing` is false again by the time this returns, so a
+    /// multi-bundle batch never trips the guard below on its own later bundles (#444).
+    func importVM(from sourceURL: URL) async {
         do {
             let vmsDir = try storageService.vmsDirectory
 
@@ -907,11 +911,24 @@ final class VMLibraryViewModel {
                 }
             }
             phantom.preparingState = VMInstance.PreparingState(operation: .importing, task: task)
+            await task.value
         } catch {
             Self.logger.error(
                 "Failed to import VM from \(sourceURL.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)"
             )
             presentError(error)
+        }
+    }
+
+    /// Imports a batch of bundles sequentially.
+    ///
+    /// Each import awaits the prior one's copy, so `hasPreparing` is false between bundles and
+    /// the per-import serialization guard never trips within a batch — every bundle imports
+    /// (#444), unlike a synchronous loop over the non-async form. A failed import surfaces its
+    /// own error and the batch continues to the next bundle.
+    func importVMs(from sourceURLs: [URL]) async {
+        for url in sourceURLs {
+            await importVM(from: url)
         }
     }
 
