@@ -251,7 +251,18 @@ final class VsockClipboardService: ClipboardServicing {
         consumeTask = Task { [weak self] in
             await Self.consume(
                 channel: channel, label: label, sender: sender, receiver: receiver,
-                onControlFrame: { @MainActor frame in self?.handleControlFrame(frame) })
+                onControlFrame: { [weak self] frame in
+                    // Fire-and-forget onto the serial main queue so the consume loop
+                    // never suspends on the main-actor hop — a control frame arriving
+                    // while main is blocked in a toggle-off paste's
+                    // performBlockingPull must not halt stream-frame routing (#458).
+                    // Serial DispatchQueue.main preserves control-frame FIFO order; a
+                    // per-frame detached Task would not. Mirrors the guest's #357
+                    // pattern (VsockGuestClipboardAgent.serve).
+                    DispatchQueue.main.async {
+                        MainActor.assumeIsolated { self?.handleControlFrame(frame) }
+                    }
+                })
             // Channel closed — wake any pull parked on a transfer whose Begin will
             // now never arrive, so an async materialize doesn't hang forever, and
             // unblock any synchronous file pull (FP relay / toggle-off paste).
@@ -424,12 +435,18 @@ final class VsockClipboardService: ClipboardServicing {
     /// frames (offer/request/release/error) hop to main via `onControlFrame`.
     /// This keeps a multi-GB transfer's tens of thousands of chunk/ack frames off
     /// the main actor entirely. [M1]
+    ///
+    /// `onControlFrame` dispatches fire-and-forget rather than being awaited, so
+    /// the loop never suspends on the main-actor hop: a control frame arriving
+    /// while main is blocked elsewhere (e.g. `performBlockingPull`) must not halt
+    /// stream-frame routing (#458), mirroring the guest's fire-and-forget
+    /// `DispatchQueue.main.async` dispatch (#357).
     nonisolated private static func consume(
         channel: VsockChannel,
         label: String,
         sender: ClipboardStreamSender,
         receiver: ClipboardStreamReceiver,
-        onControlFrame: @MainActor @Sendable @escaping (Frame) -> Void
+        onControlFrame: @Sendable @escaping (Frame) -> Void
     ) async {
         do {
             for try await frame in channel.incoming where frame.protocolVersion == 1 {
@@ -454,7 +471,7 @@ final class VsockClipboardService: ClipboardServicing {
                         sender.handleAbort(transferID: abort.transferID)
                     }
                 default:
-                    await onControlFrame(frame)
+                    onControlFrame(frame)
                 }
             }
             logger.info("Vsock clipboard channel closed for '\(label, privacy: .public)'")
@@ -465,7 +482,9 @@ final class VsockClipboardService: ClipboardServicing {
         }
     }
 
-    /// Handles the control frames the consume loop hops to the main actor for.
+    /// Handles the control frames the consume loop dispatches to the main actor
+    /// for, fire-and-forget (#458) — never awaited, so a control frame processed
+    /// here can never itself hold up the consume loop's stream-frame routing.
     private func handleControlFrame(_ frame: Frame) {
         switch frame.payload {
         case .clipboardOffer(let offer):
@@ -1203,7 +1222,9 @@ extension VsockClipboardService: HostClipboardFileRepProviding {
     /// `provide` callback already runs there); off-main it snapshots via
     /// `DispatchQueue.main.sync` (the relay's XPC queue). It then blocks the
     /// calling thread on `performBlockingPull`, woken off-main by the receiver, so
-    /// blocking main is safe — the stream receive runs on its own queue.
+    /// blocking main is safe — the stream receive runs on `consume`'s own
+    /// cooperative thread, which routes control frames to main fire-and-forget
+    /// (never awaited) and so never parks waiting on this very thread (#458).
     nonisolated func pullStagedFile(
         generation: UInt64, repIndex: Int
     ) -> Result<String, FileProviderPullError> {
