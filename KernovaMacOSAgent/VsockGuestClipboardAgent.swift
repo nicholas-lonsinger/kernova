@@ -1091,6 +1091,13 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             // anomaly like `.aborted`/`.timedOut`.
             Self.logger.debug("Inbound clipboard pull \(transferID, privacy: .public) cancelled")
             receiver.cancelAwait(transferID)
+        case .superseded:
+            // A newer pull for this id (a retry after this fetch's owner
+            // connection dropped) has already taken over the awaiter/slot
+            // registration (#500) — touch nothing keyed by `transferID`
+            // (no `cancelAwait`, no abort frame, no paste error): the retry
+            // owns it now and must resolve on its own.
+            Self.logger.debug("Inbound clipboard pull \(transferID, privacy: .public) superseded by a newer fetch")
         }
         return nil
     }
