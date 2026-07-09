@@ -34,6 +34,10 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
 {
     /// Bounded wait for the owner to connect after the doorbell is rung, kept well
     /// under Finder's ~60 s paste deadline so a missing owner fails cleanly.
+    ///
+    /// Defaults to `FileProviderServicingTiming.connectWait` — the source of
+    /// truth the owner's `FileProviderServicingConnector` reconnect budget is
+    /// structurally derived from (#466), so the two sides cannot drift apart.
     private let connectTimeout: TimeInterval
 
     /// Bounded wait for the owner's byte-pull *reply* once a connection is live.
@@ -86,7 +90,8 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
 
     init(
         config: FileProviderConfig, logger: Logger,
-        connectTimeout: TimeInterval = 30, fetchReplyTimeout: TimeInterval = 120
+        connectTimeout: TimeInterval = FileProviderServicingTiming.connectWait,
+        fetchReplyTimeout: TimeInterval = 120
     ) {
         self.config = config
         self.logger = logger
