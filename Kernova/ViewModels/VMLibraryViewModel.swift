@@ -66,6 +66,13 @@ final class VMLibraryViewModel {
     var activeRename: RenameTarget?
 
     /// `true` when any instance is mid-clone or mid-import.
+    // RATIONALE: Deliberately global and unbounded — Clone/Edit Settings/reconcile
+    // stay disabled while any import/clone copy is in flight, and
+    // FileManager.copyItem has no timeout, so a copy wedged by a dead volume holds
+    // the gate until relaunch (#502). Accepted: ordinary failures (eject, I/O
+    // error) make copyItem return and the gate lifts; scoping or timing out the
+    // gate would reopen the reconcile-resurrection races the preparing gate exists
+    // to prevent (#496).
     var hasPreparing: Bool { instances.contains(where: \.isPreparing) }
 
     /// Current VM ordering used by sortInstances(); synchronized with UserDefaults via persistOrder().
