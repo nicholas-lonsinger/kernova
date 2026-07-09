@@ -5,7 +5,8 @@
 	<!-- App-identity entitlement the system uses to launch/identify the agent and its
 	     embedded extension. A provisioning profile normally injects it; the Debug config
 	     signs profile-less (Manual), so we declare it explicitly (team-prefixed bundle
-	     id). Release signs Automatic and its profile injects the same value. -->
+	     id). Release signs Manual with the "Kernova macOS Agent Developer ID" profile,
+	     which injects the same value. -->
 	<key>com.apple.application-identifier</key>
 	<string>8MT4P4GZL2.app.kernova.macosagent</string>
 	<!-- Shared with the embedded KernovaMacOSAgentFileProvider extension so the sandboxed
@@ -19,9 +20,10 @@
 	       this means the agent no longer shows the one-time per-app-instance "access data
 	       from other apps" consent prompt inside an unregistered guest VM.
 	     • Release = group.app.kernova — the canonical iOS-style identifier, authorized by
-	       an embedded provisioning profile (Automatic signing); the same group the host
-	       app registers. A device-locked Development profile would still prompt in an
-	       unregistered VM, but distribution builds are Developer ID / MAS signed.
+	       the embedded Developer ID provisioning profile (Manual signing); the same group
+	       the host app registers. Developer ID profiles aren't device-locked, so the
+	       agent validates inside unregistered guest VMs — unlike a Development profile,
+	       which would still prompt there.
 	     The agent itself is intentionally NOT sandboxed (it opens vsock); an app group
 	     does not require the App Sandbox. -->
 	<key>com.apple.security.application-groups</key>

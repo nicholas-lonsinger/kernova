@@ -6,7 +6,8 @@
 	     extension. A provisioning profile normally injects it; the Debug config signs
 	     profile-less (Manual), so we declare it explicitly (team-prefixed bundle id).
 	     Without it, adding the domain fails with NSFileProviderError -2001. Release signs
-	     Automatic and its profile injects the same value. -->
+	     Manual with the "Kernova macOS Agent File Provider Developer ID" profile, which
+	     injects the same value. -->
 	<key>com.apple.application-identifier</key>
 	<string>8MT4P4GZL2.app.kernova.macosagent.fileprovider</string>
 	<key>com.apple.security.app-sandbox</key>
@@ -17,8 +18,8 @@
 	     per-configuration build setting: Debug = $(DEVELOPMENT_TEAM).app.kernova
 	     (Team-ID-prefixed, silent access with no provisioning profile — macOS 15
 	     criterion C — so no consent prompt inside an unregistered guest VM); Release =
-	     group.app.kernova (canonical iOS-style, profile-authorized under Automatic
-	     signing). -->
+	     group.app.kernova (canonical iOS-style, authorized by the embedded Developer ID
+	     profile under Manual signing). -->
 	<key>com.apple.security.application-groups</key>
 	<array>
 		<string>$(KERNOVA_APP_GROUP)</string>
