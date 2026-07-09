@@ -68,6 +68,21 @@ final class VMLibraryViewModel {
     /// `true` when any instance is mid-clone or mid-import.
     var hasPreparing: Bool { instances.contains(where: \.isPreparing) }
 
+    /// Chains successive `importVMs(fromDroppedURLs:)` batches so a second import
+    /// trigger (e.g. a Finder double-click arriving while a drag-and-drop batch is
+    /// still mid-copy) queues behind the first instead of racing it (#487).
+    private var importTail: Task<Void, Never>?
+
+    /// Set once app termination begins.
+    ///
+    /// A batch still queued behind `importTail` — not yet registered as a phantom row, so
+    /// invisible to `hasPreparing`/`instances` and to `AppDelegate`'s termination-time
+    /// preparing sweep — checks this and skips starting its copy instead of silently
+    /// beginning one, unsupervised, after the app has already committed to quitting (#487).
+    /// Doesn't affect a copy already in flight — cancellation there is handled the same
+    /// best-effort way it always was, via each phantom's own `preparingState`.
+    private var isTerminating = false
+
     /// Current VM ordering used by sortInstances(); synchronized with UserDefaults via persistOrder().
     private var customOrder: [UUID] = []
 
@@ -808,13 +823,18 @@ final class VMLibraryViewModel {
     /// Adds a freshly-built phantom `VMInstance` to the library and selects it.
     ///
     /// Shared by `importVM(from:)` and `cloneVM(_:)`, which each build their own phantom
-    /// (differing in `configuration`/`bundleURL`/`status`) before handing it here.
+    /// (differing in `configuration`/`bundleURL`/`status`) before handing it here. Clone and
+    /// import can now run concurrently (#487), so a second phantom registering while the
+    /// first is still preparing doesn't steal the sidebar's focus away from the operation the
+    /// user is already watching.
     private func registerPhantom(_ phantom: VMInstance) {
         wirePersistence(for: phantom)
         instances.append(phantom)
         sortInstances()
         persistOrder()
-        selectedID = phantom.id
+        if selectedInstance?.isPreparing != true {
+            selectedID = phantom.id
+        }
     }
 
     /// Registers `phantom`, runs `copyWork` off a spawned `Task`, and wires the success /
@@ -822,15 +842,13 @@ final class VMLibraryViewModel {
     /// preparing row's file copy.
     ///
     /// Returns the `Task` so an async caller can await it: `importVM(from:)` awaits the
-    /// result so `hasPreparing` is false again by the time a batch import moves to its next
-    /// bundle (#444). `cloneVM(_:)` discards it and stays fire-and-forget — a clone's
-    /// UUID-named bundle (`storageService.bundleURL(for:)`) can never collide with another
-    /// clone or an import, so it needs no self-awaited serialization; `hasPreparing` there is
-    /// purely a UI-gate convention (only one preparing row shown at a time), not a
-    /// correctness requirement. If a future feature ever clones several VMs in one batch, it
-    /// should run those clones concurrently rather than copying import's sequential-await
-    /// shape — mirroring import's `await` here would import(!) a constraint clone doesn't
-    /// actually have.
+    /// result so its own copy finishes before a batch import moves to its next bundle
+    /// (#444). `cloneVM(_:)` discards it and stays fire-and-forget — a clone's UUID-named
+    /// bundle (`storageService.bundleURL(for:)`) can never collide with another clone or an
+    /// import, so it needs no self-awaited serialization. If a future feature ever clones
+    /// several VMs in one batch, it should run those clones concurrently rather than
+    /// copying import's sequential-await shape — mirroring import's `await` here would
+    /// import(!) a constraint clone doesn't actually have.
     @discardableResult
     private func prepareBundle(
         _ phantom: VMInstance,
@@ -885,8 +903,9 @@ final class VMLibraryViewModel {
     /// Otherwise, the bundle is copied into the VMs directory asynchronously with a phantom row.
     ///
     /// `async` so callers importing a batch (``importVMs(from:)``) can await each bundle before
-    /// starting the next — `hasPreparing` is false again by the time this returns, so a
-    /// multi-bundle batch never trips the guard below on its own later bundles (#444).
+    /// starting the next — its own copy finishes before a multi-bundle batch moves to the next
+    /// bundle (#444), and `importTail` chains successive batches the same way across
+    /// independent import triggers (#487).
     func importVM(from sourceURL: URL) async {
         do {
             let vmsDir = try storageService.vmsDirectory
@@ -907,13 +926,6 @@ final class VMLibraryViewModel {
                 selectedID = existing.id
                 Self.logger.info(
                     "VM '\(config.name, privacy: .public)' already in library — selected existing instance")
-                return
-            }
-
-            // Serialize: only one preparing operation at a time
-            guard !hasPreparing else {
-                Self.logger.info("Import blocked: another preparing operation is in progress")
-                presentError(PreparingError.operationInProgress)
                 return
             }
 
@@ -940,9 +952,9 @@ final class VMLibraryViewModel {
             // Create phantom row immediately
             let phantom = VMInstance(configuration: config, bundleURL: destinationURL, status: initialStatus)
 
-            // Launch async file copy and await it, so `hasPreparing` is false again by the
-            // time this returns (see `prepareBundle`'s doc comment for why import awaits and
-            // clone doesn't).
+            // Launch async file copy and await it, so this import's copy finishes before
+            // this method returns (see `prepareBundle`'s doc comment for why import awaits
+            // and clone doesn't).
             let task = prepareBundle(
                 phantom, operation: .importing,
                 copyWork: {
@@ -966,10 +978,9 @@ final class VMLibraryViewModel {
 
     /// Imports a batch of bundles sequentially.
     ///
-    /// Each import awaits the prior one's copy, so `hasPreparing` is false between bundles and
-    /// the per-import serialization guard never trips within a batch — every bundle imports
-    /// (#444), unlike a synchronous loop over the non-async form. A failed import surfaces its
-    /// own error and the batch continues to the next bundle.
+    /// Each import awaits the prior one's copy before the next starts, so every bundle in the
+    /// batch imports (#444) instead of racing the next bundle's destination-collision check. A
+    /// failed import surfaces its own error and the batch continues to the next bundle.
     func importVMs(from sourceURLs: [URL]) async {
         guard !sourceURLs.isEmpty else {
             Self.logger.debug("importVMs: no bundles to import")
@@ -981,23 +992,54 @@ final class VMLibraryViewModel {
         }
     }
 
-    /// Filters `urls` to `.kernova` bundles and imports the batch off a spawned Task.
+    /// Filters `urls` to `.kernova` bundles and imports the batch off a chained Task.
     ///
     /// Keeps a synchronous AppKit callback (an odoc handler, a drag-drop `acceptDrop`) from
     /// blocking. Shared by `AppDelegate` (Finder open) and `SidebarViewController`
-    /// (drag-and-drop) so the filter/guard/spawn sequence isn't duplicated per caller.
+    /// (drag-and-drop) so the filter/spawn sequence isn't duplicated per caller.
     ///
-    /// Returns whether any bundle was accepted for import — `true` means a batch was queued via
-    /// a spawned Task, not that every import in it will succeed.
+    /// Each call's batch is chained behind `importTail` — the prior call's batch, if any —
+    /// rather than spawned as an independent Task. Without this, two overlapping triggers
+    /// (e.g. a drag-and-drop batch still mid-copy on bundle 3 of 5 when a Finder double-click
+    /// of another bundle arrives) would run as separate concurrent Tasks and could observe
+    /// each other's in-flight phantom rows while computing destination-collision filenames
+    /// (#487). Chaining serializes every trigger's bundles through the same sequential-await
+    /// path `importVMs(from:)` already gives one batch (#444).
+    ///
+    /// Returns whether any bundle was accepted for import — `true` means a batch was queued,
+    /// not that every import in it will succeed.
     @discardableResult
     func importVMs(fromDroppedURLs urls: [URL]) -> Bool {
         let bundles = urls.filter { VMStorageService.isBundleURL($0) }
         guard !bundles.isEmpty else { return false }
-        Task { [weak self] in
-            await self?.importVMs(from: bundles)
+        let previous = importTail
+        importTail = Task { [weak self] in
+            await previous?.value
+            guard let self, !self.isTerminating else { return }
+            await self.importVMs(from: bundles)
         }
         return true
     }
+
+    /// Stops any import batch still queued behind `importTail` from starting its copy.
+    ///
+    /// Called once, early in app termination (`AppDelegate.applicationShouldTerminate`).
+    /// A queued-but-not-yet-started batch has no phantom row yet, so it's invisible to
+    /// `hasPreparing`/`instances` and to the termination-time preparing sweep
+    /// (`cancelAndCleanupPreparingInstances`) — without this, such a batch could silently
+    /// start an unsupervised `FileManager.copyItem` after the app has already committed to
+    /// quitting (#487). Idempotent and permanent for the view model's remaining lifetime;
+    /// doesn't touch a copy already in flight, which the existing per-phantom cleanup path
+    /// still handles best-effort.
+    func cancelPendingImportBatches() {
+        isTerminating = true
+    }
+
+    #if DEBUG
+    /// Test-only seam onto the current import chain tail, so tests can await every queued
+    /// batch (including ones queued by a prior call) without polling.
+    var importTailForTesting: Task<Void, Never>? { importTail }
+    #endif
 
     // MARK: - Rename
 
@@ -1719,12 +1761,6 @@ final class VMLibraryViewModel {
             )
             return
         }
-        guard !hasPreparing else {
-            Self.logger.info("Clone blocked: another preparing operation is in progress")
-            presentError(PreparingError.operationInProgress)
-            return
-        }
-
         let existingNames = instances.map(\.configuration.name)
         var clonedConfig = instance.configuration.clonedForNewInstance(existingNames: existingNames)
 
@@ -2127,18 +2163,6 @@ final class VMLibraryViewModel {
                 log.error(
                     "Failed to clean up partial bundle at \(url.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)"
                 )
-            }
-        }
-    }
-
-    /// Error type for preparing-related validation failures.
-    private enum PreparingError: LocalizedError {
-        case operationInProgress
-
-        var errorDescription: String? {
-            switch self {
-            case .operationInProgress:
-                return "Another clone or import operation is already in progress. Please wait for it to finish."
             }
         }
     }

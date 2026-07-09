@@ -2351,20 +2351,91 @@ struct VMLibraryViewModelTests {
         #expect(presenter.showError == true)
     }
 
-    @Test("importVM is rejected while a clone is preparing (serialization guard kept)")
-    func importVMRejectedWhilePreparing() async throws {
+    @Test("importVM proceeds while a clone is preparing (#487 — import/clone can't collide)")
+    func importVMProceedsWhileCloning() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let existing = makeInstance(name: "Cloning VM")
         markPreparing(existing)
         viewModel.instances.append(existing)
 
-        let source = try makeImportSource(name: "Blocked Import", storage: storage)
+        let source = try makeImportSource(name: "Concurrent Import", storage: storage)
         defer { try? FileManager.default.removeItem(at: source.url.deletingLastPathComponent()) }
 
         await viewModel.importVM(from: source.url)
 
-        #expect(viewModel.instances.count == 1)
-        #expect(presenter.showError == true)
+        #expect(viewModel.instances.count == 2)
+        #expect(viewModel.instances.contains { $0.configuration.id == source.config.id })
+        #expect(presenter.showError == false)
+    }
+
+    @Test("importVMs(fromDroppedURLs:) serializes batches across independent invocations (#487)")
+    func importVMsBatchesSerializeAcrossInvocations() async throws {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let firstBatch = try [
+            makeImportSource(name: "Trigger A VM 1", storage: storage),
+            makeImportSource(name: "Trigger A VM 2", storage: storage),
+        ]
+        let secondBatch = try [
+            makeImportSource(name: "Trigger B VM", storage: storage)
+        ]
+        let allSources = firstBatch + secondBatch
+        defer {
+            for source in allSources {
+                try? FileManager.default.removeItem(at: source.url.deletingLastPathComponent())
+            }
+        }
+
+        // Two independent triggers (e.g. a drag-and-drop batch and a Finder double-click)
+        // firing back-to-back, mirroring SidebarViewController's acceptImport and
+        // AppDelegate's application(_:open:) both calling importVMs(fromDroppedURLs:).
+        _ = viewModel.importVMs(fromDroppedURLs: firstBatch.map(\.url))
+        _ = viewModel.importVMs(fromDroppedURLs: secondBatch.map(\.url))
+
+        await viewModel.importTailForTesting?.value
+
+        // Pre-fix, the second trigger's bundle could observe the first trigger's
+        // still-preparing rows and be rejected with "operation in progress" instead of
+        // importing.
+        #expect(viewModel.instances.count == allSources.count)
+        let importedIDs = Set(viewModel.instances.map(\.configuration.id))
+        #expect(importedIDs == Set(allSources.map(\.config.id)))
+        #expect(viewModel.instances.allSatisfy { !$0.isPreparing })
+        #expect(presenter.showError == false)
+    }
+
+    @Test("cancelPendingImportBatches stops a queued batch from starting (#487)")
+    func cancelPendingImportBatchesSkipsQueuedBatch() async throws {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let source = try makeImportSource(name: "Never Imported", storage: storage)
+        defer { try? FileManager.default.removeItem(at: source.url.deletingLastPathComponent()) }
+
+        // Mirrors AppDelegate.applicationShouldTerminate calling this before any queued
+        // batch (invisible to hasPreparing/instances until it starts) gets a chance to run.
+        viewModel.cancelPendingImportBatches()
+        _ = viewModel.importVMs(fromDroppedURLs: [source.url])
+
+        await viewModel.importTailForTesting?.value
+
+        #expect(viewModel.instances.isEmpty)
+    }
+
+    @Test("registerPhantom preserves selection of an instance the user is already watching prepare (#487)")
+    func registerPhantomPreservesSelectionOfPreparingInstance() async throws {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let preparing = makeInstance(name: "Already Preparing")
+        markPreparing(preparing, operation: .cloning)
+        viewModel.instances.append(preparing)
+        viewModel.selectedID = preparing.id
+
+        let source = try makeImportSource(name: "Concurrent Import", storage: storage)
+        defer { try? FileManager.default.removeItem(at: source.url.deletingLastPathComponent()) }
+
+        await viewModel.importVM(from: source.url)
+
+        // A second, unrelated import shouldn't steal the sidebar's focus from the
+        // instance the user is already watching prepare.
+        #expect(viewModel.selectedID == preparing.id)
+        #expect(viewModel.instances.count == 2)
     }
 
     // MARK: - Clone
@@ -2453,20 +2524,47 @@ struct VMLibraryViewModelTests {
         #expect(storage.cloneVMBundleCallCount == 0)
     }
 
-    @Test("cloneVM shows error when hasPreparing is true")
-    func cloneVMShowsErrorWhenPreparing() {
-        let (viewModel, _, _, _, _) = makeViewModel()
-        let existing = makeInstance(name: "Existing")
-        markPreparing(existing)
+    @Test("cloneVM proceeds while an import is preparing (#487 — clone/import can't collide)")
+    func cloneVMProceedsWhileImportPreparing() async {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let existing = makeInstance(name: "Importing")
+        markPreparing(existing, operation: .importing)
         let instance = makeInstance(name: "Source")
         instance.status = .stopped
         viewModel.instances = [existing, instance]
+        storage.bundles[instance.bundleURL] = instance.configuration
 
         viewModel.cloneVM(instance)
 
-        // No new instance added, error shown
-        #expect(viewModel.instances.count == 2)
-        #expect(presenter.showError == true)
+        let phantom = viewModel.instances.first { $0.id != existing.id && $0.id != instance.id }
+        #expect(phantom != nil)
+
+        // Wait for the preparing task to complete
+        await phantom?.preparingState?.task.value
+
+        #expect(viewModel.instances.count == 3)
+        #expect(presenter.showError == false)
+    }
+
+    @Test("cloneVM proceeds while another clone is preparing (#487 — UUID-named bundles can't collide)")
+    func cloneVMProceedsWhileAnotherCloneIsPreparing() async {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let existing = makeInstance(name: "Cloning")
+        markPreparing(existing, operation: .cloning)
+        let instance = makeInstance(name: "Source")
+        instance.status = .stopped
+        viewModel.instances = [existing, instance]
+        storage.bundles[instance.bundleURL] = instance.configuration
+
+        viewModel.cloneVM(instance)
+
+        let phantom = viewModel.instances.first { $0.id != existing.id && $0.id != instance.id }
+        #expect(phantom != nil)
+
+        await phantom?.preparingState?.task.value
+
+        #expect(viewModel.instances.count == 3)
+        #expect(presenter.showError == false)
     }
 
     @Test("cloneVM increments name when Copy already exists")
