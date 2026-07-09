@@ -17,6 +17,12 @@
 
 set -uo pipefail
 
+# Run from the repo root so the Signing section's repo-relative paths
+# (Config/Local.xcconfig, Tools/bootstrap-team.sh) resolve no matter where the
+# script is invoked from — the header advertises direct invocation, and the
+# other checks (git config, xcrun, sw_vers) are already cwd-independent.
+cd "$(dirname "$0")/.." || exit 1
+
 # ---- output helpers ---------------------------------------------------------
 
 # Count REQUIRED failures so the run can exit non-zero at the end rather than

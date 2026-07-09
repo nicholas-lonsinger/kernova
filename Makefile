@@ -86,7 +86,7 @@ test: check-hooks bootstrap
 test-package:
 	xcrun swift test --package-path KernovaKit
 
-test-suite:
+test-suite: bootstrap
 	@if [ -z "$(SUITE)" ]; then \
 		echo 'Usage: make test-suite SUITE=<Target/Suite>' >&2; \
 		echo 'Example: make test-suite SUITE=KernovaTests/VMConfigurationTests' >&2; \

@@ -169,9 +169,14 @@ public struct FileProviderConfig: Sendable {
     ///   - teamIdentifier: the team the host↔extension XPC peer requirements
     ///     pin to; defaults to the running executable's own signing team
     ///     (#476) so the pin floats with whoever cloned and signed the
-    ///     build, rather than a hardcoded team — the app and its extension
-    ///     are always co-signed by the same team. `nil` (unsigned/ad-hoc,
-    ///     not the real signed host path) skips peer validation.
+    ///     build, rather than a hardcoded team. Pinning the peer to *my own*
+    ///     team is correct because the host app and its embedded
+    ///     `KernovaFileProvider.appex` are always co-signed by the same team —
+    ///     an invariant Xcode's `ValidateEmbeddedBinary` build phase enforces
+    ///     (it fails the build if a host and an embedded binary carry
+    ///     different Team IDs), so the two processes always resolve the same
+    ///     value here. `nil` (unsigned/ad-hoc, not the real signed host path)
+    ///     skips peer validation.
     /// - Returns: a host-direction config.
     public static func host(
         appGroupIdentifier: String = KernovaAppGroup.identifier(),

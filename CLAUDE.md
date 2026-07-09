@@ -24,6 +24,8 @@ make clean               # Remove DerivedData/
 
 Run `make install-hooks` once after cloning to enable the pre-push `make lint` hook (see [Development setup](README.md#development-setup) in the README for the mechanics; bypass an individual push with `git push --no-verify`).
 
+`DEVELOPMENT_TEAM` is not hardcoded in the project — it's derived per-developer from your own signing certificate into the gitignored `Config/Local.xcconfig` by `make bootstrap` (#476, see [Development setup](README.md#development-setup)). `make build`/`make test`/`make test-suite` run it automatically; the raw `xcodebuild` form below (and Xcode's own ⌘B/⌘R) assume it has already run, so on a fresh clone or a new worktree run `make bootstrap` once first — otherwise `DEVELOPMENT_TEAM` resolves empty and the Manual/profile-less Debug targets fail to sign.
+
 `make test` is the canonical `xcodebuild` invocation:
 
 ```bash
