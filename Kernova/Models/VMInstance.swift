@@ -53,19 +53,20 @@ final class VMInstance {
             }
         }
 
-        var cancelLabel: String {
+        /// The user-facing noun for this operation ("Clone" / "Import").
+        ///
+        /// Used to derive the other labels below and by `VMLibraryViewModel`'s shared
+        /// preparing-row log messages.
+        var displayNoun: String {
             switch self {
-            case .cloning: "Cancel Clone"
-            case .importing: "Cancel Import"
+            case .cloning: "Clone"
+            case .importing: "Import"
             }
         }
 
-        var cancelAlertTitle: String {
-            switch self {
-            case .cloning: "Cancel Clone?"
-            case .importing: "Cancel Import?"
-            }
-        }
+        var cancelLabel: String { "Cancel \(displayNoun)" }
+
+        var cancelAlertTitle: String { "Cancel \(displayNoun)?" }
     }
 
     /// Tracks an in-flight clone or import operation.
