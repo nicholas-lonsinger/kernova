@@ -659,21 +659,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
 
         // Cancel all preparing operations and remove phantom rows before terminating
-        viewModel.instances.removeAll { instance in
-            guard instance.isPreparing else { return false }
-
-            Self.logger.notice("Terminating: cancelling preparing operation for '\(instance.name, privacy: .public)'")
-            instance.preparingState?.task.cancel()
-            // Best effort — in-flight copy may still be writing (FileManager.copyItem is not interruptible)
-            do {
-                try FileManager.default.trashItem(at: instance.bundleURL, resultingItemURL: nil)
-            } catch {
-                Self.logger.warning(
-                    "Failed to clean up partial bundle for '\(instance.name, privacy: .public)' during termination: \(error.localizedDescription, privacy: .public)"
-                )
-            }
-            return true
-        }
+        cancelAndCleanupPreparingInstances()
 
         // Save VMs that have a live virtual machine; cold-paused VMs already have state on disk
         let runningInstances = viewModel.instances.filter {
@@ -717,10 +703,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             Self.logger.notice(
                 "Termination save complete: \(savedCount, privacy: .public) saved, \(failedCount, privacy: .public) failed of \(runningInstances.count, privacy: .public) total"
             )
+            // A multi-bundle import batch (#444) awaits each bundle's copy in sequence, so a
+            // later bundle's phantom can start preparing only after the first sweep above ran —
+            // sweep again right before the deferred reply so it isn't orphaned on disk.
+            self.cancelAndCleanupPreparingInstances()
             NSApplication.shared.reply(toApplicationShouldTerminate: true)
         }
 
         return .terminateLater
+    }
+
+    /// Cancels every preparing instance's task and trashes its partial bundle — best effort,
+    /// since `FileManager.copyItem` isn't interruptible (the copy already in flight keeps
+    /// writing until it finishes or fails on its own).
+    private func cancelAndCleanupPreparingInstances() {
+        viewModel.instances.removeAll { instance in
+            guard instance.isPreparing else { return false }
+
+            Self.logger.notice("Terminating: cancelling preparing operation for '\(instance.name, privacy: .public)'")
+            instance.preparingState?.task.cancel()
+            do {
+                try FileManager.default.trashItem(at: instance.bundleURL, resultingItemURL: nil)
+            } catch {
+                Self.logger.warning(
+                    "Failed to clean up partial bundle for '\(instance.name, privacy: .public)' during termination: \(error.localizedDescription, privacy: .public)"
+                )
+            }
+            return true
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -850,22 +860,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
     }
 
-    /// Filters to `.kernova` bundles and imports the batch sequentially.
+    /// Filters to `.kernova` bundles and imports the batch.
     ///
     /// AppKit delivers the odoc event to the single running instance in both the
     /// cold-launch and already-running cases, so this one path covers both — no
     /// launcher→XPC forwarding is needed (#460 dropped the launcher; #439).
     /// `viewModel` exists from `init`, so importing this early is safe; the caller
-    /// summons the GUI (the heuristic alone only covers a cold launch). Imports run
-    /// off a detached `Task` so a multi-select batch doesn't block this synchronous
-    /// delegate callback — `importVMs(from:)` awaits each bundle in turn so every
-    /// bundle in the batch imports rather than only the first (#444).
+    /// summons the GUI (the heuristic alone only covers a cold launch).
+    /// `VMLibraryViewModel.importVMs(fromDroppedURLs:)` spawns the actual import off its own
+    /// Task so this synchronous delegate callback isn't blocked, and awaits each bundle in turn
+    /// so every bundle in the batch imports rather than only the first (#444).
     private func importVMs(from urls: [URL]) {
-        let bundles = urls.filter { VMStorageService.isBundleURL($0) }
-        guard !bundles.isEmpty else { return }
-        Task { @MainActor in
-            await viewModel.importVMs(from: bundles)
-        }
+        viewModel.importVMs(fromDroppedURLs: urls)
     }
 
     // MARK: - Menu Actions

@@ -14,6 +14,13 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
     private let baseDirectory = FileManager.default.temporaryDirectory
         .appendingPathComponent("MockVMs-\(UUID().uuidString)", isDirectory: true)
 
+    deinit {
+        // `vmsDirectory` creates `baseDirectory` on every access (see below); reclaim it here so
+        // every test — not just the ones that exercise a real copy — doesn't leak a directory
+        // into the system temp folder on every run.
+        try? FileManager.default.removeItem(at: baseDirectory)
+    }
+
     // MARK: - Call Tracking
 
     var saveConfigurationCallCount = 0

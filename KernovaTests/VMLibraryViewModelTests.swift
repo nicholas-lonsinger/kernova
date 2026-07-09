@@ -2191,19 +2191,26 @@ struct VMLibraryViewModelTests {
 
     // MARK: - Import
 
-    /// Creates a real, empty `.kernova`-shaped source bundle directory on disk (outside the
-    /// mock's vms directory, under a per-call-unique parent so parallel tests can't collide) and
-    /// registers its configuration with `storage` so the mocked `loadConfiguration(from:)`
-    /// succeeds. `importVM` copies real files via `FileManager`, so import tests need an actual
-    /// directory to copy from — callers are responsible for removing it.
-    private func makeImportSource(name: String, storage: MockVMStorageService) throws -> (
-        url: URL, config: VMConfiguration
-    ) {
+    /// Builds a `.kernova`-shaped source bundle URL under a per-call-unique temp parent.
+    ///
+    /// The parent keeps parallel tests from colliding. Registers the configuration with
+    /// `storage` so the mocked `loadConfiguration(from:)` succeeds. When `createOnDisk` is true
+    /// (the default), also creates the directory on disk — `importVM` copies real files via
+    /// `FileManager`, so tests exercising a successful copy need an actual source directory;
+    /// tests modeling a missing/never-copied source (duplicate-UUID short-circuit,
+    /// copy-failure) pass `false` and have nothing to clean up. Callers that do create on disk
+    /// must remove the returned URL's *parent* directory (`url.deletingLastPathComponent()`),
+    /// not just the leaf `.kernova` directory this returns.
+    private func makeImportSource(
+        name: String, storage: MockVMStorageService, createOnDisk: Bool = true
+    ) throws -> (url: URL, config: VMConfiguration) {
         let config = VMConfiguration(name: name, guestOS: .linux, bootMode: .efi)
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("ImportSource-\(UUID().uuidString)", isDirectory: true)
             .appendingPathComponent("\(name).kernova", isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        if createOnDisk {
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        }
         storage.bundles[url] = config
         return (url, config)
     }
@@ -2212,7 +2219,7 @@ struct VMLibraryViewModelTests {
     func importVMSingleBundle() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let source = try makeImportSource(name: "Imported VM", storage: storage)
-        defer { try? FileManager.default.removeItem(at: source.url) }
+        defer { try? FileManager.default.removeItem(at: source.url.deletingLastPathComponent()) }
 
         await viewModel.importVM(from: source.url)
 
@@ -2235,7 +2242,11 @@ struct VMLibraryViewModelTests {
             makeImportSource(name: "Batch VM 2", storage: storage),
             makeImportSource(name: "Batch VM 3", storage: storage),
         ]
-        defer { for source in sources { try? FileManager.default.removeItem(at: source.url) } }
+        defer {
+            for source in sources {
+                try? FileManager.default.removeItem(at: source.url.deletingLastPathComponent())
+            }
+        }
 
         await viewModel.importVMs(from: sources.map(\.url))
 
@@ -2249,22 +2260,18 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("importVM selects the existing instance when a VM with the same UUID is already in the library")
-    func importVMDuplicateUUIDSelectsExisting() async {
+    func importVMDuplicateUUIDSelectsExisting() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let config = VMConfiguration(name: "Existing VM", guestOS: .linux, bootMode: .efi)
-        let existingBundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(config.id.uuidString, isDirectory: true)
-        let existing = VMInstance(configuration: config, bundleURL: existingBundleURL)
+        let existing = makeInstance(name: "Existing VM")
         viewModel.instances.append(existing)
 
         // Source lives elsewhere on disk (never copied — the duplicate-UUID short-circuit
         // returns before the copy) but shares the same config UUID.
-        let sourceURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("ImportSource-\(UUID().uuidString)", isDirectory: true)
-            .appendingPathComponent("\(config.name).kernova", isDirectory: true)
-        storage.bundles[sourceURL] = config
+        let source = try makeImportSource(
+            name: existing.configuration.name, storage: storage, createOnDisk: false)
+        storage.bundles[source.url] = existing.configuration
 
-        await viewModel.importVM(from: sourceURL)
+        await viewModel.importVM(from: source.url)
 
         #expect(viewModel.instances.count == 1)
     }
@@ -2288,47 +2295,37 @@ struct VMLibraryViewModelTests {
     @Test("importVMs batch with a duplicate in the middle still imports the surrounding bundles")
     func importVMsBatchWithDuplicateInMiddle() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let existingConfig = VMConfiguration(name: "Already Imported", guestOS: .linux, bootMode: .efi)
-        let existing = VMInstance(
-            configuration: existingConfig,
-            bundleURL: FileManager.default.temporaryDirectory.appendingPathComponent(
-                existingConfig.id.uuidString, isDirectory: true)
-        )
+        let existing = makeInstance(name: "Already Imported")
         viewModel.instances.append(existing)
 
         let first = try makeImportSource(name: "Batch VM 1", storage: storage)
-        let duplicate = FileManager.default.temporaryDirectory
-            .appendingPathComponent("ImportSource-\(UUID().uuidString)", isDirectory: true)
-            .appendingPathComponent("\(existingConfig.name).kernova", isDirectory: true)
-        storage.bundles[duplicate] = existingConfig
+        let duplicate = try makeImportSource(
+            name: existing.configuration.name, storage: storage, createOnDisk: false)
+        storage.bundles[duplicate.url] = existing.configuration
         let third = try makeImportSource(name: "Batch VM 3", storage: storage)
         defer {
-            try? FileManager.default.removeItem(at: first.url)
-            try? FileManager.default.removeItem(at: third.url)
+            try? FileManager.default.removeItem(at: first.url.deletingLastPathComponent())
+            try? FileManager.default.removeItem(at: third.url.deletingLastPathComponent())
         }
 
-        await viewModel.importVMs(from: [first.url, duplicate, third.url])
+        await viewModel.importVMs(from: [first.url, duplicate.url, third.url])
 
         // The duplicate is a synchronous no-op (select-existing) that must not stall the batch.
         #expect(viewModel.instances.count == 3)
         let importedIDs = Set(viewModel.instances.map(\.configuration.id))
-        #expect(importedIDs == [existingConfig.id, first.config.id, third.config.id])
+        #expect(importedIDs == [existing.configuration.id, first.config.id, third.config.id])
         #expect(presenter.showError == false)
         #expect(viewModel.selectedID == third.config.id)
     }
 
     @Test("importVM removes the phantom and surfaces an error when the copy fails")
-    func importVMCopyFailureRemovesPhantom() async {
+    func importVMCopyFailureRemovesPhantom() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
         // Registered with the mock but never created on disk, so the real `FileManager.copyItem`
         // fails with "no such file."
-        let config = VMConfiguration(name: "Missing Source", guestOS: .linux, bootMode: .efi)
-        let sourceURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("ImportSource-\(UUID().uuidString)", isDirectory: true)
-            .appendingPathComponent("\(config.name).kernova", isDirectory: true)
-        storage.bundles[sourceURL] = config
+        let source = try makeImportSource(name: "Missing Source", storage: storage, createOnDisk: false)
 
-        await viewModel.importVM(from: sourceURL)
+        await viewModel.importVM(from: source.url)
 
         #expect(viewModel.instances.isEmpty)
         #expect(presenter.showError == true)
@@ -2339,18 +2336,14 @@ struct VMLibraryViewModelTests {
     func importVMsBatchContinuesAfterFailure() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let first = try makeImportSource(name: "Batch VM 1", storage: storage)
-        let failingConfig = VMConfiguration(name: "Missing Source", guestOS: .linux, bootMode: .efi)
-        let failingURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("ImportSource-\(UUID().uuidString)", isDirectory: true)
-            .appendingPathComponent("\(failingConfig.name).kernova", isDirectory: true)
-        storage.bundles[failingURL] = failingConfig
+        let failing = try makeImportSource(name: "Missing Source", storage: storage, createOnDisk: false)
         let third = try makeImportSource(name: "Batch VM 3", storage: storage)
         defer {
-            try? FileManager.default.removeItem(at: first.url)
-            try? FileManager.default.removeItem(at: third.url)
+            try? FileManager.default.removeItem(at: first.url.deletingLastPathComponent())
+            try? FileManager.default.removeItem(at: third.url.deletingLastPathComponent())
         }
 
-        await viewModel.importVMs(from: [first.url, failingURL, third.url])
+        await viewModel.importVMs(from: [first.url, failing.url, third.url])
 
         #expect(viewModel.instances.count == 2)
         let importedIDs = Set(viewModel.instances.map(\.configuration.id))
@@ -2366,7 +2359,7 @@ struct VMLibraryViewModelTests {
         viewModel.instances.append(existing)
 
         let source = try makeImportSource(name: "Blocked Import", storage: storage)
-        defer { try? FileManager.default.removeItem(at: source.url) }
+        defer { try? FileManager.default.removeItem(at: source.url.deletingLastPathComponent()) }
 
         await viewModel.importVM(from: source.url)
 

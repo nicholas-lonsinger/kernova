@@ -927,9 +927,32 @@ final class VMLibraryViewModel {
     /// (#444), unlike a synchronous loop over the non-async form. A failed import surfaces its
     /// own error and the batch continues to the next bundle.
     func importVMs(from sourceURLs: [URL]) async {
+        guard !sourceURLs.isEmpty else {
+            Self.logger.debug("importVMs: no bundles to import")
+            return
+        }
+        Self.logger.notice("Importing \(sourceURLs.count, privacy: .public) bundle(s)")
         for url in sourceURLs {
             await importVM(from: url)
         }
+    }
+
+    /// Filters `urls` to `.kernova` bundles and imports the batch off a spawned Task.
+    ///
+    /// Keeps a synchronous AppKit callback (an odoc handler, a drag-drop `acceptDrop`) from
+    /// blocking. Shared by `AppDelegate` (Finder open) and `SidebarViewController`
+    /// (drag-and-drop) so the filter/guard/spawn sequence isn't duplicated per caller.
+    ///
+    /// Returns whether any bundle was accepted for import — `true` means a batch was queued via
+    /// a spawned Task, not that every import in it will succeed.
+    @discardableResult
+    func importVMs(fromDroppedURLs urls: [URL]) -> Bool {
+        let bundles = urls.filter { VMStorageService.isBundleURL($0) }
+        guard !bundles.isEmpty else { return false }
+        Task { [weak self] in
+            await self?.importVMs(from: bundles)
+        }
+        return true
     }
 
     // MARK: - Rename
