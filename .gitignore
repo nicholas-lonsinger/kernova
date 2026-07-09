@@ -1,6 +1,10 @@
 # Xcode
 build/
 DerivedData/
+
+# Per-developer signing team, derived by `make bootstrap`
+# (Tools/bootstrap-team.sh) into Config/Local.xcconfig — see Config/Base.xcconfig.
+Config/Local.xcconfig
 # Written next to the .xcodeproj by Xcode's Relative Derived Data setting
 # (see CLAUDE.md); the suffix is a per-install identifier, hence the glob.
 .derived-data-log-*

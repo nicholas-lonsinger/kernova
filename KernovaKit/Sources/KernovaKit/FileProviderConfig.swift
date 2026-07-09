@@ -1,5 +1,6 @@
 import FileProvider
 import Foundation
+import os
 
 // Direction configuration for the shared clipboard File Provider machinery
 // (issues #376 guest / #424 host / #460 servicing migration).
@@ -116,33 +117,23 @@ public struct FileProviderConfig: Sendable {
         self.extensionCodeSigningRequirement = extensionCodeSigningRequirement
     }
 
-    /// Builds a code-signing requirement pinning a specific bundle `identifier` to
-    /// the Kernova team.
+    private static let logger = Logger(subsystem: "app.kernova", category: "FileProviderConfig")
+
+    /// Builds a code-signing requirement pinning a specific bundle `identifier`
+    /// to the given `team`.
     ///
     /// `anchor apple generic` + the team OU holds for both Apple Development and
-    /// Developer ID signing — and team `8MT4P4GZL2` is the certificate OU, not the
-    /// CN parenthetical (a known footgun). Both peer pins below share this shape, so
-    /// the anchor/team clause lives here once and can't drift between them.
-    private static func teamSignedRequirement(identifier: String) -> String {
+    /// Developer ID signing, so one requirement matches whichever of the two the
+    /// peer is actually signed with. `subject.OU` is the certificate field that
+    /// carries the team ID — not the CN parenthetical, which is a known footgun
+    /// (see `Tools/bootstrap-team.sh`). Both peer pins built by `host()` share
+    /// this shape, so the anchor/team clause lives here once and can't drift
+    /// between them.
+    private static func teamSignedRequirement(identifier: String, team: String) -> String {
         "identifier \"\(identifier)\" "
             + "and anchor apple generic "
-            + "and certificate leaf[subject.OU] = \"8MT4P4GZL2\""
+            + "and certificate leaf[subject.OU] = \"\(team)\""
     }
-
-    /// Code-signing requirement matching the main Kernova app (`app.kernova`).
-    ///
-    /// The host extension pins this on the connecting owner so a rogue process
-    /// can't impersonate the app that exports the relay.
-    public static let mainAppRequirement = teamSignedRequirement(identifier: "app.kernova")
-
-    /// Code-signing requirement matching the host File Provider extension
-    /// (`app.kernova.fileprovider`).
-    ///
-    /// The main app pins this on its `getFileProviderConnection` control
-    /// connection so it only exports the relay to the genuine Kernova-team
-    /// extension.
-    public static let hostExtensionRequirement =
-        teamSignedRequirement(identifier: "app.kernova.fileprovider")
 
     /// Host→guest: the guest agent serves the host's copied file to the guest
     /// (issue #376).
@@ -172,13 +163,39 @@ public struct FileProviderConfig: Sendable {
     /// Distinct service/domain/subpath/doorbell from the guest so both can
     /// coexist on a dev Mac; reuses the same app group.
     ///
-    /// - Parameter appGroupIdentifier: the shared container's app group;
-    ///   defaults to the running executable's configured value.
+    /// - Parameters:
+    ///   - appGroupIdentifier: the shared container's app group; defaults to
+    ///     the running executable's configured value.
+    ///   - teamIdentifier: the team the host↔extension XPC peer requirements
+    ///     pin to; defaults to the running executable's own signing team
+    ///     (#476) so the pin floats with whoever cloned and signed the
+    ///     build, rather than a hardcoded team. Pinning the peer to *my own*
+    ///     team is correct because the host app and its embedded
+    ///     `KernovaFileProvider.appex` are always co-signed by the same team —
+    ///     an invariant Xcode's `ValidateEmbeddedBinary` build phase enforces
+    ///     (it fails the build if a host and an embedded binary carry
+    ///     different Team IDs), so the two processes always resolve the same
+    ///     value here. `nil` (unsigned/ad-hoc, not the real signed host path)
+    ///     skips peer validation.
     /// - Returns: a host-direction config.
     public static func host(
-        appGroupIdentifier: String = KernovaAppGroup.identifier()
+        appGroupIdentifier: String = KernovaAppGroup.identifier(),
+        teamIdentifier: String? = KernovaCodeSignature.teamIdentifier()
     ) -> FileProviderConfig {
-        FileProviderConfig(
+        let ownerRequirement: String?
+        let extensionRequirement: String?
+        if let teamIdentifier {
+            ownerRequirement = teamSignedRequirement(identifier: "app.kernova", team: teamIdentifier)
+            extensionRequirement = teamSignedRequirement(
+                identifier: "app.kernova.fileprovider", team: teamIdentifier)
+        } else {
+            logger.warning(
+                "No team identifier resolved for the running code; skipping host↔extension XPC peer pin"
+            )
+            ownerRequirement = nil
+            extensionRequirement = nil
+        }
+        return FileProviderConfig(
             appGroupIdentifier: appGroupIdentifier,
             serviceName: NSFileProviderServiceName("app.kernova.clipboard.host.relay"),
             reconnectNotificationName: "app.kernova.clipboard.host.reconnect",
@@ -187,7 +204,7 @@ public struct FileProviderConfig: Sendable {
             containerDirectoryName: "FileProviderHost",
             loggerSubsystem: "app.kernova",
             extensionLoggerSubsystem: "app.kernova.fileprovider",
-            ownerCodeSigningRequirement: FileProviderConfig.mainAppRequirement,
-            extensionCodeSigningRequirement: FileProviderConfig.hostExtensionRequirement)
+            ownerCodeSigningRequirement: ownerRequirement,
+            extensionCodeSigningRequirement: extensionRequirement)
     }
 }

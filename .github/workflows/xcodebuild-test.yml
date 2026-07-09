@@ -34,12 +34,16 @@ jobs:
 
       # CODE_SIGNING_ALLOWED=NO (not ad-hoc `CODE_SIGN_IDENTITY=-`): CI has no signing
       # identity and the unit tests never touch the app-group container, so signing buys
-      # nothing here. The Debug config now uses the team-prefixed
+      # nothing here. The Debug config uses the team-prefixed
       # `$(DEVELOPMENT_TEAM).app.kernova` group (Release keeps canonical `group.app.kernova`),
       # which — unlike the profile-required `group.` form — could be ad-hoc signed; we still
-      # skip signing entirely for the reason above. DEVELOPMENT_TEAM stays set in the project,
-      # so `$(KERNOVA_APP_GROUP)` still expands in the Info.plists and the KernovaAppGroup
-      # helper resolves in the Debug test host. Mirrors dead-code.yml.
+      # skip signing entirely for the reason above. DEVELOPMENT_TEAM is derived per-developer
+      # into the gitignored Config/Local.xcconfig by `make bootstrap` (#476) and is NOT set on
+      # CI (which builds xcodebuild directly, never `make`), so it resolves empty and
+      # `$(KERNOVA_APP_GROUP)` expands to `.app.kernova`. That's harmless here: signing is off,
+      # so the malformed app-group value is never validated, and the unit tests use stub
+      # bundles rather than resolving the real container (verified: build-for-testing succeeds
+      # with an empty team). Mirrors dead-code.yml.
       - name: Build for testing
         run: |
           set -o pipefail

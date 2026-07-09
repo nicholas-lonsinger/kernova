@@ -4,11 +4,12 @@
 <dict>
 	<!-- App-identity entitlement the system uses to launch/identify the agent and its
 	     embedded extension. A provisioning profile normally injects it; the Debug config
-	     signs profile-less (Manual), so we declare it explicitly (team-prefixed bundle
-	     id). Release signs Manual with the "Kernova macOS Agent Developer ID" profile,
-	     which injects the same value. -->
+	     signs profile-less (Manual), so we declare it explicitly, floating with whichever
+	     team DEVELOPMENT_TEAM resolves to (derived per-developer by `make bootstrap`,
+	     #476) rather than a hardcoded team. Release signs Manual with the "Kernova macOS
+	     Agent Developer ID" profile, which injects the same value. -->
 	<key>com.apple.application-identifier</key>
-	<string>8MT4P4GZL2.app.kernova.macosagent</string>
+	<string>$(DEVELOPMENT_TEAM).$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<!-- Shared with the embedded KernovaMacOSAgentFileProvider extension so the sandboxed
 	     extension can exchange materialized files through the group container
 	     (addressing is via NSFileProviderServicing, not a Mach service, #460). The

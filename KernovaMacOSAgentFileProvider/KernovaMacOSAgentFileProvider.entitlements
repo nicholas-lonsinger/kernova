@@ -4,12 +4,13 @@
 <dict>
 	<!-- App-identity entitlement fileproviderd uses to launch/validate this sandboxed
 	     extension. A provisioning profile normally injects it; the Debug config signs
-	     profile-less (Manual), so we declare it explicitly (team-prefixed bundle id).
-	     Without it, adding the domain fails with NSFileProviderError -2001. Release signs
-	     Manual with the "Kernova macOS Agent File Provider Developer ID" profile, which
-	     injects the same value. -->
+	     profile-less (Manual), so we declare it explicitly, floating with whichever team
+	     DEVELOPMENT_TEAM resolves to (derived per-developer by `make bootstrap`, #476)
+	     rather than a hardcoded team. Without it, adding the domain fails with
+	     NSFileProviderError -2001. Release signs Manual with the "Kernova macOS Agent
+	     File Provider Developer ID" profile, which injects the same value. -->
 	<key>com.apple.application-identifier</key>
-	<string>8MT4P4GZL2.app.kernova.macosagent.fileprovider</string>
+	<string>$(DEVELOPMENT_TEAM).$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>com.apple.security.app-sandbox</key>
 	<true/>
 	<!-- Shares the KERNOVA_APP_GROUP container the guest agent registers so this
