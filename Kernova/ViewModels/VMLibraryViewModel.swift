@@ -822,6 +822,36 @@ final class VMLibraryViewModel {
         }
     }
 
+    /// Bounds the blocking bundle copies import and clone run.
+    ///
+    /// Without a cap, a large multi-select drop would spawn N concurrent blocking `FileManager`
+    /// calls on Swift's cooperative pool and saturate it. This queue runs the copies off the pool
+    /// and caps concurrency (#497). The cap is deliberately small — copies serialize at the device
+    /// anyway, so a low bound avoids cross-volume disk thrash without losing throughput; the
+    /// reservation/phantom work (the #491 responsiveness win) already happens synchronously
+    /// regardless of this cap.
+    private static let copyQueue: OperationQueue = {
+        let queue = OperationQueue()
+        queue.maxConcurrentOperationCount = 2
+        queue.qualityOfService = .userInitiated
+        return queue
+    }()
+
+    /// Runs blocking file work off the cooperative pool on the bounded ``copyQueue``, awaiting its
+    /// result.
+    ///
+    /// Awaited inside a `copyWork` closure so the phantom's `preparingState.task` still completes
+    /// only after the copy finishes.
+    private static func runBoundedCopy<T: Sendable>(
+        _ work: @escaping @Sendable () throws -> T
+    ) async throws -> T {
+        try await withCheckedThrowingContinuation { continuation in
+            copyQueue.addOperation {
+                continuation.resume(with: Result(catching: work))
+            }
+        }
+    }
+
     /// Registers `phantom`, runs `copyWork` off a spawned `Task`, and wires the cleanup both clone
     /// and import need around a preparing row's file copy.
     ///
@@ -950,13 +980,13 @@ final class VMLibraryViewModel {
             let destinationURL = reserveDestination(for: sourceURL, in: vmsDir)
             let phantom = VMInstance(configuration: config, bundleURL: destinationURL, status: initialStatus)
 
-            // Spawn the copy fire-and-forget; it runs concurrently (see `prepareBundle`).
+            // Spawn the copy fire-and-forget; it runs concurrently, bounded by `copyQueue`.
             prepareBundle(
                 phantom, operation: .importing,
                 copyWork: {
-                    try await Task.detached {
+                    try await Self.runBoundedCopy {
                         try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
-                    }.value
+                    }
                 },
                 onSuccess: {
                     Self.logger.notice(
@@ -1794,7 +1824,7 @@ final class VMLibraryViewModel {
             phantom, operation: .cloning,
             copyWork: {
                 let log = Self.logger
-                let skippedDiskIDs: Set<UUID> = try await Task.detached {
+                let skippedDiskIDs: Set<UUID> = try await Self.runBoundedCopy {
                     let resultURL = try storage.cloneVMBundle(
                         from: sourceBundleURL, newConfiguration: config, filesToCopy: bundleFilesToCopy)
 
@@ -1826,7 +1856,7 @@ final class VMLibraryViewModel {
                         }
                     }
                     return skipped
-                }.value
+                }
 
                 // Remove skipped disks and remap each kept internal additional
                 // disk's `path` to its regenerated id-based filename.
