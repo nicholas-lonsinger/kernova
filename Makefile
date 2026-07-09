@@ -53,7 +53,7 @@ SWIFT_FORMAT      := xcrun swift-format
 SWIFT_SOURCE_DIRS := Kernova KernovaTests KernovaMacOSAgent KernovaMacOSAgentTests KernovaKit KernovaQuickLook KernovaRelaunchHelper KernovaMacOSAgentFileProvider KernovaFileProvider
 
 .DEFAULT_GOAL := help
-.PHONY: help build test test-suite test-package clean format lint install-hooks check-hooks doctor ghosts clean-ghosts fp-reset ls-reset
+.PHONY: help build test test-suite test-package clean format lint install-hooks check-hooks bootstrap doctor ghosts clean-ghosts fp-reset ls-reset
 
 help:
 	@printf 'Kernova build targets:\n\n'
@@ -65,6 +65,7 @@ help:
 	@printf '  make format              Rewrite Swift sources in place via swift-format\n'
 	@printf '  make lint                Check Swift sources with swift-format (--strict)\n'
 	@printf '  make install-hooks       Point git at .githooks/ (runs lint on pre-push)\n'
+	@printf '  make bootstrap           Derive your signing team into Config/Local.xcconfig (auto-run by build/test)\n'
 	@printf '  make doctor              Check the local toolchain (macOS, Xcode, Swift, swift-format, hooks)\n'
 	@printf '  make ghosts              Report stale Kernova Launch Services/process/worktree registrations\n'
 	@printf '  make clean-ghosts        Same as ghosts, but also unregisters/kills/prunes what it finds\n'
@@ -74,10 +75,10 @@ help:
 	@printf '\n'
 	@printf '  Append CONFIGURATION=Release to build/test in Release (default: Debug)\n'
 
-build: check-hooks
+build: check-hooks bootstrap
 	xcodebuild $(XCODEBUILD_FLAGS) build
 
-test: check-hooks
+test: check-hooks bootstrap
 	xcodebuild $(XCODEBUILD_FLAGS) test
 
 # `xcrun` so the toolchain matches the one selected via `xcode-select`
@@ -115,6 +116,16 @@ check-hooks:
 	if [ "$$hp" != ".githooks" ]; then \
 		printf 'Note: pre-push lint hook is not installed. Run `make install-hooks` (one-time per clone) to catch swift-format issues locally.\n' >&2; \
 	fi
+
+# Derives this developer's signing team from their own certificate into the
+# gitignored Config/Local.xcconfig (see Config/Base.xcconfig) — what makes a
+# fresh clone build and sign with *your* team rather than a hardcoded one
+# (#476). A prerequisite of build/test rather than a separate manual step, so
+# a fresh clone's first `make build` just works; Tools/bootstrap-team.sh is
+# idempotent (no-ops once Config/Local.xcconfig has a value), so this is cheap
+# on every subsequent build. Re-derive with `Tools/bootstrap-team.sh --force`.
+bootstrap:
+	@Tools/bootstrap-team.sh
 
 # Environment sanity check: verifies the local toolchain (macOS, Xcode, Swift,
 # swift-format) and repo setup (git hooks) match what Kernova needs to build,

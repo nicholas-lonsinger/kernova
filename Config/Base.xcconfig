@@ -1,0 +1,16 @@
+// Project-level base configuration, wired to both the Debug and Release
+// project XCBuildConfigurations (targets without their own
+// baseConfigurationReference inherit it).
+//
+// DEVELOPMENT_TEAM is intentionally NOT hardcoded here. It is derived
+// per-developer from your own signing certificate by `make bootstrap` (see
+// Tools/bootstrap-team.sh) into the gitignored Local.xcconfig included below,
+// so a fresh clone builds and signs with *your* team, not the project
+// owner's — see README.md "Development setup" and issue #476.
+//
+// `#include?` (with the trailing `?`) is the optional form: it silently
+// no-ops when Local.xcconfig doesn't exist yet, so a not-yet-bootstrapped
+// clone still opens/builds (Automatic-signed targets resolve a team via
+// Xcode's own account picker; the three Manual/profile-less targets need
+// `make bootstrap` to have run first — see README).
+#include? "Local.xcconfig"

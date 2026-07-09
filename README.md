@@ -58,11 +58,14 @@ After cloning, run:
 
 ```bash
 make install-hooks
+make bootstrap
 ```
 
-This points the repo at the checked-in `.githooks/` directory so a pre-push hook runs `make lint` locally and matches the swift-format check enforced on `main`. It's a one-time setup per clone (Git does not auto-activate checked-in hooks). Bypass an individual push with `git push --no-verify`.
+`install-hooks` points the repo at the checked-in `.githooks/` directory so a pre-push hook runs `make lint` locally and matches the swift-format check enforced on `main`. It's a one-time setup per clone (Git does not auto-activate checked-in hooks). Bypass an individual push with `git push --no-verify`.
 
-Run `make doctor` to confirm your local toolchain (macOS, Xcode, Swift, swift-format) and git hooks match what Kernova needs before building.
+`bootstrap` derives your own signing team from your Apple Development (or Developer ID) certificate into a gitignored `Config/Local.xcconfig`, so a Debug build signs as *you* rather than a hardcoded team — see [Signing: Debug vs Release](#signing-debug-vs-release) below. `make build` and `make test` run it automatically, so this is only a manual step if you're building straight from Xcode without ever running a `make` target first, or working in a second git worktree (each one needs its own `Config/Local.xcconfig`, since gitignored files aren't shared between worktrees).
+
+Run `make doctor` to confirm your local toolchain (macOS, Xcode, Swift, swift-format), signing team, and git hooks match what Kernova needs before building.
 
 Run `make` with no arguments to see all build, test, format, and lint targets.
 
@@ -72,13 +75,13 @@ Run `make` with no arguments to see all build, test, format, and lint targets.
 2. Select the `Kernova` scheme
 3. Build and run (Cmd+R)
 
-The app requires the `com.apple.security.virtualization` entitlement, which is included in the project configuration.
+The app requires the `com.apple.security.virtualization` entitlement, which is included in the project configuration. If you haven't run `make bootstrap` yet (see above), do that first — Xcode's own ⌘R doesn't run it for you.
 
 ### Signing: Debug vs Release
 
 Kernova signs differently per build configuration, driven by the `KERNOVA_APP_GROUP` build setting that scopes the clipboard File Provider's shared container:
 
-- **Debug** uses a Team-ID-prefixed app group (`$(DEVELOPMENT_TEAM).app.kernova`). macOS grants a Team-ID-prefixed group silent container access with **no provisioning profile**, so a Debug build (⌘R, `make build`, `make test`) works with *any* signing team. (The project currently pins `DEVELOPMENT_TEAM` to the owner's team, so a contributor sets their own team first — [#476](https://github.com/nicholas-lonsinger/kernova/issues/476) will make this automatic.) No Apple Developer Program membership or developer-portal setup is needed to build and run, and the guest agent never shows the "access data from other apps" consent prompt in a VM.
+- **Debug** uses a Team-ID-prefixed app group (`$(DEVELOPMENT_TEAM).app.kernova`). macOS grants a Team-ID-prefixed group silent container access with **no provisioning profile**, so a Debug build (⌘R, `make build`, `make test`) works with *any* signing team. `DEVELOPMENT_TEAM` is not hardcoded: `make bootstrap` ([`Tools/bootstrap-team.sh`](Tools/bootstrap-team.sh)) derives it from your own signing certificate into a gitignored `Config/Local.xcconfig`, included by the tracked `Config/Base.xcconfig` ([#476](https://github.com/nicholas-lonsinger/kernova/issues/476)). No Apple Developer Program membership or developer-portal setup is needed to build and run, and the guest agent never shows the "access data from other apps" consent prompt in a VM.
 - **Release** uses the canonical `group.app.kernova`. That form is **not** silently authorized: it requires the app group registered on the Apple Developer portal plus an embedded provisioning profile, which in turn requires a paid **Apple Developer Program** membership and a distribution identity — **Developer ID** for direct distribution, or Apple Distribution for the Mac App Store. A Release build fails to sign without them.
 
 Day-to-day development only needs Debug. The Release path matters when cutting a distributable build; see the *Mac App Store Readiness* section of [CLAUDE.md](CLAUDE.md) for the full rationale.

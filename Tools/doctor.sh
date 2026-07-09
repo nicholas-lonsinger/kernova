@@ -132,6 +132,53 @@ else
     warn "pre-push lint hook not installed — run 'make install-hooks' (one-time per clone)"
 fi
 
+# ---- signing ------------------------------------------------------------
+
+section 'Signing'
+
+# Debug's three Manual/profile-less sub-targets (agent, agent File Provider,
+# host File Provider) need DEVELOPMENT_TEAM resolved before they can sign —
+# `make bootstrap` (Tools/bootstrap-team.sh) derives it from your own signing
+# certificate into the gitignored Config/Local.xcconfig (#476). CI can't catch
+# a broken team here: it builds with CODE_SIGNING_ALLOWED=NO.
+local_xcconfig="Config/Local.xcconfig"
+resolved_team=""
+if [ -f "$local_xcconfig" ]; then
+    resolved_team=$(sed -n 's/^[[:space:]]*DEVELOPMENT_TEAM[[:space:]]*=[[:space:]]*\([^[:space:];]*\).*/\1/p' "$local_xcconfig" | head -1)
+fi
+
+if [ -n "$resolved_team" ]; then
+    pass "DEVELOPMENT_TEAM = $resolved_team ($local_xcconfig)"
+else
+    warn "No signing team derived yet — run 'make bootstrap' (one-time per clone/worktree)"
+fi
+
+# `security find-identity` lists every codesigning-capable identity in the
+# keychain; same detection this repo's bootstrap script uses.
+identities=$(security find-identity -v -p codesigning 2>/dev/null | grep -E '^[[:space:]]*[0-9]+\)')
+if [ -n "$identities" ]; then
+    pass "Codesigning identity available in keychain"
+else
+    warn "No codesigning identity found — sign into Xcode ▸ Settings ▸ Accounts with your Apple ID"
+fi
+
+# Cross-check the resolved team against every team currently in the keychain,
+# via bootstrap-team.sh's own --check (dry-run) mode — reusing its derivation
+# logic rather than a second copy that could drift. Membership, not equality:
+# a resolved team that isn't the top preference but is still a real identity
+# (e.g. hand-pinned across multiple Apple IDs) is not a problem.
+if [ -n "$resolved_team" ] && [ -n "$identities" ]; then
+    if current_teams=$(Tools/bootstrap-team.sh --check 2>/dev/null); then
+        if printf '%s\n' "$current_teams" | grep -qxF "$resolved_team"; then
+            pass "Resolved team matches a current keychain identity"
+        else
+            warn "DEVELOPMENT_TEAM ($resolved_team) doesn't match any current keychain identity"
+            detail "Available: $(printf '%s' "$current_teams" | tr '\n' ' ')"
+            detail "Re-derive with: Tools/bootstrap-team.sh --force"
+        fi
+    fi
+fi
+
 # ---- optional tooling -------------------------------------------------------
 
 section 'Optional tooling'

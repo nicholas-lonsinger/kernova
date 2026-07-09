@@ -119,6 +119,7 @@
 		A1000500 /* KernovaMacOSAgentFileProvider.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = KernovaMacOSAgentFileProvider.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000600 /* KernovaFileProvider.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = KernovaFileProvider.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		B62FC33F2FAFDBB1003775B7 /* KernovaKit */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = KernovaKit; sourceTree = "<group>"; };
+		28934EC9D674276AC8786B9A /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -291,9 +292,18 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		28934EC9D674276AC8786B9B /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				28934EC9D674276AC8786B9A /* Base.xcconfig */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
 		A1000020 = {
 			isa = PBXGroup;
 			children = (
+				28934EC9D674276AC8786B9B /* Config */,
 				A1000006 /* Kernova */,
 				A1000007 /* KernovaTests */,
 				A1000101 /* KernovaRelaunchHelper */,
@@ -847,6 +857,7 @@
 /* Begin XCBuildConfiguration section */
 		A10000A0 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 28934EC9D674276AC8786B9A /* Base.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ARCHS = arm64;
@@ -915,6 +926,7 @@
 		};
 		A10000A1 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 28934EC9D674276AC8786B9A /* Base.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ARCHS = arm64;
@@ -983,7 +995,6 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = 8MT4P4GZL2;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Kernova/App/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright 2025–2026 Nicholas Lonsinger. All rights reserved.";
@@ -1012,7 +1023,6 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = 8MT4P4GZL2;
 				ENABLE_HARDENED_RUNTIME = YES;
 				REGISTER_APP_GROUPS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -1072,7 +1082,6 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = 8MT4P4GZL2;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 6.0;
 			};
@@ -1083,7 +1092,6 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = 8MT4P4GZL2;
 				ENABLE_HARDENED_RUNTIME = YES;
 				SKIP_INSTALL = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1101,7 +1109,6 @@
 				CODE_SIGN_STYLE = Manual;
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = 8MT4P4GZL2;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = KernovaMacOSAgent/Info.plist;
 				INFOPLIST_PREFIX_HEADER = "$(DERIVED_FILE_DIR)/AgentBuildNumber.h";
@@ -1125,7 +1132,6 @@
 				PROVISIONING_PROFILE_SPECIFIER = "Kernova macOS Agent Developer ID";
 				CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO;
 				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = 8MT4P4GZL2;
 				ENABLE_HARDENED_RUNTIME = YES;
 				OTHER_CODE_SIGN_FLAGS = "--timestamp";
 				SKIP_INSTALL = YES;
@@ -1180,7 +1186,6 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = 8MT4P4GZL2;
 				ENABLE_DEBUG_DYLIB = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = KernovaQuickLook/Info.plist;
@@ -1208,7 +1213,6 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = 8MT4P4GZL2;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_DEBUG_DYLIB = NO;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -1238,7 +1242,6 @@
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = 8MT4P4GZL2;
 				ENABLE_DEBUG_DYLIB = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = KernovaMacOSAgentFileProvider/Info.plist;
@@ -1268,7 +1271,6 @@
 				CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO;
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = 8MT4P4GZL2;
 				ENABLE_HARDENED_RUNTIME = YES;
 				OTHER_CODE_SIGN_FLAGS = "--timestamp";
 				ENABLE_DEBUG_DYLIB = NO;
@@ -1299,7 +1301,6 @@
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = 8MT4P4GZL2;
 				ENABLE_DEBUG_DYLIB = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = KernovaFileProvider/Info.plist;
@@ -1327,7 +1328,6 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = 8MT4P4GZL2;
 				ENABLE_HARDENED_RUNTIME = YES;
 				REGISTER_APP_GROUPS = YES;
 				ENABLE_DEBUG_DYLIB = NO;
