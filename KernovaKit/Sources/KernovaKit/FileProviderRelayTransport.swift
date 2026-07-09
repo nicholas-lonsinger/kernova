@@ -56,10 +56,21 @@ public protocol FileProviderRelayTransport: AnyObject, Sendable {
 public final class FileProviderServicingConnector: NSObject,
     FileProviderRelayTransport, @unchecked Sendable
 {
-    private let serviceName: NSFileProviderServiceName
+    /// Establishes the control connection to the extension.
+    ///
+    /// Production performs the `getFileProviderServicesForItem` →
+    /// `NSFileProviderService.getFileProviderConnection` dance (logging each
+    /// failure); tests inject a stub yielding a controllable connection or `nil`.
+    /// The seam collapses both system calls into one closure rather than
+    /// injecting either individually: `NSFileProviderService` is an opaque,
+    /// non-instantiable system type a test can't fabricate.
+    typealias ConnectOperation =
+        @Sendable (_ rootURL: URL, _ completion: @escaping @Sendable (NSXPCConnection?) -> Void) -> Void
+
     private let reconnectNotificationName: String
     private let extensionRequirement: String?
     private let logger: KernovaLogger
+    private let connectOperation: ConnectOperation
     /// Serializes the connect handshake and the doorbell handler off the main
     /// queue (the connect must never block the owner's main actor).
     private let queue = DispatchQueue(label: "app.kernova.fileprovider.connector")
@@ -83,23 +94,77 @@ public final class FileProviderServicingConnector: NSObject,
     /// the retry loop so a permanently unreachable extension can't spin.
     private var connectAttempts = 0
 
-    /// Upper bound on transient connect retries before giving up.
+    private let maxConnectAttempts: Int
+    private let connectRetryDelay: DispatchTimeInterval
+
+    /// Upper bound on transient connect retries before giving up, in production.
     ///
-    /// Sized so `maxConnectAttempts × connectRetryDelay` (~30 s) spans the
-    /// extension's own `fetchContents` connect wait, so a slow-relaunching extension
-    /// is still caught within the window the paste is waiting — rather than the owner
-    /// giving up after a few seconds while the extension keeps waiting.
-    private static let maxConnectAttempts = 15
-    /// Delay between transient connect retries.
-    private static let connectRetryDelay: DispatchTimeInterval = .seconds(2)
+    /// Sized so `defaultMaxConnectAttempts × defaultConnectRetryDelay` (~30 s)
+    /// spans the extension's own `fetchContents` connect wait, so a
+    /// slow-relaunching extension is still caught within the window the paste is
+    /// waiting — rather than the owner giving up after a few seconds while the
+    /// extension keeps waiting. (#466 tracks making this coupling more explicit.)
+    static let defaultMaxConnectAttempts = 15
+    /// Delay between transient connect retries, in production.
+    static let defaultConnectRetryDelay: DispatchTimeInterval = .seconds(2)
 
     /// Creates a connector for one direction from its config.
-    public init(config: FileProviderConfig) {
-        self.serviceName = config.serviceName
+    public convenience init(config: FileProviderConfig) {
+        // Built self-free from `config`'s VALUES: `connectOperation` is a stored
+        // `let` that must be assigned before the delegated init runs, before which
+        // a closure cannot capture `self`.
+        let logger = KernovaLogger(
+            subsystem: config.loggerSubsystem, category: "ServicingConnector")
+        let serviceName = config.serviceName
+        let operation: ConnectOperation = { rootURL, completion in
+            // Root is a real directory (never a dataless file placeholder) so this
+            // can't trigger reentrant materialization → deadlock (P1b, #460).
+            FileManager.default.getFileProviderServicesForItem(at: rootURL) { services, error in
+                if let error {
+                    logger.error(
+                        "getFileProviderServicesForItem failed: \(error.localizedDescription, privacy: .public)"
+                    )
+                    completion(nil)
+                    return
+                }
+                guard let service = services?[serviceName] else {
+                    logger.error(
+                        "Servicing endpoint '\(serviceName.rawValue, privacy: .public)' not offered by the extension"
+                    )
+                    completion(nil)
+                    return
+                }
+                service.getFileProviderConnection { connection, error in
+                    guard let connection else {
+                        logger.error(
+                            "getFileProviderConnection failed: \(error?.localizedDescription ?? "nil connection", privacy: .public)"
+                        )
+                        completion(nil)
+                        return
+                    }
+                    completion(connection)
+                }
+            }
+        }
+        self.init(
+            config: config, connect: operation,
+            maxConnectAttempts: Self.defaultMaxConnectAttempts,
+            connectRetryDelay: Self.defaultConnectRetryDelay)
+    }
+
+    /// Creates a connector with an injected connect operation and retry budget —
+    /// the seam tests use to drive the state machine deterministically.
+    init(
+        config: FileProviderConfig, connect: @escaping ConnectOperation,
+        maxConnectAttempts: Int, connectRetryDelay: DispatchTimeInterval
+    ) {
         self.reconnectNotificationName = config.reconnectNotificationName
         self.extensionRequirement = config.extensionCodeSigningRequirement
         self.logger = KernovaLogger(
             subsystem: config.loggerSubsystem, category: "ServicingConnector")
+        self.connectOperation = connect
+        self.maxConnectAttempts = maxConnectAttempts
+        self.connectRetryDelay = connectRetryDelay
         super.init()
     }
 
@@ -188,33 +253,12 @@ public final class FileProviderServicingConnector: NSObject,
     }
 
     private func connect(rootURL: URL) {
-        // Root is a real directory (never a dataless file placeholder) so this
-        // can't trigger reentrant materialization → deadlock (P1b, #460).
-        FileManager.default.getFileProviderServicesForItem(at: rootURL) { [weak self] services, error in
+        connectOperation(rootURL) { [weak self] connection in
             guard let self else { return }
-            if let error {
-                self.logger.error(
-                    "getFileProviderServicesForItem failed: \(error.localizedDescription, privacy: .public)"
-                )
-                self.finishFailedConnect()
-                return
-            }
-            guard let service = services?[self.serviceName] else {
-                self.logger.error(
-                    "Servicing endpoint '\(self.serviceName.rawValue, privacy: .public)' not offered by the extension"
-                )
-                self.finishFailedConnect()
-                return
-            }
-            service.getFileProviderConnection { connection, error in
-                guard let connection else {
-                    self.logger.error(
-                        "getFileProviderConnection failed: \(error?.localizedDescription ?? "nil connection", privacy: .public)"
-                    )
-                    self.finishFailedConnect()
-                    return
-                }
+            if let connection {
                 self.configureAndResume(connection)
+            } else {
+                self.finishFailedConnect()
             }
         }
     }
@@ -287,7 +331,7 @@ public final class FileProviderServicingConnector: NSObject,
             connecting = false
             guard connection == nil, relayService != nil, let rootURL else { return nil }
             connectAttempts += 1
-            guard connectAttempts < Self.maxConnectAttempts else {
+            guard connectAttempts < maxConnectAttempts else {
                 connectAttempts = 0
                 return nil
             }
@@ -297,9 +341,9 @@ public final class FileProviderServicingConnector: NSObject,
         }
         guard let retryRoot else { return }
         logger.notice(
-            "Servicing connect failed — retry \(attempt, privacy: .public)/\(Self.maxConnectAttempts - 1, privacy: .public) scheduled"
+            "Servicing connect failed — retry \(attempt, privacy: .public)/\(maxConnectAttempts - 1, privacy: .public) scheduled"
         )
-        queue.asyncAfter(deadline: .now() + Self.connectRetryDelay) { [weak self] in
+        queue.asyncAfter(deadline: .now() + connectRetryDelay) { [weak self] in
             self?.connect(rootURL: retryRoot)
         }
     }
@@ -327,4 +371,23 @@ public final class FileProviderServicingConnector: NSObject,
         logger.notice("Servicing connection dropped — reconnecting")
         connectIfNeeded()
     }
+
+    #if DEBUG
+    /// Whether the connector currently holds a live control connection.
+    var isConnectedForTesting: Bool { lock.withLock { connection != nil } }
+
+    /// Whether a connect handshake is currently in flight.
+    var isConnectingForTesting: Bool { lock.withLock { connecting } }
+
+    /// Consecutive failed connect attempts in the current retry burst.
+    var connectAttemptsForTesting: Int { lock.withLock { connectAttempts } }
+
+    /// Directly invokes the reconnect-doorbell handler.
+    ///
+    /// The real doorbell relies on `CFNotificationCenter` delivery on a running
+    /// main run loop, which the KernovaKit SwiftPM test target does not host (see
+    /// `DarwinNotificationTests`) — so tests drive the handler directly instead of
+    /// posting a real Darwin notification that would never arrive.
+    func triggerReconnectDoorbellForTesting() { handleReconnectDoorbell() }
+    #endif
 }
