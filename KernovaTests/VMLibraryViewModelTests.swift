@@ -2221,7 +2221,8 @@ struct VMLibraryViewModelTests {
         let source = try makeImportSource(name: "Imported VM", storage: storage)
         defer { try? FileManager.default.removeItem(at: source.url.deletingLastPathComponent()) }
 
-        await viewModel.importVM(from: source.url)
+        _ = viewModel.importVMs(fromDroppedURLs: [source.url])
+        await viewModel.importTailForTesting?.value
 
         #expect(viewModel.instances.count == 1)
         let imported = viewModel.instances.first
@@ -2248,7 +2249,8 @@ struct VMLibraryViewModelTests {
             }
         }
 
-        await viewModel.importVMs(from: sources.map(\.url))
+        _ = viewModel.importVMs(fromDroppedURLs: sources.map(\.url))
+        await viewModel.importTailForTesting?.value
 
         // Pre-fix, a synchronous loop over `importVM` only imported the first bundle and
         // rejected the rest with a "preparing operation in progress" error.
@@ -2271,7 +2273,8 @@ struct VMLibraryViewModelTests {
             name: existing.configuration.name, storage: storage, createOnDisk: false)
         storage.bundles[source.url] = existing.configuration
 
-        await viewModel.importVM(from: source.url)
+        _ = viewModel.importVMs(fromDroppedURLs: [source.url])
+        await viewModel.importTailForTesting?.value
 
         #expect(viewModel.instances.count == 1)
     }
@@ -2286,7 +2289,8 @@ struct VMLibraryViewModelTests {
         let existing = VMInstance(configuration: config, bundleURL: bundleURL)
         viewModel.instances.append(existing)
 
-        await viewModel.importVM(from: bundleURL)
+        _ = viewModel.importVMs(fromDroppedURLs: [bundleURL])
+        await viewModel.importTailForTesting?.value
 
         #expect(viewModel.instances.count == 1)
         #expect(viewModel.selectedID == existing.id)
@@ -2308,7 +2312,8 @@ struct VMLibraryViewModelTests {
             try? FileManager.default.removeItem(at: third.url.deletingLastPathComponent())
         }
 
-        await viewModel.importVMs(from: [first.url, duplicate.url, third.url])
+        _ = viewModel.importVMs(fromDroppedURLs: [first.url, duplicate.url, third.url])
+        await viewModel.importTailForTesting?.value
 
         // The duplicate is a synchronous no-op (select-existing) that must not stall the batch.
         #expect(viewModel.instances.count == 3)
@@ -2325,7 +2330,8 @@ struct VMLibraryViewModelTests {
         // fails with "no such file."
         let source = try makeImportSource(name: "Missing Source", storage: storage, createOnDisk: false)
 
-        await viewModel.importVM(from: source.url)
+        _ = viewModel.importVMs(fromDroppedURLs: [source.url])
+        await viewModel.importTailForTesting?.value
 
         #expect(viewModel.instances.isEmpty)
         #expect(presenter.showError == true)
@@ -2343,7 +2349,8 @@ struct VMLibraryViewModelTests {
             try? FileManager.default.removeItem(at: third.url.deletingLastPathComponent())
         }
 
-        await viewModel.importVMs(from: [first.url, failing.url, third.url])
+        _ = viewModel.importVMs(fromDroppedURLs: [first.url, failing.url, third.url])
+        await viewModel.importTailForTesting?.value
 
         #expect(viewModel.instances.count == 2)
         let importedIDs = Set(viewModel.instances.map(\.configuration.id))
@@ -2361,7 +2368,8 @@ struct VMLibraryViewModelTests {
         let source = try makeImportSource(name: "Concurrent Import", storage: storage)
         defer { try? FileManager.default.removeItem(at: source.url.deletingLastPathComponent()) }
 
-        await viewModel.importVM(from: source.url)
+        _ = viewModel.importVMs(fromDroppedURLs: [source.url])
+        await viewModel.importTailForTesting?.value
 
         #expect(viewModel.instances.count == 2)
         #expect(viewModel.instances.contains { $0.configuration.id == source.config.id })
@@ -2430,7 +2438,8 @@ struct VMLibraryViewModelTests {
         let source = try makeImportSource(name: "Concurrent Import", storage: storage)
         defer { try? FileManager.default.removeItem(at: source.url.deletingLastPathComponent()) }
 
-        await viewModel.importVM(from: source.url)
+        _ = viewModel.importVMs(fromDroppedURLs: [source.url])
+        await viewModel.importTailForTesting?.value
 
         // A second, unrelated import shouldn't steal the sidebar's focus from the
         // instance the user is already watching prepare.

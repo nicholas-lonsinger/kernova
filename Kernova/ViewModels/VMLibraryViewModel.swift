@@ -906,7 +906,10 @@ final class VMLibraryViewModel {
     /// starting the next — its own copy finishes before a multi-bundle batch moves to the next
     /// bundle (#444), and `importTail` chains successive batches the same way across
     /// independent import triggers (#487).
-    func importVM(from sourceURL: URL) async {
+    ///
+    /// Private: every import routes through ``importVMs(fromDroppedURLs:)`` so batches
+    /// serialize behind `importTail` (#492).
+    private func importVM(from sourceURL: URL) async {
         do {
             let vmsDir = try storageService.vmsDirectory
 
@@ -981,7 +984,9 @@ final class VMLibraryViewModel {
     /// Each import awaits the prior one's copy before the next starts, so every bundle in the
     /// batch imports (#444) instead of racing the next bundle's destination-collision check. A
     /// failed import surfaces its own error and the batch continues to the next bundle.
-    func importVMs(from sourceURLs: [URL]) async {
+    ///
+    /// Private for the same reason as ``importVM(from:)`` (#492).
+    private func importVMs(from sourceURLs: [URL]) async {
         guard !sourceURLs.isEmpty else {
             Self.logger.debug("importVMs: no bundles to import")
             return
