@@ -1,4 +1,5 @@
 import Darwin
+import FileProvider
 import Foundation
 
 @testable import KernovaKit
@@ -23,6 +24,29 @@ final class Box<T>: @unchecked Sendable {
         get { lock.withLock { stored } }
         set { lock.withLock { stored = newValue } }
     }
+}
+
+// MARK: - File Provider servicing test config
+
+/// Builds a `FileProviderConfig` for File-Provider-servicing tests: no
+/// code-signing pins (so a source/connector can be constructed without
+/// touching production identifiers), and a fresh, UUID-suffixed service name /
+/// reconnect notification name each call, so parallel tests can never
+/// cross-talk (Darwin notification names are a flat, process-global
+/// namespace).
+func makeTestFileProviderConfig() -> FileProviderConfig {
+    let unique = UUID().uuidString
+    return FileProviderConfig(
+        appGroupIdentifier: "8MT4P4GZL2.app.kernova.test",
+        serviceName: NSFileProviderServiceName("app.kernova.clipboard.test.relay.\(unique)"),
+        reconnectNotificationName: "app.kernova.clipboard.test.reconnect.\(unique)",
+        domainIdentifier: "kernova-clipboard-test",
+        domainDisplayName: "Kernova Clipboard (Test)",
+        containerDirectoryName: "FileProviderTest",
+        loggerSubsystem: "app.kernova.test",
+        extensionLoggerSubsystem: "app.kernova.test.fileprovider",
+        ownerCodeSigningRequirement: nil,
+        extensionCodeSigningRequirement: nil)
 }
 
 // MARK: - AsyncGate (package-test copy)

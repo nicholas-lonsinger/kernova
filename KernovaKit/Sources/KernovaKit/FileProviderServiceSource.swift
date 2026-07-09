@@ -34,7 +34,7 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
 {
     /// Bounded wait for the owner to connect after the doorbell is rung, kept well
     /// under Finder's ~60 s paste deadline so a missing owner fails cleanly.
-    private static let connectTimeout: TimeInterval = 30
+    private let connectTimeout: TimeInterval
 
     /// Bounded wait for the owner's byte-pull *reply* once a connection is live.
     ///
@@ -43,7 +43,7 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
     /// never complete. This runs off Finder's clock (the placeholder already
     /// returned), so it can be generous — long enough for any real pull, finite so
     /// a hung owner can't strand the fetch forever.
-    private static let fetchReplyTimeout: TimeInterval = 120
+    private let fetchReplyTimeout: TimeInterval
 
     private let config: FileProviderConfig
     private let logger: Logger
@@ -84,9 +84,14 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
         }
     }
 
-    init(config: FileProviderConfig, logger: Logger) {
+    init(
+        config: FileProviderConfig, logger: Logger,
+        connectTimeout: TimeInterval = 30, fetchReplyTimeout: TimeInterval = 120
+    ) {
         self.config = config
         self.logger = logger
+        self.connectTimeout = connectTimeout
+        self.fetchReplyTimeout = fetchReplyTimeout
         self.listener = NSXPCListener.anonymous()
         super.init()
         listener.delegate = self
@@ -216,7 +221,7 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
         // it is never cancelled: if it fires after the pull was drained or
         // cancelled, `failPending`'s lock-guarded claim makes it a no-op.
         logger.notice("No live owner connection — posting reconnect doorbell")
-        queue.asyncAfter(deadline: .now() + Self.connectTimeout) { [weak self, weak pull] in
+        queue.asyncAfter(deadline: .now() + connectTimeout) { [weak self, weak pull] in
             guard let self, let pull else { return }
             self.failPending(pull, reason: "owner connect timeout")
         }
@@ -270,7 +275,7 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
         // No cancel token — if the reply or an error arrives first, `OnceCompletion`
         // makes this a harmless no-op when it eventually fires. (A cancellable
         // `DispatchWorkItem` can't be captured in the XPC `@Sendable` closures below.)
-        queue.asyncAfter(deadline: .now() + Self.fetchReplyTimeout) {
+        queue.asyncAfter(deadline: .now() + fetchReplyTimeout) {
             once.fire(.failure(Self.serverUnreachable))
         }
 
@@ -299,6 +304,11 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
     /// failure, so Finder doesn't surface an error for a paste the user aborted.
     private static let cancelled = NSError(
         domain: NSCocoaErrorDomain, code: NSUserCancelledError)
+
+    #if DEBUG
+    /// Number of byte-pulls currently queued awaiting an owner connection.
+    var pendingPullCountForTesting: Int { lock.withLock { pendingPulls.count } }
+    #endif
 }
 
 /// Invokes a `(Result<String, NSError>) -> Void` completion exactly once, even when
