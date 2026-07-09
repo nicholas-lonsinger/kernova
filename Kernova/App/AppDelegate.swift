@@ -713,10 +713,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         return .terminateLater
     }
 
-    /// Cancels every preparing instance's task and trashes its partial bundle — best effort,
-    /// since `FileManager.copyItem` isn't interruptible (the copy already in flight keeps
-    /// writing until it finishes or fails on its own).
+    /// Cancels every preparing instance's task and trashes its partial bundle.
+    ///
+    /// Best effort, since `FileManager.copyItem` isn't interruptible (the copy already in
+    /// flight keeps writing until it finishes or fails on its own). Also stops any import
+    /// batch still queued behind `VMLibraryViewModel.importTail` — not yet a visible phantom
+    /// row, so invisible to the sweep below — from starting a fresh, unsupervised copy after
+    /// termination has begun (#487).
     private func cancelAndCleanupPreparingInstances() {
+        viewModel.cancelPendingImportBatches()
         viewModel.instances.removeAll { instance in
             guard instance.isPreparing else { return false }
 
@@ -867,9 +872,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// launcher→XPC forwarding is needed (#460 dropped the launcher; #439).
     /// `viewModel` exists from `init`, so importing this early is safe; the caller
     /// summons the GUI (the heuristic alone only covers a cold launch).
-    /// `VMLibraryViewModel.importVMs(fromDroppedURLs:)` spawns the actual import off its own
-    /// Task so this synchronous delegate callback isn't blocked, and awaits each bundle in turn
-    /// so every bundle in the batch imports rather than only the first (#444).
+    /// `VMLibraryViewModel.importVMs(fromDroppedURLs:)` runs the actual import off a Task
+    /// chained behind any batch already in flight, so this synchronous delegate callback
+    /// isn't blocked, every bundle in the batch imports rather than only the first (#444),
+    /// and this batch can't race a still-copying batch from another trigger (#487).
     private func importVMs(from urls: [URL]) {
         viewModel.importVMs(fromDroppedURLs: urls)
     }

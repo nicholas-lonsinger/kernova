@@ -2403,6 +2403,41 @@ struct VMLibraryViewModelTests {
         #expect(presenter.showError == false)
     }
 
+    @Test("cancelPendingImportBatches stops a queued batch from starting (#487)")
+    func cancelPendingImportBatchesSkipsQueuedBatch() async throws {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let source = try makeImportSource(name: "Never Imported", storage: storage)
+        defer { try? FileManager.default.removeItem(at: source.url.deletingLastPathComponent()) }
+
+        // Mirrors AppDelegate.applicationShouldTerminate calling this before any queued
+        // batch (invisible to hasPreparing/instances until it starts) gets a chance to run.
+        viewModel.cancelPendingImportBatches()
+        _ = viewModel.importVMs(fromDroppedURLs: [source.url])
+
+        await viewModel.importTailForTesting?.value
+
+        #expect(viewModel.instances.isEmpty)
+    }
+
+    @Test("registerPhantom preserves selection of an instance the user is already watching prepare (#487)")
+    func registerPhantomPreservesSelectionOfPreparingInstance() async throws {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let preparing = makeInstance(name: "Already Preparing")
+        markPreparing(preparing, operation: .cloning)
+        viewModel.instances.append(preparing)
+        viewModel.selectedID = preparing.id
+
+        let source = try makeImportSource(name: "Concurrent Import", storage: storage)
+        defer { try? FileManager.default.removeItem(at: source.url.deletingLastPathComponent()) }
+
+        await viewModel.importVM(from: source.url)
+
+        // A second, unrelated import shouldn't steal the sidebar's focus from the
+        // instance the user is already watching prepare.
+        #expect(viewModel.selectedID == preparing.id)
+        #expect(viewModel.instances.count == 2)
+    }
+
     // MARK: - Clone
 
     /// Helper to mark an instance as preparing with a no-op task.
@@ -2505,6 +2540,27 @@ struct VMLibraryViewModelTests {
         #expect(phantom != nil)
 
         // Wait for the preparing task to complete
+        await phantom?.preparingState?.task.value
+
+        #expect(viewModel.instances.count == 3)
+        #expect(presenter.showError == false)
+    }
+
+    @Test("cloneVM proceeds while another clone is preparing (#487 — UUID-named bundles can't collide)")
+    func cloneVMProceedsWhileAnotherCloneIsPreparing() async {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let existing = makeInstance(name: "Cloning")
+        markPreparing(existing, operation: .cloning)
+        let instance = makeInstance(name: "Source")
+        instance.status = .stopped
+        viewModel.instances = [existing, instance]
+        storage.bundles[instance.bundleURL] = instance.configuration
+
+        viewModel.cloneVM(instance)
+
+        let phantom = viewModel.instances.first { $0.id != existing.id && $0.id != instance.id }
+        #expect(phantom != nil)
+
         await phantom?.preparingState?.task.value
 
         #expect(viewModel.instances.count == 3)

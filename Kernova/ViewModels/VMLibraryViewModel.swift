@@ -73,6 +73,16 @@ final class VMLibraryViewModel {
     /// still mid-copy) queues behind the first instead of racing it (#487).
     private var importTail: Task<Void, Never>?
 
+    /// Set once app termination begins.
+    ///
+    /// A batch still queued behind `importTail` — not yet registered as a phantom row, so
+    /// invisible to `hasPreparing`/`instances` and to `AppDelegate`'s termination-time
+    /// preparing sweep — checks this and skips starting its copy instead of silently
+    /// beginning one, unsupervised, after the app has already committed to quitting (#487).
+    /// Doesn't affect a copy already in flight — cancellation there is handled the same
+    /// best-effort way it always was, via each phantom's own `preparingState`.
+    private var isTerminating = false
+
     /// Current VM ordering used by sortInstances(); synchronized with UserDefaults via persistOrder().
     private var customOrder: [UUID] = []
 
@@ -813,13 +823,18 @@ final class VMLibraryViewModel {
     /// Adds a freshly-built phantom `VMInstance` to the library and selects it.
     ///
     /// Shared by `importVM(from:)` and `cloneVM(_:)`, which each build their own phantom
-    /// (differing in `configuration`/`bundleURL`/`status`) before handing it here.
+    /// (differing in `configuration`/`bundleURL`/`status`) before handing it here. Clone and
+    /// import can now run concurrently (#487), so a second phantom registering while the
+    /// first is still preparing doesn't steal the sidebar's focus away from the operation the
+    /// user is already watching.
     private func registerPhantom(_ phantom: VMInstance) {
         wirePersistence(for: phantom)
         instances.append(phantom)
         sortInstances()
         persistOrder()
-        selectedID = phantom.id
+        if selectedInstance?.isPreparing != true {
+            selectedID = phantom.id
+        }
     }
 
     /// Registers `phantom`, runs `copyWork` off a spawned `Task`, and wires the success /
@@ -1000,9 +1015,24 @@ final class VMLibraryViewModel {
         let previous = importTail
         importTail = Task { [weak self] in
             await previous?.value
-            await self?.importVMs(from: bundles)
+            guard let self, !self.isTerminating else { return }
+            await self.importVMs(from: bundles)
         }
         return true
+    }
+
+    /// Stops any import batch still queued behind `importTail` from starting its copy.
+    ///
+    /// Called once, early in app termination (`AppDelegate.applicationShouldTerminate`).
+    /// A queued-but-not-yet-started batch has no phantom row yet, so it's invisible to
+    /// `hasPreparing`/`instances` and to the termination-time preparing sweep
+    /// (`cancelAndCleanupPreparingInstances`) — without this, such a batch could silently
+    /// start an unsupervised `FileManager.copyItem` after the app has already committed to
+    /// quitting (#487). Idempotent and permanent for the view model's remaining lifetime;
+    /// doesn't touch a copy already in flight, which the existing per-phantom cleanup path
+    /// still handles best-effort.
+    func cancelPendingImportBatches() {
+        isTerminating = true
     }
 
     #if DEBUG
