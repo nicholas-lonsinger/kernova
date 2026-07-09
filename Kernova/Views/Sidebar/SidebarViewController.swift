@@ -513,10 +513,11 @@ extension SidebarViewController: NSOutlineViewDataSource {
 
     /// Filters the drop to `.kernova` bundles and imports the batch.
     ///
-    /// `VMLibraryViewModel.importVMs(fromDroppedURLs:)` runs the actual import off a Task
-    /// chained behind any batch already in flight, so this synchronous drag-drop delegate
+    /// `VMLibraryViewModel.importVMs(fromDroppedURLs:)` reserves each bundle's destination
+    /// synchronously and runs the copies concurrently, so this synchronous drag-drop delegate
     /// callback isn't blocked, every bundle in the batch imports rather than only the first
-    /// (#444), and this batch can't race a still-copying batch from another trigger (#487).
+    /// (#444), and this batch can't collide with a still-copying batch from another trigger
+    /// (#487/#491).
     private func acceptImport(info: NSDraggingInfo) -> Bool {
         guard
             let urls = info.draggingPasteboard.readObjects(

@@ -870,10 +870,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// launcher→XPC forwarding is needed (#460 dropped the launcher; #439).
     /// `viewModel` exists from `init`, so importing this early is safe; the caller
     /// summons the GUI (the heuristic alone only covers a cold launch).
-    /// `VMLibraryViewModel.importVMs(fromDroppedURLs:)` runs the actual import off a Task
-    /// chained behind any batch already in flight, so this synchronous delegate callback
-    /// isn't blocked, every bundle in the batch imports rather than only the first (#444),
-    /// and this batch can't race a still-copying batch from another trigger (#487).
+    /// `VMLibraryViewModel.importVMs(fromDroppedURLs:)` reserves each bundle's destination
+    /// synchronously and runs the copies concurrently, so this synchronous delegate callback
+    /// isn't blocked, every bundle in the batch imports rather than only the first (#444), and
+    /// this batch can't collide with a still-copying batch from another trigger (#487/#491).
     private func importVMs(from urls: [URL]) {
         viewModel.importVMs(fromDroppedURLs: urls)
     }

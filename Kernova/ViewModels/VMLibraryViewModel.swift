@@ -807,9 +807,9 @@ final class VMLibraryViewModel {
 
     /// Adds a freshly-built phantom `VMInstance` to the library and selects it.
     ///
-    /// Shared by `importVM(from:)` and `cloneVM(_:)`, which each build their own phantom
+    /// Shared by `reserveAndImport(from:)` and `cloneVM(_:)`, which each build their own phantom
     /// (differing in `configuration`/`bundleURL`/`status`) before handing it here. Clone and
-    /// import can now run concurrently (#487), so a second phantom registering while the
+    /// import can run concurrently (#487), so a second phantom registering while the
     /// first is still preparing doesn't steal the sidebar's focus away from the operation the
     /// user is already watching.
     private func registerPhantom(_ phantom: VMInstance) {
@@ -826,9 +826,9 @@ final class VMLibraryViewModel {
     /// deallocated / cancelled / failure cleanup both clone and import need around a
     /// preparing row's file copy.
     ///
-    /// Returns the `Task` so `importVMs(from:)` can spawn a whole batch's copies up front and then
-    /// await them together — they run concurrently, so cancelling one can't stall the rest
-    /// (#444/#486). `cloneVM(_:)` discards it and stays fire-and-forget.
+    /// Returns the `Task` (also held on the phantom's `preparingState`). Import and clone both
+    /// spawn these fire-and-forget, so a batch's copies run concurrently — cancelling one can't
+    /// stall the rest (#444/#486).
     ///
     /// `copyWork` runs on a detached `Task` and is uninterruptible (a blocking `FileManager`
     /// call), so a user cancel (`cancelPreparingConfirmed`) cancels this outer `Task` but the copy
@@ -916,16 +916,17 @@ final class VMLibraryViewModel {
         return url
     }
 
-    /// Reserves a collision-free destination for a `.kernova` bundle, registers its phantom row
+    /// Reserves a collision-free destination for one `.kernova` bundle, registers its phantom row
     /// synchronously, and spawns the file copy — returning that copy's `Task` (or `nil` for a
     /// no-op: the source is already in the library by UUID, or already inside the VMs directory).
     ///
-    /// Reservation is synchronous through phantom registration (no `await` before the copy `Task`
-    /// is spawned), so a batch's reservations — and two overlapping triggers' — run atomically on
-    /// the MainActor and see each other's phantoms in `instances`; the copies then run
-    /// concurrently (#444, #486). Private: every import routes through
-    /// ``importVMs(fromDroppedURLs:)`` (#492).
-    private func importVM(from sourceURL: URL) -> Task<Void, Never>? {
+    /// The single per-bundle import step, reached only through ``importVMs(fromDroppedURLs:)``.
+    /// Everything before the copy `Task` is spawned is synchronous (no `await`), so a batch's
+    /// reservations — and two overlapping triggers' — run atomically on the MainActor and see each
+    /// other's phantoms in `instances`; the copies then run concurrently (#444, #486, #491). That
+    /// atomicity is inherent to this method, not to any external ordering, so calling it directly
+    /// cannot reintroduce a destination-collision race (#492/#493).
+    private func reserveAndImport(from sourceURL: URL) -> Task<Void, Never>? {
         do {
             let vmsDir = try storageService.vmsDirectory
 
@@ -986,7 +987,7 @@ final class VMLibraryViewModel {
     /// (drag-and-drop) so the filter sequence isn't duplicated per caller.
     ///
     /// Each bundle's destination is reserved and its phantom row registered synchronously (see
-    /// ``importVM(from:)``), so two overlapping triggers — e.g. a drag-and-drop batch still
+    /// ``reserveAndImport(from:)``), so two overlapping triggers — e.g. a drag-and-drop batch still
     /// copying bundle 3 of 5 when a Finder double-click of another bundle arrives — never collide
     /// on a destination name (the second trigger's reservation sees the first's phantoms in
     /// `instances`) and never wait behind each other's copies (#487/#491). The copies then run
@@ -1000,7 +1001,7 @@ final class VMLibraryViewModel {
         guard !bundles.isEmpty else { return false }
         Self.logger.notice("Importing \(bundles.count, privacy: .public) bundle(s)")
         for url in bundles {
-            _ = importVM(from: url)
+            _ = reserveAndImport(from: url)
         }
         return true
     }

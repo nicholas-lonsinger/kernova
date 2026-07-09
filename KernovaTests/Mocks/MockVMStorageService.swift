@@ -3,7 +3,7 @@ import Foundation
 
 /// In-memory mock for `VMStorageProviding` that tracks operations without touching disk —
 /// except `vmsDirectory`, which import/clone tests need as a real, writable directory since
-/// `VMLibraryViewModel.importVM(from:)` does a raw `FileManager.copyItem` into it rather than
+/// `VMLibraryViewModel.reserveAndImport(from:)` does a raw `FileManager.copyItem` into it rather than
 /// going through this protocol. `baseDirectory` is unique per instance (suffixed with a UUID) so
 /// parallel/`.serialized` tests copying real bundles into it can't collide or leak state into
 /// each other.
