@@ -4,7 +4,7 @@ import AppKit
 extension VMInstance {
     /// Display name that distinguishes preparing, cold-paused ("Suspended"), and live-paused ("Paused").
     var statusDisplayName: String {
-        if let state = preparingState { return state.operation.displayLabel }
+        if let state = preparingState { return state.displayLabel }
         return isColdPaused ? "Suspended" : status.displayName
     }
 
@@ -27,7 +27,7 @@ extension VMInstance {
 
     /// Tooltip explaining the VM state variant, or `nil` for standard states.
     var statusToolTip: String? {
-        if let state = preparingState { return state.operation.displayLabel }
+        if let state = preparingState { return state.displayLabel }
         if status == .initialBoot { return "Click Start to install macOS" }
         guard status == .paused else { return nil }
         return isColdPaused

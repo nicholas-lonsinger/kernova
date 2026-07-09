@@ -76,6 +76,17 @@ final class VMInstance {
     struct PreparingState {
         let operation: PreparingOperation
         var task: Task<Void, Never>
+
+        /// `true` once the user has cancelled but the uninterruptible copy is still settling.
+        ///
+        /// The row stays visible (as "Cancelling…") until the copy task finishes and removes it,
+        /// so the destination stays reconcile-protected and is trashed exactly once after the copy
+        /// settles (#496).
+        var isCancelling = false
+
+        /// The row's status label: "Cancelling…" once cancel is requested, otherwise the operation's
+        /// own label ("Importing…" / "Cloning…").
+        var displayLabel: String { isCancelling ? "Cancelling\u{2026}" : operation.displayLabel }
     }
 
     /// Non-nil when this instance is a phantom row awaiting a clone or import to finish.

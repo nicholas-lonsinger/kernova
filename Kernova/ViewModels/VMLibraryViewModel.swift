@@ -831,9 +831,9 @@ final class VMLibraryViewModel {
     ///
     /// `copyWork` runs on a detached `Task` and is uninterruptible (a blocking `FileManager`
     /// call), so a user cancel (`cancelPreparingConfirmed`) cancels this outer `Task` but the copy
-    /// keeps writing until it settles on its own; `cancelPreparingConfirmed` removes the row and
-    /// trashes the bundle. The success branch skips `onSuccess` when cancelled so it doesn't log a
-    /// phantom import/clone.
+    /// keeps writing until it settles on its own. Cancel leaves the "Cancelling…" row in place; this
+    /// task is the single owner of the settle — on cancel it removes the row and trashes the bundle
+    /// here (no race, the copy is done), instead of logging a phantom import/clone (#496).
     private func prepareBundle(
         _ phantom: VMInstance,
         operation: VMInstance.PreparingOperation,
@@ -847,13 +847,23 @@ final class VMLibraryViewModel {
             defer { phantom.preparingState = nil }
             do {
                 try await copyWork()
-                // Cancelled: `cancelPreparingConfirmed` already removed the row and trashed the
-                // bundle, so don't log a phantom success.
-                if Task.isCancelled { return }
-                guard self != nil else {
-                    Self.logger.warning(
-                        "\(operation.displayNoun, privacy: .public) completed but view model was deallocated — VM '\(phantom.name, privacy: .public)' exists on disk but was not added to library"
-                    )
+                guard let self else {
+                    // View model gone. If cancelled, trash the settled bundle; otherwise the copy
+                    // finished but there's no library to add it to.
+                    if Task.isCancelled {
+                        Self.trashPartialBundle(at: phantom.bundleURL)
+                    } else {
+                        Self.logger.warning(
+                            "\(operation.displayNoun, privacy: .public) completed but view model was deallocated — VM '\(phantom.name, privacy: .public)' exists on disk but was not added to library"
+                        )
+                    }
+                    return
+                }
+                if Task.isCancelled {
+                    // Cancelled while the uninterruptible copy was in flight: `cancelPreparingConfirmed`
+                    // left the "Cancelling…" row in place, so remove it now and trash the settled
+                    // bundle here — no race, the copy is done (#496).
+                    self.cleanupPhantomInstance(phantom)
                     return
                 }
                 onSuccess()
@@ -2057,12 +2067,24 @@ final class VMLibraryViewModel {
     }
 
     func cancelPreparingConfirmed(_ instance: VMInstance) {
-        let operationLabel = instance.preparingState?.operation.displayLabel ?? "preparing"
+        guard var state = instance.preparingState else {
+            // The copy already settled (finished before the user confirmed) — the row is a real VM
+            // now. Remove it and trash the completed bundle; safe, nothing is in flight (#496).
+            cleanupPhantomInstance(instance)
+            return
+        }
+        guard !state.isCancelling else { return }  // already cancelling
 
-        instance.preparingState?.task.cancel()
-        cleanupPhantomInstance(instance)
+        // Cancel the task and mark the row "Cancelling…", but keep it in `instances`. The copy is
+        // uninterruptible, so trashing/removing now would race the still-writing copy and briefly
+        // drop `hasPreparing` (letting reconcile resurrect the bundle). The copy task removes the
+        // row and trashes the bundle once the copy settles (#496).
+        state.task.cancel()
+        state.isCancelling = true
+        instance.preparingState = state
 
-        Self.logger.notice("Cancelled \(operationLabel, privacy: .public) for '\(instance.name, privacy: .public)'")
+        Self.logger.notice(
+            "Cancelling \(state.operation.displayNoun, privacy: .public) for '\(instance.name, privacy: .public)'")
     }
 
     /// Removes a phantom instance from the library, clears its preparing state, and trashes its partial bundle.

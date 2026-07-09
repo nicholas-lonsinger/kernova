@@ -2651,8 +2651,8 @@ struct VMLibraryViewModelTests {
 
     // MARK: - Cancel Preparing
 
-    @Test("cancelPreparingConfirmed removes phantom instance and cancels task")
-    func cancelPreparingConfirmedRemovesPhantom() {
+    @Test("cancelPreparingConfirmed marks the row Cancelling… and keeps it until the copy settles (#496)")
+    func cancelPreparingConfirmedMarksCancelling() {
         let (viewModel, _, _, _, _) = makeViewModel()
         let phantom = makeInstance(name: "Cloning VM")
         markPreparing(phantom)
@@ -2661,24 +2661,49 @@ struct VMLibraryViewModelTests {
 
         viewModel.cancelPreparingConfirmed(phantom)
 
-        #expect(viewModel.instances.isEmpty)
-        #expect(phantom.preparingState == nil)
-        #expect(presenter.showCancelPreparingConfirmation == false)
-        #expect(presenter.preparingInstanceToCancel == nil)
+        // The uninterruptible copy is still (notionally) in flight, so the row stays as "Cancelling…";
+        // the copy task removes + trashes it once the copy settles.
+        #expect(viewModel.instances.count == 1)
+        #expect(phantom.preparingState?.isCancelling == true)
+        #expect(phantom.preparingState?.displayLabel == "Cancelling\u{2026}")
     }
 
-    @Test("cancelPreparingConfirmed selects remaining instance")
-    func cancelPreparingConfirmedSelectsRemaining() {
-        let (viewModel, _, _, _, _) = makeViewModel()
-        let other = makeInstance(name: "Other VM")
-        let phantom = makeInstance(name: "Cloning VM")
-        markPreparing(phantom)
-        viewModel.instances = [other, phantom]
-        viewModel.selectedID = phantom.id
+    @Test("cancelPreparingConfirmed removes the row and trashes after the copy settles (#496)")
+    func cancelPreparingConfirmedRemovesAfterCopySettles() async throws {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let source = try makeImportSource(name: "Cancel Me", storage: storage)
+        defer { try? FileManager.default.removeItem(at: source.url.deletingLastPathComponent()) }
+
+        _ = viewModel.importVMs(fromDroppedURLs: [source.url])
+        let phantom = try #require(viewModel.instances.first { $0.configuration.id == source.config.id })
 
         viewModel.cancelPreparingConfirmed(phantom)
+        await viewModel.awaitPreparingForTesting()
+
+        // Once the copy settles the copy task removes the row (and trashes the bundle via the
+        // detached, best-effort trash path exercised by `importVMCopyFailureRemovesPhantom`) —
+        // whether the copy finished before or after the cancel, the end state is the same.
+        #expect(viewModel.instances.isEmpty)
+        #expect(phantom.preparingState == nil)
+        #expect(presenter.showError == false)
+    }
+
+    @Test("cancelPreparingConfirmed selects remaining instance after the copy settles (#496)")
+    func cancelPreparingConfirmedSelectsRemaining() async throws {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let other = makeInstance(name: "Other VM")
+        viewModel.instances.append(other)
+        let source = try makeImportSource(name: "Cancel Me", storage: storage)
+        defer { try? FileManager.default.removeItem(at: source.url.deletingLastPathComponent()) }
+
+        _ = viewModel.importVMs(fromDroppedURLs: [source.url])
+        let phantom = try #require(viewModel.instances.first { $0.configuration.id == source.config.id })
+
+        viewModel.cancelPreparingConfirmed(phantom)
+        await viewModel.awaitPreparingForTesting()
 
         #expect(viewModel.instances.count == 1)
+        #expect(viewModel.instances.first?.id == other.id)
         #expect(viewModel.selectedID == other.id)
     }
 
