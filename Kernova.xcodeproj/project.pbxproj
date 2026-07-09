@@ -636,7 +636,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -euo pipefail\nBUILD_NUMBER=$(git -C \"${SRCROOT}\" rev-list --count HEAD)\nif [ -z \"${BUILD_NUMBER}\" ]; then\n    echo \"error: Could not determine app build number from git history\" >&2\n    exit 1\nfi\nmkdir -p \"${DERIVED_FILE_DIR}\"\necho \"#define KERNOVA_BUILD_NUMBER ${BUILD_NUMBER}\" > \"${DERIVED_FILE_DIR}/KernovaBuildNumber.h\"\n";
+			shellScript = "\"${SRCROOT}/Tools/set-build-number.sh\" app\n";
 		};
 		A100020A /* Package Guest Agent DMG */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -683,7 +683,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -euo pipefail\nBUILD_NUMBER=$(git -C \"${SRCROOT}\" rev-list --count HEAD -- KernovaGuestAgent/ KernovaMacOSAgent/)\nif [ -z \"${BUILD_NUMBER}\" ]; then\n    echo \"error: Could not determine agent build number from git history\" >&2\n    exit 1\nfi\nmkdir -p \"${DERIVED_FILE_DIR}\"\necho \"#define AGENT_BUILD_NUMBER ${BUILD_NUMBER}\" > \"${DERIVED_FILE_DIR}/AgentBuildNumber.h\"\n";
+			shellScript = "\"${SRCROOT}/Tools/set-build-number.sh\" agent\n";
 		};
 		A100040F /* Set Build Number from Git */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -703,7 +703,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -euo pipefail\nBUILD_NUMBER=$(git -C \"${SRCROOT}\" rev-list --count HEAD)\nif [ -z \"${BUILD_NUMBER}\" ]; then\n    echo \"error: Could not determine app build number from git history\" >&2\n    exit 1\nfi\nmkdir -p \"${DERIVED_FILE_DIR}\"\necho \"#define KERNOVA_BUILD_NUMBER ${BUILD_NUMBER}\" > \"${DERIVED_FILE_DIR}/KernovaBuildNumber.h\"\n";
+			shellScript = "\"${SRCROOT}/Tools/set-build-number.sh\" app\n";
 		};
 		A100050F /* Set Build Number from Git */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -723,7 +723,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -euo pipefail\nBUILD_NUMBER=$(git -C \"${SRCROOT}\" rev-list --count HEAD -- KernovaGuestAgent/ KernovaMacOSAgent/)\nif [ -z \"${BUILD_NUMBER}\" ]; then\n    echo \"error: Could not determine agent build number from git history\" >&2\n    exit 1\nfi\nmkdir -p \"${DERIVED_FILE_DIR}\"\necho \"#define AGENT_BUILD_NUMBER ${BUILD_NUMBER}\" > \"${DERIVED_FILE_DIR}/AgentBuildNumber.h\"\n";
+			shellScript = "\"${SRCROOT}/Tools/set-build-number.sh\" agent\n";
 		};
 		A100060F /* Set Build Number from Git */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -743,7 +743,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -euo pipefail\nBUILD_NUMBER=$(git -C \"${SRCROOT}\" rev-list --count HEAD)\nif [ -z \"${BUILD_NUMBER}\" ]; then\n    echo \"error: Could not determine app build number from git history\" >&2\n    exit 1\nfi\nmkdir -p \"${DERIVED_FILE_DIR}\"\necho \"#define KERNOVA_BUILD_NUMBER ${BUILD_NUMBER}\" > \"${DERIVED_FILE_DIR}/KernovaBuildNumber.h\"\n";
+			shellScript = "\"${SRCROOT}/Tools/set-build-number.sh\" app\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
