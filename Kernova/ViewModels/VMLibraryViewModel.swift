@@ -803,6 +803,79 @@ final class VMLibraryViewModel {
         }
     }
 
+    // MARK: - Preparing Rows (shared by Clone & Import)
+
+    /// Adds a freshly-built phantom `VMInstance` to the library and selects it.
+    ///
+    /// Shared by `importVM(from:)` and `cloneVM(_:)`, which each build their own phantom
+    /// (differing in `configuration`/`bundleURL`/`status`) before handing it here.
+    private func registerPhantom(_ phantom: VMInstance) {
+        wirePersistence(for: phantom)
+        instances.append(phantom)
+        sortInstances()
+        persistOrder()
+        selectedID = phantom.id
+    }
+
+    /// Registers `phantom`, runs `copyWork` off a spawned `Task`, and wires the success /
+    /// deallocated / cancelled / failure cleanup both clone and import need around a
+    /// preparing row's file copy.
+    ///
+    /// Returns the `Task` so an async caller can await it: `importVM(from:)` awaits the
+    /// result so `hasPreparing` is false again by the time a batch import moves to its next
+    /// bundle (#444). `cloneVM(_:)` discards it and stays fire-and-forget — a clone's
+    /// UUID-named bundle (`storageService.bundleURL(for:)`) can never collide with another
+    /// clone or an import, so it needs no self-awaited serialization; `hasPreparing` there is
+    /// purely a UI-gate convention (only one preparing row shown at a time), not a
+    /// correctness requirement. If a future feature ever clones several VMs in one batch, it
+    /// should run those clones concurrently rather than copying import's sequential-await
+    /// shape — mirroring import's `await` here would import(!) a constraint clone doesn't
+    /// actually have.
+    @discardableResult
+    private func prepareBundle(
+        _ phantom: VMInstance,
+        operation: VMInstance.PreparingOperation,
+        copyWork: @escaping () async throws -> Void,
+        onSuccess: @escaping () -> Void
+    ) -> Task<Void, Never> {
+        registerPhantom(phantom)
+        let task = Task { [weak self] in
+            do {
+                try await copyWork()
+
+                // Clear preparing state regardless of whether the view model is still alive —
+                // the phantom row's UI should always reflect completion.
+                phantom.preparingState = nil
+                guard self != nil else {
+                    Self.logger.warning(
+                        "\(operation.displayNoun, privacy: .public) completed but view model was deallocated — VM '\(phantom.name, privacy: .public)' exists on disk but was not added to library"
+                    )
+                    return
+                }
+                onSuccess()
+            } catch {
+                guard let self else {
+                    // Clear preparing state and trash partial bundle even without the view model.
+                    phantom.preparingState = nil
+                    Self.trashPartialBundle(at: phantom.bundleURL)
+                    Self.logger.error(
+                        "\(operation.displayNoun, privacy: .public) failed and view model was deallocated — trashed partial bundle '\(phantom.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                    )
+                    return
+                }
+                self.cleanupPhantomInstance(phantom)
+                if !Task.isCancelled {
+                    Self.logger.error(
+                        "Failed to \(operation.displayNoun.lowercased(), privacy: .public) VM '\(phantom.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                    )
+                    self.presentError(error)
+                }
+            }
+        }
+        phantom.preparingState = VMInstance.PreparingState(operation: operation, task: task)
+        return task
+    }
+
     // MARK: - Import
 
     /// Imports a `.kernova` VM bundle from an external location (Finder double-click, drag-and-drop).
@@ -866,51 +939,22 @@ final class VMLibraryViewModel {
             }()
             // Create phantom row immediately
             let phantom = VMInstance(configuration: config, bundleURL: destinationURL, status: initialStatus)
-            wirePersistence(for: phantom)
-            instances.append(phantom)
-            sortInstances()
-            persistOrder()
-            selectedID = phantom.id
 
-            // Launch async file copy and assign preparing state atomically
-            let task = Task { [weak self] in
-                do {
+            // Launch async file copy and await it, so `hasPreparing` is false again by the
+            // time this returns (see `prepareBundle`'s doc comment for why import awaits and
+            // clone doesn't).
+            let task = prepareBundle(
+                phantom, operation: .importing,
+                copyWork: {
                     try await Task.detached {
                         try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
                     }.value
-
-                    // Clear preparing state regardless of whether the view model is still alive —
-                    // the phantom row's UI should always reflect completion.
-                    phantom.preparingState = nil
-                    guard self != nil else {
-                        Self.logger.warning(
-                            "Import completed but view model was deallocated — VM '\(config.name, privacy: .public)' exists on disk but was not added to library"
-                        )
-                        return
-                    }
+                },
+                onSuccess: {
                     Self.logger.notice(
                         "Imported VM '\(config.name, privacy: .public)' from \(sourceURL.lastPathComponent, privacy: .public)"
                     )
-                } catch {
-                    guard let self else {
-                        // Clear preparing state and trash partial bundle even without the view model.
-                        phantom.preparingState = nil
-                        Self.trashPartialBundle(at: phantom.bundleURL)
-                        Self.logger.error(
-                            "Import failed and view model was deallocated — trashed partial bundle '\(config.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-                        )
-                        return
-                    }
-                    self.cleanupPhantomInstance(phantom)
-                    if !Task.isCancelled {
-                        Self.logger.error(
-                            "Failed to import VM '\(config.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-                        )
-                        self.presentError(error)
-                    }
-                }
-            }
-            phantom.preparingState = VMInstance.PreparingState(operation: .importing, task: task)
+                })
             await task.value
         } catch {
             Self.logger.error(
@@ -1732,21 +1776,19 @@ final class VMLibraryViewModel {
 
         // Create phantom row immediately
         let phantom = VMInstance(configuration: clonedConfig, bundleURL: bundleURL)
-        wirePersistence(for: phantom)
-        instances.append(phantom)
-        sortInstances()
-        persistOrder()
-        selectedID = phantom.id
 
-        // Launch async file copy and assign preparing state atomically
+        // Launch async file copy; clone stays fire-and-forget (doesn't await the returned
+        // Task) — see `prepareBundle`'s doc comment for why import awaits and clone doesn't.
         let sourceBundleURL = instance.bundleURL
+        let sourceName = instance.name
         let config = clonedConfig
         let storage = storageService
         let diskMapping = internalDiskMapping
         let bundleFilesToCopy = filesToCopy
-        let task = Task { [weak self] in
-            let log = Self.logger
-            do {
+        prepareBundle(
+            phantom, operation: .cloning,
+            copyWork: {
+                let log = Self.logger
                 let skippedDiskIDs: Set<UUID> = try await Task.detached {
                     let resultURL = try storage.cloneVMBundle(
                         from: sourceBundleURL, newConfiguration: config, filesToCopy: bundleFilesToCopy)
@@ -1808,38 +1850,11 @@ final class VMLibraryViewModel {
                     }
                     try storage.saveConfiguration(phantom.configuration, to: phantom.bundleURL)
                 }
-
-                // Clear preparing state regardless of whether the view model is still alive —
-                // the phantom row's UI should always reflect completion.
-                phantom.preparingState = nil
-                guard self != nil else {
-                    Self.logger.warning(
-                        "Clone completed but view model was deallocated — VM '\(config.name, privacy: .public)' exists on disk but was not added to library"
-                    )
-                    return
-                }
+            },
+            onSuccess: {
                 Self.logger.notice(
-                    "Cloned VM '\(instance.name, privacy: .public)' as '\(config.name, privacy: .public)'")
-            } catch {
-                guard let self else {
-                    // Clear preparing state and trash partial bundle even without the view model.
-                    phantom.preparingState = nil
-                    Self.trashPartialBundle(at: phantom.bundleURL)
-                    Self.logger.error(
-                        "Clone failed and view model was deallocated — trashed partial bundle '\(config.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-                    )
-                    return
-                }
-                self.cleanupPhantomInstance(phantom)
-                if !Task.isCancelled {
-                    Self.logger.error(
-                        "Failed to clone VM '\(config.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-                    )
-                    self.presentError(error)
-                }
-            }
-        }
-        phantom.preparingState = VMInstance.PreparingState(operation: .cloning, task: task)
+                    "Cloned VM '\(sourceName, privacy: .public)' as '\(config.name, privacy: .public)'")
+            })
     }
 
     // MARK: - Sleep/Wake

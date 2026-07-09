@@ -465,6 +465,12 @@ struct VMInstanceTests {
         #expect(VMInstance.PreparingOperation.importing.cancelAlertTitle == "Cancel Import?")
     }
 
+    @Test("PreparingOperation displayNoun")
+    func preparingOperationDisplayNoun() {
+        #expect(VMInstance.PreparingOperation.cloning.displayNoun == "Clone")
+        #expect(VMInstance.PreparingOperation.importing.displayNoun == "Import")
+    }
+
     // MARK: - agentStatus dispatch
     //
     // `VMInstance.agentStatus` is the single read site for the UI; it must
