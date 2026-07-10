@@ -2,17 +2,37 @@ import Testing
 import Foundation
 @testable import Kernova
 
-@Suite("AppPreferences")
+// A fixed suite name (rather than a fresh UUID per call) bounds the on-disk
+// footprint to a single tombstone plist regardless of how many times the
+// suite runs; `.serialized` below keeps the two tests from racing over that
+// shared domain. See #449.
+@Suite("AppPreferences", .serialized)
 struct AppPreferencesTests {
-    /// Runs `body` with a fresh `AppPreferences` over an isolated, ephemeral
-    /// defaults suite, then tears the suite down so tests never touch the real
+    private static let suiteName = "test.kernova.appprefs"
+
+    /// Runs `body` with a fresh `AppPreferences` over an isolated defaults
+    /// suite, then tears the suite down so tests never touch the real
     /// `.standard` domain, each other's state, or leak a persisted plist.
     private func withEphemeralPreferences(
         _ body: (AppPreferences, UserDefaults) throws -> Void
     ) throws {
-        let suiteName = "test.kernova.appprefs.\(UUID().uuidString)"
+        let suiteName = Self.suiteName
         let defaults = try #require(UserDefaults(suiteName: suiteName))
-        defer { defaults.removePersistentDomain(forName: suiteName) }
+        // Clear before use, not just after: a prior run hard-killed mid-test
+        // (CI timeout, SIGKILL, Xcode stop) skips the `defer` below and can
+        // leave a stale value on disk under this fixed name (#449).
+        defaults.removePersistentDomain(forName: suiteName)
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            // cfprefsd leaves an empty tombstone plist behind even after
+            // removePersistentDomain empties the in-memory domain; delete it
+            // so repeated test runs don't accumulate files (#449).
+            if let plistURL = FileManager.default.urls(
+                for: .libraryDirectory, in: .userDomainMask
+            ).first?.appending(path: "Preferences/\(suiteName).plist") {
+                try? FileManager.default.removeItem(at: plistURL)
+            }
+        }
         try body(AppPreferences(defaults: defaults), defaults)
     }
 
