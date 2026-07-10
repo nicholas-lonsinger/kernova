@@ -173,8 +173,9 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
         // that post-mortem — accepts are infrequent (one per owner connect), so
         // persisting them is cheap. Mirrors `AppDelegate.residentProvenanceLine`
         // (#519), the complementary owner-side startup provenance line.
+        let peerPID = newConnection.processIdentifier
         logger.notice(
-            "\(Self.acceptedOwnerLogLine(pid: newConnection.processIdentifier, executablePath: Self.executablePath(forPID: newConnection.processIdentifier), pendingCount: drained.count), privacy: .public)"
+            "\(Self.acceptedOwnerLogLine(pid: peerPID, executablePath: Self.executablePath(forPID: peerPID), pendingCount: drained.count), privacy: .public)"
         )
         for pull in drained {
             // Each drained pull's connect timer (if armed) fires later and no-ops —
