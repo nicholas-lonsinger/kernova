@@ -9,7 +9,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r 'select(.tool_input.action == \"remove\") | .cwd // empty' | { read -r wt; [ -n \"$wt\" ] && /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister -u \"$wt/DerivedData/Build/Products/Debug/Kernova.app\"; } 2>/dev/null || true",
+            "command": "jq -r 'select(.tool_input.action == \"remove\") | .cwd // empty' | { read -r wt; [ -n \"$wt\" ] && { LSREG=/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister; p=\"$wt/DerivedData/Kernova/Build/Products\"; for app in \"Kernova.app\" \"Kernova Guest Agent.app\"; do for cfg in Debug Release; do \"$LSREG\" -u \"$p/$cfg/$app\"; done; done; }; } 2>/dev/null || true",
             "timeout": 15,
             "statusMessage": "Unregistering worktree build from LaunchServices"
           }
