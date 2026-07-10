@@ -225,7 +225,10 @@ struct SpiceClipboardServiceTests {
 
         try outputPipe.fileHandleForWriting.close()
 
-        try await waitUntil { !service.isConnected }
+        // `isConnected` is a stored property on the `@Observable` service, and the
+        // reader loop flips it through the observed setter on EOF — so this is an
+        // event-driven `waitForChange`, not a poll (matching VsockControlServiceTests).
+        try await waitForChange { !service.isConnected }
         #expect(!service.isConnected)
         service.stop()
     }

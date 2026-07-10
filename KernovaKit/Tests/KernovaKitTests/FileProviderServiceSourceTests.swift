@@ -197,10 +197,18 @@ struct FileProviderServiceSourceTests {
 
     @Test("cancelling a pull already dispatched to the owner asks the owner to abort it (#464)")
     func cancelDispatchedPullAsksOwnerToAbort() async throws {
-        // Short reply timeout: the relay below never replies, so this just
-        // bounds how long the (already-cancelled, harmless) background timer
-        // lingers rather than sitting at the 120s production default.
-        let source = makeSource(fetchReplyTimeout: 2)
+        // Use the full production reply timeout (makeSource's 120s default), not
+        // a small "tidy" bound. The relay below never replies, so performPull
+        // arms its reply-timeout timer the moment this pull dispatches, and that
+        // timer races the `cancellation.cancel()` call further down. A small
+        // timeout (this test previously passed 2s) lets a starved CI scheduler
+        // fire the timer first — completing the pull with `serverUnreachable`
+        // and failing the NSUserCancelledError assertions below (a real,
+        // recurring CI flake). The timer is never cancelled in production either
+        // (see performPull); after `cancel()` it is a harmless no-op via
+        // `OnceCompletion` and does not hold up suite completion, so there is
+        // nothing to gain by shrinking it.
+        let source = makeSource()
         let relay = RecordingRelay()
         defer { relay.invalidate() }
 
