@@ -732,9 +732,10 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
         }
     }
 
-    /// Removes this app's File Provider domains, blocking until done — for the
-    /// `--remove-clipboard-domain` teardown flag so host-side iteration leaves no
-    /// lingering Finder location behind.
+    /// Removes this app's File Provider domains, blocking until done — backs the
+    /// `--remove-clipboard-domain` teardown flag wired by both the host app
+    /// (`AppDelegate.main()`) and the guest agent (`AgentAppDelegate.main()`), so
+    /// dev/test iteration on either side leaves no lingering Finder location behind.
     public static func removeAllDomainsBlocking() {
         let semaphore = DispatchSemaphore(value: 0)
         NSFileProviderManager.removeAllDomains { error in

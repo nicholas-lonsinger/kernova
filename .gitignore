@@ -63,3 +63,4 @@ CLAUDE.local.md
 *.pem
 *.p12
 *.key
+*.profraw

@@ -80,8 +80,9 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
             exit(0)
         }
 
-        // Teardown helper for host-side iteration (#376) — removes the clipboard
-        // File Provider domain so no Finder location lingers after a test.
+        // Dev/test teardown helper (#376) — removes the guest clipboard File
+        // Provider domain so no Finder location lingers after a test. The host app
+        // wires the same flag for its own domain (#467).
         if CommandLine.arguments.contains("--remove-clipboard-domain") {
             FileProviderDomainHost.removeAllDomainsBlocking()
             exit(0)
