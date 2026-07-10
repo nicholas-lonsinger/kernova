@@ -48,6 +48,9 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
     /// never complete. This runs off Finder's clock (the placeholder already
     /// returned), so it can be generous — long enough for any real pull, finite so
     /// a hung owner can't strand the fetch forever.
+    ///
+    /// Defaults to `FileProviderServicingTiming.fetchReplyWait` — the source of
+    /// truth tests reference instead of independently re-hardcoding the value.
     private let fetchReplyTimeout: TimeInterval
 
     private let config: FileProviderConfig
@@ -92,7 +95,7 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
     init(
         config: FileProviderConfig, logger: Logger,
         connectTimeout: TimeInterval = FileProviderServicingTiming.connectWait,
-        fetchReplyTimeout: TimeInterval = 120
+        fetchReplyTimeout: TimeInterval = FileProviderServicingTiming.fetchReplyWait
     ) {
         self.config = config
         self.logger = logger

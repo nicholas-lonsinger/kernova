@@ -42,4 +42,13 @@ public enum FileProviderServicingTiming {
     public static var maxConnectAttempts: Int {
         max(1, Int((connectWait / connectRetryDelaySeconds).rounded(.up)) + 1)
     }
+
+    /// Extension-side bounded wait for the owner's byte-pull reply once a
+    /// connection is live (`FileProviderServiceSource.fetchReplyTimeout`).
+    ///
+    /// The single source of truth for that default, so a test that wants "the
+    /// full production reply timeout" (see CLAUDE.md's "Async waits in tests")
+    /// can reference it instead of independently re-hardcoding `120`, which
+    /// would let the two silently drift apart.
+    public static let fetchReplyWait: TimeInterval = 120
 }

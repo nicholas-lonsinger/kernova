@@ -93,7 +93,8 @@ struct FileProviderServiceSourceTests {
     /// process) but never accepts a connection unless the test does so itself,
     /// keeping every pull pending until then.
     private func makeSource(
-        connectTimeout: TimeInterval = 30, fetchReplyTimeout: TimeInterval = 120
+        connectTimeout: TimeInterval = FileProviderServicingTiming.connectWait,
+        fetchReplyTimeout: TimeInterval = FileProviderServicingTiming.fetchReplyWait
     ) -> FileProviderServiceSource {
         FileProviderServiceSource(
             config: makeTestFileProviderConfig(),
@@ -197,10 +198,13 @@ struct FileProviderServiceSourceTests {
 
     @Test("cancelling a pull already dispatched to the owner asks the owner to abort it (#464)")
     func cancelDispatchedPullAsksOwnerToAbort() async throws {
-        // Short reply timeout: the relay below never replies, so this just
-        // bounds how long the (already-cancelled, harmless) background timer
-        // lingers rather than sitting at the 120s production default.
-        let source = makeSource(fetchReplyTimeout: 2)
+        // Full production reply timeout, not a shrunk "tidy" bound — see
+        // CLAUDE.md's "Injected production timeouts race the test body" rule.
+        // The relay below never replies, so performPull's reply-timeout timer
+        // races `cancellation.cancel()` further down; this test previously
+        // passed `fetchReplyTimeout: 2` and flaked when a starved CI scheduler
+        // fired the timer first.
+        let source = makeSource()
         let relay = RecordingRelay()
         defer { relay.invalidate() }
 
