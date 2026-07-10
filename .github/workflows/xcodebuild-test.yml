@@ -90,16 +90,23 @@ jobs:
             echo "jq not found — skipping flake report."
             exit 0
           fi
-          # Each attempt is a "Repetition" node; a genuine flake has at least one
-          # Repetition with result "Failed" (a bundle-wide retry marks every
-          # passed test's repetitions "Passed", so this does not false-positive on
-          # the other tests dragged through the retry). `|| true` keeps this step
-          # from ever failing the job on an xcresulttool/jq hiccup.
-          report="$(xcrun xcresulttool get test-results tests --path "$bundle" 2>/dev/null || true)"
-          flaky="$(printf '%s' "$report" | jq -r '[ .. | objects
-                     | select(.nodeType? == "Test Case")
-                     | select(any(.children[]?; .nodeType == "Repetition" and .result == "Failed"))
-                     | .name ] | unique[]' 2>/dev/null || true)"
+          # Each attempt is a "Repetition" node; a genuine flake failed at least
+          # one Repetition but still passed overall (a bundle-wide retry marks
+          # every passed test's repetitions "Passed", so this does not
+          # false-positive on the other tests dragged through the retry). A test
+          # that failed every repetition is broken, not flaky — it already fails
+          # the job on its own via xcodebuild's exit code, so `result == "Passed"`
+          # excludes it here to avoid mislabeling it as a mere flake. Dedup on
+          # `.nodeIdentifier` (suite-qualified) rather than `.name` (bare display
+          # name), since two unrelated suites can share a test's display name.
+          if ! flaky="$(xcrun xcresulttool get test-results tests --path "$bundle" 2>&1 | jq -r '
+                [ .. | objects
+                  | select(.nodeType? == "Test Case" and .result == "Passed")
+                  | select(any(.children[]?; .nodeType == "Repetition" and .result == "Failed"))
+                  | (.nodeIdentifier // .name) ] | unique[]' 2>&1)"; then
+            echo "Could not read/parse test results at $bundle — skipping flake report. Output: $flaky"
+            exit 0
+          fi
           if [ -z "$flaky" ]; then
             echo "No flaky (failed-then-retried) tests in this run."
             exit 0
@@ -109,11 +116,13 @@ jobs:
             echo ""
             echo "Retried via \`retryOnFailure\`, so these may have passed the job on a later attempt. Investigate before they degrade further:"
             echo ""
-          } >> "$GITHUB_STEP_SUMMARY"
+          } >> "$GITHUB_STEP_SUMMARY" || true
           while IFS= read -r name; do
-            [ -z "$name" ] && continue
-            echo "::warning title=Flaky test (failed then retried)::${name}"
-            echo "- \`${name}\`" >> "$GITHUB_STEP_SUMMARY"
+            # GitHub's `::` workflow-command protocol requires literal `%` in the
+            # message to be percent-encoded so it isn't misparsed as an escape.
+            escaped="${name//%/%25}"
+            echo "::warning title=Flaky test (failed then retried)::${escaped}"
+            echo "- \`${name}\`" >> "$GITHUB_STEP_SUMMARY" || true
           done <<< "$flaky"
 
       - name: Upload test results
