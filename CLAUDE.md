@@ -366,10 +366,19 @@ Two cases stay uncovered by design: a human running `git worktree remove`
 directly triggers nothing (it is not a harness tool call, and git has **no**
 worktree-lifecycle hook — `man githooks` confirms), and Xcode-side hashed
 DerivedData lands outside `.cwd`. Both leave ghosts that only accumulate; clear
-the backlog on demand with a one-time database rebuild — `lsregister -kill -r
--domain local -domain system -domain user` (the binary is not on `PATH`; it
-lives under `…/CoreServices.framework/…/LaunchServices.framework/…/Support/
-lsregister`).
+the backlog on demand with `make ghosts` (report) / `make clean-ghosts` (also
+unregisters/kills/prunes) and `make ls-reset` for the legacy pre-#471-rename
+`com.kernova.app` identifier a plain regex update to `ghosts.sh` doesn't yet
+cover (`Tools/ghosts.sh`, `Tools/ls-reset.sh`, #454). `make ghosts` also
+inventories LIVE Kernova.app copies still on disk under Trash and
+`~/Library/Developer/Xcode/DerivedData` — exactly the hashed-DerivedData case
+above — and flags any that outrank the installed `/Applications` copy in the
+LaunchServices/PluginKit CFBundleVersion election, since Spotlight indexes
+neither location (`mdfind` alone misses them). Do not reach for a system-wide
+`lsregister -kill -r` rebuild: `-kill` has been removed from current macOS's
+`lsregister` ("dangerous and no longer useful" per `lsregister -h`), and a
+plain `lsregister -u <path>` reliably unregisters an entry even once its path
+is gone (verified empirically 2026-07-08, `Tools/ls-reset.sh`).
 
 ### Commit Messages
 

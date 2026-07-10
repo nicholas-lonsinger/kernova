@@ -20,6 +20,13 @@
 #     on disk (the file was deleted out from under a still-running process)
 #   - `git worktree list` entries marked `prunable` (administrative metadata
 #     for a worktree whose directory is already gone)
+#   - LIVE on-disk Kernova.app copies (Trash, DerivedData) whose
+#     CFBundleVersion outranks the installed /Applications copy — unlike the
+#     dead-path ghosts above, LaunchServices/PluginKit elect these by highest
+#     CFBundleVersion (= squash-aware git commit count, see CLAUDE.md "Build
+#     version"), so a ghost build can shadow the real app indefinitely even
+#     though version ordering can never favor the installed copy on its own
+#     (#454). Deregistration/eviction is the only lever.
 #
 # Run via `make ghosts` (report only) or `make clean-ghosts` (also fixes).
 # Direct invocation: Tools/ghosts.sh [--fix]
@@ -107,7 +114,7 @@ else
         for path in "${live_ghost_paths[@]}"; do
             if printf '%s\n' "$still_registered" | grep -qxF "$path"; then
                 detail "still registered: $path"
-                detail 'A full `lsregister -kill -r -domain local -domain user` rebuild would clear it, but that resets ALL app registrations system-wide, not just Kernova, so this script will not do that for you.'
+                detail 'Unexpected — a plain `lsregister -u` normally sticks even once the path is gone (see Tools/ls-reset.sh). Re-run this script; if it persists, file a bug rather than reaching for `lsregister -kill` (removed on current macOS).'
             else
                 fixed "unregistered: $path"
             fi
@@ -182,9 +189,148 @@ if ! printf '%s\n' "$fp_dump" | grep -qiE "app\.kernova|kernova-clipboard"; then
 elif printf '%s\n' "$fp_dump" | grep -q "DeadEndBackend"; then
     ghost 'A File Provider domain looks wedged (dead-end backend) with Kernova registered'
     detail 'Run `make fp-reset`, then relaunch Kernova to re-register a fresh domain.'
+    detail 'A stale "Kernova Clipboard (Mac)" Finder location that survives fp-reset needs a full domain'
+    detail 'removal instead: run the installed app with `--remove-clipboard-domain` (#454, #467, #516).'
+    detail 'This resets the domain'"'"'s System Settings enablement, so use it only when fp-reset didn'"'"'t help.'
 else
     clean 'Kernova File Provider domain(s) registered, none dead-ended'
     detail 'If Copy to Mac beeps or hangs, `make fp-reset` clears stale fileproviderd bindings.'
+fi
+
+# ---- live on-disk copies & Launch Services/PluginKit election ----------------
+
+section 'On-disk copies & registration election'
+
+# Unlike the dead-path ghost check above, this looks for LIVE copies that
+# still exist on disk but sit outside /Applications — Trash and DerivedData
+# are the two sources that actually outrank an installed copy, because both
+# escape `mdfind`: DerivedData ships a `.metadata_never_index` sentinel and
+# Trash is excluded from Spotlight entirely. LaunchServices/PluginKit elect a
+# handler by highest CFBundleVersion (a squash-aware git commit count — see
+# CLAUDE.md "Build version"), so a ghost build with a higher count can shadow
+# the real app indefinitely; version ordering can never fix this on its own,
+# eviction is the only lever (#454).
+kernova_app_copies() {
+    {
+        mdfind "kMDItemCFBundleIdentifier == 'app.kernova'" 2>/dev/null
+        find "$HOME/.Trash" -maxdepth 6 -iname 'Kernova.app' -type d 2>/dev/null
+        find "$HOME/Library/Developer/Xcode/DerivedData" -maxdepth 6 -iname 'Kernova.app' -type d 2>/dev/null
+        find "$REPO_ROOT/DerivedData" -maxdepth 6 -iname 'Kernova.app' -type d 2>/dev/null
+    } | sort -u
+}
+
+bundle_version() {
+    plutil -extract CFBundleVersion raw -o - "$1/Contents/Info.plist" 2>/dev/null
+}
+
+# Ad-hoc vs. a real identity — mixed signing across copies breaks the
+# app-group/relay handshake and masquerades as an unrelated bug.
+signing_summary() {
+    local info team
+    info=$(codesign -dv --verbose=2 "$1" 2>&1)
+    if printf '%s' "$info" | grep -q '^Signature=adhoc'; then
+        printf 'ad-hoc'
+        return
+    fi
+    team=$(printf '%s' "$info" | sed -n 's/^TeamIdentifier=//p')
+    if [ -n "$team" ] && [ "$team" != "not set" ]; then
+        printf 'team %s' "$team"
+    else
+        printf 'identity'
+    fi
+}
+
+# is_numeric VALUE -> 0 (true) when VALUE is a plain non-empty integer.
+is_numeric() {
+    case "${1:-}" in
+        ''|*[!0-9]*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+app_copies=()
+while IFS= read -r path; do
+    [ -z "$path" ] && continue
+    [ -e "$path" ] && app_copies+=("$path")
+done < <(kernova_app_copies)
+
+if [ "${#app_copies[@]}" -eq 0 ]; then
+    clean 'No on-disk Kernova.app copies found'
+else
+    blessed_path='/Applications/Kernova.app'
+    blessed_version=''
+    for path in "${app_copies[@]}"; do
+        [ "$path" = "$blessed_path" ] && blessed_version=$(bundle_version "$blessed_path")
+    done
+
+    competing_copies=()
+    for path in "${app_copies[@]}"; do
+        ver=$(bundle_version "$path")
+        sign=$(signing_summary "$path")
+        if [ "$path" = "$blessed_path" ]; then
+            clean "$path — version ${ver:-unknown}, $sign (installed copy)"
+            continue
+        fi
+
+        outranks=0
+        if is_numeric "$ver" && is_numeric "$blessed_version" && [ "$ver" -ge "$blessed_version" ]; then
+            outranks=1
+        fi
+        if [ "$outranks" = 1 ]; then
+            ghost "$path — version ${ver:-unknown}, $sign (outranks the installed copy, wins the election)"
+            competing_copies+=("$path")
+        else
+            detail "$path — version ${ver:-unknown}, $sign"
+        fi
+    done
+
+    if [ "$FIX" = 1 ] && [ "${#competing_copies[@]}" -gt 0 ]; then
+        if [ ! -t 0 ]; then
+            detail 'Not evicting competing copies: stdin is not a TTY, run interactively to confirm.'
+        elif ! command -v trash >/dev/null 2>&1; then
+            detail 'Not evicting competing copies: the `trash` CLI is not installed (brew install trash).'
+        else
+            for path in "${competing_copies[@]}"; do
+                printf '  Trash and unregister %s? [y/N] ' "$path"
+                read -r reply
+                case "$reply" in
+                    y|Y|yes|YES)
+                        if trash "$path" 2>/dev/null; then
+                            "$LSREGISTER" -u "$path" >/dev/null 2>&1
+                            fixed "trashed and unregistered: $path"
+                        else
+                            detail "trash failed for $path"
+                        fi
+                        ;;
+                    *)
+                        detail "skipped: $path"
+                        ;;
+                esac
+            done
+        fi
+    fi
+fi
+
+# PlugInKit's election for the three appexes follows the same highest-version
+# rule as the app itself. Report-only — recovering a wedged plugin means
+# evicting the competing app copy above, not a targeted pluginkit repair.
+for id in app.kernova.quicklook app.kernova.fileprovider app.kernova.macosagent.fileprovider; do
+    info=$(pluginkit -m -v -i "$id" 2>/dev/null)
+    if [ -z "$info" ]; then
+        detail "$id: not registered with PlugInKit"
+    else
+        detail "$id: $info"
+    fi
+done
+
+# launchd's record is read-only diagnosis here, never a repair target: BTM
+# does not self-clean, and its cross-path semantics on a scripted
+# unregister/register are undocumented. Repair goes through a normal launch of
+# the intended copy (which re-registers it), not a scripted fix in this script
+# (#454).
+launchd_line=$(launchctl print "gui/$(id -u)/app.kernova" 2>/dev/null | awk -F'= ' '/path = /{print $2; exit}')
+if [ -n "$launchd_line" ]; then
+    detail "launchd holds (read-only): $launchd_line"
 fi
 
 # ---- summary ------------------------------------------------------------------
