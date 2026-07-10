@@ -1462,6 +1462,113 @@ struct VsockClipboardServiceTests {
         }
     }
 
+    @Test(
+        "A control frame arriving while pullStagedFile blocks main does not stall stream-frame routing (#458)"
+    )
+    func controlFrameDuringBlockingPullDoesNotStallRouting() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        // A backstop, not the success path: under the fix this resolves in
+        // milliseconds via genuine delivery. A few seconds' slack absorbs macOS
+        // CI's heavy @MainActor scheduling jitter (CLAUDE.md's "Async waits in
+        // tests") without masking a real regression with an overly generous wait.
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", lazyPullTimeout: .seconds(5))
+        service.start()
+        defer { service.stop() }
+
+        // A single lazy-eligible file rep (non-inline, named) — pullStagedFile's target.
+        try guest.send(
+            makeOffer(
+                generation: 30,
+                reps: [(uti: "public.data", byteCount: 4, filename: "f.bin", isInline: false)]))
+        try await waitForChange {
+            service.clipboardContent.representations.first?.isPendingRemote == true
+        }
+
+        let payload = Data([0xDE, 0xAD, 0xBE, 0xEF])
+        let xid = inboundTransferID(generation: 30, repIndex: 0)
+
+        // Drains the guest side independently of the host's main thread: on seeing
+        // the host's ClipboardRequest, sends an inert control frame FIRST — the
+        // interleaving #458 describes, a control frame landing mid-pull — THEN the
+        // stream frames that resolve the pull. `.detached` (not plain `Task {}`,
+        // which would inherit this MainActor test struct's isolation) so this
+        // truly never touches the host's main actor and isn't blocked by the
+        // pullStagedFile call below; it is the guest-side analog of the "peer
+        // keeps talking while we're mid-transfer" scenario.
+        let responderTask = Task.detached {
+            for try await frame in guest.incoming {
+                guard case .clipboardRequest(let req) = frame.payload, req.transferID == xid
+                else { continue }
+                try guest.sendErrorFrame(
+                    code: "clipboard.interleaved", message: "control frame mid-pull",
+                    inReplyTo: "clipboard.request")
+                var begin = Frame()
+                begin.protocolVersion = 1
+                begin.clipboardStreamBegin = Kernova_V1_ClipboardStreamBegin.with {
+                    $0.generation = req.generation
+                    $0.transferID = req.transferID
+                    $0.uti = req.uti
+                    $0.totalBytes = UInt64(payload.count)
+                    $0.filename = "f.bin"
+                    $0.isInline = false
+                }
+                try guest.send(begin)
+                // Inlined rather than calling the suite's `sendChunkAndEnd` helper:
+                // that helper is `@MainActor`-isolated (an instance method on this
+                // struct), and this closure must stay genuinely off-actor.
+                var chunkFrame = Frame()
+                chunkFrame.protocolVersion = 1
+                chunkFrame.clipboardChunk = Kernova_V1_ClipboardChunk.with {
+                    $0.transferID = req.transferID
+                    $0.offset = 0
+                    $0.data = payload
+                }
+                try guest.send(chunkFrame)
+                var endFrame = Frame()
+                endFrame.protocolVersion = 1
+                endFrame.clipboardStreamEnd = Kernova_V1_ClipboardStreamEnd.with {
+                    $0.transferID = req.transferID
+                    $0.totalBytes = UInt64(payload.count)
+                    $0.sha256 = Data(SHA256.hash(data: payload))
+                }
+                try guest.send(endFrame)
+                return
+            }
+        }
+        defer { responderTask.cancel() }
+
+        // The toggle-off paste `provide` callback calls this directly on main — a
+        // real synchronous block of the main thread, exactly like production.
+        // Under the old `await onControlFrame` code this would hang until the
+        // lazyPullTimeout backstop fired and resolved to `.pullFailed`: the
+        // interleaved control frame suspends the whole consume loop on the
+        // unavailable main actor, so the Begin/Chunk/End behind it in the channel
+        // never route and the pull's semaphore never signals. Under the fix, the
+        // consume loop dispatches the control frame fire-and-forget and keeps
+        // draining — Begin/Chunk/End route immediately regardless of main being
+        // blocked — so this resolves promptly.
+        let outcome = service.pullStagedFile(generation: 30, repIndex: 0)
+        guard case .success(let path) = outcome else {
+            Issue.record("Expected pullStagedFile to succeed, got \(outcome)")
+            return
+        }
+        #expect(try Data(contentsOf: URL(fileURLWithPath: path)) == payload)
+
+        // The interleaved control frame wasn't dropped — it's processed
+        // fire-and-forget, so it surfaces once main frees up.
+        try await waitForChange { service.lastTransferIssue != nil }
+        if case .peerReportedError(let code, _) = service.lastTransferIssue?.kind {
+            #expect(code == "clipboard.interleaved")
+        } else {
+            Issue.record("Expected the interleaved control frame's error to surface")
+        }
+    }
+
     @Test("A newer offer supersedes an in-flight pull — the pull resolves to nothing, new placeholders publish")
     func newerOfferSupersedesInFlightPull() async throws {
         let (guest, host) = try makePair()
@@ -2213,6 +2320,18 @@ struct VsockClipboardServiceTests {
         let info = try #require(offer.repInfo.first)
         let xid = transferID(generation: offer.generation, repIndex: 0)
         try guest.send(makeRequest(generation: offer.generation, repIndex: 0, uti: info.uti))
+
+        // Wait for Begin before acking: handleRequest (a control frame, now
+        // dispatched fire-and-forget per #458) registers the transfer with the
+        // sender — an ack sent before that registration lands would be for a
+        // transfer_id the sender doesn't know yet. A real guest can't ack before
+        // it, either — Begin is what startTransfer sends, so there's nothing to
+        // ack until it arrives.
+        let beginFrame = try await nextFrame(from: guest)
+        guard case .clipboardStreamBegin = beginFrame.payload else {
+            Issue.record("Expected clipboardStreamBegin, got \(String(describing: beginFrame.payload))")
+            return
+        }
 
         // First ack: a one-chunk window → the host sends a single 64 KiB chunk
         // then blocks on credit, so progress shows but the transfer isn't done.
