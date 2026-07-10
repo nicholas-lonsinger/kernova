@@ -16,8 +16,8 @@ public typealias Frame = Kernova_V1_Frame
 /// `close()`, by EOF on the read side, or by the underlying `FileHandle` on
 /// dealloc.
 ///
-/// **Concurrency model**: this class is `@unchecked Sendable` with an
-/// internal `NSLock` rather than `@MainActor`-isolated like much of the
+/// **Concurrency model**: this class is `@unchecked Sendable` with two
+/// internal `NSLock`s rather than `@MainActor`-isolated like much of the
 /// host-side code (`SpiceClipboardService`, `VsockGuestLogService`). The
 /// reasons:
 /// - `FileHandle.readabilityHandler` callbacks run on a private GCD queue,
@@ -29,6 +29,31 @@ public typealias Frame = Kernova_V1_Frame
 ///   hops
 /// The lock-based design lets either side call `send` from any context and
 /// drain `incoming` from any task without isolation hops.
+///
+/// **Two locks, not one** (fixes #457): `writeFramed` performs a *blocking*
+/// `FileHandle.write` — it can park in `write(2)` for as long as the peer's
+/// socket receive buffer stays full (the streaming credit window, 1–2 MiB,
+/// intentionally exceeds the ~512 KiB XNU send buffer; see
+/// `ClipboardStreamTuning`). If that write held the same lock the inbound
+/// decode path needs, a stalled peer would starve inbound frame processing —
+/// including the very acks that advance the credit window and unblock the
+/// write. So the two responsibilities use separate locks:
+/// - `writeLock` serializes `writeFramed` and is held only around the
+///   blocking `fileHandle.write` call itself.
+/// - `stateLock` guards the tiny `started`/`closed` flags and is never held
+///   across a blocking operation.
+/// `decoder` is touched only from `handleChunk`, which always runs on the
+/// `FileHandle`'s single serial readability GCD queue — it needs no lock.
+/// Because `handleChunk` never takes `writeLock`, inbound decode proceeds
+/// even while a write is parked in `write(2)`. Teardown (`teardown(finishWith:)`)
+/// calls `shutdown(2)` on the descriptor *before* touching `writeLock`, so a
+/// parked write is woken and unwinds instead of pinning the lock forever.
+/// `handleChunk` holds `stateLock` across its whole decode/yield loop (not
+/// just the initial closed-check) so a concurrent `teardown` can't finish the
+/// `incoming` continuation while a decoded frame is still being yielded —
+/// that decode/yield work is pure in-memory computation, never a blocking
+/// call, so holding `stateLock` across it doesn't reintroduce the write-vs-decode
+/// stall this split was meant to fix.
 public final class VsockChannel: @unchecked Sendable {
     /// Inbound frames.
     ///
@@ -37,13 +62,30 @@ public final class VsockChannel: @unchecked Sendable {
     public let incoming: AsyncThrowingStream<Frame, Error>
 
     private let fileHandle: FileHandle
-    private let lock = NSLock()
     private let continuation: AsyncThrowingStream<Frame, Error>.Continuation
 
-    // All fields below are protected by `lock`.
-    private var decoder = VsockFrameDecoder()
+    /// Serializes the blocking `fileHandle.write` call inside `writeFramed`.
+    ///
+    /// Held only around the write itself — never across a `stateLock`-guarded
+    /// check or teardown — so a parked write can't stall anything but other
+    /// writers.
+    private let writeLock = NSLock()
+
+    /// Guards `started`/`closed`.
+    ///
+    /// Held for the duration of a flag read/write only, never across a
+    /// blocking call, so `handleChunk` (the inbound decode path) never waits
+    /// on a writer parked in `write(2)`.
+    private let stateLock = NSLock()
     private var started = false
     private var closed = false
+
+    /// Decodes inbound bytes into frames.
+    ///
+    /// Fed and drained only from `handleChunk`, which always runs on the
+    /// `FileHandle`'s own serial readability GCD queue — reader-confined, no
+    /// lock needed.
+    private var decoder = VsockFrameDecoder()
 
     /// Set once on first `VsockChannel` construction: ignore `SIGPIPE`
     /// process-wide so a write to a peer whose read side has closed surfaces
@@ -96,8 +138,8 @@ public final class VsockChannel: @unchecked Sendable {
 
     /// Begins reading from the underlying descriptor (idempotent).
     public func start() {
-        lock.lock()
-        defer { lock.unlock() }
+        stateLock.lock()
+        defer { stateLock.unlock() }
         guard !started, !closed else { return }
         started = true
 
@@ -137,25 +179,40 @@ public final class VsockChannel: @unchecked Sendable {
         try VsockFrame.encode(frame.serializedData())
     }
 
-    /// Writes already-framed bytes to the wire under the channel lock.
+    /// Writes already-framed bytes to the wire.
     ///
     /// The write counterpart of `serializeFramed(_:)` — callers that serialized
-    /// off-actor finish the send here. Like `send`, concurrent calls serialize
-    /// on the internal lock and cannot interleave on the wire.
+    /// off-actor finish the send here. Concurrent calls serialize on an
+    /// internal write lock and cannot interleave on the wire. The underlying
+    /// `fileHandle.write` is blocking and can park for as long as the peer's
+    /// receive buffer stays full — see the class-level **Two locks, not one**
+    /// note for why that never stalls inbound decode.
     ///
     /// - Throws: `VsockChannelError.closed` if the channel is closed, or
     ///   `VsockChannelError.write(_)` if the underlying `FileHandle.write`
     ///   failed (the channel is torn down before the error reaches the caller).
     public func writeFramed(_ framed: Data) throws {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !closed else { throw VsockChannelError.closed }
+        writeLock.lock()
+        guard !isClosed else {
+            writeLock.unlock()
+            throw VsockChannelError.closed
+        }
 
+        let writeError: Error?
         do {
             try fileHandle.write(contentsOf: framed)
+            writeError = nil
         } catch {
-            tearDownLocked(finishWith: error)
-            throw VsockChannelError.write(error)
+            writeError = error
+        }
+        // Release the write lock before tearing down: `teardown` shuts the
+        // descriptor down and then re-acquires `writeLock` to close it, so
+        // it must never run while this call still holds the lock.
+        writeLock.unlock()
+
+        if let writeError {
+            teardown(finishWith: writeError)
+            throw VsockChannelError.write(writeError)
         }
     }
 
@@ -164,19 +221,22 @@ public final class VsockChannel: @unchecked Sendable {
     /// Subsequent `send` calls throw `.closed` and
     /// the `incoming` stream finishes (without error).
     public func close() {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !closed else { return }
-        tearDownLocked(finishWith: nil)
+        teardown(finishWith: nil)
     }
 
     private func handleChunk(_ chunk: Data) {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !closed else { return }
+        // Holds `stateLock` across the whole decode/yield loop below (not just
+        // this check) so a concurrent `teardown` can't finish `continuation`
+        // out from under an in-flight `yield` — see the class-level note.
+        stateLock.lock()
+        guard !closed else {
+            stateLock.unlock()
+            return
+        }
 
         guard !chunk.isEmpty else {
-            tearDownLocked(finishWith: nil)
+            stateLock.unlock()
+            teardown(finishWith: nil)
             return
         }
 
@@ -186,15 +246,50 @@ public final class VsockChannel: @unchecked Sendable {
                 let frame = try Frame(serializedBytes: payload)
                 continuation.yield(frame)
             }
+            stateLock.unlock()
         } catch {
-            tearDownLocked(finishWith: error)
+            stateLock.unlock()
+            teardown(finishWith: error)
         }
     }
 
-    private func tearDownLocked(finishWith error: Error?) {
+    /// `true` once the channel is closed (locally, by EOF, or by a write/decode failure).
+    ///
+    /// Reads take `stateLock` only for the duration of the check.
+    private var isClosed: Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return closed
+    }
+
+    /// Idempotent teardown, safe to call from any context.
+    ///
+    /// Including from within `writeFramed`'s catch block or `handleChunk`,
+    /// neither of which hold `writeLock` at the call point.
+    ///
+    /// Order matters: `shutdown(2)` runs *before* `writeLock` is acquired, so
+    /// a writer currently parked in `fileHandle.write` (blocked on a full
+    /// peer receive buffer) is woken and returns an error instead of pinning
+    /// the lock forever. Only once that write has unwound — guaranteed by the
+    /// `writeLock.lock()` below succeeding — is the descriptor actually
+    /// closed, so the fd number isn't reclaimed while a write against it may
+    /// still be in flight.
+    private func teardown(finishWith error: Error?) {
+        stateLock.lock()
+        guard !closed else {
+            stateLock.unlock()
+            return
+        }
         closed = true
+        stateLock.unlock()
+
         fileHandle.readabilityHandler = nil
+        shutdown(fileHandle.fileDescriptor, SHUT_RDWR)
+
+        writeLock.lock()
         try? fileHandle.close()
+        writeLock.unlock()
+
         if let error {
             continuation.finish(throwing: error)
         } else {
