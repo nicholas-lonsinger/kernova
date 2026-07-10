@@ -67,8 +67,8 @@ help:
 	@printf '  make install-hooks       Point git at .githooks/ (runs lint on pre-push)\n'
 	@printf '  make bootstrap           Derive your signing team into Config/Local.xcconfig (auto-run by build/test)\n'
 	@printf '  make doctor              Check the local toolchain (macOS, Xcode, Swift, swift-format, hooks)\n'
-	@printf '  make ghosts              Report stale Kernova Launch Services/process/worktree registrations\n'
-	@printf '  make clean-ghosts        Same as ghosts, but also unregisters/kills/prunes what it finds\n'
+	@printf '  make ghosts              Report stale/competing Kernova Launch Services, process, and worktree registrations\n'
+	@printf '  make clean-ghosts        Same as ghosts, but also unregisters/kills/prunes/evicts what it finds\n'
 	@printf '  make fp-reset            Restart fileproviderd to clear stale Kernova File Provider bindings\n'
 	@printf '  make ls-reset            Clear legacy com.kernova.app ghost Launch Services registrations\n'
 	@printf '  make clean               Remove the DerivedData directory\n'
@@ -136,8 +136,11 @@ doctor:
 
 # Diagnoses ghost Launch Services registrations, orphaned processes, and
 # prunable git worktrees left behind when a worktree is torn down by hand
-# instead of through Claude Code's ExitWorktree unregister hook. `ghosts` only
-# reports; `clean-ghosts` also unregisters/kills/prunes what it finds.
+# instead of through Claude Code's ExitWorktree unregister hook — plus LIVE
+# on-disk Kernova.app copies (Trash, DerivedData) that outrank the installed
+# /Applications copy in the LaunchServices/PluginKit CFBundleVersion election
+# (#454). `ghosts` only reports; `clean-ghosts` also unregisters/kills/prunes,
+# and offers to evict (trash) a competing copy it finds.
 ghosts:
 	@Tools/ghosts.sh
 
