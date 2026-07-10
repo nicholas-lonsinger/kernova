@@ -16,6 +16,7 @@ import UniformTypeIdentifiers
 @MainActor
 final class SidebarViewController: NSViewController {
     private let viewModel: VMLibraryViewModel
+    private let preferences: AppPreferences
     private let outlineView = SidebarOutlineView()
     private let scrollView = NSScrollView()
     private let sections: [SidebarSection] = [.virtualMachines]
@@ -36,14 +37,14 @@ final class SidebarViewController: NSViewController {
     private static let rowPasteboardType = NSPasteboard.PasteboardType("app.kernova.sidebar-vm-row")
     private static let groupCellID = NSUserInterfaceItemIdentifier("SidebarGroupHeaderCell")
     private static let mainColumnID = NSUserInterfaceItemIdentifier("main")
-    private static let expandedSectionsKey = "KernovaSidebarExpandedSections"
     private static let leafRowHeight: CGFloat = 42
     private static let groupRowHeight: CGFloat = 24
 
     // MARK: - Init
 
-    init(viewModel: VMLibraryViewModel) {
+    init(viewModel: VMLibraryViewModel, preferences: AppPreferences = .shared) {
         self.viewModel = viewModel
+        self.preferences = preferences
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -342,8 +343,7 @@ final class SidebarViewController: NSViewController {
     // MARK: - Expansion persistence
 
     private func restoreExpansion() {
-        let saved = UserDefaults.standard.array(forKey: Self.expandedSectionsKey) as? [String]
-        let expanded = saved.map(Set.init)
+        let expanded = preferences.expandedSidebarSections.map(Set.init)
         for section in sections {
             // Default to expanded when there's no saved preference yet.
             if expanded?.contains(section.id) ?? true {
@@ -355,8 +355,8 @@ final class SidebarViewController: NSViewController {
     }
 
     private func persistExpansion() {
-        let expandedIDs = sections.filter { outlineView.isItemExpanded($0) }.map(\.id)
-        UserDefaults.standard.set(expandedIDs, forKey: Self.expandedSectionsKey)
+        preferences.expandedSidebarSections = sections.filter { outlineView.isItemExpanded($0) }
+            .map(\.id)
     }
 
     // MARK: - Content-fit width
@@ -674,7 +674,7 @@ extension SidebarViewController {
         // Lifecycle
         var startItem: NSMenuItem?
         if status.canStart {
-            if instance.canStartInRecovery && !AppPreferences.shared.alwaysShowAdvancedOptions {
+            if instance.canStartInRecovery && !preferences.alwaysShowAdvancedOptions {
                 // RATIONALE: Zero-height dummy item at index 0 anchors the context menu so it
                 // doesn't jump downward when "Start" collapses into its Recovery alternate on
                 // ⌥-hold. This is a known AppKit constraint, not a bug in our pairing:
@@ -704,7 +704,7 @@ extension SidebarViewController {
             // `canStartInRecovery` implies `.stopped`, so "Start" was just added and
             // this item immediately precedes this one (required for alternate pairing).
             let recovery = item("Start in Recovery Mode", #selector(menuStartRecovery(_:)), instance)
-            if !AppPreferences.shared.alwaysShowAdvancedOptions {
+            if !preferences.alwaysShowAdvancedOptions {
                 // Keyless Option-reveal: both items have an empty key equivalent, so the
                 // primary's modifier mask must be cleared to [] (its default is [.command])
                 // for AppKit to collapse the pair into ONE row. Otherwise [.command] is not
@@ -733,7 +733,7 @@ extension SidebarViewController {
             // Start/Recovery block above for the anchor rationale and the keyless-reveal
             // requirement that the primary's modifier mask be cleared to [].
             let forceStop = item("Force Stop…", #selector(menuForceStop(_:)), instance)
-            if !AppPreferences.shared.alwaysShowAdvancedOptions {
+            if !preferences.alwaysShowAdvancedOptions {
                 stop.keyEquivalentModifierMask = []
                 forceStop.keyEquivalentModifierMask = [.option]
                 forceStop.isAlternate = true
@@ -795,7 +795,7 @@ extension SidebarViewController {
         // pair sits at the menu's end, so collapsing the primary can't shift the menu.
         let deleteImmediately = item("Delete Immediately…", #selector(menuDeleteImmediately(_:)), instance)
         deleteImmediately.isEnabled = status.canEditSettings
-        if !AppPreferences.shared.alwaysShowAdvancedOptions {
+        if !preferences.alwaysShowAdvancedOptions {
             trash.keyEquivalentModifierMask = []
             deleteImmediately.keyEquivalentModifierMask = [.option]
             deleteImmediately.isAlternate = true

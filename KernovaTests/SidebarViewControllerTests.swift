@@ -14,19 +14,30 @@ import Testing
 @Suite("Sidebar Tests", .serialized)
 @MainActor
 struct SidebarViewControllerTests {
+    /// Isolated, pre-cleaned defaults for this suite's global state.
+    ///
+    /// Shared by the view model (selection/order) and the sidebar's
+    /// `AppPreferences` (expanded sections + the advanced-options toggle), so no
+    /// test reads or writes the real `.standard` domain. Fresh per test (the
+    /// struct is re-instantiated), so each starts clean.
+    private let defaults: UserDefaults
+    private let preferences: AppPreferences
+
+    init() {
+        let defaults = makeEphemeralDefaults(suiteName: "test.kernova.sidebar")
+        self.defaults = defaults
+        self.preferences = AppPreferences(defaults: defaults)
+    }
+
     private func makeViewModel() -> VMLibraryViewModel {
-        UserDefaults.standard.removeObject(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
-        UserDefaults.standard.removeObject(forKey: VMLibraryViewModel.vmOrderKey)
-        // Matches SidebarViewController.expandedSectionsKey; cleared so the group
-        // defaults to expanded regardless of prior test/run state.
-        UserDefaults.standard.removeObject(forKey: "KernovaSidebarExpandedSections")
-        return VMLibraryViewModel(
+        VMLibraryViewModel(
             storageService: MockVMStorageService(),
             diskImageService: MockDiskImageService(),
             virtualizationService: MockVirtualizationService(),
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
-            usbDeviceService: MockUSBDeviceService()
+            usbDeviceService: MockUSBDeviceService(),
+            defaults: defaults
         )
     }
 
@@ -143,7 +154,7 @@ struct SidebarViewControllerTests {
         let viewModel = makeViewModel()
         let instance = makeInstance(status: .stopped)
         viewModel.instances.append(instance)
-        let controller = SidebarViewController(viewModel: viewModel)
+        let controller = SidebarViewController(viewModel: viewModel, preferences: preferences)
 
         let menu = controller.buildContextMenu(for: instance)
         let menuTitles = titles(of: menu)
@@ -161,7 +172,7 @@ struct SidebarViewControllerTests {
         let viewModel = makeViewModel()
         let instance = makeInstance(status: .running)
         viewModel.instances.append(instance)
-        let controller = SidebarViewController(viewModel: viewModel)
+        let controller = SidebarViewController(viewModel: viewModel, preferences: preferences)
 
         let menu = controller.buildContextMenu(for: instance)
         let menuTitles = titles(of: menu)
@@ -180,7 +191,7 @@ struct SidebarViewControllerTests {
         let viewModel = makeViewModel()
         let instance = makeInstance(status: .paused)  // no live VM ⇒ cold-paused
         viewModel.instances.append(instance)
-        let controller = SidebarViewController(viewModel: viewModel)
+        let controller = SidebarViewController(viewModel: viewModel, preferences: preferences)
 
         let menu = controller.buildContextMenu(for: instance)
         let menuTitles = titles(of: menu)
@@ -194,11 +205,11 @@ struct SidebarViewControllerTests {
 
     @Test("Force Stop is the Option-alternate of Stop on a running VM (advanced options off)")
     func contextMenuForceStopIsOptionAlternate() {
-        UserDefaults.standard.removeObject(forKey: "alwaysShowAdvancedOptions")
+        preferences.alwaysShowAdvancedOptions = false
         let viewModel = makeViewModel()
         let instance = makeInstance(status: .running)
         viewModel.instances.append(instance)
-        let controller = SidebarViewController(viewModel: viewModel)
+        let controller = SidebarViewController(viewModel: viewModel, preferences: preferences)
 
         let menu = controller.buildContextMenu(for: instance)
 
@@ -217,12 +228,11 @@ struct SidebarViewControllerTests {
 
     @Test("Force Stop is a plain always-visible item when advanced options are on")
     func contextMenuForceStopVisibleWhenAdvanced() {
-        UserDefaults.standard.set(true, forKey: "alwaysShowAdvancedOptions")
-        defer { UserDefaults.standard.removeObject(forKey: "alwaysShowAdvancedOptions") }
+        preferences.alwaysShowAdvancedOptions = true
         let viewModel = makeViewModel()
         let instance = makeInstance(status: .running)
         viewModel.instances.append(instance)
-        let controller = SidebarViewController(viewModel: viewModel)
+        let controller = SidebarViewController(viewModel: viewModel, preferences: preferences)
 
         let menu = controller.buildContextMenu(for: instance)
 
@@ -234,11 +244,11 @@ struct SidebarViewControllerTests {
 
     @Test("Transient (starting) VM offers a standalone Force Stop, not an Option-alternate")
     func contextMenuForceStopStandaloneDuringTransition() {
-        UserDefaults.standard.removeObject(forKey: "alwaysShowAdvancedOptions")
+        preferences.alwaysShowAdvancedOptions = false
         let viewModel = makeViewModel()
         let instance = makeInstance(status: .starting)
         viewModel.instances.append(instance)
-        let controller = SidebarViewController(viewModel: viewModel)
+        let controller = SidebarViewController(viewModel: viewModel, preferences: preferences)
 
         let menu = controller.buildContextMenu(for: instance)
         let menuTitles = titles(of: menu)
@@ -251,11 +261,11 @@ struct SidebarViewControllerTests {
 
     @Test("Delete Immediately is the Option-alternate of Move to Trash (advanced options off)")
     func contextMenuDeleteImmediatelyIsOptionAlternate() {
-        UserDefaults.standard.removeObject(forKey: "alwaysShowAdvancedOptions")
+        preferences.alwaysShowAdvancedOptions = false
         let viewModel = makeViewModel()
         let instance = makeInstance(status: .stopped)
         viewModel.instances.append(instance)
-        let controller = SidebarViewController(viewModel: viewModel)
+        let controller = SidebarViewController(viewModel: viewModel, preferences: preferences)
 
         let menu = controller.buildContextMenu(for: instance)
 
@@ -274,12 +284,11 @@ struct SidebarViewControllerTests {
 
     @Test("Delete Immediately is a plain always-visible item when advanced options are on")
     func contextMenuDeleteImmediatelyVisibleWhenAdvanced() {
-        UserDefaults.standard.set(true, forKey: "alwaysShowAdvancedOptions")
-        defer { UserDefaults.standard.removeObject(forKey: "alwaysShowAdvancedOptions") }
+        preferences.alwaysShowAdvancedOptions = true
         let viewModel = makeViewModel()
         let instance = makeInstance(status: .stopped)
         viewModel.instances.append(instance)
-        let controller = SidebarViewController(viewModel: viewModel)
+        let controller = SidebarViewController(viewModel: viewModel, preferences: preferences)
 
         let menu = controller.buildContextMenu(for: instance)
 
@@ -295,7 +304,7 @@ struct SidebarViewControllerTests {
         let instance = makeInstance()
         instance.preparingState = VMInstance.PreparingState(operation: .cloning, task: Task {})
         viewModel.instances.append(instance)
-        let controller = SidebarViewController(viewModel: viewModel)
+        let controller = SidebarViewController(viewModel: viewModel, preferences: preferences)
 
         let menu = controller.buildContextMenu(for: instance)
         let menuTitles = titles(of: menu)
@@ -329,7 +338,7 @@ struct SidebarViewControllerTests {
     @Test("widthToFitLongestRow is nil with no VMs")
     func fitWidthNilWhenEmpty() {
         let viewModel = makeViewModel()
-        let controller = SidebarViewController(viewModel: viewModel)
+        let controller = SidebarViewController(viewModel: viewModel, preferences: preferences)
         controller.loadViewIfNeeded()
         #expect(controller.widthToFitLongestRow() == nil)
     }
@@ -338,13 +347,13 @@ struct SidebarViewControllerTests {
     func fitWidthTracksLongestName() {
         let shortModel = makeViewModel()
         shortModel.instances.append(makeInstance(name: "VM"))
-        let shortController = SidebarViewController(viewModel: shortModel)
+        let shortController = SidebarViewController(viewModel: shortModel, preferences: preferences)
         shortController.loadViewIfNeeded()
         shortController.view.layoutSubtreeIfNeeded()
 
         let longModel = makeViewModel()
         longModel.instances.append(makeInstance(name: "An extremely long virtual machine name"))
-        let longController = SidebarViewController(viewModel: longModel)
+        let longController = SidebarViewController(viewModel: longModel, preferences: preferences)
         longController.loadViewIfNeeded()
         longController.view.layoutSubtreeIfNeeded()
 
@@ -364,7 +373,7 @@ struct SidebarViewControllerTests {
         let viewModel = makeViewModel()
         viewModel.instances.append(makeInstance(name: "Alpha"))
         viewModel.instances.append(makeInstance(name: "Beta"))
-        let controller = SidebarViewController(viewModel: viewModel)
+        let controller = SidebarViewController(viewModel: viewModel, preferences: preferences)
         controller.loadViewIfNeeded()
         controller.view.layoutSubtreeIfNeeded()
 

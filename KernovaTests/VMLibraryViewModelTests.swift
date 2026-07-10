@@ -6,6 +6,12 @@ import Foundation
 @MainActor
 struct VMLibraryViewModelTests {
     private let presenter = MockVMLibraryPresenting()
+    /// Isolated, pre-cleaned defaults so selection/order persistence never
+    /// touches the real `.standard` domain.
+    ///
+    /// Fresh per test (the struct is re-instantiated), so each test starts from
+    /// an empty suite.
+    private let defaults = makeEphemeralDefaults(suiteName: "test.kernova.vmlibrary")
     private func makeViewModel(
         storageService: MockVMStorageService = MockVMStorageService(),
         diskImageService: MockDiskImageService = MockDiskImageService(),
@@ -15,15 +21,16 @@ struct VMLibraryViewModelTests {
         VMLibraryViewModel, MockVMStorageService, MockDiskImageService, MockVirtualizationService,
         any USBDeviceProviding
     ) {
-        UserDefaults.standard.removeObject(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
-        UserDefaults.standard.removeObject(forKey: VMLibraryViewModel.vmOrderKey)
+        defaults.removeObject(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
+        defaults.removeObject(forKey: VMLibraryViewModel.vmOrderKey)
         let vm = VMLibraryViewModel(
             storageService: storageService,
             diskImageService: diskImageService,
             virtualizationService: virtualizationService,
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
-            usbDeviceService: usbDeviceService
+            usbDeviceService: usbDeviceService,
+            defaults: defaults
         )
         vm.presenter = presenter
         return (vm, storageService, diskImageService, virtualizationService, usbDeviceService)
@@ -102,7 +109,7 @@ struct VMLibraryViewModelTests {
 
         viewModel.selectedID = instance.id
 
-        let stored = UserDefaults.standard.string(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
+        let stored = defaults.string(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
         #expect(stored == instance.id.uuidString)
     }
 
@@ -115,7 +122,7 @@ struct VMLibraryViewModelTests {
 
         viewModel.selectedID = nil
 
-        let stored = UserDefaults.standard.string(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
+        let stored = defaults.string(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
         #expect(stored == nil)
     }
 
@@ -132,15 +139,16 @@ struct VMLibraryViewModelTests {
         storage.bundles[url2] = config2
 
         // Clear then seed UserDefaults before ViewModel init triggers loadVMs()
-        UserDefaults.standard.removeObject(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
-        UserDefaults.standard.set(config2.id.uuidString, forKey: VMLibraryViewModel.lastSelectedVMIDKey)
+        defaults.removeObject(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
+        defaults.set(config2.id.uuidString, forKey: VMLibraryViewModel.lastSelectedVMIDKey)
 
         let viewModel = VMLibraryViewModel(
             storageService: storage,
             diskImageService: MockDiskImageService(),
             virtualizationService: MockVirtualizationService(),
             installService: MockMacOSInstallService(),
-            ipswService: MockIPSWService()
+            ipswService: MockIPSWService(),
+            defaults: defaults
         )
         viewModel.presenter = presenter
 
@@ -181,15 +189,16 @@ struct VMLibraryViewModelTests {
         storage.bundles[url] = config
 
         // Clear then seed UserDefaults with a UUID that doesn't match any VM
-        UserDefaults.standard.removeObject(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
-        UserDefaults.standard.set(UUID().uuidString, forKey: VMLibraryViewModel.lastSelectedVMIDKey)
+        defaults.removeObject(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
+        defaults.set(UUID().uuidString, forKey: VMLibraryViewModel.lastSelectedVMIDKey)
 
         let viewModel = VMLibraryViewModel(
             storageService: storage,
             diskImageService: MockDiskImageService(),
             virtualizationService: MockVirtualizationService(),
             installService: MockMacOSInstallService(),
-            ipswService: MockIPSWService()
+            ipswService: MockIPSWService(),
+            defaults: defaults
         )
         viewModel.presenter = presenter
 
@@ -832,15 +841,16 @@ struct VMLibraryViewModelTests {
         ipswService: MockIPSWService,
         storage: MockVMStorageService
     ) -> VMLibraryViewModel {
-        UserDefaults.standard.removeObject(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
-        UserDefaults.standard.removeObject(forKey: VMLibraryViewModel.vmOrderKey)
+        defaults.removeObject(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
+        defaults.removeObject(forKey: VMLibraryViewModel.vmOrderKey)
         let vm = VMLibraryViewModel(
             storageService: storage,
             diskImageService: MockDiskImageService(),
             virtualizationService: MockVirtualizationService(),
             installService: MockMacOSInstallService(),
             ipswService: ipswService,
-            usbDeviceService: MockUSBDeviceService()
+            usbDeviceService: MockUSBDeviceService(),
+            defaults: defaults
         )
         vm.presenter = presenter
         return vm
@@ -1851,7 +1861,8 @@ struct VMLibraryViewModelTests {
             virtualizationService: MockVirtualizationService(),
             installService: raceInstaller,
             ipswService: MockIPSWService(),
-            usbDeviceService: MockUSBDeviceService()
+            usbDeviceService: MockUSBDeviceService(),
+            defaults: defaults
         )
         viewModel.presenter = presenter
         let instance = makeInstance(name: "Race VM")
@@ -2823,7 +2834,7 @@ struct VMLibraryViewModelTests {
         viewModel.moveVM(fromOffsets: IndexSet(integer: 2), toOffset: 0)
 
         #expect(viewModel.instances.map(\.name) == ["C", "A", "B"])
-        let stored = UserDefaults.standard.stringArray(forKey: VMLibraryViewModel.vmOrderKey)
+        let stored = defaults.stringArray(forKey: VMLibraryViewModel.vmOrderKey)
         #expect(stored == [c.id.uuidString, a.id.uuidString, b.id.uuidString])
     }
 
@@ -2847,8 +2858,8 @@ struct VMLibraryViewModelTests {
         storage.bundles[url3] = config3
 
         // Set custom order: Third, First, Second
-        UserDefaults.standard.removeObject(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
-        UserDefaults.standard.set(
+        defaults.removeObject(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
+        defaults.set(
             [config3.id.uuidString, config1.id.uuidString, config2.id.uuidString],
             forKey: VMLibraryViewModel.vmOrderKey
         )
@@ -2858,7 +2869,8 @@ struct VMLibraryViewModelTests {
             diskImageService: MockDiskImageService(),
             virtualizationService: MockVirtualizationService(),
             installService: MockMacOSInstallService(),
-            ipswService: MockIPSWService()
+            ipswService: MockIPSWService(),
+            defaults: defaults
         )
         viewModel.presenter = presenter
 
@@ -2922,7 +2934,7 @@ struct VMLibraryViewModelTests {
 
         viewModel.deleteConfirmed(b)
 
-        let stored = UserDefaults.standard.stringArray(forKey: VMLibraryViewModel.vmOrderKey)
+        let stored = defaults.stringArray(forKey: VMLibraryViewModel.vmOrderKey)
         #expect(stored == [a.id.uuidString])
     }
 
@@ -2936,8 +2948,8 @@ struct VMLibraryViewModelTests {
 
         // Set custom order with a stale UUID followed by the real one
         let staleID = UUID()
-        UserDefaults.standard.removeObject(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
-        UserDefaults.standard.set(
+        defaults.removeObject(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
+        defaults.set(
             [staleID.uuidString, config.id.uuidString],
             forKey: VMLibraryViewModel.vmOrderKey
         )
@@ -2947,7 +2959,8 @@ struct VMLibraryViewModelTests {
             diskImageService: MockDiskImageService(),
             virtualizationService: MockVirtualizationService(),
             installService: MockMacOSInstallService(),
-            ipswService: MockIPSWService()
+            ipswService: MockIPSWService(),
+            defaults: defaults
         )
         viewModel.presenter = presenter
 

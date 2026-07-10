@@ -22,6 +22,7 @@ struct AppPreferences {
 
     private enum Keys {
         static let alwaysShowAdvancedOptions = "alwaysShowAdvancedOptions"
+        static let expandedSidebarSections = "KernovaSidebarExpandedSections"
     }
 
     /// When `true`, advanced menu actions (e.g. *Start in Recovery Mode*) are
@@ -32,5 +33,15 @@ struct AppPreferences {
     var alwaysShowAdvancedOptions: Bool {
         get { defaults.bool(forKey: Keys.alwaysShowAdvancedOptions) }
         nonmutating set { defaults.set(newValue, forKey: Keys.alwaysShowAdvancedOptions) }
+    }
+
+    /// Identifiers of the sidebar sections the user has expanded, or `nil` when
+    /// no preference has been saved yet.
+    ///
+    /// When `nil`, the sidebar defaults each section to expanded. Persisted by
+    /// `SidebarViewController` as it expands and collapses group rows.
+    var expandedSidebarSections: [String]? {
+        get { defaults.array(forKey: Keys.expandedSidebarSections) as? [String] }
+        nonmutating set { defaults.set(newValue, forKey: Keys.expandedSidebarSections) }
     }
 }
