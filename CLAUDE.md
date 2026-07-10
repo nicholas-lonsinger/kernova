@@ -340,6 +340,37 @@ ref in the refspec. A PR's head branch must always be the clean
 exists does not retarget the PR — it closes it — so name it correctly at first
 push.)
 
+### Worktree LaunchServices cleanup
+
+Every worktree build registers its app bundles with LaunchServices; when the
+worktree is removed those registrations become ghosts — stale entries that
+accumulate and have previously hijacked UTI and name resolution. A
+`PreToolUse`/`ExitWorktree` hook in `.claude/settings.json` prevents this: on
+`ExitWorktree(action: "remove")` (which runs `git worktree remove`) it runs
+`lsregister -u` on the worktree's built apps. It fires `PreToolUse` so the
+bundles still exist on disk — `lsregister` must read a bundle to unregister it —
+and it is scoped to the one removed worktree via the tool's `.cwd`.
+
+It unregisters both top-level apps, `Kernova.app` and `Kernova Guest Agent.app`
+(#450), across Debug and Release. Products live at the **nested**
+`DerivedData/Kernova/Build/Products/<config>/` path — Xcode "Relative" mode and
+`-derivedDataPath DerivedData/Kernova` both nest a per-project subfolder (see
+[Build & Test](#build--test)) — not the flat `DerivedData/Build/Products/`. The
+embedded appexes (`KernovaFileProvider`, `KernovaQuickLook`,
+`KernovaMacOSAgentFileProvider`) need no separate handling: unregistering a
+parent `.app` cascades to its plugin registrations (verified — a plain
+`lsregister -u` on the app alone clears all three appex entries; the `-R` flag
+governs recursive *scanning*, not unregister cascade).
+
+Two cases stay uncovered by design: a human running `git worktree remove`
+directly triggers nothing (it is not a harness tool call, and git has **no**
+worktree-lifecycle hook — `man githooks` confirms), and Xcode-side hashed
+DerivedData lands outside `.cwd`. Both leave ghosts that only accumulate; clear
+the backlog on demand with a one-time database rebuild — `lsregister -kill -r
+-domain local -domain system -domain user` (the binary is not on `PATH`; it
+lives under `…/CoreServices.framework/…/LaunchServices.framework/…/Support/
+lsregister`).
+
 ### Commit Messages
 
 These conventions apply to **all** forms of committing: local commits, PR squash/merge commits, and any other git operations that produce commits.
