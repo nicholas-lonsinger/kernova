@@ -1042,6 +1042,30 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             return nil
         }
 
+        // Refuse a stale sync-path pull for a rep the availability-flip
+        // re-publish (#429) has since re-routed to the File Provider (#510).
+        // `writePasteboardPromise` serves a single-`.fileURL` item's re-routed
+        // rep directly from its domain URL and never reaches this method for
+        // it again, so a `provideData` call here for that same
+        // (generation, repIndex) can only come from an external process's
+        // reference to the pre-switch pasteboard item that hasn't fetched
+        // this representation yet. Serving it would mint the same
+        // deterministic transfer id `fetchStagedFile` mints for the new
+        // File-Provider-backed item — a collision `fetchStagedFile`'s own
+        // safety comment documents as unsupported. Scoped to single-`.fileURL`
+        // items only (`itemTypes.count == 1`) so a dual-representation
+        // image-file item — always served through this path even once its
+        // `.fileURL` rep is FP-routed, see `writePasteboardPromise` — is
+        // unaffected.
+        if itemTypes.count == 1, itemTypes[0].type == .fileURL,
+            promise.fileProviderRepIndex == repIndex
+        {
+            Self.logger.debug(
+                "provideData refused a stale sync-path pull for File-Provider-routed rep \(repIndex, privacy: .public) (gen=\(generation, privacy: .public))"
+            )
+            return nil
+        }
+
         let representation: ClipboardContent.Representation
         if let cached = promise.materialized[repIndex] {
             representation = cached
@@ -1405,12 +1429,17 @@ extension VsockGuestClipboardAgent: FileProviderPullProvider {
         // RATIONALE: the guest-minted transferID is deterministic per
         // `(generation, repIndex)`, so the `LazyPullCoordinator` slot and the
         // receiver's awaiter hold one entry per id and cannot represent two
-        // concurrent pulls of the same item. Safe today because (1) `handleOffer`
-        // routes a rep to either the File Provider OR the synchronous `provideData`
-        // path, never both, and (2) the File Provider framework coalesces
-        // concurrent `fetchContents` for a single, constant `itemVersion`. D1b must
-        // preserve single-in-flight-per-id when it extends FP routing to
-        // multi-file/folder reps.
+        // concurrent pulls of the same item. Safe today because (1) a rep is
+        // routed to either the File Provider OR the synchronous `provideData`
+        // path, never both — `handleOffer` picks one at offer time, and once
+        // the availability-flip re-publish (#429) re-routes a rep from the sync
+        // path to the File Provider, `provideData` itself refuses a pull for
+        // that same rep (#510) so a stale reference to the pre-switch
+        // pasteboard item can no longer mint this same id concurrently — and
+        // (2) the File Provider framework coalesces concurrent `fetchContents`
+        // for a single, constant `itemVersion`. D1b must preserve
+        // single-in-flight-per-id when it extends FP routing to multi-file/
+        // folder reps.
         struct PullContext {
             let promise: InboundPromise
             let channel: VsockChannel
