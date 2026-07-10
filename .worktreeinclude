@@ -1,2 +1,9 @@
+# Gitignored local files to copy into new worktrees — the definitive list.
+# Consumed natively by Claude Code (and other worktree tools, e.g.
+# git-worktreeinclude, Conductor) when they create a worktree, and by
+# .githooks/post-checkout so a plain `git worktree add` inherits the same
+# files. gitignore syntax, but keep entries literal paths: the hook does
+# not implement glob matching.
 CLAUDE.local.md
 .claude/settings.local.json
+Config/Local.xcconfig

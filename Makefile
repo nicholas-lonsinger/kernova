@@ -64,7 +64,7 @@ help:
 	@printf '  make test-package        Run only the KernovaKit SwiftPM package tests\n'
 	@printf '  make format              Rewrite Swift sources in place via swift-format\n'
 	@printf '  make lint                Check Swift sources with swift-format (--strict)\n'
-	@printf '  make install-hooks       Point git at .githooks/ (runs lint on pre-push)\n'
+	@printf '  make install-hooks       Point git at .githooks/ (pre-push lint; post-checkout worktree setup)\n'
 	@printf '  make bootstrap           Derive your signing team into Config/Local.xcconfig (auto-run by build/test)\n'
 	@printf '  make doctor              Check the local toolchain (macOS, Xcode, Swift, swift-format, hooks)\n'
 	@printf '  make ghosts              Report stale/competing Kernova Launch Services, process, and worktree registrations\n'
@@ -103,11 +103,13 @@ lint:
 # One-time per clone: point this repo's git at the checked-in hooks —
 # `.githooks/pre-push` runs `make lint` before each push (bypass an
 # individual push with `git push --no-verify`), and `.githooks/post-checkout`
-# bootstraps DEVELOPMENT_TEAM in fresh worktrees. Per-repo config
-# (no `--global`); core.hooksPath is shared by all worktrees of this repo.
+# sets up fresh worktrees: it copies the gitignored files listed in
+# .worktreeinclude from the main checkout, then bootstraps DEVELOPMENT_TEAM
+# if still missing. Per-repo config (no `--global`); core.hooksPath is
+# shared by all worktrees of this repo.
 install-hooks:
 	git config core.hooksPath .githooks
-	@echo 'Hooks installed. Pre-push runs `make lint`; post-checkout bootstraps DEVELOPMENT_TEAM in new worktrees.'
+	@echo 'Hooks installed. Pre-push runs `make lint`; post-checkout sets up new worktrees (.worktreeinclude copies + DEVELOPMENT_TEAM bootstrap).'
 
 # Silent when the hooks are wired up; otherwise a one-line nudge. Runs as a
 # prerequisite of `build` and `test` so contributors who skipped the
@@ -116,7 +118,7 @@ install-hooks:
 check-hooks:
 	@hp=$$(git config --get core.hooksPath 2>/dev/null || true); \
 	if [ "$$hp" != ".githooks" ]; then \
-		printf 'Note: git hooks are not installed. Run `make install-hooks` (one-time per clone) to lint before push and auto-bootstrap new worktrees.\n' >&2; \
+		printf 'Note: git hooks are not installed. Run `make install-hooks` (one-time per clone) to lint before push and auto-set-up new worktrees.\n' >&2; \
 	fi
 
 # Derives this developer's signing team from their own certificate into the

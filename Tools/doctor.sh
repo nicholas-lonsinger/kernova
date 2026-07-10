@@ -133,7 +133,7 @@ section 'Repository'
 # (same stance as the Makefile's check-hooks nudge).
 hooks_path=$(git config --get core.hooksPath 2>/dev/null || echo '')
 if [ "$hooks_path" = ".githooks" ]; then
-    pass "git hooks installed (core.hooksPath = .githooks): pre-push lint, post-checkout team bootstrap"
+    pass "git hooks installed (core.hooksPath = .githooks): pre-push lint, post-checkout worktree setup"
 else
     warn "git hooks not installed — run 'make install-hooks' (one-time per clone)"
 fi
