@@ -1436,6 +1436,72 @@ struct VsockGuestClipboardAgentTests {
         try await expectNoRequest(from: hostChannel)
     }
 
+    @Test(
+        "provideData still serves a rep from cache to a stale sync-path pull after the availability flip re-routed it"
+    )
+    func provideDataServesCachedRepToStalePullAfterAvailabilityFlipReroute() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        // Domain not `.ready` yet — the offer lands on the synchronous provider path.
+        let (agent, publisher) = makeAgentWithPublisher(
+            pasteboard: pasteboard, agentFd: agentFd, publisherURL: nil)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        let contents = Data("report bytes on disk".utf8)
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 42,
+                reps: [
+                    RepInfo(
+                        uti: "com.adobe.pdf", byteCount: UInt64(contents.count),
+                        filename: "report.pdf", isInline: false)
+                ]))
+        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
+
+        // Capture the pre-switch provider, then pull through it so the rep is
+        // materialized (cached) on the sync path before the domain flips.
+        let staleProvider = pasteboard.captureProviderForTesting()
+        let firstPull = lazyPull(pasteboard, forType: .fileURL)
+        try await driveInboundStream(
+            generation: 42, uti: "com.adobe.pdf", filename: "report.pdf", payload: contents,
+            isInline: false, on: hostChannel)
+        let firstStaged = try #require(
+            (await firstPull.value).flatMap { String(data: $0, encoding: .utf8) }
+                .flatMap(URL.init(string:)))
+
+        // The domain becomes user-enabled; the live offer is re-published
+        // through the File Provider (#429), keeping the same generation.
+        let domainURL = URL(fileURLWithPath: "/Users/Shared/KernovaClipboard/report.pdf")
+        publisher.urlToReturn = domainURL
+        DispatchQueue.main.sync { agent.fileProviderAvailabilityChanged(.ready) }
+        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
+
+        // The stale, pre-switch provider is asked for the SAME rep again. It
+        // was already materialized before the flip, so serving it from cache
+        // mints no new transfer id and can't collide with a concurrent File
+        // Provider fetch — the (#510) guard must not refuse it.
+        let item = NSPasteboardItem()
+        nonisolated(unsafe) let provider = staleProvider
+        nonisolated(unsafe) let capturedItem = item
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            DispatchQueue.global().async {
+                provider?.pasteboard(nil, item: capturedItem, provideDataForType: .fileURL)
+                cont.resume()
+            }
+        }
+        let restaged = try #require(
+            item.data(forType: .fileURL).flatMap { String(data: $0, encoding: .utf8) }
+                .flatMap(URL.init(string:)))
+        #expect(restaged == firstStaged)
+        try await expectNoRequest(from: hostChannel)
+    }
+
     @Test("availability flip is a no-op when the guest clipboard changed since the offer was written")
     func availabilityFlipNoOpWhenClipboardReplaced() async throws {
         let pasteboard = FakePasteboard()
