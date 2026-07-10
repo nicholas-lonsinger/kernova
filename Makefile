@@ -100,21 +100,23 @@ format:
 lint:
 	$(SWIFT_FORMAT) lint --strict --recursive $(SWIFT_SOURCE_DIRS)
 
-# One-time per clone: point this repo's git at the checked-in hooks so
-# `.githooks/pre-push` runs `make lint` before each push. Per-repo config
-# (no `--global`); bypass an individual push with `git push --no-verify`.
+# One-time per clone: point this repo's git at the checked-in hooks —
+# `.githooks/pre-push` runs `make lint` before each push (bypass an
+# individual push with `git push --no-verify`), and `.githooks/post-checkout`
+# bootstraps DEVELOPMENT_TEAM in fresh worktrees. Per-repo config
+# (no `--global`); core.hooksPath is shared by all worktrees of this repo.
 install-hooks:
 	git config core.hooksPath .githooks
-	@echo 'Hooks installed. Pre-push will now run `make lint`.'
+	@echo 'Hooks installed. Pre-push runs `make lint`; post-checkout bootstraps DEVELOPMENT_TEAM in new worktrees.'
 
-# Silent when the hook is wired up; otherwise a one-line nudge. Runs as a
+# Silent when the hooks are wired up; otherwise a one-line nudge. Runs as a
 # prerequisite of `build` and `test` so contributors who skipped the
 # install step see the reminder on their first build instead of only when
 # CI fails on their PR.
 check-hooks:
 	@hp=$$(git config --get core.hooksPath 2>/dev/null || true); \
 	if [ "$$hp" != ".githooks" ]; then \
-		printf 'Note: pre-push lint hook is not installed. Run `make install-hooks` (one-time per clone) to catch swift-format issues locally.\n' >&2; \
+		printf 'Note: git hooks are not installed. Run `make install-hooks` (one-time per clone) to lint before push and auto-bootstrap new worktrees.\n' >&2; \
 	fi
 
 # Derives this developer's signing team from their own certificate into the
