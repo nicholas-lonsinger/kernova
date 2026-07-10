@@ -849,25 +849,14 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         let domainURLsByRepIndex = fileProviderURLs(for: offer.repInfo, generation: generation)
 
         guard
-            writePasteboardPromise(
-                items: items, generation: generation, domainURLsByRepIndex: domainURLsByRepIndex)
-        else {
-            // The write failed, so the providers were never retained — the
-            // helper's local array dropped them and no finish callback fired.
-            Self.logger.warning(
-                "Failed to register host clipboard promise (gen=\(generation, privacy: .public))")
-            inboundPromise = nil
-            // Retract any File Provider placeholder this offer just published, so a
-            // failed pasteboard write doesn't leave a dangling item in the domain
-            // (mirrors handleRelease / teardown; clearOffer is idempotent).
-            fileProvider?.clearOffer()
-            return
-        }
-        promise.fileProviderRepIndex = domainURLsByRepIndex.keys.first
+            publishPromise(
+                promise, items: items, domainURLsByRepIndex: domainURLsByRepIndex,
+                failureContext: "register host clipboard promise",
+                successMessage:
+                    "Registered host clipboard promise (gen=\(generation), \(items.count) item(s))"
+            )
+        else { return }
         clipboardActivityStorage = .offeredFromHost
-        Self.logger.notice(
-            "Registered host clipboard promise (gen=\(generation, privacy: .public), \(items.count, privacy: .public) item(s))"
-        )
     }
 
     /// Re-runs File Provider routing for the live inbound promise once the
@@ -892,23 +881,51 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         else { return }
 
         let domainURLsByRepIndex = fileProviderURLs(
-            for: promise.reps, generation: promise.generation)
+            for: promise.reps, generation: promise.generation, logIneligibility: false)
         guard !domainURLsByRepIndex.isEmpty else { return }
 
         let items = Self.promisedItems(for: promise.reps)
+        publishPromise(
+            promise, items: items, domainURLsByRepIndex: domainURLsByRepIndex,
+            failureContext: "re-publish host clipboard promise via the File Provider",
+            successMessage:
+                "Re-published inbound offer through the File Provider after the domain became ready (gen=\(promise.generation))"
+        )
+    }
+
+    /// Writes `items` for `promise` via `writePasteboardPromise` and applies the
+    /// shared success/failure bookkeeping used by both the initial offer and the
+    /// availability-flip re-publish (#429).
+    ///
+    /// On failure, logs `failureContext` and tears down `inboundPromise` + the
+    /// File Provider offer (the write failed, so the providers were never
+    /// retained — `writePasteboardPromise`'s local array dropped them and no
+    /// finish callback fired). On success, records the promise's File-Provider
+    /// routing state and logs `successMessage`. Returns whether the write
+    /// succeeded.
+    @discardableResult
+    private func publishPromise(
+        _ promise: InboundPromise, items: [PromisedItem], domainURLsByRepIndex: [Int: URL],
+        failureContext: String, successMessage: String
+    ) -> Bool {
         guard
             writePasteboardPromise(
                 items: items, generation: promise.generation,
                 domainURLsByRepIndex: domainURLsByRepIndex)
         else {
+            Self.logger.warning(
+                "Failed to \(failureContext, privacy: .public) (gen=\(promise.generation, privacy: .public))"
+            )
             inboundPromise = nil
+            // Retract any File Provider placeholder this offer just published, so a
+            // failed pasteboard write doesn't leave a dangling item in the domain
+            // (mirrors handleRelease / teardown; clearOffer is idempotent).
             fileProvider?.clearOffer()
-            return
+            return false
         }
         promise.fileProviderRepIndex = domainURLsByRepIndex.keys.first
-        Self.logger.notice(
-            "Re-published inbound offer through the File Provider after the domain became ready (gen=\(promise.generation, privacy: .public))"
-        )
+        Self.logger.notice("\(successMessage, privacy: .public)")
+        return true
     }
 
     /// Writes `items` to the pasteboard as lazy providers, serving the single
@@ -969,8 +986,13 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// the synchronous provider path until D1b. Empty when no File Provider is
     /// wired (tests, or the domain isn't usable) or the offer isn't that
     /// single-file case, so the caller falls back to the provider path.
+    ///
+    /// `logIneligibility` suppresses the ineligible-offer notice on a re-check
+    /// (the availability-flip re-publish calls this repeatedly for the same
+    /// live promise; the initial offer-time call already logged it once).
     private func fileProviderURLs(
-        for reps: [Kernova_V1_ClipboardRepresentationInfo], generation: UInt64
+        for reps: [Kernova_V1_ClipboardRepresentationInfo], generation: UInt64,
+        logIneligibility: Bool = true
     ) -> [Int: URL] {
         guard let fileProvider else { return [:] }
         let fileRepIndices = reps.indices.filter { index in
@@ -979,7 +1001,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                 && Self.isPromisable(info)
         }
         guard fileRepIndices.count == 1, let repIndex = fileRepIndices.first else {
-            if !fileRepIndices.isEmpty {
+            if !fileRepIndices.isEmpty, logIneligibility {
                 Self.logger.notice(
                     "Inbound offer has \(fileRepIndices.count, privacy: .public) file reps — not routed through the File Provider (D1a is single-file)"
                 )
