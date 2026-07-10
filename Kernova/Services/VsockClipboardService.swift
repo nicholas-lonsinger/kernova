@@ -401,7 +401,7 @@ final class VsockClipboardService: ClipboardServicing {
         offer.protocolVersion = 1
         offer.clipboardOffer = Kernova_V1_ClipboardOffer.with {
             $0.generation = generation
-            $0.repInfo = content.representations.map(Self.repInfo(for:))
+            $0.repInfo = content.representations.map(\.offerRepresentationInfo)
             $0.isConcealed = content.isConcealed
         }
 
@@ -1209,21 +1209,6 @@ final class VsockClipboardService: ClipboardServicing {
         Self.logger.debug(
             "Guest released clipboard offer (gen=\(release.generation, privacy: .public)) for '\(self.label, privacy: .public)'"
         )
-    }
-
-    // MARK: - Helpers
-
-    /// Builds the metadata advertised for a representation in an offer.
-    private static func repInfo(
-        for representation: ClipboardContent.Representation
-    ) -> Kernova_V1_ClipboardRepresentationInfo {
-        Kernova_V1_ClipboardRepresentationInfo.with {
-            $0.uti = representation.uti
-            $0.byteCount = UInt64(representation.byteCount)
-            $0.filename = representation.filename
-            $0.isInline = representation.shouldInlineOnPasteboard
-            $0.isDirectory = representation.isDirectory
-        }
     }
 }
 
