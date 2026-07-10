@@ -430,11 +430,12 @@ final class VsockClipboardService: ClipboardServicing {
     /// actor.
     ///
     /// `nonisolated`, so the loop and its per-frame routing run on a cooperative
-    /// thread, not the main actor: stream frames (begin/chunk/end/ack/abort) go
-    /// straight to the thread-safe engine, and only the low-frequency control
-    /// frames (offer/request/release/error) hop to main via `onControlFrame`.
-    /// This keeps a multi-GB transfer's tens of thousands of chunk/ack frames off
-    /// the main actor entirely. [M1]
+    /// thread, not the main actor: stream frames (begin/chunk/end/ack, and a
+    /// receiver-bound abort) go straight to the thread-safe engine, and the
+    /// low-frequency control frames (offer/request/release/error), plus a
+    /// sender-bound abort, hop to main via `onControlFrame`. This keeps a
+    /// multi-GB transfer's tens of thousands of chunk/ack frames off the main
+    /// actor entirely. [M1]
     ///
     /// `onControlFrame` dispatches fire-and-forget rather than being awaited, so
     /// the loop never suspends on the main-actor hop: a control frame arriving
@@ -468,7 +469,18 @@ final class VsockClipboardService: ClipboardServicing {
                     if ClipboardTransferID.hostReceives(abort.transferID) {
                         receiver.handleAbort(abort)
                     } else {
-                        sender.handleAbort(transferID: abort.transferID)
+                        // A sender-bound abort (e.g. the peer cancelling its own
+                        // in-flight pull, #464/#500) must not be handled directly
+                        // here: `handleRequest` now registers the transfer via
+                        // `sender.startTransfer` fire-and-forget on main (#458),
+                        // so an abort for the same transfer_id handled
+                        // synchronously off-main could race ahead of that
+                        // registration and land as a silent no-op on an
+                        // unregistered id — the transfer then streams anyway
+                        // despite having been cancelled. Routing it through the
+                        // same `onControlFrame` main-queue dispatch as the
+                        // request preserves their relative order (#503).
+                        onControlFrame(frame)
                     }
                 default:
                     onControlFrame(frame)
@@ -502,8 +514,14 @@ final class VsockClipboardService: ClipboardServicing {
                     kind: .peerReportedError(code: error.code, message: error.message),
                     date: Date())
             }
-        case .clipboardStreamBegin, .clipboardChunk, .clipboardStreamEnd, .clipboardStreamAck,
-            .clipboardStreamAbort:
+        case .clipboardStreamAbort(let abort):
+            // Only a sender-bound abort reaches here (routed through this same
+            // dispatch, not off-main, so it can't race ahead of a still-pending
+            // `sender.startTransfer` registration for the same transfer_id —
+            // see the routing comment in `consume`, #503). A receiver-bound
+            // abort is routed off-main directly and never reaches here.
+            sender?.handleAbort(transferID: abort.transferID)
+        case .clipboardStreamBegin, .clipboardChunk, .clipboardStreamEnd, .clipboardStreamAck:
             // Routed off-main by the consume loop; never reaches here.
             break
         case .hello, .heartbeat, .policyUpdate, .logRecord, .none:
