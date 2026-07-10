@@ -64,8 +64,11 @@ struct FileProviderDomainHostAvailabilityTests {
 /// `primeDomainChangeNotifications()` (issue #448) to arm the real
 /// `NSFileProviderDomainDidChange` notification immediately rather than waiting
 /// on registration to succeed — so `domainSource.callCount` is no longer
-/// guaranteed zero right after enable. Tests below that care about call count
-/// use relative deltas or gate on a specific count rather than asserting zero.
+/// guaranteed zero right after enable. That read is gated to fire at most once
+/// per host instance (the notification, once armed, stays armed), so a single
+/// enable in a fresh test host contributes exactly one extra call. Tests below
+/// that care about call count use relative deltas, gate on a specific count, or
+/// (for the one-enable-per-test common case) pin the exact expected count.
 ///
 /// `setEnabled(true)` also runs the *real*, non-stubbable `registerDomain()` →
 /// `NSFileProviderManager.add(domain)` — there is no injected seam for domain
@@ -281,13 +284,14 @@ struct FileProviderDomainHostEnablementTests {
         // need a real seam for `addDomain` to stay meaningful.
         //
         // `setEnabled(true)` also fires the discarded, throwaway priming
-        // `fetchDomains` read (see the suite doc comment / issue #448), so
-        // `domainSource.callCount == 0` no longer holds. Stage a *matching* domain
-        // instead — one that would map to `.ready`/`.needsEnabling` if it were ever
-        // consulted — and assert neither of those values is ever observed. Since
-        // the priming read's result is always discarded, the only way either value
-        // could appear is if the failure branch routed through the fetch-driven
-        // mapping helper instead of writing `.unavailable` directly.
+        // `fetchDomains` read exactly once (see the suite doc comment / issue
+        // #448), so `domainSource.callCount == 0` no longer holds. Stage a
+        // *matching* domain instead — one that would map to
+        // `.ready`/`.needsEnabling` if it were ever consulted — and assert it's
+        // never observed, while pinning `callCount == 1` to prove the priming
+        // read is the *only* call: an exact count (not just "not zero") still
+        // catches a future failure-branch edit that added its own extra,
+        // similarly-discarded `fetchDomains` call.
         let domainIdentifierString = "kernova-clipboard-test-\(UUID().uuidString)"
         let domainSource = FakeDomainSource()
         let matching = NSFileProviderDomain(
@@ -306,9 +310,17 @@ struct FileProviderDomainHostEnablementTests {
         try await collector.gate.wait(timeout: .seconds(20)) {
             collector.values.contains(.unavailable)
         }
+        // The priming read is dispatched from an independent `Task`, so it can
+        // still be in flight when `.unavailable` lands — wait for it too before
+        // pinning the exact count.
+        try await domainSource.gate.wait(timeout: .seconds(20)) { domainSource.callCount >= 1 }
         #expect(
             !collector.values.contains(.ready) && !collector.values.contains(.needsEnabling),
             "the addDomain failure branch must write .unavailable directly — a .ready/.needsEnabling here would mean it consulted the discarded priming read's result"
+        )
+        #expect(
+            domainSource.callCount == 1,
+            "only the priming read should ever call fetchDomains here — the addDomain failure branch must not consult it too"
         )
     }
 
