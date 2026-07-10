@@ -52,10 +52,14 @@ found_count=0
 fixed_count=0
 
 clean()   { printf '  %s✓%s %s\n' "$c_green" "$c_reset" "$1"; }
+warn()    { printf '  %s⚠%s %s\n' "$c_yellow" "$c_reset" "$1"; }
 ghost()   { printf '  %s✗%s %s\n' "$c_red" "$c_reset" "$1"; found_count=$((found_count + 1)); }
 fixed()   { printf '    %s→ fixed:%s %s\n' "$c_green" "$c_reset" "$1"; fixed_count=$((fixed_count + 1)); }
 detail()  { printf '    %s%s%s\n' "$c_dim" "$1" "$c_reset"; }
 section() { printf '\n%s%s%s\n' "$c_bold" "$1" "$c_reset"; }
+
+# Display-only: abbreviate $HOME to ~ so deep DerivedData paths stay scannable.
+pretty_path() { printf '%s' "${1/#$HOME/~}"; }
 
 printf '%sKernova ghost cleanup%s\n' "$c_bold" "$c_reset"
 [ "$FIX" = 1 ] && printf '%s(--fix: will unregister, kill, and prune)%s\n' "$c_dim" "$c_reset"
@@ -266,35 +270,67 @@ else
     blessed_known=0
     is_numeric "$blessed_version" && blessed_known=1
 
-    if [ "$blessed_known" -eq 0 ]; then
-        detail 'No /Applications/Kernova.app found — cannot determine which on-disk copy'
-        detail 'LaunchServices currently prefers. Listing every copy below for manual comparison.'
-    fi
-
-    competing_copies=()
+    # Pre-compute each copy's version (one plutil spawn per copy) so the
+    # no-install branch below can rank the copies before printing a verdict.
+    copy_vers=()
+    top_idx=-1
+    top_ver=-1
+    i=0
     for path in "${app_copies[@]}"; do
         ver=$(bundle_version "$path")
-        sign=$(signing_summary "$path")
-        if [ "$path" = "$blessed_path" ]; then
-            clean "$path — version ${ver:-unknown}, $sign (installed copy)"
-            continue
+        copy_vers+=("${ver:-unknown}")
+        if is_numeric "$ver" && [ "$ver" -gt "$top_ver" ]; then
+            top_ver=$ver
+            top_idx=$i
         fi
-
-        # Strictly greater, not >=: an equal CFBundleVersion is most likely a
-        # duplicate of the installed build (e.g. a Trashed copy of the same
-        # release), and this script has no verified basis for a tie-break —
-        # only a build that would actually outrank /Applications is a ghost.
-        outranks=0
-        if [ "$blessed_known" -eq 1 ] && is_numeric "$ver" && [ "$ver" -gt "$blessed_version" ]; then
-            outranks=1
-        fi
-        if [ "$outranks" = 1 ]; then
-            ghost "$path — version ${ver:-unknown}, $sign (outranks the installed copy, wins the election)"
-            competing_copies+=("$path")
-        else
-            detail "$path — version ${ver:-unknown}, $sign"
-        fi
+        i=$((i + 1))
     done
+
+    competing_copies=()
+    if [ "$blessed_known" -eq 1 ]; then
+        i=0
+        for path in "${app_copies[@]}"; do
+            ver=${copy_vers[$i]}
+            i=$((i + 1))
+            sign=$(signing_summary "$path")
+            if [ "$path" = "$blessed_path" ]; then
+                clean "$path — version $ver, $sign (installed copy)"
+                continue
+            fi
+
+            # Strictly greater, not >=: an equal CFBundleVersion is most
+            # likely a duplicate of the installed build (e.g. a Trashed copy
+            # of the same release), and this script has no verified basis for
+            # a tie-break — only a build that would actually outrank
+            # /Applications is a ghost.
+            outranks=0
+            if is_numeric "$ver" && [ "$ver" -gt "$blessed_version" ]; then
+                outranks=1
+            fi
+            if [ "$outranks" = 1 ]; then
+                ghost "$(pretty_path "$path") — version $ver, $sign (outranks the installed copy, wins the election)"
+                competing_copies+=("$path")
+            else
+                detail "$(pretty_path "$path") — version $ver, $sign"
+            fi
+        done
+    elif [ "${#app_copies[@]}" -eq 1 ]; then
+        clean 'No /Applications install — the only on-disk copy wins the election unopposed:'
+        detail "$(pretty_path "${app_copies[0]}") — version ${copy_vers[0]}, $(signing_summary "${app_copies[0]}")"
+    else
+        # Without an installed copy there is nothing to outrank, so none of
+        # these is a ghost by this script's definition — but multiple copies
+        # mean the highest CFBundleVersion silently wins name/UTI resolution,
+        # which is worth a glance.
+        warn "No /Applications install to rank against — ${#app_copies[@]} copies on disk, highest version wins:"
+        i=0
+        for path in "${app_copies[@]}"; do
+            mark=''
+            [ "$i" = "$top_idx" ] && mark=' ← wins the election'
+            detail "$(pretty_path "$path") — version ${copy_vers[$i]}, $(signing_summary "$path")$mark"
+            i=$((i + 1))
+        done
+    fi
 
     if [ "$FIX" = 1 ] && [ "${#competing_copies[@]}" -gt 0 ]; then
         if [ ! -t 0 ]; then
@@ -338,14 +374,53 @@ fi
 # PlugInKit's election for the three appexes follows the same highest-version
 # rule as the app itself. Report-only — recovering a wedged plugin means
 # evicting the competing app copy above, not a targeted pluginkit repair.
+# A default `pluginkit -m` returns only the election winner. Each match line
+# is "<election-marker> id(version)<TAB>uuid<TAB>registered<TAB>path",
+# followed by a tab-less "(N plug-ins)" count line — keep the version and
+# winning path, drop the UUID/timestamp/count noise. Collect everything
+# first so the verdict line can lead and the per-appex lines sit under it.
+pk_lines=()
+pk_dead=()
+pk_registered=0
 for id in app.kernova.quicklook app.kernova.fileprovider app.kernova.macosagent.fileprovider; do
     info=$(pluginkit -m -v -i "$id" 2>/dev/null)
     if [ -z "$info" ]; then
-        detail "$id: not registered with PlugInKit"
-    else
-        detail "$id: $info"
+        pk_lines+=("$id — not registered with PlugInKit")
+        continue
     fi
+    pk_registered=$((pk_registered + 1))
+    while IFS=$'\t' read -r head _uuid _registered path; do
+        [ -z "$path" ] && continue
+        ver=${head##*\(}
+        ver=${ver%\)}
+        # The election marker only matters when it says the winner is not
+        # actually in use (man pluginkit); `+`/blank are the normal states.
+        note=''
+        case "$head" in
+            '-'*) note=' (user elected to ignore)' ;;
+            '='*) note=' (superseded by another plug-in)' ;;
+        esac
+        [ -e "$path" ] || pk_dead+=("$id")
+        pk_lines+=("$id $ver — $(pretty_path "$path")$note")
+    done <<< "$info"
 done
+
+if [ "${#pk_dead[@]}" -gt 0 ]; then
+    # Not counted as a fixable issue: pluginkit offers no scripted repair —
+    # pkd re-elects on its next discovery pass (e.g. relaunching the intended
+    # copy, or evicting the competing copy above).
+    warn "PlugInKit election(s) point at deleted paths: ${pk_dead[*]}"
+elif [ "$pk_registered" -eq 0 ]; then
+    clean 'No app.kernova.* appexes registered with PlugInKit'
+    pk_lines=()
+else
+    clean 'PlugInKit appex elections point at bundles present on disk:'
+fi
+if [ "${#pk_lines[@]}" -gt 0 ]; then
+    for line in "${pk_lines[@]}"; do
+        detail "$line"
+    done
+fi
 
 # launchd's record is read-only diagnosis here, never a repair target: BTM
 # does not self-clean, and its cross-path semantics on a scripted
