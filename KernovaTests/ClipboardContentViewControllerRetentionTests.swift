@@ -18,8 +18,9 @@ import Testing
 @Suite("ClipboardContentViewController Copy-to-Mac retention")
 @MainActor
 struct ClipboardContentViewControllerRetentionTests {
-    /// Isolated, pre-cleaned defaults so `VMLibraryViewModel`'s selection/order
-    /// persistence never touches the real `.standard` domain.
+    /// Isolated, pre-cleaned defaults for this suite's `VMLibraryViewModel`.
+    ///
+    /// Selection/order persistence never touches the real `.standard` domain.
     private let defaults = makeEphemeralDefaults(suiteName: "test.kernova.clipboard-retention")
 
     private func makeViewModel() -> VMLibraryViewModel {
@@ -169,8 +170,9 @@ struct ClipboardContentViewControllerRetentionTests {
 @Suite("ClipboardContentViewController editor commit")
 @MainActor
 struct ClipboardContentViewControllerEditTests {
-    /// Isolated, pre-cleaned defaults so `VMLibraryViewModel`'s selection/order
-    /// persistence never touches the real `.standard` domain.
+    /// Isolated, pre-cleaned defaults for this suite's `VMLibraryViewModel`.
+    ///
+    /// Selection/order persistence never touches the real `.standard` domain.
     private let defaults = makeEphemeralDefaults(suiteName: "test.kernova.clipboard-edit")
 
     private func makeViewModel() -> VMLibraryViewModel {

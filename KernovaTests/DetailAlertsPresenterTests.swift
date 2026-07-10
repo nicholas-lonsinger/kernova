@@ -31,8 +31,9 @@ import Testing
 @Suite("DetailAlertsPresenter Tests", .serialized)
 @MainActor
 struct DetailAlertsPresenterTests {
-    /// Isolated, pre-cleaned defaults so `VMLibraryViewModel`'s selection/order
-    /// persistence never touches the real `.standard` domain.
+    /// Isolated, pre-cleaned defaults for this suite's `VMLibraryViewModel`.
+    ///
+    /// Selection/order persistence never touches the real `.standard` domain.
     private let defaults = makeEphemeralDefaults(suiteName: "test.kernova.detailalerts")
 
     private func makeViewModel() -> VMLibraryViewModel {
