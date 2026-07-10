@@ -70,15 +70,17 @@ struct FileProviderDomainHostAvailabilityTests {
 /// that care about call count use relative deltas, gate on a specific count, or
 /// (for the one-enable-per-test common case) pin the exact expected count.
 ///
-/// `setEnabled(true)` also runs the *real*, non-stubbable `registerDomain()` →
-/// `NSFileProviderManager.add(domain)` — there is no injected seam for domain
-/// registration itself (see the type's doc comment on why: it's shared,
-/// direction-agnostic system machinery). In this test process (a bare `swift
-/// test` executable, not an app bundle with a registered File Provider
-/// extension) that call reliably fails, which is exactly what
-/// `registrationFailureReportsUnavailable` below exercises. Every fake domain
-/// identifier is a fresh UUID so the (failing) registration attempts from
-/// different tests can never collide.
+/// `setEnabled(true)` also runs `registerDomain()` → `addDomain(retryOnExists:)`,
+/// which calls the injectable `addDomainToSystem` seam (#428) — `makeHost` omits
+/// it by default, so most tests below exercise the *real*, non-stubbable
+/// `NSFileProviderManager.add(domain)`. In this test process (a bare `swift test`
+/// executable, not an app bundle with a registered File Provider extension) that
+/// call reliably fails, which is exactly what `registrationFailureReportsUnavailable`
+/// below exercises. `pasteRetriesTransientRegistrationFailure` instead injects a
+/// `FakeAddDomain` to deterministically exercise the usage-triggered re-registration
+/// self-heal that `publishSingleFile` kicks off when it finds the domain
+/// unregistered. Every fake domain identifier is a fresh UUID so the (failing)
+/// registration attempts from different tests can never collide.
 @Suite("FileProviderDomainHost enablement & availability wiring")
 @MainActor
 struct FileProviderDomainHostEnablementTests {
@@ -160,11 +162,40 @@ struct FileProviderDomainHostEnablementTests {
 
     private struct FakeFetchError: Error {}
 
+    /// Stands in for `NSFileProviderManager.add(domain:completionHandler:)` (#428).
+    ///
+    /// Fails the first `failCount` calls (`NSError` with a nonsense domain/code —
+    /// `addDomain` only inspects `localizedDescription` for logging, never the
+    /// domain/code), then succeeds. Dispatches the completion asynchronously off a
+    /// global queue to mirror the real API's async delivery, so a test can't rely
+    /// on completion having already run by the time the call returns.
+    private final class FakeAddDomain: @unchecked Sendable {
+        private let lock = NSLock()
+        private let failCount: Int
+        private var callCountStorage = 0
+
+        init(failCount: Int) {
+            self.failCount = failCount
+        }
+
+        var callCount: Int { lock.withLock { callCountStorage } }
+
+        func add(_ domain: NSFileProviderDomain, completion: @escaping @Sendable (Error?) -> Void) {
+            let thisCall = lock.withLock {
+                callCountStorage += 1
+                return callCountStorage
+            }
+            let error: Error? = thisCall <= failCount ? NSError(domain: "FakeAddDomain", code: thisCall) : nil
+            DispatchQueue.global().async { completion(error) }
+        }
+    }
+
     // MARK: - Helpers
 
     private func makeHost(
         domainIdentifier: String, domainSource: FakeDomainSource,
-        notificationCenter: NotificationCenter
+        notificationCenter: NotificationCenter,
+        addDomain: FakeAddDomain? = nil
     ) -> FileProviderDomainHost {
         let config = FileProviderConfig(
             appGroupIdentifier: "8MT4P4GZL2.app.kernova.test",
@@ -177,6 +208,15 @@ struct FileProviderDomainHostEnablementTests {
             extensionLoggerSubsystem: "app.kernova.test.fileprovider",
             ownerCodeSigningRequirement: nil,
             extensionCodeSigningRequirement: nil)
+        if let addDomain {
+            return FileProviderDomainHost(
+                config: config,
+                pullProvider: NeverCalledPullProvider(),
+                relayTransport: NoOpRelayTransport(),
+                notificationCenter: notificationCenter,
+                fetchDomains: { try await domainSource.fetch() },
+                addDomainToSystem: { domain, completion in addDomain.add(domain, completion: completion) })
+        }
         return FileProviderDomainHost(
             config: config,
             pullProvider: NeverCalledPullProvider(),
@@ -344,6 +384,56 @@ struct FileProviderDomainHostEnablementTests {
         host.setEnabled(true)
 
         try await domainSource.gate.wait(timeout: .seconds(20)) { domainSource.callCount >= 1 }
+    }
+
+    @Test("a paste that finds the domain unregistered after a transient add failure retries registration (#428)")
+    func pasteRetriesTransientRegistrationFailure() async throws {
+        // Simulates a one-off transient `NSFileProviderManager.add` failure: the
+        // initial `setEnabled(true)` registration and its orphan-heal retry both
+        // fail (calls 1-2), landing the domain in `.unavailable` with
+        // `domainRegistered == false` — exactly the issue's reported dead end,
+        // since nothing used to retry after that. A subsequent `publishSingleFile`
+        // call (standing in for a real paste) must kick a bounded re-registration
+        // (call 3), which this fake lets succeed, and the domain must come back.
+        let domainIdentifierString = "kernova-clipboard-test-\(UUID().uuidString)"
+        let domainSource = FakeDomainSource()
+        let collector = AvailabilityCollector()
+        let center = NotificationCenter()
+        let addDomain = FakeAddDomain(failCount: 2)
+        let host = makeHost(
+            domainIdentifier: domainIdentifierString, domainSource: domainSource,
+            notificationCenter: center, addDomain: addDomain)
+        host.setAvailabilityObserver { collector.record($0) }
+
+        host.setEnabled(true)
+
+        try await collector.gate.wait(timeout: .seconds(20)) {
+            collector.values.contains(.unavailable)
+        }
+        #expect(
+            addDomain.callCount == 2,
+            "the initial registration plus its one orphan-heal retry should both have run")
+
+        // Arm the domain source so the re-registration's post-success
+        // `refreshAvailability()` finds a match — a fresh domain's `userEnabled`
+        // defaults `false`, landing `.needsEnabling` (see
+        // `notificationTriggersRefetchWhileEnabled` above for why `.ready` isn't
+        // constructible here).
+        let matching = NSFileProviderDomain(
+            identifier: NSFileProviderDomainIdentifier(domainIdentifierString),
+            displayName: "Test")
+        domainSource.setResult(.success([matching]))
+
+        let published = host.publishSingleFile(
+            generation: 1, repIndex: 0, filename: "test.txt", byteCount: 10, uti: "public.data")
+        #expect(published == nil, "the triggering paste itself must still fall back to the sync path")
+
+        try await collector.gate.wait(timeout: .seconds(20)) {
+            collector.values.contains(.needsEnabling)
+        }
+        #expect(
+            addDomain.callCount == 3,
+            "the usage-triggered re-registration should have retried add() exactly once more")
     }
 
     @Test("disabling stops observing the domain-change notification; a later post is a no-op")
