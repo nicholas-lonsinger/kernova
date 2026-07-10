@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Darwin
 import Observation
@@ -288,4 +289,23 @@ private func armObservationOnce(
     // Resolved (observation, immediate hit, or the backstop itself) — cancel the
     // backstop so it doesn't linger asleep until `deadline`.
     backstop?.cancel()
+}
+
+// MARK: - AppKit window factory
+
+/// Builds a plain window with `isReleasedWhenClosed` disarmed.
+///
+/// The default `true` double-releases an ARC-owned `NSWindow` on `close()`
+/// (see `SettingsWindowController`'s own `isReleasedWhenClosed = false` for the
+/// same reason) — fatal under ARC.
+@MainActor
+func makeTestWindow(styleMask: NSWindow.StyleMask) -> NSWindow {
+    let window = NSWindow(
+        contentRect: NSRect(x: 0, y: 0, width: 200, height: 100),
+        styleMask: styleMask,
+        backing: .buffered,
+        defer: false
+    )
+    window.isReleasedWhenClosed = false
+    return window
 }
