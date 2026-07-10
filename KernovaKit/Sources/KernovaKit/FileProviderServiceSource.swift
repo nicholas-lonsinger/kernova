@@ -217,7 +217,7 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
         var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN) * 4)
         let length = proc_pidpath(pid, &buffer, UInt32(buffer.count))
         guard length > 0 else { return nil }
-        return String(cString: buffer)
+        return String(decoding: buffer[0..<Int(length)].map(UInt8.init(bitPattern:)), as: UTF8.self)
     }
 
     // MARK: - FileProviderControl (activation handshake)
