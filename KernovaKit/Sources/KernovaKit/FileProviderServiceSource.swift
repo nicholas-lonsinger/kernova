@@ -200,11 +200,16 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
 
     /// Best-effort resolution of a process's executable path via `proc_pidpath`.
     ///
-    /// `nil` on failure (e.g. the peer exited between accept and this call) —
-    /// callers fall back to logging just the PID rather than treating this as
-    /// fatal. Deliberately not `NSRunningApplication`, which pulls AppKit into
-    /// this file — shared `KernovaKit` code compiled into both the host and
-    /// guest File Provider *extension* binaries, neither an AppKit app.
+    /// `nil` on failure (e.g. the peer exited between accept and this call, or
+    /// the App Sandbox denies resolving a non-self PID — both extension
+    /// targets this file compiles into carry `com.apple.security.app-sandbox`,
+    /// and Apple's sandbox profile may scope `proc_pidpath` to the caller's own
+    /// PID). Either way this is best-effort: callers fall back to logging just
+    /// the PID — the primary, always-available identity signal — rather than
+    /// treating an unresolved path as fatal. Deliberately not
+    /// `NSRunningApplication`, which pulls AppKit into this file — shared
+    /// `KernovaKit` code compiled into both the host and guest File Provider
+    /// *extension* binaries, neither an AppKit app.
     private static func executablePath(forPID pid: pid_t) -> String? {
         // `PROC_PIDPATHINFO_MAXSIZE` itself is unavailable on this SDK
         // ("structure not supported"); its definition (4 * MAXPATHLEN) is not,
