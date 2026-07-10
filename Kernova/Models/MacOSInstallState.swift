@@ -2,7 +2,7 @@ import Foundation
 
 /// Snapshot of download progress reported by the IPSW download delegate.
 struct DownloadProgress: Sendable {
-     let bytesWritten: Int64
+    let bytesWritten: Int64
     let totalBytes: Int64
     /// EWMA-smoothed download speed; zero before the first progress report.
     let bytesPerSecond: Double
