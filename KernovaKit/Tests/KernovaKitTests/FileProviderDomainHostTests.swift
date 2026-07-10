@@ -60,6 +60,16 @@ struct FileProviderDomainHostAvailabilityTests {
 /// injected `notificationCenter` re-probes availability through the injected
 /// `fetchDomains`, and a post while never enabled is a no-op.
 ///
+/// `setEnabled(true)` also fires a throwaway, discarded `fetchDomains` read via
+/// `primeDomainChangeNotifications()` (issue #448) to arm the real
+/// `NSFileProviderDomainDidChange` notification immediately rather than waiting
+/// on registration to succeed — so `domainSource.callCount` is no longer
+/// guaranteed zero right after enable. That read is gated to fire at most once
+/// per host instance (the notification, once armed, stays armed), so a single
+/// enable in a fresh test host contributes exactly one extra call. Tests below
+/// that care about call count use relative deltas, gate on a specific count, or
+/// (for the one-enable-per-test common case) pin the exact expected count.
+///
 /// `setEnabled(true)` also runs the *real*, non-stubbable `registerDomain()` →
 /// `NSFileProviderManager.add(domain)` — there is no injected seam for domain
 /// registration itself (see the type's doc comment on why: it's shared,
@@ -76,11 +86,13 @@ struct FileProviderDomainHostEnablementTests {
 
     /// Stands in for `NSFileProviderManager.domains()`, returning (or throwing)
     /// whatever a test last configured and counting invocations so a test can
-    /// tell a probe actually ran.
+    /// tell a probe actually ran. `gate` fires on every `fetch()` call so a test
+    /// can wait for a specific call count without polling.
     private final class FakeDomainSource: @unchecked Sendable {
         private let lock = NSLock()
         private var result: Result<[NSFileProviderDomain], Error> = .success([])
         private var callCountStorage = 0
+        let gate = AsyncGate()
 
         var callCount: Int { lock.withLock { callCountStorage } }
 
@@ -93,6 +105,7 @@ struct FileProviderDomainHostEnablementTests {
                 callCountStorage += 1
                 return result
             }
+            gate.notify()
             return try outcome.get()
         }
     }
@@ -256,7 +269,9 @@ struct FileProviderDomainHostEnablementTests {
         #expect(host.availability == .inactive)
     }
 
-    @Test("addDomain's registration failure reports .unavailable directly, without consulting fetchDomains")
+    @Test(
+        "addDomain's registration failure reports .unavailable directly, without routing through the fetchDomains-driven mapping"
+    )
     func registrationFailureReportsUnavailable() async throws {
         // Validates the `addDomain` failure branch's `self.setAvailability(.unavailable)`
         // consistency fix (previously a direct `self.availabilityStorage = .unavailable`
@@ -267,11 +282,26 @@ struct FileProviderDomainHostEnablementTests {
         // which is what this test process is. If that ever stops being true (e.g. a
         // future test host where registration spuriously succeeds), this test would
         // need a real seam for `addDomain` to stay meaningful.
+        //
+        // `setEnabled(true)` also fires the discarded, throwaway priming
+        // `fetchDomains` read exactly once (see the suite doc comment / issue
+        // #448), so `domainSource.callCount == 0` no longer holds. Stage a
+        // *matching* domain instead — one that would map to
+        // `.ready`/`.needsEnabling` if it were ever consulted — and assert it's
+        // never observed, while pinning `callCount == 1` to prove the priming
+        // read is the *only* call: an exact count (not just "not zero") still
+        // catches a future failure-branch edit that added its own extra,
+        // similarly-discarded `fetchDomains` call.
+        let domainIdentifierString = "kernova-clipboard-test-\(UUID().uuidString)"
         let domainSource = FakeDomainSource()
+        let matching = NSFileProviderDomain(
+            identifier: NSFileProviderDomainIdentifier(domainIdentifierString),
+            displayName: "Test")
+        domainSource.setResult(.success([matching]))
         let collector = AvailabilityCollector()
         let center = NotificationCenter()
         let host = makeHost(
-            domainIdentifier: "kernova-clipboard-test-\(UUID().uuidString)",
+            domainIdentifier: domainIdentifierString,
             domainSource: domainSource, notificationCenter: center)
         host.setAvailabilityObserver { collector.record($0) }
 
@@ -280,9 +310,40 @@ struct FileProviderDomainHostEnablementTests {
         try await collector.gate.wait(timeout: .seconds(20)) {
             collector.values.contains(.unavailable)
         }
+        // The priming read is dispatched from an independent `Task`, so it can
+        // still be in flight when `.unavailable` lands — wait for it too before
+        // pinning the exact count.
+        try await domainSource.gate.wait(timeout: .seconds(20)) { domainSource.callCount >= 1 }
         #expect(
-            domainSource.callCount == 0,
-            "the addDomain failure branch writes .unavailable directly — it must not consult fetchDomains")
+            !collector.values.contains(.ready) && !collector.values.contains(.needsEnabling),
+            "the addDomain failure branch must write .unavailable directly — a .ready/.needsEnabling here would mean it consulted the discarded priming read's result"
+        )
+        #expect(
+            domainSource.callCount == 1,
+            "only the priming read should ever call fetchDomains here — the addDomain failure branch must not consult it too"
+        )
+    }
+
+    @Test(
+        "enabling arms NSFileProviderDomainDidChange delivery via an eager, throwaway fetchDomains read, independent of registration outcome"
+    )
+    func enableEagerlyPrimesDomainNotifications() async throws {
+        // The real `NSFileProviderManager.add(domain)` call in this test process
+        // never succeeds (see the suite doc comment), so if the priming read were
+        // gated on registration succeeding — as `refreshAvailability()` normally
+        // is, via `addDomain`'s success completion — `domainSource` would never be
+        // consulted here. Proves `primeDomainChangeNotifications()` runs
+        // unconditionally at enable, arming the notification without waiting on
+        // (or being blocked by) registration (issue #448).
+        let domainSource = FakeDomainSource()
+        let center = NotificationCenter()
+        let host = makeHost(
+            domainIdentifier: "kernova-clipboard-test-\(UUID().uuidString)",
+            domainSource: domainSource, notificationCenter: center)
+
+        host.setEnabled(true)
+
+        try await domainSource.gate.wait(timeout: .seconds(20)) { domainSource.callCount >= 1 }
     }
 
     @Test("disabling stops observing the domain-change notification; a later post is a no-op")

@@ -123,6 +123,12 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
 
     private var enabled = false
     private var domainRegistered = false
+    /// Set once `primeDomainChangeNotifications()` has fired. The underlying
+    /// `NSFileProviderDomainDidChange` notification only needs the process's
+    /// first-ever `domains()` call to go live, so repeat enables (e.g. a policy
+    /// off→on toggle, or a VM stop/start cycling `HostClipboardFileProvider`'s
+    /// `activeServiceCount`) skip the redundant IPC round-trip.
+    private var domainChangeNotificationsPrimed = false
     /// User-visible domain root, resolved after registration; `nil` until then
     /// (the File Provider path is unused while it's `nil`).
     private var rootURL: URL?
@@ -234,8 +240,9 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
             // invalidation, so this runs on every enable — no outer latch, which
             // would defeat the connector's "re-arm on next enable" recovery.
             relayTransport.startServing(relayService)
-            registerDomain()
             startObservingDomainChanges()
+            primeDomainChangeNotifications()
+            registerDomain()
         } else {
             stopObservingDomainChanges()
             setAvailability(.inactive)
@@ -415,6 +422,33 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
             DispatchQueue.main.async {
                 guard let self, self.enabled, generation == self.refreshGeneration else { return }
                 self.setAvailability(availability)
+            }
+        }
+    }
+
+    /// Fires one throwaway `domains()` read so `NSFileProviderDomainDidChange`
+    /// starts posting. Per Apple's header comment on that notification, it only
+    /// goes live after the process's first `NSFileProviderManager.domains()`
+    /// call completes; `refreshAvailability()`'s first call is gated on
+    /// `addDomain` succeeding, which is async and can fail, leaving a window at
+    /// enable where a System-Settings toggle flip wouldn't be observed. This
+    /// primes delivery immediately and independent of registration outcome. The
+    /// result is intentionally discarded — availability stays driven solely by
+    /// `addDomain`'s outcome and subsequent notification-triggered refreshes.
+    ///
+    /// Only needs to run once per process (the notification, once armed, stays
+    /// armed) — `domainChangeNotificationsPrimed` skips the IPC round-trip on
+    /// every subsequent enable.
+    private func primeDomainChangeNotifications() {
+        guard !domainChangeNotificationsPrimed else { return }
+        domainChangeNotificationsPrimed = true
+        Task { [weak self, fetchDomains] in
+            do {
+                _ = try await fetchDomains()
+            } catch {
+                self?.logger.warning(
+                    "Priming domains() read failed: \(error.localizedDescription, privacy: .public)"
+                )
             }
         }
     }
