@@ -1113,7 +1113,7 @@
 				INFOPLIST_FILE = KernovaMacOSAgent/Info.plist;
 				INFOPLIST_PREFIX_HEADER = "$(DERIVED_FILE_DIR)/AgentBuildNumber.h";
 				INFOPLIST_PREPROCESS = YES;
-				MARKETING_VERSION = 0.33.0;
+				MARKETING_VERSION = 0.34.0;
 				EXECUTABLE_NAME = KernovaMacOSAgent;
 				PRODUCT_BUNDLE_IDENTIFIER = app.kernova.macosagent;
 				PRODUCT_MODULE_NAME = KernovaMacOSAgent;
@@ -1139,7 +1139,7 @@
 				INFOPLIST_FILE = KernovaMacOSAgent/Info.plist;
 				INFOPLIST_PREFIX_HEADER = "$(DERIVED_FILE_DIR)/AgentBuildNumber.h";
 				INFOPLIST_PREPROCESS = YES;
-				MARKETING_VERSION = 0.33.0;
+				MARKETING_VERSION = 0.34.0;
 				EXECUTABLE_NAME = KernovaMacOSAgent;
 				PRODUCT_BUNDLE_IDENTIFIER = app.kernova.macosagent;
 				PRODUCT_MODULE_NAME = KernovaMacOSAgent;
@@ -1252,7 +1252,7 @@
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.33.0;
+				MARKETING_VERSION = 0.34.0;
 				PRODUCT_BUNDLE_IDENTIFIER = app.kernova.macosagent.fileprovider;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -1283,7 +1283,7 @@
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.33.0;
+				MARKETING_VERSION = 0.34.0;
 				PRODUCT_BUNDLE_IDENTIFIER = app.kernova.macosagent.fileprovider;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
