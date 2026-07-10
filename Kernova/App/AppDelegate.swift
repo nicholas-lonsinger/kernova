@@ -349,7 +349,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // headless); an unreadable event falls back to the activation heuristic.
         resolveColdLaunch(from: NSAppleEventManager.shared().currentAppleEvent)
 
-        Self.logger.notice("Kernova resident app ready (headless, .accessory)")
+        // Provenance line (#455): the XPC peer pin on the File Provider servicing
+        // connection checks only identifier + team, so a mismatched-version
+        // interaction (an old resident copy still answering while a new one was
+        // just installed) is otherwise only diagnosable by correlating logs
+        // across processes. One greppable line at startup makes "which copy is
+        // this" a single `log show` away instead.
+        let provenance = Self.residentProvenanceLine(
+            bundlePath: Bundle.main.bundlePath,
+            build: Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?",
+            configuration: Self.buildConfiguration)
+        Self.logger.notice(
+            "Kernova resident app ready (headless, .accessory) — \(provenance, privacy: .public)")
+    }
+
+    #if DEBUG
+    private static let buildConfiguration = "Debug"
+    #else
+    private static let buildConfiguration = "Release"
+    #endif
+
+    /// Formats the resident-app startup provenance line — bundle path, build
+    /// number, and configuration — factored out pure for unit testing (mirrors
+    /// `launchProvenance`).
+    nonisolated static func residentProvenanceLine(
+        bundlePath: String, build: String, configuration: String
+    ) -> String {
+        "bundle=\(bundlePath) build=\(build) config=\(configuration)"
     }
 
     // MARK: - Cold-launch resolution
