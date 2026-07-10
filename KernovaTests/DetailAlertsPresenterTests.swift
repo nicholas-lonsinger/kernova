@@ -31,6 +31,11 @@ import Testing
 @Suite("DetailAlertsPresenter Tests", .serialized)
 @MainActor
 struct DetailAlertsPresenterTests {
+    /// Isolated, pre-cleaned defaults for this suite's `VMLibraryViewModel`.
+    ///
+    /// Selection/order persistence never touches the real `.standard` domain.
+    private let defaults = makeEphemeralDefaults(suiteName: "test.kernova.detailalerts")
+
     private func makeViewModel() -> VMLibraryViewModel {
         VMLibraryViewModel(
             storageService: MockVMStorageService(),
@@ -38,7 +43,8 @@ struct DetailAlertsPresenterTests {
             virtualizationService: MockVirtualizationService(),
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
-            usbDeviceService: MockUSBDeviceService()
+            usbDeviceService: MockUSBDeviceService(),
+            defaults: defaults
         )
     }
 

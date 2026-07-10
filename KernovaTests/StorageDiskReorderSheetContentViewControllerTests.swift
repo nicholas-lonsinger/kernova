@@ -109,7 +109,9 @@ struct StorageDiskReorderSheetContentViewControllerTests {
             Issue.record("Expected an NSPasteboardItem from pasteboardWriterForRow")
             return
         }
-        let pasteboard = NSPasteboard(name: NSPasteboard.Name("test-drag"))
+        // A per-test unique name so parallel/retried runs never share this global
+        // named pasteboard (matches ClipboardPasteboardIntakeTests).
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("kernova-test-\(UUID().uuidString)"))
         pasteboard.clearContents()
         pasteboard.writeObjects([writer])
 
@@ -130,7 +132,8 @@ struct StorageDiskReorderSheetContentViewControllerTests {
             Issue.record("Expected an NSTableView")
             return
         }
-        let dragInfo = StubDraggingInfo(pasteboard: NSPasteboard(name: NSPasteboard.Name("test-validate")))
+        let dragInfo = StubDraggingInfo(
+            pasteboard: NSPasteboard(name: NSPasteboard.Name("kernova-test-\(UUID().uuidString)")))
         #expect(
             vc.tableView(table, validateDrop: dragInfo, proposedRow: 1, proposedDropOperation: .above)
                 == .move

@@ -16,6 +16,12 @@ final class VMLibraryViewModel {
     let diskImageService: any DiskImageProviding
     let lifecycle: VMLifecycleCoordinator
 
+    /// Backing store for selection/order persistence.
+    ///
+    /// Injectable so tests use an ephemeral suite instead of the real `.standard`
+    /// domain; production passes the default.
+    private let defaults: UserDefaults
+
     // MARK: - State
 
     var instances: [VMInstance] = []
@@ -23,9 +29,9 @@ final class VMLibraryViewModel {
         didSet {
             guard selectedID != oldValue else { return }
             if let selectedID {
-                UserDefaults.standard.set(selectedID.uuidString, forKey: Self.lastSelectedVMIDKey)
+                defaults.set(selectedID.uuidString, forKey: Self.lastSelectedVMIDKey)
             } else {
-                UserDefaults.standard.removeObject(forKey: Self.lastSelectedVMIDKey)
+                defaults.removeObject(forKey: Self.lastSelectedVMIDKey)
             }
         }
     }
@@ -111,10 +117,12 @@ final class VMLibraryViewModel {
         virtualizationService: any VirtualizationProviding = VirtualizationService(),
         installService: any MacOSInstallProviding = MacOSInstallService(),
         ipswService: any IPSWProviding = IPSWService(),
-        usbDeviceService: any USBDeviceProviding = USBDeviceService()
+        usbDeviceService: any USBDeviceProviding = USBDeviceService(),
+        defaults: UserDefaults = .standard
     ) {
         self.storageService = storageService
         self.diskImageService = diskImageService
+        self.defaults = defaults
         self.lifecycle = VMLifecycleCoordinator(
             virtualizationService: virtualizationService,
             installService: installService,
@@ -170,7 +178,7 @@ final class VMLibraryViewModel {
 
             // Load persisted order, sort by it, then normalize customOrder to match
             // the actual instance list (prunes stale UUIDs, incorporates new VMs).
-            if let savedStrings = UserDefaults.standard.stringArray(forKey: Self.vmOrderKey) {
+            if let savedStrings = defaults.stringArray(forKey: Self.vmOrderKey) {
                 customOrder = savedStrings.compactMap { UUID(uuidString: $0) }
                 Self.logger.debug("Loaded custom VM order: \(self.customOrder.count, privacy: .public) UUID(s)")
             } else {
@@ -180,7 +188,7 @@ final class VMLibraryViewModel {
             customOrder = instances.map(\.id)
 
             if selectedID == nil || !instances.contains(where: { $0.id == selectedID }) {
-                if let savedString = UserDefaults.standard.string(forKey: Self.lastSelectedVMIDKey),
+                if let savedString = defaults.string(forKey: Self.lastSelectedVMIDKey),
                     let savedID = UUID(uuidString: savedString),
                     instances.contains(where: { $0.id == savedID })
                 {
@@ -2169,7 +2177,7 @@ final class VMLibraryViewModel {
     /// Snapshots the current instance order into customOrder and persists it to UserDefaults.
     private func persistOrder() {
         customOrder = instances.map(\.id)
-        UserDefaults.standard.set(customOrder.map(\.uuidString), forKey: Self.vmOrderKey)
+        defaults.set(customOrder.map(\.uuidString), forKey: Self.vmOrderKey)
     }
 
     // MARK: - Error Handling

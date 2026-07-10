@@ -24,6 +24,32 @@ struct TestFailure: Error {
     init(_ m: String) { message = m }
 }
 
+// MARK: - Ephemeral UserDefaults
+
+/// Opens an isolated, pre-cleaned `UserDefaults` suite for a `.serialized` test suite.
+///
+/// State never bleeds in from another test or a prior run: a run hard-killed
+/// mid-test (CI timeout, SIGKILL) skips any `defer`, so clearing *before* use is
+/// the load-bearing half. Pass a fixed `suiteName` unique to the calling suite —
+/// a fixed name (not a per-call UUID) bounds the on-disk footprint to a single
+/// reusable tombstone plist. Shared by every suite (e.g. `AppPreferencesTests`,
+/// #449/#506) that needs a test never to read or write the real `.standard`
+/// domain; callers that also need after-the-fact teardown (e.g. because they
+/// reuse one suite across multiple `@Test`s) should wrap the returned instance
+/// in their own `defer { defaults.removePersistentDomain(forName:) }`.
+func makeEphemeralDefaults(suiteName: String) -> UserDefaults {
+    guard let defaults = UserDefaults(suiteName: suiteName) else {
+        fatalError("Could not open test UserDefaults suite '\(suiteName)'")
+    }
+    defaults.removePersistentDomain(forName: suiteName)
+    if let plistURL = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)
+        .first?.appending(path: "Preferences/\(suiteName).plist")
+    {
+        try? FileManager.default.removeItem(at: plistURL)
+    }
+    return defaults
+}
+
 // MARK: - Socket / channel factories
 
 /// Returns a connected AF_UNIX socketpair as two raw file descriptors.
