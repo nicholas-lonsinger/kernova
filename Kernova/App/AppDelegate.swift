@@ -212,6 +212,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     // MARK: - Entry Point
 
     static func main() {
+        // Teardown helper (#467) — removes the host clipboard File Provider domain
+        // so no Finder location lingers (e.g. a ghost domain left by a deleted
+        // build). Handled before any NSApplication setup so it works headless.
+        if CommandLine.arguments.contains("--remove-clipboard-domain") {
+            FileProviderDomainHost.removeAllDomainsBlocking()
+            exit(0)
+        }
+
         let isTestHost = ProcessInfo.processInfo.isRunningXCTests
         let app = NSApplication.shared
 
