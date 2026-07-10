@@ -71,6 +71,60 @@ jobs:
             COMPILER_INDEX_STORE_ENABLE=NO \
             2>&1 | if command -v xcbeautify &>/dev/null; then xcbeautify --renderer github-actions; else cat; fi
 
+      # Kernova.xctestplan runs with retryOnFailure (maximumTestRepetitions: 2):
+      # it re-runs the whole bundle and lets a test that failed its first attempt
+      # pass the job on a retry, silently masking the flake — a green run can hide
+      # a ~35%-flaky test (which is exactly how #523 stayed green for a day). This
+      # step reads the result bundle and warns on any test with a failed attempt,
+      # so a passed-on-retry flake is visible instead of an invisible green. It is
+      # visibility-only and never fails the job (retryOnFailure still guards merges).
+      - name: Report flaky (retried) tests
+        if: always()
+        run: |
+          bundle="artifacts/TestResults.xcresult"
+          if [ ! -d "$bundle" ]; then
+            echo "No test result bundle at $bundle — skipping flake report."
+            exit 0
+          fi
+          if ! command -v jq >/dev/null 2>&1; then
+            echo "jq not found — skipping flake report."
+            exit 0
+          fi
+          # Each attempt is a "Repetition" node; a genuine flake failed at least
+          # one Repetition but still passed overall (a bundle-wide retry marks
+          # every passed test's repetitions "Passed", so this does not
+          # false-positive on the other tests dragged through the retry). A test
+          # that failed every repetition is broken, not flaky — it already fails
+          # the job on its own via xcodebuild's exit code, so `result == "Passed"`
+          # excludes it here to avoid mislabeling it as a mere flake. Dedup on
+          # `.nodeIdentifier` (suite-qualified) rather than `.name` (bare display
+          # name), since two unrelated suites can share a test's display name.
+          if ! flaky="$(xcrun xcresulttool get test-results tests --path "$bundle" 2>&1 | jq -r '
+                [ .. | objects
+                  | select(.nodeType? == "Test Case" and .result == "Passed")
+                  | select(any(.children[]?; .nodeType == "Repetition" and .result == "Failed"))
+                  | (.nodeIdentifier // .name) ] | unique[]' 2>&1)"; then
+            echo "Could not read/parse test results at $bundle — skipping flake report. Output: $flaky"
+            exit 0
+          fi
+          if [ -z "$flaky" ]; then
+            echo "No flaky (failed-then-retried) tests in this run."
+            exit 0
+          fi
+          {
+            echo "### ⚠️ Flaky tests (failed at least one attempt)"
+            echo ""
+            echo "Retried via \`retryOnFailure\`, so these may have passed the job on a later attempt. Investigate before they degrade further:"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY" || true
+          while IFS= read -r name; do
+            # GitHub's `::` workflow-command protocol requires literal `%` in the
+            # message to be percent-encoded so it isn't misparsed as an escape.
+            escaped="${name//%/%25}"
+            echo "::warning title=Flaky test (failed then retried)::${escaped}"
+            echo "- \`${name}\`" >> "$GITHUB_STEP_SUMMARY" || true
+          done <<< "$flaky"
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v6
