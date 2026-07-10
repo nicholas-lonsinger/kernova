@@ -25,6 +25,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private let clipboardMenuItem: NSMenuItem
     private var settingsWindowController: SettingsWindowController?
 
+    /// Single close-side trigger for the activation-policy reconcile (#437).
+    ///
+    /// Fires `scheduleAgentActivationPolicySync()` on every window close, tracked
+    /// or not (e.g. the standard About panel), rather than each window kind
+    /// scheduling its own reconcile. Installed once in `applicationDidFinishLaunching`
+    /// for the resident app; unused in the test host.
+    private var globalWindowCloseObserver: Any?
+
     /// The menu-bar status item (resident app only): the always-visible "Kernova
     /// is running" affordance and a discoverable way to summon the GUI while
     /// headless.
@@ -316,6 +324,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             }
         )
 
+        // Single close-side activation-policy reconcile trigger (#437): fires on
+        // every window close, tracked or not — so an untracked AppKit panel (the
+        // standard About panel, the toolbar customization palette) closing as the
+        // last window still drops the Dock icon, and one closing while a tracked
+        // window remains never strips it. See `hasVisibleUserWindow`.
+        globalWindowCloseObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.scheduleAgentActivationPolicySync() }
+        }
+
         // Cold-launch resolution (#460): the launch Apple event classifies most
         // launches deterministically (manual → show the window; login item → stay
         // headless); an unreadable event falls back to the activation heuristic.
@@ -506,7 +525,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         if displayWindows.values.contains(where: { onScreen($0.window) }) { return true }
         if clipboardWindows.values.contains(where: { onScreen($0.window) }) { return true }
         if onScreen(settingsWindowController?.window) { return true }
+        // AppKit-owned top-level panels opened from the menu bar — the standard
+        // About panel, the toolbar customization palette — are genuine on-screen
+        // windows we don't track. Count any so a reconcile can't strip the Dock
+        // icon + menu bar while one is the last window visible (#437).
+        if NSApp.windows.contains(where: Self.isUntrackedUserPanel) { return true }
         return false
+    }
+
+    /// Whether `window` is an untracked, AppKit-owned top-level panel whose
+    /// presence must keep the Dock icon.
+    ///
+    /// The standard About panel and the toolbar customization palette are the
+    /// motivating examples (#437). Excludes the always-present status-bar window
+    /// and other chrome by requiring a visible, normal-level, titled window — the
+    /// status item's backing `NSStatusBarWindow` is borderless and sits above
+    /// `.normal`, so an unfiltered `NSApp.windows` scan would pin the agent to
+    /// `.regular` forever.
+    nonisolated static func isUntrackedUserPanel(_ window: NSWindow) -> Bool {
+        (window.isVisible || window.isMiniaturized)
+            && window.level == .normal
+            && window.styleMask.contains(.titled)
     }
 
     /// Reconciles the resident app's activation policy with its open windows:
@@ -548,9 +587,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // single-instance for free (a second open → reopen event, not a new
         // process), so no instance lock is needed.
         if !isTestHost {
-            // Stay resident; reconcile the Dock presence on the next tick (drops to
-            // `.accessory` only if no user window remains).
-            scheduleAgentActivationPolicySync()
+            // Stay resident. The global `willClose` observer (#437) already
+            // schedules the Dock-presence reconcile for this same window close;
+            // no need to schedule it again here.
             return false
         }
 
@@ -1067,7 +1106,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 }
                 self[keyPath: windowsKP].removeValue(forKey: vmID)
                 self.terminateIfIdle()
-                self.scheduleAgentActivationPolicySync()
+                // The global `willClose` observer (#437) already schedules the Dock-
+                // presence reconcile for this same window close.
             }
         }
         self[keyPath: observersPath][vmID] = token
@@ -1189,9 +1229,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                         "Display window closed for '\(instance.name, privacy: .public)' (programmatic=\(controller.closedProgrammatically, privacy: .public), policy=\(NSApp.activationPolicy().rawValue, privacy: .public))"
                     )
                     if controller.closedProgrammatically {
-                        // VM stopped/errored/cold-paused — check if app should quit
+                        // VM stopped/errored/cold-paused — check if app should quit.
+                        // The global `willClose` observer (#437) already schedules the
+                        // Dock-presence reconcile for this same window close.
                         self.terminateIfIdle()
-                        self.scheduleAgentActivationPolicySync()
                         return
                     }
                 }
@@ -1206,10 +1247,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 } else if !appWasActive {
                     self.showLibraryWindow(bringToFront: false)
                 }
-                // Popping a display back in (or closing it) must re-evaluate the
-                // Dock presence: the main window staying open keeps the icon, but
-                // the last window closing drops to `.accessory`.
-                self.scheduleAgentActivationPolicySync()
+                // The global `willClose` observer (#437) already schedules the Dock-
+                // presence reconcile for this same window close (popping a display
+                // back in, or closing it outright, both need re-evaluation).
             }
         }
         displayWindowObservers[vmID] = token
