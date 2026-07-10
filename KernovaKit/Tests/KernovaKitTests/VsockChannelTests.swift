@@ -7,11 +7,11 @@ import Darwin
 struct VsockChannelTests {
     // MARK: - Helpers
 
-    /// Creates two `VsockChannel`s connected by a `socketpair(AF_UNIX, SOCK_STREAM)`.
+    /// Creates a raw `socketpair(AF_UNIX, SOCK_STREAM)`.
     ///
     /// AF_UNIX behaves identically to AF_VSOCK at the SOCK_STREAM level for our purposes
     /// and is testable on the host.
-    private func makePair() throws -> (a: VsockChannel, b: VsockChannel) {
+    private func rawSocketPair() throws -> (Int32, Int32) {
         var fds: [Int32] = [-1, -1]
         let rc = fds.withUnsafeMutableBufferPointer { buf in
             socketpair(AF_UNIX, SOCK_STREAM, 0, buf.baseAddress)
@@ -19,10 +19,13 @@ struct VsockChannelTests {
         guard rc == 0 else {
             throw POSIXError(.init(rawValue: errno) ?? .EIO)
         }
-        return (
-            VsockChannel(fileDescriptor: fds[0]),
-            VsockChannel(fileDescriptor: fds[1])
-        )
+        return (fds[0], fds[1])
+    }
+
+    /// Creates two `VsockChannel`s connected by a `socketpair(AF_UNIX, SOCK_STREAM)`.
+    private func makePair() throws -> (a: VsockChannel, b: VsockChannel) {
+        let (fdA, fdB) = try rawSocketPair()
+        return (VsockChannel(fileDescriptor: fdA), VsockChannel(fileDescriptor: fdB))
     }
 
     /// Creates a `VsockChannel` (started) paired with the *raw* fd of its peer,
@@ -35,23 +38,17 @@ struct VsockChannelTests {
     /// relying on the platform's default, which can vary) so a modest write
     /// reliably blocks instead of being buffered away.
     private func makeChannelWithRawPeer() throws -> (channel: VsockChannel, rawPeerFd: Int32) {
-        var fds: [Int32] = [-1, -1]
-        let rc = fds.withUnsafeMutableBufferPointer { buf in
-            socketpair(AF_UNIX, SOCK_STREAM, 0, buf.baseAddress)
-        }
-        guard rc == 0 else {
-            throw POSIXError(.init(rawValue: errno) ?? .EIO)
-        }
+        let (fd, rawPeerFd) = try rawSocketPair()
         var enable: Int32 = 1
-        _ = setsockopt(fds[1], SOL_SOCKET, SO_NOSIGPIPE, &enable, socklen_t(MemoryLayout<Int32>.size))
+        _ = setsockopt(rawPeerFd, SOL_SOCKET, SO_NOSIGPIPE, &enable, socklen_t(MemoryLayout<Int32>.size))
         var tinyBuffer: Int32 = 4096
-        for fd in fds {
-            _ = setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &tinyBuffer, socklen_t(MemoryLayout<Int32>.size))
-            _ = setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &tinyBuffer, socklen_t(MemoryLayout<Int32>.size))
+        for eachFd in [fd, rawPeerFd] {
+            _ = setsockopt(eachFd, SOL_SOCKET, SO_SNDBUF, &tinyBuffer, socklen_t(MemoryLayout<Int32>.size))
+            _ = setsockopt(eachFd, SOL_SOCKET, SO_RCVBUF, &tinyBuffer, socklen_t(MemoryLayout<Int32>.size))
         }
-        let channel = VsockChannel(fileDescriptor: fds[0])
+        let channel = VsockChannel(fileDescriptor: fd)
         channel.start()
-        return (channel, fds[1])
+        return (channel, rawPeerFd)
     }
 
     /// Awaits the next frame from a channel's `incoming` stream, failing if it doesn't

@@ -48,6 +48,12 @@ public typealias Frame = Kernova_V1_Frame
 /// even while a write is parked in `write(2)`. Teardown (`teardown(finishWith:)`)
 /// calls `shutdown(2)` on the descriptor *before* touching `writeLock`, so a
 /// parked write is woken and unwinds instead of pinning the lock forever.
+/// `handleChunk` holds `stateLock` across its whole decode/yield loop (not
+/// just the initial closed-check) so a concurrent `teardown` can't finish the
+/// `incoming` continuation while a decoded frame is still being yielded —
+/// that decode/yield work is pure in-memory computation, never a blocking
+/// call, so holding `stateLock` across it doesn't reintroduce the write-vs-decode
+/// stall this split was meant to fix.
 public final class VsockChannel: @unchecked Sendable {
     /// Inbound frames.
     ///
@@ -192,16 +198,21 @@ public final class VsockChannel: @unchecked Sendable {
             throw VsockChannelError.closed
         }
 
+        let writeError: Error?
         do {
             try fileHandle.write(contentsOf: framed)
-            writeLock.unlock()
+            writeError = nil
         } catch {
-            // Release the write lock before tearing down: `teardown` shuts
-            // the descriptor down and then re-acquires `writeLock` to close
-            // it, so it must never run while this call still holds the lock.
-            writeLock.unlock()
-            teardown(finishWith: error)
-            throw VsockChannelError.write(error)
+            writeError = error
+        }
+        // Release the write lock before tearing down: `teardown` shuts the
+        // descriptor down and then re-acquires `writeLock` to close it, so
+        // it must never run while this call still holds the lock.
+        writeLock.unlock()
+
+        if let writeError {
+            teardown(finishWith: writeError)
+            throw VsockChannelError.write(writeError)
         }
     }
 
@@ -214,9 +225,17 @@ public final class VsockChannel: @unchecked Sendable {
     }
 
     private func handleChunk(_ chunk: Data) {
-        guard !isClosed else { return }
+        // Holds `stateLock` across the whole decode/yield loop below (not just
+        // this check) so a concurrent `teardown` can't finish `continuation`
+        // out from under an in-flight `yield` — see the class-level note.
+        stateLock.lock()
+        guard !closed else {
+            stateLock.unlock()
+            return
+        }
 
         guard !chunk.isEmpty else {
+            stateLock.unlock()
             teardown(finishWith: nil)
             return
         }
@@ -227,7 +246,9 @@ public final class VsockChannel: @unchecked Sendable {
                 let frame = try Frame(serializedBytes: payload)
                 continuation.yield(frame)
             }
+            stateLock.unlock()
         } catch {
+            stateLock.unlock()
             teardown(finishWith: error)
         }
     }
