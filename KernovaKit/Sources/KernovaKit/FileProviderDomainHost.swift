@@ -234,8 +234,9 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
             // invalidation, so this runs on every enable — no outer latch, which
             // would defeat the connector's "re-arm on next enable" recovery.
             relayTransport.startServing(relayService)
-            registerDomain()
             startObservingDomainChanges()
+            primeDomainChangeNotifications()
+            registerDomain()
         } else {
             stopObservingDomainChanges()
             setAvailability(.inactive)
@@ -417,6 +418,19 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
                 self.setAvailability(availability)
             }
         }
+    }
+
+    /// Fires one throwaway `domains()` read so `NSFileProviderDomainDidChange`
+    /// starts posting. Per Apple's header comment on that notification, it only
+    /// goes live after the process's first `NSFileProviderManager.domains()`
+    /// call completes; `refreshAvailability()`'s first call is gated on
+    /// `addDomain` succeeding, which is async and can fail, leaving a window at
+    /// enable where a System-Settings toggle flip wouldn't be observed. This
+    /// primes delivery immediately and independent of registration outcome. The
+    /// result is intentionally discarded — availability stays driven solely by
+    /// `addDomain`'s outcome and subsequent notification-triggered refreshes.
+    private func primeDomainChangeNotifications() {
+        Task { [fetchDomains] in _ = try? await fetchDomains() }
     }
 
     /// Maps the system's domain registry to availability: a matching domain with
