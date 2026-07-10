@@ -113,6 +113,7 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     private let relayService: FileProviderRelayService
     private let notificationCenter: NotificationCenter
     private let fetchDomains: @Sendable () async throws -> [NSFileProviderDomain]
+    private let addDomainToSystem: @Sendable (NSFileProviderDomain, @escaping @Sendable (Error?) -> Void) -> Void
     /// Guards `domainChangeObserver`, which — unlike the rest of the state
     /// below — is also read/removed from `deinit`. `deinit` runs on whatever
     /// thread drops the last strong reference, not necessarily main, so that
@@ -132,6 +133,16 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     /// User-visible domain root, resolved after registration; `nil` until then
     /// (the File Provider path is unused while it's `nil`).
     private var rootURL: URL?
+    /// Set while an `addDomain` cycle (including its orphan-heal retry) is
+    /// outstanding, so two pastes landing back-to-back while unregistered can't
+    /// launch overlapping `removeAllDomains`+`add` cycles for the same domain (#428).
+    private var registrationInFlight = false
+    /// Usage-triggered re-registration attempts made since the last successful registration or fresh enable (#428).
+    ///
+    /// Bounds `attemptReregisterIfNeeded()` so a persistent signing/install failure
+    /// quiesces instead of re-adding on every paste.
+    private var reregisterAttempts = 0
+    private static let maxReregisterAttempts = 3
     private var availabilityStorage: FileProviderAvailability = .inactive
     /// Token for the `NSFileProviderDomainDidChange` observer.
     ///
@@ -198,7 +209,13 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
         notificationCenter: NotificationCenter = .default,
         fetchDomains: @escaping @Sendable () async throws -> [NSFileProviderDomain] = {
             try await NSFileProviderManager.domains()
-        }
+        },
+        addDomainToSystem:
+            @escaping @Sendable (
+                NSFileProviderDomain, @escaping @Sendable (Error?) -> Void
+            ) -> Void = { domain, completion in
+                NSFileProviderManager.add(domain, completionHandler: completion)
+            }
     ) {
         self.config = config
         self.logger = KernovaLogger(subsystem: config.loggerSubsystem, category: "FileProviderHost")
@@ -213,6 +230,7 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
             displayName: config.domainDisplayName)
         self.notificationCenter = notificationCenter
         self.fetchDomains = fetchDomains
+        self.addDomainToSystem = addDomainToSystem
         super.init()
     }
 
@@ -242,6 +260,10 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
             relayTransport.startServing(relayService)
             startObservingDomainChanges()
             primeDomainChangeNotifications()
+            // A fresh enable is the user's explicit recovery path, so it always gets
+            // a clean re-registration budget (#428) — even if a prior enable-session
+            // exhausted `attemptReregisterIfNeeded()`'s attempts.
+            reregisterAttempts = 0
             registerDomain()
         } else {
             stopObservingDomainChanges()
@@ -310,11 +332,12 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     /// state, so a heal does reset enablement; the trade is acceptable because the
     /// pre-heal domain was already unusable.
     private func registerDomain() {
+        registrationInFlight = true
         addDomain(retryOnExists: true)
     }
 
     private func addDomain(retryOnExists: Bool) {
-        NSFileProviderManager.add(domain) { [weak self] error in
+        addDomainToSystem(domain) { [weak self] error in
             let failure = error?.localizedDescription
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -340,10 +363,13 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
                     self.logger.error(
                         "Failed to add File Provider domain: \(failure, privacy: .public)")
                     self.domainRegistered = false
+                    self.registrationInFlight = false
                     self.setAvailability(.unavailable)
                     return
                 }
                 self.domainRegistered = true
+                self.registrationInFlight = false
+                self.reregisterAttempts = 0
                 self.logger.notice(
                     "File Provider domain registered: \(self.domain.identifier.rawValue, privacy: .public)"
                 )
@@ -351,6 +377,35 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
                 self.refreshAvailability()
             }
         }
+    }
+
+    /// Kicks a bounded, usage-triggered re-registration when a paste finds sharing
+    /// enabled but the domain unregistered (#428) — a one-off transient `add`
+    /// failure otherwise leaves the domain permanently unregistered until the user
+    /// toggles clipboard sharing off/on.
+    ///
+    /// RATIONALE: usage-triggered, not timer-driven — this fires only from
+    /// `publishSingleFile` when a real paste needs the domain and finds it missing,
+    /// never on a repeating schedule, so it doesn't reinstate the 3s poll timer
+    /// `startObservingDomainChanges`'s doc comment describes replacing. Bounded to
+    /// `maxReregisterAttempts` per enable-session (reset on a fresh `setEnabled(true)`
+    /// and on a successful registration) so a persistent signing/install failure
+    /// quiesces onto the sync fallback instead of re-adding on every paste; the
+    /// budget only recovers via the user re-enabling sharing, matching the existing
+    /// "recoverable by toggling off/on" behavior.
+    private func attemptReregisterIfNeeded() {
+        guard !registrationInFlight else { return }
+        guard reregisterAttempts < Self.maxReregisterAttempts else {
+            logger.debug(
+                "Skipping re-registration — attempt budget (\(Self.maxReregisterAttempts, privacy: .public)) exhausted"
+            )
+            return
+        }
+        reregisterAttempts += 1
+        logger.notice(
+            "Paste found the domain unregistered — retrying registration (attempt \(self.reregisterAttempts, privacy: .public)/\(Self.maxReregisterAttempts, privacy: .public))"
+        )
+        registerDomain()
     }
 
     /// Caches the user-visible root URL so an offer can construct `root/filename`
@@ -495,6 +550,17 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
             logger.debug(
                 "FP publish skipped (enabled=\(self.enabled, privacy: .public), registered=\(self.domainRegistered, privacy: .public), root=\(self.rootURL != nil, privacy: .public)) — using sync path"
             )
+            // A paste that finds sharing on but the domain unregistered means a
+            // prior `add` failed transiently and nothing since has retried it
+            // (#428) — kick a bounded re-registration so the *next* paste can use
+            // the File Provider path instead of staying stuck on the sync
+            // fallback. This paste still falls back regardless. Keyed strictly on
+            // `domainRegistered`, not `availabilityStorage == .unavailable` (which
+            // also covers registered-but-user-disabled, where re-adding is
+            // pointless).
+            if enabled, !domainRegistered {
+                attemptReregisterIfNeeded()
+            }
             return nil
         }
         // Kicks off an async re-probe so a *later* publish self-corrects if a
