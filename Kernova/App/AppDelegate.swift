@@ -29,8 +29,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     ///
     /// Fires `scheduleAgentActivationPolicySync()` on every window close, tracked
     /// or not (e.g. the standard About panel), rather than each window kind
-    /// scheduling its own reconcile. Installed once in `applicationDidFinishLaunching`
-    /// for the resident app; unused in the test host.
+    /// scheduling its own reconcile. Installed once in `startResidentApp` (called
+    /// from `applicationDidFinishLaunching`) for the resident app; unused in the
+    /// test host.
     private var globalWindowCloseObserver: Any?
 
     /// The menu-bar status item (resident app only): the always-visible "Kernova
@@ -326,9 +327,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
         // Single close-side activation-policy reconcile trigger (#437): fires on
         // every window close, tracked or not — so an untracked AppKit panel (the
-        // standard About panel, the toolbar customization palette) closing as the
-        // last window still drops the Dock icon, and one closing while a tracked
-        // window remains never strips it. See `hasVisibleUserWindow`.
+        // standard About panel) closing as the last window still drops the Dock
+        // icon, and one closing while a tracked window remains never strips it.
+        // See `hasVisibleUserWindow`.
         globalWindowCloseObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.willCloseNotification, object: nil, queue: .main
         ) { [weak self] _ in
@@ -526,9 +527,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         if clipboardWindows.values.contains(where: { onScreen($0.window) }) { return true }
         if onScreen(settingsWindowController?.window) { return true }
         // AppKit-owned top-level panels opened from the menu bar — the standard
-        // About panel, the toolbar customization palette — are genuine on-screen
-        // windows we don't track. Count any so a reconcile can't strip the Dock
-        // icon + menu bar while one is the last window visible (#437).
+        // About panel is the motivating case — are genuine on-screen windows we
+        // don't track. Count any so a reconcile can't strip the Dock icon + menu
+        // bar while one is the last window visible (#437).
         if NSApp.windows.contains(where: Self.isUntrackedUserPanel) { return true }
         return false
     }
@@ -536,13 +537,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// Whether `window` is an untracked, AppKit-owned top-level panel whose
     /// presence must keep the Dock icon.
     ///
-    /// The standard About panel and the toolbar customization palette are the
-    /// motivating examples (#437). Excludes the always-present status-bar window
-    /// and other chrome by requiring a visible, normal-level, titled window — the
-    /// status item's backing `NSStatusBarWindow` is borderless and sits above
-    /// `.normal`, so an unfiltered `NSApp.windows` scan would pin the agent to
-    /// `.regular` forever.
-    nonisolated static func isUntrackedUserPanel(_ window: NSWindow) -> Bool {
+    /// The standard About panel is the motivating example (#437) — unlike the
+    /// toolbar customization palette, which AppKit presents as a sheet attached to
+    /// its target window and so can never be the sole surviving window; that
+    /// window is already covered by the tracked-window checks above. Excludes the
+    /// always-present status-bar window and other chrome by requiring a visible,
+    /// normal-level, titled window — the status item's backing `NSStatusBarWindow`
+    /// is borderless and sits above `.normal`, so an unfiltered `NSApp.windows`
+    /// scan would pin the agent to `.regular` forever.
+    static func isUntrackedUserPanel(_ window: NSWindow) -> Bool {
         (window.isVisible || window.isMiniaturized)
             && window.level == .normal
             && window.styleMask.contains(.titled)
@@ -1247,9 +1250,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 } else if !appWasActive {
                     self.showLibraryWindow(bringToFront: false)
                 }
-                // The global `willClose` observer (#437) already schedules the Dock-
-                // presence reconcile for this same window close (popping a display
-                // back in, or closing it outright, both need re-evaluation).
+                // Reconcile immediately (not `scheduleAgentActivationPolicySync()`'s
+                // extra deferred tick): the global `willClose` observer (#437) also
+                // schedules a reconcile for this same window close, but as an
+                // independent `Task` it isn't guaranteed to run after the
+                // `showLibrary`/`showLibraryWindow` restore above — an ordering race
+                // that could otherwise flip the Dock icon to `.accessory` and back.
+                // Calling it synchronously here, after the restore, is the
+                // authoritative reconcile for this path.
+                self.syncAgentActivationPolicy()
             }
         }
         displayWindowObservers[vmID] = token
