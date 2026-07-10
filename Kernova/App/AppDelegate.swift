@@ -357,7 +357,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // this" a single `log show` away instead.
         let provenance = Self.residentProvenanceLine(
             bundlePath: Bundle.main.bundlePath,
-            build: Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?",
+            build: Self.buildNumber,
             configuration: Self.buildConfiguration)
         Self.logger.notice(
             "Kernova resident app ready (headless, .accessory) — \(provenance, privacy: .public)")
@@ -368,6 +368,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     #else
     private static let buildConfiguration = "Release"
     #endif
+
+    /// `CFBundleVersion` is a compile-time-known Info.plist key (`Kernova/App/
+    /// Info.plist`, substituted by `Tools/set-build-number.sh`), so a missing
+    /// value indicates a build misconfiguration rather than a runtime condition.
+    private static let buildNumber: String = {
+        guard let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String else {
+            logger.fault("CFBundleVersion not found in Info.plist")
+            assertionFailure("CFBundleVersion not found in Info.plist")
+            return "?"
+        }
+        return build
+    }()
 
     /// Formats the resident-app startup provenance line — bundle path, build
     /// number, and configuration — factored out pure for unit testing (mirrors
