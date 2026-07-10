@@ -21,8 +21,6 @@ struct VMLibraryViewModelTests {
         VMLibraryViewModel, MockVMStorageService, MockDiskImageService, MockVirtualizationService,
         any USBDeviceProviding
     ) {
-        defaults.removeObject(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
-        defaults.removeObject(forKey: VMLibraryViewModel.vmOrderKey)
         let vm = VMLibraryViewModel(
             storageService: storageService,
             diskImageService: diskImageService,
@@ -138,8 +136,7 @@ struct VMLibraryViewModelTests {
         storage.bundles[url1] = config1
         storage.bundles[url2] = config2
 
-        // Clear then seed UserDefaults before ViewModel init triggers loadVMs()
-        defaults.removeObject(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
+        // Seed UserDefaults before ViewModel init triggers loadVMs()
         defaults.set(config2.id.uuidString, forKey: VMLibraryViewModel.lastSelectedVMIDKey)
 
         let viewModel = VMLibraryViewModel(
@@ -188,8 +185,7 @@ struct VMLibraryViewModelTests {
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
         storage.bundles[url] = config
 
-        // Clear then seed UserDefaults with a UUID that doesn't match any VM
-        defaults.removeObject(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
+        // Seed UserDefaults with a UUID that doesn't match any VM
         defaults.set(UUID().uuidString, forKey: VMLibraryViewModel.lastSelectedVMIDKey)
 
         let viewModel = VMLibraryViewModel(
@@ -841,8 +837,6 @@ struct VMLibraryViewModelTests {
         ipswService: MockIPSWService,
         storage: MockVMStorageService
     ) -> VMLibraryViewModel {
-        defaults.removeObject(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
-        defaults.removeObject(forKey: VMLibraryViewModel.vmOrderKey)
         let vm = VMLibraryViewModel(
             storageService: storage,
             diskImageService: MockDiskImageService(),
@@ -2858,7 +2852,6 @@ struct VMLibraryViewModelTests {
         storage.bundles[url3] = config3
 
         // Set custom order: Third, First, Second
-        defaults.removeObject(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
         defaults.set(
             [config3.id.uuidString, config1.id.uuidString, config2.id.uuidString],
             forKey: VMLibraryViewModel.vmOrderKey
@@ -2948,7 +2941,6 @@ struct VMLibraryViewModelTests {
 
         // Set custom order with a stale UUID followed by the real one
         let staleID = UUID()
-        defaults.removeObject(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
         defaults.set(
             [staleID.uuidString, config.id.uuidString],
             forKey: VMLibraryViewModel.vmOrderKey

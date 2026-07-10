@@ -32,8 +32,11 @@ struct TestFailure: Error {
 /// mid-test (CI timeout, SIGKILL) skips any `defer`, so clearing *before* use is
 /// the load-bearing half. Pass a fixed `suiteName` unique to the calling suite —
 /// a fixed name (not a per-call UUID) bounds the on-disk footprint to a single
-/// reusable tombstone plist. Mirrors the #506 `AppPreferencesTests` treatment so
-/// a test never reads or writes the real `.standard` domain.
+/// reusable tombstone plist. Shared by every suite (e.g. `AppPreferencesTests`,
+/// #449/#506) that needs a test never to read or write the real `.standard`
+/// domain; callers that also need after-the-fact teardown (e.g. because they
+/// reuse one suite across multiple `@Test`s) should wrap the returned instance
+/// in their own `defer { defaults.removePersistentDomain(forName:) }`.
 func makeEphemeralDefaults(suiteName: String) -> UserDefaults {
     guard let defaults = UserDefaults(suiteName: suiteName) else {
         fatalError("Could not open test UserDefaults suite '\(suiteName)'")

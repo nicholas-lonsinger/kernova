@@ -17,11 +17,7 @@ struct AppPreferencesTests {
         _ body: (AppPreferences, UserDefaults) throws -> Void
     ) throws {
         let suiteName = Self.suiteName
-        let defaults = try #require(UserDefaults(suiteName: suiteName))
-        // Clear before use, not just after: a prior run hard-killed mid-test
-        // (CI timeout, SIGKILL, Xcode stop) skips the `defer` below and can
-        // leave a stale value on disk under this fixed name (#449).
-        defaults.removePersistentDomain(forName: suiteName)
+        let defaults = makeEphemeralDefaults(suiteName: suiteName)
         defer {
             defaults.removePersistentDomain(forName: suiteName)
             // cfprefsd leaves an empty tombstone plist behind even after
