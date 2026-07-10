@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+#
+# Auto-bootstrap DEVELOPMENT_TEAM in fresh checkouts. Runs after
+# `git worktree add` — the case that matters: a new worktree never has the
+# gitignored Config/Local.xcconfig, so without this hook its first Xcode
+# build fails signing until `make bootstrap` is run by hand. Also fires on
+# `git switch`/`git checkout`, where the Local.xcconfig guard below makes it
+# a no-op. It cannot fire on a fresh `git clone`: hooks only activate once
+# `make install-hooks` sets core.hooksPath (git never auto-runs checked-in
+# hooks), so a brand-new clone still needs one `make bootstrap`/`make build`
+# — see README "Development setup".
+#
+# Git runs post-checkout from the working-tree root, so the paths below
+# resolve within whichever worktree was just created or switched.
+
+set -uo pipefail
+
+# $3 is 1 for a branch checkout, 0 for a file checkout (git checkout -- <path>),
+# which doesn't create a working tree and is skipped.
+[ "${3:-0}" = "1" ] || exit 0
+
+[ -f Config/Local.xcconfig ] && exit 0
+
+# Best-effort: a failed derivation (e.g. no signing certificate in the
+# keychain) must not fail the checkout; bootstrap prints its own diagnostics
+# and `make doctor` reports the missing team.
+if [ -x Tools/bootstrap-team.sh ]; then
+    Tools/bootstrap-team.sh || true
+fi
+
+exit 0

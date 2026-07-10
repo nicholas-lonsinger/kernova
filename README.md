@@ -61,9 +61,9 @@ make install-hooks
 make bootstrap
 ```
 
-`install-hooks` points the repo at the checked-in `.githooks/` directory so a pre-push hook runs `make lint` locally and matches the swift-format check enforced on `main`. It's a one-time setup per clone (Git does not auto-activate checked-in hooks). Bypass an individual push with `git push --no-verify`.
+`install-hooks` points the repo at the checked-in `.githooks/` directory. It's a one-time setup per clone (Git does not auto-activate checked-in hooks) and enables two hooks: a pre-push hook that runs `make lint` locally, matching the swift-format check enforced on `main` (bypass an individual push with `git push --no-verify`), and a post-checkout hook that re-runs `bootstrap` (below) in any checkout missing `Config/Local.xcconfig` — so a new git worktree builds in Xcode immediately with no manual step.
 
-`bootstrap` derives your own signing team from your Apple Development (or Developer ID) certificate into a gitignored `Config/Local.xcconfig`, so a Debug build signs as *you* rather than a hardcoded team — see [Signing: Debug vs Release](#signing-debug-vs-release) below. `make build` and `make test` run it automatically, so this is only a manual step if you're building straight from Xcode without ever running a `make` target first, or working in a second git worktree (each one needs its own `Config/Local.xcconfig`, since gitignored files aren't shared between worktrees).
+`bootstrap` derives your own signing team from your Apple Development (or Developer ID) certificate into a gitignored `Config/Local.xcconfig`, so a Debug build signs as *you* rather than a hardcoded team — see [Signing: Debug vs Release](#signing-debug-vs-release) below. `make build` and `make test` run it automatically, and the post-checkout hook covers additional git worktrees (each needs its own `Config/Local.xcconfig`, since gitignored files aren't shared between worktrees), so this is only a manual step if you're building a fresh clone straight from Xcode without ever running a `make` target first.
 
 Run `make doctor` to confirm your local toolchain (macOS, Xcode, Swift, swift-format), signing team, and git hooks match what Kernova needs before building.
 
