@@ -1,3 +1,4 @@
+import Darwin
 import FileProvider
 import Foundation
 import os
@@ -163,8 +164,19 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
         // Its invalidation handler no-ops (it only clears when still current, and we
         // just replaced it).
         previous?.invalidate()
-        logger.debug(
-            "Accepted owner servicing connection (draining \(drained.count, privacy: .public) pending)")
+        // Identity signal at the XPC choke point (#518): the peer pin above checks
+        // only bundle identifier + team, so a version-mismatched owner (an old
+        // resident copy still answering after a new one was installed) would
+        // otherwise be accepted with no clue in this process's log as to which
+        // copy connected — diagnosable only by correlating logs across
+        // processes. `.notice` (not `.debug`) so the line actually persists for
+        // that post-mortem — accepts are infrequent (one per owner connect), so
+        // persisting them is cheap. Mirrors `AppDelegate.residentProvenanceLine`
+        // (#519), the complementary owner-side startup provenance line.
+        let peerPID = newConnection.processIdentifier
+        logger.notice(
+            "\(Self.acceptedOwnerLogLine(pid: peerPID, executablePath: Self.executablePath(forPID: peerPID), pendingCount: drained.count), privacy: .public)"
+        )
         for pull in drained {
             // Each drained pull's connect timer (if armed) fires later and no-ops —
             // the removal from `pendingPulls` above already claimed the pull.
@@ -177,6 +189,35 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
     /// connection may already have replaced it).
     private func clearConnection(_ connection: NSXPCConnection) {
         lock.withLock { if acceptedConnection === connection { acceptedConnection = nil } }
+    }
+
+    /// Formats the accept-time owner-identity log line — pure and testable
+    /// without standing up an XPC round trip, mirroring
+    /// `AppDelegate.residentProvenanceLine` (#519).
+    static func acceptedOwnerLogLine(pid: pid_t, executablePath: String?, pendingCount: Int) -> String {
+        "Accepted owner servicing connection (pid=\(pid) executable=\(executablePath ?? "unknown") draining \(pendingCount) pending)"
+    }
+
+    /// Best-effort resolution of a process's executable path via `proc_pidpath`.
+    ///
+    /// `nil` on failure (e.g. the peer exited between accept and this call, or
+    /// the App Sandbox denies resolving a non-self PID — both extension
+    /// targets this file compiles into carry `com.apple.security.app-sandbox`,
+    /// and Apple's sandbox profile may scope `proc_pidpath` to the caller's own
+    /// PID). Either way this is best-effort: callers fall back to logging just
+    /// the PID — the primary, always-available identity signal — rather than
+    /// treating an unresolved path as fatal. Deliberately not
+    /// `NSRunningApplication`, which pulls AppKit into this file — shared
+    /// `KernovaKit` code compiled into both the host and guest File Provider
+    /// *extension* binaries, neither an AppKit app.
+    private static func executablePath(forPID pid: pid_t) -> String? {
+        // `PROC_PIDPATHINFO_MAXSIZE` itself is unavailable on this SDK
+        // ("structure not supported"); its definition (4 * MAXPATHLEN) is not,
+        // so compute the same bound directly.
+        var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN) * 4)
+        let length = proc_pidpath(pid, &buffer, UInt32(buffer.count))
+        guard length > 0 else { return nil }
+        return String(cString: buffer)
     }
 
     // MARK: - FileProviderControl (activation handshake)

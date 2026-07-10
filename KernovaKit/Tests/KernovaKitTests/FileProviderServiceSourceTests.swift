@@ -312,4 +312,29 @@ struct FileProviderServiceSourceTests {
         cancellation.cancel()
         #expect(relay.cancelCall == nil)
     }
+
+    // MARK: - Accept-time owner-identity log line (#518)
+
+    /// The pure formatter behind the accept-time `.notice` log line.
+    ///
+    /// Mirrors `AppDelegate.residentProvenanceLine` (#519), the complementary
+    /// owner-side startup provenance line. Formatting only; resolving the
+    /// peer's actual PID/executable path via `proc_pidpath` isn't exercised here.
+    @Test("formats pid, resolved executable path, and pending count into one line")
+    func acceptedOwnerLogLineFormatsAllFields() {
+        #expect(
+            FileProviderServiceSource.acceptedOwnerLogLine(
+                pid: 4242, executablePath: "/Applications/Kernova.app/Contents/MacOS/Kernova",
+                pendingCount: 3)
+                == "Accepted owner servicing connection (pid=4242 executable=/Applications/Kernova.app/Contents/MacOS/Kernova draining 3 pending)"
+        )
+    }
+
+    @Test("falls back to 'unknown' when the executable path can't be resolved")
+    func acceptedOwnerLogLineToleratesUnresolvedPath() {
+        #expect(
+            FileProviderServiceSource.acceptedOwnerLogLine(pid: 99, executablePath: nil, pendingCount: 0)
+                == "Accepted owner servicing connection (pid=99 executable=unknown draining 0 pending)"
+        )
+    }
 }
