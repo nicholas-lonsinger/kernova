@@ -190,7 +190,7 @@ elif printf '%s\n' "$fp_dump" | grep -q "DeadEndBackend"; then
     ghost 'A File Provider domain looks wedged (dead-end backend) with Kernova registered'
     detail 'Run `make fp-reset`, then relaunch Kernova to re-register a fresh domain.'
     detail 'A stale "Kernova Clipboard (Mac)" Finder location that survives fp-reset needs a full domain'
-    detail 'removal instead: run the installed app with `--remove-clipboard-domain` (#454, #467, #516).'
+    detail 'removal instead: run any build of Kernova with `--remove-clipboard-domain` (#454, #467, #516).'
     detail 'This resets the domain'"'"'s System Settings enablement, so use it only when fp-reset didn'"'"'t help.'
 else
     clean 'Kernova File Provider domain(s) registered, none dead-ended'
@@ -257,11 +257,19 @@ done < <(kernova_app_copies)
 if [ "${#app_copies[@]}" -eq 0 ]; then
     clean 'No on-disk Kernova.app copies found'
 else
+    # Check the well-known path directly rather than scanning app_copies for
+    # it: blessed_path is a fixed constant, so a scan would just be a second
+    # plutil spawn for the same bundle the equality check already identifies.
     blessed_path='/Applications/Kernova.app'
     blessed_version=''
-    for path in "${app_copies[@]}"; do
-        [ "$path" = "$blessed_path" ] && blessed_version=$(bundle_version "$blessed_path")
-    done
+    [ -e "$blessed_path" ] && blessed_version=$(bundle_version "$blessed_path")
+    blessed_known=0
+    is_numeric "$blessed_version" && blessed_known=1
+
+    if [ "$blessed_known" -eq 0 ]; then
+        detail 'No /Applications/Kernova.app found — cannot determine which on-disk copy'
+        detail 'LaunchServices currently prefers. Listing every copy below for manual comparison.'
+    fi
 
     competing_copies=()
     for path in "${app_copies[@]}"; do
@@ -272,8 +280,12 @@ else
             continue
         fi
 
+        # Strictly greater, not >=: an equal CFBundleVersion is most likely a
+        # duplicate of the installed build (e.g. a Trashed copy of the same
+        # release), and this script has no verified basis for a tie-break —
+        # only a build that would actually outrank /Applications is a ghost.
         outranks=0
-        if is_numeric "$ver" && is_numeric "$blessed_version" && [ "$ver" -ge "$blessed_version" ]; then
+        if [ "$blessed_known" -eq 1 ] && is_numeric "$ver" && [ "$ver" -gt "$blessed_version" ]; then
             outranks=1
         fi
         if [ "$outranks" = 1 ]; then
@@ -292,12 +304,24 @@ else
         else
             for path in "${competing_copies[@]}"; do
                 printf '  Trash and unregister %s? [y/N] ' "$path"
-                read -r reply
+                # Default to empty (falls through to the skip branch below)
+                # rather than leaving $reply unset: under `set -u`, EOF on
+                # `read` (e.g. Ctrl-D at the prompt) never assigns it, and
+                # referencing an unset var would abort the whole script.
+                reply=''
+                read -r reply || true
                 case "$reply" in
                     y|Y|yes|YES)
                         if trash "$path" 2>/dev/null; then
                             "$LSREGISTER" -u "$path" >/dev/null 2>&1
-                            fixed "trashed and unregistered: $path"
+                            # Same best-effort-then-verify discipline as the
+                            # Launch Services ghost fix above: don't trust
+                            # the unregister exit code, re-check the dump.
+                            if printf '%s\n' "$(kernova_registered_paths)" | grep -qxF "$path"; then
+                                detail "trashed but still registered: $path (re-run to retry unregistering)"
+                            else
+                                fixed "trashed and unregistered: $path"
+                            fi
                         else
                             detail "trash failed for $path"
                         fi
