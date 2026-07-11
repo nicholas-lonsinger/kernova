@@ -2,6 +2,32 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- App Sandbox, adopted for Mac App Store eligibility (#89). Host vsock is
+	     fully framework-mediated — VZVirtioSocketListener/-Connection hand the
+	     app already-connected fds and it never calls socket()/bind()/listen()
+	     itself — so the sandbox does not constrain it (network entitlements gate
+	     socket-acquisition syscalls, not I/O on granted fds). The serial-console
+	     relay's AF_UNIX listener binds inside the app's own temp directory,
+	     which file rules allow; network.server is deliberately absent (it gates
+	     network-family listeners only). -->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<!-- Sole network use: IPSWService's URLSession download of macOS restore
+	     images from Apple's CDN. -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<!-- Powerbox grants from NSOpenPanel/NSSavePanel (external disk images,
+	     ISOs, shared folders, Linux kernel/initrd, local IPSW files). -->
+	<key>com.apple.security.files.user-selected.read-write</key>
+	<true/>
+	<!-- The default IPSW download destination (~/Downloads/RestoreImage.ipsw)
+	     and its sibling .kernovadownload resume sidecar. -->
+	<key>com.apple.security.files.downloads.read-write</key>
+	<true/>
+	<!-- Panel grants persist across relaunches as app-scoped security
+	     bookmarks (SecurityScopedBookmark). -->
+	<key>com.apple.security.files.bookmarks.app-scope</key>
+	<true/>
 	<key>com.apple.security.virtualization</key>
 	<true/>
 	<key>com.apple.security.device.audio-input</key>
@@ -20,8 +46,9 @@
 	     • Release = group.app.kernova — the canonical iOS-style identifier, registered
 	       on the developer portal and authorized by an embedded provisioning profile
 	       (Automatic signing); Apple's recommended, Mac-App-Store-compatible form.
-	     The app is intentionally NOT sandboxed yet (it opens vsock); an app group does
-	     not require the App Sandbox. The guest agent registers the same identifier —
+	     An app group does not require the App Sandbox, and the group container sits
+	     outside the app's own container — both sandboxed and unsandboxed processes
+	     reach it the same way. The guest agent registers the same identifier —
 	     host and guest never share a machine in production, and the host side uses a
 	     distinct domain id and container subpath so a dev host running both never
 	     collides. -->

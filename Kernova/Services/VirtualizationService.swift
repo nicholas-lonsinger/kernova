@@ -115,6 +115,9 @@ final class VirtualizationService {
     /// Builds a fresh configuration and `VZVirtualMachine`, wires the session
     /// plumbing, and starts the machine — one cold-boot attempt.
     private func coldBoot(_ instance: VMInstance, bootIntoRecovery: Bool) async throws {
+        // Per attempt, not once per start: the lock-contention retry loop
+        // tears the session down (releasing these scopes) between attempts.
+        instance.openRuntimeFileAccess()
         let result = try await buildConfiguration(for: instance)
         instance.serialInputPipe = result.serialInputPipe
         instance.serialOutputPipe = result.serialOutputPipe
@@ -361,6 +364,7 @@ final class VirtualizationService {
     ///
     /// On restore failure, deletes the stale save file and falls back to a cold boot.
     private func restoreOrColdBoot(_ instance: VMInstance) async throws {
+        instance.openRuntimeFileAccess()
         // Per-item UUIDs in `VMConfiguration.removableMedia` and per-disk
         // identifiers in `VMConfiguration.storageDisks` are applied by the
         // builder, so the rebuilt configuration matches what VZ recorded

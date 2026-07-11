@@ -155,22 +155,31 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
 
     @objc private func browseISO() {
         browse(title: "Select ISO Image", types: [.iso]) { [weak self] url in
-            self?.creationVM.isoPath = url.path(percentEncoded: false)
-            self?.rebuildConditional()
+            guard let self else { return }
+            let (path, bookmark) = SecurityScopedBookmark.capture(url)
+            self.creationVM.isoPath = path
+            self.creationVM.isoBookmark = bookmark
+            self.rebuildConditional()
         }
     }
 
     @objc private func browseKernel() {
         browse(title: "Select Kernel", types: [.data]) { [weak self] url in
-            self?.creationVM.kernelPath = url.path(percentEncoded: false)
-            self?.rebuildConditional()
+            guard let self else { return }
+            let (path, bookmark) = SecurityScopedBookmark.capture(url)
+            self.creationVM.kernelPath = path
+            self.creationVM.kernelBookmark = bookmark
+            self.rebuildConditional()
         }
     }
 
     @objc private func browseInitrd() {
         browse(title: "Select Initrd", types: [.data]) { [weak self] url in
-            self?.creationVM.initrdPath = url.path(percentEncoded: false)
-            self?.rebuildConditional()
+            guard let self else { return }
+            let (path, bookmark) = SecurityScopedBookmark.capture(url)
+            self.creationVM.initrdPath = path
+            self.creationVM.initrdBookmark = bookmark
+            self.rebuildConditional()
         }
     }
 

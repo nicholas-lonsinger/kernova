@@ -129,9 +129,11 @@ final class IPSWSelectionContentViewController: NSViewController {
         switch creationVM.ipswSource {
         case .downloadLatest:
             guard let path = creationVM.ipswDownloadPath else { return }
-            let change = makeLinkButton(
-                "Change…", target: self, action: #selector(changeDownloadDestination))
-            conditionalContainer.addArrangedSubview(makeWizardPathBadge(path: path, changeButton: change))
+            // No "Change…" affordance: the destination is always the Downloads
+            // folder, the one location the sandbox's downloads entitlement
+            // covers without per-pick grants (the resume sidecar lives beside
+            // the destination, outside any save-panel grant).
+            conditionalContainer.addArrangedSubview(makeWizardPathBadge(path: path))
 
             if creationVM.shouldShowOverwriteWarning {
                 let useExisting = NSButton(
@@ -172,10 +174,6 @@ final class IPSWSelectionContentViewController: NSViewController {
 
     // MARK: - Actions
 
-    @objc private func changeDownloadDestination() {
-        selectDownloadDestination()
-    }
-
     @objc private func changeLocalFile() {
         selectIPSWFile()
     }
@@ -192,27 +190,6 @@ final class IPSWSelectionContentViewController: NSViewController {
 
     // MARK: - Panels
 
-    private func selectDownloadDestination() {
-        let panel = NSSavePanel()
-        panel.title = "Choose Download Location"
-        if let currentPath = creationVM.ipswDownloadPath {
-            let currentURL = URL(fileURLWithPath: currentPath)
-            panel.directoryURL = currentURL.deletingLastPathComponent()
-            panel.nameFieldStringValue = currentURL.lastPathComponent
-        } else {
-            panel.directoryURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
-            panel.nameFieldStringValue = "RestoreImage.ipsw"
-        }
-        panel.allowedContentTypes = [.ipsw]
-
-        guard let window = view.window else { return }
-        panel.beginSheetModal(for: window) { [weak self] response in
-            guard let self, response == .OK, let url = panel.url else { return }
-            self.creationVM.ipswDownloadPath = url.path(percentEncoded: false)
-            self.refresh()
-        }
-    }
-
     private func selectIPSWFile() {
         let panel = NSOpenPanel()
         panel.title = "Select macOS Restore Image"
@@ -223,8 +200,10 @@ final class IPSWSelectionContentViewController: NSViewController {
         guard let window = view.window else { return }
         panel.beginSheetModal(for: window) { [weak self] response in
             guard let self, response == .OK, let url = panel.url else { return }
+            let (path, bookmark) = SecurityScopedBookmark.capture(url)
             self.creationVM.ipswSource = .localFile
-            self.creationVM.ipswPath = url.path(percentEncoded: false)
+            self.creationVM.ipswPath = path
+            self.creationVM.ipswBookmark = bookmark
             self.refresh()
         }
     }

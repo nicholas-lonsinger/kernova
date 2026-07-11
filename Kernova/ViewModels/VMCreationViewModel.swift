@@ -55,6 +55,16 @@ final class VMCreationViewModel {
     var initrdPath: String?
     var kernelCommandLine: String?
 
+    /// Security bookmarks paired with the panel-picked paths above; each is
+    /// set alongside its path at pick time and flows into the built
+    /// configuration / install context. `nil` for paths adopted without a
+    /// panel (e.g. "Use Existing File", whose Downloads location the
+    /// entitlement already covers).
+    var ipswBookmark: Data?
+    var isoBookmark: Data?
+    var kernelBookmark: Data?
+    var initrdBookmark: Data?
+
     // MARK: - Step 3: Resources
 
     var vmName: String = "My Virtual Machine"
@@ -172,9 +182,16 @@ final class VMCreationViewModel {
     // MARK: - Defaults
 
     static var defaultIPSWDownloadPath: String {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Downloads/RestoreImage.ipsw")
-            .path(percentEncoded: false)
+        // Ask the system for the Downloads location rather than assuming a
+        // home-relative layout: under the sandbox this resolves through the
+        // container's `Downloads` symlink, which the downloads.read-write
+        // entitlement covers — no save panel or bookmark needed for the
+        // default destination. Same API the save panel's directoryURL uses.
+        let downloads =
+            FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(
+                "Downloads", isDirectory: true)
+        return downloads.appendingPathComponent("RestoreImage.ipsw").path(percentEncoded: false)
     }
 
     // MARK: - Apply Defaults
@@ -223,7 +240,8 @@ final class VMCreationViewModel {
         case .localFile:
             return MacOSInstallContext(
                 source: .localFile,
-                localIPSWPath: ipswPath
+                localIPSWPath: ipswPath,
+                localIPSWBookmark: ipswBookmark
             )
         }
     }
@@ -252,6 +270,10 @@ final class VMCreationViewModel {
     func useExistingDownloadFile() {
         ipswSource = .localFile
         ipswPath = ipswDownloadPath
+        // Adopted without a panel: no grant to bookmark, and none needed —
+        // the Downloads location is entitlement-covered. Clearing also drops
+        // any bookmark left over from an earlier local-file pick.
+        ipswBookmark = nil
     }
 
     // MARK: - Build Configuration
@@ -281,7 +303,8 @@ final class VMCreationViewModel {
             let installerDisk = StorageDisk(
                 path: isoPath,
                 readOnly: true,
-                label: URL(fileURLWithPath: isoPath).deletingPathExtension().lastPathComponent
+                label: URL(fileURLWithPath: isoPath).deletingPathExtension().lastPathComponent,
+                bookmark: isoBookmark
             )
             let mainDisk = StorageDisk(
                 path: "Disk.asif",
@@ -306,6 +329,8 @@ final class VMCreationViewModel {
             kernelPath: selectedBootMode == .linuxKernel ? kernelPath : nil,
             initrdPath: selectedBootMode == .linuxKernel ? initrdPath : nil,
             kernelCommandLine: selectedBootMode == .linuxKernel ? kernelCommandLine : nil,
+            kernelBookmark: selectedBootMode == .linuxKernel ? kernelBookmark : nil,
+            initrdBookmark: selectedBootMode == .linuxKernel ? initrdBookmark : nil,
             storageDisks: storageDisks
         )
     }

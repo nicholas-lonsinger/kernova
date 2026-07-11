@@ -56,24 +56,12 @@ func relaunchApp() async {
         }
     }
 
-    // Last resort: the `open` CLI takes a different LaunchServices code path
-    // and may succeed where the NSWorkspace API call fails.
-    logger.notice("NSWorkspace failed after 4 attempts, falling back to /usr/bin/open")
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-    process.arguments = ["-a", appPath]
-    do {
-        try process.run()
-        process.waitUntilExit()
-        if process.terminationStatus == 0 {
-            logger.notice("Relaunched Kernova via /usr/bin/open")
-        } else {
-            logger.error("/usr/bin/open exited with status \(process.terminationStatus, privacy: .public)")
-        }
-    } catch {
-        logger.error("Failed to launch via /usr/bin/open: \(error.localizedDescription, privacy: .public)")
-    }
-
+    // RATIONALE: No /usr/bin/open fallback. The helper runs sandboxed
+    // (app-sandbox + inherit), so a spawned `open` would inherit the same
+    // sandbox and reach LaunchServices through the same mediated path as
+    // NSWorkspace — no added capability, just an exec for App Review to
+    // question.
+    logger.error("Failed to relaunch Kernova after 4 attempts, giving up")
     exit(1)
 }
 

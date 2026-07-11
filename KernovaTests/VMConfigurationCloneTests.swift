@@ -293,4 +293,30 @@ struct VMConfigurationCloneTests {
         let clone = makeConfig().clonedForNewInstance(existingNames: [])
         #expect(clone.removableMedia == nil)
     }
+
+    // MARK: - Security Bookmarks
+
+    @Test("Clone carries security bookmarks through disks, media, and shared directories")
+    func cloneCarriesBookmarksThrough() {
+        // The clone references the same external files, so the same access
+        // grants remain valid — bookmarks must survive the ID regeneration.
+        let diskBookmark = Data([0x01])
+        let mediaBookmark = Data([0x02])
+        let dirBookmark = Data([0x03])
+        var config = makeConfig(sharedDirectories: [
+            SharedDirectory(path: "/Users/test/Shared", bookmark: dirBookmark)
+        ])
+        config.storageDisks = [
+            StorageDisk(path: "/ext/backup.img", isInternal: false, bookmark: diskBookmark)
+        ]
+        config.removableMedia = [
+            RemovableMediaItem(path: "/tmp/install.iso", bookmark: mediaBookmark)
+        ]
+
+        let clone = config.clonedForNewInstance(existingNames: [])
+
+        #expect(clone.storageDisks?[0].bookmark == diskBookmark)
+        #expect(clone.removableMedia?[0].bookmark == mediaBookmark)
+        #expect(clone.sharedDirectories?[0].bookmark == dirBookmark)
+    }
 }

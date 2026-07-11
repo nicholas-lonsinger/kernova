@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The helper is spawned by the sandboxed host app via Process, so it
+	     adopts the documented child-process pattern: app-sandbox + inherit,
+	     and nothing else (inherit forbids any other sandbox key). It inherits
+	     the parent's sandbox at exec time and keeps it after the parent
+	     terminates; its only needs — NSWorkspace.openApplication, kill(pid, 0),
+	     and a DispatchSource process watcher — require no entitlements of
+	     their own. Mac App Store review requires every executable embedded in
+	     the app bundle to be sandboxed. -->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<key>com.apple.security.inherit</key>
+	<true/>
+</dict>
+</plist>

@@ -132,6 +132,12 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     var initrdPath: String?
     var kernelCommandLine: String?
 
+    /// App-scoped security bookmarks for `kernelPath` / `initrdPath`
+    /// (user-picked files re-read on every boot); see
+    /// ``StorageDisk/bookmark`` for the nil semantics.
+    var kernelBookmark: Data?
+    var initrdBookmark: Data?
+
     // MARK: - Storage Disks
 
     /// Ordered list of disks attached on `vzConfig.storageDevices`.
@@ -201,6 +207,8 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         kernelPath: String? = nil,
         initrdPath: String? = nil,
         kernelCommandLine: String? = nil,
+        kernelBookmark: Data? = nil,
+        initrdBookmark: Data? = nil,
         storageDisks: [StorageDisk]? = nil,
         removableMedia: [RemovableMediaItem]? = nil,
         sharedDirectories: [SharedDirectory]? = nil,
@@ -234,6 +242,8 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.kernelPath = kernelPath
         self.initrdPath = initrdPath
         self.kernelCommandLine = kernelCommandLine
+        self.kernelBookmark = kernelBookmark
+        self.initrdBookmark = initrdBookmark
         self.storageDisks = storageDisks
         self.removableMedia = removableMedia
         self.sharedDirectories = sharedDirectories
@@ -277,6 +287,8 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.kernelPath = try c.decodeIfPresent(String.self, forKey: .kernelPath)
         self.initrdPath = try c.decodeIfPresent(String.self, forKey: .initrdPath)
         self.kernelCommandLine = try c.decodeIfPresent(String.self, forKey: .kernelCommandLine)
+        self.kernelBookmark = try c.decodeIfPresent(Data.self, forKey: .kernelBookmark)
+        self.initrdBookmark = try c.decodeIfPresent(Data.self, forKey: .initrdBookmark)
         self.storageDisks = try c.decodeIfPresent([StorageDisk].self, forKey: .storageDisks)
         self.removableMedia = try c.decodeIfPresent([RemovableMediaItem].self, forKey: .removableMedia)
         self.sharedDirectories = try c.decodeIfPresent([SharedDirectory].self, forKey: .sharedDirectories)
@@ -333,6 +345,8 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         // Regenerate storage disk IDs so virtio block device identifiers
         // and USB UUIDs don't collide with the source bundle. Internal
         // disk paths are updated by the caller after copying files.
+        // Bookmarks carry through: the clone references the same external
+        // files, so the same access grants remain valid.
         clone.storageDisks = storageDisks?.map { disk in
             StorageDisk(
                 id: UUID(),
@@ -340,7 +354,8 @@ struct VMConfiguration: Codable, Sendable, Equatable {
                 readOnly: disk.readOnly,
                 label: disk.label,
                 isInternal: disk.isInternal,
-                kind: disk.kind
+                kind: disk.kind,
+                bookmark: disk.bookmark
             )
         }
 
@@ -351,13 +366,14 @@ struct VMConfiguration: Codable, Sendable, Equatable {
                 id: UUID(),
                 path: item.path,
                 readOnly: item.readOnly,
-                label: item.label
+                label: item.label,
+                bookmark: item.bookmark
             )
         }
 
         // Regenerate shared directory IDs to avoid VirtioFS collisions
         clone.sharedDirectories = sharedDirectories?.map { dir in
-            SharedDirectory(id: UUID(), path: dir.path, readOnly: dir.readOnly)
+            SharedDirectory(id: UUID(), path: dir.path, readOnly: dir.readOnly, bookmark: dir.bookmark)
         }
 
         // Clones copy the source bundle's post-install artifacts (HardwareModel,
@@ -435,10 +451,15 @@ struct SharedDirectory: Codable, Sendable, Equatable {
     var path: String
     var readOnly: Bool
 
-    init(id: UUID = UUID(), path: String, readOnly: Bool = false) {
+    /// App-scoped security bookmark for `path` (a user-picked directory);
+    /// see ``StorageDisk/bookmark`` for the nil semantics.
+    var bookmark: Data?
+
+    init(id: UUID = UUID(), path: String, readOnly: Bool = false, bookmark: Data? = nil) {
         self.id = id
         self.path = path
         self.readOnly = readOnly
+        self.bookmark = bookmark
     }
 
     /// The last path component, used as the display name in the UI and as the share name in VirtioFS.

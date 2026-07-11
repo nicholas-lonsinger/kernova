@@ -165,6 +165,15 @@ final class VMLifecycleCoordinator {
             do {
                 let ipswURL: URL
 
+                // Live for the install's duration when the local IPSW
+                // carries a security bookmark (the context survives app
+                // relaunches, so the wizard's panel grant is long gone);
+                // released on every exit path by the defer. The download
+                // path needs no scope — its destination is
+                // entitlement-covered Downloads.
+                var localIPSWScope: ScopedAccess?
+                defer { localIPSWScope?.release() }
+
                 switch context.source {
                 case .downloadLatest:
                     guard let downloadDestination = context.downloadDestinationURL else {
@@ -250,7 +259,12 @@ final class VMLifecycleCoordinator {
                     guard let localURL = context.localIPSWURL else {
                         throw IPSWError.noDownloadURL
                     }
-                    ipswURL = localURL
+                    localIPSWScope = context.localIPSWBookmark.flatMap {
+                        ScopedAccess(bookmark: $0)
+                    }
+                    // Prefer the bookmark's resolved URL — it tracks the
+                    // file if it moved since the wizard pick.
+                    ipswURL = localIPSWScope?.url ?? localURL
 
                     // Local file: single-step install (no download)
                     instance.installState = MacOSInstallState(
