@@ -23,7 +23,7 @@ struct SidebarViewControllerTests {
     private let preferences: AppPreferences
 
     init() {
-        self.preferences = AppPreferences(defaults: makeEphemeralDefaults(suiteName: "test.kernova.sidebar"))
+        self.preferences = makeEphemeralPreferences(suiteName: "test.kernova.sidebar")
     }
 
     private func makeViewModel() -> VMLibraryViewModel {

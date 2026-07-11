@@ -75,7 +75,7 @@ final class VMLibraryViewModel {
     // to prevent (#496).
     var hasPreparing: Bool { instances.contains(where: \.isPreparing) }
 
-    /// Current VM ordering used by sortInstances(); synchronized with UserDefaults via persistOrder().
+    /// Current VM ordering used by sortInstances(); synchronized with `AppPreferences.vmOrder` via persistOrder().
     private var customOrder: [UUID] = []
 
     /// Bundle names whose load failures have already been reported to the user.
@@ -2167,7 +2167,7 @@ final class VMLibraryViewModel {
         }
     }
 
-    /// Snapshots the current instance order into customOrder and persists it to UserDefaults.
+    /// Snapshots the current instance order into customOrder and persists it via `AppPreferences.vmOrder`.
     private func persistOrder() {
         customOrder = instances.map(\.id)
         preferences.vmOrder = customOrder

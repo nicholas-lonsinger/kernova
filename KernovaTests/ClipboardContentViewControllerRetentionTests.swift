@@ -22,8 +22,7 @@ struct ClipboardContentViewControllerRetentionTests {
     /// Isolated, pre-cleaned preferences for this suite's `VMLibraryViewModel`.
     ///
     /// Selection/order persistence never touches the real `.standard` domain.
-    private let preferences = AppPreferences(
-        defaults: makeEphemeralDefaults(suiteName: "test.kernova.clipboard-retention"))
+    private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.clipboard-retention")
 
     private func makeViewModel() -> VMLibraryViewModel {
         VMLibraryViewModel(
@@ -175,8 +174,7 @@ struct ClipboardContentViewControllerEditTests {
     /// Isolated, pre-cleaned preferences for this suite's `VMLibraryViewModel`.
     ///
     /// Selection/order persistence never touches the real `.standard` domain.
-    private let preferences = AppPreferences(
-        defaults: makeEphemeralDefaults(suiteName: "test.kernova.clipboard-edit"))
+    private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.clipboard-edit")
 
     private func makeViewModel() -> VMLibraryViewModel {
         VMLibraryViewModel(

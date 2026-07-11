@@ -11,7 +11,7 @@ struct VMLibraryViewModelTests {
     ///
     /// Fresh per test (the struct is re-instantiated), so each test starts from
     /// an empty suite.
-    private let preferences = AppPreferences(defaults: makeEphemeralDefaults(suiteName: "test.kernova.vmlibrary"))
+    private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.vmlibrary")
     private func makeViewModel(
         storageService: MockVMStorageService = MockVMStorageService(),
         diskImageService: MockDiskImageService = MockDiskImageService(),

@@ -5,6 +5,8 @@ import Observation
 import KernovaKit
 import KernovaTestSupport
 
+@testable import Kernova
+
 // Bundle-specific test helpers for KernovaTests. The event-driven/poll wait
 // primitives (`AsyncGate`, `waitUntil`, `TestFailure`) live in the shared
 // `KernovaTestSupport` package product — see its doc comment for why they
@@ -40,6 +42,13 @@ func makeEphemeralDefaults(suiteName: String) -> UserDefaults {
         try? FileManager.default.removeItem(at: plistURL)
     }
     return defaults
+}
+
+/// Wraps `makeEphemeralDefaults` in an `AppPreferences`, for suites that only
+/// need the typed wrapper (e.g. to construct a `VMLibraryViewModel`) and never
+/// inspect the raw `UserDefaults` store directly.
+func makeEphemeralPreferences(suiteName: String) -> AppPreferences {
+    AppPreferences(defaults: makeEphemeralDefaults(suiteName: suiteName))
 }
 
 // MARK: - Socket / channel factories

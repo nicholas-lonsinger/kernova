@@ -23,6 +23,10 @@ struct AppPreferences {
     private enum Keys {
         static let alwaysShowAdvancedOptions = "alwaysShowAdvancedOptions"
         static let expandedSidebarSections = "KernovaSidebarExpandedSections"
+        // RATIONALE: Unlike expandedSidebarSections, these two carry over the
+        // exact key strings VMLibraryViewModel used before this property moved
+        // here (#528), so existing users' persisted selection/order still load.
+        // Not a namespacing inconsistency to "fix" — changing them drops saved state.
         static let lastSelectedVMID = "lastSelectedVMID"
         static let vmOrder = "vmOrder"
     }
@@ -54,13 +58,7 @@ struct AppPreferences {
     /// restored on the next launch, provided the VM still exists.
     var lastSelectedVMID: UUID? {
         get { defaults.string(forKey: Keys.lastSelectedVMID).flatMap(UUID.init(uuidString:)) }
-        nonmutating set {
-            if let newValue {
-                defaults.set(newValue.uuidString, forKey: Keys.lastSelectedVMID)
-            } else {
-                defaults.removeObject(forKey: Keys.lastSelectedVMID)
-            }
-        }
+        nonmutating set { defaults.set(newValue?.uuidString, forKey: Keys.lastSelectedVMID) }
     }
 
     /// The user's custom VM ordering, or `nil` when no order has been saved

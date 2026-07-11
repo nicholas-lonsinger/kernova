@@ -11,8 +11,7 @@ struct VMSettingsViewControllerTests {
     /// Isolated, pre-cleaned preferences for this suite's `VMLibraryViewModel`.
     ///
     /// Selection/order persistence never touches the real `.standard` domain.
-    private let preferences = AppPreferences(
-        defaults: makeEphemeralDefaults(suiteName: "test.kernova.vmsettings"))
+    private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.vmsettings")
 
     private func makeViewModel() -> VMLibraryViewModel {
         VMLibraryViewModel(
