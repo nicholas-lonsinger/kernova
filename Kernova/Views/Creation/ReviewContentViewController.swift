@@ -85,8 +85,9 @@ final class ReviewContentViewController: NSViewController {
             if creationVM.ipswSource == .localFile, let path = creationVM.ipswPath {
                 rows.append(valueRow("File", URL(fileURLWithPath: path).lastPathComponent))
             }
-            if creationVM.ipswSource == .downloadLatest, let path = creationVM.ipswDownloadPath {
-                rows.append(valueRow("Save to", wizardAbbreviateWithTilde(path)))
+            if creationVM.ipswSource == .downloadLatest {
+                rows.append(
+                    valueRow("Save to", wizardAbbreviateWithTilde(creationVM.ipswDownloadPath)))
             }
             addSection("Installation", rows: rows, to: form)
         }

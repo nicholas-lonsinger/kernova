@@ -1,5 +1,6 @@
 import Foundation
 import Virtualization
+import os
 
 /// Wizard steps for creating a new VM.
 enum VMCreationStep: String, CaseIterable, Sendable {
@@ -28,6 +29,8 @@ enum IPSWSource: Sendable {
 @MainActor
 @Observable
 final class VMCreationViewModel {
+    private static let logger = Logger(subsystem: "app.kernova", category: "VMCreationViewModel")
+
     // MARK: - Wizard State
 
     var currentStep: VMCreationStep = .osSelection
@@ -41,7 +44,10 @@ final class VMCreationViewModel {
     var selectedBootMode: VMBootMode = .efi
     var ipswSource: IPSWSource = .downloadLatest
     var ipswPath: String?
-    var ipswDownloadPath: String? = VMCreationViewModel.defaultIPSWDownloadPath {
+    /// Non-optional since the custom-destination picker was removed with
+    /// the sandbox adoption: the destination is always the Downloads
+    /// default, set once here.
+    var ipswDownloadPath: String = VMCreationViewModel.defaultIPSWDownloadPath {
         didSet {
             // Reset overwrite confirmation when the download destination changes
             if ipswDownloadPath != confirmedOverwritePath {
@@ -95,7 +101,6 @@ final class VMCreationViewModel {
             case .macOS:
                 switch ipswSource {
                 case .downloadLatest:
-                    if ipswDownloadPath == nil { return "Choose a download location." }
                     if shouldShowOverwriteWarning { return "Resolve the file conflict above to continue." }
                 case .localFile:
                     if ipswPath == nil { return "Select a restore image file." }
@@ -141,7 +146,7 @@ final class VMCreationViewModel {
         switch selectedOS {
         case .macOS:
             switch ipswSource {
-            case .downloadLatest: ipswDownloadPath != nil && !shouldShowOverwriteWarning
+            case .downloadLatest: !shouldShowOverwriteWarning
             case .localFile: ipswPath != nil
             }
         case .linux:
@@ -187,10 +192,17 @@ final class VMCreationViewModel {
         // container's `Downloads` symlink, which the downloads.read-write
         // entitlement covers — no save panel or bookmark needed for the
         // default destination. Same API the save panel's directoryURL uses.
-        let downloads =
-            FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
-            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(
-                "Downloads", isDirectory: true)
+        guard
+            let downloads = FileManager.default.urls(
+                for: .downloadsDirectory, in: .userDomainMask
+            ).first
+        else {
+            logger.fault("No Downloads directory in userDomainMask")
+            assertionFailure("FileManager returned no Downloads directory")
+            return FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Downloads/RestoreImage.ipsw")
+                .path(percentEncoded: false)
+        }
         return downloads.appendingPathComponent("RestoreImage.ipsw").path(percentEncoded: false)
     }
 
@@ -205,8 +217,7 @@ final class VMCreationViewModel {
     // MARK: - Overwrite Warning
 
     var ipswDownloadPathFileExists: Bool {
-        guard let path = ipswDownloadPath else { return false }
-        return FileManager.default.fileExists(atPath: path)
+        FileManager.default.fileExists(atPath: ipswDownloadPath)
     }
 
     var shouldShowOverwriteWarning: Bool {
@@ -256,10 +267,9 @@ final class VMCreationViewModel {
     /// case instead.
     var hasResumableDownload: Bool {
         guard ipswSource == .downloadLatest,
-            let path = ipswDownloadPath,
             !ipswDownloadPathFileExists
         else { return false }
-        let bundleURL = IPSWService.resumeBundleURL(for: URL(fileURLWithPath: path))
+        let bundleURL = IPSWService.resumeBundleURL(for: URL(fileURLWithPath: ipswDownloadPath))
         return IPSWBundle(url: bundleURL).exists
     }
 

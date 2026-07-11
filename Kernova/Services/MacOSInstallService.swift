@@ -62,7 +62,13 @@ final class MacOSInstallService {
 
         try storageService.saveConfiguration(instance.configuration, to: instance.bundleURL)
 
-        // 4. Build VZ configuration and create VM
+        // 4. Build VZ configuration and create VM. The install-time build is
+        // a third config-build path alongside coldBoot/restoreOrColdBoot and
+        // needs the same security scopes active — a pre-install VM can
+        // already carry bookmarked external attachments from settings.
+        // Scopes are released by the session teardown, and the post-install
+        // auto-boot's own openRuntimeFileAccess re-adopts cleanly.
+        instance.openRuntimeFileAccess()
         let result = try configBuilder.build(
             from: instance.configuration,
             bundleURL: instance.bundleURL

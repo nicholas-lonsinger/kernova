@@ -5,7 +5,10 @@ import Foundation
 @Suite("VMLifecycleCoordinator Tests")
 @MainActor
 struct VMLifecycleCoordinatorTests {
-    private func makeCoordinator() -> (
+    /// `downloadsDirectory` widens the coordinator's Downloads-only
+    /// destination invariant to a test-owned directory so fresh-download
+    /// tests can stage real files without touching the user's Downloads.
+    private func makeCoordinator(downloadsDirectory: URL? = nil) -> (
         VMLifecycleCoordinator,
         MockVirtualizationService,
         MockMacOSInstallService,
@@ -20,7 +23,9 @@ struct VMLifecycleCoordinatorTests {
             virtualizationService: virtService,
             installService: installService,
             ipswService: ipswService,
-            usbDeviceService: usbService
+            usbDeviceService: usbService,
+            downloadsDirectory: downloadsDirectory
+                ?? FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
         )
         return (coordinator, virtService, installService, ipswService, usbService)
     }
@@ -449,15 +454,16 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("installMacOS with requestedFreshDownload trashes existing file and clears the flag")
     func installMacOSFreshDownloadTrashesAndClears() async throws {
-        let (coordinator, _, _, ipswService, _) = makeCoordinator()
-        let instance = makeInstance()
-
         // Create a real file at the destination so the trash path has something
-        // to act on. Persist it in a unique per-test temp directory to keep
-        // the assertion deterministic.
+        // to act on. Persist it in a unique per-test temp directory (injected
+        // as the coordinator's Downloads-invariant root) to keep the
+        // assertion deterministic without touching the user's Downloads.
         let temp = FileManager.default.temporaryDirectory
             .appendingPathComponent("freshDownloadTrash-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
+        let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: temp)
+        let instance = makeInstance()
+
         let destination = temp.appendingPathComponent("RestoreImage.ipsw")
         try Data(repeating: 0xFF, count: 1024).write(to: destination)
 
@@ -533,12 +539,18 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("installMacOS rejects requestedFreshDownload on a non-IPSW path")
     func installMacOSFreshDownloadRejectsNonIPSWPath() async {
-        let (coordinator, _, _, ipswService, _) = makeCoordinator()
+        // The non-IPSW file sits inside the (injected) Downloads directory —
+        // an out-of-Downloads path would be normalized to the default
+        // destination before this guard is reached.
+        let temp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("rejectNonIPSW-\(UUID().uuidString)", isDirectory: true)
+        let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: temp)
         let instance = makeInstance()
         // Path doesn't end in .ipsw — guard must fire before any trash attempt.
         let context = MacOSInstallContext(
             source: .downloadLatest,
-            downloadDestinationPath: "/Users/me/Documents/important.doc",
+            downloadDestinationPath: temp.appendingPathComponent("important.doc")
+                .path(percentEncoded: false),
             requestedFreshDownload: true
         )
         instance.configuration.installContext = context
@@ -722,6 +734,45 @@ struct VMLifecycleCoordinatorTests {
 
         // Device should still be tracked since detach failed
         #expect(instance.liveRemovableMedia.count == 1)
+    }
+
+    @Test("attachUSBDevice attaches the resolved URL but tracks the stored path")
+    func attachUSBDeviceTracksStoredPathWithResolvedURL() async throws {
+        let (coordinator, _, _, _, usbService) = makeCoordinator()
+        let instance = makeInstance()
+
+        // A bookmark that tracked a moved file: the resolved location is
+        // what must reach the service, while the tracked identity stays the
+        // config's stored path so the live reconcile's path comparison
+        // doesn't churn.
+        let info = try await coordinator.attachUSBDevice(
+            diskImagePath: "/old/location/media.iso",
+            readOnly: true,
+            resolvedURL: URL(fileURLWithPath: "/new/location/media.iso"),
+            to: instance
+        )
+
+        #expect(usbService.lastAttachedPath == "/new/location/media.iso")
+        #expect(info.path == "/old/location/media.iso")
+        #expect(instance.liveRemovableMedia.first?.path == "/old/location/media.iso")
+    }
+
+    // MARK: - Download Destination Normalization
+
+    @Test("normalizedDownloadDestination keeps Downloads paths and redirects others to the default")
+    func normalizedDownloadDestinationEnforcesDownloads() throws {
+        let (coordinator, _, _, _, _) = makeCoordinator()
+        let downloads = try #require(
+            FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first)
+        let inDownloads = downloads.appendingPathComponent("Custom.ipsw")
+        #expect(coordinator.normalizedDownloadDestination(for: inDownloads) == inDownloads)
+
+        // A pre-sandbox custom destination outside Downloads can never be
+        // written under the sandbox — it must fall back to the default.
+        let elsewhere = URL(fileURLWithPath: "/Users/Shared/RestoreImage.ipsw")
+        let normalized = coordinator.normalizedDownloadDestination(for: elsewhere)
+        #expect(
+            normalized.path(percentEncoded: false) == VMCreationViewModel.defaultIPSWDownloadPath)
     }
 }
 

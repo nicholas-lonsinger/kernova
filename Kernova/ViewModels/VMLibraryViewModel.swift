@@ -805,17 +805,16 @@ final class VMLibraryViewModel {
     ) -> Task<Void, Never> {
         Task.detached(priority: .userInitiated) { [weak self] in
             do {
-                // Scope for the same reason as `removeStorageDisk`.
-                let scope = bookmark.flatMap { ScopedAccess(bookmark: $0) }
-                defer { scope?.release() }
-                let target = scope?.url ?? url
-                if permanently {
-                    // RATIONALE: the user-confirmed "Delete Immediately" path; the deliberate
-                    // exception to CLAUDE.md's "prefer trash over rm" guideline (see also
-                    // `VMStorageService.permanentlyDeleteVMBundle`).
-                    try FileManager.default.removeItem(at: target)
-                } else {
-                    try FileManager.default.trashItem(at: target, resultingItemURL: nil)
+                try SecurityScopedBookmark.withResolvedURL(bookmark: bookmark, fallback: url) {
+                    target in
+                    if permanently {
+                        // RATIONALE: the user-confirmed "Delete Immediately" path; the deliberate
+                        // exception to CLAUDE.md's "prefer trash over rm" guideline (see also
+                        // `VMStorageService.permanentlyDeleteVMBundle`).
+                        try FileManager.default.removeItem(at: target)
+                    } else {
+                        try FileManager.default.trashItem(at: target, resultingItemURL: nil)
+                    }
                 }
                 Self.logger.notice(
                     "Deleted external attachment '\(label, privacy: .public)' for deleted VM '\(vmName, privacy: .public)'"
@@ -1372,12 +1371,15 @@ final class VMLibraryViewModel {
                 // Scoped access must be live while the service resolves the
                 // path and opens the disk attachment; registered with the
                 // instance on success (released at detach or teardown), and
-                // released by deinit if the attach throws.
+                // released by deinit if the attach throws. The scope's
+                // resolved URL is what gets attached, so a file the bookmark
+                // tracked through a move still hot-attaches.
                 let scope = item.bookmark.flatMap { ScopedAccess(bookmark: $0) }
                 _ = try await lifecycle.attachUSBDevice(
                     diskImagePath: item.path,
                     readOnly: item.readOnly,
                     desiredUUID: item.id,
+                    resolvedURL: scope?.url,
                     to: instance
                 )
                 if let scope {
@@ -1548,12 +1550,9 @@ final class VMLibraryViewModel {
         let bookmark = disk.isInternal ? nil : disk.bookmark
         return Task.detached(priority: .userInitiated) { [weak self] in
             do {
-                // Trashing an out-of-container file needs its scope active;
-                // with a nil/dead bookmark the raw-path attempt surfaces the
-                // usual warning below.
-                let scope = bookmark.flatMap { ScopedAccess(bookmark: $0) }
-                defer { scope?.release() }
-                try FileManager.default.trashItem(at: scope?.url ?? diskURL, resultingItemURL: nil)
+                try SecurityScopedBookmark.withResolvedURL(bookmark: bookmark, fallback: diskURL) {
+                    try FileManager.default.trashItem(at: $0, resultingItemURL: nil)
+                }
                 Self.logger.notice(
                     "Trashed disk '\(label, privacy: .public)' for VM '\(vmName, privacy: .public)'"
                 )
@@ -1669,10 +1668,9 @@ final class VMLibraryViewModel {
         let bookmark = item.bookmark
         return Task.detached(priority: .userInitiated) { [weak self] in
             do {
-                // Scope for the same reason as `removeStorageDisk`.
-                let scope = bookmark.flatMap { ScopedAccess(bookmark: $0) }
-                defer { scope?.release() }
-                try FileManager.default.trashItem(at: scope?.url ?? url, resultingItemURL: nil)
+                try SecurityScopedBookmark.withResolvedURL(bookmark: bookmark, fallback: url) {
+                    try FileManager.default.trashItem(at: $0, resultingItemURL: nil)
+                }
                 Self.logger.notice(
                     "Trashed removable media '\(label, privacy: .public)' for VM '\(vmName, privacy: .public)'"
                 )

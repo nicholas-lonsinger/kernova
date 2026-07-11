@@ -48,17 +48,33 @@ enum SecurityScopedBookmark {
         }
     }
 
+    /// Runs `body` with the bookmark's scope active, passing the resolved
+    /// URL (which tracks a moved file) — or `fallback` with no scope when
+    /// the bookmark is absent or dead, letting the raw-path attempt surface
+    /// the usual sandbox denial.
+    ///
+    /// The single momentary-scope idiom shared by the external-file
+    /// trash/delete sites; existence probes use the
+    /// ``fileExists(atPath:bookmark:)`` wrapper over it.
+    static func withResolvedURL<T>(
+        bookmark: Data?, fallback: URL, _ body: (URL) throws -> T
+    ) rethrows -> T {
+        guard let bookmark, let scope = ScopedAccess(bookmark: bookmark) else {
+            return try body(fallback)
+        }
+        defer { scope.release() }
+        return try body(scope.url)
+    }
+
     /// Existence check that honors a bookmark when present: probes the
     /// bookmark's resolved location under a momentary scope — so a file the
     /// bookmark still tracks after a move reads as existing (boot-time
     /// healing updates the stored path) — falling back to a raw-path check
     /// when the bookmark is absent or dead.
     static func fileExists(atPath path: String, bookmark: Data?) -> Bool {
-        guard let bookmark, let scope = ScopedAccess(bookmark: bookmark) else {
-            return FileManager.default.fileExists(atPath: path)
+        withResolvedURL(bookmark: bookmark, fallback: URL(fileURLWithPath: path)) { url in
+            FileManager.default.fileExists(atPath: url.path(percentEncoded: false))
         }
-        defer { scope.release() }
-        return FileManager.default.fileExists(atPath: scope.url.path(percentEncoded: false))
     }
 
     /// Resolves bookmark data back to a URL, or `nil` (logged) when the

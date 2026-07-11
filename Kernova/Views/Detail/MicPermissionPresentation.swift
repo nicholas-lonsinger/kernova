@@ -46,7 +46,7 @@ func micPermissionPresentation(_ status: AVAuthorizationStatus, audioInputEnable
 func externalAttachmentRefs(for configuration: VMConfiguration) -> [String: Data?] {
     var refs: [String: Data?] = [:]
     func add(_ path: String, _ bookmark: Data?) {
-        if let existing = refs[path], existing != nil { return }
+        if (refs[path] ?? nil) != nil { return }
         refs.updateValue(bookmark, forKey: path)
     }
     if let disks = configuration.storageDisks {

@@ -154,31 +154,37 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
     }
 
     @objc private func browseISO() {
-        browse(title: "Select ISO Image", types: [.iso]) { [weak self] url in
-            guard let self else { return }
-            let (path, bookmark) = SecurityScopedBookmark.capture(url)
-            self.creationVM.isoPath = path
-            self.creationVM.isoBookmark = bookmark
-            self.rebuildConditional()
+        browseAndCapture(title: "Select ISO Image", types: [.iso]) { vm, path, bookmark in
+            vm.isoPath = path
+            vm.isoBookmark = bookmark
         }
     }
 
     @objc private func browseKernel() {
-        browse(title: "Select Kernel", types: [.data]) { [weak self] url in
-            guard let self else { return }
-            let (path, bookmark) = SecurityScopedBookmark.capture(url)
-            self.creationVM.kernelPath = path
-            self.creationVM.kernelBookmark = bookmark
-            self.rebuildConditional()
+        browseAndCapture(title: "Select Kernel", types: [.data]) { vm, path, bookmark in
+            vm.kernelPath = path
+            vm.kernelBookmark = bookmark
         }
     }
 
     @objc private func browseInitrd() {
-        browse(title: "Select Initrd", types: [.data]) { [weak self] url in
+        browseAndCapture(title: "Select Initrd", types: [.data]) { vm, path, bookmark in
+            vm.initrdPath = path
+            vm.initrdBookmark = bookmark
+        }
+    }
+
+    /// `browse` + `SecurityScopedBookmark.capture` + refresh, shared by the
+    /// three pickers; `assign` writes the captured pair onto its model
+    /// fields.
+    private func browseAndCapture(
+        title: String, types: [UTType],
+        assign: @escaping (VMCreationViewModel, String, Data?) -> Void
+    ) {
+        browse(title: title, types: types) { [weak self] url in
             guard let self else { return }
             let (path, bookmark) = SecurityScopedBookmark.capture(url)
-            self.creationVM.initrdPath = path
-            self.creationVM.initrdBookmark = bookmark
+            assign(self.creationVM, path, bookmark)
             self.rebuildConditional()
         }
     }

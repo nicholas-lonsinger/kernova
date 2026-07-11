@@ -94,9 +94,6 @@ final class IPSWSelectionContentViewController: NSViewController {
         switch source {
         case .downloadLatest:
             creationVM.ipswSource = .downloadLatest
-            if creationVM.ipswDownloadPath == nil {
-                creationVM.ipswDownloadPath = VMCreationViewModel.defaultIPSWDownloadPath
-            }
             refresh()
         case .localFile:
             // Selection only commits when the user actually picks a file. Re-sync
@@ -128,7 +125,7 @@ final class IPSWSelectionContentViewController: NSViewController {
 
         switch creationVM.ipswSource {
         case .downloadLatest:
-            guard let path = creationVM.ipswDownloadPath else { return }
+            let path = creationVM.ipswDownloadPath
             // No "Change…" affordance: the destination is always the Downloads
             // folder, the one location the sandbox's downloads entitlement
             // covers without per-pick grants (the resume sidecar lives beside

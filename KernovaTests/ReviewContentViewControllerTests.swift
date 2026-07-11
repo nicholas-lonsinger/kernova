@@ -36,9 +36,8 @@ struct ReviewContentViewControllerTests {
         vc.loadViewIfNeeded()
 
         #expect(findLabel(withText: "Download Latest", in: vc.view) != nil)
-        if let path = vm.ipswDownloadPath {
-            #expect(findLabel(withText: wizardAbbreviateWithTilde(path), in: vc.view) != nil)
-        }
+        #expect(
+            findLabel(withText: wizardAbbreviateWithTilde(vm.ipswDownloadPath), in: vc.view) != nil)
     }
 
     @Test("macOS + local file shows the file basename")

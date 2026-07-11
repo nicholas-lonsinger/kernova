@@ -14,9 +14,8 @@ struct IPSWSelectionContentViewControllerTests {
 
         #expect(radio(titled: "Download Latest", in: vc.view)?.state == .on)
         #expect(radio(titled: "Choose Local File", in: vc.view)?.state == .off)
-        if let path = vm.ipswDownloadPath {
-            #expect(findLabel(withText: wizardAbbreviateWithTilde(path), in: vc.view) != nil)
-        }
+        #expect(
+            findLabel(withText: wizardAbbreviateWithTilde(vm.ipswDownloadPath), in: vc.view) != nil)
     }
 
     @Test("Overwrite warning shows when a file exists; Use Existing switches to local file")
