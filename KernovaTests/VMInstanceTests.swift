@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 import AppKit
+import KernovaTestSupport
 @testable import Kernova
 
 @Suite("VMInstance Tests")

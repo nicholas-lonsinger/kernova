@@ -86,12 +86,12 @@ When adding new functionality or modifying existing behavior, include unit tests
 
 macos-26 CI runners have heavy `@MainActor` scheduling jitter. With a `waitUntil`/`pollUntil` poll loop, the timeout deadline *is* the pass/fail criterion — so a starved scheduler fails a test whose condition would have become true. **When a test waits for async state that has an underlying signal, make the wait event-driven from the start — do not reach for a poll loop.** With event-driven waits the timeout is only a stuck-condition backstop the happy path never reaches.
 
-Pick the seam by what produces the state (helpers live in `KernovaTests/TestHelpers.swift`, `KernovaMacOSAgentTests/TestHelpers.swift`, and `KernovaKit/Tests/KernovaKitTests/StreamTestSupport.swift`):
+Pick the seam by what produces the state. `AsyncGate`/`waitUntil`/`TestFailure` live in the shared `KernovaTestSupport` SwiftPM product (`KernovaKit/Sources/KernovaTestSupport/`), imported by all three test targets; `waitForChange` is KernovaTests-only and stays in `KernovaTests/TestHelpers.swift`:
 
 | Seam | Use when | Notes |
 |------|----------|-------|
 | `waitForChange(until:)` | The predicate reads a production `@Observable` property directly (e.g. `service.clipboardContent`, `service.agentStatus`) | KernovaTests only. Built on `withObservationTracking`: the predicate must be side-effect-free and read every inspected value through an `@Observable` getter on the arming pass, or only the deadline wakes it. |
-| `AsyncGate` (`notify()` + `wait(until:)`) | The signal flows through a test-owned double/recorder | Call `notify()` after each relevant mutation. `@MainActor` in KernovaTests; `nonisolated` + `@Sendable` predicate in the GuestAgent/KernovaKit bundles — keep the copies aligned. |
+| `AsyncGate` (`notify()` + `wait(until:)`) | The signal flows through a test-owned double/recorder | Call `notify()` after each relevant mutation. A single implementation serves every bundle: `wait`/`waitUntil` take the caller's isolation via `isolation: isolated (any Actor)? = #isolation`, so the same code runs isolation-free for `@MainActor` KernovaTests predicates and nonisolated GuestAgent/KernovaKit predicates alike — no per-bundle fork to keep in sync (#526). |
 | `await` the production `Task` | A production `Task` does the work | Expose it via a `#if DEBUG …ForTesting` seam and `await task.value` instead of polling the flag it flips. |
 
 If the condition is driven by a *single* event a starved scheduler can miss (e.g. one heartbeat that latches a terminal state), drive it *continuously* — a wait conversion alone won't fix that.

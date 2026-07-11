@@ -7,7 +7,8 @@ let package = Package(
         .macOS(.v15)
     ],
     products: [
-        .library(name: "KernovaKit", targets: ["KernovaKit"])
+        .library(name: "KernovaKit", targets: ["KernovaKit"]),
+        .library(name: "KernovaTestSupport", targets: ["KernovaTestSupport"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.38.0")
@@ -22,9 +23,15 @@ let package = Package(
                 .swiftLanguageMode(.v6)
             ]
         ),
+        .target(
+            name: "KernovaTestSupport",
+            swiftSettings: [
+                .swiftLanguageMode(.v6)
+            ]
+        ),
         .testTarget(
             name: "KernovaKitTests",
-            dependencies: ["KernovaKit"],
+            dependencies: ["KernovaKit", "KernovaTestSupport"],
             swiftSettings: [
                 .swiftLanguageMode(.v6)
             ]

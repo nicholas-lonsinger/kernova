@@ -206,7 +206,7 @@ KernovaQuickLook/                       # Quick Look preview extension (.appex e
 └── KernovaQuickLook.entitlements       # App sandbox + user-selected read-only (appexes must be sandboxed)
 
 KernovaKit/                        # SPM package: the **shared host <-> guest module** — everything both the app and the guest agent need. The vsock wire protocol was its first tenant and still dominates it, but membership is "shared between the two targets," not "wire-only": it also holds the clipboard domain model (`ClipboardContent`) + file staging/archive, cross-cutting helpers (`KernovaVersionComparison`), and the shared `NSPasteboardItemDataProvider`. New host/guest-identical code (e.g. a shared progress component) belongs here too. The name reflects this broader scope — the package was renamed from `KernovaProtocol` (its wire-protocol origin) to `KernovaKit` in #407
-├── Package.swift                       # Swift 6 package, depends on apple/swift-protobuf
+├── Package.swift                       # Swift 6 package, depends on apple/swift-protobuf; also vends the `KernovaTestSupport` product (see Sources/KernovaTestSupport/ below)
 ├── Proto/
 │   └── kernova.proto                   # Frame envelope + Hello/Error/Heartbeat + clipboard payloads (metadata offer/request + chunk-streamed begin/chunk/end/ack/abort; legacy single-frame ClipboardData + ClipboardFormat retired/reserved) + log records
 ├── Sources/KernovaKit/
@@ -243,6 +243,8 @@ KernovaKit/                        # SPM package: the **shared host <-> guest mo
 │   ├── KernovaLogMessage.swift         # Custom interpolation supporting OSLogPrivacy-shaped privacy attrs (moved from KernovaMacOSAgent/ in #434)
 │   ├── KernovaVersionComparison.swift  # `isAtLeast` numeric version comparator — the single current-vs-outdated rule shared by the host's AgentStatus and the guest's update line
 │   └── KernovaCodeSignature.swift      # Resolves the running executable's own Developer Team Identifier from its code signature (`SecCodeCopySelf` → `SecCodeCopyStaticCode` → `SecCodeCopySigningInformation(kSecCSSigningInformation)` → `kSecCodeInfoTeamIdentifier`, cached); `nil` for unsigned/ad-hoc code. Backs `FileProviderConfig.host()`'s peer pins (#476)
+├── Sources/KernovaTestSupport/          # Plain-Foundation `KernovaTestSupport` product (#526) — the single shared copy of the event-driven/poll wait primitives all three test targets (KernovaTests, KernovaMacOSAgentTests, KernovaKitTests) depend on
+│   └── AsyncWaits.swift                # `TestFailure`, `ResumeOnce`, `AsyncGate` (`wait`/`waitUntil` take the caller's isolation via `isolation: isolated (any Actor)? = #isolation`, so one implementation serves both `@MainActor` and nonisolated callers), `waitUntil` — formerly triplicated across the three bundles (see CLAUDE.md's "Async waits in tests"); has no dependency on `KernovaKit` and is never linked into a shipping target
 └── Tests/KernovaKitTests/              # One suite per package area — regenerate this inventory with `ls` rather than trusting a snapshot. Areas:
                                         #   wire protocol (VsockFrameTests, VsockChannelTests); clipboard domain model + snapshot policy
                                         #   (ClipboardContentTests); the streaming engine end-to-end (ClipboardStreamTests, ClipboardFileStagingTests,
@@ -254,7 +256,9 @@ KernovaKit/                        # SPM package: the **shared host <-> guest mo
                                         #   FileProviderServicingTimingTests — #466's connect-timeout/retry-budget coupling); KernovaLogMessageTests
                                         #   (privacy-redaction matrix, moved here with its source in #434), KernovaVersionComparisonTests, and
                                         #   KernovaCodeSignatureTests (#476 — the running code's own team-identifier resolution).
-                                        #   StreamTestSupport.swift holds the shared helpers (channel pairs, AsyncGate, frame factories)
+                                        #   StreamTestSupport.swift holds the package-specific helpers (channel pairs, frame factories,
+                                        #   pollUntil, StreamTestFailure); AsyncGate/waitUntil/TestFailure come from the shared
+                                        #   KernovaTestSupport product (#526)
 
 Config/
 ├── Base.xcconfig                       # Tracked project-level base config (wired via baseConfigurationReference on both project XCBuildConfigurations); carries no team — just `#include? "Local.xcconfig"` (#476)
@@ -279,8 +283,9 @@ KernovaTests/
 │   ├── MockUSBDeviceService.swift
 │   ├── SuspendingMockUSBDeviceService.swift
 │   └── MockVMLibraryPresenting.swift   # Records VMLibraryViewModel presentation requests for test assertions
-├── TestHelpers.swift                   # Shared helpers: waitForChange (Observation-armed), AsyncGate (@MainActor variant), waitUntil,
-│                                       # socket-pair factories — see CLAUDE.md's async-wait table for when to use which
+├── TestHelpers.swift                   # Bundle-specific helpers: waitForChange (Observation-armed, KernovaTests-only), nextFrame,
+│                                       # socket-pair factories, AppKit window factory — AsyncGate/waitUntil/TestFailure come from the
+│                                       # shared KernovaTestSupport product (#526); see CLAUDE.md's async-wait table for when to use which
 └── …Tests.swift                        # ~70 suites, roughly one per component — regenerate this inventory with `ls` rather than
                                         # trusting a snapshot. Areas:
                                         #   models (VMConfiguration + clone, VMInstance + recovery eligibility, VMBundleLayout, VMStatus /
@@ -304,9 +309,9 @@ KernovaMacOSAgentTests/                 # Unit tests for the guest agent (standa
 │                                       # Compiles KernovaMacOSAgent source files directly (except AgentAppDelegate.swift)
 │                                       # so internal members are accessible without @testable import.
 │                                       # See Helper Targets section for the source-compilation rationale.
-├── TestHelpers.swift                   # Shared helpers: makeRawSocketPair, makeChannelPair, waitUntil, AsyncGate (nonisolated
-│                                       # variant, kept aligned with the KernovaTests copy — see CLAUDE.md's async-wait table),
-│                                       # nextFrame, awaitFirst, AtomicInt, frame factories (makeLogFrame etc.)
+├── TestHelpers.swift                   # Bundle-specific helpers: makeRawSocketPair, makeChannelPair, nextFrame, awaitFirst, AtomicInt
+│                                       # (built on the shared AsyncGate), frame factories (makeLogFrame etc.) — AsyncGate/waitUntil/
+│                                       # TestFailure come from the shared KernovaTestSupport product (#526; see CLAUDE.md's async-wait table)
 ├── AgentMenuTextTests.swift       # Pure menu-text mappers: identity/about titles, updateAvailableLine, hostStatusLine, statusSubmenu, logForwardingLine, clipboardLine
 ├── VsockHostConnectionTests.swift      # Log ring-buffer cap, partial-flush re-enqueue, forwardLog live-channel paths
 ├── VsockGuestClientTests.swift         # Connect/retry/stop lifecycle; socket-factory injection

@@ -2,6 +2,7 @@ import FileProvider
 import Foundation
 import Testing
 import os
+import KernovaTestSupport
 
 @testable import KernovaKit
 
