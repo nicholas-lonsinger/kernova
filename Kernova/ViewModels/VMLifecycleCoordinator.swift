@@ -27,6 +27,14 @@ final class VMLifecycleCoordinator {
     let usbDeviceService: any USBDeviceProviding
     let fileSystem: any FileSystemOperating
 
+    /// The directory IPSW downloads must land in — the one location the
+    /// sandbox's downloads entitlement covers.
+    ///
+    /// Injectable so tests can point
+    /// the destination invariant at a temp directory; `nil` (no system
+    /// Downloads folder — not expected in practice) disables normalization.
+    private let downloadsDirectory: URL?
+
     /// Maps VM ID → operation token for VMs that currently have a lifecycle operation in flight.
     ///
     /// The token allows `defer` blocks to avoid clobbering entries inserted by a later operation.
@@ -37,13 +45,17 @@ final class VMLifecycleCoordinator {
         installService: any MacOSInstallProviding,
         ipswService: any IPSWProviding,
         usbDeviceService: any USBDeviceProviding = USBDeviceService(),
-        fileSystem: any FileSystemOperating = FileManager.default
+        fileSystem: any FileSystemOperating = FileManager.default,
+        downloadsDirectory: URL? = FileManager.default.urls(
+            for: .downloadsDirectory, in: .userDomainMask
+        ).first
     ) {
         self.virtualizationService = virtualizationService
         self.installService = installService
         self.ipswService = ipswService
         self.usbDeviceService = usbDeviceService
         self.fileSystem = fileSystem
+        self.downloadsDirectory = downloadsDirectory
     }
 
     // MARK: - Errors
@@ -153,6 +165,24 @@ final class VMLifecycleCoordinator {
 
     // MARK: - macOS Installation
 
+    /// The effective IPSW download destination for a persisted path:
+    /// the path itself when it lives in `downloadsDirectory`, the wizard
+    /// default otherwise.
+    ///
+    /// Downloads is the only destination the app supports (the sandbox
+    /// entitlement covers it, resume sidecar included, with no per-pick
+    /// grant). Comparison is symlink-resolved because the sandbox
+    /// container's `Downloads` and the real `~/Downloads` are the same
+    /// directory spelled two ways.
+    func normalizedDownloadDestination(for persisted: URL) -> URL {
+        guard let downloads = downloadsDirectory else { return persisted }
+        let persistedParent = persisted.deletingLastPathComponent()
+            .resolvingSymlinksInPath().standardizedFileURL
+        let downloadsResolved = downloads.resolvingSymlinksInPath().standardizedFileURL
+        guard persistedParent.path != downloadsResolved.path else { return persisted }
+        return URL(fileURLWithPath: VMCreationViewModel.defaultIPSWDownloadPath)
+    }
+
     func installMacOS(
         on instance: VMInstance,
         context: MacOSInstallContext
@@ -165,10 +195,36 @@ final class VMLifecycleCoordinator {
             do {
                 let ipswURL: URL
 
+                // Live for the install's duration when the local IPSW
+                // carries a security bookmark (the context survives app
+                // relaunches, so the wizard's panel grant is long gone);
+                // released on every exit path by the defer. The download
+                // path needs no scope — its destination is
+                // entitlement-covered Downloads.
+                var localIPSWScope: ScopedAccess?
+                defer { localIPSWScope?.release() }
+
                 switch context.source {
                 case .downloadLatest:
-                    guard let downloadDestination = context.downloadDestinationURL else {
+                    guard let persistedDestination = context.downloadDestinationURL else {
                         throw IPSWError.noDownloadURL
+                    }
+                    // The app only supports downloading into the Downloads
+                    // folder — the one location the sandbox's entitlement
+                    // covers together with the resume sidecar. A persisted
+                    // destination anywhere else (a pre-sandbox config's
+                    // custom pick, or a hand-edited config.json) can never
+                    // be written, and no picker exists to re-point it, so
+                    // enforce the invariant at use time by falling back to
+                    // the default. Symlink-resolved comparison because the
+                    // container's Downloads path and the real ~/Downloads
+                    // are the same folder spelled two ways.
+                    let downloadDestination = normalizedDownloadDestination(
+                        for: persistedDestination)
+                    if downloadDestination != persistedDestination {
+                        Self.logger.notice(
+                            "installMacOS: persisted download destination is outside Downloads; using the default destination instead"
+                        )
                     }
 
                     // Honor "Download & Replace" intent ONCE: trash the
@@ -250,7 +306,22 @@ final class VMLifecycleCoordinator {
                     guard let localURL = context.localIPSWURL else {
                         throw IPSWError.noDownloadURL
                     }
-                    ipswURL = localURL
+                    localIPSWScope = context.localIPSWBookmark.flatMap {
+                        ScopedAccess(bookmark: $0)
+                    }
+                    // Prefer the bookmark's resolved URL — it tracks the
+                    // file if it moved since the wizard pick.
+                    ipswURL = localIPSWScope?.url ?? localURL
+                    // Heal a stale bookmark like every other bookmarked
+                    // field (the context survives relaunches until the
+                    // install succeeds, so it can go stale between retries).
+                    if let scope = localIPSWScope, scope.isStale,
+                        let fresh = SecurityScopedBookmark.make(for: scope.url)
+                    {
+                        instance.performConfigurationMutation {
+                            $0.installContext?.localIPSWBookmark = fresh
+                        }
+                    }
 
                     // Local file: single-step install (no download)
                     instance.installState = MacOSInstallState(
@@ -306,20 +377,31 @@ final class VMLifecycleCoordinator {
     /// `VZUSBDeviceConfiguration.uuid` so the runtime device matches the
     /// caller's persisted identity (e.g. `RemovableMediaItem.id`),
     /// which is required for save-state restore matching.
+    ///
+    /// `resolvedURL`, when supplied, is the security bookmark's live
+    /// location and is what actually gets attached — a bookmark tracks a
+    /// moved file where the stored path goes stale. The *tracked* identity
+    /// (`USBDeviceInfo.path`, compared against config entries by the live
+    /// reconcile) stays `diskImagePath`, so a heal-at-boot remains the one
+    /// place stored paths change.
     func attachUSBDevice(
         diskImagePath: String,
         readOnly: Bool,
         desiredUUID: UUID? = nil,
+        resolvedURL: URL? = nil,
         to instance: VMInstance
     ) async throws -> USBDeviceInfo {
         let info = try await usbDeviceService.attach(
-            diskImagePath: diskImagePath,
+            diskImagePath: resolvedURL?.path(percentEncoded: false) ?? diskImagePath,
             readOnly: readOnly,
             desiredUUID: desiredUUID,
             to: instance
         )
-        instance.liveRemovableMedia.append(info)
-        return info
+        let tracked = USBDeviceInfo(
+            id: info.id, path: diskImagePath, readOnly: info.readOnly,
+            attachedAt: info.attachedAt)
+        instance.liveRemovableMedia.append(tracked)
+        return tracked
     }
 
     /// Detaches a USB mass storage device from a running VM and removes

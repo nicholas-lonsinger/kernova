@@ -18,6 +18,16 @@ import os
 ///   the volume is ejected (FSEvents on the mount point disappears with
 ///   the volume itself), and so we can attach a parent watcher we
 ///   couldn't open earlier because the volume wasn't mounted yet.
+///
+/// Under the App Sandbox, existence probes run through each path's security
+/// bookmark (a raw `fileExists` on an out-of-container path is denied and
+/// would mark every present attachment missing), and parents of external
+/// paths can't be opened for watching at all — a file-scoped bookmark never
+/// grants its parent directory. The existing `fd >= 0` guard leaves those
+/// parents unwatched; freshness then comes from the coarse triggers
+/// (settings-appear `setPaths`, app-activation `apply()`, and the volume
+/// mount/unmount refresh), which is acceptable for a warning affordance
+/// whose authoritative check runs at VM start.
 @MainActor
 @Observable
 final class AttachmentFileMonitor {
@@ -67,6 +77,11 @@ final class AttachmentFileMonitor {
     @ObservationIgnored
     private var desiredPaths: Set<String> = []
 
+    /// Security bookmark for each tracked path that has one, so existence
+    /// probes can run under a momentary scope (see the class doc).
+    @ObservationIgnored
+    private var bookmarkByPath: [String: Data] = [:]
+
     /// Off-main probe step invoked by `setPaths(_:)`.
     ///
     /// Default implementation hops to a detached utility-priority task and
@@ -79,9 +94,14 @@ final class AttachmentFileMonitor {
 
     /// Type of the off-main probe step.
     ///
-    /// `@Sendable` so the default implementation can dispatch its body to
-    /// a detached task without violating strict concurrency.
-    typealias Probe = @Sendable (_ paths: Set<String>, _ parents: Set<String>) async -> ProbeResult
+    /// `bookmarks` carries the security bookmark for each path that has one,
+    /// so the existence syscall can run under a momentary scope. `@Sendable`
+    /// so the default implementation can dispatch its body to a detached
+    /// task without violating strict concurrency.
+    typealias Probe =
+        @Sendable (
+            _ paths: Set<String>, _ bookmarks: [String: Data], _ parents: Set<String>
+        ) async -> ProbeResult
 
     /// Single-flight coordination for volume mount/unmount refreshes.
     ///
@@ -133,21 +153,27 @@ final class AttachmentFileMonitor {
         existsByPath[path] ?? true
     }
 
-    /// Replaces the set of paths being watched.
+    /// Replaces the set of paths being watched, keyed path → security
+    /// bookmark (`nil` for paths without one, e.g. pre-sandbox entries).
     ///
     /// Idempotent: only diff churn (added / removed paths) triggers FS work.
     /// The synchronous portion (computing the diff, dropping removed paths,
     /// cancelling their watchers) runs immediately on the main actor; the
-    /// blocking syscalls (`FileManager.fileExists`, `open(O_EVTONLY)` on
+    /// blocking syscalls (the scoped existence probe, `open(O_EVTONLY)` on
     /// each new parent directory) run on a detached utility-priority Task
     /// so a stale network mount cannot freeze the UI.
     ///
     /// Concurrent calls coalesce safely: the last call wins for *desired
     /// state*, and any in-flight probe whose paths have been un-desired by
     /// a later call has its results discarded on resume.
-    func setPaths(_ paths: Set<String>) async {
-        let next = paths.filter { !$0.isEmpty }
+    func setPaths(_ refs: [String: Data?]) async {
+        let next = Set(refs.keys.filter { !$0.isEmpty })
         desiredPaths = next
+        bookmarkByPath = refs.reduce(into: [:]) { partial, entry in
+            if !entry.key.isEmpty, let bookmark = entry.value {
+                partial[entry.key] = bookmark
+            }
+        }
 
         // Drop entries no longer wanted. All in-memory, runs immediately.
         let removed = Set(existsByPath.keys).subtracting(next)
@@ -162,7 +188,7 @@ final class AttachmentFileMonitor {
             .subtracting(Set(parentSources.keys))
         guard !added.isEmpty || !newParents.isEmpty else { return }
 
-        let result = await probe(added, newParents)
+        let result = await probe(added, bookmarks(for: added), newParents)
 
         // Apply results — filtered through the *current* desire so that any
         // path un-requested during the await is silently dropped.
@@ -210,12 +236,12 @@ final class AttachmentFileMonitor {
     /// detached utility-priority task so a stale network mount cannot
     /// freeze the main actor. `nonisolated` so it can be used as a
     /// default value for the `init` parameter.
-    nonisolated private static let defaultProbe: Probe = { added, newParents in
-        await Task.detached(priority: .utility) { [added, newParents] in
+    nonisolated private static let defaultProbe: Probe = { added, bookmarks, newParents in
+        await Task.detached(priority: .utility) { [added, bookmarks, newParents] in
             ProbeResult(
                 existence: Dictionary(
                     uniqueKeysWithValues: added.map {
-                        ($0, FileManager.default.fileExists(atPath: $0))
+                        ($0, SecurityScopedBookmark.fileExists(atPath: $0, bookmark: bookmarks[$0]))
                     }
                 ),
                 parentFDs: Dictionary(
@@ -228,12 +254,20 @@ final class AttachmentFileMonitor {
         }.value
     }
 
+    /// Bookmarks for the subset of `paths` that have one.
+    private func bookmarks(for paths: Set<String>) -> [String: Data] {
+        paths.reduce(into: [:]) { partial, path in
+            partial[path] = bookmarkByPath[path]
+        }
+    }
+
     /// Tear-down for a single path.
     ///
     /// Used by the `setPaths` removal branch (and reserved for future
     /// targeted removals).
     private func detach(path: String) {
         existsByPath.removeValue(forKey: path)
+        bookmarkByPath.removeValue(forKey: path)
         let parent = Self.parent(of: path)
         guard var siblings = pathsByParent[parent] else { return }
         siblings.remove(path)
@@ -360,11 +394,12 @@ final class AttachmentFileMonitor {
     /// `pathsByParent` to drop any path the caller un-requested mid-await.
     private func refreshPaths(in parent: String) async {
         guard let snapshot = pathsByParent[parent] else { return }
+        let bookmarkSnapshot = bookmarks(for: snapshot)
 
-        let existence = await Task.detached(priority: .utility) { [snapshot] in
+        let existence = await Task.detached(priority: .utility) { [snapshot, bookmarkSnapshot] in
             Dictionary(
                 uniqueKeysWithValues: snapshot.map {
-                    ($0, FileManager.default.fileExists(atPath: $0))
+                    ($0, SecurityScopedBookmark.fileExists(atPath: $0, bookmark: bookmarkSnapshot[$0]))
                 }
             )
         }.value

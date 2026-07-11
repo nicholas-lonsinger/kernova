@@ -351,8 +351,8 @@ final class VMSettingsViewController: NSViewController {
     /// Starts the per-instance side effects: seeding the file monitor with the
     /// current attachment paths and refreshing the main disk's usage stats.
     private func startInstanceSideEffects() {
-        let paths = externalAttachmentPaths(for: instance.configuration)
-        Task { await fileMonitor.setPaths(paths) }
+        let refs = externalAttachmentRefs(for: instance.configuration)
+        Task { await fileMonitor.setPaths(refs) }
     }
 
     /// Re-arming `withObservationTracking` on `fileMonitor.existsByPath`, so the
@@ -1079,8 +1079,8 @@ extension VMSettingsViewController {
         refreshRemovableList()
         refreshSharedList()
 
-        let paths = externalAttachmentPaths(for: instance.configuration)
-        Task { await fileMonitor.setPaths(paths) }
+        let refs = externalAttachmentRefs(for: instance.configuration)
+        Task { await fileMonitor.setPaths(refs) }
     }
 
     private func refreshGeneral() {
@@ -1611,9 +1611,9 @@ extension VMSettingsViewController {
         var current = currentStorageDisks
         let existing = Set(current.map(\.path))
         for url in urls {
-            let path = url.path(percentEncoded: false)
+            let (path, bookmark) = SecurityScopedBookmark.capture(url)
             guard !existing.contains(path) else { continue }
-            current.append(StorageDisk(path: path))
+            current.append(StorageDisk(path: path, bookmark: bookmark))
         }
         writeStorageDisks(current)
     }
@@ -1961,9 +1961,9 @@ extension VMSettingsViewController {
         var current = currentRemovableMedia
         let existing = Set(current.map(\.path))
         for url in urls {
-            let path = url.path(percentEncoded: false)
+            let (path, bookmark) = SecurityScopedBookmark.capture(url)
             guard !existing.contains(path) else { continue }
-            current.append(RemovableMediaItem(path: path, readOnly: true))
+            current.append(RemovableMediaItem(path: path, readOnly: true, bookmark: bookmark))
         }
         writeRemovableMedia(current)
     }
@@ -2040,9 +2040,9 @@ extension VMSettingsViewController {
         var current = currentSharedDirectories
         let existing = Set(current.map(\.path))
         for url in panel.urls {
-            let path = url.path(percentEncoded: false)
+            let (path, bookmark) = SecurityScopedBookmark.capture(url)
             guard !existing.contains(path) else { continue }
-            current.append(SharedDirectory(path: path))
+            current.append(SharedDirectory(path: path, bookmark: bookmark))
         }
         writeSharedDirectories(current)
     }

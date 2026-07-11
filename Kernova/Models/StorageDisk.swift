@@ -37,13 +37,25 @@ struct StorageDisk: Codable, Sendable, Equatable {
     /// guest-side device naming.
     var kind: StorageDiskKind
 
+    /// App-scoped security bookmark for `path`, minted from the user's
+    /// open-panel grant so the sandboxed app can reopen the file across
+    /// launches.
+    ///
+    /// Only meaningful for external disks; `nil` for internal
+    /// (bundle-relative) disks, for configs written before the sandbox
+    /// adoption, and when bookmark creation failed — resolution then falls
+    /// back to the raw path, surfacing the existing missing-file UX when
+    /// the sandbox denies it.
+    var bookmark: Data?
+
     init(
         id: UUID = UUID(),
         path: String,
         readOnly: Bool = false,
         label: String? = nil,
         isInternal: Bool = false,
-        kind: StorageDiskKind? = nil
+        kind: StorageDiskKind? = nil,
+        bookmark: Data? = nil
     ) {
         self.id = id
         self.path = path
@@ -51,6 +63,7 @@ struct StorageDisk: Codable, Sendable, Equatable {
         self.label = label ?? URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
         self.isInternal = isInternal
         self.kind = kind ?? Self.defaultKind(forPath: path)
+        self.bookmark = bookmark
     }
 
     /// Picks the bus class implied by the file extension.
@@ -114,16 +127,22 @@ struct RemovableMediaItem: Codable, Sendable, Equatable {
     var readOnly: Bool
     var label: String
 
+    /// App-scoped security bookmark for `path` (always an external,
+    /// user-picked file); see ``StorageDisk/bookmark`` for the nil semantics.
+    var bookmark: Data?
+
     init(
         id: UUID = UUID(),
         path: String,
         readOnly: Bool = true,
-        label: String? = nil
+        label: String? = nil,
+        bookmark: Data? = nil
     ) {
         self.id = id
         self.path = path
         self.readOnly = readOnly
         self.label = label ?? URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
+        self.bookmark = bookmark
     }
 }
 

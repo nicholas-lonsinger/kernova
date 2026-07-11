@@ -69,14 +69,11 @@ struct VMCreationViewModelTests {
         let vm = VMCreationViewModel()
         vm.currentStep = .bootConfig
 
-        // macOS with downloadLatest but no download path is invalid
+        // macOS with downloadLatest is valid (the destination is always the
+        // Downloads default; only an unresolved overwrite conflict blocks)
         vm.selectedOS = .macOS
         vm.ipswSource = .downloadLatest
-        vm.ipswDownloadPath = nil
-        #expect(vm.canAdvance == false)
-
-        // macOS with downloadLatest and download path is valid
-        vm.ipswDownloadPath = "/Users/user/Downloads/RestoreImage.ipsw"
+        vm.ipswDownloadPath = "/nonexistent/RestoreImage.ipsw"
         #expect(vm.canAdvance == true)
 
         // macOS with localFile but no path is invalid
@@ -86,22 +83,6 @@ struct VMCreationViewModelTests {
 
         // macOS with localFile and path is valid
         vm.ipswPath = "/path/to/restore.ipsw"
-        #expect(vm.canAdvance == true)
-    }
-
-    @Test("canAdvance at bootConfig for macOS downloadLatest requires ipswDownloadPath")
-    func canAdvanceBootConfigMacOSDownloadLatest() {
-        let vm = VMCreationViewModel()
-        vm.currentStep = .bootConfig
-        vm.selectedOS = .macOS
-        vm.ipswSource = .downloadLatest
-
-        // Without download path — invalid
-        vm.ipswDownloadPath = nil
-        #expect(vm.canAdvance == false)
-
-        // With download path — valid
-        vm.ipswDownloadPath = "/Users/user/Downloads/RestoreImage.ipsw"
         #expect(vm.canAdvance == true)
     }
 
@@ -504,14 +485,6 @@ struct VMCreationViewModelTests {
         #expect(vm.canAdvance == true)
     }
 
-    @Test("ipswDownloadPathFileExists is false when path is nil")
-    func fileExistsFalseWhenPathNil() {
-        let vm = VMCreationViewModel()
-        vm.ipswDownloadPath = nil
-
-        #expect(vm.ipswDownloadPathFileExists == false)
-    }
-
     // MARK: - validationMessage
 
     @Test("validationMessage is nil when canAdvance is true")
@@ -570,17 +543,6 @@ struct VMCreationViewModelTests {
         vm.ipswPath = nil
 
         #expect(vm.validationMessage == "Select a restore image file.")
-    }
-
-    @Test("validationMessage returns download location hint for macOS downloadLatest with nil path")
-    func validationMessageMacOSDownloadLatestNoPath() {
-        let vm = VMCreationViewModel()
-        vm.currentStep = .bootConfig
-        vm.selectedOS = .macOS
-        vm.ipswSource = .downloadLatest
-        vm.ipswDownloadPath = nil
-
-        #expect(vm.validationMessage == "Choose a download location.")
     }
 
     @Test("validationMessage returns conflict hint when overwrite warning is showing")

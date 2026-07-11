@@ -263,6 +263,59 @@ struct VMConfigurationTests {
         #expect(config.removableMedia == nil)
     }
 
+    @Test("Security bookmark fields round-trip through JSON")
+    func bookmarkFieldsRoundTrip() throws {
+        var original = VMConfiguration(
+            name: "Bookmarked VM",
+            guestOS: .linux,
+            bootMode: .linuxKernel,
+            kernelPath: "/boot/vmlinuz",
+            initrdPath: "/boot/initrd",
+            kernelBookmark: Data([0x0A]),
+            initrdBookmark: Data([0x0B])
+        )
+        original.storageDisks = [
+            StorageDisk(path: "/ext/data.img", isInternal: false, bookmark: Data([0x0C]))
+        ]
+        original.removableMedia = [
+            RemovableMediaItem(path: "/ext/install.iso", bookmark: Data([0x0D]))
+        ]
+        original.sharedDirectories = [
+            SharedDirectory(path: "/Users/me/Shared", bookmark: Data([0x0E]))
+        ]
+
+        let data = try VMConfiguration.makeJSONEncoder().encode(original)
+        let decoded = try VMConfiguration.makeJSONDecoder().decode(VMConfiguration.self, from: data)
+
+        #expect(decoded.kernelBookmark == Data([0x0A]))
+        #expect(decoded.initrdBookmark == Data([0x0B]))
+        #expect(decoded.storageDisks?[0].bookmark == Data([0x0C]))
+        #expect(decoded.removableMedia?[0].bookmark == Data([0x0D]))
+        #expect(decoded.sharedDirectories?[0].bookmark == Data([0x0E]))
+    }
+
+    @Test("Pre-sandbox JSON without bookmark fields decodes with nil bookmarks")
+    func missingBookmarkFieldsDecodeNil() throws {
+        // The exact shape written by pre-sandbox builds: raw paths only.
+        let json = Self.makeBaseJSON(
+            extraFields: """
+                "kernelPath": "/boot/vmlinuz",
+                "storageDisks": [{"id": "22345678-1234-1234-1234-123456789012", "path": "/ext/d.img", "readOnly": false, "label": "D", "isInternal": false, "kind": "virtio"}],
+                "removableMedia": [{"id": "32345678-1234-1234-1234-123456789012", "path": "/ext/i.iso", "readOnly": true, "label": "I"}],
+                "sharedDirectories": [{"id": "42345678-1234-1234-1234-123456789012", "path": "/Users/me/S", "readOnly": false}]
+                """
+        )
+        let decoded = try VMConfiguration.makeJSONDecoder().decode(
+            VMConfiguration.self, from: Data(json.utf8))
+
+        #expect(decoded.kernelPath == "/boot/vmlinuz")
+        #expect(decoded.kernelBookmark == nil)
+        #expect(decoded.initrdBookmark == nil)
+        #expect(decoded.storageDisks?[0].bookmark == nil)
+        #expect(decoded.removableMedia?[0].bookmark == nil)
+        #expect(decoded.sharedDirectories?[0].bookmark == nil)
+    }
+
     @Test("Missing optional sharedDirectories decodes as nil")
     func missingOptionalSharedDirectories() throws {
         let decoder = JSONDecoder()

@@ -34,7 +34,7 @@ struct AttachmentFileMonitorTests {
         let missing = path(in: tmp.url, "missing.iso")
 
         let monitor = AttachmentFileMonitor()
-        await monitor.setPaths([present, missing])
+        await monitor.setPaths([present: nil, missing: nil])
 
         #expect(monitor.exists(present) == true)
         #expect(monitor.exists(missing) == false)
@@ -50,7 +50,7 @@ struct AttachmentFileMonitorTests {
         // Read exists() before setPaths has had a chance to populate.
         #expect(monitor.exists(missing) == true)
 
-        await monitor.setPaths([missing])
+        await monitor.setPaths([missing: nil])
         // After the await, the probe has settled and the missing file
         // reads as missing.
         #expect(monitor.exists(missing) == false)
@@ -70,7 +70,7 @@ struct AttachmentFileMonitorTests {
         FileManager.default.createFile(atPath: present, contents: Data([0]))
 
         let monitor = AttachmentFileMonitor()
-        await monitor.setPaths([present, ""])
+        await monitor.setPaths([present: nil, "": nil])
 
         #expect(monitor.existsByPath.keys.contains("") == false)
         #expect(monitor.exists(present) == true)
@@ -86,10 +86,10 @@ struct AttachmentFileMonitorTests {
         FileManager.default.createFile(atPath: b, contents: Data([0]))
 
         let monitor = AttachmentFileMonitor()
-        await monitor.setPaths([a, b])
+        await monitor.setPaths([a: nil, b: nil])
         #expect(Set(monitor.existsByPath.keys) == [a, b])
 
-        await monitor.setPaths([a])
+        await monitor.setPaths([a: nil])
         #expect(Set(monitor.existsByPath.keys) == [a])
         #expect(monitor.exists(b) == true, "Dropped path falls back to the unwatched default")
     }
@@ -103,7 +103,7 @@ struct AttachmentFileMonitorTests {
         let target = path(in: tmp.url, "appears.iso")
 
         let monitor = AttachmentFileMonitor()
-        await monitor.setPaths([target])
+        await monitor.setPaths([target: nil])
         #expect(monitor.exists(target) == false)
 
         FileManager.default.createFile(atPath: target, contents: Data([0]))
@@ -121,7 +121,7 @@ struct AttachmentFileMonitorTests {
         FileManager.default.createFile(atPath: target, contents: Data([0]))
 
         let monitor = AttachmentFileMonitor()
-        await monitor.setPaths([target])
+        await monitor.setPaths([target: nil])
         #expect(monitor.exists(target) == true)
 
         try FileManager.default.removeItem(atPath: target)
@@ -156,7 +156,7 @@ struct AttachmentFileMonitorTests {
         }
 
         var probe: AttachmentFileMonitor.Probe {
-            { [self] added, _ in
+            { [self] added, _, _ in
                 let isFirst = self.isFirstCallPending.withLock { pending in
                     let wasFirst = pending
                     pending = false
@@ -193,12 +193,12 @@ struct AttachmentFileMonitorTests {
 
         // Kick off the first call in the background; it suspends inside
         // the probe waiting on `release`.
-        let firstCall = Task { await monitor.setPaths([a]) }
+        let firstCall = Task { await monitor.setPaths([a: nil]) }
         for await _ in stub.started { break }
 
         // While the first call is parked in its probe, make a superseding
         // call. The stub returns immediately for every non-first call.
-        await monitor.setPaths([b])
+        await monitor.setPaths([b: nil])
         #expect(monitor.exists(b) == true, "Superseding call applies its own probe")
 
         // Let the first probe complete. Its apply step should drop the
@@ -228,7 +228,7 @@ struct AttachmentFileMonitorTests {
         let expectedParent = (target as NSString).deletingLastPathComponent
 
         let monitor = AttachmentFileMonitor()
-        await monitor.setPaths([target])
+        await monitor.setPaths([target: nil])
         #expect(monitor.exists(target) == true)
         #expect(
             monitor.watchedParentsForTesting.contains(expectedParent),
@@ -238,7 +238,7 @@ struct AttachmentFileMonitorTests {
         // Drop the path. detach() cancels the DispatchSource (which fires
         // setCancelHandler { close(fd) }) and removes the entry from
         // parentSources.
-        await monitor.setPaths([])
+        await monitor.setPaths([:])
         #expect(monitor.existsByPath.isEmpty)
         #expect(
             monitor.watchedParentsForTesting.isEmpty,

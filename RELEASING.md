@@ -1,10 +1,12 @@
 # RELEASING.md
 
 How to cut a **notarized Developer ID release** of Kernova. This is the only
-distribution channel that exists today: TestFlight and the Mac App Store come
-later and require adopting the App Sandbox first (see the *Mac App Store
-Readiness* section of [CLAUDE.md](CLAUDE.md)). Until then, Developer ID
-("Direct Distribution" in Xcode's Organizer) is the pre-sandbox channel.
+distribution channel that exists today: the app already runs under the App
+Sandbox in every configuration (#89 — see the *Mac App Store Readiness*
+section of [CLAUDE.md](CLAUDE.md)), so TestFlight and the Mac App Store are a
+matter of App Store Connect setup rather than further code work. Developer ID
+("Direct Distribution" in Xcode's Organizer) remains the shipping channel; the
+sandbox changes nothing in the flow below.
 
 Releasing is **Nicholas-specific** and does not touch CI or the clone-and-run
 story. CI builds Debug with `CODE_SIGNING_ALLOWED=NO`, and the Debug

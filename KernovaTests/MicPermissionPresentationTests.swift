@@ -25,27 +25,45 @@ struct MicPermissionPresentationTests {
         #expect(micPermissionPresentation(.authorized, audioInputEnabled: true) == .none)
     }
 
-    // MARK: - External attachment path derivation
+    // MARK: - External attachment ref derivation
 
-    @Test("External attachment paths include external disks and removable media but exclude internal disks")
-    func externalAttachmentPathDerivation() {
+    @Test("External attachment refs include external disks and removable media but exclude internal disks")
+    func externalAttachmentRefDerivation() {
         var config = VMConfiguration(name: "Test", guestOS: .linux, bootMode: .efi)
+        let diskBookmark = Data([0xAA])
         config.storageDisks = [
             StorageDisk(path: "Disk.asif", isInternal: true),
-            StorageDisk(path: "/Volumes/External/data.img", isInternal: false),
+            StorageDisk(path: "/Volumes/External/data.img", isInternal: false, bookmark: diskBookmark),
         ]
         config.removableMedia = [
             RemovableMediaItem(path: "/Users/me/installer.iso")
         ]
 
-        let paths = externalAttachmentPaths(for: config)
-        #expect(paths == ["/Volumes/External/data.img", "/Users/me/installer.iso"])
+        let refs = externalAttachmentRefs(for: config)
+        #expect(Set(refs.keys) == ["/Volumes/External/data.img", "/Users/me/installer.iso"])
+        #expect(refs["/Volumes/External/data.img"] == diskBookmark)
+        #expect(refs["/Users/me/installer.iso"] == Data?.none)
     }
 
-    @Test("External attachment paths is empty when there are no attachments")
-    func externalAttachmentPathsEmpty() {
+    @Test("A non-nil bookmark wins when the same path appears on both lists")
+    func externalAttachmentRefsPreferNonNilBookmark() {
+        var config = VMConfiguration(name: "Test", guestOS: .linux, bootMode: .efi)
+        let bookmark = Data([0xBB])
+        config.storageDisks = [
+            StorageDisk(path: "/Users/me/shared.iso", isInternal: false)
+        ]
+        config.removableMedia = [
+            RemovableMediaItem(path: "/Users/me/shared.iso", bookmark: bookmark)
+        ]
+
+        let refs = externalAttachmentRefs(for: config)
+        #expect(refs["/Users/me/shared.iso"] == bookmark)
+    }
+
+    @Test("External attachment refs is empty when there are no attachments")
+    func externalAttachmentRefsEmpty() {
         let config = VMConfiguration(name: "Test", guestOS: .linux, bootMode: .efi)
-        #expect(externalAttachmentPaths(for: config).isEmpty)
+        #expect(externalAttachmentRefs(for: config).isEmpty)
     }
 
     // MARK: - Guest agent section visibility

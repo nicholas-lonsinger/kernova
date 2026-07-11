@@ -9,7 +9,7 @@ A macOS GUI application for creating and managing virtual machines using Apple's
 - **macOS & Linux guests** — Run macOS virtual machines and Linux VMs with EFI or direct kernel boot
 - **Full VM lifecycle** — Start, stop, pause, resume, suspend, and restore
 - **VM cloning** — Clone existing VMs with automatic naming
-- **Bundle import** — Import VM bundles (`.kernova`) via double-click or drag-and-drop
+- **Bundle import** — Import VM bundles (`.kernova`) via double-click or drag-and-drop (also how you bring existing VMs into the sandboxed app's library — on the same volume the copy is an APFS clone, near-instant with no double disk usage)
 - **Recovery mode** — Boot macOS guests into Recovery
 - **Headless operation** — The app runs as a launch-at-login background agent, so quitting the window keeps VMs running headless
 - **Graceful shutdown** — Save-suspends running VMs automatically when the background agent itself terminates (status-item Quit, logout, or shutdown)

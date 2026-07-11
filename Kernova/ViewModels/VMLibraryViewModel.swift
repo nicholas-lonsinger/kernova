@@ -576,6 +576,7 @@ final class VMLibraryViewModel {
                 tasks.append(
                     deleteExternalAttachment(
                         at: URL(fileURLWithPath: attachment.path),
+                        bookmark: bookmark(for: attachment, in: instance.configuration),
                         label: attachment.label,
                         vmName: vmName,
                         permanently: permanently
@@ -668,18 +669,24 @@ final class VMLibraryViewModel {
     /// ``externalAttachments(for:)`` with each attachment's
     /// ``ExternalAttachment/isMissing`` resolved against the filesystem.
     ///
-    /// The `FileManager.fileExists` syscalls run on a detached task so a stale
-    /// or unreachable mount can't freeze the main actor while the delete sheet
-    /// is assembled — the same reason ``AttachmentFileMonitor`` probes off-main.
-    /// Used by `DetailAlertsPresenter` before presenting the sheet.
+    /// The existence syscalls run on a detached task so a stale or
+    /// unreachable mount can't freeze the main actor while the delete sheet
+    /// is assembled — the same reason ``AttachmentFileMonitor`` probes
+    /// off-main. Probes go through each attachment's security bookmark
+    /// (``SecurityScopedBookmark/fileExists(atPath:bookmark:)``) — a raw
+    /// check on an out-of-container path is sandbox-denied and would render
+    /// every row as missing. Used by `DetailAlertsPresenter` before
+    /// presenting the sheet.
     func externalAttachmentsResolvingExistence(for instance: VMInstance) async -> [ExternalAttachment] {
         let attachments = externalAttachments(for: instance)
         guard !attachments.isEmpty else { return attachments }
         let paths = attachments.map(\.path)
+        let bookmarks = externalAttachmentRefs(for: instance.configuration)
         let missingByPath = await Task.detached(priority: .userInitiated) {
             var result: [String: Bool] = [:]
             for path in paths where result[path] == nil {
-                result[path] = !FileManager.default.fileExists(atPath: path)
+                result[path] = !SecurityScopedBookmark.fileExists(
+                    atPath: path, bookmark: bookmarks[path] ?? nil)
             }
             return result
         }.value
@@ -692,6 +699,20 @@ final class VMLibraryViewModel {
                 sharedWithVMNames: attachment.sharedWithVMNames,
                 isMissing: missingByPath[attachment.path] ?? false
             )
+        }
+    }
+
+    /// The persisted security bookmark backing an external attachment,
+    /// looked up by id in the configuration the attachment was projected
+    /// from (``ExternalAttachment`` itself is a bookmark-free UI projection).
+    private func bookmark(
+        for attachment: ExternalAttachment, in config: VMConfiguration
+    ) -> Data? {
+        switch attachment.kind {
+        case .storageDisk:
+            (config.storageDisks ?? []).first { $0.id == attachment.id }?.bookmark
+        case .removableMedia:
+            (config.removableMedia ?? []).first { $0.id == attachment.id }?.bookmark
         }
     }
 
@@ -780,17 +801,20 @@ final class VMLibraryViewModel {
     /// moved or deleted out-of-band), other failures log `.warning` and
     /// surface a single error alert on the MainActor.
     private func deleteExternalAttachment(
-        at url: URL, label: String, vmName: String, permanently: Bool
+        at url: URL, bookmark: Data?, label: String, vmName: String, permanently: Bool
     ) -> Task<Void, Never> {
         Task.detached(priority: .userInitiated) { [weak self] in
             do {
-                if permanently {
-                    // RATIONALE: the user-confirmed "Delete Immediately" path; the deliberate
-                    // exception to CLAUDE.md's "prefer trash over rm" guideline (see also
-                    // `VMStorageService.permanentlyDeleteVMBundle`).
-                    try FileManager.default.removeItem(at: url)
-                } else {
-                    try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+                try SecurityScopedBookmark.withResolvedURL(bookmark: bookmark, fallback: url) {
+                    target in
+                    if permanently {
+                        // RATIONALE: the user-confirmed "Delete Immediately" path; the deliberate
+                        // exception to CLAUDE.md's "prefer trash over rm" guideline (see also
+                        // `VMStorageService.permanentlyDeleteVMBundle`).
+                        try FileManager.default.removeItem(at: target)
+                    } else {
+                        try FileManager.default.trashItem(at: target, resultingItemURL: nil)
+                    }
                 }
                 Self.logger.notice(
                     "Deleted external attachment '\(label, privacy: .public)' for deleted VM '\(vmName, privacy: .public)'"
@@ -1273,11 +1297,20 @@ final class VMLibraryViewModel {
         // tracking. Tracked entries win over target entries on id collisions
         // so a mutated row that failed mid-swap restores its original
         // path/readOnly; new ids only present in target supply metadata
-        // for successful attaches.
+        // for successful attaches. A rebuilt entry keeps its persisted
+        // security bookmark only when the config row still matches the live
+        // path — a mid-swap rollback can't recover the old path's bookmark
+        // (the config already carries the new one), so it rolls back
+        // bookmark-less and the missing-file UX handles it on next boot.
+        let configuredByID = Dictionary(
+            (instance.configuration.removableMedia ?? []).map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first })
         var rollbackLookup: [UUID: RemovableMediaItem] = [:]
         for info in tracked {
+            let configured = configuredByID[info.id]
             rollbackLookup[info.id] = RemovableMediaItem(
-                id: info.id, path: info.path, readOnly: info.readOnly)
+                id: info.id, path: info.path, readOnly: info.readOnly,
+                bookmark: configured?.path == info.path ? configured?.bookmark : nil)
         }
         for item in target where rollbackLookup[item.id] == nil {
             rollbackLookup[item.id] = item
@@ -1307,6 +1340,7 @@ final class VMLibraryViewModel {
         for device in toDetach {
             do {
                 try await lifecycle.detachUSBDevice(device, from: instance)
+                instance.runtimeFileAccess.releaseHotAttach(id: device.id)
             } catch USBDeviceError.noVirtualMachine {
                 Self.logger.notice(
                     "VM '\(instance.name, privacy: .public)' torn down during media detach; abandoning reconcile"
@@ -1321,6 +1355,7 @@ final class VMLibraryViewModel {
                     "Removable media '\(device.displayName, privacy: .public)' was already gone on '\(instance.name, privacy: .public)' (deviceNotFound); clearing tracking"
                 )
                 instance.liveRemovableMedia.removeAll { $0.id == device.id }
+                instance.runtimeFileAccess.releaseHotAttach(id: device.id)
             } catch {
                 Self.logger.error(
                     "Removable media detach failed for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
@@ -1333,12 +1368,23 @@ final class VMLibraryViewModel {
 
         for item in toAttach {
             do {
+                // Scoped access must be live while the service resolves the
+                // path and opens the disk attachment; registered with the
+                // instance on success (released at detach or teardown), and
+                // released by deinit if the attach throws. The scope's
+                // resolved URL is what gets attached, so a file the bookmark
+                // tracked through a move still hot-attaches.
+                let scope = item.bookmark.flatMap { ScopedAccess(bookmark: $0) }
                 _ = try await lifecycle.attachUSBDevice(
                     diskImagePath: item.path,
                     readOnly: item.readOnly,
                     desiredUUID: item.id,
+                    resolvedURL: scope?.url,
                     to: instance
                 )
+                if let scope {
+                    instance.runtimeFileAccess.addHotAttach(id: item.id, scope)
+                }
                 Self.logger.notice(
                     "Attached removable media '\(item.label, privacy: .public)' on '\(instance.name, privacy: .public)' (readOnly: \(item.readOnly, privacy: .public))"
                 )
@@ -1501,9 +1547,12 @@ final class VMLibraryViewModel {
             : URL(fileURLWithPath: disk.path)
         let label = disk.label
         let vmName = instance.name
+        let bookmark = disk.isInternal ? nil : disk.bookmark
         return Task.detached(priority: .userInitiated) { [weak self] in
             do {
-                try FileManager.default.trashItem(at: diskURL, resultingItemURL: nil)
+                try SecurityScopedBookmark.withResolvedURL(bookmark: bookmark, fallback: diskURL) {
+                    try FileManager.default.trashItem(at: $0, resultingItemURL: nil)
+                }
                 Self.logger.notice(
                     "Trashed disk '\(label, privacy: .public)' for VM '\(vmName, privacy: .public)'"
                 )
@@ -1616,9 +1665,12 @@ final class VMLibraryViewModel {
         let url = URL(fileURLWithPath: item.path)
         let label = item.label
         let vmName = instance.name
+        let bookmark = item.bookmark
         return Task.detached(priority: .userInitiated) { [weak self] in
             do {
-                try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+                try SecurityScopedBookmark.withResolvedURL(bookmark: bookmark, fallback: url) {
+                    try FileManager.default.trashItem(at: $0, resultingItemURL: nil)
+                }
                 Self.logger.notice(
                     "Trashed removable media '\(label, privacy: .public)' for VM '\(vmName, privacy: .public)'"
                 )
@@ -1728,10 +1780,14 @@ final class VMLibraryViewModel {
             do {
                 try await diskImageService.createDiskImage(at: destinationURL, sizeInGB: sizeInGB)
 
+                // Bookmark after the write succeeds: the file must exist to
+                // be bookmarked, and the write itself rides the still-live
+                // save-panel grant.
                 let item = RemovableMediaItem(
                     path: destinationURL.path(percentEncoded: false),
                     readOnly: false,
-                    label: destinationURL.deletingPathExtension().lastPathComponent
+                    label: destinationURL.deletingPathExtension().lastPathComponent,
+                    bookmark: SecurityScopedBookmark.make(for: destinationURL)
                 )
                 updateConfiguration(of: instance) { config in
                     config.removableMedia = (config.removableMedia ?? []) + [item]

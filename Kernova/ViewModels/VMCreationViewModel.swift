@@ -1,5 +1,6 @@
 import Foundation
 import Virtualization
+import os
 
 /// Wizard steps for creating a new VM.
 enum VMCreationStep: String, CaseIterable, Sendable {
@@ -28,6 +29,8 @@ enum IPSWSource: Sendable {
 @MainActor
 @Observable
 final class VMCreationViewModel {
+    private static let logger = Logger(subsystem: "app.kernova", category: "VMCreationViewModel")
+
     // MARK: - Wizard State
 
     var currentStep: VMCreationStep = .osSelection
@@ -41,7 +44,10 @@ final class VMCreationViewModel {
     var selectedBootMode: VMBootMode = .efi
     var ipswSource: IPSWSource = .downloadLatest
     var ipswPath: String?
-    var ipswDownloadPath: String? = VMCreationViewModel.defaultIPSWDownloadPath {
+    /// Non-optional since the custom-destination picker was removed with
+    /// the sandbox adoption: the destination is always the Downloads
+    /// default, set once here.
+    var ipswDownloadPath: String = VMCreationViewModel.defaultIPSWDownloadPath {
         didSet {
             // Reset overwrite confirmation when the download destination changes
             if ipswDownloadPath != confirmedOverwritePath {
@@ -54,6 +60,16 @@ final class VMCreationViewModel {
     var kernelPath: String?
     var initrdPath: String?
     var kernelCommandLine: String?
+
+    /// Security bookmarks paired with the panel-picked paths above; each is
+    /// set alongside its path at pick time and flows into the built
+    /// configuration / install context. `nil` for paths adopted without a
+    /// panel (e.g. "Use Existing File", whose Downloads location the
+    /// entitlement already covers).
+    var ipswBookmark: Data?
+    var isoBookmark: Data?
+    var kernelBookmark: Data?
+    var initrdBookmark: Data?
 
     // MARK: - Step 3: Resources
 
@@ -85,7 +101,6 @@ final class VMCreationViewModel {
             case .macOS:
                 switch ipswSource {
                 case .downloadLatest:
-                    if ipswDownloadPath == nil { return "Choose a download location." }
                     if shouldShowOverwriteWarning { return "Resolve the file conflict above to continue." }
                 case .localFile:
                     if ipswPath == nil { return "Select a restore image file." }
@@ -131,7 +146,7 @@ final class VMCreationViewModel {
         switch selectedOS {
         case .macOS:
             switch ipswSource {
-            case .downloadLatest: ipswDownloadPath != nil && !shouldShowOverwriteWarning
+            case .downloadLatest: !shouldShowOverwriteWarning
             case .localFile: ipswPath != nil
             }
         case .linux:
@@ -172,9 +187,23 @@ final class VMCreationViewModel {
     // MARK: - Defaults
 
     static var defaultIPSWDownloadPath: String {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Downloads/RestoreImage.ipsw")
-            .path(percentEncoded: false)
+        // Ask the system for the Downloads location rather than assuming a
+        // home-relative layout: under the sandbox this resolves through the
+        // container's `Downloads` symlink, which the downloads.read-write
+        // entitlement covers — no save panel or bookmark needed for the
+        // default destination. Same API the save panel's directoryURL uses.
+        guard
+            let downloads = FileManager.default.urls(
+                for: .downloadsDirectory, in: .userDomainMask
+            ).first
+        else {
+            logger.fault("No Downloads directory in userDomainMask")
+            assertionFailure("FileManager returned no Downloads directory")
+            return FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Downloads/RestoreImage.ipsw")
+                .path(percentEncoded: false)
+        }
+        return downloads.appendingPathComponent("RestoreImage.ipsw").path(percentEncoded: false)
     }
 
     // MARK: - Apply Defaults
@@ -188,8 +217,7 @@ final class VMCreationViewModel {
     // MARK: - Overwrite Warning
 
     var ipswDownloadPathFileExists: Bool {
-        guard let path = ipswDownloadPath else { return false }
-        return FileManager.default.fileExists(atPath: path)
+        FileManager.default.fileExists(atPath: ipswDownloadPath)
     }
 
     var shouldShowOverwriteWarning: Bool {
@@ -223,7 +251,8 @@ final class VMCreationViewModel {
         case .localFile:
             return MacOSInstallContext(
                 source: .localFile,
-                localIPSWPath: ipswPath
+                localIPSWPath: ipswPath,
+                localIPSWBookmark: ipswBookmark
             )
         }
     }
@@ -238,10 +267,9 @@ final class VMCreationViewModel {
     /// case instead.
     var hasResumableDownload: Bool {
         guard ipswSource == .downloadLatest,
-            let path = ipswDownloadPath,
             !ipswDownloadPathFileExists
         else { return false }
-        let bundleURL = IPSWService.resumeBundleURL(for: URL(fileURLWithPath: path))
+        let bundleURL = IPSWService.resumeBundleURL(for: URL(fileURLWithPath: ipswDownloadPath))
         return IPSWBundle(url: bundleURL).exists
     }
 
@@ -252,6 +280,10 @@ final class VMCreationViewModel {
     func useExistingDownloadFile() {
         ipswSource = .localFile
         ipswPath = ipswDownloadPath
+        // Adopted without a panel: no grant to bookmark, and none needed —
+        // the Downloads location is entitlement-covered. Clearing also drops
+        // any bookmark left over from an earlier local-file pick.
+        ipswBookmark = nil
     }
 
     // MARK: - Build Configuration
@@ -281,7 +313,8 @@ final class VMCreationViewModel {
             let installerDisk = StorageDisk(
                 path: isoPath,
                 readOnly: true,
-                label: URL(fileURLWithPath: isoPath).deletingPathExtension().lastPathComponent
+                label: URL(fileURLWithPath: isoPath).deletingPathExtension().lastPathComponent,
+                bookmark: isoBookmark
             )
             let mainDisk = StorageDisk(
                 path: "Disk.asif",
@@ -306,6 +339,8 @@ final class VMCreationViewModel {
             kernelPath: selectedBootMode == .linuxKernel ? kernelPath : nil,
             initrdPath: selectedBootMode == .linuxKernel ? initrdPath : nil,
             kernelCommandLine: selectedBootMode == .linuxKernel ? kernelCommandLine : nil,
+            kernelBookmark: selectedBootMode == .linuxKernel ? kernelBookmark : nil,
+            initrdBookmark: selectedBootMode == .linuxKernel ? initrdBookmark : nil,
             storageDisks: storageDisks
         )
     }

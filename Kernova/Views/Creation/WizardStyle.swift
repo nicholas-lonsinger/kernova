@@ -126,10 +126,10 @@ func makeWizardRadioOption(radio: NSButton, iconSymbol: String, description desc
 // The borderless link-styled button used here lives in `GroupedFormStyle` as
 // `makeLinkButton(_:target:action:)`, shared with the Detail layer.
 
-/// Builds the IPSW path badge: a doc icon, a middle-truncating path, and a
-/// trailing "Change…" button, in a subtle rounded container.
+/// Builds the IPSW path badge: a doc icon, a middle-truncating path, and an
+/// optional trailing "Change…" button, in a subtle rounded container.
 @MainActor
-func makeWizardPathBadge(path: String, changeButton: NSButton) -> NSView {
+func makeWizardPathBadge(path: String, changeButton: NSButton? = nil) -> NSView {
     let icon = NSImageView(image: .systemSymbol("doc.fill", accessibilityDescription: ""))
     icon.contentTintColor = .secondaryLabelColor
     icon.setContentHuggingPriority(.required, for: .horizontal)
@@ -141,7 +141,7 @@ func makeWizardPathBadge(path: String, changeButton: NSButton) -> NSView {
     pathLabel.isSelectable = false
     pathLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-    let row = NSStackView(views: [icon, pathLabel, changeButton])
+    let row = NSStackView(views: [icon, pathLabel] + (changeButton.map { [$0] } ?? []))
     row.orientation = .horizontal
     row.alignment = .firstBaseline
     row.spacing = Spacing.small
@@ -156,16 +156,32 @@ func makeWizardPathBadge(path: String, changeButton: NSButton) -> NSView {
     )
 }
 
-/// Abbreviates a path with a leading `~` when it lives under the user's home
-/// directory.
+/// Abbreviates a path with a leading `~` when it lives under a home
+/// directory the user would read as "mine".
 ///
-/// Matches the SwiftUI predecessor's manual logic (keyed on
-/// `homeDirectoryForCurrentUser`) rather than `NSString.abbreviatingWithTildeInPath`,
-/// which keys on `NSHomeDirectory()` and can differ for a sandboxed app.
+/// Tries the process home first — under the App Sandbox that is the
+/// container, so container-internal paths like the default IPSW destination
+/// (whose `Downloads` component is the container's symlink to the real
+/// folder) read as `~/Downloads/…` — then the real user home (`getpwuid`),
+/// so panel-picked files outside the container abbreviate too. The process
+/// home is checked first because it is the longer, more specific prefix
+/// (the container lives inside the real home). Unsandboxed, the two are
+/// identical. Manual logic rather than
+/// `NSString.abbreviatingWithTildeInPath`, which keys only on
+/// `NSHomeDirectory()`.
 func wizardAbbreviateWithTilde(_ path: String) -> String {
-    let home = FileManager.default.homeDirectoryForCurrentUser.path(percentEncoded: false)
-    if path.hasPrefix(home) {
+    let processHome = FileManager.default.homeDirectoryForCurrentUser.path(percentEncoded: false)
+    for home in [processHome, realUserHomePath] where path.hasPrefix(home) {
         return "~" + path.dropFirst(home.count)
     }
     return path
+}
+
+/// The user's real home directory, which differs from the process home (the
+/// sandbox container) in a sandboxed app.
+private var realUserHomePath: String {
+    guard let dir = getpwuid(getuid())?.pointee.pw_dir else {
+        return FileManager.default.homeDirectoryForCurrentUser.path(percentEncoded: false)
+    }
+    return String(cString: dir)
 }

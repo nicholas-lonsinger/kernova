@@ -32,6 +32,10 @@ final class VMInstance {
     var virtualMachine: VZVirtualMachine?
     let bundleURL: URL
 
+    /// Security-scoped access grants held for the live session; populated by
+    /// `openRuntimeFileAccess()` at boot, drained in `tearDownSession()`.
+    let runtimeFileAccess = RuntimeFileAccess()
+
     /// Structured installation state tracking download and install phases.
     var installState: MacOSInstallState?
 
@@ -370,8 +374,8 @@ final class VMInstance {
     // MARK: - State Helpers
 
     /// Tears down the live VM session: stops clipboard and serial I/O, releases
-    /// pipes, clears attached USB devices, and nils the delegate adapter and
-    /// `VZVirtualMachine` reference.
+    /// pipes, clears attached USB devices, releases security-scoped file
+    /// access, and nils the delegate adapter and `VZVirtualMachine` reference.
     ///
     /// Does **not** change `status` — callers set the appropriate status after calling this.
     func tearDownSession() {
@@ -385,6 +389,7 @@ final class VMInstance {
         liveRemovableMedia = []
         virtualMachine = nil
         delegateAdapter = nil
+        runtimeFileAccess.releaseAll()
     }
 
     /// Releases the VZVirtualMachine reference and marks the VM as stopped.
