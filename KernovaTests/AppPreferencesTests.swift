@@ -50,4 +50,45 @@ struct AppPreferencesTests {
             #expect(prefs.alwaysShowAdvancedOptions == false)
         }
     }
+
+    @Test("lastSelectedVMID defaults to nil")
+    func lastSelectedVMIDDefaultsToNil() throws {
+        try withEphemeralPreferences { prefs, _ in
+            #expect(prefs.lastSelectedVMID == nil)
+        }
+    }
+
+    @Test("lastSelectedVMID round-trips through UserDefaults and clears on nil")
+    func lastSelectedVMIDRoundTrips() throws {
+        try withEphemeralPreferences { prefs, defaults in
+            let id = UUID()
+            prefs.lastSelectedVMID = id
+            #expect(prefs.lastSelectedVMID == id)
+            #expect(defaults.string(forKey: "lastSelectedVMID") == id.uuidString)
+
+            prefs.lastSelectedVMID = nil
+            #expect(prefs.lastSelectedVMID == nil)
+            #expect(defaults.string(forKey: "lastSelectedVMID") == nil)
+        }
+    }
+
+    @Test("vmOrder defaults to nil")
+    func vmOrderDefaultsToNil() throws {
+        try withEphemeralPreferences { prefs, _ in
+            #expect(prefs.vmOrder == nil)
+        }
+    }
+
+    @Test("vmOrder round-trips through UserDefaults")
+    func vmOrderRoundTrips() throws {
+        try withEphemeralPreferences { prefs, defaults in
+            let order = [UUID(), UUID(), UUID()]
+            prefs.vmOrder = order
+            #expect(prefs.vmOrder == order)
+            #expect(defaults.stringArray(forKey: "vmOrder") == order.map(\.uuidString))
+
+            prefs.vmOrder = nil
+            #expect(prefs.vmOrder == nil)
+        }
+    }
 }

@@ -19,10 +19,10 @@ import KernovaTestSupport
 @Suite("ClipboardContentViewController Copy-to-Mac retention")
 @MainActor
 struct ClipboardContentViewControllerRetentionTests {
-    /// Isolated, pre-cleaned defaults for this suite's `VMLibraryViewModel`.
+    /// Isolated, pre-cleaned preferences for this suite's `VMLibraryViewModel`.
     ///
     /// Selection/order persistence never touches the real `.standard` domain.
-    private let defaults = makeEphemeralDefaults(suiteName: "test.kernova.clipboard-retention")
+    private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.clipboard-retention")
 
     private func makeViewModel() -> VMLibraryViewModel {
         VMLibraryViewModel(
@@ -32,7 +32,7 @@ struct ClipboardContentViewControllerRetentionTests {
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
             usbDeviceService: MockUSBDeviceService(),
-            defaults: defaults
+            preferences: preferences
         )
     }
 
@@ -171,10 +171,10 @@ struct ClipboardContentViewControllerRetentionTests {
 @Suite("ClipboardContentViewController editor commit")
 @MainActor
 struct ClipboardContentViewControllerEditTests {
-    /// Isolated, pre-cleaned defaults for this suite's `VMLibraryViewModel`.
+    /// Isolated, pre-cleaned preferences for this suite's `VMLibraryViewModel`.
     ///
     /// Selection/order persistence never touches the real `.standard` domain.
-    private let defaults = makeEphemeralDefaults(suiteName: "test.kernova.clipboard-edit")
+    private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.clipboard-edit")
 
     private func makeViewModel() -> VMLibraryViewModel {
         VMLibraryViewModel(
@@ -184,7 +184,7 @@ struct ClipboardContentViewControllerEditTests {
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
             usbDeviceService: MockUSBDeviceService(),
-            defaults: defaults
+            preferences: preferences
         )
     }
 

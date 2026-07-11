@@ -8,10 +8,10 @@ import Testing
 struct VMSettingsViewControllerTests {
     // MARK: - Fixtures
 
-    /// Isolated, pre-cleaned defaults for this suite's `VMLibraryViewModel`.
+    /// Isolated, pre-cleaned preferences for this suite's `VMLibraryViewModel`.
     ///
     /// Selection/order persistence never touches the real `.standard` domain.
-    private let defaults = makeEphemeralDefaults(suiteName: "test.kernova.vmsettings")
+    private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.vmsettings")
 
     private func makeViewModel() -> VMLibraryViewModel {
         VMLibraryViewModel(
@@ -21,7 +21,7 @@ struct VMSettingsViewControllerTests {
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
             usbDeviceService: MockUSBDeviceService(),
-            defaults: defaults
+            preferences: preferences
         )
     }
 

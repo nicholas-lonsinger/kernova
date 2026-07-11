@@ -7,8 +7,6 @@ import os
 @Observable
 final class VMLibraryViewModel {
     nonisolated private static let logger = Logger(subsystem: "app.kernova", category: "VMLibraryViewModel")
-    static let lastSelectedVMIDKey = "lastSelectedVMID"
-    static let vmOrderKey = "vmOrder"
 
     // MARK: - Services
 
@@ -20,7 +18,7 @@ final class VMLibraryViewModel {
     ///
     /// Injectable so tests use an ephemeral suite instead of the real `.standard`
     /// domain; production passes the default.
-    private let defaults: UserDefaults
+    private let preferences: AppPreferences
 
     // MARK: - State
 
@@ -28,11 +26,7 @@ final class VMLibraryViewModel {
     var selectedID: UUID? {
         didSet {
             guard selectedID != oldValue else { return }
-            if let selectedID {
-                defaults.set(selectedID.uuidString, forKey: Self.lastSelectedVMIDKey)
-            } else {
-                defaults.removeObject(forKey: Self.lastSelectedVMIDKey)
-            }
+            preferences.lastSelectedVMID = selectedID
         }
     }
 
@@ -81,7 +75,7 @@ final class VMLibraryViewModel {
     // to prevent (#496).
     var hasPreparing: Bool { instances.contains(where: \.isPreparing) }
 
-    /// Current VM ordering used by sortInstances(); synchronized with UserDefaults via persistOrder().
+    /// Current VM ordering used by sortInstances(); synchronized with `AppPreferences.vmOrder` via persistOrder().
     private var customOrder: [UUID] = []
 
     /// Bundle names whose load failures have already been reported to the user.
@@ -118,11 +112,11 @@ final class VMLibraryViewModel {
         installService: any MacOSInstallProviding = MacOSInstallService(),
         ipswService: any IPSWProviding = IPSWService(),
         usbDeviceService: any USBDeviceProviding = USBDeviceService(),
-        defaults: UserDefaults = .standard
+        preferences: AppPreferences = .shared
     ) {
         self.storageService = storageService
         self.diskImageService = diskImageService
-        self.defaults = defaults
+        self.preferences = preferences
         self.lifecycle = VMLifecycleCoordinator(
             virtualizationService: virtualizationService,
             installService: installService,
@@ -178,8 +172,8 @@ final class VMLibraryViewModel {
 
             // Load persisted order, sort by it, then normalize customOrder to match
             // the actual instance list (prunes stale UUIDs, incorporates new VMs).
-            if let savedStrings = defaults.stringArray(forKey: Self.vmOrderKey) {
-                customOrder = savedStrings.compactMap { UUID(uuidString: $0) }
+            if let savedOrder = preferences.vmOrder {
+                customOrder = savedOrder
                 Self.logger.debug("Loaded custom VM order: \(self.customOrder.count, privacy: .public) UUID(s)")
             } else {
                 Self.logger.debug("No custom VM order found — using default createdAt sort")
@@ -188,8 +182,7 @@ final class VMLibraryViewModel {
             customOrder = instances.map(\.id)
 
             if selectedID == nil || !instances.contains(where: { $0.id == selectedID }) {
-                if let savedString = defaults.string(forKey: Self.lastSelectedVMIDKey),
-                    let savedID = UUID(uuidString: savedString),
+                if let savedID = preferences.lastSelectedVMID,
                     instances.contains(where: { $0.id == savedID })
                 {
                     selectedID = savedID
@@ -2174,10 +2167,10 @@ final class VMLibraryViewModel {
         }
     }
 
-    /// Snapshots the current instance order into customOrder and persists it to UserDefaults.
+    /// Snapshots the current instance order into customOrder and persists it via `AppPreferences.vmOrder`.
     private func persistOrder() {
         customOrder = instances.map(\.id)
-        defaults.set(customOrder.map(\.uuidString), forKey: Self.vmOrderKey)
+        preferences.vmOrder = customOrder
     }
 
     // MARK: - Error Handling
