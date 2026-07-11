@@ -29,9 +29,22 @@ jobs:
       - name: Cache SwiftPM checkouts
         uses: actions/cache@v5
         with:
-          path: DerivedData/SourcePackages
-          key: ${{ runner.os }}-spm-${{ env.XCODE_BUILD }}-${{ hashFiles('Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          # Nested under DerivedData/Kernova to match the Makefile's canonical
+          # layout (see below). The key's `spm2` segment marks that move: a
+          # same-key cache saved at the old flat path would restore uselessly
+          # and, existing, block a save at the new path.
+          path: DerivedData/Kernova/SourcePackages
+          key: ${{ runner.os }}-spm2-${{ env.XCODE_BUILD }}-${{ hashFiles('Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
 
+      # The two invocations below mirror the Makefile's canonical XCODEBUILD_FLAGS
+      # (same project/scheme/destination/configuration and the nested
+      # DerivedData/Kernova layout) — CI can't run `make test` itself because the
+      # bootstrap prerequisite needs a signing identity the runner doesn't have,
+      # so keep changes to the shared flags in sync with the Makefile by hand.
+      # CI-only additions on top: the build-for-testing/test-without-building
+      # split, CODE_SIGNING_ALLOWED=NO, COMPILER_INDEX_STORE_ENABLE=NO,
+      # -skipPackagePluginValidation, and -resultBundlePath.
+      #
       # CODE_SIGNING_ALLOWED=NO (not ad-hoc `CODE_SIGN_IDENTITY=-`): CI has no signing
       # identity and the unit tests never touch the app-group container, so signing buys
       # nothing here. The Debug config uses the team-prefixed
@@ -51,7 +64,8 @@ jobs:
             -project Kernova.xcodeproj \
             -scheme Kernova \
             -destination 'platform=macOS' \
-            -derivedDataPath DerivedData \
+            -derivedDataPath DerivedData/Kernova \
+            -configuration Debug \
             -skipPackagePluginValidation \
             CODE_SIGNING_ALLOWED=NO \
             COMPILER_INDEX_STORE_ENABLE=NO \
@@ -64,7 +78,8 @@ jobs:
             -project Kernova.xcodeproj \
             -scheme Kernova \
             -destination 'platform=macOS' \
-            -derivedDataPath DerivedData \
+            -derivedDataPath DerivedData/Kernova \
+            -configuration Debug \
             -resultBundlePath artifacts/TestResults.xcresult \
             -skipPackagePluginValidation \
             CODE_SIGNING_ALLOWED=NO \

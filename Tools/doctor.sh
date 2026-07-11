@@ -130,12 +130,41 @@ section 'Repository'
 
 # core.hooksPath is shared across worktrees, so this is accurate from anywhere
 # in the checkout. Missing hooks don't block a build, so warn rather than fail
-# (same stance as the Makefile's check-hooks nudge).
-hooks_path=$(git config --get core.hooksPath 2>/dev/null || echo '')
-if [ "$hooks_path" = ".githooks" ]; then
-    pass "git hooks installed (core.hooksPath = .githooks): pre-push lint, post-checkout worktree setup"
+# (same stance as the Makefile's check-hooks nudge). Detection is shared with
+# `make check-hooks` via Tools/hooks-installed.sh, which verifies the
+# configured path actually contains the hooks instead of string-comparing
+# against ".githooks".
+if hooks_dir=$(Tools/hooks-installed.sh); then
+    pass "git hooks installed ($hooks_dir): pre-push lint, post-checkout worktree setup"
 else
     warn "git hooks not installed — run 'make install-hooks' (one-time per clone)"
+fi
+
+# .worktreeinclude entries must be gitignored (Claude Code, other worktree
+# tools, and .githooks/post-checkout all refuse non-ignored entries) and
+# literal paths (the hook doesn't implement the glob matching the native
+# consumers support). A bad entry fails silently at worktree-creation time —
+# the file just never arrives — so validate it loudly here instead.
+if [ -f .worktreeinclude ]; then
+    wti_problems=0
+    while IFS= read -r entry || [ -n "$entry" ]; do
+        case "$entry" in '' | '#'*) continue ;; esac
+        case "$entry" in
+            *'*'* | *'?'* | *'['* | '!'*)
+                [ "$wti_problems" -eq 0 ] && warn ".worktreeinclude has entries that won't reach new worktrees:"
+                wti_problems=$((wti_problems + 1))
+                detail "$entry — glob syntax; the post-checkout hook only copies literal paths"
+                ;;
+            *)
+                if ! git check-ignore -q -- "$entry"; then
+                    [ "$wti_problems" -eq 0 ] && warn ".worktreeinclude has entries that won't reach new worktrees:"
+                    wti_problems=$((wti_problems + 1))
+                    detail "$entry — not gitignored; every consumer skips it (safety rule)"
+                fi
+                ;;
+        esac
+    done <.worktreeinclude
+    [ "$wti_problems" -eq 0 ] && pass ".worktreeinclude entries are gitignored literal paths"
 fi
 
 # ---- signing ------------------------------------------------------------
@@ -196,6 +225,16 @@ if command -v protoc >/dev/null 2>&1 && command -v protoc-gen-swift >/dev/null 2
 else
     warn "proto toolchain absent — only needed to regenerate .pb.swift from kernova.proto"
     detail "Install with: brew install protobuf swift-protobuf"
+fi
+
+# Shell static analysis for Tools/ and .githooks/ — `make lint-shell` (part of
+# `make lint`) uses it when present and CI requires it; locally it's optional,
+# with `bash -n` still catching syntax errors without it.
+if command -v shellcheck >/dev/null 2>&1; then
+    pass "shellcheck $(shellcheck --version 2>/dev/null | sed -n 's/^version: //p') — make lint-shell runs full static analysis"
+else
+    warn "shellcheck absent — make lint-shell falls back to bash -n only (CI still enforces shellcheck)"
+    detail "Install with: brew install shellcheck"
 fi
 
 # ---- summary ----------------------------------------------------------------

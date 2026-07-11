@@ -11,6 +11,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The job name "swift-format" is a required check in the repo ruleset — keep
+  # it stable. Its `make lint` step now covers shell scripts too (bash -n +
+  # shellcheck via the lint-shell target, which treats shellcheck as REQUIRED
+  # when $CI is set), so shell findings gate merges through this same check.
   swift-format:
     runs-on: macos-26
     timeout-minutes: 5
@@ -25,5 +29,11 @@ jobs:
           sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
           xcrun swift-format --version
 
-      - name: swift-format lint --strict
+      # The macOS runner images ship shellcheck; install it only if a future
+      # image drops it, so `make lint` never silently skips static analysis
+      # here (lint-shell hard-fails on CI without it).
+      - name: Ensure shellcheck
+        run: command -v shellcheck >/dev/null || brew install shellcheck
+
+      - name: make lint (swift-format --strict + shell lint)
         run: make lint
