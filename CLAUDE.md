@@ -344,34 +344,20 @@ push.)
 
 ### Worktree LaunchServices cleanup
 
-Every worktree build registers its app bundles with LaunchServices; when the
-worktree is removed those registrations become ghosts — stale entries that
-accumulate and have previously hijacked UTI and name resolution. A
-`PreToolUse`/`ExitWorktree` hook in `.claude/settings.json` prevents this: on
-`ExitWorktree(action: "remove")` (which runs `git worktree remove`) it runs
-`lsregister -u` on the worktree's built apps. It fires `PreToolUse` so the
-bundles still exist on disk — `lsregister` must read a bundle to unregister it —
-and it is scoped to the one removed worktree via the tool's `.cwd`.
-
-It unregisters both top-level apps, `Kernova.app` and `Kernova Guest Agent.app`
-(#450), across Debug and Release. Products live at the **nested**
-`DerivedData/Kernova/Build/Products/<config>/` path — Xcode "Relative" mode and
-`-derivedDataPath DerivedData/Kernova` both nest a per-project subfolder (see
-[Build & Test](#build--test)) — not the flat `DerivedData/Build/Products/`. The
-embedded appexes (`KernovaFileProvider`, `KernovaQuickLook`,
-`KernovaMacOSAgentFileProvider`) need no separate handling: unregistering a
-parent `.app` cascades to its plugin registrations (verified — a plain
-`lsregister -u` on the app alone clears all three appex entries; the `-R` flag
-governs recursive *scanning*, not unregister cascade).
-
-Two cases stay uncovered by design: a human running `git worktree remove`
-directly triggers nothing (it is not a harness tool call, and git has **no**
-worktree-lifecycle hook — `man githooks` confirms), and Xcode-side hashed
-DerivedData lands outside `.cwd`. Both leave ghosts that only accumulate; clear
-the backlog on demand with `make ghosts` (report) / `make clean-ghosts` (also
-unregisters/kills/prunes) and `make ls-reset` for the legacy pre-#471-rename
-`com.kernova.app` identifier a plain regex update to `ghosts.sh` doesn't yet
-cover (`Tools/ghosts.sh`, `Tools/ls-reset.sh`, #454). `make ghosts` also
+Every worktree build registers its app bundles (and their embedded appexes)
+with LaunchServices; when the worktree is removed those registrations become
+ghosts — stale entries that accumulate and have previously hijacked UTI and
+name resolution. Dead-path ghosts self-heal lazily: the `post-checkout` git
+hook's step 3 runs `Tools/ghosts.sh --sweep-ls` on every *initial* checkout
+(`git worktree add` passes the null ref as `$1`; a plain `git switch` never
+pays the multi-second `lsregister` dump), unregistering every registered
+`app.kernova.*` path that no longer exists on disk (`lsregister -u` works
+even after the path is gone). The sweep only heals dead paths; LIVE stray
+copies still need the on-demand tools: `make ghosts` (report) /
+`make clean-ghosts` (also unregisters/kills/prunes) and `make ls-reset` for
+the legacy pre-#471-rename `com.kernova.app` identifier a plain regex update
+to `ghosts.sh` doesn't yet cover (`Tools/ghosts.sh`, `Tools/ls-reset.sh`,
+#454). `make ghosts` also
 inventories LIVE Kernova.app copies still on disk under Trash and
 `~/Library/Developer/Xcode/DerivedData` — exactly the hashed-DerivedData case
 above — and flags any that outrank the installed `/Applications` copy in the

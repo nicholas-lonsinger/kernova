@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Find (and optionally clean up) ghost Kernova registrations left behind by
-# worktrees that were torn down without going through Claude Code's
-# ExitWorktree unregister hook (a manual `git worktree remove`, dragging the
-# worktree to Trash, etc.).
+# torn-down worktrees (Claude Code's session-end auto-removal of a clean
+# worktree, a manual `git worktree remove`, dragging the worktree to Trash,
+# etc.).
 #
 # Both KernovaFileProvider (host) and KernovaMacOSAgentFileProvider (guest
 # agent) are ordinary macOS/arm64 .appex bundles — nothing about them is
@@ -29,15 +29,55 @@
 #     (#454). Deregistration/eviction is the only lever.
 #
 # Run via `make ghosts` (report only) or `make clean-ghosts` (also fixes).
-# Direct invocation: Tools/ghosts.sh [--fix]
+# Direct invocation: Tools/ghosts.sh [--fix | --sweep-ls]
 
 set -uo pipefail
 
 FIX=0
-[ "${1:-}" = "--fix" ] && FIX=1
+SWEEP=0
+case "${1:-}" in
+    --fix) FIX=1 ;;
+    --sweep-ls) SWEEP=1 ;;
+esac
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+
+# lsregister's dump lists `path:` a few lines before the `identifier:` line
+# for the same entry, with entries separated by a full-width dash rule —
+# track the most recently seen path and reset it at each rule so an
+# identifier never gets paired with a path from a different entry.
+kernova_registered_paths() {
+    "$LSREGISTER" -dump 2>/dev/null | awk '
+        /^-+$/ { path = "" }
+        /^path:/ {
+            line = $0
+            sub(/^path:[ \t]*/, "", line)
+            sub(/ \(0x[0-9a-fA-F]+\)[ \t]*$/, "", line)
+            path = line
+        }
+        /^identifier:[ \t]+app\.kernova($|\.)/ {
+            if (path != "") print path
+        }
+    ' | sort -u
+}
+
+# --sweep-ls: the quiet, non-interactive subset for hooks — unregister dead
+# app.kernova.* Launch Services registrations and exit. The post-checkout git
+# hook runs it on every new worktree, so registrations left by torn-down
+# worktrees self-heal at the next worktree creation. Best-effort by design:
+# always exits 0 so a failed sweep can never fail the checkout that triggered
+# it, and skips the fix path's re-dump verification — `make ghosts` still
+# reports anything left behind.
+if [ "$SWEEP" = 1 ]; then
+    while IFS= read -r path; do
+        [ -z "$path" ] && continue
+        [ -e "$path" ] && continue
+        "$LSREGISTER" -u "$path" >/dev/null 2>&1
+        printf 'ghosts.sh: swept dead Launch Services registration: %s\n' "$path"
+    done < <(kernova_registered_paths)
+    exit 0
+fi
 
 # ---- output helpers (matches Tools/doctor.sh) --------------------------------
 
@@ -67,25 +107,6 @@ printf '%sKernova ghost cleanup%s\n' "$c_bold" "$c_reset"
 # ---- Launch Services ghost registrations -------------------------------------
 
 section 'Launch Services registrations'
-
-# lsregister's dump lists `path:` a few lines before the `identifier:` line
-# for the same entry, with entries separated by a full-width dash rule —
-# track the most recently seen path and reset it at each rule so an
-# identifier never gets paired with a path from a different entry.
-kernova_registered_paths() {
-    "$LSREGISTER" -dump 2>/dev/null | awk '
-        /^-+$/ { path = "" }
-        /^path:/ {
-            line = $0
-            sub(/^path:[ \t]*/, "", line)
-            sub(/ \(0x[0-9a-fA-F]+\)[ \t]*$/, "", line)
-            path = line
-        }
-        /^identifier:[ \t]+app\.kernova($|\.)/ {
-            if (path != "") print path
-        }
-    ' | sort -u
-}
 
 # Built via a plain read loop rather than `mapfile`/`readarray`: macOS ships
 # bash 3.2 (GPLv3), which predates both builtins.

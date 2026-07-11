@@ -10,7 +10,7 @@
 # auto-runs checked-in hooks), so a brand-new clone still needs one
 # `make bootstrap`/`make build` — see README "Development setup".
 #
-# Two steps:
+# Three steps:
 #   1. Copy the gitignored local files listed in .worktreeinclude from the
 #      main checkout. Claude Code (and other worktree tools, e.g.
 #      git-worktreeinclude, Conductor) consume that file natively when they
@@ -19,6 +19,11 @@
 #   2. Derive DEVELOPMENT_TEAM via Tools/bootstrap-team.sh when step 1
 #      didn't deliver Config/Local.xcconfig (no main-checkout copy to
 #      inherit — e.g. the main checkout of a fresh clone).
+#   3. Sweep dead app.kernova.* Launch Services registrations left by
+#      removed worktrees (see CLAUDE.md "Worktree LaunchServices cleanup").
+#      Initial checkouts only ($1 is the null ref for `git worktree add`/
+#      `git clone` but not `git switch`), so the multi-second lsregister
+#      dump never taxes a plain branch switch.
 #
 # Git runs post-checkout from the working-tree root, so the relative paths
 # below resolve within whichever worktree was just created or switched.
@@ -54,13 +59,19 @@ fi
 
 # ---- 2. derive DEVELOPMENT_TEAM if still missing ----------------------------
 
-[ -f Config/Local.xcconfig ] && exit 0
-
 # Best-effort: a failed derivation (e.g. no signing certificate in the
 # keychain) must not fail the checkout; bootstrap prints its own diagnostics
 # and `make doctor` reports the missing team.
-if [ -x Tools/bootstrap-team.sh ]; then
+if [ ! -f Config/Local.xcconfig ] && [ -x Tools/bootstrap-team.sh ]; then
     Tools/bootstrap-team.sh || true
+fi
+
+# ---- 3. sweep dead LaunchServices registrations ------------------------------
+
+# Best-effort: a failed sweep must not fail the checkout; `make ghosts`
+# reports anything left behind.
+if [ "${1:-}" = "0000000000000000000000000000000000000000" ] && [ -x Tools/ghosts.sh ]; then
+    Tools/ghosts.sh --sweep-ls || true
 fi
 
 exit 0
