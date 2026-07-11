@@ -11,11 +11,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # The job name "swift-format" is a required check in the repo ruleset — keep
-  # it stable. Its `make lint` step now covers shell scripts too (bash -n +
-  # shellcheck via the lint-shell target, which treats shellcheck as REQUIRED
-  # when $CI is set), so shell findings gate merges through this same check.
-  swift-format:
+  # The job name "lint" is a required check in the repo's "Required actions"
+  # ruleset (required checks match on job name) — renaming it again means
+  # updating the ruleset in the same change, or PRs wait forever on a check
+  # that never reports. `make lint` covers Swift (swift-format --strict) and
+  # shell (bash -n + shellcheck via lint-shell, which treats shellcheck as
+  # REQUIRED when $CI is set), so both gate merges through this one check.
+  lint:
     runs-on: macos-26
     timeout-minutes: 5
     steps:
