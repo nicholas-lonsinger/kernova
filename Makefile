@@ -169,12 +169,13 @@ doctor: ## Check the local toolchain (macOS, Xcode, Swift, swift-format) and rep
 	@Tools/doctor.sh
 
 # Diagnoses ghost Launch Services registrations, orphaned processes, and
-# prunable git worktrees left behind when a worktree is torn down by hand
-# instead of through Claude Code's ExitWorktree unregister hook — plus LIVE
-# on-disk Kernova.app copies (Trash, DerivedData) that outrank the installed
-# /Applications copy in the LaunchServices/PluginKit CFBundleVersion election
-# (#454). `ghosts` only reports; `clean-ghosts` also unregisters/kills/prunes,
-# and offers to evict (trash) a competing copy it finds.
+# prunable git worktrees left behind by torn-down worktrees (the post-checkout
+# hook sweeps dead registrations on new checkouts; this reports whatever
+# remains) — plus LIVE on-disk Kernova.app copies (Trash, DerivedData) that
+# outrank the installed /Applications copy in the LaunchServices/PluginKit
+# CFBundleVersion election (#454). `ghosts` only reports; `clean-ghosts` also
+# unregisters/kills/prunes, and offers to evict (trash) a competing copy it
+# finds.
 ghosts: ## Report stale/competing Kernova Launch Services, process, and worktree registrations
 	@Tools/ghosts.sh
 
