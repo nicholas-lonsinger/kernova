@@ -23,6 +23,8 @@ struct AppPreferences {
     private enum Keys {
         static let alwaysShowAdvancedOptions = "alwaysShowAdvancedOptions"
         static let expandedSidebarSections = "KernovaSidebarExpandedSections"
+        static let lastSelectedVMID = "lastSelectedVMID"
+        static let vmOrder = "vmOrder"
     }
 
     /// When `true`, advanced menu actions (e.g. *Start in Recovery Mode*) are
@@ -43,5 +45,32 @@ struct AppPreferences {
     var expandedSidebarSections: [String]? {
         get { defaults.array(forKey: Keys.expandedSidebarSections) as? [String] }
         nonmutating set { defaults.set(newValue, forKey: Keys.expandedSidebarSections) }
+    }
+
+    /// The most recently selected VM, or `nil` when none has been selected yet
+    /// (or the value fails to parse as a UUID).
+    ///
+    /// Persisted by `VMLibraryViewModel` on every `selectedID` change and
+    /// restored on the next launch, provided the VM still exists.
+    var lastSelectedVMID: UUID? {
+        get { defaults.string(forKey: Keys.lastSelectedVMID).flatMap(UUID.init(uuidString:)) }
+        nonmutating set {
+            if let newValue {
+                defaults.set(newValue.uuidString, forKey: Keys.lastSelectedVMID)
+            } else {
+                defaults.removeObject(forKey: Keys.lastSelectedVMID)
+            }
+        }
+    }
+
+    /// The user's custom VM ordering, or `nil` when no order has been saved
+    /// yet.
+    ///
+    /// Persisted by `VMLibraryViewModel` as the user drags to reorder VMs in
+    /// the sidebar; entries that no longer correspond to a UUID are dropped on
+    /// read.
+    var vmOrder: [UUID]? {
+        get { defaults.stringArray(forKey: Keys.vmOrder)?.compactMap { UUID(uuidString: $0) } }
+        nonmutating set { defaults.set(newValue?.map(\.uuidString), forKey: Keys.vmOrder) }
     }
 }

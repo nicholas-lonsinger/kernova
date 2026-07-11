@@ -14,19 +14,16 @@ import Testing
 @Suite("Sidebar Tests", .serialized)
 @MainActor
 struct SidebarViewControllerTests {
-    /// Isolated, pre-cleaned defaults for this suite's global state.
+    /// Isolated, pre-cleaned preferences for this suite's global state.
     ///
-    /// Shared by the view model (selection/order) and the sidebar's
+    /// Shared by the view model (selection/order) and the sidebar's own use of
     /// `AppPreferences` (expanded sections + the advanced-options toggle), so no
     /// test reads or writes the real `.standard` domain. Fresh per test (the
     /// struct is re-instantiated), so each starts clean.
-    private let defaults: UserDefaults
     private let preferences: AppPreferences
 
     init() {
-        let defaults = makeEphemeralDefaults(suiteName: "test.kernova.sidebar")
-        self.defaults = defaults
-        self.preferences = AppPreferences(defaults: defaults)
+        self.preferences = AppPreferences(defaults: makeEphemeralDefaults(suiteName: "test.kernova.sidebar"))
     }
 
     private func makeViewModel() -> VMLibraryViewModel {
@@ -37,7 +34,7 @@ struct SidebarViewControllerTests {
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
             usbDeviceService: MockUSBDeviceService(),
-            defaults: defaults
+            preferences: preferences
         )
     }
 

@@ -6,12 +6,12 @@ import Foundation
 @MainActor
 struct VMLibraryViewModelTests {
     private let presenter = MockVMLibraryPresenting()
-    /// Isolated, pre-cleaned defaults so selection/order persistence never
+    /// Isolated, pre-cleaned preferences so selection/order persistence never
     /// touches the real `.standard` domain.
     ///
     /// Fresh per test (the struct is re-instantiated), so each test starts from
     /// an empty suite.
-    private let defaults = makeEphemeralDefaults(suiteName: "test.kernova.vmlibrary")
+    private let preferences = AppPreferences(defaults: makeEphemeralDefaults(suiteName: "test.kernova.vmlibrary"))
     private func makeViewModel(
         storageService: MockVMStorageService = MockVMStorageService(),
         diskImageService: MockDiskImageService = MockDiskImageService(),
@@ -28,7 +28,7 @@ struct VMLibraryViewModelTests {
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
             usbDeviceService: usbDeviceService,
-            defaults: defaults
+            preferences: preferences
         )
         vm.presenter = presenter
         return (vm, storageService, diskImageService, virtualizationService, usbDeviceService)
@@ -107,8 +107,7 @@ struct VMLibraryViewModelTests {
 
         viewModel.selectedID = instance.id
 
-        let stored = defaults.string(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
-        #expect(stored == instance.id.uuidString)
+        #expect(preferences.lastSelectedVMID == instance.id)
     }
 
     @Test("selectedID clears UserDefaults when set to nil")
@@ -120,8 +119,7 @@ struct VMLibraryViewModelTests {
 
         viewModel.selectedID = nil
 
-        let stored = defaults.string(forKey: VMLibraryViewModel.lastSelectedVMIDKey)
-        #expect(stored == nil)
+        #expect(preferences.lastSelectedVMID == nil)
     }
 
     @Test("loadVMs restores selection from UserDefaults when VM still exists")
@@ -136,8 +134,8 @@ struct VMLibraryViewModelTests {
         storage.bundles[url1] = config1
         storage.bundles[url2] = config2
 
-        // Seed UserDefaults before ViewModel init triggers loadVMs()
-        defaults.set(config2.id.uuidString, forKey: VMLibraryViewModel.lastSelectedVMIDKey)
+        // Seed preferences before ViewModel init triggers loadVMs()
+        preferences.lastSelectedVMID = config2.id
 
         let viewModel = VMLibraryViewModel(
             storageService: storage,
@@ -145,7 +143,7 @@ struct VMLibraryViewModelTests {
             virtualizationService: MockVirtualizationService(),
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
-            defaults: defaults
+            preferences: preferences
         )
         viewModel.presenter = presenter
 
@@ -185,8 +183,8 @@ struct VMLibraryViewModelTests {
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
         storage.bundles[url] = config
 
-        // Seed UserDefaults with a UUID that doesn't match any VM
-        defaults.set(UUID().uuidString, forKey: VMLibraryViewModel.lastSelectedVMIDKey)
+        // Seed preferences with a UUID that doesn't match any VM
+        preferences.lastSelectedVMID = UUID()
 
         let viewModel = VMLibraryViewModel(
             storageService: storage,
@@ -194,7 +192,7 @@ struct VMLibraryViewModelTests {
             virtualizationService: MockVirtualizationService(),
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
-            defaults: defaults
+            preferences: preferences
         )
         viewModel.presenter = presenter
 
@@ -844,7 +842,7 @@ struct VMLibraryViewModelTests {
             installService: MockMacOSInstallService(),
             ipswService: ipswService,
             usbDeviceService: MockUSBDeviceService(),
-            defaults: defaults
+            preferences: preferences
         )
         vm.presenter = presenter
         return vm
@@ -1856,7 +1854,7 @@ struct VMLibraryViewModelTests {
             installService: raceInstaller,
             ipswService: MockIPSWService(),
             usbDeviceService: MockUSBDeviceService(),
-            defaults: defaults
+            preferences: preferences
         )
         viewModel.presenter = presenter
         let instance = makeInstance(name: "Race VM")
@@ -2828,8 +2826,7 @@ struct VMLibraryViewModelTests {
         viewModel.moveVM(fromOffsets: IndexSet(integer: 2), toOffset: 0)
 
         #expect(viewModel.instances.map(\.name) == ["C", "A", "B"])
-        let stored = defaults.stringArray(forKey: VMLibraryViewModel.vmOrderKey)
-        #expect(stored == [c.id.uuidString, a.id.uuidString, b.id.uuidString])
+        #expect(preferences.vmOrder == [c.id, a.id, b.id])
     }
 
     @Test("loadVMs applies custom order from UserDefaults")
@@ -2852,10 +2849,7 @@ struct VMLibraryViewModelTests {
         storage.bundles[url3] = config3
 
         // Set custom order: Third, First, Second
-        defaults.set(
-            [config3.id.uuidString, config1.id.uuidString, config2.id.uuidString],
-            forKey: VMLibraryViewModel.vmOrderKey
-        )
+        preferences.vmOrder = [config3.id, config1.id, config2.id]
 
         let viewModel = VMLibraryViewModel(
             storageService: storage,
@@ -2863,7 +2857,7 @@ struct VMLibraryViewModelTests {
             virtualizationService: MockVirtualizationService(),
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
-            defaults: defaults
+            preferences: preferences
         )
         viewModel.presenter = presenter
 
@@ -2927,8 +2921,7 @@ struct VMLibraryViewModelTests {
 
         viewModel.deleteConfirmed(b)
 
-        let stored = defaults.stringArray(forKey: VMLibraryViewModel.vmOrderKey)
-        #expect(stored == [a.id.uuidString])
+        #expect(preferences.vmOrder == [a.id])
     }
 
     @Test("custom order ignores stale UUIDs not present in loaded VMs")
@@ -2941,10 +2934,7 @@ struct VMLibraryViewModelTests {
 
         // Set custom order with a stale UUID followed by the real one
         let staleID = UUID()
-        defaults.set(
-            [staleID.uuidString, config.id.uuidString],
-            forKey: VMLibraryViewModel.vmOrderKey
-        )
+        preferences.vmOrder = [staleID, config.id]
 
         let viewModel = VMLibraryViewModel(
             storageService: storage,
@@ -2952,7 +2942,7 @@ struct VMLibraryViewModelTests {
             virtualizationService: MockVirtualizationService(),
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
-            defaults: defaults
+            preferences: preferences
         )
         viewModel.presenter = presenter
 
