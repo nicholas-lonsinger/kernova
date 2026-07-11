@@ -17,12 +17,12 @@ make test-suite SUITE=KernovaTests/VMConfigurationTests   # Run a single suite
 make test-package        # Run only the KernovaKit SwiftPM package tests
 make format              # Rewrite Swift sources in place via swift-format
 make lint                # Check Swift sources with swift-format --strict
-make install-hooks       # One-time: enable .githooks/ (pre-push lint; post-checkout team bootstrap in new worktrees)
+make install-hooks       # One-time: enable .githooks/ (pre-push lint; post-checkout worktree setup)
 make doctor              # Check the local toolchain (macOS, Xcode, Swift, swift-format) and git hooks
 make clean               # Remove DerivedData/
 ```
 
-Run `make install-hooks` once after cloning to enable the checked-in `.githooks/`: pre-push runs `make lint` (bypass an individual push with `git push --no-verify`), and post-checkout runs `make bootstrap`'s derivation in any checkout missing `Config/Local.xcconfig` — so new git worktrees sign without a manual step (see [Development setup](README.md#development-setup) in the README for the mechanics).
+Run `make install-hooks` once after cloning to enable the checked-in `.githooks/`: pre-push runs `make lint` (bypass an individual push with `git push --no-verify`), and post-checkout sets up new worktrees — it copies the gitignored local files listed in `.worktreeinclude` from the main checkout (the definitive list of local files worktrees inherit; Claude Code and other worktree tools consume it natively, the hook makes plain `git worktree add` honor it too — literal paths only, no globs), then runs `make bootstrap`'s derivation if `Config/Local.xcconfig` is still missing — so new git worktrees sign without a manual step (see [Development setup](README.md#development-setup) in the README for the mechanics).
 
 `DEVELOPMENT_TEAM` is not hardcoded in the project — it's derived per-developer from your own signing certificate into the gitignored `Config/Local.xcconfig` by `make bootstrap` (#476, see [Development setup](README.md#development-setup)). `make build`/`make test`/`make test-suite` run it automatically, and the post-checkout hook covers new worktrees; the raw `xcodebuild` form below (and Xcode's own ⌘B/⌘R) assume it has already run, so on a fresh clone (where hooks aren't active yet) run `make bootstrap` once first — otherwise `DEVELOPMENT_TEAM` resolves empty and the Manual/profile-less Debug targets fail to sign.
 

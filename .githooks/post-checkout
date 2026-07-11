@@ -1,23 +1,58 @@
 #!/usr/bin/env bash
 #
-# Auto-bootstrap DEVELOPMENT_TEAM in fresh checkouts. Runs after
-# `git worktree add` — the case that matters: a new worktree never has the
-# gitignored Config/Local.xcconfig, so without this hook its first Xcode
-# build fails signing until `make bootstrap` is run by hand. Also fires on
-# `git switch`/`git checkout`, where the Local.xcconfig guard below makes it
-# a no-op. It cannot fire on a fresh `git clone`: hooks only activate once
-# `make install-hooks` sets core.hooksPath (git never auto-runs checked-in
-# hooks), so a brand-new clone still needs one `make bootstrap`/`make build`
-# — see README "Development setup".
+# Set up fresh checkouts. Runs after `git worktree add` — the case that
+# matters: a new worktree starts without the repo's gitignored local files
+# (git only checks out tracked content), so without this hook its first
+# Xcode build fails signing until `make bootstrap` is run by hand. Also
+# fires on `git switch`/`git checkout`, where the already-present guards
+# below make it a no-op. It cannot fire on a fresh `git clone`: hooks only
+# activate once `make install-hooks` sets core.hooksPath (git never
+# auto-runs checked-in hooks), so a brand-new clone still needs one
+# `make bootstrap`/`make build` — see README "Development setup".
 #
-# Git runs post-checkout from the working-tree root, so the paths below
-# resolve within whichever worktree was just created or switched.
+# Two steps:
+#   1. Copy the gitignored local files listed in .worktreeinclude from the
+#      main checkout. Claude Code (and other worktree tools, e.g.
+#      git-worktreeinclude, Conductor) consume that file natively when they
+#      create a worktree; this step makes a plain `git worktree add` honor
+#      it too. Literal paths only — no glob patterns.
+#   2. Derive DEVELOPMENT_TEAM via Tools/bootstrap-team.sh when step 1
+#      didn't deliver Config/Local.xcconfig (no main-checkout copy to
+#      inherit — e.g. the main checkout of a fresh clone).
+#
+# Git runs post-checkout from the working-tree root, so the relative paths
+# below resolve within whichever worktree was just created or switched.
 
 set -uo pipefail
 
 # $3 is 1 for a branch checkout, 0 for a file checkout (git checkout -- <path>),
 # which doesn't create a working tree and is skipped.
 [ "${3:-0}" = "1" ] || exit 0
+
+# ---- 1. inherit .worktreeinclude files from the main checkout --------------
+
+# Only meaningful in a linked worktree — in the main checkout, source and
+# destination would be the same file. git-dir equals git-common-dir exactly
+# when this is the main checkout.
+git_dir=$(git rev-parse --git-dir 2>/dev/null || true)
+common_dir=$(git rev-parse --git-common-dir 2>/dev/null || true)
+if [ -n "$git_dir" ] && [ "$git_dir" != "$common_dir" ] && [ -f .worktreeinclude ]; then
+    main_root=$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')
+    if [ -n "$main_root" ] && [ -d "$main_root" ]; then
+        while IFS= read -r path || [ -n "$path" ]; do
+            case "$path" in '' | '#'*) continue ;; esac
+            [ -e "$path" ] && continue            # never overwrite
+            [ -f "$main_root/$path" ] || continue # no source to copy
+            # Same safety rule the native consumers apply: only gitignored
+            # paths are eligible, so a tracked file can never be shadowed
+            # by a stale local copy.
+            git check-ignore -q -- "$path" || continue
+            mkdir -p "$(dirname "$path")" && cp "$main_root/$path" "$path"
+        done <.worktreeinclude
+    fi
+fi
+
+# ---- 2. derive DEVELOPMENT_TEAM if still missing ----------------------------
 
 [ -f Config/Local.xcconfig ] && exit 0
 
