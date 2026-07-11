@@ -1,6 +1,7 @@
 import Darwin
 import FileProvider
 import Foundation
+import KernovaTestSupport
 
 @testable import KernovaKit
 
@@ -47,76 +48,6 @@ func makeTestFileProviderConfig() -> FileProviderConfig {
         extensionLoggerSubsystem: "app.kernova.test.fileprovider",
         ownerCodeSigningRequirement: nil,
         extensionCodeSigningRequirement: nil)
-}
-
-// MARK: - AsyncGate (package-test copy)
-
-/// Resumes its continuation at most once across the `notify()`/timeout race.
-private final class ResumeOnce: @unchecked Sendable {
-    private let lock = NSLock()
-    private var fired = false
-    func fire(_ body: () -> Void) {
-        lock.lock()
-        let already = fired
-        fired = true
-        lock.unlock()
-        if !already { body() }
-    }
-}
-
-/// Event-driven wait primitive — a producer calls `notify()` after each state
-/// change; the consumer awaits `wait(until:)`.
-///
-/// Mirrors the app/guest test
-/// bundles' `AsyncGate` (kept in sync per the flaky-CI investigation), copied
-/// here because Xcode synchronized folders make those copies target-private.
-final class AsyncGate: @unchecked Sendable {
-    private let lock = NSLock()
-    private var waiters: [UUID: () -> Void] = [:]
-
-    func notify() {
-        lock.lock()
-        let resumes = Array(waiters.values)
-        waiters.removeAll()
-        lock.unlock()
-        resumes.forEach { $0() }
-    }
-
-    func wait(
-        timeout: Duration = .seconds(10),
-        until predicate: @Sendable () -> Bool
-    ) async throws {
-        let deadline = ContinuousClock.now.advanced(by: timeout)
-        while !predicate() {
-            if ContinuousClock.now >= deadline {
-                throw StreamTestFailure("Condition not met within \(timeout)")
-            }
-            await armOnce(deadline: deadline, predicate: predicate)
-        }
-    }
-
-    private func armOnce(
-        deadline: ContinuousClock.Instant,
-        predicate: @Sendable () -> Bool
-    ) async {
-        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
-            let id = UUID()
-            let once = ResumeOnce()
-            lock.lock()
-            waiters[id] = { once.fire { cont.resume() } }
-            lock.unlock()
-            if predicate() {
-                lock.withLock { _ = waiters.removeValue(forKey: id) }
-                once.fire { cont.resume() }
-                return
-            }
-            Task {
-                try? await Task.sleep(until: deadline, clock: ContinuousClock())
-                self.lock.withLock { _ = self.waiters.removeValue(forKey: id) }
-                once.fire { cont.resume() }
-            }
-        }
-    }
 }
 
 // MARK: - Socket pair

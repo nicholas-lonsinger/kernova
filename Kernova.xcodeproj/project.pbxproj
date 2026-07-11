@@ -17,6 +17,8 @@
 		A2000006 /* KernovaKit in Frameworks */ = {isa = PBXBuildFile; productRef = A2000007 /* KernovaKit */; };
 		A2000009 /* KernovaKit in Frameworks */ = {isa = PBXBuildFile; productRef = A2000008 /* KernovaKit */; };
 		A200000A /* KernovaKit in Frameworks */ = {isa = PBXBuildFile; productRef = A200000B /* KernovaKit */; };
+		A200000C /* KernovaTestSupport in Frameworks */ = {isa = PBXBuildFile; productRef = A200000D /* KernovaTestSupport */; };
+		A200000E /* KernovaTestSupport in Frameworks */ = {isa = PBXBuildFile; productRef = A200000F /* KernovaTestSupport */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -240,6 +242,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A200000C /* KernovaTestSupport in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -263,6 +266,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A2000006 /* KernovaKit in Frameworks */,
+				A200000E /* KernovaTestSupport in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -385,6 +389,7 @@
 			);
 			name = KernovaTests;
 			packageProductDependencies = (
+				A200000D /* KernovaTestSupport */,
 			);
 			productName = KernovaTests;
 			productReference = A1000005 /* KernovaTests.xctest */;
@@ -457,6 +462,7 @@
 			name = KernovaMacOSAgentTests;
 			packageProductDependencies = (
 				A2000007 /* KernovaKit */,
+				A200000F /* KernovaTestSupport */,
 			);
 			productName = KernovaMacOSAgentTests;
 			productReference = A1000300 /* KernovaMacOSAgentTests.xctest */;
@@ -1455,6 +1461,14 @@
 		A200000B /* KernovaKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = KernovaKit;
+		};
+		A200000D /* KernovaTestSupport */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = KernovaTestSupport;
+		};
+		A200000F /* KernovaTestSupport */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = KernovaTestSupport;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

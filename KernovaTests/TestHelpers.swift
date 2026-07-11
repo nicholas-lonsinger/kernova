@@ -3,26 +3,18 @@ import Foundation
 import Darwin
 import Observation
 import KernovaKit
+import KernovaTestSupport
 
-// Shared timing/test primitives for the KernovaTests bundle. Mirrors the
-// shape of `KernovaMacOSAgentTests/TestHelpers.swift` so the two bundles
-// give the same diagnostic detail (timeout vs EOF) when frame waits fail.
+// Bundle-specific test helpers for KernovaTests. The event-driven/poll wait
+// primitives (`AsyncGate`, `waitUntil`, `TestFailure`) live in the shared
+// `KernovaTestSupport` package product — see its doc comment for why they
+// were hoisted out of this file (formerly triplicated, #526).
 //
-// Xcode 16 synchronized folders make each bundle's files target-private,
-// so a single file can't be shared across both — the duplication here is
-// deliberate. Keep these signatures aligned with the GuestAgent variant.
-//
-// Exception: `waitForChange` is KernovaTests-only. It observes `@MainActor`
-// `@Observable` production state directly; the GuestAgent bundle's helpers are
-// `nonisolated`/`@Sendable` over `Sendable` boxes and have no such type to
-// track, so there is nothing to mirror there.
-
-// MARK: - TestFailure
-
-struct TestFailure: Error {
-    let message: String
-    init(_ m: String) { message = m }
-}
+// `waitForChange` below is KernovaTests-only and was never one of the
+// triplicated copies: it observes `@MainActor` `@Observable` production state
+// directly via `withObservationTracking`, which only this bundle's tests need
+// — the GuestAgent/KernovaKit bundles' predicates read `Sendable` boxes
+// (`AtomicInt`, `PolicyBox`) with no such observable type to track.
 
 // MARK: - Ephemeral UserDefaults
 
@@ -64,34 +56,6 @@ func makeRawSocketPair() throws -> (Int32, Int32) {
     return (fds[0], fds[1])
 }
 
-// MARK: - waitUntil
-
-/// Polls `predicate` every 50 ms until it returns `true` or `timeout` elapses.
-///
-/// Default deadline is generous (5 s) to absorb MainActor scheduling jitter on
-/// CI runners. See CLAUDE.md "Async waits in tests". Prefer the
-/// event-driven `AsyncGate` below for new timing-sensitive waits — polling is
-/// retained for predicates with no underlying signal to await; the 50 ms tick
-/// (up from 10 ms) keeps idle pollers from adding avoidable MainActor churn.
-///
-/// `@MainActor`-isolated because every test in `KernovaTests` is MainActor and
-/// the predicates routinely close over MainActor-isolated state (services,
-/// view models). Keeping the helper on the same actor sidesteps Swift 6's
-/// non-Sendable-closure errors on MainActor → nonisolated boundaries.
-@MainActor
-func waitUntil(
-    timeout: Duration = .seconds(5),
-    _ predicate: () -> Bool
-) async throws {
-    let deadline = ContinuousClock.now.advanced(by: timeout)
-    while !predicate() && ContinuousClock.now < deadline {
-        try await Task.sleep(for: .milliseconds(50))
-    }
-    guard predicate() else {
-        throw TestFailure("Predicate did not become true within \(timeout)")
-    }
-}
-
 // MARK: - nextFrame
 
 /// Reads the next frame from `channel`, distinguishing timeout from EOF.
@@ -128,107 +92,6 @@ func nextFrame(
         return frame
     } catch is CancellationError {
         throw TestFailure("Timed out waiting for a frame after \(timeout)")
-    }
-}
-
-// MARK: - AsyncGate
-
-/// Resumes its continuation at most once, regardless of how many racing paths
-/// (a `notify()` and the timeout backstop) try to fire it. `CheckedContinuation`
-/// traps on a second resume, so this guard makes the race safe.
-private final class ResumeOnce: @unchecked Sendable {
-    private let lock = NSLock()
-    private var fired = false
-    func fire(_ body: () -> Void) {
-        lock.lock()
-        let already = fired
-        fired = true
-        lock.unlock()
-        if !already { body() }
-    }
-}
-
-/// Event-driven replacement for `waitUntil` polling.
-///
-/// A producer calls `notify()` after each observable state change; the consumer
-/// awaits `wait(until:)`, which suspends until the predicate holds — re-checked
-/// on every `notify()` — or throws `TestFailure` after `timeout`.
-///
-/// Unlike the poll loop, an idle waiter adds **zero** wake-ups to the shared
-/// (and, on CI, contended) MainActor, and the `timeout` is a backstop the happy
-/// path never reaches rather than the success deadline — so a slow runner no
-/// longer fails the wait, only a genuinely stuck condition does. This is the
-/// fix for the timing-sensitive flakes documented in the flaky-CI
-/// investigation; keep it aligned with the GuestAgent bundle's copy.
-final class AsyncGate: @unchecked Sendable {
-    private let lock = NSLock()
-    private var waiters: [UUID: () -> Void] = [:]
-
-    /// Wake every current waiter; call right after mutating observed state.
-    func notify() {
-        lock.lock()
-        let resumes = Array(waiters.values)
-        waiters.removeAll()
-        lock.unlock()
-        resumes.forEach { $0() }
-    }
-
-    /// Suspend until `predicate()` holds (re-checked on each `notify()`), or
-    /// throw `TestFailure` after `timeout`. `@MainActor` so predicates may read
-    /// MainActor-isolated test state, matching this bundle's `waitUntil`.
-    @MainActor
-    func wait(
-        timeout: Duration = .seconds(10),
-        until predicate: () -> Bool
-    ) async throws {
-        let deadline = ContinuousClock.now.advanced(by: timeout)
-        while !predicate() {
-            if ContinuousClock.now >= deadline {
-                throw TestFailure("Condition not met within \(timeout)")
-            }
-            await armOnce(deadline: deadline, predicate: predicate)
-        }
-    }
-
-    /// Suspends until the next `notify()`, an immediate hit (the predicate
-    /// already holds at arm time, closing the arm-vs-notify race), or the
-    /// `deadline` backstop — whichever comes first.
-    @MainActor
-    private func armOnce(
-        deadline: ContinuousClock.Instant,
-        predicate: () -> Bool
-    ) async {
-        // Captured so it can be cancelled once `notify()` (or the immediate-hit
-        // re-check) resolves the wait; otherwise every happy-path arm would leak
-        // a Task sleeping until `deadline`.
-        var backstop: Task<Void, Never>?
-        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
-            let id = UUID()
-            let once = ResumeOnce()
-            lock.lock()
-            waiters[id] = { once.fire { cont.resume() } }
-            lock.unlock()
-            // Close the arm-vs-notify race: if the state already satisfies the
-            // predicate (a notify may have landed before we registered), resume
-            // now so the outer loop re-checks promptly instead of blocking.
-            if predicate() {
-                lock.lock()
-                waiters.removeValue(forKey: id)
-                lock.unlock()
-                once.fire { cont.resume() }
-                return
-            }
-            // Backstop: resume at the deadline even if no notify arrives, so a
-            // genuinely stuck condition fails the wait instead of hanging.
-            backstop = Task {
-                try? await Task.sleep(until: deadline, clock: ContinuousClock())
-                self.lock.withLock { _ = self.waiters.removeValue(forKey: id) }
-                once.fire { cont.resume() }
-            }
-        }
-        // Resolved via notify() or the immediate hit; cancel the backstop so it
-        // doesn't linger asleep until `deadline`.
-        backstop?.cancel()
     }
 }
 

@@ -4,6 +4,7 @@ import AppKit
 import CryptoKit
 import Darwin
 import KernovaKit
+import KernovaTestSupport
 import UniformTypeIdentifiers
 
 // MARK: - Fake Pasteboard
