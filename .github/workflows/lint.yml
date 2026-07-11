@@ -11,7 +11,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  swift-format:
+  # The job name "lint" is a required check in the repo's "Required actions"
+  # ruleset (required checks match on job name) — renaming it again means
+  # updating the ruleset in the same change, or PRs wait forever on a check
+  # that never reports. `make lint` covers Swift (swift-format --strict) and
+  # shell (bash -n + shellcheck via lint-shell, which treats shellcheck as
+  # REQUIRED when $CI is set), so both gate merges through this one check.
+  lint:
     runs-on: macos-26
     timeout-minutes: 5
     steps:
@@ -25,5 +31,11 @@ jobs:
           sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
           xcrun swift-format --version
 
-      - name: swift-format lint --strict
+      # The macOS runner images ship shellcheck; install it only if a future
+      # image drops it, so `make lint` never silently skips static analysis
+      # here (lint-shell hard-fails on CI without it).
+      - name: Ensure shellcheck
+        run: command -v shellcheck >/dev/null || brew install shellcheck
+
+      - name: make lint (swift-format --strict + shell lint)
         run: make lint

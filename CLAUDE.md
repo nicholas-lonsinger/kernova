@@ -16,9 +16,9 @@ make test                # Run the full test suite (all three test targets via K
 make test-suite SUITE=KernovaTests/VMConfigurationTests   # Run a single suite
 make test-package        # Run only the KernovaKit SwiftPM package tests
 make format              # Rewrite Swift sources in place via swift-format
-make lint                # Check Swift sources with swift-format --strict
+make lint                # Check Swift sources (swift-format --strict) + shell scripts (bash -n; shellcheck when installed, required on CI)
 make install-hooks       # One-time: enable .githooks/ (pre-push lint; post-checkout worktree setup)
-make doctor              # Check the local toolchain (macOS, Xcode, Swift, swift-format) and git hooks
+make doctor              # Check the local toolchain (macOS, Xcode, Swift, swift-format) and repo setup (hooks, .worktreeinclude)
 make clean               # Remove DerivedData/
 ```
 
