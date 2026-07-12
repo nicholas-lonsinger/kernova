@@ -904,6 +904,7 @@ struct VMLibraryViewModelTests {
     @Test("deleteConfirmed swallows missing-file errors for a selected external")
     func deleteConfirmedSwallowsMissingExternals() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
+        fileSystem.trashError = CocoaError(.fileNoSuchFile)
         let instance = makeInstance()
         let ghostID = UUID()
         let ghostPath = FileManager.default.temporaryDirectory
@@ -925,6 +926,7 @@ struct VMLibraryViewModelTests {
     @Test("deleteConfirmed permanently swallows missing-file errors for a selected external")
     func deleteConfirmedPermanentlySwallowsMissingExternals() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
+        fileSystem.removeError = CocoaError(.fileNoSuchFile)
         let instance = makeInstance()
         let ghostID = UUID()
         let ghostPath = FileManager.default.temporaryDirectory
