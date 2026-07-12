@@ -7,11 +7,19 @@ import Foundation
 // Both directions use the canonical `NSFileProviderServicing` anonymous-XPC
 // pattern. INVERTED wiring vs. the old Mach design: the *owner* (the guest agent
 // or the main app) is the XPC **client** — it reaches the extension's vended
-// endpoint via `FileManager.getFileProviderServicesForItem(at:)` →
+// endpoint via `NSFileProviderManager.getService(named:for:)` →
 // `NSFileProviderService.getFileProviderConnection`, then **exports** the relay
 // object so the extension can call it back at `fetchContents`. The extension can
 // neither initiate nor launch a connection, so the owner connects proactively at
 // publish time and re-connects when the extension rings the Darwin doorbell.
+//
+// The service lookup is by ITEM IDENTIFIER (`.rootContainer`), not by path: the
+// path-based `FileManager.getFileProviderServicesForItem(at:)` needs filesystem
+// access to the domain root under `~/Library/CloudStorage`, which the sandboxed
+// host app doesn't have (Cocoa 257, #539). The identifier form is a pure
+// fileproviderd round-trip — no path resolution, so the sandbox never gates it,
+// and no dataless-placeholder touch, so no reentrant-materialization hazard
+// (P1b, #460) either.
 //
 // The domain host owns the relay *service* (built from its pull provider) and
 // hands it to the connector, keeping its enable/disable lifecycle identical
@@ -34,12 +42,10 @@ public protocol FileProviderRelayTransport: AnyObject, Sendable {
     /// call made while disabled can't reach a stale relay.
     func stopServing()
 
-    /// Proactively (re)establishes the control connection to the extension that
-    /// manages `rootURL` — the domain root user-visible URL (never a dataless
-    /// file placeholder, which could deadlock; see #460). Idempotent: a live or
-    /// in-flight connection short-circuits. Runs the connect off the caller's
-    /// thread so it can't block.
-    func ensureConnected(rootURL: URL)
+    /// Proactively (re)establishes the control connection to the extension.
+    /// Idempotent: a live or in-flight connection short-circuits. Runs the
+    /// connect off the caller's thread so it can't block.
+    func ensureConnected()
 }
 
 // MARK: - Servicing connector
@@ -58,14 +64,14 @@ public final class FileProviderServicingConnector: NSObject,
 {
     /// Establishes the control connection to the extension.
     ///
-    /// Production performs the `getFileProviderServicesForItem` →
+    /// Production performs the `NSFileProviderManager.getService(named:for:)` →
     /// `NSFileProviderService.getFileProviderConnection` dance (logging each
     /// failure); tests inject a stub yielding a controllable connection or `nil`.
     /// The seam collapses both system calls into one closure rather than
     /// injecting either individually: `NSFileProviderService` is an opaque,
     /// non-instantiable system type a test can't fabricate.
     typealias ConnectOperation =
-        @Sendable (_ rootURL: URL, _ completion: @escaping @Sendable (NSXPCConnection?) -> Void) -> Void
+        @Sendable (_ completion: @escaping @Sendable (NSXPCConnection?) -> Void) -> Void
 
     private let reconnectNotificationName: String
     private let extensionRequirement: String?
@@ -78,8 +84,15 @@ public final class FileProviderServicingConnector: NSObject,
     private let lock = NSLock()
     /// The relay object exported to the extension; `nil` while disabled.
     private var relayService: FileProviderRelay?
-    /// The domain root URL to connect through, cached from `ensureConnected`.
-    private var rootURL: URL?
+    /// Whether `ensureConnected` has ever been called.
+    ///
+    /// The domain host's signal that the domain is registered and connecting is
+    /// worthwhile — gates connect attempts so a doorbell arriving before
+    /// registration doesn't spin the retry budget. Deliberately not cleared by
+    /// `stopServing` (matching the root-URL cache it replaced, #539): after a
+    /// re-enable, a doorbell can reconnect immediately — the domain stays
+    /// registered across policy off→on cycles.
+    private var connectRequested = false
     /// The live control connection, or `nil` when not connected.
     private var connection: NSXPCConnection?
     /// `true` while a connect handshake is in flight (coalesces concurrent
@@ -123,20 +136,25 @@ public final class FileProviderServicingConnector: NSObject,
         let logger = KernovaLogger(
             subsystem: config.loggerSubsystem, category: "ServicingConnector")
         let serviceName = config.serviceName
-        let operation: ConnectOperation = { rootURL, completion in
-            // Root is a real directory (never a dataless file placeholder) so this
-            // can't trigger reentrant materialization → deadlock (P1b, #460).
-            FileManager.default.getFileProviderServicesForItem(at: rootURL) { services, error in
-                if let error {
+        let operation: ConnectOperation = { completion in
+            // Identifier-based lookup (`.rootContainer` is always known to the
+            // extension) — see the file header for why this is not the path-based
+            // `FileManager.getFileProviderServicesForItem(at:)` (#539). The domain
+            // is built fresh per attempt via `config.makeDomain()` (a `Sendable`
+            // struct's factory) because `NSFileProviderDomain` itself can't cross
+            // this `@Sendable` closure boundary.
+            let domain = config.makeDomain()
+            guard let manager = NSFileProviderManager(for: domain) else {
+                logger.error(
+                    "No NSFileProviderManager for domain '\(domain.identifier.rawValue, privacy: .public)'"
+                )
+                completion(nil)
+                return
+            }
+            manager.getService(named: serviceName, for: .rootContainer) { service, error in
+                guard let service else {
                     logger.error(
-                        "getFileProviderServicesForItem failed: \(error.localizedDescription, privacy: .public)"
-                    )
-                    completion(nil)
-                    return
-                }
-                guard let service = services?[serviceName] else {
-                    logger.error(
-                        "Servicing endpoint '\(serviceName.rawValue, privacy: .public)' not offered by the extension"
+                        "getService(named: \(serviceName.rawValue, privacy: .public)) failed: \(error?.localizedDescription ?? "no service offered", privacy: .public)"
                     )
                     completion(nil)
                     return
@@ -215,12 +233,12 @@ public final class FileProviderServicingConnector: NSObject,
         logger.notice("Servicing connector disarmed (clipboard disabled)")
     }
 
-    /// Caches the domain root URL and proactively (re)establishes the control
-    /// connection if not already connected.
-    public func ensureConnected(rootURL: URL) {
+    /// Proactively (re)establishes the control connection if not already
+    /// connected.
+    public func ensureConnected() {
         // An explicit (re)connect request restarts the retry budget.
         lock.withLock {
-            self.rootURL = rootURL
+            connectRequested = true
             connectAttempts = 0
         }
         connectIfNeeded()
@@ -249,25 +267,26 @@ public final class FileProviderServicingConnector: NSObject,
     }
 
     /// Claims the connect slot and dispatches the handshake off-queue, or no-ops
-    /// when already connected/connecting, disarmed, or the root URL is unknown.
+    /// when already connected/connecting, disarmed, or no connect was requested
+    /// yet.
     ///
     /// Coalescing a trigger that arrives while a connect is in flight (`connecting
     /// == true`) is safe: that in-flight attempt either succeeds, or fails and
     /// retries via `finishFailedConnect`, so the coalesced request's intent — be
     /// connected — is still satisfied without a lost edge.
     private func connectIfNeeded() {
-        let root: URL? = lock.withLock {
-            guard connection == nil, !connecting else { return nil }
-            guard relayService != nil, let rootURL else { return nil }
+        let claimed: Bool = lock.withLock {
+            guard connection == nil, !connecting else { return false }
+            guard relayService != nil, connectRequested else { return false }
             connecting = true
-            return rootURL
+            return true
         }
-        guard let root else { return }
-        queue.async { [weak self] in self?.connect(rootURL: root) }
+        guard claimed else { return }
+        queue.async { [weak self] in self?.connect() }
     }
 
-    private func connect(rootURL: URL) {
-        connectOperation(rootURL) { [weak self] connection in
+    private func connect() {
+        connectOperation { [weak self] connection in
             guard let self else {
                 // The connector went away while the two-hop connect was in
                 // flight — unlike a live connector, there's nothing left to
@@ -348,24 +367,24 @@ public final class FileProviderServicingConnector: NSObject,
     /// meanwhile (`relayService == nil`) — the guards below simply schedule no retry.
     private func finishFailedConnect() {
         var attempt = 0
-        let retryRoot: URL? = lock.withLock {
+        let shouldRetry: Bool = lock.withLock {
             connecting = false
-            guard connection == nil, relayService != nil, let rootURL else { return nil }
+            guard connection == nil, relayService != nil, connectRequested else { return false }
             connectAttempts += 1
             guard connectAttempts < maxConnectAttempts else {
                 connectAttempts = 0
-                return nil
+                return false
             }
             attempt = connectAttempts
             connecting = true  // hold the slot for the scheduled retry
-            return rootURL
+            return true
         }
-        guard let retryRoot else { return }
+        guard shouldRetry else { return }
         logger.notice(
             "Servicing connect failed — retry \(attempt, privacy: .public)/\(maxConnectAttempts - 1, privacy: .public) scheduled"
         )
         queue.asyncAfter(deadline: .now() + connectRetryDelay) { [weak self] in
-            self?.connect(rootURL: retryRoot)
+            self?.connect()
         }
     }
 
@@ -379,7 +398,7 @@ public final class FileProviderServicingConnector: NSObject,
             guard self.connection === connection else { return false }
             self.connection = nil
             connectAttempts = 0  // a live connection dropped → fresh retry budget
-            return relayService != nil && rootURL != nil
+            return relayService != nil && connectRequested
         }
         // Invalidate the dropped connection whether or not it was still current.
         // On the invalidation path this is a documented no-op; on the interruption

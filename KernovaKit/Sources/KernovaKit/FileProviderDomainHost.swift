@@ -102,6 +102,15 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     private let config: FileProviderConfig
     private let logger: KernovaLogger
     private let container: FileProviderContainer
+    /// Salts this host instance's item identifiers so a new owner session's
+    /// offers can never collide with a previous session's (#541).
+    ///
+    /// The offer `generation` restarts at 1 with each session while placeholder
+    /// dirents survive teardown on disk; an unsalted identifier collision makes
+    /// fileproviderd treat the new offer as an in-place rename of the stale —
+    /// possibly materialized — placeholder with `shouldFetch:false`, so a paste
+    /// serves the previous offer's bytes. See `FileProviderItemIdentifier`.
+    private let sessionSalt = UInt64.random(in: .min ... .max)
     private let pullProvider: FileProviderPullProvider
     private let domain: NSFileProviderDomain
     /// Connects to the extension and exports the relay so the extension can call
@@ -133,6 +142,10 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     /// User-visible domain root, resolved after registration; `nil` until then
     /// (the File Provider path is unused while it's `nil`).
     private var rootURL: URL?
+    /// Whether the security scope of `rootURL` is currently open.
+    ///
+    /// See `adoptRootURL` for the scope's lifecycle.
+    private var rootURLScopeActive = false
     /// Set while an `addDomain` cycle (including its orphan-heal retry) is
     /// outstanding, so two pastes landing back-to-back while unregistered can't
     /// launch overlapping `removeAllDomains`+`add` cycles for the same domain (#428).
@@ -244,9 +257,7 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
             relayTransport ?? FileProviderServicingConnector(config: config)
         self.relayService = FileProviderRelayService(
             pullProvider: pullProvider, loggerSubsystem: config.loggerSubsystem)
-        self.domain = NSFileProviderDomain(
-            identifier: NSFileProviderDomainIdentifier(config.domainIdentifier),
-            displayName: config.domainDisplayName)
+        self.domain = config.makeDomain()
         self.notificationCenter = notificationCenter
         self.fetchDomains = fetchDomains
         self.addDomainToSystem = addDomainToSystem
@@ -255,6 +266,7 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
 
     deinit {
         stopObservingDomainChanges()
+        releaseRootURLScope()
     }
 
     // MARK: - Enablement (clipboard policy)
@@ -288,6 +300,10 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
         } else {
             stopObservingDomainChanges()
             setAvailability(.inactive)
+            // No offer can be valid while disabled (the manifest is cleared
+            // below), so the domain-root scope has no consumer until the next
+            // enable's registration re-resolves the root and re-opens it.
+            releaseRootURLScope()
             // Disarm the connector: drop the control connection and stop observing
             // the doorbell so a stray fetch while disabled fails cleanly
             // (serverUnreachable) instead of reaching a relay whose offer was just
@@ -406,6 +422,15 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
                 self.logger.notice(
                     "File Provider domain registered: \(self.domain.identifier.rawValue, privacy: .public)"
                 )
+                // Warm the servicing connection at registration (not only at
+                // publish) — load-bearing for the reconnect doorbell: after an
+                // owner relaunch, a paste of a still-on-disk placeholder (the
+                // domain stays registered across restarts) rings the doorbell
+                // with no offer having been published yet, and the connector only
+                // acts on the doorbell once a connect has been requested (#460).
+                // Idempotent with the publish-time `ensureConnected`; the
+                // connector runs the connect off its own queue.
+                self.relayTransport.ensureConnected()
                 self.resolveRootURL()
                 self.refreshAvailability()
             }
@@ -439,34 +464,59 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     }
 
     /// Caches the user-visible root URL so an offer can construct `root/filename`
-    /// for the pasteboard without a per-item round-trip, and warms the servicing
-    /// connection now that the root URL is known.
-    ///
-    /// Connecting at registration (not only at publish) is load-bearing for the
-    /// reconnect doorbell: the connector can only act on the doorbell once it has
-    /// the root URL, and after an owner relaunch a paste of a still-on-disk
-    /// placeholder (the domain stays registered across restarts) rings the doorbell
-    /// with no offer having been published yet — without this the connector would
-    /// have no root URL to reconnect through and the read would hang to the
-    /// extension's timeout (#460). Idempotent with the publish-time
-    /// `ensureConnected`; the connector runs the connect off its own queue.
+    /// for the pasteboard without a per-item round-trip.
     private func resolveRootURL() {
         guard let manager = NSFileProviderManager(for: domain) else { return }
         manager.getUserVisibleURL(for: .rootContainer) { [weak self] url, error in
             DispatchQueue.main.async {
                 guard let self else { return }
                 if let url {
-                    self.rootURL = url
+                    self.adoptRootURL(url)
                     self.logger.notice("Clipboard domain visible at: \(url.path, privacy: .public)")
-                    if self.enabled {
-                        self.relayTransport.ensureConnected(rootURL: url)
-                    }
                 } else if let error {
                     self.logger.error(
                         "getUserVisibleURL failed: \(error.localizedDescription, privacy: .public)")
                 }
             }
         }
+    }
+
+    /// Caches the root URL and opens its security scope, holding it for as long
+    /// as the root stays current (released on disable, replacement, and deinit).
+    ///
+    /// The URL `getUserVisibleURL` returns is security-scoped (per its header
+    /// doc) — the sandboxed host app's only access to the domain root under
+    /// `~/Library/CloudStorage`, which no entitlement covers (#539). The scope is
+    /// held open rather than wrapped around individual calls because TWO
+    /// consumers need it live:
+    /// - `forceRootEnumeration`'s readdir (denied Cocoa 257 otherwise), and
+    /// - the pasteboard server's sandbox validation when the placeholder's
+    ///   `public.file-url` lands on the host pasteboard: pboard mints the
+    ///   *pasting* app's sandbox extension from OUR live access to the referenced
+    ///   path, at whatever moment the promised data is provided (Universal
+    ///   Clipboard's eager read makes that copy time, a paste makes it later).
+    ///   Without the scope the entry is silently rejected ("Entry failed
+    ///   validation" in pboard's log) and a Finder ⌘V just beeps.
+    ///
+    /// In the unsandboxed guest agent `startAccessingSecurityScopedResource`
+    /// reports no scope was taken and all access works on ordinary permissions.
+    private func adoptRootURL(_ url: URL) {
+        releaseRootURLScope()
+        rootURL = url
+        rootURLScopeActive = url.startAccessingSecurityScopedResource()
+    }
+
+    /// Balances the scope opened by `adoptRootURL`, if one is active.
+    ///
+    /// Called on disable and on root replacement; also from `deinit`, where no
+    /// concurrent access can exist (this is the last reference) so the
+    /// main-queue-state convention on `rootURL`/`rootURLScopeActive` can't be
+    /// violated by another thread.
+    private func releaseRootURLScope() {
+        if rootURLScopeActive, let rootURL {
+            rootURL.stopAccessingSecurityScopedResource()
+        }
+        rootURLScopeActive = false
     }
 
     /// Re-checks whether the user has enabled the domain by reading the live
@@ -615,11 +665,11 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
         // connection carries NO bytes — the vsock pull stays fully lazy, running only
         // when `fetchContents` is actually invoked. The connector runs the connect on
         // its own queue, so this call doesn't block main. #460.
-        relayTransport.ensureConnected(rootURL: rootURL)
+        relayTransport.ensureConnected()
 
         let item = FileProviderManifest.Item(
-            generation: generation, repIndex: repIndex, filename: filename,
-            byteCount: byteCount, uti: uti)
+            sessionSalt: sessionSalt, generation: generation, repIndex: repIndex,
+            filename: filename, byteCount: byteCount, uti: uti)
         let manifest = FileProviderManifest(generation: generation, items: [item])
         do {
             try container.writeManifest(manifest)
@@ -651,6 +701,10 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     /// longer than the listing, so the placeholder exists by paste time.
     private func forceRootEnumeration(root: URL) {
         DispatchQueue.global(qos: .userInitiated).async { [logger] in
+            // Sandbox access to the domain root comes from the security scope the
+            // domain host holds open while the root is current (`adoptRootURL`,
+            // #539) — publishSingleFile's `enabled`+`rootURL` guard means it is
+            // always active here.
             do {
                 // `.skipsHiddenFiles` so the diagnostic count reflects user-visible
                 // entries, not bookkeeping dirents (`.Trash`, `.DS_Store`).

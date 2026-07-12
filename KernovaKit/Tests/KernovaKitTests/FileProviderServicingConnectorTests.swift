@@ -12,7 +12,7 @@ import KernovaTestSupport
 /// in-flight connect, and the reconnect-doorbell re-probe.
 ///
 /// Drives the connector through its injected `connect` operation (the
-/// `getFileProviderServicesForItem` → `getFileProviderConnection` chain is
+/// `getService(named:for:)` → `getFileProviderConnection` chain is
 /// collapsed into one seam — `NSFileProviderService` is an opaque,
 /// non-instantiable system type a test can't fabricate) rather than the real
 /// system calls. Every test is deterministic. One (the doorbell re-probe
@@ -26,10 +26,6 @@ import KernovaTestSupport
 /// the `#if DEBUG` seam.
 @Suite("FileProviderServicingConnector")
 struct FileProviderServicingConnectorTests {
-    /// A placeholder root URL — never touched by a real File Provider API,
-    /// since every test replaces the connect operation with a stub.
-    private static let testRootURL = URL(fileURLWithPath: "/tmp/kernova-servicing-connector-test-root")
-
     /// A `FileProviderRelay` that fails the test if ever called — none of these
     /// state-machine tests drive an actual byte pull.
     private final class NeverCalledRelay: NSObject, FileProviderRelay, @unchecked Sendable {
@@ -73,7 +69,7 @@ struct FileProviderServicingConnectorTests {
 
         var callCount: Int { lock.withLock { callCountStorage } }
 
-        func record(rootURL: URL, completion: @escaping @Sendable (NSXPCConnection?) -> Void) {
+        func record(completion: @escaping @Sendable (NSXPCConnection?) -> Void) {
             lock.withLock {
                 callCountStorage += 1
                 if case .capture = response { captured = completion }
@@ -157,7 +153,7 @@ struct FileProviderServicingConnectorTests {
     ) -> FileProviderServicingConnector {
         FileProviderServicingConnector(
             config: config,
-            connect: { rootURL, completion in stub.record(rootURL: rootURL, completion: completion) },
+            connect: { completion in stub.record(completion: completion) },
             maxConnectAttempts: maxConnectAttempts, connectRetryDelay: connectRetryDelay)
     }
 
@@ -167,13 +163,13 @@ struct FileProviderServicingConnectorTests {
         let connector = makeConnector(stub: stub, config: makeTestFileProviderConfig())
         connector.startServing(NeverCalledRelay())
 
-        connector.ensureConnected(rootURL: Self.testRootURL)
+        connector.ensureConnected()
         try await stub.gate.wait { stub.callCount == 1 }
         #expect(connector.isConnectingForTesting)
 
         // A second trigger while the first is in flight coalesces synchronously
         // (the `connecting` guard) — no further dispatch, so no wait is needed.
-        connector.ensureConnected(rootURL: Self.testRootURL)
+        connector.ensureConnected()
         #expect(stub.callCount == 1)
     }
 
@@ -185,7 +181,7 @@ struct FileProviderServicingConnectorTests {
             config: makeTestFileProviderConfig())
         connector.startServing(NeverCalledRelay())
 
-        connector.ensureConnected(rootURL: Self.testRootURL)
+        connector.ensureConnected()
 
         // Gate on the terminal tuple, not `callCount == 3` alone: `connecting`
         // only clears inside the 3rd `finishFailedConnect`, after the 3rd call is
@@ -205,7 +201,7 @@ struct FileProviderServicingConnectorTests {
         let stub = ConnectStub(.capture)
         let connector = makeConnector(stub: stub, config: makeTestFileProviderConfig())
         connector.startServing(NeverCalledRelay())
-        connector.ensureConnected(rootURL: Self.testRootURL)
+        connector.ensureConnected()
         try await stub.gate.wait { stub.callCount == 1 }
 
         connector.stopServing()
@@ -225,7 +221,7 @@ struct FileProviderServicingConnectorTests {
         let stub = ConnectStub(.capture)
         let connector = makeConnector(stub: stub, config: makeTestFileProviderConfig())
         connector.startServing(NeverCalledRelay())
-        connector.ensureConnected(rootURL: Self.testRootURL)
+        connector.ensureConnected()
         try await stub.gate.wait { stub.callCount == 1 }
 
         connector.stopServing()
@@ -243,7 +239,7 @@ struct FileProviderServicingConnectorTests {
         let stub = ConnectStub(.immediate(NSXPCConnection(listenerEndpoint: peer.endpoint)))
         let connector = makeConnector(stub: stub, config: makeTestFileProviderConfig())
         connector.startServing(NeverCalledRelay())
-        connector.ensureConnected(rootURL: Self.testRootURL)
+        connector.ensureConnected()
 
         try await peer.gate.wait { peer.ownerDidConnectCount == 1 }
         #expect(connector.isConnectedForTesting)
@@ -272,7 +268,7 @@ struct FileProviderServicingConnectorTests {
             stub: stub, maxConnectAttempts: 1, connectRetryDelay: .seconds(2),
             config: makeTestFileProviderConfig())
         connector.startServing(NeverCalledRelay())
-        connector.ensureConnected(rootURL: Self.testRootURL)
+        connector.ensureConnected()
 
         try await stub.gate.wait { stub.callCount == 1 && !connector.isConnectingForTesting }
         #expect(!connector.isConnectedForTesting)

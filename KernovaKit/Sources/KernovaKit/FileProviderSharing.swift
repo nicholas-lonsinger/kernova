@@ -14,32 +14,47 @@ import Foundation
 // across the two processes is the atomic manifest write, not shared memory, so
 // none of this needs lock-based `@unchecked Sendable`.
 
-/// Encodes and decodes a file representation's `(generation, repIndex)` as a
-/// `NSFileProviderItemIdentifier` string.
+/// Encodes and decodes a file representation's `(sessionSalt, generation,
+/// repIndex)` as a `NSFileProviderItemIdentifier` string.
 ///
 /// The string is carried as a plain `String` here (not `NSFileProviderItemIdentifier`)
 /// so the encoding is unit-testable without importing `FileProvider`; the
 /// extension wraps it. The `clipfile` prefix distinguishes a per-rep file item
 /// from the framework's reserved container identifiers (root / working-set /
 /// trash). Avoids `/` and `:`, which the framework reserves.
+///
+/// The identifier leads with a per-owner-session salt because the offer
+/// `generation` counter restarts at 1 with every owner session, while
+/// placeholder dirents survive teardown on disk (#541). Without the salt, a
+/// new session's first offer reuses the previous session's item identifier and
+/// fileproviderd treats it as an in-place *update* of the stale — possibly
+/// already materialized — placeholder: it renames the old file, keeps its
+/// bytes and size, and decides `shouldFetch:false`, so a paste serves the
+/// previous offer's content. A salted identifier makes a new session's offer a
+/// *different item*, so reconciliation deletes the stale placeholder and
+/// creates a fresh dataless one with the correct metadata.
 enum FileProviderItemIdentifier {
     private static let prefix = "clipfile"
     private static let separator: Character = "."
 
-    /// Encodes `(generation, repIndex)` into an item identifier string.
-    static func make(generation: UInt64, repIndex: Int) -> String {
-        "\(prefix)\(separator)\(generation)\(separator)\(repIndex)"
+    /// Encodes `(sessionSalt, generation, repIndex)` into an item identifier
+    /// string.
+    static func make(sessionSalt: UInt64, generation: UInt64, repIndex: Int) -> String {
+        "\(prefix)\(separator)\(sessionSalt)\(separator)\(generation)\(separator)\(repIndex)"
     }
 
-    /// Decodes an identifier string back to `(generation, repIndex)`, or `nil`
-    /// when it isn't one this provider minted.
-    static func decode(_ identifier: String) -> (generation: UInt64, repIndex: Int)? {
+    /// Decodes an identifier string back to `(sessionSalt, generation,
+    /// repIndex)`, or `nil` when it isn't one this provider minted.
+    static func decode(
+        _ identifier: String
+    ) -> (sessionSalt: UInt64, generation: UInt64, repIndex: Int)? {
         let parts = identifier.split(separator: separator, omittingEmptySubsequences: false)
-        guard parts.count == 3, parts[0] == prefix,
-            let generation = UInt64(parts[1]),
-            let repIndex = Int(parts[2]), repIndex >= 0
+        guard parts.count == 4, parts[0] == prefix,
+            let sessionSalt = UInt64(parts[1]),
+            let generation = UInt64(parts[2]),
+            let repIndex = Int(parts[3]), repIndex >= 0
         else { return nil }
-        return (generation, repIndex)
+        return (sessionSalt, generation, repIndex)
     }
 }
 
@@ -48,9 +63,14 @@ enum FileProviderItemIdentifier {
 ///
 /// One entry per File-Provider-served file rep.
 public struct FileProviderManifest: Codable, Sendable, Equatable {
-    /// One enumerable file item: its `(generation, repIndex)` identity plus the
-    /// metadata the enumerator needs to build a dataless `NSFileProviderItem`.
+    /// One enumerable file item: its `(sessionSalt, generation, repIndex)`
+    /// identity plus the metadata the enumerator needs to build a dataless
+    /// `NSFileProviderItem`.
     public struct Item: Codable, Sendable, Equatable {
+        /// The publishing owner session's salt — makes the item identifier
+        /// unique across sessions whose `generation` counters restart (#541);
+        /// see `FileProviderItemIdentifier`.
+        public var sessionSalt: UInt64
         /// Offer generation this item belongs to.
         public var generation: UInt64
         /// Index of the file representation within the offer.
@@ -64,8 +84,10 @@ public struct FileProviderManifest: Codable, Sendable, Equatable {
 
         /// Creates a manifest item from a file rep's identity and metadata.
         public init(
-            generation: UInt64, repIndex: Int, filename: String, byteCount: UInt64, uti: String
+            sessionSalt: UInt64, generation: UInt64, repIndex: Int, filename: String,
+            byteCount: UInt64, uti: String
         ) {
+            self.sessionSalt = sessionSalt
             self.generation = generation
             self.repIndex = repIndex
             self.filename = filename
@@ -75,7 +97,8 @@ public struct FileProviderManifest: Codable, Sendable, Equatable {
 
         /// The File Provider item identifier string for this entry.
         public var itemIdentifier: String {
-            FileProviderItemIdentifier.make(generation: generation, repIndex: repIndex)
+            FileProviderItemIdentifier.make(
+                sessionSalt: sessionSalt, generation: generation, repIndex: repIndex)
         }
     }
 
@@ -94,11 +117,12 @@ public struct FileProviderManifest: Codable, Sendable, Equatable {
     public static let empty = FileProviderManifest(generation: 0, items: [])
 
     /// The item matching an identifier, or `nil` if it isn't in the current offer
-    /// (a stale identifier from a superseded generation).
+    /// (a stale identifier from a superseded generation or a previous session).
     public func item(for identifier: String) -> Item? {
         guard let decoded = FileProviderItemIdentifier.decode(identifier) else { return nil }
         return items.first {
-            $0.generation == decoded.generation && $0.repIndex == decoded.repIndex
+            $0.sessionSalt == decoded.sessionSalt && $0.generation == decoded.generation
+                && $0.repIndex == decoded.repIndex
         }
     }
 }

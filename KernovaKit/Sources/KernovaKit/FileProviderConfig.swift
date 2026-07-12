@@ -14,7 +14,9 @@ import os
 // Host↔extension IPC uses the canonical `NSFileProviderServicing` anonymous-XPC
 // pattern (#460): the extension vends a listener endpoint under a per-direction
 // `NSFileProviderServiceName`, the owner connects via
-// `FileManager.getFileProviderServicesForItem(at:)` and exports the relay so the
+// `NSFileProviderManager.getService(named:for:)` (identifier-based — the
+// path-based `FileManager` form needs filesystem access to the domain root,
+// which the sandboxed host app doesn't have, #539) and exports the relay so the
 // extension can call back at `fetchContents`, and a per-direction Darwin
 // notification is the reconnect doorbell. There is no Mach service.
 //
@@ -118,6 +120,20 @@ public struct FileProviderConfig: Sendable {
     }
 
     private static let logger = Logger(subsystem: "app.kernova", category: "FileProviderConfig")
+
+    /// Builds this direction's File Provider domain.
+    ///
+    /// The single construction point for domain identity: the domain host
+    /// registers the domain this returns, and the servicing connector's
+    /// identifier-based `getService(named:for:)` lookup must resolve the same
+    /// domain (#539). Each call site constructs a fresh instance rather than
+    /// sharing one — `NSFileProviderDomain` is not Sendable, so a shared
+    /// instance couldn't cross the connector's `@Sendable` connect closure.
+    public func makeDomain() -> NSFileProviderDomain {
+        NSFileProviderDomain(
+            identifier: NSFileProviderDomainIdentifier(domainIdentifier),
+            displayName: domainDisplayName)
+    }
 
     /// Builds a code-signing requirement pinning a specific bundle `identifier`
     /// to the given `team`.
