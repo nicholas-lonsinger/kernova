@@ -14,6 +14,10 @@ final class VMLibraryViewModel {
     let diskImageService: any DiskImageProviding
     let lifecycle: VMLifecycleCoordinator
 
+    /// Seam for trash/remove operations (see `FileSystemOperating`);
+    /// tests inject a mock so fixture files never land in the real Trash.
+    private let fileSystem: any FileSystemOperating
+
     /// Backing store for selection/order persistence.
     ///
     /// Injectable so tests use an ephemeral suite instead of the real `.standard`
@@ -112,16 +116,19 @@ final class VMLibraryViewModel {
         installService: any MacOSInstallProviding = MacOSInstallService(),
         ipswService: any IPSWProviding = IPSWService(),
         usbDeviceService: any USBDeviceProviding = USBDeviceService(),
+        fileSystem: any FileSystemOperating = FileManager.default,
         preferences: AppPreferences = .shared
     ) {
         self.storageService = storageService
         self.diskImageService = diskImageService
+        self.fileSystem = fileSystem
         self.preferences = preferences
         self.lifecycle = VMLifecycleCoordinator(
             virtualizationService: virtualizationService,
             installService: installService,
             ipswService: ipswService,
-            usbDeviceService: usbDeviceService
+            usbDeviceService: usbDeviceService,
+            fileSystem: fileSystem
         )
 
         loadVMs()
@@ -803,7 +810,8 @@ final class VMLibraryViewModel {
     private func deleteExternalAttachment(
         at url: URL, bookmark: Data?, label: String, vmName: String, permanently: Bool
     ) -> Task<Void, Never> {
-        Task.detached(priority: .userInitiated) { [weak self] in
+        let fileSystem = fileSystem
+        return Task.detached(priority: .userInitiated) { [weak self] in
             do {
                 try SecurityScopedBookmark.withResolvedURL(bookmark: bookmark, fallback: url) {
                     target in
@@ -811,9 +819,9 @@ final class VMLibraryViewModel {
                         // RATIONALE: the user-confirmed "Delete Immediately" path; the deliberate
                         // exception to CLAUDE.md's "prefer trash over rm" guideline (see also
                         // `VMStorageService.permanentlyDeleteVMBundle`).
-                        try FileManager.default.removeItem(at: target)
+                        try fileSystem.removeItem(at: target)
                     } else {
-                        try FileManager.default.trashItem(at: target, resultingItemURL: nil)
+                        try fileSystem.trashItem(at: target)
                     }
                 }
                 Self.logger.notice(
@@ -903,6 +911,7 @@ final class VMLibraryViewModel {
         onSuccess: @escaping () -> Void
     ) {
         registerPhantom(phantom)
+        let fileSystem = fileSystem
         let task = Task { [weak self] in
             // Clear preparing state on every exit path — the row's UI should always reflect
             // completion, even if the view model was deallocated.
@@ -913,7 +922,7 @@ final class VMLibraryViewModel {
                     // View model gone. If cancelled, trash the settled bundle; otherwise the copy
                     // finished but there's no library to add it to.
                     if Task.isCancelled {
-                        Self.trashPartialBundle(at: phantom.bundleURL)
+                        Self.trashPartialBundle(at: phantom.bundleURL, fileSystem: fileSystem)
                     } else {
                         Self.logger.warning(
                             "\(operation.displayNoun, privacy: .public) completed but view model was deallocated — VM '\(phantom.name, privacy: .public)' exists on disk but was not added to library"
@@ -932,7 +941,7 @@ final class VMLibraryViewModel {
             } catch {
                 guard let self else {
                     // Trash the partial bundle even without the view model.
-                    Self.trashPartialBundle(at: phantom.bundleURL)
+                    Self.trashPartialBundle(at: phantom.bundleURL, fileSystem: fileSystem)
                     Self.logger.error(
                         "\(operation.displayNoun, privacy: .public) failed and view model was deallocated — trashed partial bundle '\(phantom.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                     )
@@ -1548,10 +1557,11 @@ final class VMLibraryViewModel {
         let label = disk.label
         let vmName = instance.name
         let bookmark = disk.isInternal ? nil : disk.bookmark
+        let fileSystem = fileSystem
         return Task.detached(priority: .userInitiated) { [weak self] in
             do {
                 try SecurityScopedBookmark.withResolvedURL(bookmark: bookmark, fallback: diskURL) {
-                    try FileManager.default.trashItem(at: $0, resultingItemURL: nil)
+                    try fileSystem.trashItem(at: $0)
                 }
                 Self.logger.notice(
                     "Trashed disk '\(label, privacy: .public)' for VM '\(vmName, privacy: .public)'"
@@ -1666,10 +1676,11 @@ final class VMLibraryViewModel {
         let label = item.label
         let vmName = instance.name
         let bookmark = item.bookmark
+        let fileSystem = fileSystem
         return Task.detached(priority: .userInitiated) { [weak self] in
             do {
                 try SecurityScopedBookmark.withResolvedURL(bookmark: bookmark, fallback: url) {
-                    try FileManager.default.trashItem(at: $0, resultingItemURL: nil)
+                    try fileSystem.trashItem(at: $0)
                 }
                 Self.logger.notice(
                     "Trashed removable media '\(label, privacy: .public)' for VM '\(vmName, privacy: .public)'"
@@ -1754,7 +1765,7 @@ final class VMLibraryViewModel {
                 // phases throw before the destination file is touched.
                 if case DiskImageError.writeFailed = error {
                     do {
-                        try FileManager.default.trashItem(at: diskURL, resultingItemURL: nil)
+                        try fileSystem.trashItem(at: diskURL)
                     } catch let cleanupError {
                         Self.logger.warning(
                             "Failed to clean up partial disk image at '\(diskURL.lastPathComponent, privacy: .public)': \(cleanupError.localizedDescription, privacy: .public)"
@@ -1803,7 +1814,7 @@ final class VMLibraryViewModel {
                 // remove an unrelated pre-existing file.
                 if case DiskImageError.writeFailed = error {
                     do {
-                        try FileManager.default.trashItem(at: destinationURL, resultingItemURL: nil)
+                        try fileSystem.trashItem(at: destinationURL)
                     } catch let cleanupError {
                         Self.logger.warning(
                             "Failed to clean up partial removable disk at '\(destinationURL.lastPathComponent, privacy: .public)': \(cleanupError.localizedDescription, privacy: .public)"
@@ -2192,7 +2203,7 @@ final class VMLibraryViewModel {
             selectedID = instances.first?.id
         }
         phantom.preparingState = nil
-        Self.trashPartialBundle(at: phantom.bundleURL)
+        Self.trashPartialBundle(at: phantom.bundleURL, fileSystem: fileSystem)
     }
 
     // MARK: - Reorder
@@ -2232,11 +2243,15 @@ final class VMLibraryViewModel {
     // MARK: - Error Handling
 
     /// Moves a partial VM bundle to the Trash in the background, logging on failure.
-    private static func trashPartialBundle(at url: URL) {
+    ///
+    /// Static (with the file-system seam passed in) because two call sites run
+    /// after `guard let self else` — the cleanup must not depend on the view
+    /// model still being alive.
+    private static func trashPartialBundle(at url: URL, fileSystem: any FileSystemOperating) {
         let log = logger
         Task.detached {
             do {
-                try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+                try fileSystem.trashItem(at: url)
             } catch {
                 log.error(
                     "Failed to clean up partial bundle at \(url.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)"

@@ -8,7 +8,10 @@ struct VMLifecycleCoordinatorTests {
     /// `downloadsDirectory` widens the coordinator's Downloads-only
     /// destination invariant to a test-owned directory so fresh-download
     /// tests can stage real files without touching the user's Downloads.
-    private func makeCoordinator(downloadsDirectory: URL? = nil) -> (
+    private func makeCoordinator(
+        downloadsDirectory: URL? = nil,
+        fileSystem: any FileSystemOperating = MockFileSystem()
+    ) -> (
         VMLifecycleCoordinator,
         MockVirtualizationService,
         MockMacOSInstallService,
@@ -24,6 +27,7 @@ struct VMLifecycleCoordinatorTests {
             installService: installService,
             ipswService: ipswService,
             usbDeviceService: usbService,
+            fileSystem: fileSystem,
             downloadsDirectory: downloadsDirectory
                 ?? FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
         )
@@ -454,18 +458,18 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("installMacOS with requestedFreshDownload trashes existing file and clears the flag")
     func installMacOSFreshDownloadTrashesAndClears() async throws {
-        // Create a real file at the destination so the trash path has something
-        // to act on. Persist it in a unique per-test temp directory (injected
-        // as the coordinator's Downloads-invariant root) to keep the
-        // assertion deterministic without touching the user's Downloads.
+        // The mock reports the destination as existing and records the trash
+        // request, so no real file (or real Trash write) is involved. The
+        // Downloads-invariant root is a unique temp path so the destination
+        // passes normalization without touching the user's Downloads.
         let temp = FileManager.default.temporaryDirectory
             .appendingPathComponent("freshDownloadTrash-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
-        let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: temp)
+        let fileSystem = MockFileSystem()
+        let (coordinator, _, _, ipswService, _) = makeCoordinator(
+            downloadsDirectory: temp, fileSystem: fileSystem)
         let instance = makeInstance()
 
         let destination = temp.appendingPathComponent("RestoreImage.ipsw")
-        try Data(repeating: 0xFF, count: 1024).write(to: destination)
 
         let context = MacOSInstallContext(
             source: .downloadLatest,
@@ -477,18 +481,15 @@ struct VMLifecycleCoordinatorTests {
 
         try await coordinator.installMacOS(on: instance, context: context)
 
-        // The existing IPSW must have been trashed (no longer at its path),
-        // the bundle cleanup must have been invoked exactly once, and on
-        // success the installContext is cleared by the post-install path —
-        // so we can't observe the cleared `requestedFreshDownload` directly,
-        // but the discardResumeData call count is the proxy that proves the
+        // The existing IPSW must have been trashed, the bundle cleanup must
+        // have been invoked exactly once, and on success the installContext
+        // is cleared by the post-install path — so we can't observe the
+        // cleared `requestedFreshDownload` directly, but the
+        // discardResumeData call count is the proxy that proves the
         // honor-and-clear branch ran.
-        #expect(!FileManager.default.fileExists(atPath: destination.path))
+        #expect(fileSystem.trashedURLs == [destination])
         #expect(ipswService.discardResumeDataCallCount == 1)
         #expect(ipswService.lastDiscardResumeDataURL == destination)
-
-        // Clean up the temp dir (the file itself is in Trash).
-        try? FileManager.default.removeItem(at: temp)
     }
 
     @Test("installMacOS surfaces freshDownloadCleanupFailed when the trash operation throws")
@@ -502,7 +503,8 @@ struct VMLifecycleCoordinatorTests {
             code: NSFileWriteNoPermissionError,
             userInfo: [NSLocalizedDescriptionKey: "denied"]
         )
-        let throwingFS = ThrowingFileSystem(fileExistsResult: true, trashError: trashError)
+        let throwingFS = MockFileSystem()
+        throwingFS.trashError = trashError
 
         let virtService = MockVirtualizationService()
         let installService = MockMacOSInstallService()
@@ -774,24 +776,4 @@ struct VMLifecycleCoordinatorTests {
         #expect(
             normalized.path(percentEncoded: false) == VMCreationViewModel.defaultIPSWDownloadPath)
     }
-}
-
-// MARK: - Test Doubles
-
-/// `FileSystemOperating` stub for the fresh-download cleanup tests.
-///
-/// Pretends the destination file exists and then throws from `trashItem`,
-/// exercising the path that wraps the error in
-/// `IPSWError.freshDownloadCleanupFailed`.
-private final class ThrowingFileSystem: FileSystemOperating, @unchecked Sendable {
-    let fileExistsResult: Bool
-    let trashError: any Error
-
-    init(fileExistsResult: Bool, trashError: any Error) {
-        self.fileExistsResult = fileExistsResult
-        self.trashError = trashError
-    }
-
-    func fileExists(atPath path: String) -> Bool { fileExistsResult }
-    func trashItem(at url: URL) throws { throw trashError }
 }

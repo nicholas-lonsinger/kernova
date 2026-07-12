@@ -411,21 +411,3 @@ final class VMLifecycleCoordinator {
         instance.liveRemovableMedia.removeAll { $0.id == deviceInfo.id }
     }
 }
-
-// MARK: - FileSystem Seam
-
-/// Minimal `FileManager` surface for the fresh-download cleanup branch.
-///
-/// Lets tests inject a failing trash to cover the
-/// `IPSWError.freshDownloadCleanupFailed` path without resorting to
-/// disk-level hacks.
-protocol FileSystemOperating {
-    func fileExists(atPath path: String) -> Bool
-    func trashItem(at url: URL) throws
-}
-
-extension FileManager: FileSystemOperating {
-    func trashItem(at url: URL) throws {
-        try trashItem(at: url, resultingItemURL: nil)
-    }
-}

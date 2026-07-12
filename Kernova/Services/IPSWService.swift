@@ -11,14 +11,20 @@ final class IPSWService: Sendable {
     private static let logger = Logger(subsystem: "app.kernova", category: "IPSWService")
 
     private let session: URLSession
+    private let fileSystem: any FileSystemOperating
 
     /// Designated initializer.
     ///
     /// Defaults to a per-instance default-configuration session; tests inject a
-    /// configuration with stub `protocolClasses`.
-    init(sessionConfiguration: URLSessionConfiguration? = nil) {
+    /// configuration with stub `protocolClasses`, and a `FileSystemOperating`
+    /// mock so bundle disposal never reaches the real Trash.
+    init(
+        sessionConfiguration: URLSessionConfiguration? = nil,
+        fileSystem: any FileSystemOperating = FileManager.default
+    ) {
         let configuration = sessionConfiguration ?? .default
         self.session = URLSession(configuration: configuration)
+        self.fileSystem = fileSystem
     }
 
     deinit {
@@ -173,7 +179,7 @@ final class IPSWService: Sendable {
             )
             if let total, bundle.partialByteCount == total {
                 Self.logger.notice("416 with full file already on disk — finalizing")
-                try bundle.finalize(to: destinationURL)
+                try bundle.finalize(to: destinationURL, fileSystem: fileSystem)
                 let progress = DownloadProgress(
                     bytesWritten: total, totalBytes: total, bytesPerSecond: 0)
                 await MainActor.run { progressHandler(progress) }
@@ -196,7 +202,7 @@ final class IPSWService: Sendable {
         // `response.expectedContentLength`, which on 206 reports the partial-body
         // length rather than the full file size — a bug now closed by relying on
         // `streamBytes`'s totalWritten.)
-        try bundle.finalize(to: destinationURL)
+        try bundle.finalize(to: destinationURL, fileSystem: fileSystem)
         Self.logger.info(
             "Restore image downloaded to \(destinationURL.lastPathComponent, privacy: .public)"
         )
@@ -260,9 +266,9 @@ final class IPSWService: Sendable {
             if permanently {
                 // RATIONALE: the user-confirmed "Delete Immediately" path; the deliberate
                 // exception to CLAUDE.md's "prefer trash over rm" guideline.
-                try FileManager.default.removeItem(at: bundleURL)
+                try fileSystem.removeItem(at: bundleURL)
             } else {
-                try FileManager.default.trashItem(at: bundleURL, resultingItemURL: nil)
+                try fileSystem.trashItem(at: bundleURL)
             }
             Self.logger.info(
                 "Discarded in-progress download bundle at '\(bundleURL.lastPathComponent, privacy: .public)'"
@@ -602,13 +608,18 @@ struct IPSWBundle: Sendable {
     }
 
     /// Moves the `data` file to the final IPSW destination and trashes the bundle.
-    func finalize(to destinationURL: URL) throws {
+    ///
+    /// `fileSystem` carries only the Trash disposal of the spent bundle; the
+    /// destination shuffle stays on the real `FileManager` because tests want
+    /// those moves to actually happen — a mocked `removeItem` would leave the
+    /// old destination in place and fail the subsequent move.
+    func finalize(to destinationURL: URL, fileSystem: any FileSystemOperating) throws {
         let fm = FileManager.default
         if fm.fileExists(atPath: destinationURL.path(percentEncoded: false)) {
             try fm.removeItem(at: destinationURL)
         }
         try fm.moveItem(at: dataURL, to: destinationURL)
-        try fm.trashItem(at: url, resultingItemURL: nil)
+        try fileSystem.trashItem(at: url)
     }
 }
 
