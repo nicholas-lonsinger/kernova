@@ -14,10 +14,13 @@ import Foundation
 /// One receiver drives all inbound transfers on a channel, keyed by
 /// `transfer_id`. The owning service routes `ClipboardStreamBegin` /
 /// `ClipboardChunk` / `ClipboardStreamEnd` / `ClipboardStreamAbort` frames here;
-/// the receiver acks each chunk only **after** it is durably written (so credit
-/// tracks the slowest stage) and verifies size + SHA-256 at End before
-/// delivering. Per-transfer file I/O runs on a dedicated serial queue so the
-/// owning actor is never blocked.
+/// the receiver acks only **durably written** bytes (so credit tracks the
+/// slowest stage), coalesced to one cumulative ack per quarter-window
+/// (`ClipboardStreamTuning.ackQuantum(forWindowBytes:)`, #377) with a
+/// 1 s latency bound so slow writes fall back to per-chunk acks — the
+/// go-signal, duplicate re-ack, and final ack at End stay unconditional — and
+/// verifies size + SHA-256 at End before delivering. Per-transfer file I/O runs on a
+/// dedicated serial queue so the owning actor is never blocked.
 ///
 /// `@unchecked Sendable`: the transfer table is guarded by `lock`; each
 /// transfer's bytes are touched only on its own serial queue.
@@ -25,6 +28,15 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
     private let channel: VsockChannel
     private let staging: ClipboardFileStaging
     private let windowBytes: Int
+    /// Durably-written bytes that must accumulate since the last ack before the
+    /// next cumulative ack is sent — see
+    /// `ClipboardStreamTuning.ackQuantum(forWindowBytes:)`.
+    private let ackQuantum: Int
+    /// Oldest the last ack may grow before the next durably-written chunk
+    /// forces a fresh ack regardless of the byte quantum, so slow writes fall
+    /// back to timely per-chunk acking instead of starving the sender's no-ack
+    /// deadline — see `ClipboardStreamTuning.ackLatencyBound`.
+    private let ackLatencyBound: Duration
     private let stallTimeout: Duration
 
     /// Inline payloads at/below this size reassemble in RAM; larger ones spill to
@@ -69,6 +81,10 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
     ///   - channel: the vsock channel the transfer frames are read from.
     ///   - staging: provides temp-file sinks and the free-space guard.
     ///   - windowBytes: advertised credit window; sent in each ack.
+    ///   - ackLatencyBound: oldest the last ack may grow before the next
+    ///     durably-written chunk forces a fresh ack regardless of the byte
+    ///     quantum. Tests inject `.zero` (per-chunk acks) or a huge value
+    ///     (pure byte-quantum schedules).
     ///   - stallTimeout: how long a transfer waits for its next chunk before
     ///     aborting a silent sender. Tests inject a short value.
     ///   - maxResidentInlineBytes: inline-rep RAM-residency spill threshold;
@@ -84,6 +100,7 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
         channel: VsockChannel,
         staging: ClipboardFileStaging,
         windowBytes: Int = ClipboardStreamTuning.defaultWindowBytes,
+        ackLatencyBound: Duration = ClipboardStreamTuning.ackLatencyBound,
         stallTimeout: Duration = ClipboardStreamTuning.inboundStallTimeout,
         maxResidentInlineBytes: Int = ClipboardStreamTuning.maxResidentInlineBytes,
         onTransferTimed: (@Sendable (ClipboardTransferMetrics) -> Void)? = nil,
@@ -93,6 +110,8 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
         self.channel = channel
         self.staging = staging
         self.windowBytes = min(max(windowBytes, 1), ClipboardStreamTuning.maxWindowBytes)
+        self.ackQuantum = ClipboardStreamTuning.ackQuantum(forWindowBytes: self.windowBytes)
+        self.ackLatencyBound = ackLatencyBound
         self.stallTimeout = stallTimeout
         self.maxResidentInlineBytes = max(maxResidentInlineBytes, 0)
         self.onTransferTimed = onTransferTimed
@@ -159,11 +178,12 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
             self.sendAck(transfer)
             // Start the stall clock — a sender that never sends a chunk after
             // Begin must not pin this transfer's fd/partial forever. [H2]
-            self.armStallTimer(transfer)
+            self.startStallTimer(transfer)
         }
     }
 
-    /// Writes one chunk and acks it after the durable write.
+    /// Writes one chunk; a cumulative ack follows once a quantum of
+    /// durably-written bytes has accumulated (#377).
     public func handleChunk(_ chunk: Kernova_V1_ClipboardChunk) {
         guard let transfer = transfer(chunk.transferID) else {
             // Orphan chunk for an unknown/aborted transfer — ignore.
@@ -231,9 +251,21 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
                     }
                 }
             }
-            self.sendAck(transfer)
+            // Coalesced cumulative ack (#377): ack once at least a quantum of
+            // durably-written bytes has accumulated since the last ack — or
+            // once the last ack is older than the latency bound, so slow
+            // durable writes fall back to timely per-chunk acks instead of
+            // stretching the gap between credit-opening acks past the sender's
+            // fixed no-ack deadline. The tail below one quantum is acked at
+            // End.
+            let now = ContinuousClock.now
+            if transfer.receivedBytes - transfer.ackedBytes >= self.ackQuantum
+                || transfer.lastAckAt.duration(to: now) >= self.ackLatencyBound
+            {
+                self.sendAck(transfer)
+            }
             // A chunk arrived — reset the stall clock. [H2]
-            self.armStallTimer(transfer)
+            transfer.lastChunkAt = now
             // Tell a parked lazy pull the transfer is alive so it re-arms its
             // inactivity backstop instead of timing out a slow-but-progressing
             // large transfer, and carry the cumulative byte counts for progress
@@ -263,6 +295,11 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
             guard digest == end.sha256 else {
                 self.fail(transfer, code: "digest.mismatch", message: "SHA-256 mismatch at End")
                 return
+            }
+            // Final ack: a tail below one ack quantum was never acked mid-stream
+            // (#377) — close the sender's cumulative credit ledger at End.
+            if transfer.receivedBytes > transfer.ackedBytes {
+                self.sendAck(transfer)
             }
 
             let representation: ClipboardContent.Representation
@@ -534,25 +571,42 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
         }
     }
 
-    /// (Re)arms the inbound stall timer: fails the transfer if no chunk arrives
-    /// within `stallTimeout`.
+    /// Starts the per-transfer stall watchdog: one repeating timer that fails
+    /// the transfer once no chunk has arrived within `stallTimeout`.
     ///
-    /// Called only from the transfer's serial queue, so cancelling and
-    /// rescheduling here never races chunk processing; the work item's
-    /// `!finished` guard makes a fire that loses the race to completion a no-op.
-    /// [H2]
-    private func armStallTimer(_ transfer: InboundTransfer) {
-        transfer.stallTimer?.cancel()
-        let timer = DispatchWorkItem { [weak self, weak transfer] in
+    /// The timer fires on the transfer's serial queue and compares against
+    /// `lastChunkAt`, which each durably-written chunk refreshes with a plain
+    /// store — replacing a per-chunk `DispatchWorkItem` cancel+alloc+`asyncAfter`
+    /// re-arm, pure per-chunk enqueue overhead on the hot path (#377). The
+    /// handler's `!finished` guard makes a tick that loses the race to
+    /// completion a no-op. [H2]
+    private func startStallTimer(_ transfer: InboundTransfer) {
+        let timer = DispatchSource.makeTimerSource(queue: transfer.queue)
+        timer.setEventHandler { [weak self, weak transfer] in
             guard let self, let transfer, !transfer.finished else { return }
+            guard transfer.lastChunkAt.duration(to: .now) >= self.stallTimeout else { return }
             self.fail(transfer, code: "stall.timeout", message: "Sender stopped sending")
         }
+        // RATIONALE: checking at `stallTimeout` cadence with a half-interval
+        // leeway detects a stall within ~1–2.5× `stallTimeout`, not exactly at
+        // it — deliberate: the timeout is a dead-sender backstop (well under
+        // the 120 s lazy-pull backstop even at 2.5×), not a precise deadline,
+        // and the coarse cadence + generous leeway let the OS coalesce the
+        // per-transfer wakeup instead of firing it on-schedule for the whole
+        // life of a long healthy transfer.
+        let interval = stallTimeout.timeInterval
+        timer.schedule(
+            deadline: .now() + interval, repeating: interval,
+            leeway: .milliseconds(Int(interval * 500)))
         transfer.stallTimer = timer
-        transfer.queue.asyncAfter(deadline: .now() + stallTimeout.timeInterval, execute: timer)
+        timer.resume()
     }
 
-    /// Sends a cumulative ack for the transfer's current progress.
+    /// Sends a cumulative ack for the transfer's current progress and advances
+    /// the coalescing watermarks (`ackedBytes`/`lastAckAt`) to match.
     private func sendAck(_ transfer: InboundTransfer) {
+        transfer.ackedBytes = transfer.receivedBytes
+        transfer.lastAckAt = .now
         send(
             .with {
                 $0.protocolVersion = 1
@@ -608,6 +662,20 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
     private func send(_ frame: Frame) {
         try? channel.writeFramed(VsockChannel.serializeFramed(frame))
     }
+
+    #if DEBUG
+    /// The stall watchdog's activity anchor for an in-flight transfer: when its
+    /// last chunk was durably written (or, before any chunk, when the transfer
+    /// was accepted). `nil` for an unknown/finished transfer.
+    ///
+    /// Read on the transfer's queue, the anchor's isolation domain — the
+    /// deterministic seam for asserting a chunk advances the anchor without
+    /// racing the repeating watchdog timer.
+    func lastChunkAtForTesting(_ transferID: UInt64) -> ContinuousClock.Instant? {
+        guard let transfer = transfer(transferID) else { return nil }
+        return transfer.queue.sync { transfer.lastChunkAt }
+    }
+    #endif
 }
 
 /// Timing telemetry for one successfully completed inbound transfer,
@@ -722,16 +790,31 @@ private final class InboundTransfer: @unchecked Sendable {
     var firstChunkAt: ContinuousClock.Instant?
 
     var receivedBytes = 0
+    /// Bytes covered by the last ack sent — the ack-coalescing byte watermark.
+    ///
+    /// Touched only on `queue`.
+    var ackedBytes = 0
+    /// When the last ack was sent — the ack-coalescing time watermark, checked
+    /// against `ackLatencyBound` on each durably-written chunk.
+    ///
+    /// Touched only on `queue`.
+    var lastAckAt = ContinuousClock.now
     var bytesSinceCheck = 0
     var hasher = SHA256()
     var buffer: Data?
     var sink: ClipboardFileStaging.Sink?
     var finished = false
-    /// Pending inactivity timeout; rescheduled on each chunk, cancelled on
-    /// finish.
+    /// When the last chunk was durably written (seeded at acceptance, before
+    /// any chunk) — the stall watchdog's activity anchor.
     ///
     /// Touched only on `queue`.
-    var stallTimer: DispatchWorkItem?
+    var lastChunkAt = ContinuousClock.now
+    /// Per-transfer stall watchdog: a repeating timer on `queue` that checks
+    /// `lastChunkAt` — started once per transfer, cancelled on finish, never
+    /// re-armed per chunk.
+    ///
+    /// Touched only on `queue`.
+    var stallTimer: DispatchSourceTimer?
 
     init(
         transferID: UInt64, generation: UInt64, uti: String, filename: String, isInline: Bool,

@@ -48,6 +48,39 @@ public enum ClipboardStreamTuning {
     /// Hard cap on the credit window: 2 MiB.
     public static let maxWindowBytes = 2 * 1024 * 1024
 
+    /// Cumulative-ack coalescing quantum for a credit window: window/4 (at
+    /// least 1 byte) — 256 KiB at the production 1 MiB window.
+    ///
+    /// The receiver acks once at least this many durably-written bytes have
+    /// accumulated since its last ack, instead of after every 64 KiB chunk —
+    /// ~75% fewer reverse-path frames and syscalls per transfer (#377). The
+    /// coarser cadence is safe by construction: acks are cumulative (credit
+    /// only moves forward, so the schedule is self-healing); the quantum stays
+    /// well under the window, so a draining receiver always frees at least 3/4
+    /// of the window — and a single chunk at/above the quantum acks
+    /// immediately, so no chunk/window shape can starve the sender; the
+    /// go-signal, duplicate re-ack, and final ack at End remain unconditional;
+    /// and `ackLatencyBound` keeps the *wall-clock* gap between acks bounded
+    /// when durable writes run slow.
+    public static func ackQuantum(forWindowBytes windowBytes: Int) -> Int {
+        max(1, windowBytes / 4)
+    }
+
+    /// Upper bound on how long the last ack may age before the next
+    /// durably-written chunk forces a fresh ack regardless of the byte
+    /// quantum: 1 s.
+    ///
+    /// The byte quantum alone stretches the gap between credit-opening acks to
+    /// four chunk-write times, and the sender's no-ack deadline (10 s) does not
+    /// extend on an ack that opens too little credit — so under degraded I/O
+    /// (contention, swap pressure) sustained per-chunk writes in the 2.5–10 s
+    /// range would abort a live transfer the old per-chunk cadence tolerated.
+    /// This bound restores per-chunk acking exactly when writes are slow
+    /// (below ~quantum/bound throughput) while leaving the hot path's
+    /// coalescing untouched; the check reuses the per-chunk clock read the
+    /// stall watchdog's anchor already pays for.
+    public static let ackLatencyBound: Duration = .seconds(1)
+
     /// Upper bound on how much an inline reassembly buffer pre-reserves: 64 MiB.
     ///
     /// Reserving toward the sender's declared `total_bytes` (rather than the 2 MiB
