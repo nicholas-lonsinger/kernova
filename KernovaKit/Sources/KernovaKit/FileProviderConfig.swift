@@ -14,7 +14,9 @@ import os
 // Host↔extension IPC uses the canonical `NSFileProviderServicing` anonymous-XPC
 // pattern (#460): the extension vends a listener endpoint under a per-direction
 // `NSFileProviderServiceName`, the owner connects via
-// `FileManager.getFileProviderServicesForItem(at:)` and exports the relay so the
+// `NSFileProviderManager.getService(named:for:)` (identifier-based — the
+// path-based `FileManager` form needs filesystem access to the domain root,
+// which the sandboxed host app doesn't have, #539) and exports the relay so the
 // extension can call back at `fetchContents`, and a per-direction Darwin
 // notification is the reconnect doorbell. There is no Mach service.
 //

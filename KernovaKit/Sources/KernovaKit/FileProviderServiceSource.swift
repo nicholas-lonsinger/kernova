@@ -11,7 +11,7 @@ import os
 // relay object; this source is the XPC **server** and calls **back** to the
 // owner via the accepted connection's `remoteObjectProxy`. There is no Mach
 // service — the system hands the owner this endpoint when it calls
-// `getFileProviderServicesForItem`.
+// `NSFileProviderManager.getService(named:for:)`.
 //
 // The extension can't reach its owner on its own, so on `fetchContents` with no
 // live owner connection it rings the Darwin doorbell and waits for the owner to

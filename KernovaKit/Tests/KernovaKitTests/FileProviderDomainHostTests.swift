@@ -158,7 +158,7 @@ struct FileProviderDomainHostEnablementTests {
     {
         func startServing(_ service: FileProviderRelay) {}
         func stopServing() {}
-        func ensureConnected(rootURL: URL) {}
+        func ensureConnected() {}
     }
 
     private struct FakeFetchError: Error {}

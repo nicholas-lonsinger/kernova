@@ -406,6 +406,15 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
                 self.logger.notice(
                     "File Provider domain registered: \(self.domain.identifier.rawValue, privacy: .public)"
                 )
+                // Warm the servicing connection at registration (not only at
+                // publish) — load-bearing for the reconnect doorbell: after an
+                // owner relaunch, a paste of a still-on-disk placeholder (the
+                // domain stays registered across restarts) rings the doorbell
+                // with no offer having been published yet, and the connector only
+                // acts on the doorbell once a connect has been requested (#460).
+                // Idempotent with the publish-time `ensureConnected`; the
+                // connector runs the connect off its own queue.
+                self.relayTransport.ensureConnected()
                 self.resolveRootURL()
                 self.refreshAvailability()
             }
@@ -439,17 +448,14 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     }
 
     /// Caches the user-visible root URL so an offer can construct `root/filename`
-    /// for the pasteboard without a per-item round-trip, and warms the servicing
-    /// connection now that the root URL is known.
+    /// for the pasteboard without a per-item round-trip.
     ///
-    /// Connecting at registration (not only at publish) is load-bearing for the
-    /// reconnect doorbell: the connector can only act on the doorbell once it has
-    /// the root URL, and after an owner relaunch a paste of a still-on-disk
-    /// placeholder (the domain stays registered across restarts) rings the doorbell
-    /// with no offer having been published yet — without this the connector would
-    /// have no root URL to reconnect through and the read would hang to the
-    /// extension's timeout (#460). Idempotent with the publish-time
-    /// `ensureConnected`; the connector runs the connect off its own queue.
+    /// The URL `getUserVisibleURL` returns is security-scoped (per its header
+    /// doc), which is what lets the sandboxed host app touch the domain root
+    /// under `~/Library/CloudStorage` at all — `forceRootEnumeration` opens that
+    /// scope around its readdir (#539). Cached as-is: the scope travels with the
+    /// URL value, and no other access goes through it in-process (the pasteboard
+    /// URL derived from it is resolved by the *pasting* app, not us).
     private func resolveRootURL() {
         guard let manager = NSFileProviderManager(for: domain) else { return }
         manager.getUserVisibleURL(for: .rootContainer) { [weak self] url, error in
@@ -458,9 +464,6 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
                 if let url {
                     self.rootURL = url
                     self.logger.notice("Clipboard domain visible at: \(url.path, privacy: .public)")
-                    if self.enabled {
-                        self.relayTransport.ensureConnected(rootURL: url)
-                    }
                 } else if let error {
                     self.logger.error(
                         "getUserVisibleURL failed: \(error.localizedDescription, privacy: .public)")
@@ -615,7 +618,7 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
         // connection carries NO bytes — the vsock pull stays fully lazy, running only
         // when `fetchContents` is actually invoked. The connector runs the connect on
         // its own queue, so this call doesn't block main. #460.
-        relayTransport.ensureConnected(rootURL: rootURL)
+        relayTransport.ensureConnected()
 
         let item = FileProviderManifest.Item(
             generation: generation, repIndex: repIndex, filename: filename,
@@ -651,6 +654,15 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     /// longer than the listing, so the placeholder exists by paste time.
     private func forceRootEnumeration(root: URL) {
         DispatchQueue.global(qos: .userInitiated).async { [logger] in
+            // `root` is the security-scoped URL from `getUserVisibleURL`; the
+            // scope is what grants the sandboxed host app access to the domain
+            // root under `~/Library/CloudStorage`, which no entitlement covers
+            // (#539). In the unsandboxed guest agent `start` returns `false`
+            // and the readdir proceeds on ordinary access.
+            let scoped = root.startAccessingSecurityScopedResource()
+            defer {
+                if scoped { root.stopAccessingSecurityScopedResource() }
+            }
             do {
                 // `.skipsHiddenFiles` so the diagnostic count reflects user-visible
                 // entries, not bookkeeping dirents (`.Trash`, `.DS_Store`).
