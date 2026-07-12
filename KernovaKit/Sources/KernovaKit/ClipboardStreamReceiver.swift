@@ -44,6 +44,14 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
     /// Called off the owning actor.
     private let onAbort: @Sendable (ClipboardStreamAbortInfo) -> Void
 
+    /// Reports timing telemetry for each successfully completed transfer, so
+    /// the owning service can surface a per-transfer throughput log line
+    /// (the real-vsock baseline #377 calls for).
+    ///
+    /// Called off the owning actor, on the transfer's queue, just before
+    /// delivery. `nil` disables the (already negligible) capture.
+    private let onTransferTimed: (@Sendable (ClipboardTransferMetrics) -> Void)?
+
     private let lock = NSLock()
     private var transfers: [UInt64: InboundTransfer] = [:]
 
@@ -66,6 +74,9 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
     ///   - maxResidentInlineBytes: inline-rep RAM-residency spill threshold;
     ///     larger inline reps stream to disk and are mmapped back. Tests inject a
     ///     tiny value to exercise the spill path.
+    ///   - onTransferTimed: receives timing telemetry for each successful
+    ///     transfer (fired on the transfer's queue, just before `onComplete`);
+    ///     `nil` skips the reporting.
     ///   - onComplete: receives `(transferID, representation)` for each
     ///     successful transfer.
     ///   - onAbort: receives an `AbortInfo` for each failed transfer.
@@ -75,6 +86,7 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
         windowBytes: Int = ClipboardStreamTuning.defaultWindowBytes,
         stallTimeout: Duration = ClipboardStreamTuning.inboundStallTimeout,
         maxResidentInlineBytes: Int = ClipboardStreamTuning.maxResidentInlineBytes,
+        onTransferTimed: (@Sendable (ClipboardTransferMetrics) -> Void)? = nil,
         onComplete: @escaping @Sendable (UInt64, ClipboardContent.Representation) -> Void,
         onAbort: @escaping @Sendable (ClipboardStreamAbortInfo) -> Void
     ) {
@@ -83,6 +95,7 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
         self.windowBytes = min(max(windowBytes, 1), ClipboardStreamTuning.maxWindowBytes)
         self.stallTimeout = stallTimeout
         self.maxResidentInlineBytes = max(maxResidentInlineBytes, 0)
+        self.onTransferTimed = onTransferTimed
         self.onComplete = onComplete
         self.onAbort = onAbort
     }
@@ -188,6 +201,8 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
                     message: "Chunk exceeds declared total of \(transfer.totalBytes)")
                 return
             }
+
+            if transfer.firstChunkAt == nil { transfer.firstChunkAt = ContinuousClock.now }
 
             do {
                 if transfer.streamsToDisk {
@@ -312,6 +327,19 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
             }
             transfer.finished = true
             self.remove(transfer.transferID)
+            if let onTransferTimed = self.onTransferTimed {
+                let completedAt = ContinuousClock.now
+                onTransferTimed(
+                    ClipboardTransferMetrics(
+                        transferID: transfer.transferID,
+                        uti: transfer.uti,
+                        byteCount: transfer.receivedBytes,
+                        streamedToDisk: transfer.streamsToDisk,
+                        duration: transfer.beganAt.duration(to: completedAt),
+                        streamingDuration: transfer.firstChunkAt.map {
+                            $0.duration(to: completedAt)
+                        }))
+            }
             self.deliverComplete(transfer.transferID, representation)
         }
     }
@@ -582,6 +610,50 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
     }
 }
 
+/// Timing telemetry for one successfully completed inbound transfer,
+/// surfaced by the owning service as a `.notice` console log line so a real
+/// host↔guest vsock throughput baseline can be read out of Console.app /
+/// `log stream` without a special build (#377 — the tuning constants were
+/// set from first principles; no measured baseline existed).
+///
+/// Successful transfers only — a failed transfer reports through
+/// `ClipboardStreamAbortInfo` instead.
+public struct ClipboardTransferMetrics: Sendable, Equatable {
+    /// Identifies the transfer these metrics describe.
+    public let transferID: UInt64
+    /// UTI of the transferred representation.
+    public let uti: String
+    /// Total payload bytes received and digest-verified.
+    public let byteCount: Int
+    /// Whether the payload streamed to a staging file (vs. reassembling in RAM).
+    public let streamedToDisk: Bool
+    /// Begin processed → digest verified and committed.
+    public let duration: Duration
+    /// First chunk arrival → digest verified and committed — excludes the
+    /// go-signal round-trip and the sender's source-open ramp from the
+    /// steady-state streaming figure. `nil` for a zero-byte transfer, which
+    /// never carries a chunk.
+    public let streamingDuration: Duration?
+
+    /// One-line human-readable rendering for the throughput log line, e.g.
+    /// `"10485760 bytes (public.data) in 0.052 s — 192.3 MiB/s (disk, streamed 0.049 s)"`.
+    ///
+    /// The headline rate uses the total duration (the honest end-to-end
+    /// figure); the trailing streaming time lets a reader separate per-transfer
+    /// setup cost from steady-state throughput when comparing configurations.
+    public var logSummary: String {
+        let seconds = duration.timeInterval
+        let rate = seconds > 0 ? Double(byteCount) / 1_048_576 / seconds : 0
+        var detail = streamedToDisk ? "disk" : "memory"
+        if let streamingDuration {
+            detail += String(format: ", streamed %.3f s", streamingDuration.timeInterval)
+        }
+        return String(
+            format: "%ld bytes (%@) in %.3f s — %.1f MiB/s (%@)",
+            byteCount, uti, seconds, rate, detail)
+    }
+}
+
 /// Why an inbound transfer failed, surfaced to the owning service.
 public struct ClipboardStreamAbortInfo: Sendable, Equatable {
     /// Identifies the transfer that aborted.
@@ -639,6 +711,15 @@ private final class InboundTransfer: @unchecked Sendable {
     var streamsToDisk: Bool {
         !isInline || totalBytes > maxResidentInlineBytes
     }
+
+    /// When `handleBegin` created this transfer; anchors the total duration
+    /// reported in `ClipboardTransferMetrics`.
+    let beganAt = ContinuousClock.now
+    /// When the first chunk arrived; separates the go-signal/source-open ramp
+    /// from steady-state streaming in the reported metrics.
+    ///
+    /// Touched only on `queue`.
+    var firstChunkAt: ContinuousClock.Instant?
 
     var receivedBytes = 0
     var bytesSinceCheck = 0

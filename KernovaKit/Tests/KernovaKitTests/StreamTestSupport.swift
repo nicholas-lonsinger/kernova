@@ -99,6 +99,7 @@ final class StreamCollector: @unchecked Sendable {
     private let lock = NSLock()
     private var completed: [UInt64: ClipboardContent.Representation] = [:]
     private var aborts: [ClipboardStreamAbortInfo] = []
+    private var timings: [ClipboardTransferMetrics] = []
     let gate = AsyncGate()
 
     func complete(_ id: UInt64, _ representation: ClipboardContent.Representation) {
@@ -109,6 +110,10 @@ final class StreamCollector: @unchecked Sendable {
         lock.withLock { aborts.append(info) }
         gate.notify()
     }
+    func timed(_ metrics: ClipboardTransferMetrics) {
+        lock.withLock { timings.append(metrics) }
+        gate.notify()
+    }
 
     var completedCount: Int { lock.withLock { completed.count } }
     func representation(_ id: UInt64) -> ClipboardContent.Representation? {
@@ -116,6 +121,7 @@ final class StreamCollector: @unchecked Sendable {
     }
     var abortInfos: [ClipboardStreamAbortInfo] { lock.withLock { aborts } }
     var abortCount: Int { lock.withLock { aborts.count } }
+    var timedMetrics: [ClipboardTransferMetrics] { lock.withLock { timings } }
 }
 
 // MARK: - Harness
@@ -158,6 +164,7 @@ final class StreamHarness: @unchecked Sendable {
         receiver = ClipboardStreamReceiver(
             channel: b, staging: staging, windowBytes: windowBytes, stallTimeout: stallTimeout,
             maxResidentInlineBytes: maxResidentInlineBytes,
+            onTransferTimed: { metrics in collector.timed(metrics) },
             onComplete: { id, rep in collector.complete(id, rep) },
             onAbort: { info in collector.abort(info) })
 
