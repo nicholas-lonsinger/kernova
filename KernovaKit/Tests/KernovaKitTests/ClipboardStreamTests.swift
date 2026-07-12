@@ -18,6 +18,18 @@ struct ClipboardStreamTests {
             freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })  // 100 GiB
     }
 
+    /// Harness sized for the ack-coalescing tests.
+    ///
+    /// 1 KiB chunks under a 16 KiB window → a 4 KiB ack quantum (4 chunks), so
+    /// a few KiB exercises several quantum boundaries. The ack latency bound is
+    /// pushed out of reach so the expected ack schedules stay pure byte-quantum
+    /// functions — deterministic even on a stalled CI scheduler.
+    private func quantumHarness() throws -> StreamHarness {
+        try StreamHarness(
+            chunkSize: 1024, windowBytes: 16384, ackLatencyBound: .seconds(600),
+            freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
+    }
+
     private func tempFile(bytes: Data) throws -> URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(
             UUID().uuidString, isDirectory: false)
@@ -243,6 +255,131 @@ struct ClipboardStreamTests {
 
         try await harness.collector.gate.wait { harness.collector.representation(1) != nil }
         #expect(harness.collector.representation(1)?.inMemoryData == bytes)
+    }
+
+    // MARK: - Ack coalescing (#377)
+
+    @Test("acks are coalesced to the window/4 quantum, with a final ack at End")
+    func acksCoalesceToQuantum() async throws {
+        // 16 full chunks + a 500-byte tail must produce exactly the go-signal,
+        // one ack per accumulated quantum, and the final tail ack at End — not
+        // one ack per chunk. The schedule is deterministic: chunks land in
+        // order on the transfer's serial queue, and the ack decision depends
+        // only on the received/acked byte counts.
+        let harness = try quantumHarness()
+        defer { harness.tearDown() }
+
+        let total = 16 * 1024 + 500
+        let bytes = Data((0..<total).map { UInt8((($0 &* 31) &+ 7) & 0xFF) })
+        harness.sender.startTransfer(
+            transferID: 1, generation: 1,
+            representation: .init(uti: "public.utf8-plain-text", data: bytes),
+            maxAcceptByteCount: .max, isInline: true, isCurrent: { _ in true })
+
+        try await harness.collector.gate.wait { harness.collector.representation(1) != nil }
+        // The final ack travels the socket while completion is delivered
+        // directly — wait for the ack too before asserting the schedule.
+        try await harness.collector.gate.wait {
+            harness.collector.ackedByteCounts(1).last == UInt64(total)
+        }
+        #expect(
+            harness.collector.ackedByteCounts(1) == [0, 4096, 8192, 12288, 16384, UInt64(total)])
+        #expect(harness.collector.representation(1)?.inMemoryData == bytes)
+        #expect(harness.collector.abortCount == 0)
+    }
+
+    @Test("a transfer below one ack quantum acks only the go-signal and the tail at End")
+    func belowQuantumAcksOnlyAtEnd() async throws {
+        // Two 1 KiB-and-under chunks never accumulate the 4 KiB quantum, so no
+        // mid-stream ack fires at all — only the go-signal and the final ack at
+        // End, which must cover the whole payload (the sender's cumulative
+        // credit ledger ends complete).
+        let harness = try quantumHarness()
+        defer { harness.tearDown() }
+
+        let total = 1024 + 500
+        let bytes = Data((0..<total).map { UInt8((($0 &* 17) &+ 3) & 0xFF) })
+        harness.sender.startTransfer(
+            transferID: 1, generation: 1,
+            representation: .init(uti: "public.utf8-plain-text", data: bytes),
+            maxAcceptByteCount: .max, isInline: true, isCurrent: { _ in true })
+
+        try await harness.collector.gate.wait { harness.collector.representation(1) != nil }
+        try await harness.collector.gate.wait {
+            harness.collector.ackedByteCounts(1).last == UInt64(total)
+        }
+        #expect(harness.collector.ackedByteCounts(1) == [0, UInt64(total)])
+        #expect(harness.collector.representation(1)?.inMemoryData == bytes)
+    }
+
+    @Test("a stale last-ack forces an ack on the next chunk even below the byte quantum")
+    func staleLastAckForcesAckBelowQuantum() async throws {
+        // ackLatencyBound: .zero makes every landing chunk see a stale last-ack
+        // (elapsed ≥ 0 always holds), deterministically forcing the
+        // latency-bound path that the production 1 s value only takes under
+        // degraded I/O — the guard that slow durable writes cannot stretch the
+        // gap between credit-opening acks past the sender's fixed no-ack
+        // deadline (#377).
+        let harness = try StreamHarness(
+            chunkSize: 1024, windowBytes: 16384, ackLatencyBound: .zero,
+            freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
+        defer { harness.tearDown() }
+
+        let total = 3 * 1024
+        let bytes = Data((0..<total).map { UInt8((($0 &* 11) &+ 5) & 0xFF) })
+        harness.sender.startTransfer(
+            transferID: 1, generation: 1,
+            representation: .init(uti: "public.utf8-plain-text", data: bytes),
+            maxAcceptByteCount: .max, isInline: true, isCurrent: { _ in true })
+
+        try await harness.collector.gate.wait { harness.collector.representation(1) != nil }
+        try await harness.collector.gate.wait {
+            harness.collector.ackedByteCounts(1).last == UInt64(total)
+        }
+        // Every chunk sits below the 4 KiB quantum, yet each one acks.
+        #expect(harness.collector.ackedByteCounts(1) == [0, 1024, 2048, UInt64(total)])
+        #expect(harness.collector.representation(1)?.inMemoryData == bytes)
+    }
+
+    @Test("a duplicate chunk below the ack quantum still re-acks immediately")
+    func duplicateChunkReAcksBelowQuantum() async throws {
+        // A duplicate means the peer may be out of sync — the re-ack stays
+        // unconditional (never coalesced), carrying the durably-written count.
+        let harness = try quantumHarness()
+        defer { harness.tearDown() }
+
+        let bytes = Data(repeating: 0x5A, count: 1024)
+        harness.receiver.handleBegin(
+            .with {
+                $0.generation = 1; $0.transferID = 21; $0.uti = "public.data"
+                $0.totalBytes = UInt64(bytes.count); $0.isInline = true
+            })
+        try await harness.collector.gate.wait { harness.collector.ackedByteCounts(21) == [0] }
+
+        harness.receiver.handleChunk(
+            .with {
+                $0.transferID = 21; $0.offset = 0; $0.data = bytes
+            })
+        // 1 KiB < the 4 KiB quantum: the write itself acks nothing; only the
+        // duplicate triggers the re-sync ack.
+        harness.receiver.handleChunk(
+            .with {
+                $0.transferID = 21; $0.offset = 0; $0.data = bytes
+            })
+        try await harness.collector.gate.wait {
+            harness.collector.ackedByteCounts(21).count == 2
+        }
+        #expect(harness.collector.ackedByteCounts(21) == [0, 1024])
+
+        // End finds the tail already acked by the duplicate's re-ack — the
+        // transfer completes without a redundant final ack.
+        harness.receiver.handleEnd(
+            .with {
+                $0.transferID = 21; $0.totalBytes = UInt64(bytes.count)
+                $0.sha256 = Data(SHA256.hash(data: bytes))
+            })
+        try await harness.collector.gate.wait { harness.collector.representation(21) != nil }
+        #expect(harness.collector.ackedByteCounts(21) == [0, 1024])
     }
 
     // MARK: - Receiver robustness (driven directly)
@@ -491,6 +628,78 @@ struct ClipboardStreamTests {
             !materializedFiles(under: harness.stagingTempRoot).contains {
                 $0.lastPathComponent == "stalled.bin"
             })
+    }
+
+    @Test("a sender that goes silent after streaming chunks aborts with stall.timeout")
+    func midStreamStallTimesOut() async throws {
+        // The watchdog is one repeating timer anchored on the last chunk's
+        // arrival (#377), not a per-chunk re-armed one-shot — prove it keeps
+        // watching *after* activity, not just after Begin.
+        let harness = try StreamHarness(
+            chunkSize: Self.chunk, windowBytes: Self.window,
+            stallTimeout: .milliseconds(150),
+            freeSpaceProvider: { _ in 100 * 1024 * 1024 * 1024 })
+        defer { harness.tearDown() }
+
+        harness.receiver.handleBegin(
+            .with {
+                $0.generation = 1; $0.transferID = 8; $0.uti = "public.data"
+                $0.totalBytes = 1_000_000; $0.isInline = false; $0.filename = "mid-stall.bin"
+            })
+        harness.receiver.handleChunk(
+            .with {
+                $0.transferID = 8; $0.offset = 0
+                $0.data = Data(repeating: 0x7C, count: Self.chunk)
+            })
+        // One chunk landed, then silence — the watchdog must still fire and
+        // clean up the partial.
+        try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
+        #expect(harness.collector.abortInfos.contains { $0.code == "stall.timeout" })
+        #expect(harness.collector.representation(8) == nil)
+        #expect(
+            !materializedFiles(under: harness.stagingTempRoot).contains {
+                $0.lastPathComponent == "mid-stall.bin"
+            })
+    }
+
+    @Test("each durably-written chunk advances the stall watchdog's activity anchor")
+    func chunkAdvancesStallAnchor() async throws {
+        // Deterministic seam check (no timing): the watchdog compares against
+        // `lastChunkAt`, so each written chunk must move the anchor forward —
+        // this is what replaced the per-chunk timer re-arm (#377). The roomy
+        // harness's quantum-sized chunks (4 KiB chunk, 16 KiB window → 4 KiB
+        // quantum) make every write emit an ack to gate on, so each anchor read
+        // is ordered after its chunk's queue block.
+        let harness = try roomyHarness()
+        defer { harness.tearDown() }
+
+        harness.receiver.handleBegin(
+            .with {
+                $0.generation = 1; $0.transferID = 31; $0.uti = "public.data"
+                $0.totalBytes = 16384; $0.isInline = true
+            })
+        try await harness.collector.gate.wait { harness.collector.ackedByteCounts(31) == [0] }
+        let anchorAtBegin = try #require(harness.receiver.lastChunkAtForTesting(31))
+
+        harness.receiver.handleChunk(
+            .with {
+                $0.transferID = 31; $0.offset = 0; $0.data = Data(repeating: 1, count: 4096)
+            })
+        try await harness.collector.gate.wait {
+            harness.collector.ackedByteCounts(31).count == 2
+        }
+        let anchorAfterFirst = try #require(harness.receiver.lastChunkAtForTesting(31))
+        #expect(anchorAfterFirst > anchorAtBegin)
+
+        harness.receiver.handleChunk(
+            .with {
+                $0.transferID = 31; $0.offset = 4096; $0.data = Data(repeating: 2, count: 4096)
+            })
+        try await harness.collector.gate.wait {
+            harness.collector.ackedByteCounts(31).count == 3
+        }
+        let anchorAfterSecond = try #require(harness.receiver.lastChunkAtForTesting(31))
+        #expect(anchorAfterSecond > anchorAfterFirst)
     }
 
     @Test("an inline rep past the residency threshold spills to disk, then mmaps back identically")

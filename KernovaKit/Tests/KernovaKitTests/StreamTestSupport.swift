@@ -100,6 +100,7 @@ final class StreamCollector: @unchecked Sendable {
     private var completed: [UInt64: ClipboardContent.Representation] = [:]
     private var aborts: [ClipboardStreamAbortInfo] = []
     private var timings: [ClipboardTransferMetrics] = []
+    private var acks: [Kernova_V1_ClipboardStreamAck] = []
     let gate = AsyncGate()
 
     func complete(_ id: UInt64, _ representation: ClipboardContent.Representation) {
@@ -114,6 +115,10 @@ final class StreamCollector: @unchecked Sendable {
         lock.withLock { timings.append(metrics) }
         gate.notify()
     }
+    func ack(_ ack: Kernova_V1_ClipboardStreamAck) {
+        lock.withLock { acks.append(ack) }
+        gate.notify()
+    }
 
     var completedCount: Int { lock.withLock { completed.count } }
     func representation(_ id: UInt64) -> ClipboardContent.Representation? {
@@ -122,6 +127,14 @@ final class StreamCollector: @unchecked Sendable {
     var abortInfos: [ClipboardStreamAbortInfo] { lock.withLock { aborts } }
     var abortCount: Int { lock.withLock { aborts.count } }
     var timedMetrics: [ClipboardTransferMetrics] { lock.withLock { timings } }
+    /// Every `ClipboardStreamAck` the receiver emitted (in wire order), recorded
+    /// by the harness's sender-side routing task — lets ack-coalescing tests
+    /// assert the exact `bytes_consumed` schedule.
+    var ackFrames: [Kernova_V1_ClipboardStreamAck] { lock.withLock { acks } }
+    /// The `bytes_consumed` sequence of every recorded ack for one transfer.
+    func ackedByteCounts(_ id: UInt64) -> [UInt64] {
+        lock.withLock { acks.filter { $0.transferID == id }.map(\.bytesConsumed) }
+    }
 }
 
 // MARK: - Harness
@@ -146,6 +159,7 @@ final class StreamHarness: @unchecked Sendable {
         chunkSize: Int,
         windowBytes: Int,
         noAckTimeout: Duration = .seconds(10),
+        ackLatencyBound: Duration = ClipboardStreamTuning.ackLatencyBound,
         stallTimeout: Duration = ClipboardStreamTuning.inboundStallTimeout,
         maxResidentInlineBytes: Int = ClipboardStreamTuning.maxResidentInlineBytes,
         suppressAcks: Bool = false,
@@ -162,7 +176,8 @@ final class StreamHarness: @unchecked Sendable {
             channel: a, chunkSize: chunkSize, windowBytes: windowBytes, noAckTimeout: noAckTimeout)
         let collector = self.collector
         receiver = ClipboardStreamReceiver(
-            channel: b, staging: staging, windowBytes: windowBytes, stallTimeout: stallTimeout,
+            channel: b, staging: staging, windowBytes: windowBytes,
+            ackLatencyBound: ackLatencyBound, stallTimeout: stallTimeout,
             maxResidentInlineBytes: maxResidentInlineBytes,
             onTransferTimed: { metrics in collector.timed(metrics) },
             onComplete: { id, rep in collector.complete(id, rep) },
@@ -192,6 +207,7 @@ final class StreamHarness: @unchecked Sendable {
                     for try await frame in a.incoming {
                         switch frame.payload {
                         case .clipboardStreamAck(let x):
+                            collector.ack(x)
                             if suppressAcks { break }  // model a peer that never acks
                             sender.handleAck(
                                 transferID: x.transferID, bytesConsumed: x.bytesConsumed,
