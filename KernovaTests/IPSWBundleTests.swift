@@ -124,13 +124,15 @@ struct IPSWBundleTests {
         try handle.close()
 
         let destination = temp.appendingPathComponent("R.ipsw")
-        try bundle.finalize(to: destination)
+        let fileSystem = MockFileSystem()
+        try bundle.finalize(to: destination, fileSystem: fileSystem)
 
         #expect(FileManager.default.fileExists(atPath: destination.path))
         let movedData = try Data(contentsOf: destination)
         #expect(movedData == payload)
-        // Bundle goes to Trash, so it should be gone from its original location.
-        #expect(!bundle.exists)
+        // The spent bundle is handed to the Trash seam (the mock records it
+        // rather than filling the real Trash on every test run).
+        #expect(fileSystem.trashedURLs == [bundle.url])
     }
 
     @Test("finalize replaces an existing file at the destination")
@@ -148,7 +150,7 @@ struct IPSWBundleTests {
         let destination = temp.appendingPathComponent("R.ipsw")
         try Data(repeating: 0x00, count: 100).write(to: destination)
 
-        try bundle.finalize(to: destination)
+        try bundle.finalize(to: destination, fileSystem: MockFileSystem())
 
         let movedData = try Data(contentsOf: destination)
         #expect(movedData == fresh)

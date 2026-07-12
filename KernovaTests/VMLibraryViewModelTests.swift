@@ -12,6 +12,12 @@ struct VMLibraryViewModelTests {
     /// Fresh per test (the struct is re-instantiated), so each test starts from
     /// an empty suite.
     private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.vmlibrary")
+    /// Fresh per test (the struct is re-instantiated).
+    ///
+    /// Records trash/remove requests so delete flows are asserted on the
+    /// recorded URLs instead of real fixture files — nothing ever lands in
+    /// the user's Trash.
+    private let fileSystem = MockFileSystem()
     private func makeViewModel(
         storageService: MockVMStorageService = MockVMStorageService(),
         diskImageService: MockDiskImageService = MockDiskImageService(),
@@ -28,6 +34,7 @@ struct VMLibraryViewModelTests {
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
             usbDeviceService: usbDeviceService,
+            fileSystem: fileSystem,
             preferences: preferences
         )
         vm.presenter = presenter
@@ -285,8 +292,6 @@ struct VMLibraryViewModelTests {
         let instance = makeInstance()
         let externalDisk = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(UUID().uuidString)-external.img")
-        try Data("disk".utf8).write(to: externalDisk)
-        defer { try? FileManager.default.removeItem(at: externalDisk) }
 
         let diskID = UUID()
         instance.configuration.storageDisks = [
@@ -303,7 +308,9 @@ struct VMLibraryViewModelTests {
 
         #expect(tasks.count == 1)
         #expect(viewModel.instances.isEmpty)
-        #expect(!FileManager.default.fileExists(atPath: externalDisk.path(percentEncoded: false)))
+        // Hard delete, not trash — mirrors the VM bundle's own disposition.
+        #expect(fileSystem.removedURLs == [externalDisk])
+        #expect(fileSystem.trashedURLs.isEmpty)
         #expect(!presenter.showError)
     }
 
@@ -312,8 +319,6 @@ struct VMLibraryViewModelTests {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let sharedDisk = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(UUID().uuidString)-shared.img")
-        try Data("shared".utf8).write(to: sharedDisk)
-        defer { try? FileManager.default.removeItem(at: sharedDisk) }
 
         let sharedID = UUID()
         let sharedPath = sharedDisk.path(percentEncoded: false)
@@ -339,7 +344,8 @@ struct VMLibraryViewModelTests {
 
         // The shared-file hard-block holds in the immediate path too.
         #expect(tasks.isEmpty)
-        #expect(FileManager.default.fileExists(atPath: sharedPath))
+        #expect(fileSystem.removedURLs.isEmpty)
+        #expect(fileSystem.trashedURLs.isEmpty)
         #expect(!presenter.showError)
     }
 
@@ -515,12 +521,6 @@ struct VMLibraryViewModelTests {
             .appendingPathComponent("\(UUID().uuidString)-external.img")
         let externalISO = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(UUID().uuidString)-installer.iso")
-        try Data("disk".utf8).write(to: externalDisk)
-        try Data("iso".utf8).write(to: externalISO)
-        defer {
-            try? FileManager.default.removeItem(at: externalDisk)
-            try? FileManager.default.removeItem(at: externalISO)
-        }
 
         instance.configuration.storageDisks = [
             StorageDisk(
@@ -538,8 +538,8 @@ struct VMLibraryViewModelTests {
 
         #expect(tasks.isEmpty)
         #expect(viewModel.instances.isEmpty)
-        #expect(FileManager.default.fileExists(atPath: externalDisk.path(percentEncoded: false)))
-        #expect(FileManager.default.fileExists(atPath: externalISO.path(percentEncoded: false)))
+        #expect(fileSystem.trashedURLs.isEmpty)
+        #expect(fileSystem.removedURLs.isEmpty)
         #expect(!presenter.showError)
     }
 
@@ -679,12 +679,6 @@ struct VMLibraryViewModelTests {
             .appendingPathComponent("\(UUID().uuidString)-external.img")
         let externalISO = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(UUID().uuidString)-installer.iso")
-        try Data("disk".utf8).write(to: externalDisk)
-        try Data("iso".utf8).write(to: externalISO)
-        defer {
-            try? FileManager.default.removeItem(at: externalDisk)
-            try? FileManager.default.removeItem(at: externalISO)
-        }
 
         let diskID = UUID()
         let isoID = UUID()
@@ -706,8 +700,7 @@ struct VMLibraryViewModelTests {
 
         #expect(tasks.count == 2)
         #expect(viewModel.instances.isEmpty)
-        #expect(!FileManager.default.fileExists(atPath: externalDisk.path(percentEncoded: false)))
-        #expect(!FileManager.default.fileExists(atPath: externalISO.path(percentEncoded: false)))
+        #expect(Set(fileSystem.trashedURLs) == [externalDisk, externalISO])
         #expect(!presenter.showError)
         #expect(presenter.showDeleteSheet == false)
     }
@@ -720,12 +713,6 @@ struct VMLibraryViewModelTests {
             .appendingPathComponent("\(UUID().uuidString)-trash.img")
         let keptDisk = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(UUID().uuidString)-keep.img")
-        try Data("trash".utf8).write(to: trashedDisk)
-        try Data("keep".utf8).write(to: keptDisk)
-        defer {
-            try? FileManager.default.removeItem(at: trashedDisk)
-            try? FileManager.default.removeItem(at: keptDisk)
-        }
 
         let trashedID = UUID()
         let keptID = UUID()
@@ -747,8 +734,7 @@ struct VMLibraryViewModelTests {
 
         // Only the selected disk is trashed; the unselected one stays put.
         #expect(tasks.count == 1)
-        #expect(!FileManager.default.fileExists(atPath: trashedDisk.path(percentEncoded: false)))
-        #expect(FileManager.default.fileExists(atPath: keptDisk.path(percentEncoded: false)))
+        #expect(fileSystem.trashedURLs == [trashedDisk])
         #expect(!presenter.showError)
     }
 
@@ -757,8 +743,6 @@ struct VMLibraryViewModelTests {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let sharedDisk = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(UUID().uuidString)-shared.img")
-        try Data("shared".utf8).write(to: sharedDisk)
-        defer { try? FileManager.default.removeItem(at: sharedDisk) }
 
         let sharedID = UUID()
         let sharedPath = sharedDisk.path(percentEncoded: false)
@@ -785,7 +769,7 @@ struct VMLibraryViewModelTests {
 
         // Hard-block: a shared file is never trashed, so the other VM keeps it.
         #expect(tasks.isEmpty)
-        #expect(FileManager.default.fileExists(atPath: sharedPath))
+        #expect(fileSystem.trashedURLs.isEmpty)
         #expect(!presenter.showError)
     }
 
@@ -842,6 +826,7 @@ struct VMLibraryViewModelTests {
             installService: MockMacOSInstallService(),
             ipswService: ipswService,
             usbDeviceService: MockUSBDeviceService(),
+            fileSystem: fileSystem,
             preferences: preferences
         )
         vm.presenter = presenter
@@ -919,6 +904,7 @@ struct VMLibraryViewModelTests {
     @Test("deleteConfirmed swallows missing-file errors for a selected external")
     func deleteConfirmedSwallowsMissingExternals() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
+        fileSystem.trashError = CocoaError(.fileNoSuchFile)
         let instance = makeInstance()
         let ghostID = UUID()
         let ghostPath = FileManager.default.temporaryDirectory
@@ -940,6 +926,7 @@ struct VMLibraryViewModelTests {
     @Test("deleteConfirmed permanently swallows missing-file errors for a selected external")
     func deleteConfirmedPermanentlySwallowsMissingExternals() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
+        fileSystem.removeError = CocoaError(.fileNoSuchFile)
         let instance = makeInstance()
         let ghostID = UUID()
         let ghostPath = FileManager.default.temporaryDirectory
@@ -3472,8 +3459,6 @@ struct VMLibraryViewModelTests {
         let instance = makeInstance()
         let destination = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(UUID().uuidString)-external.img")
-        try Data("payload".utf8).write(to: destination)
-        defer { try? FileManager.default.removeItem(at: destination) }
 
         let external = StorageDisk(
             path: destination.path(percentEncoded: false),
@@ -3485,8 +3470,7 @@ struct VMLibraryViewModelTests {
         await viewModel.removeStorageDisk(external, from: instance, trashFile: true)?.value
 
         #expect(instance.configuration.storageDisks == nil)
-        // trashItem moved the file out of its original location.
-        #expect(!FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)))
+        #expect(fileSystem.trashedURLs == [destination])
         #expect(!presenter.showError)
     }
 
@@ -3496,8 +3480,6 @@ struct VMLibraryViewModelTests {
         let instance = makeInstance()
         let destination = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(UUID().uuidString)-external.img")
-        try Data("payload".utf8).write(to: destination)
-        defer { try? FileManager.default.removeItem(at: destination) }
 
         let external = StorageDisk(
             path: destination.path(percentEncoded: false),
@@ -3509,7 +3491,7 @@ struct VMLibraryViewModelTests {
         viewModel.removeStorageDisk(external, from: instance, trashFile: false)
 
         #expect(instance.configuration.storageDisks == nil)
-        #expect(FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)))
+        #expect(fileSystem.trashedURLs.isEmpty)
         #expect(!presenter.showError)
     }
 
@@ -3520,6 +3502,7 @@ struct VMLibraryViewModelTests {
         // trashItem failing with `.fileNoSuchFile` should not raise an
         // error alert — there's nothing actionable for the user.
         let (viewModel, _, _, _, _) = makeViewModel()
+        fileSystem.trashError = CocoaError(.fileNoSuchFile)
         let instance = makeInstance()
         let ghostPath = FileManager.default.temporaryDirectory
             .appendingPathComponent("kernova-ghost-\(UUID().uuidString).img")
@@ -3543,8 +3526,6 @@ struct VMLibraryViewModelTests {
         let instance = makeInstance()
         let destination = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(UUID().uuidString)-media.iso")
-        try Data("payload".utf8).write(to: destination)
-        defer { try? FileManager.default.removeItem(at: destination) }
 
         let item = RemovableMediaItem(
             path: destination.path(percentEncoded: false), readOnly: true)
@@ -3554,7 +3535,7 @@ struct VMLibraryViewModelTests {
         viewModel.removeRemovableMedia(item, from: instance, trashFile: false)
 
         #expect(instance.configuration.removableMedia == nil)
-        #expect(FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)))
+        #expect(fileSystem.trashedURLs.isEmpty)
         #expect(!presenter.showError)
     }
 
@@ -3564,8 +3545,6 @@ struct VMLibraryViewModelTests {
         let instance = makeInstance()
         let destination = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(UUID().uuidString)-media.iso")
-        try Data("payload".utf8).write(to: destination)
-        defer { try? FileManager.default.removeItem(at: destination) }
 
         let item = RemovableMediaItem(
             path: destination.path(percentEncoded: false), readOnly: true)
@@ -3575,13 +3554,14 @@ struct VMLibraryViewModelTests {
         await viewModel.removeRemovableMedia(item, from: instance, trashFile: true)?.value
 
         #expect(instance.configuration.removableMedia == nil)
-        #expect(!FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)))
+        #expect(fileSystem.trashedURLs == [destination])
         #expect(!presenter.showError)
     }
 
     @Test("removeRemovableMedia with trashFile=true swallows missing-file errors")
     func removeRemovableMediaMissingFileSwallows() async {
         let (viewModel, _, _, _, _) = makeViewModel()
+        fileSystem.trashError = CocoaError(.fileNoSuchFile)
         let instance = makeInstance()
         let ghostPath = FileManager.default.temporaryDirectory
             .appendingPathComponent("kernova-ghost-\(UUID().uuidString).iso")
@@ -3596,13 +3576,33 @@ struct VMLibraryViewModelTests {
         #expect(!presenter.showError)
     }
 
+    @Test("removeStorageDisk with trashFile=true surfaces non-missing-file trash failures")
+    func removeStorageDiskTrashFailureSurfacesError() async {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        fileSystem.trashError = CocoaError(.fileWriteNoPermission)
+        let instance = makeInstance()
+        let external = StorageDisk(
+            path: FileManager.default.temporaryDirectory
+                .appendingPathComponent("\(UUID().uuidString)-external.img")
+                .path(percentEncoded: false),
+            readOnly: false, label: "External", isInternal: false, kind: .virtio
+        )
+        instance.configuration.storageDisks = [external]
+        viewModel.instances.append(instance)
+
+        await viewModel.removeStorageDisk(external, from: instance, trashFile: true)?.value
+
+        // The entry is still removed, and the failure is surfaced as an alert
+        // (unlike the swallowed missing-file case above).
+        #expect(instance.configuration.storageDisks == nil)
+        #expect(presenter.showError == true)
+    }
+
     @Test("removeStorageDisk with trashFile=true keeps a file shared with another VM")
     func removeStorageDiskKeepsSharedFile() throws {
         let (viewModel, _, _, _, _) = makeViewModel()
         let shared = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(UUID().uuidString)-shared.img")
-        try Data("payload".utf8).write(to: shared)
-        defer { try? FileManager.default.removeItem(at: shared) }
         let sharedPath = shared.path(percentEncoded: false)
 
         let target = makeInstance(name: "Target")
@@ -3616,11 +3616,11 @@ struct VMLibraryViewModelTests {
         viewModel.instances = [target, other]
 
         // Even asked to trash, a file another VM still references is kept: no
-        // trash task is spawned and the file remains on disk.
+        // trash task is spawned and no trash request reaches the file system.
         let task = viewModel.removeStorageDisk(disk, from: target, trashFile: true)
         #expect(task == nil)
         #expect(target.configuration.storageDisks == nil)
-        #expect(FileManager.default.fileExists(atPath: sharedPath))
+        #expect(fileSystem.trashedURLs.isEmpty)
         #expect(!presenter.showError)
     }
 
@@ -3629,8 +3629,6 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, _, _) = makeViewModel()
         let shared = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(UUID().uuidString)-shared.iso")
-        try Data("payload".utf8).write(to: shared)
-        defer { try? FileManager.default.removeItem(at: shared) }
         let sharedPath = shared.path(percentEncoded: false)
 
         let target = makeInstance(name: "Target")
@@ -3643,7 +3641,7 @@ struct VMLibraryViewModelTests {
         let task = viewModel.removeRemovableMedia(item, from: target, trashFile: true)
         #expect(task == nil)
         #expect(target.configuration.removableMedia == nil)
-        #expect(FileManager.default.fileExists(atPath: sharedPath))
+        #expect(fileSystem.trashedURLs.isEmpty)
         #expect(!presenter.showError)
     }
 
@@ -3831,15 +3829,13 @@ struct VMLibraryViewModelTests {
         // Stand in for the partial file `createDiskImage` would have left.
         let destination = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(UUID().uuidString).asif")
-        try Data("partial".utf8).write(to: destination)
-        defer { try? FileManager.default.removeItem(at: destination) }
 
         viewModel.createRemovableMedia(for: instance, sizeInGB: 16, destinationURL: destination)
 
         while !presenter.showError { await Task.yield() }
 
-        // `trashItem` moved the file out of its original location.
-        #expect(!FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)))
+        // The partial file was handed to the Trash seam.
+        #expect(fileSystem.trashedURLs == [destination])
         #expect(instance.configuration.removableMedia == nil)
     }
 
@@ -3856,15 +3852,13 @@ struct VMLibraryViewModelTests {
 
         let destination = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(UUID().uuidString).asif")
-        try Data("user file".utf8).write(to: destination)
-        defer { try? FileManager.default.removeItem(at: destination) }
 
         viewModel.createRemovableMedia(for: instance, sizeInGB: 16, destinationURL: destination)
 
         while !presenter.showError { await Task.yield() }
 
-        // Pre-existing file is intact.
-        #expect(FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)))
+        // Pre-existing file is intact — no trash request was made.
+        #expect(fileSystem.trashedURLs.isEmpty)
         #expect(instance.configuration.removableMedia == nil)
     }
 

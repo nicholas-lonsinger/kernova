@@ -25,11 +25,16 @@ struct IPSWServiceDownloadTests {
     /// Builds an `IPSWService` whose `URLSession` routes every request through `StubURLProtocol`.
     ///
     /// The configuration is `.ephemeral` to avoid any disk caching between tests.
-    private static func makeServiceWithStub() -> IPSWService {
+    /// The default throwaway `MockFileSystem` keeps successful-download
+    /// finalization from trashing a real `.kernovadownload` bundle on every
+    /// run; tests that assert on the disposal pass their own mock.
+    private static func makeServiceWithStub(
+        fileSystem: any FileSystemOperating = MockFileSystem()
+    ) -> IPSWService {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses =
             [StubURLProtocol.self] + (configuration.protocolClasses ?? [])
-        return IPSWService(sessionConfiguration: configuration)
+        return IPSWService(sessionConfiguration: configuration, fileSystem: fileSystem)
     }
 
     private static func mustParseURL(_ string: String) -> URL {
@@ -63,7 +68,8 @@ struct IPSWServiceDownloadTests {
         }
         defer { StubURLProtocol.handler = nil }
 
-        let service = Self.makeServiceWithStub()
+        let fileSystem = MockFileSystem()
+        let service = Self.makeServiceWithStub(fileSystem: fileSystem)
         try await service.downloadRestoreImage(
             from: Self.remoteURL,
             to: destination,
@@ -74,13 +80,9 @@ struct IPSWServiceDownloadTests {
         let written = try Data(contentsOf: destination)
         #expect(written == payload)
 
-        // Bundle has been finalized (moved to Trash); no longer next to destination.
+        // Bundle has been finalized: the spent bundle went to the Trash seam.
         let bundleURL = IPSWService.resumeBundleURL(for: destination)
-        var isDir: ObjCBool = false
-        let exists =
-            FileManager.default.fileExists(
-                atPath: bundleURL.path, isDirectory: &isDir) && isDir.boolValue
-        #expect(!exists)
+        #expect(fileSystem.trashedURLs == [bundleURL])
     }
 
     @Test("Resume sends Range/If-Range and appends 206 body to existing bytes")
