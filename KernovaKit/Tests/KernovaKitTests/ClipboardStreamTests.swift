@@ -106,6 +106,49 @@ struct ClipboardStreamTests {
         }
     }
 
+    @Test("completed transfers report timing metrics for the throughput log line")
+    func completedTransfersReportTimingMetrics() async throws {
+        let harness = try roomyHarness()
+        defer { harness.tearDown() }
+
+        // One file rep (streams to disk) and one small inline rep (RAM).
+        var bytes = Data()
+        for i in 0..<(Self.chunk * 5 + 99) { bytes.append(UInt8((i * 13 + 5) & 0xFF)) }
+        let source = try tempFile(bytes: bytes)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let fileRep = ClipboardContent.Representation(
+            uti: "public.data", fileURL: source, byteCount: bytes.count, filename: "big.bin")
+        let inlineBytes = Data(repeating: 0x42, count: 512)
+        let inlineRep = ClipboardContent.Representation(
+            uti: "public.utf8-plain-text", data: inlineBytes)
+
+        harness.sender.startTransfer(
+            transferID: 1, generation: 1, representation: fileRep, maxAcceptByteCount: .max,
+            isInline: false, isCurrent: { _ in true })
+        harness.sender.startTransfer(
+            transferID: 2, generation: 1, representation: inlineRep, maxAcceptByteCount: .max,
+            isInline: true, isCurrent: { _ in true })
+
+        try await harness.collector.gate.wait { harness.collector.completedCount == 2 }
+        try await harness.collector.gate.wait { harness.collector.timedMetrics.count == 2 }
+
+        let fileMetrics = try #require(
+            harness.collector.timedMetrics.first { $0.transferID == 1 })
+        #expect(fileMetrics.byteCount == bytes.count)
+        #expect(fileMetrics.uti == "public.data")
+        #expect(fileMetrics.streamedToDisk)
+        #expect(fileMetrics.duration > .zero)
+        let streaming = try #require(fileMetrics.streamingDuration)
+        #expect(streaming > .zero)
+        #expect(streaming <= fileMetrics.duration)
+
+        let inlineMetrics = try #require(
+            harness.collector.timedMetrics.first { $0.transferID == 2 })
+        #expect(inlineMetrics.byteCount == inlineBytes.count)
+        #expect(!inlineMetrics.streamedToDisk)
+        #expect(harness.collector.abortCount == 0)
+    }
+
     @Test("a payload far larger than the old 104 MiB cap streams successfully")
     func exceedsOldCap() async throws {
         // Production 64 KiB chunks, 256 KiB window, ~105 MiB file rep — proves the
@@ -373,6 +416,8 @@ struct ClipboardStreamTests {
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
         #expect(harness.collector.abortInfos.contains { $0.code == "digest.mismatch" })
         #expect(harness.collector.representation(6) == nil)
+        // Timing metrics report successful transfers only.
+        #expect(harness.collector.timedMetrics.isEmpty)
     }
 
     // MARK: - Free-space guard

@@ -404,6 +404,15 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         let sender = ClipboardStreamSender(channel: channel)
         let receiver = ClipboardStreamReceiver(
             channel: channel, staging: self.staging,
+            // Per-transfer throughput baseline for #377, forwarded to the host
+            // log store by the vsock log bridge — the only measured number for
+            // the real vsock link, so it logs at `.notice` (persisted) rather
+            // than `.debug`.
+            onTransferTimed: { metrics in
+                Self.logger.notice(
+                    "Host→guest clipboard transfer \(metrics.transferID, privacy: .public) completed: \(metrics.logSummary, privacy: .public)"
+                )
+            },
             // Lazy inbound pulls register a per-transfer awaiter (via
             // LazyPullCoordinator) that takes precedence over these channel-wide
             // closures, so they fire only for an unexpected unawaited transfer.

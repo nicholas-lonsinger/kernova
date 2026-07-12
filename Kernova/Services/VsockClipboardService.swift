@@ -229,6 +229,14 @@ final class VsockClipboardService: ClipboardServicing {
         let sender = ClipboardStreamSender(channel: channel)
         let receiver = ClipboardStreamReceiver(
             channel: channel, staging: staging,
+            // Per-transfer throughput baseline for #377 — the only measured
+            // number for the real vsock link, so it logs at `.notice`
+            // (persisted) rather than `.debug`.
+            onTransferTimed: { [label = self.label] metrics in
+                Self.logger.notice(
+                    "Guest→host clipboard transfer \(metrics.transferID, privacy: .public) ('\(label, privacy: .public)') completed: \(metrics.logSummary, privacy: .public)"
+                )
+            },
             // Lazy pulls register a per-transfer awaiter (bridged to an async
             // continuation by `pull`) that takes precedence over these
             // channel-wide closures, so they fire only for an unexpected
