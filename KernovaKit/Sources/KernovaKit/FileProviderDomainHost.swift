@@ -102,6 +102,15 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     private let config: FileProviderConfig
     private let logger: KernovaLogger
     private let container: FileProviderContainer
+    /// Salts this host instance's item identifiers so a new owner session's
+    /// offers can never collide with a previous session's (#541).
+    ///
+    /// The offer `generation` restarts at 1 with each session while placeholder
+    /// dirents survive teardown on disk; an unsalted identifier collision makes
+    /// fileproviderd treat the new offer as an in-place rename of the stale —
+    /// possibly materialized — placeholder with `shouldFetch:false`, so a paste
+    /// serves the previous offer's bytes. See `FileProviderItemIdentifier`.
+    private let sessionSalt = UInt64.random(in: .min ... .max)
     private let pullProvider: FileProviderPullProvider
     private let domain: NSFileProviderDomain
     /// Connects to the extension and exports the relay so the extension can call
@@ -659,8 +668,8 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
         relayTransport.ensureConnected()
 
         let item = FileProviderManifest.Item(
-            generation: generation, repIndex: repIndex, filename: filename,
-            byteCount: byteCount, uti: uti)
+            sessionSalt: sessionSalt, generation: generation, repIndex: repIndex,
+            filename: filename, byteCount: byteCount, uti: uti)
         let manifest = FileProviderManifest(generation: generation, items: [item])
         do {
             try container.writeManifest(manifest)

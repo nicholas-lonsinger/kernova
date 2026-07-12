@@ -315,9 +315,13 @@ final class ClipboardFileItem: NSObject, NSFileProviderItem, @unchecked Sendable
     }
     var contentType: UTType { UTType(representationUTI) ?? .data }
     var documentSize: NSNumber? { NSNumber(value: size) }
-    // The bytes and metadata of a given (generation, repIndex) item never change,
-    // so a constant version is correct — and keeps fetchContents' returned
-    // version matching the enumerated one (the framework requires the match).
+    // The bytes and metadata of a given item identifier never change, so a
+    // constant version is correct — and keeps fetchContents' returned version
+    // matching the enumerated one (the framework requires the match). This
+    // relies on the identifier being unique per offer ACROSS owner sessions
+    // (the session salt, #541): with a colliding identifier, fileproviderd
+    // compares versions across two different offers, sees no change, and
+    // serves the stale placeholder's bytes with `shouldFetch:false`.
     var itemVersion: NSFileProviderItemVersion {
         NSFileProviderItemVersion(contentVersion: Data("1".utf8), metadataVersion: Data("1".utf8))
     }
