@@ -133,6 +133,10 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     /// User-visible domain root, resolved after registration; `nil` until then
     /// (the File Provider path is unused while it's `nil`).
     private var rootURL: URL?
+    /// Whether the security scope of `rootURL` is currently open.
+    ///
+    /// See `adoptRootURL` for the scope's lifecycle.
+    private var rootURLScopeActive = false
     /// Set while an `addDomain` cycle (including its orphan-heal retry) is
     /// outstanding, so two pastes landing back-to-back while unregistered can't
     /// launch overlapping `removeAllDomains`+`add` cycles for the same domain (#428).
@@ -253,6 +257,7 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
 
     deinit {
         stopObservingDomainChanges()
+        releaseRootURLScope()
     }
 
     // MARK: - Enablement (clipboard policy)
@@ -286,6 +291,10 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
         } else {
             stopObservingDomainChanges()
             setAvailability(.inactive)
+            // No offer can be valid while disabled (the manifest is cleared
+            // below), so the domain-root scope has no consumer until the next
+            // enable's registration re-resolves the root and re-opens it.
+            releaseRootURLScope()
             // Disarm the connector: drop the control connection and stop observing
             // the doorbell so a stray fetch while disabled fails cleanly
             // (serverUnreachable) instead of reaching a relay whose offer was just
@@ -447,20 +456,13 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
 
     /// Caches the user-visible root URL so an offer can construct `root/filename`
     /// for the pasteboard without a per-item round-trip.
-    ///
-    /// The URL `getUserVisibleURL` returns is security-scoped (per its header
-    /// doc), which is what lets the sandboxed host app touch the domain root
-    /// under `~/Library/CloudStorage` at all — `forceRootEnumeration` opens that
-    /// scope around its readdir (#539). Cached as-is: the scope travels with the
-    /// URL value, and no other access goes through it in-process (the pasteboard
-    /// URL derived from it is resolved by the *pasting* app, not us).
     private func resolveRootURL() {
         guard let manager = NSFileProviderManager(for: domain) else { return }
         manager.getUserVisibleURL(for: .rootContainer) { [weak self] url, error in
             DispatchQueue.main.async {
                 guard let self else { return }
                 if let url {
-                    self.rootURL = url
+                    self.adoptRootURL(url)
                     self.logger.notice("Clipboard domain visible at: \(url.path, privacy: .public)")
                 } else if let error {
                     self.logger.error(
@@ -468,6 +470,44 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
                 }
             }
         }
+    }
+
+    /// Caches the root URL and opens its security scope, holding it for as long
+    /// as the root stays current (released on disable, replacement, and deinit).
+    ///
+    /// The URL `getUserVisibleURL` returns is security-scoped (per its header
+    /// doc) — the sandboxed host app's only access to the domain root under
+    /// `~/Library/CloudStorage`, which no entitlement covers (#539). The scope is
+    /// held open rather than wrapped around individual calls because TWO
+    /// consumers need it live:
+    /// - `forceRootEnumeration`'s readdir (denied Cocoa 257 otherwise), and
+    /// - the pasteboard server's sandbox validation when the placeholder's
+    ///   `public.file-url` lands on the host pasteboard: pboard mints the
+    ///   *pasting* app's sandbox extension from OUR live access to the referenced
+    ///   path, at whatever moment the promised data is provided (Universal
+    ///   Clipboard's eager read makes that copy time, a paste makes it later).
+    ///   Without the scope the entry is silently rejected ("Entry failed
+    ///   validation" in pboard's log) and a Finder ⌘V just beeps.
+    ///
+    /// In the unsandboxed guest agent `startAccessingSecurityScopedResource`
+    /// reports no scope was taken and all access works on ordinary permissions.
+    private func adoptRootURL(_ url: URL) {
+        releaseRootURLScope()
+        rootURL = url
+        rootURLScopeActive = url.startAccessingSecurityScopedResource()
+    }
+
+    /// Balances the scope opened by `adoptRootURL`, if one is active.
+    ///
+    /// Called on disable and on root replacement; also from `deinit`, where no
+    /// concurrent access can exist (this is the last reference) so the
+    /// main-queue-state convention on `rootURL`/`rootURLScopeActive` can't be
+    /// violated by another thread.
+    private func releaseRootURLScope() {
+        if rootURLScopeActive, let rootURL {
+            rootURL.stopAccessingSecurityScopedResource()
+        }
+        rootURLScopeActive = false
     }
 
     /// Re-checks whether the user has enabled the domain by reading the live
@@ -652,15 +692,10 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     /// longer than the listing, so the placeholder exists by paste time.
     private func forceRootEnumeration(root: URL) {
         DispatchQueue.global(qos: .userInitiated).async { [logger] in
-            // `root` is the security-scoped URL from `getUserVisibleURL`; the
-            // scope is what grants the sandboxed host app access to the domain
-            // root under `~/Library/CloudStorage`, which no entitlement covers
-            // (#539). In the unsandboxed guest agent `start` returns `false`
-            // and the readdir proceeds on ordinary access.
-            let scoped = root.startAccessingSecurityScopedResource()
-            defer {
-                if scoped { root.stopAccessingSecurityScopedResource() }
-            }
+            // Sandbox access to the domain root comes from the security scope the
+            // domain host holds open while the root is current (`adoptRootURL`,
+            // #539) — publishSingleFile's `enabled`+`rootURL` guard means it is
+            // always active here.
             do {
                 // `.skipsHiddenFiles` so the diagnostic count reflects user-visible
                 // entries, not bookkeeping dirents (`.Trash`, `.DS_Store`).
