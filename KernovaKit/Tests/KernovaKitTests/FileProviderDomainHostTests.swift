@@ -161,6 +161,26 @@ struct FileProviderDomainHostEnablementTests {
         func ensureConnected() {}
     }
 
+    /// Counts `ensureConnected()` calls (notifying `gate` on each) so a test can
+    /// assert the registration-time servicing warm-up actually fires — the
+    /// load-bearing #460/#539 behavior `NoOpRelayTransport` can't observe.
+    private final class RecordingRelayTransport: FileProviderRelayTransport,
+        @unchecked Sendable
+    {
+        private let lock = NSLock()
+        private var ensureConnectedCountStorage = 0
+        let gate = AsyncGate()
+
+        var ensureConnectedCount: Int { lock.withLock { ensureConnectedCountStorage } }
+
+        func startServing(_ service: FileProviderRelay) {}
+        func stopServing() {}
+        func ensureConnected() {
+            lock.withLock { ensureConnectedCountStorage += 1 }
+            gate.notify()
+        }
+    }
+
     private struct FakeFetchError: Error {}
 
     /// Stands in for `NSFileProviderManager.add(domain:completionHandler:)` (#428).
@@ -196,7 +216,8 @@ struct FileProviderDomainHostEnablementTests {
     private func makeHost(
         domainIdentifier: String, domainSource: FakeDomainSource,
         notificationCenter: NotificationCenter,
-        addDomain: FakeAddDomain? = nil
+        addDomain: FakeAddDomain? = nil,
+        relayTransport: FileProviderRelayTransport? = nil
     ) -> FileProviderDomainHost {
         let config = FileProviderConfig(
             appGroupIdentifier: "8MT4P4GZL2.app.kernova.test",
@@ -213,7 +234,7 @@ struct FileProviderDomainHostEnablementTests {
             return FileProviderDomainHost(
                 config: config,
                 pullProvider: NeverCalledPullProvider(),
-                relayTransport: NoOpRelayTransport(),
+                relayTransport: relayTransport ?? NoOpRelayTransport(),
                 notificationCenter: notificationCenter,
                 fetchDomains: { try await domainSource.fetch() },
                 addDomainToSystem: { domain, completion in addDomain.add(domain, completion: completion) })
@@ -221,7 +242,7 @@ struct FileProviderDomainHostEnablementTests {
         return FileProviderDomainHost(
             config: config,
             pullProvider: NeverCalledPullProvider(),
-            relayTransport: NoOpRelayTransport(),
+            relayTransport: relayTransport ?? NoOpRelayTransport(),
             notificationCenter: notificationCenter,
             fetchDomains: { try await domainSource.fetch() })
     }
@@ -435,6 +456,63 @@ struct FileProviderDomainHostEnablementTests {
         #expect(
             addDomain.callCount == 3,
             "the usage-triggered re-registration should have retried add() exactly once more")
+    }
+
+    @Test("registration success warms the servicing connection")
+    func registrationSuccessWarmsServicingConnection() async throws {
+        // The warm-up must fire in `addDomain`'s success branch (#539) — after an
+        // owner relaunch, the reconnect doorbell can only act once a connect has
+        // been requested, and no offer has been published yet at that point, so
+        // registration is the only trigger (#460).
+        let transport = RecordingRelayTransport()
+        let host = makeHost(
+            domainIdentifier: "kernova-clipboard-test-\(UUID().uuidString)",
+            domainSource: FakeDomainSource(),
+            notificationCenter: NotificationCenter(),
+            addDomain: FakeAddDomain(failCount: 0),
+            relayTransport: transport)
+
+        host.setEnabled(true)
+
+        try await transport.gate.wait { transport.ensureConnectedCount == 1 }
+    }
+
+    @Test("a failed registration doesn't warm the servicing connection; the recovering re-registration does")
+    func failedRegistrationDoesNotWarmServicingConnection() async throws {
+        // Both the initial add and its orphan-heal retry fail (calls 1-2), so no
+        // warm-up may fire — a connect request against a never-registered domain
+        // would just burn the connector's retry budget. The paste-triggered
+        // re-registration (call 3) succeeds and must then fire it.
+        let domainIdentifierString = "kernova-clipboard-test-\(UUID().uuidString)"
+        let domainSource = FakeDomainSource()
+        let collector = AvailabilityCollector()
+        let transport = RecordingRelayTransport()
+        let host = makeHost(
+            domainIdentifier: domainIdentifierString, domainSource: domainSource,
+            notificationCenter: NotificationCenter(),
+            addDomain: FakeAddDomain(failCount: 2),
+            relayTransport: transport)
+        host.setAvailabilityObserver { collector.record($0) }
+
+        host.setEnabled(true)
+
+        try await collector.gate.wait(timeout: .seconds(20)) {
+            collector.values.contains(.unavailable)
+        }
+        #expect(
+            transport.ensureConnectedCount == 0,
+            "a terminally failed registration must not request a connect")
+
+        // Standing in for a real paste: finds the domain unregistered, falls back
+        // (returns nil), and kicks the bounded re-registration — whose success
+        // completion is what fires the warm-up.
+        let published = host.publishSingleFile(
+            generation: 1, repIndex: 0, filename: "test.txt", byteCount: 10, uti: "public.data")
+        #expect(published == nil)
+
+        try await transport.gate.wait(timeout: .seconds(20)) {
+            transport.ensureConnectedCount == 1
+        }
     }
 
     @Test("disabling stops observing the domain-change notification; a later post is a no-op")

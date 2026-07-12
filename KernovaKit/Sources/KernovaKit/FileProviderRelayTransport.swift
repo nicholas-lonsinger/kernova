@@ -136,18 +136,18 @@ public final class FileProviderServicingConnector: NSObject,
         let logger = KernovaLogger(
             subsystem: config.loggerSubsystem, category: "ServicingConnector")
         let serviceName = config.serviceName
-        let domainIdentifier = config.domainIdentifier
-        let domainDisplayName = config.domainDisplayName
         let operation: ConnectOperation = { completion in
             // Identifier-based lookup (`.rootContainer` is always known to the
             // extension) — see the file header for why this is not the path-based
-            // `FileManager.getFileProviderServicesForItem(at:)` (#539).
-            let domain = NSFileProviderDomain(
-                identifier: NSFileProviderDomainIdentifier(domainIdentifier),
-                displayName: domainDisplayName)
+            // `FileManager.getFileProviderServicesForItem(at:)` (#539). The domain
+            // is built fresh per attempt via `config.makeDomain()` (a `Sendable`
+            // struct's factory) because `NSFileProviderDomain` itself can't cross
+            // this `@Sendable` closure boundary.
+            let domain = config.makeDomain()
             guard let manager = NSFileProviderManager(for: domain) else {
                 logger.error(
-                    "No NSFileProviderManager for domain '\(domainIdentifier, privacy: .public)'")
+                    "No NSFileProviderManager for domain '\(domain.identifier.rawValue, privacy: .public)'"
+                )
                 completion(nil)
                 return
             }

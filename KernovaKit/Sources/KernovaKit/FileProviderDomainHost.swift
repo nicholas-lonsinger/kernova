@@ -244,9 +244,7 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
             relayTransport ?? FileProviderServicingConnector(config: config)
         self.relayService = FileProviderRelayService(
             pullProvider: pullProvider, loggerSubsystem: config.loggerSubsystem)
-        self.domain = NSFileProviderDomain(
-            identifier: NSFileProviderDomainIdentifier(config.domainIdentifier),
-            displayName: config.domainDisplayName)
+        self.domain = config.makeDomain()
         self.notificationCenter = notificationCenter
         self.fetchDomains = fetchDomains
         self.addDomainToSystem = addDomainToSystem

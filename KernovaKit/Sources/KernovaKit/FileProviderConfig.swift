@@ -121,6 +121,20 @@ public struct FileProviderConfig: Sendable {
 
     private static let logger = Logger(subsystem: "app.kernova", category: "FileProviderConfig")
 
+    /// Builds this direction's File Provider domain.
+    ///
+    /// The single construction point for domain identity: the domain host
+    /// registers the domain this returns, and the servicing connector's
+    /// identifier-based `getService(named:for:)` lookup must resolve the same
+    /// domain (#539). Each call site constructs a fresh instance rather than
+    /// sharing one — `NSFileProviderDomain` is not Sendable, so a shared
+    /// instance couldn't cross the connector's `@Sendable` connect closure.
+    public func makeDomain() -> NSFileProviderDomain {
+        NSFileProviderDomain(
+            identifier: NSFileProviderDomainIdentifier(domainIdentifier),
+            displayName: domainDisplayName)
+    }
+
     /// Builds a code-signing requirement pinning a specific bundle `identifier`
     /// to the given `team`.
     ///
