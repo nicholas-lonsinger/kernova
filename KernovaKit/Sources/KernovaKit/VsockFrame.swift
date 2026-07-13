@@ -65,12 +65,13 @@ enum VsockFrameError: Error, Sendable, Equatable {
 /// The decoder is `Sendable` and intended to be owned by a single actor or
 /// queue at a time.
 struct VsockFrameDecoder: Sendable {
-    /// Compact the consumed prefix once the read offset crosses this many
-    /// bytes.
+    /// Floor below which the consumed prefix is never compacted, so small
+    /// buffers don't churn on a shift.
     ///
-    /// Sized to amortize the shift cost (each byte is copied at most
-    /// once before being dropped) without keeping more than ~64 KiB of stale
-    /// storage live per decoder.
+    /// This is only the floor: `compactIfNeeded` also requires the consumed
+    /// prefix to be at least as large as the unread tail before shifting, so
+    /// each surviving byte is copied at most once before it is dropped and the
+    /// buffer stays within ~2× the live (unread) bytes.
     private static let compactionThreshold: Int = 64 * 1024
 
     private var buffer: Data = Data()
@@ -86,8 +87,10 @@ struct VsockFrameDecoder: Sendable {
 
     /// Extracts the next complete frame payload from the buffer, if available.
     ///
-    /// - Returns: The payload (without the length prefix) of the next frame,
-    ///   or `nil` if the buffer does not yet hold a complete frame.
+    /// - Returns: The payload (without the length prefix) of the next frame, as
+    ///   a slice aliasing the decoder's buffer — consume it before the next
+    ///   `feed`/`nextFrame` (see the `RATIONALE` in the body) — or `nil` if the
+    ///   buffer does not yet hold a complete frame.
     /// - Throws: `VsockFrameError.frameTooLarge` if a frame's declared size
     ///   exceeds `VsockFrame.maxPayloadSize`. After this throws, the decoder
     ///   should be discarded — the buffer is left in place but the stream is
@@ -110,7 +113,22 @@ struct VsockFrameDecoder: Sendable {
 
         let payloadStart = buffer.startIndex + readOffset + VsockFrame.lengthPrefixSize
         let payloadEnd = buffer.startIndex + readOffset + totalFrameSize
-        let payload = Data(buffer[payloadStart..<payloadEnd])
+        // RATIONALE: return a slice that aliases `buffer` rather than copying the
+        // payload out — this removes the per-frame payload copy on the common path
+        // (#377). On the amortized-rare frames where `compactIfNeeded` shifts, the
+        // still-live slice turns that shift into a copy-on-write; the net is still a
+        // win because most frames don't compact. The slice shares the decoder's
+        // backing storage, so a caller MUST consume (or copy) it before the next
+        // `feed`/
+        // `nextFrame` mutates the decoder; the sole production consumer,
+        // `VsockChannel.handleChunk`, parses each payload synchronously via
+        // `Frame(serializedBytes:)` inside its decode loop and never lets the raw
+        // slice cross the `incoming` async boundary. `Data`'s copy-on-write keeps
+        // this correct even if a future caller does stash the slice — the next
+        // buffer mutation simply COWs — so the invariant is a performance contract,
+        // not a safety one. The slice carries a non-zero `startIndex`; index it
+        // through its own indices, not absolute offsets.
+        let payload = buffer[payloadStart..<payloadEnd]
         readOffset += totalFrameSize
 
         compactIfNeeded()
@@ -131,8 +149,13 @@ struct VsockFrameDecoder: Sendable {
         }
     }
 
-    /// Two-tier compaction: drained buffers reset for free; partial buffers
-    /// shift only after the threshold to keep the per-byte copy cost amortized.
+    /// Two-tier compaction of the consumed prefix.
+    ///
+    /// Drained buffers reset without a shift; partial buffers shift only once the
+    /// consumed prefix reaches both `compactionThreshold` and the size of the
+    /// unread tail, so a shift never moves more bytes than it reclaims (amortized
+    /// O(1) per byte). Either branch copy-on-writes when a just-returned payload
+    /// slice still aliases the buffer (see `nextFrame`).
     private mutating func compactIfNeeded() {
         guard readOffset > 0 else { return }
         if readOffset == buffer.count {
@@ -140,7 +163,16 @@ struct VsockFrameDecoder: Sendable {
             readOffset = 0
             return
         }
-        if readOffset >= VsockFrameDecoder.compactionThreshold {
+        // RATIONALE: gate the shift on `readOffset >= unread`, not just the fixed
+        // threshold. A chunk frame is ~65.5 KiB — already past `compactionThreshold`
+        // on its own — so a bare `readOffset >= compactionThreshold` guard would
+        // memmove the entire unread tail after *every* frame, moving far more than
+        // it reclaims and breaking the "each byte copied at most once" invariant
+        // (#377). Requiring the reclaimable prefix to be at least the tail size
+        // keeps the amortized copy cost O(1) at the price of the buffer growing to
+        // ~2× the live bytes (window-bounded to a few MiB) between compactions.
+        let unread = buffer.count - readOffset
+        if readOffset >= max(VsockFrameDecoder.compactionThreshold, unread) {
             let unreadStart = buffer.startIndex + readOffset
             buffer.removeSubrange(buffer.startIndex..<unreadStart)
             readOffset = 0

@@ -229,6 +229,61 @@ struct VsockFrameTests {
         #expect(decoder.isEmpty)
     }
 
+    // MARK: - chunk-sized frames (#377)
+
+    @Test("decoder drains many chunk-sized frames from one feed without corruption")
+    func decoderDrainsChunkSizedFramesInOneFeed() throws {
+        var decoder = VsockFrameDecoder()
+        // A production clipboard chunk frame is ~65.5 KiB — already larger than the
+        // 64 KiB compaction threshold on its own. Feeding several in a single chunk
+        // is the case that used to memmove the whole unread tail after every frame;
+        // confirm every distinctly-filled payload survives byte-for-byte through the
+        // deferred-compaction path.
+        let chunkSize = 64 * 1024
+        let frameCount = 8
+        var payloads: [Data] = []
+        var bulk = Data()
+        for i in 0..<frameCount {
+            let payload = Data((0..<chunkSize).map { UInt8(($0 &+ i) & 0xFF) })
+            payloads.append(payload)
+            bulk.append(try VsockFrame.encode(payload))
+        }
+
+        decoder.feed(bulk)
+        for (i, expected) in payloads.enumerated() {
+            #expect(try decoder.nextFrame() == expected, "payload mismatch at frame \(i)")
+        }
+        #expect(try decoder.nextFrame() == nil)
+        #expect(decoder.isEmpty)
+    }
+
+    @Test("retained payload slices stay valid across later decoder mutations")
+    func retainedPayloadSlicesSurviveLaterMutations() throws {
+        var decoder = VsockFrameDecoder()
+        // `nextFrame` returns a slice aliasing the decoder buffer; a caller holding
+        // it past the next feed/nextFrame relies on Data's copy-on-write to keep the
+        // bytes correct. Retain the first two chunk-sized payloads, then drain the
+        // third (which mutates and compacts the aliased buffer) and confirm the
+        // retained slices are still byte-correct.
+        let chunkSize = 64 * 1024
+        let p0 = Data((0..<chunkSize).map { UInt8($0 & 0xFF) })
+        let p1 = Data((0..<chunkSize).map { UInt8(($0 &+ 1) & 0xFF) })
+        let p2 = Data((0..<chunkSize).map { UInt8(($0 &+ 2) & 0xFF) })
+        var bulk = try VsockFrame.encode(p0)
+        bulk.append(try VsockFrame.encode(p1))
+        bulk.append(try VsockFrame.encode(p2))
+        decoder.feed(bulk)
+
+        let first = try decoder.nextFrame()
+        let second = try decoder.nextFrame()
+        let third = try decoder.nextFrame()
+
+        #expect(first == p0)
+        #expect(second == p1)
+        #expect(third == p2)
+        #expect(try decoder.nextFrame() == nil)
+    }
+
     // MARK: - round trip
 
     @Test("encode/decode round-trip preserves arbitrary bytes")
