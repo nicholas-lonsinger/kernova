@@ -102,8 +102,9 @@ final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate {
     /// and credit-window sizes are untouched. Host-only: the guest→host writer
     /// lives in Apple's `com.apple.Virtualization.VirtualMachine` helper process
     /// and is unreachable per-fd, so that direction stays capped ~750 MiB/s. The
-    /// `setsockopt` return is checked and the applied value read back so a clamp
-    /// or no-op is visible in the log.
+    /// `setsockopt` return is checked and the applied value read back; a clamp
+    /// below the requested size is logged at `.warning` (persisted) so a lever
+    /// that silently failed to engage is diagnosable post-mortem.
     private func applySendBuffer(_ fd: Int32) {
         var size = Int32(Self.sendBufferBytes)
         let rc = setsockopt(
@@ -116,7 +117,12 @@ final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate {
         }
         var applied: Int32 = 0
         var len = socklen_t(MemoryLayout<Int32>.size)
-        if getsockopt(fd, SOL_SOCKET, SO_SNDBUF, &applied, &len) == 0 {
+        guard getsockopt(fd, SOL_SOCKET, SO_SNDBUF, &applied, &len) == 0 else { return }
+        if applied < Int32(Self.sendBufferBytes) {
+            Self.logger.warning(
+                "SO_SNDBUF on vsock port \(self.port, privacy: .public) clamped to \(applied, privacy: .public) bytes (requested \(Self.sendBufferBytes, privacy: .public)) — host→guest throughput may stay below the unlocked ceiling"
+            )
+        } else {
             Self.logger.debug(
                 "SO_SNDBUF on vsock port \(self.port, privacy: .public) set to \(applied, privacy: .public) bytes"
             )

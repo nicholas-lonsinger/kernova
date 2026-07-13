@@ -114,9 +114,12 @@ struct VsockFrameDecoder: Sendable {
         let payloadStart = buffer.startIndex + readOffset + VsockFrame.lengthPrefixSize
         let payloadEnd = buffer.startIndex + readOffset + totalFrameSize
         // RATIONALE: return a slice that aliases `buffer` rather than copying the
-        // payload out — this removes the per-frame payload copy and the decoder's
-        // only per-frame allocation (#377). The slice shares the decoder's backing
-        // storage, so a caller MUST consume (or copy) it before the next `feed`/
+        // payload out — this removes the per-frame payload copy on the common path
+        // (#377). On the amortized-rare frames where `compactIfNeeded` shifts, the
+        // still-live slice turns that shift into a copy-on-write; the net is still a
+        // win because most frames don't compact. The slice shares the decoder's
+        // backing storage, so a caller MUST consume (or copy) it before the next
+        // `feed`/
         // `nextFrame` mutates the decoder; the sole production consumer,
         // `VsockChannel.handleChunk`, parses each payload synchronously via
         // `Frame(serializedBytes:)` inside its decode loop and never lets the raw
@@ -146,10 +149,13 @@ struct VsockFrameDecoder: Sendable {
         }
     }
 
-    /// Two-tier compaction: drained buffers reset for free; partial buffers shift
-    /// only once the consumed prefix reaches both `compactionThreshold` and the
-    /// size of the unread tail, so a shift never moves more bytes than it
-    /// reclaims (amortized O(1) per byte).
+    /// Two-tier compaction of the consumed prefix.
+    ///
+    /// Drained buffers reset without a shift; partial buffers shift only once the
+    /// consumed prefix reaches both `compactionThreshold` and the size of the
+    /// unread tail, so a shift never moves more bytes than it reclaims (amortized
+    /// O(1) per byte). Either branch copy-on-writes when a just-returned payload
+    /// slice still aliases the buffer (see `nextFrame`).
     private mutating func compactIfNeeded() {
         guard readOffset > 0 else { return }
         if readOffset == buffer.count {
