@@ -47,7 +47,7 @@ enum FileProviderServicingTiming {
     /// connection is live (`FileProviderServiceSource.fetchReplyTimeout`).
     ///
     /// The single source of truth for that default, so a test that wants "the
-    /// full production reply timeout" (see CLAUDE.md's "Async waits in tests")
+    /// full production reply timeout" (see docs/TESTING.md's "Async waits in tests")
     /// can reference it instead of independently re-hardcoding `120`, which
     /// would let the two silently drift apart.
     static let fetchReplyWait: TimeInterval = 120

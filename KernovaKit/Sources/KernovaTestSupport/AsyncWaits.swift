@@ -72,7 +72,7 @@ public final class ResumeOnce: @unchecked Sendable {
 /// happy path never reaches rather than the success deadline — so a slow runner
 /// no longer fails the wait, only a genuinely stuck condition does. This is the
 /// fix for the timing-sensitive flakes documented in the flaky-CI investigation
-/// (see CLAUDE.md's "Async waits in tests").
+/// (see docs/TESTING.md's "Async waits in tests").
 public final class AsyncGate: @unchecked Sendable {
     private let lock = NSLock()
     private var waiters: [UUID: () -> Void] = [:]
@@ -166,7 +166,7 @@ public final class AsyncGate: @unchecked Sendable {
 /// Polls `predicate` every 50 ms until it returns `true` or `timeout` elapses.
 ///
 /// Default deadline is generous (5 s) to absorb scheduling jitter on CI
-/// runners. See CLAUDE.md's "Async waits in tests" — prefer the event-driven
+/// runners. See docs/TESTING.md's "Async waits in tests" — prefer the event-driven
 /// `AsyncGate` above for new timing-sensitive waits; polling is retained for
 /// predicates with no underlying signal to await.
 public func waitUntil(

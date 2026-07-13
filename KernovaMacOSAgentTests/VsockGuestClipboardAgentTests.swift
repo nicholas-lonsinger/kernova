@@ -52,7 +52,7 @@ final class FakePasteboard: Pasteboard, @unchecked Sendable {
     ///
     /// `writeItems`/`clearContents`/`setItem`/`setItems` call `notify()`, so a
     /// test awaits the promised-state change instead of polling the `…ForTesting`
-    /// accessors on a contended scheduler. See CLAUDE.md "Async waits in tests".
+    /// accessors on a contended scheduler. See docs/TESTING.md "Async waits in tests".
     let changed = AsyncGate()
 
     var changeCount: Int {
@@ -320,7 +320,7 @@ struct VsockGuestClipboardAgentTests {
         // `inboundPromiseGenerationForTesting`, `isEnabledForTesting`) is the
         // system-under-test's own state — not a test double we can fire an
         // AsyncGate from, and the agent isn't @Observable. These reads stay
-        // polling per CLAUDE.md "Async waits in tests" (sanctioned no-signal
+        // polling per docs/TESTING.md "Async waits in tests" (sanctioned no-signal
         // poll); the pasteboard-write waits, where the async timing flake
         // actually lives, use `pasteboard.changed` instead.
         try await waitUntil { agent.liveChannelForTesting != nil }

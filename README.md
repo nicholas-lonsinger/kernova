@@ -11,8 +11,8 @@ A macOS GUI application for creating and managing virtual machines using Apple's
 - **VM cloning** — Clone existing VMs with automatic naming
 - **Bundle import** — Import VM bundles (`.kernova`) via double-click or drag-and-drop (also how you bring existing VMs into the sandboxed app's library — on the same volume the copy is an APFS clone, near-instant with no double disk usage)
 - **Recovery mode** — Boot macOS guests into Recovery
-- **Headless operation** — The app runs as a launch-at-login background agent, so quitting the window keeps VMs running headless
-- **Graceful shutdown** — Save-suspends running VMs automatically when the background agent itself terminates (status-item Quit, logout, or shutdown)
+- **Headless operation** — The app is a resident menu-bar app (with an opt-in "Open at Login" toggle), so closing the window keeps VMs running headless
+- **Graceful shutdown** — Save-suspends running VMs automatically when the app itself terminates (menu-bar Quit, logout, or shutdown)
 
 ### Guest Configuration
 
@@ -84,7 +84,7 @@ Kernova signs differently per build configuration, driven by the `KERNOVA_APP_GR
 - **Debug** uses a Team-ID-prefixed app group (`$(DEVELOPMENT_TEAM).app.kernova`). macOS grants a Team-ID-prefixed group silent container access with **no provisioning profile**, so a Debug build (⌘R, `make build`, `make test`) works with *any* signing team. `DEVELOPMENT_TEAM` is not hardcoded: `make bootstrap` ([`Tools/bootstrap-team.sh`](Tools/bootstrap-team.sh)) derives it from your own signing certificate into a gitignored `Config/Local.xcconfig`, included by the tracked `Config/Base.xcconfig` ([#476](https://github.com/nicholas-lonsinger/kernova/issues/476)). No Apple Developer Program membership or developer-portal setup is needed to build and run, and the guest agent never shows the "access data from other apps" consent prompt in a VM.
 - **Release** uses the canonical `group.app.kernova`. That form is **not** silently authorized: it requires the app group registered on the Apple Developer portal plus an embedded provisioning profile, which in turn requires a paid **Apple Developer Program** membership and a distribution identity — **Developer ID** for direct distribution, or Apple Distribution for the Mac App Store. A Release build fails to sign without them.
 
-Day-to-day development only needs Debug. The Release path matters when cutting a distributable build; see the *Mac App Store Readiness* section of [CLAUDE.md](CLAUDE.md) for the full rationale.
+Day-to-day development only needs Debug. The Release path matters when cutting a distributable build; see [docs/SANDBOX.md](docs/SANDBOX.md) for the full rationale.
 
 ## Testing
 
@@ -94,11 +94,11 @@ The project has comprehensive test coverage using [Swift Testing](https://develo
 make test
 ```
 
-This runs all three test targets via the test plan; it wraps the canonical `xcodebuild` invocation documented in [CLAUDE.md](CLAUDE.md). See the test coverage section in [ARCHITECTURE.md](ARCHITECTURE.md) for details.
+This runs all three test targets via the test plan; it wraps the canonical `xcodebuild` invocation documented in [AGENTS.md](AGENTS.md). See the test coverage section in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for details.
 
 ## Architecture
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed component descriptions, data flow diagrams, and design decisions.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed component descriptions, data flow diagrams, and design decisions — and [docs/README.md](docs/README.md) for the full documentation index.
 
 ```
 Kernova/
@@ -110,7 +110,7 @@ Kernova/
 └── Utilities/    # Formatters, extensions
 ```
 
-Alongside the app target, the repo contains the in-guest menu-bar agent (`KernovaMacOSAgent/`), the shared SwiftPM package (`KernovaKit/`), the Quick Look extension (`KernovaQuickLook/`), the guest and host clipboard File Provider extensions (`KernovaMacOSAgentFileProvider/`, `KernovaFileProvider/`), and the relaunch helper (`KernovaRelaunchHelper/`) — see [ARCHITECTURE.md](ARCHITECTURE.md) for the full map.
+Alongside the app target, the repo contains the in-guest menu-bar agent (`KernovaMacOSAgent/`), the shared SwiftPM package (`KernovaKit/`), the Quick Look extension (`KernovaQuickLook/`), the guest and host clipboard File Provider extensions (`KernovaMacOSAgentFileProvider/`, `KernovaFileProvider/`), and the relaunch helper (`KernovaRelaunchHelper/`) — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full map.
 
 ### Key Components
 

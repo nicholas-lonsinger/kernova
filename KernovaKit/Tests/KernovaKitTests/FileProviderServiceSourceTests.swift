@@ -200,7 +200,7 @@ struct FileProviderServiceSourceTests {
     @Test("cancelling a pull already dispatched to the owner asks the owner to abort it (#464)")
     func cancelDispatchedPullAsksOwnerToAbort() async throws {
         // Full production reply timeout, not a shrunk "tidy" bound — see
-        // CLAUDE.md's "Injected production timeouts race the test body" rule.
+        // docs/TESTING.md's "Injected production timeouts race the test body" rule.
         // The relay below never replies, so performPull's reply-timeout timer
         // races `cancellation.cancel()` further down; this test previously
         // passed `fetchReplyTimeout: 2` and flaked when a starved CI scheduler

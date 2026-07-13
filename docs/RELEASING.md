@@ -2,8 +2,8 @@
 
 How to cut a **notarized Developer ID release** of Kernova. This is the only
 distribution channel that exists today: the app already runs under the App
-Sandbox in every configuration (#89 — see the *Mac App Store Readiness*
-section of [CLAUDE.md](CLAUDE.md)), so TestFlight and the Mac App Store are a
+Sandbox in every configuration (#89 — see [SANDBOX.md](SANDBOX.md)), so
+TestFlight and the Mac App Store are a
 matter of App Store Connect setup rather than further code work. Developer ID
 ("Direct Distribution" in Xcode's Organizer) remains the shipping channel; the
 sandbox changes nothing in the flow below.
@@ -113,8 +113,8 @@ install.)
 
 1. **Version.** Decide whether to bump `MARKETING_VERSION` for the app
    (currently `0.9.1`). The guest agent has its **own** version (currently
-   `0.31.2`) — bump it only when agent behavior changed, per the guest-agent
-   versioning conventions in CLAUDE.md. `CFBundleVersion` is automatic (git
+   `0.38.0`) — bump it only when agent behavior changed, per the guest-agent
+   versioning conventions in [BUILD.md](BUILD.md). `CFBundleVersion` is automatic (git
    commit count) and needs no manual edit.
 2. **Archive.** In Xcode, select the **Kernova** scheme, then **Product →
    Archive** (archiving builds Release).

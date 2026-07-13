@@ -116,7 +116,7 @@ func nextFrame(
 /// adds **zero** wake-ups to the shared (and, on CI, contended) MainActor, and
 /// `timeout` is a stuck-condition backstop the happy path never reaches rather
 /// than the success deadline. This is the fix for the poll-budget flakes in the
-/// flaky-CI investigation; see CLAUDE.md "Async waits in tests".
+/// flaky-CI investigation; see docs/TESTING.md "Async waits in tests".
 ///
 /// The predicate must read every value it inspects through an `@Observable`
 /// getter so tracking registers a dependency, and it must be **side-effect-free**

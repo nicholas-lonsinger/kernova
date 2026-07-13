@@ -62,7 +62,7 @@ struct VsockControlServiceTests {
     /// channel closed out from under it — surfacing as an EOF / `.closed` flake.
     /// Sixteen tests inherited those defaults despite not testing liveness; this
     /// makes the watchdog an explicit opt-in instead of an implicit deadline
-    /// coupled to every test's runtime. See CLAUDE.md "Async waits in tests".
+    /// coupled to every test's runtime. See docs/TESTING.md "Async waits in tests".
     private static let watchdogDisabledUnresponsive: Duration = .seconds(3_600)
     private static let watchdogDisabledTerminate: Duration = .seconds(7_200)
 
@@ -443,7 +443,7 @@ struct VsockControlServiceTests {
 
         // The recovery → .current transition was the original CI flake (the poll
         // budget timed out under jitter). This suite's agentStatus/isConnected
-        // waits are all event-driven now; see CLAUDE.md "Async waits in tests".
+        // waits are all event-driven now; see docs/TESTING.md "Async waits in tests".
         try await waitForChange(timeout: .seconds(5)) {
             service.agentStatus == .current(version: "0.9.0")
         }
@@ -481,7 +481,7 @@ struct VsockControlServiceTests {
         // RATIONALE: channel closure is detected by attempting a send and
         // catching `.closed` — there is no @Observable property or signal to
         // await (the watchdog closes the socket directly), so this is one of the
-        // sanctioned no-signal polls per CLAUDE.md "Async waits in tests".
+        // sanctioned no-signal polls per docs/TESTING.md "Async waits in tests".
         try await waitUntil(timeout: .seconds(5)) {
             do {
                 try host.send(makeHeartbeat(nonce: 1))

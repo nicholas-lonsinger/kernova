@@ -69,7 +69,7 @@ struct LazyPullCoordinatorTests {
     // a background `DispatchQueue`. There is no test-owned signal to await: the
     // file's `AsyncGate` gates the harness receiver's onComplete/onAbort closures,
     // not slot registration, and wiring a gate into production `pull()` is out of
-    // scope. Polling the coordinator's own state is correct here. See CLAUDE.md
+    // scope. Polling the coordinator's own state is correct here. See docs/TESTING.md
     // "Async waits in tests".
 
     @Test("pull blocks until deliver wakes it with the representation")

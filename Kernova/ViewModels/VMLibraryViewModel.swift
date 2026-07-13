@@ -817,7 +817,7 @@ final class VMLibraryViewModel {
                     target in
                     if permanently {
                         // RATIONALE: the user-confirmed "Delete Immediately" path; the deliberate
-                        // exception to CLAUDE.md's "prefer trash over rm" guideline (see also
+                        // exception to AGENTS.md's "prefer trash over rm" guideline (see also
                         // `VMStorageService.permanentlyDeleteVMBundle`).
                         try fileSystem.removeItem(at: target)
                     } else {

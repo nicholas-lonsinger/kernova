@@ -23,7 +23,7 @@
 #   - LIVE on-disk Kernova.app copies (Trash, DerivedData) whose
 #     CFBundleVersion outranks the installed /Applications copy — unlike the
 #     dead-path ghosts above, LaunchServices/PluginKit elect these by highest
-#     CFBundleVersion (= squash-aware git commit count, see CLAUDE.md "Build
+#     CFBundleVersion (= squash-aware git commit count, see docs/BUILD.md "Build
 #     version"), so a ghost build can shadow the real app indefinitely even
 #     though version ordering can never favor the installed copy on its own
 #     (#454). Deregistration/eviction is the only lever.
@@ -232,7 +232,7 @@ section 'On-disk copies & registration election'
 # escape `mdfind`: DerivedData ships a `.metadata_never_index` sentinel and
 # Trash is excluded from Spotlight entirely. LaunchServices/PluginKit elect a
 # handler by highest CFBundleVersion (a squash-aware git commit count — see
-# CLAUDE.md "Build version"), so a ghost build with a higher count can shadow
+# docs/BUILD.md "Build version"), so a ghost build with a higher count can shadow
 # the real app indefinitely; version ordering can never fix this on its own,
 # eviction is the only lever (#454).
 kernova_app_copies() {

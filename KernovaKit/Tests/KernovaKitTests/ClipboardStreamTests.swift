@@ -471,7 +471,7 @@ struct ClipboardStreamTests {
         // receiver creates and deletes the staging partial on its private
         // per-transfer DispatchQueue; the only test-owned signal
         // (StreamCollector.gate) fires on onComplete/onAbort, never on partial-file
-        // I/O. Per CLAUDE.md "Async waits in tests", a filesystem-appearance poll is
+        // I/O. Per docs/TESTING.md "Async waits in tests", a filesystem-appearance poll is
         // a sanctioned `pollUntil` use.
         // The partial temp file is created off the transfer queue.
         try await pollUntil {
