@@ -144,7 +144,7 @@ struct VMStorageService: Sendable {
             throw VMStorageError.bundleNotFound(bundleURL)
         }
         // RATIONALE: This is the user-confirmed "Delete Immediately" path, the deliberate
-        // exception to CLAUDE.md's "prefer trash over rm" guideline.
+        // exception to AGENTS.md's "prefer trash over rm" guideline.
         try FileManager.default.removeItem(at: bundleURL)
         Self.logger.notice("Permanently deleted VM bundle: \(bundleURL.lastPathComponent, privacy: .public)")
     }

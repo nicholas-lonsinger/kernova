@@ -65,7 +65,7 @@ struct VsockGuestClientTests {
         // cleared on socket EOF — not an @Observable property or a test-owned double,
         // so there is no signal to await. Event-driving these waits would require
         // adding notify() plumbing to VsockGuestClient (out of scope); polling is the
-        // correct seam. See CLAUDE.md "Async waits in tests".
+        // correct seam. See docs/TESTING.md "Async waits in tests".
         try await waitUntil { client.liveChannel != nil }
         #expect(client.liveChannel != nil)
 

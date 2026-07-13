@@ -1474,7 +1474,7 @@ struct VsockClipboardServiceTests {
 
         // A backstop, not the success path: under the fix this resolves in
         // milliseconds via genuine delivery. A few seconds' slack absorbs macOS
-        // CI's heavy @MainActor scheduling jitter (CLAUDE.md's "Async waits in
+        // CI's heavy @MainActor scheduling jitter (docs/TESTING.md's "Async waits in
         // tests") without masking a real regression with an overly generous wait.
         let service = VsockClipboardService(
             channel: host, label: "test-\(UUID().uuidString)", lazyPullTimeout: .seconds(5))

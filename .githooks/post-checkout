@@ -20,7 +20,7 @@
 #      didn't deliver Config/Local.xcconfig (no main-checkout copy to
 #      inherit — e.g. the main checkout of a fresh clone).
 #   3. Sweep dead app.kernova.* Launch Services registrations left by
-#      removed worktrees (see CLAUDE.md "Worktree LaunchServices cleanup").
+#      removed worktrees (see docs/BUILD.md "Worktree LaunchServices cleanup").
 #      Initial checkouts only ($1 is the null ref for `git worktree add`/
 #      `git clone` but not `git switch`), so the multi-second lsregister
 #      dump never taxes a plain branch switch.

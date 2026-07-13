@@ -12,7 +12,7 @@ import KernovaTestSupport
 @Suite("SerialSocketRelay")
 struct SerialSocketRelayTests {
     // RATIONALE: Every `waitUntil` in this suite stays a poll rather than
-    // `waitForChange`/`AsyncGate` (see CLAUDE.md "Async waits in tests"). The only
+    // `waitForChange`/`AsyncGate` (see docs/TESTING.md "Async waits in tests"). The only
     // two signals are a kernel socket/pipe becoming readable (`readChunk`) and
     // `relay.hasClientForTesting`, which `SerialSocketRelay` (`@unchecked Sendable`,
     // not `@Observable`) flips on its private background GCD queue under `NSLock`.
