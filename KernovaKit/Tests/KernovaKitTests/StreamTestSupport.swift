@@ -127,10 +127,6 @@ final class StreamCollector: @unchecked Sendable {
     var abortInfos: [ClipboardStreamAbortInfo] { lock.withLock { aborts } }
     var abortCount: Int { lock.withLock { aborts.count } }
     var timedMetrics: [ClipboardTransferMetrics] { lock.withLock { timings } }
-    /// Every `ClipboardStreamAck` the receiver emitted (in wire order), recorded
-    /// by the harness's sender-side routing task — lets ack-coalescing tests
-    /// assert the exact `bytes_consumed` schedule.
-    var ackFrames: [Kernova_V1_ClipboardStreamAck] { lock.withLock { acks } }
     /// The `bytes_consumed` sequence of every recorded ack for one transfer.
     func ackedByteCounts(_ id: UInt64) -> [UInt64] {
         lock.withLock { acks.filter { $0.transferID == id }.map(\.bytesConsumed) }
