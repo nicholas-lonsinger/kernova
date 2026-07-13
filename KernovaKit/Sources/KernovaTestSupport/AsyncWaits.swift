@@ -114,6 +114,10 @@ public final class AsyncGate: @unchecked Sendable {
     /// — runs on the same actor as the original caller with no hop. The
     /// backstop `Task` touches only `Sendable` state (never `predicate`), so
     /// it needs no isolation of its own.
+    // `isolation` uses the Swift `isolated` keyword to pin this helper to the
+    // caller's actor (forwarded from `wait`, see above), so it is intentionally
+    // never referenced by name. Periphery reports it as an unused parameter.
+    // periphery:ignore:parameters isolation
     private func armOnce(
         deadline: ContinuousClock.Instant,
         isolation: isolated (any Actor)?,
@@ -155,6 +159,10 @@ public final class AsyncGate: @unchecked Sendable {
 
 // MARK: - waitUntil
 
+// `isolation` uses the Swift `isolated` keyword to inherit the caller's actor
+// isolation so the synchronous `predicate()` calls need no hop; it is
+// intentionally never referenced by name. Periphery reports it as unused.
+// periphery:ignore:parameters isolation
 /// Polls `predicate` every 50 ms until it returns `true` or `timeout` elapses.
 ///
 /// Default deadline is generous (5 s) to absorb scheduling jitter on CI

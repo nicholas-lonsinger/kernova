@@ -13,19 +13,19 @@ import Foundation
 /// files; editing either in isolation silently misaligned them. `maxConnectAttempts`
 /// now *derives* from `connectWait`/`connectRetryDelaySeconds`, so the two sides
 /// cannot drift apart.
-public enum FileProviderServicingTiming {
+enum FileProviderServicingTiming {
     /// Extension-side bounded wait for the owner to connect after the doorbell is
     /// rung, kept well under Finder's ~60 s paste deadline so a missing owner
     /// fails cleanly.
     ///
     /// The source of truth both sides derive from.
-    public static let connectWait: TimeInterval = 30
+    static let connectWait: TimeInterval = 30
 
     /// Owner-side delay between transient connect retries, in seconds.
-    public static let connectRetryDelaySeconds: TimeInterval = 2
+    static let connectRetryDelaySeconds: TimeInterval = 2
 
     /// `connectRetryDelaySeconds` as a `DispatchTimeInterval`, for the connector.
-    public static var connectRetryDelay: DispatchTimeInterval {
+    static var connectRetryDelay: DispatchTimeInterval {
         .seconds(Int(connectRetryDelaySeconds))
     }
 
@@ -39,7 +39,7 @@ public enum FileProviderServicingTiming {
     /// for that: derived, not a separately-maintained literal — editing either
     /// constant above re-derives this (16 today: `⌈30 / 2⌉ + 1`, giving 15
     /// actual retry delays = 30s, matching `connectWait` exactly).
-    public static var maxConnectAttempts: Int {
+    static var maxConnectAttempts: Int {
         max(1, Int((connectWait / connectRetryDelaySeconds).rounded(.up)) + 1)
     }
 
@@ -50,5 +50,5 @@ public enum FileProviderServicingTiming {
     /// full production reply timeout" (see CLAUDE.md's "Async waits in tests")
     /// can reference it instead of independently re-hardcoding `120`, which
     /// would let the two silently drift apart.
-    public static let fetchReplyWait: TimeInterval = 120
+    static let fetchReplyWait: TimeInterval = 120
 }

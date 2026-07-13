@@ -201,7 +201,7 @@ struct FileProviderDomainHostEnablementTests {
 
         var callCount: Int { lock.withLock { callCountStorage } }
 
-        func add(_ domain: NSFileProviderDomain, completion: @escaping @Sendable (Error?) -> Void) {
+        func add(_: NSFileProviderDomain, completion: @escaping @Sendable (Error?) -> Void) {
             let thisCall = lock.withLock {
                 callCountStorage += 1
                 return callCountStorage

@@ -492,6 +492,39 @@ struct VMLifecycleCoordinatorTests {
         #expect(ipswService.lastDiscardResumeDataURL == destination)
     }
 
+    @Test("installMacOS with requestedFreshDownload skips trash when the file is absent")
+    func installMacOSFreshDownloadSkipsTrashWhenAbsent() async throws {
+        // The file-absent counterpart of the test above: the mock reports the
+        // destination as *not* existing, so the fresh-download cleanup must skip
+        // the trash entirely — but still discard any resume data and clear the
+        // flag, since that cleanup runs unconditionally within the honor branch.
+        let temp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("freshDownloadAbsent-\(UUID().uuidString)", isDirectory: true)
+        let fileSystem = MockFileSystem()
+        fileSystem.fileExistsResult = false
+        let (coordinator, _, _, ipswService, _) = makeCoordinator(
+            downloadsDirectory: temp, fileSystem: fileSystem)
+        let instance = makeInstance()
+
+        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+
+        let context = MacOSInstallContext(
+            source: .downloadLatest,
+            downloadDestinationPath: destination.path(percentEncoded: false),
+            requestedFreshDownload: true
+        )
+        instance.configuration.installContext = context
+        instance.onUpdateConfiguration = { mutate in mutate(&instance.configuration) }
+
+        try await coordinator.installMacOS(on: instance, context: context)
+
+        // Nothing existed to trash, but the honor-and-clear branch still ran:
+        // resume data was discarded exactly once for the destination.
+        #expect(fileSystem.trashedURLs.isEmpty)
+        #expect(ipswService.discardResumeDataCallCount == 1)
+        #expect(ipswService.lastDiscardResumeDataURL == destination)
+    }
+
     @Test("installMacOS surfaces freshDownloadCleanupFailed when the trash operation throws")
     func installMacOSFreshDownloadSurfacesTrashFailure() async throws {
         // Inject a FileSystemOperating that always throws from `trashItem`.
