@@ -761,6 +761,49 @@ struct VMConfigurationTests {
         #expect(decoded.clipboardSharingEnabled == true)
     }
 
+    // MARK: - clipboardPassthroughEnabled Tests
+
+    @Test("Default clipboardPassthroughEnabled is false")
+    func defaultClipboardPassthroughEnabled() {
+        let config = VMConfiguration(
+            name: "Test VM",
+            guestOS: .macOS,
+            bootMode: .macOS
+        )
+        #expect(config.clipboardPassthroughEnabled == false)
+    }
+
+    @Test("Configuration preserves clipboardPassthroughEnabled flag")
+    func clipboardPassthroughEnabledRoundTrip() throws {
+        let config = VMConfiguration(
+            name: "Passthrough VM",
+            guestOS: .macOS,
+            bootMode: .macOS,
+            clipboardPassthroughEnabled: true
+        )
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(config)
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(VMConfiguration.self, from: data)
+
+        #expect(decoded.clipboardPassthroughEnabled == true)
+    }
+
+    @Test("Configs missing the clipboardPassthroughEnabled key default it off")
+    func clipboardPassthroughMissingKeyUsesDefault() throws {
+        // `makeBaseJSON` predates the passthrough key — the shape of a config
+        // saved before passthrough existed. It must fall through to `false`.
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
+
+        #expect(decoded.clipboardPassthroughEnabled == false)
+    }
+
     // MARK: - agentLogForwardingEnabled Tests
 
     @Test("Default agentLogForwardingEnabled is false")
@@ -971,6 +1014,8 @@ struct VMConfigurationTests {
             networkEnabled: false,
             macAddress: "aa:bb:cc:dd:ee:ff",
             clipboardSharingEnabled: true,
+            clipboardPassthroughEnabled: true,
+            serialSocketRelayEnabled: true,
             audioInputEnabled: true,
             audioOutputEnabled: false,
             agentLogForwardingEnabled: true,

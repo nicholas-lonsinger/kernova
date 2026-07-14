@@ -51,6 +51,13 @@ final class VsockClipboardService: ClipboardServicing {
 
     var supportsBinaryRepresentations: Bool { true }
 
+    /// Bumped once per new inbound guest offer (see `ClipboardServicing`).
+    ///
+    /// So the passthrough coordinator publishes guest content to the host
+    /// pasteboard exactly once; not bumped by preview/copy materialization of an
+    /// already-published offer — that would re-publish on every lazy pull.
+    private(set) var inboundOfferSeq: UInt64 = 0
+
     // MARK: - Private state
 
     private let channel: VsockChannel
@@ -630,6 +637,10 @@ final class VsockClipboardService: ClipboardServicing {
         inboundPromise = promise
         previewMaterializationStarted = 0
         lastTransferIssue = nil
+        // A genuinely new offer with usable content landed — signal the
+        // passthrough coordinator (once per offer, after the promise is live so
+        // its `materializeForCopy` sees it).
+        inboundOfferSeq &+= 1
         Self.logger.notice(
             "Received guest clipboard offer for '\(self.label, privacy: .public)' (gen=\(offer.generation, privacy: .public), \(offer.repInfo.count, privacy: .public) reps) — metadata only"
         )

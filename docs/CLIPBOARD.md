@@ -143,6 +143,16 @@ middle — never in *how bytes move*. There must be no second, parallel transpor
   a divergent code path; it changes *who/what* authorizes the pull, not the pull itself.
 - The gate's purpose is **trust** (§10), not transformation. It is the boundary that stops a
   guest from reading the host clipboard without explicit user intent.
+- **Realized by `ClipboardPassthroughCoordinator`** (per VM, host-side only): a 0.5 s host-pasteboard
+  poll drives the outbound `ClipboardPasteboardIntake` → `grabIfChanged()` choke-point, and a new-offer
+  observation drives the shared `HostClipboardPublisher.publish` — the same two choke-points the window
+  gestures use. Enabling requires explicit confirmation; the toggle (`clipboardPassthroughEnabled`)
+  is hot-toggleable. When several VMs run with passthrough on, the host pasteboard is genuinely shared
+  across them (a sibling's inbound write becomes another's outbound forward); this terminates rather
+  than loops because each guest agent suppresses its own echo. Enabling passthrough does **not** waive
+  §3 for the guest→host direction — the auto-publish reuses the same lazy promise write, so bytes are
+  still pulled on paste; it does mean an inline rep (text, small image) is materialized once per guest
+  copy, exactly as an explicit "Copy to Mac" would.
 
 ### 5. The window is a preview; the preview is never on the data path
 
@@ -304,7 +314,7 @@ fix, not just whether to fix it. (macOS-guest issues only; Linux/Windows out of 
 | **#376** — File Provider domain for large-file paste (no 60 s deadline) | §2 Disk-as-fallback (on-demand), §13 OS deadlines, §11 Sandbox-forward | This is the canonical §2 mechanism: instant placeholder, on-demand `fetchContents`, write once at the destination, native progress, no deadline. Also killed #371's 2×-disk. Extension can't open vsock — relay through the agent (§11). **Partially shipped** — D1a (guest transport) landed in #425; the host-side "Copy to Mac" mirror (D2) is the separate issue #424, shipped in #434. Remaining #376 phases tracked on the issue. |
 | **#422** — a directory crosses as a fully materialized archive, staged whole on **both** sides (≈3N peak disk) | §2 (no reflexive intermediate copy), §3 (pay on consume), ordering (bounded peak), §12 (smarter wins) | Stream the (de)serialization both ways and hash **inline** (§7); defer source archiving to paste via a negotiated offer that doesn't need exact size/SHA up front. Kernova's own disk for the transfer must approach zero beyond the destination. The File Provider arc it was sequenced after has landed — #376 D1a (#425) and the #424 host mirror (#434) — no longer blocked. |
 | **#354** — clipboard transfer progress UI (bar + ring) | §13 Legibility, §9 bidirectional, §5 preview-only | Drive both indicators off existing transport progress, both directions; clear on terminal states. Progress is a window affordance — it must not touch the data path (§5). ✓ **Resolved** — progress bar + ring driven off transport progress (#417). |
-| **#82** — opt-in automatic clipboard passthrough | §4 One data plane | Passthrough is the gate-less mode of the **same** path. Implement it as a change to *when consume is authorized*, not as a parallel transport. |
+| **#82** — opt-in automatic clipboard passthrough | §4 One data plane | Passthrough is the gate-less mode of the **same** path — a change to *when consume is authorized*, not a parallel transport. ✓ **Resolved** — `ClipboardPassthroughCoordinator` (per VM, host-side only, no proto/`PolicyUpdate` change) polls the host pasteboard and funnels changes through the identical `ClipboardPasteboardIntake` → `grabIfChanged()` choke-point the window's Paste uses, and auto-invokes the shared `HostClipboardPublisher.publish` (the same lazy write "Copy to Mac" uses) on each new inbound offer. Marker filtering (§10) is inherited from the shared intake; echo is suppressed by the publisher's post-write `changeCount` (a digest can't be the key — inbound writes are lazy promises). Drives both transports; the `clipboardPassthroughEnabled` toggle requires explicit confirmation to enable and is hot-toggleable. |
 | **#145** — per-VM auth on the vsock listener | §10 Trust boundary | Required before non-trusted guest workloads; the host must authenticate the guest per VM. |
 | **#330** — preference to disable the guest-agent install prompt | §10 (consent/UX) | Peripheral to transport; a consent/UX affordance, not a data-path change. |
 | **#499** — a stale cancel/abort for one pull attempt can land on a same-id retry instead | §9 idempotent/bidirectional abort | The `transfer_id`'s determinism from `(generation, repIndex, direction)` is load-bearing (cancel re-derives it; `cancelPull`'s race guard depends on it) — an id-format change to disambiguate attempts was rejected as disproportionate. ✓ **Resolved as documented-benign** — the residual (a spurious re-abort/retry, never corruption) is pinned by a regression test and the invariant is documented on `ClipboardTransferID` itself. |

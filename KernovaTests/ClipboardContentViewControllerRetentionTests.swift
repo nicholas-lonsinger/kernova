@@ -298,6 +298,9 @@ private final class FakeWritePasteboard: HostWritePasteboard {
     var failNextWrite = false
     var onWrite: (() -> Void)?
 
+    /// Bumped on every successful write so it mirrors `NSPasteboard.changeCount`.
+    private(set) var changeCount = 0
+
     @discardableResult func clearContents() -> Int {
         clearCount += 1
         return clearCount
@@ -307,6 +310,7 @@ private final class FakeWritePasteboard: HostWritePasteboard {
         writeAttempts += 1
         let shouldFail = failNextWrite
         failNextWrite = false
+        if !shouldFail { changeCount += 1 }
         onWrite?()
         return !shouldFail
     }

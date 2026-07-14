@@ -51,6 +51,13 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     /// Active = the banner is collapsed to zero height (the common case, toggle
     /// on); deactivated to reveal it when the toggle is off.
     private lazy var bannerCollapsed = enablementBanner.heightAnchor.constraint(equalToConstant: 0)
+    /// Shown while automatic passthrough is on, indicating the editor/buttons are
+    /// no longer the primary pathway; carries a runtime "Turn Off".
+    private let passthroughBanner = ClipboardPassthroughBanner()
+    /// Active = the passthrough banner is collapsed to zero height (passthrough
+    /// off, the default); deactivated to reveal it when passthrough is on.
+    private lazy var passthroughBannerCollapsed = passthroughBanner.heightAnchor.constraint(
+        equalToConstant: 0)
     /// Content-type indicator + transient-status surface, placed in the status
     /// row (right-aligned) so the command row stays a clean set of buttons.
     private let indicatorView = ClipboardIndicatorView()
@@ -121,33 +128,27 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     /// the completion hops back to the main actor before touching state.
     private let promiseQueue = OperationQueue()
 
-    /// Label for the host-side clipboard staging root.
+    /// Writes the buffer to the host pasteboard for "Copy to Mac".
     ///
-    /// Shared so `AppDelegate`'s launch-time orphan sweep targets the same temp
-    /// directory this controller stages into (the staging never sweeps on
-    /// window close — that would invalidate a just-copied file URL still on the
-    /// pasteboard — so orphans are reclaimed at launch instead, mirroring how
-    /// the guest agent sweeps on start).
-    static let stagingLabel = "host"
+    /// The window-independent inbound-publication path (CLIPBOARD.md §4). In
+    /// production the same per-VM instance is shared with the passthrough
+    /// coordinator; tests inject one built over a private pasteboard/registry.
+    private let publisher: HostClipboardPublisher
 
-    /// Materializes inline file payloads (e.g. an image file shown in place) to
-    /// local temp files for "Copy to Mac" so a Finder paste creates the file.
+    /// Stages dropped/pasted *folders* into archives before they reach the guest.
     ///
-    /// A streamed `.file` payload already has a temp URL and isn't re-staged here.
-    /// Recent generations are retained (see `ClipboardFileStaging`) so a
-    /// just-copied URL on the pasteboard stays valid across a couple more copies.
-    private let staging = ClipboardFileStaging(label: ClipboardContentViewController.stagingLabel)
+    /// Only the inbound intake (Paste button, responder `paste:`, drag-and-drop)
+    /// uses this — the "Copy to Mac" host-write staging moved to
+    /// `HostClipboardPublisher`. Both stage under the same launch-swept `"host"`
+    /// root (each generation is its own UUID subdirectory, so the two never
+    /// collide); recent generations are retained so a just-resolved URL stays valid.
+    private let staging = ClipboardFileStaging(label: HostClipboardPublisher.stagingLabel)
 
-    /// Monotonic generation for the window's launch-swept staging root.
+    /// Monotonic generation for this controller's slice of the launch-swept
+    /// staging root.
     ///
-    /// Bumped by both "Copy to Mac" (files/folders staged for the pasteboard) and
-    /// outbound folder archiving, so each operation supersedes older staged
-    /// artifacts within `ClipboardFileStaging`'s recency window. One shared
-    /// counter is correct here: both uses key on this *local* counter and one
-    /// `staging` instance, so there is no generation-namespace collision. The
-    /// guest, by contrast, needs a separate `sendStaging` because its inbound
-    /// staging keys on the host's offer generation — a foreign namespace an
-    /// outbound counter could collide with.
+    /// Bumped per folder-resolving intake so each supersedes older staged
+    /// artifacts within the staging recency window.
     private var stagingGeneration: UInt64 = 1
 
     /// `true` while a "Copy to Mac" is materializing/writing.
@@ -156,22 +157,6 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     /// observation pass and would re-enable the Copy button mid-copy; this flag is
     /// the real re-entrancy guard, not the button's enabled state.
     private var isCopyingToMac = false
-
-    /// Destination pasteboard for "Copy to Mac".
-    ///
-    /// `.general` in production; tests inject a private `NSPasteboard(name:)` to
-    /// exercise the write/retention path without touching the developer's real
-    /// clipboard, or a `HostWritePasteboard` fake to force a write failure (the
-    /// concrete `NSPasteboard` can't be made to fail). See `HostWritePasteboard`.
-    private let writePasteboard: any HostWritePasteboard
-
-    /// Process-lifetime owner of the lazy data providers a "Copy to Mac" writes.
-    ///
-    /// RATIONALE: a promised pasteboard item can be pasted long after this
-    /// window closes (and the window auto-closes when the VM stops), so the
-    /// providers must outlive the controller — they live in this app-scoped
-    /// registry rather than on `self`. See `LazyClipboardProviderRegistry`.
-    private let providerRegistry: LazyClipboardProviderRegistry
 
     /// First-file-wins gate shared by one promise receipt's per-file
     /// completions (the buffer models a single pasteboard item).
@@ -184,12 +169,18 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         instance: VMInstance, viewModel: VMLibraryViewModel,
         writePasteboard: any HostWritePasteboard = NSPasteboard.general,
         providerRegistry: LazyClipboardProviderRegistry = .shared,
+        publisher: HostClipboardPublisher? = nil,
         editDebounceInterval: Duration = .milliseconds(200)
     ) {
         self.instance = instance
         self.viewModel = viewModel
-        self.writePasteboard = writePasteboard
-        self.providerRegistry = providerRegistry
+        // In production the window shares the VM's publisher with the passthrough
+        // coordinator (so echo suppression sees a manual "Copy to Mac" too); tests
+        // inject one over a private pasteboard/registry via the params above.
+        self.publisher =
+            publisher
+            ?? HostClipboardPublisher(
+                writePasteboard: writePasteboard, providerRegistry: providerRegistry)
         self.editDebounceInterval = editDebounceInterval
 
         let textView = ClipboardEditorTextView()
@@ -286,6 +277,11 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         enablementBanner.onEnable = { [weak self] in self?.openFileProviderSettings() }
         container.addSubview(enablementBanner)
 
+        passthroughBanner.translatesAutoresizingMaskIntoConstraints = false
+        passthroughBanner.isHidden = true
+        passthroughBanner.onTurnOff = { [weak self] in self?.disablePassthrough() }
+        container.addSubview(passthroughBanner)
+
         let commandDivider = NSBox()
         commandDivider.boxType = .separator
         commandDivider.translatesAutoresizingMaskIntoConstraints = false
@@ -312,15 +308,21 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         statusBar.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(statusBar)
 
-        // Vertical order: enablement banner (top, collapsed when not needed) →
-        // command bar → divider → content → divider → progress bar → status row.
+        // Vertical order: enablement banner → passthrough banner (both top,
+        // collapsed when not needed) → command bar → divider → content → divider →
+        // progress bar → status row.
         var constraints: [NSLayoutConstraint] = [
             enablementBanner.topAnchor.constraint(equalTo: container.topAnchor),
             enablementBanner.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             enablementBanner.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             bannerCollapsed,
 
-            commandBar.topAnchor.constraint(equalTo: enablementBanner.bottomAnchor),
+            passthroughBanner.topAnchor.constraint(equalTo: enablementBanner.bottomAnchor),
+            passthroughBanner.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            passthroughBanner.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            passthroughBannerCollapsed,
+
+            commandBar.topAnchor.constraint(equalTo: passthroughBanner.bottomAnchor),
             commandBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             commandBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
 
@@ -487,6 +489,9 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 // The host "Copy to Mac" File Provider's enablement, so the
                 // top-of-window banner reacts when the user flips the toggle.
                 _ = HostClipboardFileProvider.shared.availability
+                // Passthrough state, so the passthrough banner reveals/collapses
+                // when it's toggled (from settings or its own "Turn Off").
+                _ = self.instance.configuration.clipboardPassthroughEnabled
             },
             apply: { [weak self] in
                 self?.updateUI()
@@ -568,7 +573,22 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
         applyStatus(status, canInstallKernovaAgent: canInstallKernovaAgent)
         updateEnablementBanner()
+        updatePassthroughBanner()
         triggerPreviewMaterialization()
+    }
+
+    /// Reveals the passthrough banner while automatic passthrough is on.
+    private func updatePassthroughBanner() {
+        let on = instance.configuration.clipboardPassthroughEnabled
+        guard passthroughBanner.isHidden == on else { return }
+        passthroughBanner.isHidden = !on
+        passthroughBannerCollapsed.isActive = !on
+    }
+
+    /// Turns automatic passthrough off from the window banner (no confirmation —
+    /// only enabling, which the settings toggle gates, needs one).
+    private func disablePassthrough() {
+        viewModel?.updateConfiguration(of: instance) { $0.clipboardPassthroughEnabled = false }
     }
 
     /// Reveals the top-of-window banner only in the `.needsEnabling` state.
@@ -757,16 +777,8 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         guard !isCopyingToMac else { return }
         isCopyingToMac = true
 
-        let staging = self.staging
-        let generation = stagingGeneration
-        stagingGeneration += 1
-        // Classify the copy items, then build the pasteboard pairs off the main
-        // actor. Inline/preview/directory reps are pulled eagerly and grouped by
-        // the shared planner; the single plain file rep is either a File Provider
-        // placeholder (materialized on read, no deadline) or a size-capped lazy
-        // paste. Files are no longer pulled at click — the eager staging bridge is
-        // gone (#424). A large stage mustn't block the UI, so disable the button
-        // until it resolves.
+        // A large stage mustn't block the UI, so disable the button until the
+        // publish resolves. The publish materializes + writes off the main actor.
         commandBar.copyButton.isEnabled = false
         Task { @MainActor [weak self] in
             guard let self else { return }
@@ -774,309 +786,35 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 self.isCopyingToMac = false
                 self.commandBar.copyButton.isEnabled = !service.clipboardContent.isEmpty
             }
-            let copyItems = await service.materializeForCopy()
-            var resolvedReps: [ClipboardContent.Representation] = []
-            var lazyFiles: [(generation: UInt64, repIndex: Int)] = []
-            var droppedReasons: [CopyToMacDropReason] = []
-            for item in copyItems {
-                switch item {
-                case .resolved(let rep): resolvedReps.append(rep)
-                case .lazyFile(let generation, let repIndex, _, _):
-                    lazyFiles.append((generation, repIndex))
-                case .droppedFile(let reason): droppedReasons.append(reason)
-                }
-            }
-            guard !resolvedReps.isEmpty || !lazyFiles.isEmpty else {
-                self.indicatorView.showTransientMessage(
-                    Self.dropMessage(for: droppedReasons), style: .error)
-                return
-            }
-            // Eager reps go through the shared planner (inline grouping, image-file
-            // staging, directory extraction). The single lazy file rep gets its own
-            // item whose `.fileURL` is pulled + staged on paste (the File-Provider-
-            // off fallback); only `VsockClipboardService` produces `.lazyFile`.
-            var specs = await Self.hostPasteboardItems(
-                for: ClipboardContent(representations: resolvedReps), generation: generation,
-                staging: staging)
-            if let fileProvider = service as? any HostClipboardFileRepProviding {
-                specs += lazyFiles.map {
-                    Self.lazyFileSpec(
-                        generation: $0.generation, repIndex: $0.repIndex, fileProvider: fileProvider)
-                }
-            }
-            // One lazy provider per item: its bytes are read only when a
-            // destination pastes that type (the laziness #392 restores). The
-            // providers outlive this window — `finishCopyToMac` hands them to the
-            // app-scoped registry (not self) once the write succeeds, so a paste
-            // after the window closes still finds a live provider.
-            let registry = self.providerRegistry
-            var providers: [LazyClipboardDataProvider] = []
-            let items = specs.map { spec -> NSPasteboardItem in
-                let item = NSPasteboardItem()
-                let provider = LazyClipboardDataProvider(
-                    provide: spec.provide,
-                    onFinished: { provider in
-                        // The registry is internally locked, so this nonisolated
-                        // callback (fired by NSPasteboard on the main run loop)
-                        // drops the provider directly. Captures the registry, not
-                        // the VC, so the provider's lifetime is decoupled from this
-                        // controller.
-                        registry.release(provider)
-                    })
-                item.setDataProvider(provider, forTypes: spec.types)
-                providers.append(provider)
-                return item
-            }
-            // `materializeForCopy` already counted the file payloads it couldn't
-            // serve (over the deadline-safe cap with the File Provider off, an
-            // extra file beyond the single lazy one, or a failed eager pull), so
-            // surface that rather than showing an unqualified success.
-            self.finishCopyToMac(
-                items: items, providers: providers,
-                representationCount: resolvedReps.count + lazyFiles.count,
-                droppedFiles: droppedReasons.count)
+            let outcome = await self.publisher.publish(from: service)
+            self.showCopyOutcome(outcome)
         }
     }
 
-    /// One pasteboard item to write for "Copy to Mac": the types it promises and
-    /// a closure that lazily serves the bytes for each requested type.
-    ///
-    /// The spec is the lazy counterpart of an eager `[(type, data)]` item — the
-    /// byte read is deferred into `provide`, which the `LazyClipboardDataProvider`
-    /// invokes only when a destination actually pastes that type. A File Provider
-    /// placeholder or extracted-directory `.fileURL` is a stable URL captured by
-    /// the closure; a File-Provider-off lazy file pulls + stages its bytes inside
-    /// `provide` (see `lazyFileSpec`); inline image bytes are served on demand.
-    struct PasteboardItemSpec: Sendable {
-        let types: [NSPasteboard.PasteboardType]
-        let provide: @Sendable (NSPasteboard.PasteboardType) -> Data?
-    }
-
-    /// A pasteboard item for the single lazy file rep served when the host File
-    /// Provider is off: `provide(.fileURL)` pulls + stages the bytes on demand and
-    /// returns the staged file URL.
-    ///
-    /// The pull runs synchronously on the main thread (the pasteboard server's
-    /// `provideData` callback), blocking it while the stream receiver delivers
-    /// off-main — the same `pullStagedFile` bridge the File Provider relay uses.
-    /// The rep was size-capped at copy time (`maxDeadlineSafeFileBytes`) so the
-    /// pull + stage completes within the OS paste deadline.
-    nonisolated private static func lazyFileSpec(
-        generation: UInt64, repIndex: Int, fileProvider: any HostClipboardFileRepProviding
-    ) -> PasteboardItemSpec {
-        PasteboardItemSpec(types: [.fileURL]) { type in
-            guard type == .fileURL else { return nil }
-            guard
-                case .success(let path) = fileProvider.pullStagedFile(
-                    generation: generation, repIndex: repIndex)
-            else { return nil }
-            return Data(URL(fileURLWithPath: path).absoluteString.utf8)
-        }
-    }
-
-    /// Builds the per-item provider specs to promise on the host pasteboard for
-    /// the eagerly-resolved `content`, while deferring inline byte reads to paste
-    /// time.
-    ///
-    /// A single inline item promises every inline (filename-less) representation;
-    /// each file payload becomes its own item promising exactly one `.fileURL`
-    /// (and, for an image file, its inline image bytes too). One `.fileURL` per
-    /// item is what a Finder paste needs to create N files — a single item holds
-    /// only one value per type, so several file URLs in one item would collide.
-    /// Mirrors the guest agent's inbound promise grouping. (`content` carries only
-    /// resolved reps — the lazy single file rep is added by the caller via
-    /// `lazyFileSpec`.)
-    ///
-    /// Internal (not `private`) so `@testable import` can exercise this pure
-    /// grouping/staging step — and each spec's `provide` closure — directly
-    /// without driving the whole controller.
-    nonisolated static func hostPasteboardItems(
-        for content: ClipboardContent, generation: UInt64, staging: ClipboardFileStaging
-    ) async -> [PasteboardItemSpec] {
-        // The grouping decision (one shared inline item; one item per file
-        // payload; UTI dedup) is the shared planner — the single source of truth
-        // both sides of the bridge use. This side maps each planned item to a lazy
-        // `PasteboardItemSpec`: a File Provider placeholder / extracted-directory
-        // `.fileURL` is a stable URL used as-is, an inline-and-named image file is
-        // staged to a sink, and inline byte reads are deferred to paste time.
-        let descriptors = content.representations.map {
-            ClipboardRepresentationDescriptor(
-                uti: $0.uti, filename: $0.filename,
-                isInline: $0.shouldInlineOnPasteboard, isPromisable: true)
-        }
-        let plan = ClipboardPasteboardItemPlan.plan(for: descriptors)
-
-        var specs: [PasteboardItemSpec] = []
-        for item in plan.items {
-            if item.types.contains(where: \.isFileURL) {
-                // A file payload — one item promising exactly one `.fileURL` (plus
-                // inline image bytes for an image file). All of an item's types
-                // share one backing rep. Same-named files get distinct staged URLs
-                // from `ClipboardFileStaging`; the `.fileURL` is resolved now (eager
-                // staging), the image bytes served on demand.
-                let representation = content.representations[item.types[0].representationIndex]
-                var types: [NSPasteboard.PasteboardType] = []
-                // The planner emits the content (image) UTI before `.fileURL` iff the
-                // rep inlines — promise that flavor from the same durable staged file.
-                let imageType = item.types.first { !$0.isFileURL }
-                    .map { NSPasteboard.PasteboardType($0.uti) }
-                if let imageType { types.append(imageType) }
-
-                // Resolve the pasteboard `.fileURL`: a File Provider placeholder's
-                // stable domain URL, or an inline image file written to a durable
-                // sink. The image flavor reads the SAME staged file — reading
-                // `representation.fileURL` lazily could vend empty bytes once a
-                // transient source is swept, the window-survival case the provider
-                // registry exists to support.
-                let stagedURL = stagedFileURL(
-                    for: representation, generation: generation, staging: staging)
-                let fileURLData = stagedURL.map { Data($0.absoluteString.utf8) }
-                if fileURLData != nil { types.append(.fileURL) }
-
-                guard !types.isEmpty else { continue }
-                specs.append(
-                    PasteboardItemSpec(types: types) { type in
-                        if type == .fileURL { return fileURLData }
-                        if type == imageType {
-                            if let stagedURL,
-                                let data = try? Data(contentsOf: stagedURL, options: .mappedIfSafe)
-                            {
-                                return data
-                            }
-                            // Staging produced no durable file — fall back to the
-                            // rep's own bytes (resident, or a best-effort URL read).
-                            return inlineData(for: representation)
-                        }
-                        return nil
-                    })
-            } else {
-                // The shared inline item: promise every inline rep's content UTI,
-                // reading the bytes lazily only when a destination pastes that type.
-                var inlineByType: [NSPasteboard.PasteboardType: ClipboardContent.Representation] = [:]
-                var inlineTypes: [NSPasteboard.PasteboardType] = []
-                for promised in item.types {
-                    let type = NSPasteboard.PasteboardType(promised.uti)
-                    inlineByType[type] = content.representations[promised.representationIndex]
-                    inlineTypes.append(type)
-                }
-                // Snapshot to a `let` so the @Sendable provider closure captures an
-                // immutable map rather than the mutable `var` built above.
-                let inlineReps = inlineByType
-                specs.append(
-                    PasteboardItemSpec(types: inlineTypes) { type in
-                        inlineReps[type].flatMap(inlineData(for:))
-                    })
-            }
-        }
-        return specs
-    }
-
-    /// Resident bytes to inline for a representation, memory-mapped rather than
-    /// read whole so a multi-GB image is never loaded into the heap. [L2]
-    ///
-    /// The bytes page in on demand and the OS can evict them under pressure. The
-    /// caller gates this to image payloads (`shouldInlineOnPasteboard`), so there
-    /// is no size ceiling to apply (CLIPBOARD.md §1).
-    nonisolated private static func inlineData(
-        for representation: ClipboardContent.Representation
-    ) -> Data? {
-        if let resident = representation.inMemoryData {
-            return resident
-        }
-        if let url = representation.fileURL {
-            return try? Data(contentsOf: url, options: .mappedIfSafe)
-        }
-        return nil
-    }
-
-    /// Returns the pasteboard `public.file-url` for a resolved file payload.
-    ///
-    /// A directory payload is extracted from its streamed `.aar` into a real
-    /// folder under the window's launch-swept root so a Finder paste recreates the
-    /// tree. An inline-and-named payload (image file) is written to a fresh sink so
-    /// its `.fileURL` outlives the VM teardown. [sweep-vs-URL]
-    nonisolated private static func stagedFileURL(
-        for representation: ClipboardContent.Representation, generation: UInt64,
-        staging: ClipboardFileStaging
-    ) -> URL? {
-        if representation.isDirectory {
-            // A directory rep's bytes are an `.aar` of the tree. Extract it into a
-            // real folder under the launch-swept root so a Finder paste recreates
-            // the tree, not the archive file. The shared helper (also used by the
-            // guest agent) does the free-space floor check + extract.
-            return ClipboardDirectoryArchive.extractedDirectoryURL(
-                for: representation, into: staging, generation: generation)
-        }
-        if let existing = representation.fileURL {
-            // A File Provider placeholder already has a stable domain URL (its bytes
-            // materialize lazily on read); use it as-is. The eager `adopt()` re-home
-            // of a streamed `.file` into the launch-swept root is gone (#424) — a
-            // rare spilled inline file simply keeps its transient URL.
-            return existing
-        }
-        guard let data = representation.inMemoryData,
-            let sink = try? staging.makeSink(
-                generation: generation, filename: representation.filename)
-        else { return nil }
-        do {
-            try sink.write(data)
-            return try sink.commit()
-        } catch {
-            // Don't offer a truncated file — abort the partial stage.
-            sink.abort()
-            return nil
-        }
-    }
-
-    /// Writes the prepared pasteboard items to the Mac clipboard, surfacing
-    /// success/failure.
-    ///
-    /// Split from `copyToMac(_:)` so the file-staging step can run off the main
-    /// actor in between. `writeObjects` with several `NSPasteboardItem`s is the
-    /// multi-item write a Finder paste turns into N files. `providers` are the
-    /// lazy data providers backing `items`; they are handed to the app-scoped
-    /// registry only after a successful write — an unwritten provider never gets a
-    /// finish callback, so it needs no rollback and simply deallocates with the
-    /// caller's local array.
-    private func finishCopyToMac(
-        items: [NSPasteboardItem], providers: [LazyClipboardDataProvider],
-        representationCount: Int, droppedFiles: Int
-    ) {
-        // `hostPasteboardItems` emits a spec only with a non-empty `types`, and
-        // `setDataProvider(_:forTypes:)` carries those onto each item, so an empty
-        // `items` means every payload was dropped (e.g. a folder that failed to
-        // extract). Surface that rather than clearing the Mac clipboard to write
-        // nothing.
-        guard !items.isEmpty else {
+    /// Surfaces a "Copy to Mac" publish result as a transient status message.
+    private func showCopyOutcome(_ outcome: HostPublishOutcome) {
+        switch outcome {
+        case .nothingServed(let reasons):
+            // `materializeForCopy` counted the file payloads it couldn't serve
+            // (over the deadline-safe cap with the File Provider off, an extra file
+            // beyond the single lazy one, or a failed eager pull).
+            indicatorView.showTransientMessage(Self.dropMessage(for: reasons), style: .error)
+        case .stagingFailed:
             indicatorView.showTransientMessage(
                 "Couldn't prepare the clipboard content to copy", style: .error)
-            Self.logger.error("copyToMac produced no pasteboard items (staging failed)")
-            return
-        }
-        let pasteboard = writePasteboard
-        pasteboard.clearContents()
-        if pasteboard.writeObjects(items) {
-            // The promise is live now, so hand provider ownership to the registry;
-            // the caller's local array deallocates when this returns, but a paste
-            // can land long after, including after the window closes.
-            providerRegistry.retain(providers)
-            if droppedFiles > 0 {
+        case .written(_, let droppedReasons, _):
+            if droppedReasons.isEmpty {
+                indicatorView.showTransientMessage("Copied to Mac clipboard", style: .info)
+            } else {
                 // Partial success: some payloads (e.g. a folder that failed to
                 // extract) were dropped — don't claim an unqualified success.
+                let count = droppedReasons.count
                 indicatorView.showTransientMessage(
-                    "Copied to Mac clipboard — \(droppedFiles) item\(droppedFiles == 1 ? "" : "s") couldn't be prepared",
+                    "Copied to Mac clipboard — \(count) item\(count == 1 ? "" : "s") couldn't be prepared",
                     style: .warning)
-            } else {
-                indicatorView.showTransientMessage("Copied to Mac clipboard", style: .info)
             }
-            Self.logger.info(
-                "Copied clipboard buffer to host pasteboard (\(representationCount, privacy: .public) reps, \(items.count, privacy: .public) items, \(droppedFiles, privacy: .public) dropped)"
-            )
-        } else {
-            // The write failed, so the providers were never retained — the local
-            // array drops them and no finish callback fires.
+        case .writeFailed:
             indicatorView.showTransientMessage("Couldn't write to the Mac clipboard", style: .error)
-            Self.logger.error("NSPasteboard.writeObjects failed for clipboard buffer")
         }
     }
 
@@ -1359,16 +1097,21 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     }
 }
 
-/// The narrow slice of `NSPasteboard` the "Copy to Mac" write path needs, so a
+/// The narrow slice of `NSPasteboard` the host write-back path needs, so a
 /// test can substitute a fake that forces `writeObjects` to fail.
 ///
 /// `NSPasteboard` is a class cluster with no public initializer and can't be
 /// subclassed, so its write can't be made to fail from a test. This write-only
-/// seam (clear plus an objects-write returning `Bool`) is deliberately separate
-/// from the guest agent's richer `Pasteboard` protocol, which also carries
-/// poll/read members the host write path never uses. `NSPasteboard` satisfies
-/// both requirements as-is.
+/// seam (clear, an objects-write returning `Bool`, and the post-write
+/// `changeCount` the passthrough coordinator reads for echo suppression) is
+/// deliberately separate from the guest agent's richer `Pasteboard` protocol,
+/// which also carries poll/read members the host write path never uses.
+/// `NSPasteboard` satisfies all of them as-is.
 protocol HostWritePasteboard: AnyObject {
+    /// Monotonically increasing count of pasteboard changes — the value right
+    /// after a write identifies that write to a coordinator polling the same
+    /// pasteboard.
+    var changeCount: Int { get }
     @discardableResult func clearContents() -> Int
     func writeObjects(_ objects: [any NSPasteboardWriting]) -> Bool
 }
