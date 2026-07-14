@@ -83,9 +83,9 @@ Notarization requires a hardened runtime and a secure timestamp on every
 binary, and since export re-signing can't add either inside the DMG, they have
 to be baked in at build time.
 
-The outer app, the host `KernovaFileProvider.appex`, `KernovaQuickLook.appex`,
-and `KernovaRelaunchHelper` all keep **Automatic / Apple Development** at build
-time and receive their Developer ID signatures from the Organizer export. The
+The outer app, the host `KernovaFileProvider.appex`, and `KernovaRelaunchHelper`
+all keep **Automatic / Apple Development** at build time and receive their
+Developer ID signatures from the Organizer export. The
 app and host File Provider targets set `REGISTER_APP_GROUPS = YES` so Xcode's
 automatic signing generates/updates Developer ID profiles carrying the
 `group.app.kernova` authorization at export (Xcode 16.3+ behavior).
@@ -101,11 +101,11 @@ into *build*-action products for debugger attachment — the agent targets set
 the DMG is notarization-clean regardless of whether it came from a `build` or
 an `archive` action.
 
-All six product targets set `ENABLE_HARDENED_RUNTIME = YES` in Release. The
+All five product targets set `ENABLE_HARDENED_RUNTIME = YES` in Release. The
 agent and `KernovaRelaunchHelper` each set `SKIP_INSTALL = YES` so the archive
 contains only `Kernova.app` — either one installing as a second product turns
 the archive into a generic *Other Items* archive with **Distribute App
-disabled**. (The three embedded appexes already carry `SKIP_INSTALL = YES` by
+disabled**. (The two embedded appexes already carry `SKIP_INSTALL = YES` by
 default; the agent and helper are standalone app/tool targets that otherwise
 install.)
 

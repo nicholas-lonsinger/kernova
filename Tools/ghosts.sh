@@ -392,7 +392,7 @@ else
     fi
 fi
 
-# PlugInKit's election for the three appexes follows the same highest-version
+# PlugInKit's election for the two appexes follows the same highest-version
 # rule as the app itself. Report-only — recovering a wedged plugin means
 # evicting the competing app copy above, not a targeted pluginkit repair.
 # A default `pluginkit -m` returns only the election winner. Each match line
@@ -403,7 +403,7 @@ fi
 pk_lines=()
 pk_dead=()
 pk_registered=0
-for id in app.kernova.quicklook app.kernova.fileprovider app.kernova.macosagent.fileprovider; do
+for id in app.kernova.fileprovider app.kernova.macosagent.fileprovider; do
     info=$(pluginkit -m -v -i "$id" 2>/dev/null)
     if [ -z "$info" ]; then
         pk_lines+=("$id — not registered with PlugInKit")

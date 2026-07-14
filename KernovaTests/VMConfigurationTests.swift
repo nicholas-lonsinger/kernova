@@ -32,6 +32,18 @@ struct VMConfigurationTests {
             """
     }
 
+    /// Creates a throwaway `.kernova` bundle directory containing `config.json`.
+    ///
+    /// Callers remove it via the returned URL in a `defer`.
+    private static func makeBundle(_ configuration: VMConfiguration) throws -> URL {
+        let bundleURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(configuration.id.uuidString).kernova", isDirectory: true)
+        try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+        let data = try VMConfiguration.makeJSONEncoder().encode(configuration)
+        try data.write(to: VMBundleLayout(bundleURL: bundleURL).configURL)
+        return bundleURL
+    }
+
     @Test("Default macOS configuration has correct defaults")
     func defaultMacOSConfig() {
         let config = VMConfiguration(
@@ -1109,5 +1121,33 @@ struct VMConfigurationTests {
         #expect(VMConfiguration.removableMediaChanged(old: added, new: base))
         #expect(!VMConfiguration.removableMediaChanged(old: base, new: base))
         #expect(!VMConfiguration.removableMediaChanged(old: added, new: added))
+    }
+
+    // MARK: - Bundle loading seam
+
+    @Test("VMConfiguration.load(fromBundle:) round-trips the saved config")
+    func loadFromBundleRoundTrip() throws {
+        // Whole-second creation date: the ISO-8601 strategy drops fractional
+        // seconds, which would break exact equality after the round trip.
+        let config = VMConfiguration(
+            name: "Round Trip", guestOS: .linux, bootMode: .efi, cpuCount: 4,
+            createdAt: Date(timeIntervalSince1970: 1_750_000_000))
+        let bundleURL = try Self.makeBundle(config)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        let loaded = try VMConfiguration.load(fromBundle: bundleURL)
+        #expect(loaded == config)
+    }
+
+    @Test("VMConfiguration.load(fromBundle:) throws when config.json is absent")
+    func loadFromBundleMissingConfig() throws {
+        let bundleURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString).kernova", isDirectory: true)
+        try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        #expect(throws: (any Error).self) {
+            try VMConfiguration.load(fromBundle: bundleURL)
+        }
     }
 }

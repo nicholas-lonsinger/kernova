@@ -300,9 +300,8 @@ struct VMConfiguration: Codable, Sendable, Equatable {
 
     /// Decoder configured for `config.json` (ISO-8601 dates).
     ///
-    /// The single coding configuration shared by the app's `VMStorageService`
-    /// and the Quick Look extension's read-only preview, so the two can never
-    /// drift.
+    /// The single coding configuration for reading `config.json`, so every read
+    /// site decodes identically.
     static func makeJSONDecoder() -> JSONDecoder {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601

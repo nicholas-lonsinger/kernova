@@ -17,8 +17,8 @@ func diskIconSystemName(for disk: StorageDisk) -> String {
 }
 
 // The pure `diskSubtitle(…)` formatting functions live in
-// `Kernova/Utilities/DiskSubtitle.swift` (Foundation-only, shared with the
-// KernovaQuickLook extension); this file keeps the AppKit painters.
+// `Kernova/Utilities/DiskSubtitle.swift` (Foundation-only); this file keeps the
+// AppKit painters.
 
 /// Paints `text` into the subtitle field, fading it in when the content changes.
 ///

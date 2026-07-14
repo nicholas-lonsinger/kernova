@@ -24,8 +24,8 @@ nonisolated func diskSubtitle(for disk: StorageDisk, bundleLayout: VMBundleLayou
 /// it can run on a detached task — the file reads happen off the main thread.
 /// Callers paint the result via `populateDiskSubtitle(_:id:path:isInternal:bundleLayout:isMissing:)`.
 ///
-/// Foundation-only (this file is shared with the `KernovaQuickLook` extension,
-/// which uses the same phrasing for the preview's Storage row).
+/// Foundation-only: the pure formatters carry no AppKit dependency, so the
+/// AppKit painters live separately in `Views/Detail/StorageDiskSubtitle.swift`.
 nonisolated func diskSubtitle(path: String, isInternal: Bool, bundleLayout: VMBundleLayout) -> String {
     // One coalesced read for both figures (rather than two separate stats).
     diskSubtitle(
@@ -35,9 +35,9 @@ nonisolated func diskSubtitle(path: String, isInternal: Bool, bundleLayout: VMBu
 
 /// Formats already-read sizes into the subtitle string.
 ///
-/// The read/format split lets a caller that also needs the raw figures — the
-/// Quick Look preview derives its usage bar from them — stat the file once
-/// instead of twice.
+/// Isolating the pure formatting from the file read keeps the string mapping
+/// independently testable; the `path:` overload above reads the sizes once, then
+/// delegates here.
 nonisolated func diskSubtitle(sizes: VMBundleLayout.DiskSizes, path: String, isInternal: Bool) -> String {
     let onDiskText = sizes.onDiskBytes.map { DataFormatters.formatBytes($0) }
     let allocatedText = sizes.capacityBytes.map { DataFormatters.formatBytes($0) }
