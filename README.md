@@ -1,49 +1,95 @@
 # Kernova
 
-A macOS GUI application for creating and managing virtual machines using Apple's [Virtualization.framework](https://developer.apple.com/documentation/virtualization).
+**Native virtual machines for Apple Silicon — macOS and Linux guests, built on Apple's [Virtualization.framework](https://developer.apple.com/documentation/virtualization).**
+
+![License: FSL-1.1-ALv2](https://img.shields.io/badge/license-FSL--1.1--ALv2-blue)
+![Platform: macOS 26 · Apple Silicon](https://img.shields.io/badge/platform-macOS%2026%20%C2%B7%20Apple%20Silicon-lightgrey)
+
+Kernova is a pure-AppKit Mac app for creating and running virtual machines directly on Apple Silicon — no third-party hypervisor, no kernel extensions, no licensing. It's for developers, QA engineers, and power users who want fast, disposable macOS and Linux VMs that feel like part of the Mac: a real source list of machines, one-click lifecycle, and deep host integration — shared clipboard, files, audio, and an in-guest agent — all inside the App Sandbox.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/hero-dark.png">
+    <img src="docs/images/hero-light.png" alt="Kernova main window: sidebar of VMs with a running guest in the detail pane" width="900">
+  </picture>
+</p>
 
 ## Features
 
 ### Virtual Machines
 
-- **macOS & Linux guests** — Run macOS virtual machines and Linux VMs with EFI or direct kernel boot
+- **macOS & Linux guests** — Run macOS virtual machines and Linux VMs with EFI/UEFI or direct kernel boot
 - **Full VM lifecycle** — Start, stop, pause, resume, suspend, and restore
-- **VM cloning** — Clone existing VMs with automatic naming
+- **Force Stop** — Terminate a hung running or paused VM immediately without saving state
+- **Recovery mode** — One-shot "Start in Recovery Mode" for macOS guests
+- **VM cloning** — Clone existing VMs with automatic naming and freshly regenerated identifiers
 - **Bundle import** — Import VM bundles (`.kernova`) via double-click or drag-and-drop (also how you bring existing VMs into the sandboxed app's library — on the same volume the copy is an APFS clone, near-instant with no double disk usage)
-- **Recovery mode** — Boot macOS guests into Recovery
 - **Headless operation** — The app is a resident menu-bar app (with an opt-in "Open at Login" toggle), so closing the window keeps VMs running headless
 - **Graceful shutdown** — Save-suspends running VMs automatically when the app itself terminates (menu-bar Quit, logout, or shutdown)
+- **Sleep integration** — Auto-pauses running VMs on system sleep and resumes them on wake
 
 ### Guest Configuration
 
-- **Creation wizard** — Step-by-step VM creation with IPSW download for macOS guests
-- **Linux boot modes** — EFI/UEFI boot or direct kernel boot with kernel, initrd, and command-line args
-- **ISO attachment** — Mount disk images as USB drives for installation media, with boot priority support
+- **Creation wizard** — Step-by-step VM creation, including IPSW download for macOS guests
+- **Linux boot modes** — EFI/UEFI boot or direct kernel boot with kernel, initrd, and command-line arguments
 - **Shared directories** — Host-to-guest directory sharing via VirtioFS (read-only or read-write)
 - **Display settings** — Configurable resolution and DPI (width, height, PPI)
 - **Network** — MAC address management with persistent, stable addresses
-- **Audio** — Per-VM audio output and microphone passthrough toggles
-- **ASIF disk images** — Apple Sparse Image Format for near-native SSD performance with space-efficient storage
+- **Audio output** — Route guest audio to the host, on by default, toggleable per VM
+- **Microphone passthrough** — Opt-in per VM (off by default for privacy); streams the host mic into the guest, with a permission-guidance popover when macOS mic access isn't granted
 
-### Display and Console
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/creation-wizard-dark.png">
+    <img src="docs/images/creation-wizard-light.png" alt="The VM creation wizard selecting a guest operating system" width="720">
+  </picture>
+</p>
+
+### Storage & Media
+
+- **ASIF disk images** — Apple Sparse Image Format for near-native SSD performance with space-efficient storage
+- **Additional storage disks** — Attach or create extra ASIF disks beyond the primary disk, each with a read-only toggle, rename, Get Info, and drag-to-reorder boot order
+- **Removable media (hot-plug)** — Attach and eject USB mass-storage devices (ISOs, disk images) at runtime without stopping the VM, with boot-priority support for installation media
+- **Live disk-capacity display** — On-disk footprint vs. allocated capacity, read live for each disk
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/vm-settings-dark.png">
+    <img src="docs/images/vm-settings-light.png" alt="VM settings form showing the Storage Disks, Removable Media, and Audio sections" width="720">
+  </picture>
+</p>
+
+### Display & Console
 
 - **Native UI** — Pure-AppKit app, Liquid Glass design language
-- **Fullscreen mode** — Dedicated fullscreen window per VM
-- **Serial console** — Terminal window for serial port access
+- **Display modes** — Per-VM preference for where the display opens: inline in the detail pane, a pop-out window, or fullscreen (auto-hides the menu bar and Dock, and remembers the last fullscreen display)
+- **Detail-pane settings toggle** — Flip the detail pane between the live display and the read-only settings form while the VM runs
+- **Serial log** — Every VM's serial output is persisted to `serial.log` in its bundle
+- **Serial socket relay** — Opt-in AF_UNIX socket exposing the serial port to external terminal tools (`socat`, `nc -U`), hot-toggleable while running
 
-### Clipboard & File Sharing
+### Guest Integration
 
-- **Clipboard sync** — Host↔guest clipboard sharing for text, rich text, images, files, and folders — chunk-streamed with no size cap and live transfer progress on macOS guests (via the vsock guest agent); Linux guests sync clipboard text only (spice-vdagent)
-- **Guest agent** — In-guest menu-bar agent for macOS guests (vsock transport), installed from an attachable installer disk
-- **Copy to Mac** — Lazy guest→host file transfer backed by a host File Provider, so pasted files materialize on demand
+- **Guest agent (macOS guests)** — A lightweight in-guest menu-bar helper, installed from an attachable installer disk. It reports connection status and version back to the host over vsock, drives the in-app install/update prompt, and powers clipboard sync and log forwarding
+- **Clipboard sync** — Bidirectional host↔guest clipboard sharing for text, rich text, images, and **multiple files and entire folders** (transparently archived and extracted) — chunk-streamed with **no size cap**, integrity-verified, and surfaced through a dedicated clipboard window with live transfer progress. Respects macOS privacy markers: concealed/password content shows a locked placeholder, and transient pasteboard snapshots aren't synced. macOS guests sync over the vsock agent; Linux guests sync clipboard text only (spice-vdagent)
+- **Copy to Mac** — Lazy guest→host file transfer backed by a host File Provider, so pasted files materialize on the host on demand
 - **Large-file paste** — A guest File Provider transport materializes large host files inside the guest on demand
+- **Guest log forwarding (macOS guests)** — Opt-in per VM; the guest's `os.Logger` records surface on the host in Console.app (subsystem `app.kernova.guest`). Live-toggleable while the VM runs
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/clipboard-dark.png">
+    <img src="docs/images/clipboard-light.png" alt="The clipboard window showing a file transfer between host and guest" width="720">
+  </picture>
+</p>
 
 ### Management
 
 - **VM renaming** — Inline rename or via menu
-- **Sleep integration** — Auto-pauses running VMs on system sleep, resumes on wake
-- **Directory watching** — Monitors the VMs directory for external filesystem changes
-- **Quick Look** — Preview `.kernova` bundles from Finder with the bundled Quick Look extension
+- **Sidebar reordering** — Drag VMs into a custom, persisted order
+- **Customizable toolbar** — Standard AppKit toolbar customization, with the layout remembered
+- **App preferences** — A Settings window (⌘,) with an Advanced tab (e.g. always-show-advanced-actions)
+- **Directory watching** — Monitors the VMs directory for external filesystem changes and reconciles the library
+- **Safe deletion** — A unified sheet to move a VM to the Trash or delete it immediately, surfacing any external attachments to optionally trash alongside it
 
 ## Requirements
 
@@ -98,7 +144,7 @@ This runs all three test targets via the test plan; it wraps the canonical `xcod
 
 ## Architecture
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed component descriptions, data flow diagrams, and design decisions — and [docs/README.md](docs/README.md) for the full documentation index.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed component descriptions, data flow diagrams, and design decisions — and [docs/README.md](docs/README.md) for the full documentation index. Design philosophy and UI guidelines live in [docs/SPEC.md](docs/SPEC.md); the clipboard subsystem is documented in [docs/CLIPBOARD.md](docs/CLIPBOARD.md).
 
 ```
 Kernova/
@@ -135,6 +181,7 @@ Each VM is stored as a directory under `~/Library/Application Support/Kernova/VM
   HardwareModel         # VZMacHardwareModel data
   MachineIdentifier     # VZMacMachineIdentifier data
   SaveFile.vzvmsave     # Saved VM state (suspend/resume)
+  serial.log            # Persisted serial console output
 ```
 
 ## License
