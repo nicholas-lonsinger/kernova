@@ -14,8 +14,18 @@ final class MacOSInstallProgressViewController: NSViewController {
     private var observation: ObservationLoop?
 
     private let progressBar = NSProgressIndicator()
-    private let detailLabel = NSTextField(wrappingLabelWithString: "")
+    // Two separate labels so the speed/ETA line can refresh on a slower cadence
+    // than the byte/percent line. Line 1 (bytes/%) and the progress bar track the
+    // smoother's ~10 Hz feed; line 2 is throttled to `line2RefreshInterval` so the
+    // ~5 s-smoothed speed/ETA doesn't flicker (#555 follow-up).
+    private let detailLine1Label = NSTextField(labelWithString: "")
+    private let detailLine2Label = NSTextField(labelWithString: "")
     private let cancelButton = NSButton()
+
+    /// Line 2 (speed/ETA) refreshes at most once a second; line 1 (bytes/%) and
+    /// the progress bar track the smoother's raw ~10 Hz feed.
+    private static let line2RefreshInterval: TimeInterval = 1.0
+    private var lastLine2Refresh: TimeInterval = 0
 
     // Step indicator (present only when the install has a download step).
     private var stepIndicator: NSStackView?
@@ -61,12 +71,23 @@ final class MacOSInstallProgressViewController: NSViewController {
         progressBar.translatesAutoresizingMaskIntoConstraints = false
         progressBar.widthAnchor.constraint(equalToConstant: 320).isActive = true
 
-        detailLabel.font = .monospacedDigitSystemFont(
+        let detailFont = NSFont.monospacedDigitSystemFont(
             ofSize: NSFont.preferredFont(forTextStyle: .subheadline).pointSize, weight: .regular)
-        detailLabel.textColor = .secondaryLabelColor
-        detailLabel.alignment = .center
-        detailLabel.maximumNumberOfLines = 0
-        detailLabel.isSelectable = false
+        for label in [detailLine1Label, detailLine2Label] {
+            label.font = detailFont
+            label.textColor = .secondaryLabelColor
+            label.alignment = .center
+            label.isSelectable = false
+        }
+        detailLine2Label.isHidden = true
+
+        // The two lines stack tightly (hairline gap), each centered on the shared
+        // centerline — every field is constant-width (#555), so neither line
+        // shifts horizontally as it updates.
+        let detailStack = NSStackView(views: [detailLine1Label, detailLine2Label])
+        detailStack.orientation = .vertical
+        detailStack.alignment = .centerX
+        detailStack.spacing = Spacing.hairline
 
         cancelButton.title = "Cancel"
         cancelButton.bezelStyle = .rounded
@@ -80,7 +101,7 @@ final class MacOSInstallProgressViewController: NSViewController {
             arranged.append(indicator)
         }
         arranged.append(progressBar)
-        arranged.append(detailLabel)
+        arranged.append(detailStack)
         arranged.append(cancelButton)
 
         let stack = NSStackView(views: arranged)
@@ -198,10 +219,29 @@ final class MacOSInstallProgressViewController: NSViewController {
         switch state.currentPhase {
         case .downloading(let download):
             progressBar.doubleValue = download.fraction
-            detailLabel.stringValue = downloadDetailText(download)
         case .installing(let progress):
             progressBar.doubleValue = progress
-            detailLabel.stringValue = "Installing macOS: \(Int(progress * 100))%"
+        }
+        refreshDetailLabels(for: state.currentPhase)
+    }
+
+    /// Refreshes the two subtitle labels.
+    ///
+    /// Line 1 (bytes/%) tracks the progress bar's ~10 Hz feed; line 2 (speed/ETA)
+    /// is throttled to `line2RefreshInterval` so the ~5 s-smoothed figures don't
+    /// flicker. Line 2 also refreshes the instant it starts or stops applying (the
+    /// first speed sample, or the install phase) so its appearance isn't delayed
+    /// by a throttle window.
+    private func refreshDetailLabels(for phase: MacOSInstallPhase) {
+        detailLine1Label.stringValue = Self.detailLine1(for: phase)
+
+        let line2 = Self.detailLine2(for: phase)
+        let visibilityChanged = detailLine2Label.isHidden == (line2 != nil)
+        let now = ProcessInfo.processInfo.systemUptime
+        if visibilityChanged || now - lastLine2Refresh >= Self.line2RefreshInterval {
+            detailLine2Label.stringValue = line2 ?? ""
+            detailLine2Label.isHidden = (line2 == nil)
+            lastLine2Refresh = now
         }
     }
 
@@ -264,24 +304,49 @@ final class MacOSInstallProgressViewController: NSViewController {
         return .pending
     }
 
-    private func downloadDetailText(_ download: DownloadProgress) -> String {
-        let written = DataFormatters.formatBytesFixedWidth(UInt64(max(0, download.bytesWritten)))
-        let total = DataFormatters.formatBytesFixedWidth(UInt64(max(0, download.totalBytes)))
-        let pct = String(format: "%3d", Int(download.fraction * 100))
-            .replacingOccurrences(of: " ", with: "\u{2007}")
-        var text = "Downloading:\u{2007}\(written) / \(total) — \(pct)%"
-        if download.bytesPerSecond > 0 {
-            let speed = DataFormatters.formatSpeed(download.bytesPerSecond)
-            if let eta = DataFormatters.formatETA(
-                remainingBytes: download.totalBytes - download.bytesWritten,
-                bytesPerSecond: download.bytesPerSecond)
-            {
-                text += "\n\(speed) — \(eta)\u{2007}remaining"
-            } else {
-                text += "\n\(speed)"
-            }
+    /// Builds subtitle line 1 — the byte/percent progress line.
+    ///
+    /// Assembled from figure-space-padded fixed-width fields so it holds a stable
+    /// horizontal position as values update (#555). Pure and `nonisolated` so the
+    /// width-stability tests can exercise it directly.
+    nonisolated static func detailLine1(for phase: MacOSInstallPhase) -> String {
+        switch phase {
+        case .downloading(let download):
+            let written = DataFormatters.formatBytesFixedWidth(UInt64(max(0, download.bytesWritten)))
+            let total = DataFormatters.formatBytesFixedWidth(UInt64(max(0, download.totalBytes)))
+            let pct = String(format: "%3d", Int(download.fraction * 100))
+                .replacingOccurrences(of: " ", with: "\u{2007}")
+            return "Downloading:\u{2007}\(written) / \(total) — \(pct)%"
+        case .installing(let progress):
+            let pct = String(format: "%3d", Int(progress * 100))
+                .replacingOccurrences(of: " ", with: "\u{2007}")
+            return "Installing macOS:\u{2007}\(pct)%"
         }
-        return text
+    }
+
+    /// Builds subtitle line 2 — the speed/ETA line — or `nil` when it doesn't
+    /// apply (installing, or before the first non-zero speed sample).
+    ///
+    /// The constant-glyph `H:MM:SS` ETA falls back to a same-width dash
+    /// placeholder (rather than vanishing) so the line keeps a constant width
+    /// whenever it is shown.
+    nonisolated static func detailLine2(for phase: MacOSInstallPhase) -> String? {
+        guard case .downloading(let download) = phase, download.bytesPerSecond > 0 else { return nil }
+        let speed = DataFormatters.formatSpeed(download.bytesPerSecond)
+        let eta =
+            DataFormatters.formatETA(
+                remainingBytes: download.totalBytes - download.bytesWritten,
+                bytesPerSecond: download.bytesPerSecond) ?? DataFormatters.etaUnknownPlaceholder
+        return "\(speed) — \(eta)\u{2007}remaining"
+    }
+
+    /// Composes both subtitle lines into one newline-separated string.
+    ///
+    /// The live UI renders the lines in two independently-throttled labels; this
+    /// joined form is the single source of truth for the assembled text and backs
+    /// the width-stability tests.
+    nonisolated static func detailText(for phase: MacOSInstallPhase) -> String {
+        [detailLine1(for: phase), detailLine2(for: phase)].compactMap { $0 }.joined(separator: "\n")
     }
 
     // MARK: - Cancel
