@@ -25,7 +25,11 @@ final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
     init(instance: VMInstance, viewModel: VMLibraryViewModel) {
         self.instance = instance
 
-        let viewController = ClipboardContentViewController(instance: instance, viewModel: viewModel)
+        // Share the VM's host publisher so a manual "Copy to Mac" and the
+        // passthrough coordinator write through one instance — the coordinator's
+        // echo suppression then recognizes a manual copy's write too.
+        let viewController = ClipboardContentViewController(
+            instance: instance, viewModel: viewModel, publisher: instance.hostClipboardPublisher)
         self.clipboardContentVC = viewController
         // Tall enough for the content area plus the command bar and the
         // agent status bar; the min keeps both bars and a few text lines

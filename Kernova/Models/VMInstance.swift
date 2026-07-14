@@ -126,6 +126,20 @@ final class VMInstance {
     /// May be nil on macOS until the guest agent connects.
     var clipboardService: (any ClipboardServicing)?
 
+    /// Host-pasteboard writer shared by the clipboard window's "Copy to Mac" and
+    /// the passthrough coordinator.
+    ///
+    /// One per VM so echo suppression sees *both* writers: the coordinator's poll
+    /// skips whatever change count this publisher last produced, whether the write
+    /// came from an inbound auto-publish or a manual copy.
+    @ObservationIgnored let hostClipboardPublisher = HostClipboardPublisher()
+
+    /// Automatic clipboard passthrough driver.
+    ///
+    /// Live only while `clipboardPassthroughEnabled` (and sharing) are on for a
+    /// running session; created/torn down by `refreshClipboardPassthrough()`.
+    @ObservationIgnored private var clipboardPassthroughCoordinator: ClipboardPassthroughCoordinator?
+
     // MARK: - Vsock Channel (macOS guests)
 
     /// Listener for incoming guest log connections; populated for macOS guests
@@ -379,6 +393,8 @@ final class VMInstance {
     ///
     /// Does **not** change `status` — callers set the appropriate status after calling this.
     func tearDownSession() {
+        clipboardPassthroughCoordinator?.stop()
+        clipboardPassthroughCoordinator = nil
         stopVsockServices()
         stopClipboardService()
         stopSerialReading()
@@ -541,6 +557,9 @@ final class VMInstance {
     ///   the guest agent connects via the listener installed in
     ///   `startVsockServices()`. Nothing to do here besides log.
     func startClipboardService() {
+        // Passthrough is host-side and gated on sharing, so refresh regardless of
+        // whether sharing is on (a no-op when it isn't) once the service is armed.
+        defer { refreshClipboardPassthrough() }
         guard configuration.clipboardSharingEnabled else { return }
         switch configuration.guestOS {
         case .linux:
@@ -550,6 +569,36 @@ final class VMInstance {
                 "Clipboard sharing armed (vsock) for '\(self.name, privacy: .public)' — awaiting guest agent")
         }
     }
+
+    /// Starts or stops automatic clipboard passthrough to match the current
+    /// configuration and session state.
+    ///
+    /// Runs when clipboard sharing **and** passthrough are on for a live session
+    /// (a `VZVirtualMachine` in memory). Host-side only — no guest cooperation, no
+    /// wire change — so it drives both transports and works with the clipboard
+    /// window closed. The coordinator's own poll no-ops until the transport
+    /// connects, so starting it here (before the macOS agent connects) is safe.
+    func refreshClipboardPassthrough() {
+        let shouldRun =
+            configuration.clipboardSharingEnabled && configuration.clipboardPassthroughEnabled
+            && virtualMachine != nil
+        if shouldRun {
+            let coordinator =
+                clipboardPassthroughCoordinator
+                ?? ClipboardPassthroughCoordinator(instance: self, publisher: hostClipboardPublisher)
+            clipboardPassthroughCoordinator = coordinator
+            coordinator.start()
+        } else {
+            clipboardPassthroughCoordinator?.stop()
+            clipboardPassthroughCoordinator = nil
+        }
+    }
+
+    #if DEBUG
+    /// Whether automatic clipboard passthrough is currently active — test seam so
+    /// wiring tests assert the live-toggle start/stop without a real transport.
+    var isClipboardPassthroughActiveForTesting: Bool { clipboardPassthroughCoordinator != nil }
+    #endif
 
     private func startSpiceClipboardService() {
         guard let inputPipe = clipboardInputPipe,
@@ -849,6 +898,16 @@ final class VMInstance {
         // otherwise returns early for guests without a `VZVirtioSocketDevice`.
         if oldConfig.serialSocketRelayEnabled != newConfig.serialSocketRelayEnabled {
             applyLiveSerialRelayPolicy(enabled: newConfig.serialSocketRelayEnabled)
+        }
+
+        // Clipboard passthrough is likewise host-side only (it polls/writes the
+        // host pasteboard, no guest cooperation and no wire frame), so a toggle of
+        // either passthrough or sharing is applied here — before the socket-device
+        // guard — so it also works for Linux/SPICE guests.
+        if oldConfig.clipboardPassthroughEnabled != newConfig.clipboardPassthroughEnabled
+            || oldConfig.clipboardSharingEnabled != newConfig.clipboardSharingEnabled
+        {
+            refreshClipboardPassthrough()
         }
 
         guard let socketDevice = vm.socketDevices.first(where: { $0 is VZVirtioSocketDevice }) as? VZVirtioSocketDevice

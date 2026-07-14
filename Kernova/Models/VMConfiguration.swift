@@ -50,6 +50,18 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     /// exchange between host and guest via the clipboard panel window.
     var clipboardSharingEnabled: Bool
 
+    /// When `true`, the host clipboard is polled and forwarded to the guest
+    /// automatically, and inbound guest clipboard content is written straight to
+    /// the host clipboard — removing the clipboard window's manual gate in both
+    /// directions.
+    ///
+    /// Host-side only (no guest cooperation, no wire change), so it drives both
+    /// transports and is hot-toggleable for either guest OS while the VM runs.
+    /// Gated on `clipboardSharingEnabled` and, because the guest gains continuous
+    /// read of whatever is copied on the host, requires explicit confirmation to
+    /// enable. Off by default for privacy. See `ClipboardPassthroughCoordinator`.
+    var clipboardPassthroughEnabled: Bool
+
     // MARK: - Serial Console
 
     /// When `true`, the running VM exposes its serial port over a host-side
@@ -195,6 +207,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         networkEnabled: Bool = true,
         macAddress: String? = nil,
         clipboardSharingEnabled: Bool = false,
+        clipboardPassthroughEnabled: Bool = false,
         serialSocketRelayEnabled: Bool = false,
         audioInputEnabled: Bool = false,
         audioOutputEnabled: Bool = true,
@@ -230,6 +243,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.networkEnabled = networkEnabled
         self.macAddress = macAddress
         self.clipboardSharingEnabled = clipboardSharingEnabled
+        self.clipboardPassthroughEnabled = clipboardPassthroughEnabled
         self.serialSocketRelayEnabled = serialSocketRelayEnabled
         self.audioInputEnabled = audioInputEnabled
         self.audioOutputEnabled = audioOutputEnabled
@@ -274,6 +288,8 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.networkEnabled = try c.decode(Bool.self, forKey: .networkEnabled)
         self.macAddress = try c.decodeIfPresent(String.self, forKey: .macAddress)
         self.clipboardSharingEnabled = try c.decode(Bool.self, forKey: .clipboardSharingEnabled)
+        self.clipboardPassthroughEnabled =
+            try c.decodeIfPresent(Bool.self, forKey: .clipboardPassthroughEnabled) ?? false
         self.serialSocketRelayEnabled =
             try c.decodeIfPresent(Bool.self, forKey: .serialSocketRelayEnabled) ?? false
         self.audioInputEnabled = try c.decodeIfPresent(Bool.self, forKey: .audioInputEnabled) ?? false
@@ -412,6 +428,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     static let hotToggleFields: [KeyPath<VMConfiguration, Bool> & Sendable] = [
         \.agentLogForwardingEnabled,
         \.clipboardSharingEnabled,
+        \.clipboardPassthroughEnabled,
         \.serialSocketRelayEnabled,
         \.agentInstallNudgeDismissed,
     ]

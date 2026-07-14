@@ -43,6 +43,10 @@ final class SpiceClipboardService: ClipboardServicing {
     /// Text-only until the SPICE rich-format follow-up to issue #112.
     var supportsBinaryRepresentations: Bool { false }
 
+    /// Bumped once per inbound guest clipboard text (see `ClipboardServicing`),
+    /// so the passthrough coordinator writes guest content to the host pasteboard.
+    private(set) var inboundOfferSeq: UInt64 = 0
+
     /// SPICE agents (e.g. `spice-vdagent` on Linux) are user-installed and
     /// version-tracked by the guest's package manager — Kernova does not bundle
     /// or update them.
@@ -287,6 +291,8 @@ final class SpiceClipboardService: ClipboardServicing {
 
         clipboardContent = ClipboardContent(text: text)
         lastGrabbedText = nil  // New text is from the guest, not us
+        // Signal the passthrough coordinator to mirror this onto the host pasteboard.
+        inboundOfferSeq &+= 1
         Self.logger.debug("Received guest clipboard text (\(text.count, privacy: .public) characters)")
     }
 

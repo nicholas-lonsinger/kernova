@@ -51,6 +51,13 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     /// Active = the banner is collapsed to zero height (the common case, toggle
     /// on); deactivated to reveal it when the toggle is off.
     private lazy var bannerCollapsed = enablementBanner.heightAnchor.constraint(equalToConstant: 0)
+    /// Shown while automatic passthrough is on, indicating the editor/buttons are
+    /// no longer the primary pathway; carries a runtime "Turn Off".
+    private let passthroughBanner = ClipboardPassthroughBanner()
+    /// Active = the passthrough banner is collapsed to zero height (passthrough
+    /// off, the default); deactivated to reveal it when passthrough is on.
+    private lazy var passthroughBannerCollapsed = passthroughBanner.heightAnchor.constraint(
+        equalToConstant: 0)
     /// Content-type indicator + transient-status surface, placed in the status
     /// row (right-aligned) so the command row stays a clean set of buttons.
     private let indicatorView = ClipboardIndicatorView()
@@ -162,12 +169,18 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         instance: VMInstance, viewModel: VMLibraryViewModel,
         writePasteboard: any HostWritePasteboard = NSPasteboard.general,
         providerRegistry: LazyClipboardProviderRegistry = .shared,
+        publisher: HostClipboardPublisher? = nil,
         editDebounceInterval: Duration = .milliseconds(200)
     ) {
         self.instance = instance
         self.viewModel = viewModel
-        self.publisher = HostClipboardPublisher(
-            writePasteboard: writePasteboard, providerRegistry: providerRegistry)
+        // In production the window shares the VM's publisher with the passthrough
+        // coordinator (so echo suppression sees a manual "Copy to Mac" too); tests
+        // inject one over a private pasteboard/registry via the params above.
+        self.publisher =
+            publisher
+            ?? HostClipboardPublisher(
+                writePasteboard: writePasteboard, providerRegistry: providerRegistry)
         self.editDebounceInterval = editDebounceInterval
 
         let textView = ClipboardEditorTextView()
@@ -264,6 +277,11 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         enablementBanner.onEnable = { [weak self] in self?.openFileProviderSettings() }
         container.addSubview(enablementBanner)
 
+        passthroughBanner.translatesAutoresizingMaskIntoConstraints = false
+        passthroughBanner.isHidden = true
+        passthroughBanner.onTurnOff = { [weak self] in self?.disablePassthrough() }
+        container.addSubview(passthroughBanner)
+
         let commandDivider = NSBox()
         commandDivider.boxType = .separator
         commandDivider.translatesAutoresizingMaskIntoConstraints = false
@@ -290,15 +308,21 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         statusBar.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(statusBar)
 
-        // Vertical order: enablement banner (top, collapsed when not needed) →
-        // command bar → divider → content → divider → progress bar → status row.
+        // Vertical order: enablement banner → passthrough banner (both top,
+        // collapsed when not needed) → command bar → divider → content → divider →
+        // progress bar → status row.
         var constraints: [NSLayoutConstraint] = [
             enablementBanner.topAnchor.constraint(equalTo: container.topAnchor),
             enablementBanner.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             enablementBanner.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             bannerCollapsed,
 
-            commandBar.topAnchor.constraint(equalTo: enablementBanner.bottomAnchor),
+            passthroughBanner.topAnchor.constraint(equalTo: enablementBanner.bottomAnchor),
+            passthroughBanner.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            passthroughBanner.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            passthroughBannerCollapsed,
+
+            commandBar.topAnchor.constraint(equalTo: passthroughBanner.bottomAnchor),
             commandBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             commandBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
 
@@ -465,6 +489,9 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 // The host "Copy to Mac" File Provider's enablement, so the
                 // top-of-window banner reacts when the user flips the toggle.
                 _ = HostClipboardFileProvider.shared.availability
+                // Passthrough state, so the passthrough banner reveals/collapses
+                // when it's toggled (from settings or its own "Turn Off").
+                _ = self.instance.configuration.clipboardPassthroughEnabled
             },
             apply: { [weak self] in
                 self?.updateUI()
@@ -546,7 +573,22 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
         applyStatus(status, canInstallKernovaAgent: canInstallKernovaAgent)
         updateEnablementBanner()
+        updatePassthroughBanner()
         triggerPreviewMaterialization()
+    }
+
+    /// Reveals the passthrough banner while automatic passthrough is on.
+    private func updatePassthroughBanner() {
+        let on = instance.configuration.clipboardPassthroughEnabled
+        guard passthroughBanner.isHidden == on else { return }
+        passthroughBanner.isHidden = !on
+        passthroughBannerCollapsed.isActive = !on
+    }
+
+    /// Turns automatic passthrough off from the window banner (no confirmation —
+    /// only enabling, which the settings toggle gates, needs one).
+    private func disablePassthrough() {
+        viewModel?.updateConfiguration(of: instance) { $0.clipboardPassthroughEnabled = false }
     }
 
     /// Reveals the top-of-window banner only in the `.needsEnabling` state.

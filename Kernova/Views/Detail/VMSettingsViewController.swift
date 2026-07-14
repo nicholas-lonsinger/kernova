@@ -163,6 +163,7 @@ final class VMSettingsViewController: NSViewController {
 
     // Clipboard
     private var clipboardSwitch = NSSwitch()
+    private var clipboardPassthroughSwitch = NSSwitch()
     private var clipboardCaption = NSView()
 
     // Serial Console
@@ -787,6 +788,17 @@ extension VMSettingsViewController {
     static let agentDependencyCaption =
         "Clipboard sharing and log forwarding require the Kernova guest agent. Kernova offers to install or update it from the clipboard window."
 
+    /// Info-popover copy for the "Automatic Clipboard Passthrough" toggle, shared
+    /// by the macOS and Linux clipboard sections.
+    static let passthroughInfoParagraphs: [InfoPopoverParagraph] = [
+        .body(
+            "Forwards this Mac's clipboard to the guest automatically and writes the guest's clipboard here — no clipboard window step in either direction. Requires clipboard sharing and can be toggled while the VM runs."
+        ),
+        .body(
+            "Because the guest then continuously reads whatever you copy (including passwords), turning it on asks for confirmation."
+        ),
+    ]
+
     /// Guest Agent group for **macOS** guests.
     ///
     /// Holds the two agent-management toggles plus Clipboard Sharing, which
@@ -798,6 +810,7 @@ extension VMSettingsViewController {
         logForwardingSwitch = makeSwitch(action: #selector(logForwardingToggled))
         installReminderSwitch = makeSwitch(action: #selector(installReminderToggled))
         clipboardSwitch = makeSwitch(action: #selector(clipboardToggled))
+        clipboardPassthroughSwitch = makeSwitch(action: #selector(clipboardPassthroughToggled))
         // Not lockable — every toggle here takes effect live. Future
         // agent-backed features belong in this group too, keeping the
         // agent-dependent cohort intact rather than spawning new top-level
@@ -819,6 +832,9 @@ extension VMSettingsViewController {
                     .body("Exchanges clipboard text between host and guest.")
                 ]),
             makeToggleRowWithInfo(
+                "Automatic Clipboard Passthrough", control: clipboardPassthroughSwitch,
+                paragraphs: Self.passthroughInfoParagraphs),
+            makeToggleRowWithInfo(
                 "Show install reminder", control: installReminderSwitch,
                 paragraphs: [
                     .body(
@@ -838,6 +854,7 @@ extension VMSettingsViewController {
     /// macOS clipboard is agent-dependent and lives in `buildGuestAgentSection()`.
     private func buildClipboardSection() -> NSView {
         clipboardSwitch = makeSwitch(action: #selector(clipboardToggled))
+        clipboardPassthroughSwitch = makeSwitch(action: #selector(clipboardPassthroughToggled))
         let caption = makeGroupedFormCaption(
             "Takes effect on next start — Linux guests configure SPICE at VM start time.")
         caption.textColor = .systemOrange
@@ -847,9 +864,16 @@ extension VMSettingsViewController {
         let body: InfoPopoverParagraph = .body(
             "Exchanges clipboard text between host and guest. Requires `spice-vdagent` installed in the guest via its package manager."
         )
+        // Passthrough is host-side (it polls/writes the host pasteboard), so unlike
+        // sharing it takes effect live for Linux guests too.
         return makeSection([
             makeHeader("Clipboard", paragraphs: [body]),
-            makeGroupedFormCard(rows: [makeGroupedFormCardRow("Clipboard Sharing", control: clipboardSwitch)]),
+            makeGroupedFormCard(rows: [
+                makeGroupedFormCardRow("Clipboard Sharing", control: clipboardSwitch),
+                makeToggleRowWithInfo(
+                    "Automatic Clipboard Passthrough", control: clipboardPassthroughSwitch,
+                    paragraphs: Self.passthroughInfoParagraphs),
+            ]),
             clipboardCaption,
         ])
     }
@@ -1231,6 +1255,11 @@ extension VMSettingsViewController {
         // The clipboard switch lives on both platforms (nested in the agent
         // group on macOS, standalone on Linux), so its state always refreshes.
         clipboardSwitch.state = instance.configuration.clipboardSharingEnabled ? .on : .off
+        // Passthrough rides on sharing: its state mirrors the config, but the
+        // control is only actionable while sharing is on (it's hot-toggleable, so
+        // not in `persistentLockableControls` — its enablement is gated here).
+        clipboardPassthroughSwitch.state = instance.configuration.clipboardPassthroughEnabled ? .on : .off
+        clipboardPassthroughSwitch.isEnabled = instance.configuration.clipboardSharingEnabled
         // The "takes effect on next start" caption is built only by the Linux
         // standalone section; macOS clipboard is hot-toggleable and has none, so
         // gate the caption here (symmetric with refreshGuestAgent's guard).
@@ -1591,6 +1620,42 @@ extension VMSettingsViewController {
     @objc private func clipboardToggled() {
         writeConfig { $0.clipboardSharingEnabled = clipboardSwitch.state == .on }
     }
+
+    @objc private func clipboardPassthroughToggled() {
+        // Turning off is immediate; turning on grants the guest continuous read of
+        // the host clipboard, so confirm first and revert the switch on cancel.
+        guard clipboardPassthroughSwitch.state == .on else {
+            writeConfig { $0.clipboardPassthroughEnabled = false }
+            return
+        }
+        guard let window = view.window else {
+            // No window to host a sheet — don't silently enable; revert.
+            clipboardPassthroughSwitch.state = .off
+            return
+        }
+        presentSheetAlert(
+            ClipboardPassthroughConfirmation.alert(
+                onConfirm: { [weak self] in self?.enablePassthroughConfirmed() },
+                onCancel: { [weak self] in self?.revertPassthroughToggle() }),
+            in: window)
+    }
+
+    /// Commits the passthrough enable after the user confirms the security prompt.
+    private func enablePassthroughConfirmed() {
+        writeConfig { $0.clipboardPassthroughEnabled = true }
+    }
+
+    /// Puts the switch back to off when the user cancels the enable prompt.
+    private func revertPassthroughToggle() {
+        clipboardPassthroughSwitch.state = .off
+    }
+
+    #if DEBUG
+    /// Drives the confirmation outcomes without a window/sheet, so tests exercise
+    /// the real enable-commit and cancel-revert paths.
+    func confirmPassthroughEnableForTesting() { enablePassthroughConfirmed() }
+    func cancelPassthroughEnableForTesting() { revertPassthroughToggle() }
+    #endif
 
     @objc private func showMicPermissionInfo(_ sender: NSButton) {
         micPermissionPresenter.show(

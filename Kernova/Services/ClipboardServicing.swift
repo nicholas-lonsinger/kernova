@@ -53,6 +53,17 @@ protocol ClipboardServicing: AnyObject {
     /// `nil` for transports without byte-level progress (the default below).
     var transferProgress: ClipboardTransferProgress? { get }
 
+    /// Monotonically increases each time a **new inbound guest offer** is
+    /// published to `clipboardContent` — not on our own outbound writes, and not
+    /// on the per-representation preview/copy materialization of an
+    /// already-published offer.
+    ///
+    /// The passthrough coordinator observes this so it auto-publishes guest
+    /// content to the host pasteboard exactly once per offer, without racing the
+    /// digest against its own outbound writes. Defaults to `0` for transports
+    /// that never receive (the extension default below).
+    var inboundOfferSeq: UInt64 { get }
+
     /// Stops protocol I/O. Idempotent.
     func stop()
 
@@ -135,4 +146,7 @@ extension ClipboardServicing {
     /// Transports without byte-level progress (SPICE text, fakes) never show a
     /// transfer bar.
     var transferProgress: ClipboardTransferProgress? { nil }
+
+    /// Transports that never receive (fakes) report no inbound offers.
+    var inboundOfferSeq: UInt64 { 0 }
 }
