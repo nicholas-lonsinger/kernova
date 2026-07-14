@@ -166,6 +166,14 @@ struct VMConfigurationCloneTests {
         #expect(clone.lastFullscreenDisplayID == nil)
     }
 
+    @Test("Clone resets agentInstallNudgeDismissed to false")
+    func cloneResetsAgentInstallNudgeDismissed() {
+        var config = makeConfig()
+        config.agentInstallNudgeDismissed = true
+        let clone = config.clonedForNewInstance(existingNames: [])
+        #expect(clone.agentInstallNudgeDismissed == false)
+    }
+
     // MARK: - Shared Directories
 
     @Test("Clone regenerates shared directory IDs")
