@@ -62,10 +62,12 @@ inside the worktree:
   now-stale `origin/<type>/<short-description>` remote-tracking ref — all without
   leaving the worktree. A plain `git fetch --prune` from inside the worktree
   would only update the shared `origin/main` ref, not the local `main` branch
-  pointer, which is why this targets the primary checkout. (For this repo the
-  primary is `/Users/nlonsinger/Developer/GitHub/nicholas-lonsinger/kernova`;
-  resolve it at runtime via `git worktree list` if unsure.) The worktree and its
-  scratch branch are left in place for continued or follow-up work.
+  pointer, which is why this targets the primary checkout. Resolve
+  `<primary-checkout-path>` at runtime — it is the first entry of
+  `git worktree list` (the one with no `.claude/worktrees/` segment), e.g.
+  `git -C "$(git worktree list --porcelain | head -1 | cut -d' ' -f2)" pull --prune --ff-only`.
+  The worktree and its scratch branch are left in place for continued or
+  follow-up work.
 
 Working directly in a checkout (no `EnterWorktree` session), follow the
 tool-neutral post-merge steps in AGENTS.md instead.
