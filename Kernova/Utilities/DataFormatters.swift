@@ -57,15 +57,40 @@ enum DataFormatters {
             .replacingOccurrences(of: " ", with: "\u{2007}")
     }
 
-    /// Formats an ETA from remaining bytes and current speed into a human-readable string.
+    /// Formats an ETA from remaining bytes and current speed into a fixed-width
+    /// `H:MM:SS` clock (e.g. `"\u{2007}0:04:33"`, `"12:33:22"`).
     ///
-    /// Returns `nil` if speed is negligible, the estimate exceeds 100 hours, or the result is non-finite.
+    /// The hour field is one or two characters left-padded with a figure space
+    /// (U+2007), and every other slot is a digit or a colon, so the rendered
+    /// width is constant under a monospaced-digit font regardless of the value —
+    /// the ETA never shifts the surrounding line as it crosses unit boundaries.
+    /// Use ``etaUnknownPlaceholder`` for the same-width dash rendering when this
+    /// returns `nil` but an ETA slot still needs to be shown.
+    ///
+    /// Returns `nil` if speed is negligible, the estimate exceeds 100 hours, or
+    /// the result is non-finite.
     static func formatETA(remainingBytes: Int64, bytesPerSecond: Double) -> String? {
         guard bytesPerSecond > 1_000 else { return nil }
         let seconds = Double(remainingBytes) / bytesPerSecond
         guard seconds.isFinite, seconds > 0, seconds < 360_000 else { return nil }
-        return formatDuration(seconds)
+        // The < 360_000 guard bounds this below 100h; clamp so a value rounding
+        // up at the boundary can't spill into a three-digit hour field.
+        let total = min(Int(seconds.rounded()), 359_999)
+        let hours = total / 3_600
+        let minutes = (total % 3_600) / 60
+        let secs = total % 60
+        let paddedHours = String(format: "%2d", hours)
+            .replacingOccurrences(of: " ", with: "\u{2007}")
+        return "\(paddedHours):\(String(format: "%02d", minutes)):\(String(format: "%02d", secs))"
     }
+
+    /// A same-width stand-in for an ETA (`"\u{2007}\u{2012}:\u{2012}\u{2012}:\u{2012}\u{2012}"`),
+    /// shown while a speed is displayed but ``formatETA`` returns `nil`.
+    ///
+    /// Uses figure dashes (U+2012), which render at the same advance as a digit
+    /// under the monospaced-digit font, so line 2 keeps a constant width whether
+    /// or not an ETA estimate is currently available.
+    static let etaUnknownPlaceholder = "\u{2007}\u{2012}:\u{2012}\u{2012}:\u{2012}\u{2012}"
 
     /// Formats a disk size in GB for display, using TB for sizes >= 1000 GB.
     ///
@@ -96,17 +121,5 @@ enum DataFormatters {
     /// name the VMs that share a file in the delete confirmations.
     static func quotedList(_ items: [String]) -> String {
         ListFormatter.localizedString(byJoining: items.map { "\u{201C}\($0)\u{201D}" })
-    }
-
-    private static let durationFormatter: DateComponentsFormatter = {
-        let formatter = DateComponentsFormatter()
-        formatter.allowedUnits = [.hour, .minute, .second]
-        formatter.unitsStyle = .abbreviated
-        return formatter
-    }()
-
-    /// Formats a duration in seconds into a human-readable string.
-    static func formatDuration(_ seconds: TimeInterval) -> String {
-        durationFormatter.string(from: seconds) ?? "\(Int(seconds))s"
     }
 }

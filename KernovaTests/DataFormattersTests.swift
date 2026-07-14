@@ -125,20 +125,54 @@ struct DataFormattersTests {
         #expect(result == nil)
     }
 
-    @Test("formatETA returns formatted duration for valid inputs")
+    @Test("formatETA formats a sub-minute estimate as a padded H:MM:SS clock")
     func formatETAValid() {
         // 100 MB remaining at 10 MB/s = 10 seconds
         let result = DataFormatters.formatETA(remainingBytes: 100_000_000, bytesPerSecond: 10_000_000)
-        #expect(result != nil)
-        #expect(result!.contains("s"))
+        #expect(result == "\u{2007}0:00:10")
     }
 
-    @Test("formatETA handles large remaining time")
+    @Test("formatETA formats a multi-hour estimate, padding a single-digit hour with a figure space")
     func formatETALargeTime() {
-        // 10 GB remaining at 1 MB/s = ~10000 seconds
+        // 10 GB remaining at 1 MB/s = 10000 seconds = 2h 46m 40s
         let result = DataFormatters.formatETA(remainingBytes: 10_000_000_000, bytesPerSecond: 1_000_000)
-        #expect(result != nil)
-        #expect(result!.contains("h"))
+        #expect(result == "\u{2007}2:46:40")
+    }
+
+    @Test("formatETA keeps a two-digit hour field unpadded")
+    func formatETATwoDigitHour() {
+        // 36 GB remaining at 1 MB/s = 36000 seconds = exactly 10:00:00
+        let result = DataFormatters.formatETA(remainingBytes: 36_000_000_000, bytesPerSecond: 1_000_000)
+        #expect(result == "10:00:00")
+    }
+
+    @Test("formatETA holds a constant glyph template across unit boundaries")
+    func formatETAConstantTemplate() {
+        // Every estimate renders as [figure-space|digit][digit]:[digit][digit]:[digit][digit].
+        let template = "^[\u{2007}0-9][0-9]:[0-9]{2}:[0-9]{2}$"
+        for seconds in [9, 10, 59, 60, 90, 3599, 3600, 35_999, 36_000, 359_000] {
+            // remaining = seconds × speed, so the estimate is exactly `seconds`.
+            let result = DataFormatters.formatETA(
+                remainingBytes: Int64(seconds) * 1_000_000, bytesPerSecond: 1_000_000)
+            #expect(result != nil)
+            #expect(
+                result?.range(of: template, options: .regularExpression) != nil,
+                "ETA \(result ?? "nil") for \(seconds)s should match the fixed clock template")
+        }
+    }
+
+    @Test("formatETA pads with figure spaces, never plain spaces")
+    func formatETAFigureSpaces() {
+        // 5000 seconds = 1h 23m 20s — a single-digit hour that must be figure-space padded.
+        let result = DataFormatters.formatETA(remainingBytes: 10_000_000, bytesPerSecond: 2_000)
+        #expect(result == "\u{2007}1:23:20")
+        #expect(result?.contains(" ") == false)
+        #expect(result?.contains("\u{2007}") == true)
+    }
+
+    @Test("etaUnknownPlaceholder is a same-shape figure-dash clock")
+    func etaUnknownPlaceholder() {
+        #expect(DataFormatters.etaUnknownPlaceholder == "\u{2007}\u{2012}:\u{2012}\u{2012}:\u{2012}\u{2012}")
     }
 
     @Test("formatETA returns nil when estimate exceeds upper bound")
@@ -195,29 +229,5 @@ struct DataFormattersTests {
     @Test("formatCPUCount returns plural for multiple cores")
     func formatCPUCountPlural() {
         #expect(DataFormatters.formatCPUCount(4) == "4 cores")
-    }
-
-    // MARK: - formatDuration
-
-    @Test("formatDuration formats seconds only")
-    func formatDurationSecondsOnly() {
-        let result = DataFormatters.formatDuration(45)
-        #expect(result.contains("45"))
-        #expect(result.contains("s"))
-    }
-
-    @Test("formatDuration formats minutes and seconds")
-    func formatDurationMinutesSeconds() {
-        let result = DataFormatters.formatDuration(125)  // 2m 5s
-        #expect(result.contains("m"))
-        #expect(result.contains("s"))
-    }
-
-    @Test("formatDuration formats hours, minutes, and seconds")
-    func formatDurationHoursMinutesSeconds() {
-        let result = DataFormatters.formatDuration(3661)  // 1h 1m 1s
-        #expect(result.contains("h"))
-        #expect(result.contains("m"))
-        #expect(result.contains("s"))
     }
 }

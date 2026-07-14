@@ -198,11 +198,10 @@ final class MacOSInstallProgressViewController: NSViewController {
         switch state.currentPhase {
         case .downloading(let download):
             progressBar.doubleValue = download.fraction
-            detailLabel.stringValue = downloadDetailText(download)
         case .installing(let progress):
             progressBar.doubleValue = progress
-            detailLabel.stringValue = "Installing macOS: \(Int(progress * 100))%"
         }
+        detailLabel.stringValue = Self.detailText(for: state.currentPhase)
     }
 
     private func applyStepStates(_ state: MacOSInstallState) {
@@ -264,7 +263,24 @@ final class MacOSInstallProgressViewController: NSViewController {
         return .pending
     }
 
-    private func downloadDetailText(_ download: DownloadProgress) -> String {
+    /// Builds the subtitle text for a phase.
+    ///
+    /// Both lines are assembled from fixed-width pieces (figure-space-padded
+    /// byte/percent fields and the constant-glyph `H:MM:SS` ETA) so the label
+    /// holds a stable horizontal position as values update — see #555. Pure and
+    /// `nonisolated` so it can be exercised directly by the width-stability tests.
+    nonisolated static func detailText(for phase: MacOSInstallPhase) -> String {
+        switch phase {
+        case .downloading(let download):
+            return downloadDetailText(download)
+        case .installing(let progress):
+            let pct = String(format: "%3d", Int(progress * 100))
+                .replacingOccurrences(of: " ", with: "\u{2007}")
+            return "Installing macOS:\u{2007}\(pct)%"
+        }
+    }
+
+    nonisolated static func downloadDetailText(_ download: DownloadProgress) -> String {
         let written = DataFormatters.formatBytesFixedWidth(UInt64(max(0, download.bytesWritten)))
         let total = DataFormatters.formatBytesFixedWidth(UInt64(max(0, download.totalBytes)))
         let pct = String(format: "%3d", Int(download.fraction * 100))
@@ -272,14 +288,13 @@ final class MacOSInstallProgressViewController: NSViewController {
         var text = "Downloading:\u{2007}\(written) / \(total) — \(pct)%"
         if download.bytesPerSecond > 0 {
             let speed = DataFormatters.formatSpeed(download.bytesPerSecond)
-            if let eta = DataFormatters.formatETA(
-                remainingBytes: download.totalBytes - download.bytesWritten,
-                bytesPerSecond: download.bytesPerSecond)
-            {
-                text += "\n\(speed) — \(eta)\u{2007}remaining"
-            } else {
-                text += "\n\(speed)"
-            }
+            // Fall back to a same-width dash placeholder (rather than dropping
+            // the ETA slot) so line 2 keeps a constant width while it is shown.
+            let eta =
+                DataFormatters.formatETA(
+                    remainingBytes: download.totalBytes - download.bytesWritten,
+                    bytesPerSecond: download.bytesPerSecond) ?? DataFormatters.etaUnknownPlaceholder
+            text += "\n\(speed) — \(eta)\u{2007}remaining"
         }
         return text
     }
