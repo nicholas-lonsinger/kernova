@@ -397,6 +397,12 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         // an initial boot.
         clone.installContext = nil
 
+        // A clone is a distinct VM whose own guest-agent state the user hasn't
+        // evaluated yet, so let the sidebar install nudge surface again rather
+        // than inheriting the source VM's dismissal. (Contrast lastSeenAgentVersion,
+        // preserved deliberately because the agent binary is copied with the disk.)
+        clone.agentInstallNudgeDismissed = false
+
         return clone
     }
 
