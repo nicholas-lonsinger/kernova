@@ -142,20 +142,22 @@ struct ClipboardPassthroughCoordinatorTests {
         let h = makeHarness()
         defer { h.pasteboard.releaseGlobally() }
 
-        let baseline = h.pasteboard.changeCount
+        // Event-driven: the gate fires when the inbound auto-publish completes, so
+        // the wait resolves on the publish itself — never a poll deadline — even
+        // when a contended CI main actor delays the observation → publish Task
+        // chain (docs/TESTING.md "Async waits in tests"). The generous timeout is a
+        // stuck-condition backstop, not the success deadline.
+        let published = AsyncGate()
+        h.coordinator.onInboundPublishedForTesting = { published.notify() }
         h.coordinator.start()
         defer { h.coordinator.stop() }
 
         h.service.simulateInboundOffer(ClipboardContent(text: "guest copied this"))
 
-        // The inbound observation → publish runs on a detached main-actor Task and
-        // writes the private pasteboard. RATIONALE: `NSPasteboard` has no change
-        // notification, so this genuinely signal-less predicate polls
-        // (docs/TESTING.md permits polling when there is no signal to await).
-        try await waitUntil { h.pasteboard.changeCount != baseline }
-
         let textType = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
-        #expect(h.pasteboard.data(forType: textType) == Data("guest copied this".utf8))
+        try await published.wait(timeout: .seconds(30)) {
+            h.pasteboard.data(forType: textType) == Data("guest copied this".utf8)
+        }
     }
 
     @Test("After stop, a new inbound offer is not published")
@@ -163,16 +165,19 @@ struct ClipboardPassthroughCoordinatorTests {
         let h = makeHarness()
         defer { h.pasteboard.releaseGlobally() }
 
+        var publishedAfterStop = false
         h.coordinator.start()
         h.coordinator.stop()
+        h.coordinator.onInboundPublishedForTesting = { publishedAfterStop = true }
 
         let baseline = h.pasteboard.changeCount
         h.service.simulateInboundOffer(ClipboardContent(text: "should not appear"))
 
-        // Give any (incorrectly) still-armed observation time to fire. RATIONALE:
-        // asserting the *absence* of a write needs a bounded wait; the pasteboard
-        // is signal-less. A short sleep is the backstop, not a success deadline.
-        try await Task.sleep(for: .milliseconds(200))
+        // Bounded negative check: stop() cancelled the observation, so no publish
+        // Task fires. RATIONALE: asserting the *absence* of an event needs a
+        // bounded wait; the short sleep is the backstop, not a success deadline.
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(!publishedAfterStop)
         #expect(h.pasteboard.changeCount == baseline)
     }
 }

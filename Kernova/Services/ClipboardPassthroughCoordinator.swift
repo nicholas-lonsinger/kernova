@@ -84,6 +84,15 @@ final class ClipboardPassthroughCoordinator {
 
     private var isRunning = false
 
+    #if DEBUG
+    /// Fires after each inbound auto-publish completes.
+    ///
+    /// Test seam so a test awaits the publish event-driven (via `AsyncGate`)
+    /// instead of polling the signal-less pasteboard — the poll's deadline would
+    /// otherwise become the pass/fail criterion under a contended CI main actor.
+    var onInboundPublishedForTesting: (@MainActor () -> Void)?
+    #endif
+
     private static let logger = Logger(
         subsystem: "app.kernova", category: "ClipboardPassthroughCoordinator")
 
@@ -230,6 +239,9 @@ final class ClipboardPassthroughCoordinator {
             if let changeCount = outcome.postWriteChangeCount {
                 self.lastPasteboardChangeCount = changeCount
             }
+            #if DEBUG
+            self.onInboundPublishedForTesting?()
+            #endif
         }
     }
 }
