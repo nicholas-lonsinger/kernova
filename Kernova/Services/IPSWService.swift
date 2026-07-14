@@ -701,8 +701,13 @@ private final class StreamingDataTaskDelegate: NSObject, URLSessionDataDelegate,
 /// keeps the same progress-bar feel.
 struct DownloadSpeedSmoother {
     /// EWMA smoothing factor — lower values produce smoother output.
-    static let smoothingAlpha: Double = 0.2
-    /// Minimum interval between progress reports.
+    ///
+    /// The filter is sample-indexed, so its effective window is roughly
+    /// `((1 - alpha) / alpha)` samples wide. At `alpha = 0.02` and the 0.1 s
+    /// reporting interval below that is ~49 samples ≈ 5 s of transfer, which
+    /// keeps the reported speed/ETA steady to read without noticeable lag.
+    static let smoothingAlpha: Double = 0.02
+    /// Minimum interval between progress reports (paces the progress bar).
     static let progressInterval: TimeInterval = 0.1
 
     private var lastReportTime: TimeInterval = 0

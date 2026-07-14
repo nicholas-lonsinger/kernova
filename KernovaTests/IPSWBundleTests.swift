@@ -265,8 +265,8 @@ struct DownloadSpeedSmootherTests {
         _ = smoother.sample(totalBytes: 0, now: 1000.0)
         let steady = smoother.sample(totalBytes: 1_000_000, now: 1001.0) ?? 0
         let spiked = smoother.sample(totalBytes: 11_000_000, now: 1002.0) ?? 0
-        // After a 10x spike, EWMA(α=0.2) over a steady baseline lands between
-        // the prior value and the instantaneous value, never at the spike itself.
+        // After a 10x spike, the EWMA over a steady baseline lands between the
+        // prior value and the instantaneous value, never at the spike itself.
         #expect(spiked > steady)
         #expect(spiked < 10_000_000)
     }

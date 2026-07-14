@@ -103,4 +103,41 @@ struct MacOSInstallSubtitleTests {
         ).components(separatedBy: "\n")
         #expect(lines.count == 1)
     }
+
+    // MARK: - Per-line builders (the labels are refreshed on separate cadences)
+
+    @Test("detailLine2 is nil for the install phase and before the first speed sample")
+    func line2NilWhenNotApplicable() {
+        #expect(MacOSInstallProgressViewController.detailLine2(for: .installing(progress: 0.5)) == nil)
+        #expect(
+            MacOSInstallProgressViewController.detailLine2(
+                for: .downloading(
+                    DownloadProgress(bytesWritten: 0, totalBytes: 1_000_000, bytesPerSecond: 0)))
+                == nil)
+    }
+
+    @Test("detailLine2 is present, with the dash placeholder, when speed is below the ETA guard")
+    func line2UsesPlaceholderBelowGuard() {
+        let line2 = MacOSInstallProgressViewController.detailLine2(
+            for: .downloading(
+                DownloadProgress(bytesWritten: 0, totalBytes: 500_000, bytesPerSecond: 500)))
+        #expect(line2 != nil)
+        #expect(line2?.contains(DataFormatters.etaUnknownPlaceholder) == true)
+    }
+
+    @Test("detailText composes exactly line 1, then line 2 when present")
+    func detailTextComposesLines() {
+        let downloading = MacOSInstallPhase.downloading(
+            DownloadProgress(bytesWritten: 0, totalBytes: 100_000_000, bytesPerSecond: 10_000_000))
+        let line1 = MacOSInstallProgressViewController.detailLine1(for: downloading)
+        let line2 = MacOSInstallProgressViewController.detailLine2(for: downloading)
+        #expect(line2 != nil)
+        #expect(MacOSInstallProgressViewController.detailText(for: downloading) == "\(line1)\n\(line2!)")
+
+        // Install phase has no line 2, so the composed text is line 1 alone.
+        let installing = MacOSInstallPhase.installing(progress: 0.42)
+        #expect(
+            MacOSInstallProgressViewController.detailText(for: installing)
+                == MacOSInstallProgressViewController.detailLine1(for: installing))
+    }
 }
