@@ -184,6 +184,47 @@ func makeGroupedFormCard(rows: [NSView]) -> NSView {
     return container
 }
 
+/// Leading indent applied to a sub-option nested beneath its parent row.
+///
+/// Enough to read as "child of the row above" while the trailing control stays
+/// aligned with the rest of the card. Matches the wizard's radio-description
+/// indent.
+let groupedFormSubOptionIndent: CGFloat = 20
+
+/// Composes a primary row and a dependent sub-option into a single grouped-form
+/// "row": the sub-option (and the hairline separating it) are indented beneath
+/// the primary so the pair reads as a parent → child unit.
+///
+/// Pass the result to ``makeGroupedFormCard(rows:)`` in place of two sibling
+/// rows. The card then draws its usual full-width separators only *around* the
+/// pair — not between them — keeping the sub-option visually attached to its
+/// parent rather than floating as an equal peer.
+@MainActor
+func makeGroupedFormSubOptionGroup(primary: NSView, subOption: NSView) -> NSView {
+    let hairline = makeGroupedFormHairline()
+    let container = NSView()
+    for view in [primary, hairline, subOption] {
+        view.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(view)
+    }
+    let indent = groupedFormSubOptionIndent
+    NSLayoutConstraint.activate([
+        primary.topAnchor.constraint(equalTo: container.topAnchor),
+        primary.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+        primary.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+
+        hairline.topAnchor.constraint(equalTo: primary.bottomAnchor, constant: Spacing.relaxed),
+        hairline.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: indent),
+        hairline.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+
+        subOption.topAnchor.constraint(equalTo: hairline.bottomAnchor, constant: Spacing.relaxed),
+        subOption.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: indent),
+        subOption.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+        subOption.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+    ])
+    return container
+}
+
 // MARK: - Labels
 
 /// Builds a secondary value label for a form/review row (the trailing value).

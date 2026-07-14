@@ -164,6 +164,12 @@ final class VMSettingsViewController: NSViewController {
     // Clipboard
     private var clipboardSwitch = NSSwitch()
     private var clipboardPassthroughSwitch = NSSwitch()
+    /// The passthrough row's title label.
+    ///
+    /// Retained because AppKit fades a disabled `NSSwitch` but leaves its label
+    /// at full strength — `refreshClipboard` grays the text in step with the
+    /// switch so the whole row reads as inert.
+    private var clipboardPassthroughLabel = NSTextField()
     private var clipboardCaption = NSView()
 
     // Serial Console
@@ -824,16 +830,21 @@ extension VMSettingsViewController {
                         "Streams `os.Logger` records from the macOS guest agent to the host so they appear in Console.app under `app.kernova.guest`. Off by default; can be toggled while the VM is running."
                     )
                 ]),
-            makeToggleRowWithInfo(
-                "Clipboard Sharing", control: clipboardSwitch,
-                paragraphs: [
-                    // Behavior only — the group caption below carries the shared
-                    // agent dependency, so it isn't repeated here.
-                    .body("Exchanges clipboard text between host and guest.")
-                ]),
-            makeToggleRowWithInfo(
-                "Automatic Clipboard Passthrough", control: clipboardPassthroughSwitch,
-                paragraphs: Self.passthroughInfoParagraphs),
+            // Passthrough rides on sharing (it goes inert when sharing is off),
+            // so it's nested as a sub-option beneath Clipboard Sharing rather
+            // than presented as an equal sibling toggle.
+            makeGroupedFormSubOptionGroup(
+                primary: makeToggleRowWithInfo(
+                    "Clipboard Sharing", control: clipboardSwitch,
+                    paragraphs: [
+                        // Behavior only — the group caption below carries the shared
+                        // agent dependency, so it isn't repeated here.
+                        .body("Exchanges clipboard text between host and guest.")
+                    ]),
+                subOption: makeToggleRowWithInfo(
+                    "Automatic Clipboard Passthrough", control: clipboardPassthroughSwitch,
+                    paragraphs: Self.passthroughInfoParagraphs,
+                    titleLabel: { [weak self] in self?.clipboardPassthroughLabel = $0 })),
             makeToggleRowWithInfo(
                 "Show install reminder", control: installReminderSwitch,
                 paragraphs: [
@@ -869,10 +880,15 @@ extension VMSettingsViewController {
         return makeSection([
             makeHeader("Clipboard", paragraphs: [body]),
             makeGroupedFormCard(rows: [
-                makeGroupedFormCardRow("Clipboard Sharing", control: clipboardSwitch),
-                makeToggleRowWithInfo(
-                    "Automatic Clipboard Passthrough", control: clipboardPassthroughSwitch,
-                    paragraphs: Self.passthroughInfoParagraphs),
+                // Passthrough rides on sharing (it goes inert when sharing is
+                // off), so it's nested as a sub-option beneath Clipboard Sharing
+                // rather than presented as an equal sibling toggle.
+                makeGroupedFormSubOptionGroup(
+                    primary: makeGroupedFormCardRow("Clipboard Sharing", control: clipboardSwitch),
+                    subOption: makeToggleRowWithInfo(
+                        "Automatic Clipboard Passthrough", control: clipboardPassthroughSwitch,
+                        paragraphs: Self.passthroughInfoParagraphs,
+                        titleLabel: { [weak self] in self?.clipboardPassthroughLabel = $0 }))
             ]),
             clipboardCaption,
         ])
@@ -943,13 +959,20 @@ extension VMSettingsViewController {
         return toggle
     }
 
+    /// Builds a toggle row: title, info button, and a trailing control.
+    ///
+    /// `titleLabel` hands the freshly-built label back to the caller, for rows
+    /// whose text has to be restyled later (e.g. grayed in step with a control
+    /// that gets disabled). Callers that never restyle simply omit it.
     private func makeToggleRowWithInfo(
-        _ title: String, control: NSControl, paragraphs: [InfoPopoverParagraph]
+        _ title: String, control: NSControl, paragraphs: [InfoPopoverParagraph],
+        titleLabel: ((NSTextField) -> Void)? = nil
     ) -> NSView {
         let label = NSTextField(labelWithString: title)
         label.font = Typography.body
         label.isSelectable = false
         label.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        titleLabel?(label)
 
         let info = InfoButtonView()
         info.configure(label: title, paragraphs: paragraphs)
@@ -1260,6 +1283,10 @@ extension VMSettingsViewController {
         // not in `persistentLockableControls` — its enablement is gated here).
         clipboardPassthroughSwitch.state = instance.configuration.clipboardPassthroughEnabled ? .on : .off
         clipboardPassthroughSwitch.isEnabled = instance.configuration.clipboardSharingEnabled
+        // AppKit fades the disabled switch but not its label, which leaves the
+        // row half-lit; gray the text in step so the sub-option reads as inert.
+        clipboardPassthroughLabel.textColor =
+            instance.configuration.clipboardSharingEnabled ? .labelColor : .disabledControlTextColor
         // The "takes effect on next start" caption is built only by the Linux
         // standalone section; macOS clipboard is hot-toggleable and has none, so
         // gate the caption here (symmetric with refreshGuestAgent's guard).
