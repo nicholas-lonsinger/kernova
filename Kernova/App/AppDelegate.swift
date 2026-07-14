@@ -270,7 +270,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // sweeps on close; a one-time sweep at launch — before any clipboard
         // window opens — clears prior-session orphans, mirroring the guest
         // agent's sweep-on-start.
-        ClipboardFileStaging(label: ClipboardContentViewController.stagingLabel).sweep()
+        ClipboardFileStaging(label: HostClipboardPublisher.stagingLabel).sweep()
 
         // Intercept the Quit Apple Event to inspect its sender. TCC revocations
         // arrive from System Settings or tccd; Dock Quit, AppleScript, and system

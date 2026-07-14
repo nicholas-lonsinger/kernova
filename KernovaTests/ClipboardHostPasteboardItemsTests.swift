@@ -6,14 +6,14 @@ import UniformTypeIdentifiers
 
 @testable import Kernova
 
-/// Exercises `ClipboardContentViewController.hostPasteboardItems` — the pure
+/// Exercises `HostClipboardPublisher.hostPasteboardItems` — the pure
 /// "Copy to Mac" grouping/staging step that turns the buffer into one
 /// `PasteboardItemSpec` per inline-content block plus one per file payload.
 ///
 /// Each spec promises a set of types and serves their bytes lazily through
 /// `provide`; the tests drive that closure directly, so they cover both the
 /// grouping and the on-demand read without touching a real `NSPasteboard`.
-@Suite("ClipboardContentViewController host write-back")
+@Suite("HostClipboardPublisher pasteboard items")
 struct ClipboardHostPasteboardItemsTests {
     private func makeStaging() -> ClipboardFileStaging {
         ClipboardFileStaging(
@@ -23,7 +23,7 @@ struct ClipboardHostPasteboardItemsTests {
     }
 
     /// The file URL a spec serves for `.fileURL`, or `nil` when it promises none.
-    private func fileURL(in spec: ClipboardContentViewController.PasteboardItemSpec) -> URL? {
+    private func fileURL(in spec: HostClipboardPublisher.PasteboardItemSpec) -> URL? {
         spec.provide(.fileURL)
             .flatMap { String(data: $0, encoding: .utf8) }
             .flatMap(URL.init(string:))
@@ -35,7 +35,7 @@ struct ClipboardHostPasteboardItemsTests {
         defer { staging.sweep() }
 
         let content = ClipboardContent(text: "hello world")
-        let specs = await ClipboardContentViewController.hostPasteboardItems(
+        let specs = await HostClipboardPublisher.hostPasteboardItems(
             for: content, generation: 1, staging: staging)
 
         #expect(specs.count == 1)
@@ -57,7 +57,7 @@ struct ClipboardHostPasteboardItemsTests {
             .init(uti: UTType.plainText.identifier, data: Data("alpha".utf8), filename: "a.txt"),
             .init(uti: UTType.plainText.identifier, data: Data("beta".utf8), filename: "b.txt"),
         ])
-        let specs = await ClipboardContentViewController.hostPasteboardItems(
+        let specs = await HostClipboardPublisher.hostPasteboardItems(
             for: content, generation: 1, staging: staging)
 
         #expect(specs.count == 2)
@@ -88,7 +88,7 @@ struct ClipboardHostPasteboardItemsTests {
         let content = ClipboardContent(representations: [
             .init(uti: UTType.png.identifier, data: png, filename: "photo.png")
         ])
-        let specs = await ClipboardContentViewController.hostPasteboardItems(
+        let specs = await HostClipboardPublisher.hostPasteboardItems(
             for: content, generation: 1, staging: staging)
 
         #expect(specs.count == 1)
@@ -111,7 +111,7 @@ struct ClipboardHostPasteboardItemsTests {
             .init(uti: ClipboardContent.utf8TextUTI, data: Data("inline text".utf8)),
             .init(uti: UTType.plainText.identifier, data: Data("file body".utf8), filename: "f.txt"),
         ])
-        let specs = await ClipboardContentViewController.hostPasteboardItems(
+        let specs = await HostClipboardPublisher.hostPasteboardItems(
             for: content, generation: 1, staging: staging)
 
         #expect(specs.count == 2)
@@ -134,7 +134,7 @@ struct ClipboardHostPasteboardItemsTests {
             .init(uti: UTType.plainText.identifier, data: Data("one".utf8), filename: "dup.txt"),
             .init(uti: UTType.plainText.identifier, data: Data("two".utf8), filename: "dup.txt"),
         ])
-        let specs = await ClipboardContentViewController.hostPasteboardItems(
+        let specs = await HostClipboardPublisher.hostPasteboardItems(
             for: content, generation: 1, staging: staging)
 
         #expect(specs.count == 2)
@@ -175,7 +175,7 @@ struct ClipboardHostPasteboardItemsTests {
                 uti: UTType.folder.identifier, fileURL: archive, byteCount: size,
                 filename: "Project", isDirectory: true)
         ])
-        let specs = await ClipboardContentViewController.hostPasteboardItems(
+        let specs = await HostClipboardPublisher.hostPasteboardItems(
             for: content, generation: 1, staging: staging)
 
         #expect(specs.count == 1)
@@ -209,7 +209,7 @@ struct ClipboardHostPasteboardItemsTests {
                 uti: UTType.folder.identifier, fileURL: missing, byteCount: 100, filename: "Gone",
                 isDirectory: true)
         ])
-        let specs = await ClipboardContentViewController.hostPasteboardItems(
+        let specs = await HostClipboardPublisher.hostPasteboardItems(
             for: content, generation: 1, staging: staging)
         #expect(specs.isEmpty)
     }
