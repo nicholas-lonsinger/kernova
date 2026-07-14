@@ -156,7 +156,7 @@ Kernova/
 └── Utilities/    # Formatters, extensions
 ```
 
-Alongside the app target, the repo contains the in-guest menu-bar agent (`KernovaMacOSAgent/`), the shared SwiftPM package (`KernovaKit/`), the Quick Look extension (`KernovaQuickLook/`), the guest and host clipboard File Provider extensions (`KernovaMacOSAgentFileProvider/`, `KernovaFileProvider/`), and the relaunch helper (`KernovaRelaunchHelper/`) — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full map.
+Alongside the app target, the repo contains the in-guest menu-bar agent (`KernovaMacOSAgent/`), the shared SwiftPM package (`KernovaKit/`), the guest and host clipboard File Provider extensions (`KernovaMacOSAgentFileProvider/`, `KernovaFileProvider/`), and the relaunch helper (`KernovaRelaunchHelper/`) — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full map.
 
 ### Key Components
 
