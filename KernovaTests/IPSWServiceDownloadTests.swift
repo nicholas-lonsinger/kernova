@@ -299,7 +299,8 @@ struct IPSWServiceDownloadTests {
         }
         defer { StubURLProtocol.handler = nil }
 
-        let service = Self.makeServiceWithStub()
+        let fileSystem = MockFileSystem()
+        let service = Self.makeServiceWithStub(fileSystem: fileSystem)
         try await service.downloadRestoreImage(
             from: Self.remoteURL,
             to: destination,
@@ -308,6 +309,9 @@ struct IPSWServiceDownloadTests {
 
         let written = try Data(contentsOf: destination)
         #expect(written == complete)
+        // Disposal is a separate step from `finalize` on this path too — pin it
+        // here as well as on the success path, so dropping it can't go unnoticed.
+        #expect(fileSystem.trashedURLs == [bundleURL])
     }
 
     @Test("206 response without a parseable Content-Range fails fast")
