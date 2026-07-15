@@ -60,7 +60,6 @@ struct MacOSInstallServiceTests {
         let resolved = try MacOSInstallService.resolveRestoreImage(at: viaSymlink)
 
         #expect(resolved.path(percentEncoded: false) == realImage.path(percentEncoded: false))
-        #expect(!resolved.path(percentEncoded: false).contains("/Downloads/"))
     }
 
     @Test("resolveRestoreImage resolves a symlink to the image file itself")
@@ -116,6 +115,35 @@ struct MacOSInstallServiceTests {
                 case .restoreImageNotFound = error
             else { return false }
             return true
+        }
+    }
+
+    /// The reported path reaches the user via `instance.errorMessage`, so it
+    /// must name the resolved location rather than the sandbox container's
+    /// `Downloads` spelling, which the user cannot act on.
+    @Test("A missing image under a symlinked parent reports the resolved path")
+    func resolveRestoreImageMissingReportsResolvedPath() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let realDir = dir.appendingPathComponent("RealDownloads")
+        try FileManager.default.createDirectory(at: realDir, withIntermediateDirectories: true)
+
+        // Parent symlink is intact; the image itself is absent.
+        let linkedDir = dir.appendingPathComponent("Downloads")
+        try FileManager.default.createSymbolicLink(at: linkedDir, withDestinationURL: realDir)
+
+        let missing = linkedDir.appendingPathComponent("RestoreImage.ipsw")
+        let expected = realDir.appendingPathComponent("RestoreImage.ipsw")
+            .path(percentEncoded: false)
+
+        #expect {
+            try MacOSInstallService.resolveRestoreImage(at: missing)
+        } throws: { error in
+            guard let error = error as? MacOSInstallError,
+                case .restoreImageNotFound(let path) = error
+            else { return false }
+            return path == expected
         }
     }
 

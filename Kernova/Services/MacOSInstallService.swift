@@ -306,20 +306,39 @@ final class MacOSInstallService {
             resolved.logResolution(logger: logger, context: "Restore image")
             return resolved.url
         } catch {
+            // Report the symlink-resolved path. `errorDescription` reaches the
+            // user through `instance.errorMessage`, and the raw path is the
+            // container's `Downloads` spelling — a location the user has no
+            // way to act on, and not the `~/Downloads/…` they know.
+            //
+            // RATIONALE: resolve the *parent* and re-attach the file name
+            // rather than resolving `url` whole. `resolvingSymlinksInPath()`
+            // is existence-dependent — it returns the path untouched when the
+            // last component doesn't exist, which is precisely the `.notFound`
+            // case here, so resolving `url` directly would be a no-op exactly
+            // when it matters. The parent still exists (that's why the failure
+            // is `.notFound` and not a dangling-parent error), so it resolves;
+            // if it doesn't, the path stays as-is, which is then the best
+            // available answer.
+            let reportedPath =
+                url.deletingLastPathComponent()
+                .resolvingSymlinksInPath()
+                .appendingPathComponent(url.lastPathComponent)
+                .path(percentEncoded: false)
             switch error {
             case .notFound:
-                logger.error("Restore image not found at '\(path, privacy: .private)'")
-                throw MacOSInstallError.restoreImageNotFound(path: path)
+                logger.error("Restore image not found at '\(reportedPath, privacy: .private)'")
+                throw MacOSInstallError.restoreImageNotFound(path: reportedPath)
             case .unexpectedType:
-                logger.error("Restore image path is a directory: '\(path, privacy: .private)'")
-                throw MacOSInstallError.restoreImageNotAFile(path: path)
+                logger.error("Restore image path is a directory: '\(reportedPath, privacy: .private)'")
+                throw MacOSInstallError.restoreImageNotAFile(path: reportedPath)
             case .notReadable, .notWritable:
                 // `resolveFile` only throws these when `requireWritable` is
                 // set, which we don't — VZ opening the file is the
                 // authoritative readability test (see `PathValidation`).
                 logger.fault("Unexpected \(String(describing: error), privacy: .public) for restore image")
                 assertionFailure("Unexpected PathValidation failure for restore image: \(error)")
-                throw MacOSInstallError.restoreImageNotFound(path: path)
+                throw MacOSInstallError.restoreImageNotFound(path: reportedPath)
             }
         }
     }
