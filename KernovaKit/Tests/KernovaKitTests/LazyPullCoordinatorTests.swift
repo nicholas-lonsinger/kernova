@@ -128,35 +128,42 @@ struct LazyPullCoordinatorTests {
         let window1Entered = AsyncGate()
         let window2Entered = AsyncGate()
         let releaseWindow1 = DispatchSemaphore(value: 0)
-        let windowCallCount = Box(0)
+        let releaseWindow2 = DispatchSemaphore(value: 0)
+        let sawFirstWindow = Box(false)
+        let sawSecondWindow = Box(false)
 
-        coordinator.windowWaitForTesting = { semaphore, timeout in
-            let call = windowCallCount.value
-            windowCallCount.value = call + 1
-            if call == 0 {
-                // First boundary: park here (instead of a real timed wait)
-                // until the test has delivered a heartbeat, so `progressed`
-                // is guaranteed set before `pull` evaluates this boundary.
+        // Neither branch touches the real semaphore/timeout: `pull`'s outcome
+        // is decided purely by `slot.resolved`/`slot.outcome` under its lock
+        // once this closure returns, so parking on a test-owned semaphore
+        // instead is enough to control both boundaries with no wall-clock
+        // dependency anywhere in the test.
+        coordinator.windowWaitForTesting = { _, _ in
+            if !sawFirstWindow.value {
+                sawFirstWindow.value = true
                 window1Entered.notify()
                 releaseWindow1.wait()
             } else {
                 // Second boundary reached: the first window re-armed rather
                 // than resolving `.timedOut` — the invariant under test
-                // (#500 — a slow-but-live transfer must not time out). Wait
-                // for real so `deliver`'s signal wakes it as usual.
+                // (#500 — a slow-but-live transfer must not time out).
+                sawSecondWindow.value = true
                 window2Entered.notify()
-                _ = semaphore.wait(timeout: .now() + timeout.timeInterval)
+                releaseWindow2.wait()
             }
         }
         // The window value itself is moot here — `windowWaitForTesting`
         // controls boundary timing directly — but 300 ms documents the real
         // production window this test stands in for.
         async let outcome = runPull(coordinator, transferID: 11, timeout: .milliseconds(300))
-        try await window1Entered.wait { windowCallCount.value >= 1 }
+        try await window1Entered.wait { sawFirstWindow.value }
         coordinator.heartbeat(11)
         releaseWindow1.signal()
-        try await window2Entered.wait { windowCallCount.value >= 2 }
+        try await window2Entered.wait { sawSecondWindow.value }
+        // `deliver` must run before `releaseWindow2.signal()` lets `pull`'s
+        // loop past this boundary, so `slot.resolved` is already true by the
+        // time it re-checks — no race with the real semaphore's signal.
         coordinator.deliver(11, inlineRep("slow but alive"))
+        releaseWindow2.signal()
 
         guard case .delivered(let rep) = await outcome else {
             Issue.record("Expected .delivered — heartbeats should have prevented the timeout")
