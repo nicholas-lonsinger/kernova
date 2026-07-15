@@ -52,6 +52,18 @@ public final class LazyPullCoordinator: @unchecked Sendable {
         var progressed = false
     }
 
+    #if DEBUG
+    /// Test seam: replaces the real timed semaphore wait at each window boundary in `pull`.
+    ///
+    /// Lets a test control precisely when a window "elapses" instead of
+    /// racing real wall-clock scheduling. Defaults to a real timed wait
+    /// identical to the Release-only path below; tests override it to make
+    /// window-boundary re-arming deterministic. Test-only.
+    var windowWaitForTesting: (@Sendable (DispatchSemaphore, Duration) -> Void) = { semaphore, timeout in
+        _ = semaphore.wait(timeout: .now() + timeout.timeInterval)
+    }
+    #endif
+
     private let lock = NSLock()
     private var slots: [UInt64: Slot] = [:]
     /// Transfer ids cancelled (#464) before `pull` registered a slot for them.
@@ -132,7 +144,11 @@ public final class LazyPullCoordinator: @unchecked Sendable {
             // The wait blocks one window; the slot's flags — not the wait result —
             // decide the outcome, so a signal that races the deadline is still
             // honored via `resolved` below.
+            #if DEBUG
+            windowWaitForTesting(slot.semaphore, timeout)
+            #else
             _ = slot.semaphore.wait(timeout: .now() + timeout.timeInterval)
+            #endif
             let outcome: LazyPullOutcome? = lock.withLock {
                 // A terminal resolve (deliver/abort/cancel) sets `resolved` before
                 // signaling, so it's observed here whether the wait was signaled or

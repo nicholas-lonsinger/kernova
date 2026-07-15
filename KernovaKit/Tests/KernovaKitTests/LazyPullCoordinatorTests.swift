@@ -119,16 +119,43 @@ struct LazyPullCoordinatorTests {
 
     @Test("heartbeats re-arm the inactivity window so a slow-but-live pull is not timed out")
     func heartbeatExtendsTimeout() async throws {
+        // Drives the window boundary via `windowWaitForTesting` instead of a
+        // real wall-clock wait, so the test proves the re-arm branch in `pull`
+        // fires deterministically — not that a `Task.sleep` producer happens
+        // to beat a real semaphore timeout on a shared CI runner (#571: the
+        // prior version raced real time and flaked under scheduler jitter).
         let coordinator = LazyPullCoordinator()
-        // A short window: an absolute deadline would fire long before delivery.
-        async let outcome = runPull(coordinator, transferID: 11, timeout: .milliseconds(300))
-        try await pollUntil { coordinator.pendingSlotCountForTesting == 1 }
-        // Beat far faster than the window for well over a window's worth of
-        // wall-clock, so an un-reset (absolute) backstop would have fired by now.
-        for _ in 0..<24 {
-            try await Task.sleep(for: .milliseconds(25))
-            coordinator.heartbeat(11)
+        let window1Entered = AsyncGate()
+        let window2Entered = AsyncGate()
+        let releaseWindow1 = DispatchSemaphore(value: 0)
+        let windowCallCount = Box(0)
+
+        coordinator.windowWaitForTesting = { semaphore, timeout in
+            let call = windowCallCount.value
+            windowCallCount.value = call + 1
+            if call == 0 {
+                // First boundary: park here (instead of a real timed wait)
+                // until the test has delivered a heartbeat, so `progressed`
+                // is guaranteed set before `pull` evaluates this boundary.
+                window1Entered.notify()
+                releaseWindow1.wait()
+            } else {
+                // Second boundary reached: the first window re-armed rather
+                // than resolving `.timedOut` — the invariant under test
+                // (#500 — a slow-but-live transfer must not time out). Wait
+                // for real so `deliver`'s signal wakes it as usual.
+                window2Entered.notify()
+                _ = semaphore.wait(timeout: .now() + timeout.timeInterval)
+            }
         }
+        // The window value itself is moot here — `windowWaitForTesting`
+        // controls boundary timing directly — but 300 ms documents the real
+        // production window this test stands in for.
+        async let outcome = runPull(coordinator, transferID: 11, timeout: .milliseconds(300))
+        try await window1Entered.wait { windowCallCount.value >= 1 }
+        coordinator.heartbeat(11)
+        releaseWindow1.signal()
+        try await window2Entered.wait { windowCallCount.value >= 2 }
         coordinator.deliver(11, inlineRep("slow but alive"))
 
         guard case .delivered(let rep) = await outcome else {
