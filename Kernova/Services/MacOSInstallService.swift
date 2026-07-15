@@ -25,8 +25,8 @@ final class MacOSInstallService {
     ///   - instance: The VM instance to install into.
     ///   - restoreImageURL: The local URL of the IPSW file.
     ///   - progressHandler: Called with installation progress (0.0–1.0).
-    /// - Throws: ``MacOSInstallError`` if the restore image is incompatible with this host,
-    ///   or any error rethrown from the underlying `VZMacOSInstaller`.
+    /// - Throws: ``MacOSInstallError`` if the restore image is missing or incompatible
+    ///   with this host, or any error rethrown from the underlying `VZMacOSInstaller`.
     func install(
         into instance: VMInstance,
         restoreImageURL: URL,
@@ -36,8 +36,10 @@ final class MacOSInstallService {
 
         Self.logger.info("Starting macOS installation for '\(instance.name, privacy: .public)'")
 
-        // 1. Load restore image
-        let restoreImage = try await loadRestoreImage(from: restoreImageURL)
+        // 1. Resolve, then load, the restore image. Both VZ hand-offs below
+        // take the resolved URL — see `resolveRestoreImage`.
+        let imageURL = try Self.resolveRestoreImage(at: restoreImageURL)
+        let restoreImage = try await loadRestoreImage(from: imageURL)
 
         guard let supportedConfig = restoreImage.mostFeaturefulSupportedConfiguration else {
             throw MacOSInstallError.unsupportedRestoreImage
@@ -95,7 +97,7 @@ final class MacOSInstallService {
         try Task.checkCancellation()
 
         // 6. Run installer with progress tracking
-        let installer = VZMacOSInstaller(virtualMachine: vm, restoringFromImageAt: restoreImageURL)
+        let installer = VZMacOSInstaller(virtualMachine: vm, restoringFromImageAt: imageURL)
 
         // Observe progress via KVO
         progressObservation = installer.progress.observe(\.fractionCompleted, options: [.new]) { progress, _ in
@@ -281,6 +283,66 @@ final class MacOSInstallService {
 
     // MARK: - Helpers
 
+    /// Resolves the restore image through symlinks and validates that a
+    /// regular file is there, mapping `PathValidation.Failure` to
+    /// ``MacOSInstallError``.
+    ///
+    /// RATIONALE: Virtualization rejects a restore image whose path traverses
+    /// a symlink — in *any* component, and regardless of the sandbox. It does
+    /// not resolve the path itself: `VZMacOSRestoreImage.load` fails with
+    /// `VZErrorInvalidRestoreImage` ("The restore image does not exist") even
+    /// though `FileManager` reports the file as existing and readable, and
+    /// `VZMacOSInstaller.init(virtualMachine:restoringFromImageAt:)` documents
+    /// that it *raises an exception* for a URL it won't take. That makes
+    /// resolving mandatory rather than defensive: the download destination is
+    /// always symlinked under the sandbox, because `.downloadsDirectory`
+    /// resolves to the container's `Downloads`, itself a symlink to the real
+    /// `~/Downloads`. This mirrors what `ConfigurationBuilder` already does
+    /// for storage attachments — VZ is only ever handed resolved URLs.
+    static func resolveRestoreImage(at url: URL) throws -> URL {
+        let path = url.path(percentEncoded: false)
+        do {
+            let resolved = try PathValidation.resolveFile(at: path)
+            resolved.logResolution(logger: logger, context: "Restore image")
+            return resolved.url
+        } catch {
+            // Report the symlink-resolved path. `errorDescription` reaches the
+            // user through `instance.errorMessage`, and the raw path is the
+            // container's `Downloads` spelling — a location the user has no
+            // way to act on, and not the `~/Downloads/…` they know.
+            //
+            // RATIONALE: resolve the *parent* and re-attach the file name
+            // rather than resolving `url` whole. `resolvingSymlinksInPath()`
+            // is existence-dependent — it returns the path untouched when the
+            // last component doesn't exist, which is precisely the `.notFound`
+            // case here, so resolving `url` directly would be a no-op exactly
+            // when it matters. The parent still exists (that's why the failure
+            // is `.notFound` and not a dangling-parent error), so it resolves;
+            // if it doesn't, the path stays as-is, which is then the best
+            // available answer.
+            let reportedPath =
+                url.deletingLastPathComponent()
+                .resolvingSymlinksInPath()
+                .appendingPathComponent(url.lastPathComponent)
+                .path(percentEncoded: false)
+            switch error {
+            case .notFound:
+                logger.error("Restore image not found at '\(reportedPath, privacy: .private)'")
+                throw MacOSInstallError.restoreImageNotFound(path: reportedPath)
+            case .unexpectedType:
+                logger.error("Restore image path is a directory: '\(reportedPath, privacy: .private)'")
+                throw MacOSInstallError.restoreImageNotAFile(path: reportedPath)
+            case .notReadable, .notWritable:
+                // `resolveFile` only throws these when `requireWritable` is
+                // set, which we don't — VZ opening the file is the
+                // authoritative readability test (see `PathValidation`).
+                logger.fault("Unexpected \(String(describing: error), privacy: .public) for restore image")
+                assertionFailure("Unexpected PathValidation failure for restore image: \(error)")
+                throw MacOSInstallError.restoreImageNotFound(path: reportedPath)
+            }
+        }
+    }
+
     private func loadRestoreImage(from url: URL) async throws -> VZMacOSRestoreImage {
         try await VZMacOSRestoreImage.image(from: url)
     }
@@ -295,6 +357,8 @@ extension MacOSInstallService: MacOSInstallProviding {}
 enum MacOSInstallError: LocalizedError {
     case unsupportedRestoreImage
     case unsupportedHardwareModel
+    case restoreImageNotFound(path: String)
+    case restoreImageNotAFile(path: String)
 
     var errorDescription: String? {
         switch self {
@@ -302,6 +366,10 @@ enum MacOSInstallError: LocalizedError {
             "The restore image does not contain a supported macOS configuration."
         case .unsupportedHardwareModel:
             "The hardware model in the restore image is not supported on this machine."
+        case .restoreImageNotFound(let path):
+            "The restore image could not be found at \(path)."
+        case .restoreImageNotAFile(let path):
+            "The restore image at \(path) is a folder, not a file."
         }
     }
 }
