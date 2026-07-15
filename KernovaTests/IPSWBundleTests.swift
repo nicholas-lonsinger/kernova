@@ -111,8 +111,8 @@ struct IPSWBundleTests {
         }
     }
 
-    @Test("finalize moves data to destination and trashes bundle")
-    func finalizeMovesDataAndTrashes() throws {
+    @Test("finalize moves data to the destination and leaves disposal to the caller")
+    func finalizeMovesDataToDestination() throws {
         let temp = try Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: temp) }
         let bundle = IPSWBundle(url: temp.appendingPathComponent("R.kernovadownload"))
@@ -124,15 +124,16 @@ struct IPSWBundleTests {
         try handle.close()
 
         let destination = temp.appendingPathComponent("R.ipsw")
-        let fileSystem = MockFileSystem()
-        try bundle.finalize(to: destination, fileSystem: fileSystem)
+        try bundle.finalize(to: destination)
 
         #expect(FileManager.default.fileExists(atPath: destination.path))
         let movedData = try Data(contentsOf: destination)
         #expect(movedData == payload)
-        // The spent bundle is handed to the Trash seam (the mock records it
-        // rather than filling the real Trash on every test run).
-        #expect(fileSystem.trashedURLs == [bundle.url])
+        // Disposal is the caller's separate, non-fatal step
+        // (`IPSWService.discardResumeData`), so finalize leaves the spent
+        // bundle behind — data-less, and therefore not resumable.
+        #expect(bundle.exists)
+        #expect(!bundle.isResumable)
     }
 
     @Test("finalize replaces an existing file at the destination")
@@ -150,10 +151,33 @@ struct IPSWBundleTests {
         let destination = temp.appendingPathComponent("R.ipsw")
         try Data(repeating: 0x00, count: 100).write(to: destination)
 
-        try bundle.finalize(to: destination, fileSystem: MockFileSystem())
+        try bundle.finalize(to: destination)
 
         let movedData = try Data(contentsOf: destination)
         #expect(movedData == fresh)
+    }
+
+    @Test("isResumable requires the data file, not just the bundle directory")
+    func isResumableRequiresDataFile() throws {
+        let temp = try Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let bundle = IPSWBundle(url: temp.appendingPathComponent("R.kernovadownload"))
+
+        // Absent bundle.
+        #expect(!bundle.exists)
+        #expect(!bundle.isResumable)
+
+        // Freshly prepared: a zero-byte `data` file is still resumable — the
+        // resume simply starts from offset 0.
+        try bundle.prepareForFreshDownload(with: Self.makeMetadata())
+        #expect(bundle.isResumable)
+        #expect(bundle.partialByteCount == 0)
+
+        // The husk a failed disposal leaves: directory and metadata present,
+        // `data` moved away. `exists` still passes, `isResumable` must not.
+        try FileManager.default.removeItem(at: bundle.dataURL)
+        #expect(bundle.exists)
+        #expect(!bundle.isResumable)
     }
 
     @Test("Content-Range parses canonical bytes header")

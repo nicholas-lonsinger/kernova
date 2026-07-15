@@ -68,16 +68,28 @@ final class IPSWService: Sendable {
         let bundle = IPSWBundle(url: bundleURL)
 
         // Skip-existing fast path: a completed IPSW at the destination with no
-        // in-progress bundle means a prior attempt already downloaded the file.
+        // resumable bundle means a prior attempt already downloaded the file.
         // This happens when the user cancelled or hit an error during the install
         // phase (post-download). Skipping saves a multi-GB redownload and avoids
         // a "File exists" failure on the final move.
-        if !bundle.exists,
+        //
+        // The guard is `isResumable`, not `exists`: a husk left by a finalize
+        // whose disposal failed has no bytes to resume from, so it must not
+        // keep us off this path and force a full re-download of a file that is
+        // already sitting complete at the destination.
+        if !bundle.isResumable,
             FileManager.default.fileExists(atPath: destinationURL.path(percentEncoded: false))
         {
             Self.logger.notice(
                 "IPSW already present at '\(destinationURL.lastPathComponent, privacy: .public)' — skipping download"
             )
+            // Retry disposal of any husk we just skipped past. This is the one
+            // place the code both detects the debris and has the destination in
+            // hand; `discardResumeData` is non-fatal, and the `exists` guard
+            // keeps the common (no-bundle) case free of a Trash syscall.
+            if bundle.exists {
+                discardResumeData(at: destinationURL)
+            }
             let fileSize = (try? destinationURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
             let completed = DownloadProgress(
                 bytesWritten: Int64(fileSize),
@@ -179,7 +191,8 @@ final class IPSWService: Sendable {
             )
             if let total, bundle.partialByteCount == total {
                 Self.logger.notice("416 with full file already on disk — finalizing")
-                try bundle.finalize(to: destinationURL, fileSystem: fileSystem)
+                try bundle.finalize(to: destinationURL)
+                discardResumeData(at: destinationURL)
                 let progress = DownloadProgress(
                     bytesWritten: total, totalBytes: total, bytesPerSecond: 0)
                 await MainActor.run { progressHandler(progress) }
@@ -196,13 +209,18 @@ final class IPSWService: Sendable {
             throw IPSWError.downloadFailed(URLError(.badServerResponse))
         }
 
-        // Successful completion — move bytes to the user's chosen path and trash the bundle.
+        // Successful completion — move bytes to the user's chosen path, then
+        // dispose of the spent bundle. The move is the success condition; the
+        // disposal that follows is non-fatal cleanup, so a Trash failure logs
+        // and leaves a husk rather than failing a download whose bytes are
+        // already in place.
         // `streamBytes` already emitted the unthrottled final-progress callback,
         // so we don't need to do it here. (The previous version used
         // `response.expectedContentLength`, which on 206 reports the partial-body
         // length rather than the full file size — a bug now closed by relying on
         // `streamBytes`'s totalWritten.)
-        try bundle.finalize(to: destinationURL, fileSystem: fileSystem)
+        try bundle.finalize(to: destinationURL)
+        discardResumeData(at: destinationURL)
         Self.logger.info(
             "Restore image downloaded to \(destinationURL.lastPathComponent, privacy: .public)"
         )
@@ -210,7 +228,11 @@ final class IPSWService: Sendable {
 
     /// Loads bundle resume metadata and decides whether the bundle is usable.
     ///
-    /// Returns `nil` (and discards the bundle via `removeItem`) when:
+    /// Returns `nil` when the bundle holds no partial bytes to resume from —
+    /// either no bundle at all, or a husk left behind by a finalize whose
+    /// disposal failed.
+    ///
+    /// Also returns `nil` (and discards the bundle via `removeItem`) when:
     /// - the bundle directory exists but `Info.plist` can't be decoded;
     /// - the stored `originalURL` differs from the caller's `remoteURL`
     ///   (e.g. Apple shipped a new macOS build between attempts).
@@ -225,7 +247,10 @@ final class IPSWService: Sendable {
         bundle: IPSWBundle,
         remoteURL: URL
     ) -> IPSWDownloadMetadata? {
-        guard bundle.exists else { return nil }
+        // `isResumable`, not `exists`: a husk decodes valid metadata but has no
+        // bytes behind it, which would emit a false "Resuming… (0 bytes on
+        // disk)" notice before falling through to a fresh GET anyway.
+        guard bundle.isResumable else { return nil }
 
         let metadata: IPSWDownloadMetadata
         do {
@@ -254,12 +279,20 @@ final class IPSWService: Sendable {
 
     /// Discards the `.kernovadownload` bundle for the given destination, if present.
     ///
-    /// Safe to call when no bundle exists. The bundle may contain multi-GB of
-    /// partial data; the default trashes (rather than `rm`) so the user can recover
-    /// from Trash if a VM delete was unintentional. `permanently` removes it
-    /// immediately instead, matching a "Delete Immediately" VM delete so the whole
-    /// operation uses one disposition. Mirrors the policy in commit `2ca723d` for
-    /// external storage trashed on VM delete.
+    /// Serves both dispositions of a bundle: an in-progress one abandoned by a VM
+    /// delete or a fresh-download request, and a spent one whose bytes `finalize`
+    /// has already moved to the destination.
+    ///
+    /// Safe to call when no bundle exists, and non-fatal by design — every failure
+    /// is swallowed and logged. That is what lets `finalize`'s callers treat
+    /// disposal as cleanup rather than as part of the download's success condition.
+    ///
+    /// The bundle may contain multi-GB of partial data; the default trashes
+    /// (rather than `rm`) so the user can recover from Trash if a VM delete was
+    /// unintentional. `permanently` removes it immediately instead, matching a
+    /// "Delete Immediately" VM delete so the whole operation uses one
+    /// disposition. Mirrors the policy in commit `2ca723d` for external storage
+    /// trashed on VM delete.
     func discardResumeData(at destinationURL: URL, permanently: Bool = false) {
         let bundleURL = Self.resumeBundleURL(for: destinationURL)
         do {
@@ -557,6 +590,20 @@ struct IPSWBundle: Sendable {
             atPath: url.path(percentEncoded: false), isDirectory: &isDir) && isDir.boolValue
     }
 
+    /// `true` when the bundle directory exists *and* still holds its `data` file.
+    ///
+    /// A `finalize` whose disposal failed leaves a husk behind — `data` moved to
+    /// the destination, `Info.plist` still present — which passes `exists` and
+    /// decodes valid metadata but has no bytes to resume from. Its
+    /// `partialByteCount` reads 0, indistinguishable from a genuinely empty
+    /// file, so `exists` alone would have such a husk drive a full re-download
+    /// and offer a bogus "Resume" affordance. Every resume decision must ask
+    /// this instead.
+    var isResumable: Bool {
+        exists
+            && FileManager.default.fileExists(atPath: dataURL.path(percentEncoded: false))
+    }
+
     /// Current size of the `data` file on disk; the resume offset for the next request.
     var partialByteCount: Int64 {
         let attrs = try? FileManager.default.attributesOfItem(
@@ -607,19 +654,19 @@ struct IPSWBundle: Sendable {
         try handle.close()
     }
 
-    /// Moves the `data` file to the final IPSW destination and trashes the bundle.
+    /// Moves the `data` file to the final IPSW destination.
     ///
-    /// `fileSystem` carries only the Trash disposal of the spent bundle; the
-    /// destination shuffle stays on the real `FileManager` because tests want
-    /// those moves to actually happen — a mocked `removeItem` would leave the
-    /// old destination in place and fail the subsequent move.
-    func finalize(to destinationURL: URL, fileSystem: any FileSystemOperating) throws {
+    /// Disposing of the spent bundle is deliberately *not* part of this step —
+    /// once the bytes are at the destination the download has succeeded, and a
+    /// failure to dispose of the leftover husk must not undo that. Callers
+    /// follow up with `IPSWService.discardResumeData(at:)`, which swallows and
+    /// logs disposal failures.
+    func finalize(to destinationURL: URL) throws {
         let fm = FileManager.default
         if fm.fileExists(atPath: destinationURL.path(percentEncoded: false)) {
             try fm.removeItem(at: destinationURL)
         }
         try fm.moveItem(at: dataURL, to: destinationURL)
-        try fileSystem.trashItem(at: url)
     }
 }
 

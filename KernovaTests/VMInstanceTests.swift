@@ -381,6 +381,70 @@ struct VMInstanceTests {
         #expect(instance.startAction.label == "Install")
     }
 
+    @Test("startAction is .install when the bundle is a data-less husk")
+    func startActionInstallWithHuskBundle() throws {
+        // A finalize whose disposal failed leaves the bundle directory (and its
+        // metadata) behind with `data` already moved to the destination. It has
+        // no bytes to resume from, so it must not offer "Resume Install".
+        let temp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("VMInstanceTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temp) }
+
+        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+        let bundle = IPSWBundle(url: IPSWService.resumeBundleURL(for: destination))
+        try bundle.prepareForFreshDownload(
+            with: IPSWDownloadMetadata(
+                originalURL: URL(fileURLWithPath: "/tmp/RestoreImage.ipsw"),
+                etag: nil,
+                lastModified: nil,
+                createdAt: Date()
+            )
+        )
+        try FileManager.default.removeItem(at: bundle.dataURL)
+        #expect(bundle.exists)
+
+        let instance = makeInstance(status: .stopped)
+        instance.configuration.installContext = MacOSInstallContext(
+            source: .downloadLatest,
+            downloadDestinationPath: destination.path(percentEncoded: false)
+        )
+
+        #expect(instance.hasResumableInstallDownload == false)
+        #expect(instance.startAction == .install)
+        #expect(instance.startAction.label == "Install")
+    }
+
+    @Test("startAction is .resumeInstall when the bundle still holds partial bytes")
+    func startActionResumeInstallWithPartialBytes() throws {
+        let temp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("VMInstanceTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temp) }
+
+        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+        let bundle = IPSWBundle(url: IPSWService.resumeBundleURL(for: destination))
+        try bundle.prepareForFreshDownload(
+            with: IPSWDownloadMetadata(
+                originalURL: URL(fileURLWithPath: "/tmp/RestoreImage.ipsw"),
+                etag: nil,
+                lastModified: nil,
+                createdAt: Date()
+            )
+        )
+        try Data(repeating: 0x11, count: 1024).write(to: bundle.dataURL)
+
+        let instance = makeInstance(status: .stopped)
+        instance.configuration.installContext = MacOSInstallContext(
+            source: .downloadLatest,
+            downloadDestinationPath: destination.path(percentEncoded: false)
+        )
+
+        #expect(instance.hasResumableInstallDownload == true)
+        #expect(instance.startAction == .resumeInstall)
+        #expect(instance.startAction.label == "Resume Install")
+    }
+
     @Test("StartAction labels match what each variant performs")
     func startActionLabels() {
         #expect(VMInstance.StartAction.start.label == "Start")
