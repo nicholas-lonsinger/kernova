@@ -40,8 +40,21 @@ struct LazyPullCoordinatorTests {
         var isMonotonic: Bool { lock.withLock { monotonic } }
     }
 
-    /// Runs the blocking `pull` on a global queue so the test's cooperative
-    /// thread stays free to deliver/abort/failAll and `await` the outcome.
+    /// Runs the blocking `pull` on a dedicated thread so the test's
+    /// cooperative thread stays free to deliver/abort/failAll and `await` the
+    /// outcome.
+    ///
+    /// `pull` blocks its thread on a semaphore for up to `timeout`. A
+    /// dedicated `Thread` — not `DispatchQueue.global()` — draws from no
+    /// shared pool: Swift Testing runs this suite's tests in parallel, so the
+    /// suite's ~15 concurrent blocking pulls would otherwise park shared
+    /// global-pool workers at once, and GCD throttles new-worker creation
+    /// under saturation. A freshly dispatched `pull` then can't get a thread
+    /// within a sibling's `pollUntil` window, its slot never registers, and
+    /// the whole cluster times out together — a starvation cascade that
+    /// self-reinforces (each test's deliver/abort/failAll, which would free a
+    /// worker, is gated behind the very `pollUntil` that's timing out) and
+    /// survives the automatic retry (#578).
     private func runPull(
         _ coordinator: LazyPullCoordinator,
         transferID: UInt64,
@@ -49,11 +62,13 @@ struct LazyPullCoordinatorTests {
         send: @escaping @Sendable () -> Void = {}
     ) async -> LazyPullOutcome {
         await withCheckedContinuation { (cont: CheckedContinuation<LazyPullOutcome, Never>) in
-            DispatchQueue.global().async {
+            let thread = Thread {
                 cont.resume(
                     returning: coordinator.pull(
                         transferID: transferID, timeout: timeout, send: send))
             }
+            thread.name = "LazyPullCoordinatorTests.runPull(\(transferID))"
+            thread.start()
         }
     }
 
