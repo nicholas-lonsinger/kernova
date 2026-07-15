@@ -75,17 +75,19 @@ extension VMInstance {
     }
 
     /// `true` when this VM has a `.downloadLatest` install context, a
-    /// `.kernovadownload` in-progress bundle at the chosen path, and no
-    /// completed IPSW yet at the same path.
+    /// `.kernovadownload` bundle still holding partial bytes at the chosen path,
+    /// and no completed IPSW yet at the same path.
     ///
-    /// Drives the "Resume Install" label variant.
+    /// Drives the "Resume Install" label variant. The bytes check (`isResumable`
+    /// rather than `exists`) keeps a husk left by a failed disposal from
+    /// labelling a from-scratch download as a resume.
     var hasResumableInstallDownload: Bool {
         guard let context = configuration.installContext,
             context.source == .downloadLatest,
             let destinationURL = context.downloadDestinationURL
         else { return false }
         let bundle = IPSWBundle(url: IPSWService.resumeBundleURL(for: destinationURL))
-        return bundle.exists
+        return bundle.isResumable
             && !FileManager.default.fileExists(atPath: destinationURL.path(percentEncoded: false))
     }
 }

@@ -260,17 +260,20 @@ final class VMCreationViewModel {
     // MARK: - Resume Detection
 
     /// `true` when the chosen download destination has an associated
-    /// `.kernovadownload` in-progress bundle from a prior interrupted download,
-    /// *and* no completed IPSW already exists at the path.
+    /// `.kernovadownload` bundle from a prior interrupted download that still
+    /// holds its partial bytes, *and* no completed IPSW already exists at the
+    /// path.
     ///
     /// A completed file takes priority — the overwrite warning flow handles that
-    /// case instead.
+    /// case instead. The bytes check (`isResumable` rather than `exists`) keeps a
+    /// husk left by a failed disposal from offering a resume with nothing behind
+    /// it.
     var hasResumableDownload: Bool {
         guard ipswSource == .downloadLatest,
             !ipswDownloadPathFileExists
         else { return false }
         let bundleURL = IPSWService.resumeBundleURL(for: URL(fileURLWithPath: ipswDownloadPath))
-        return IPSWBundle(url: bundleURL).exists
+        return IPSWBundle(url: bundleURL).isResumable
     }
 
     func confirmOverwrite() {

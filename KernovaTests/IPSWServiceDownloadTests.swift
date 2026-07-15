@@ -85,6 +85,96 @@ struct IPSWServiceDownloadTests {
         #expect(fileSystem.trashedURLs == [bundleURL])
     }
 
+    @Test("A download whose spent bundle can't be trashed still succeeds")
+    func freshDownloadSucceedsWhenDisposalFails() async throws {
+        // The bytes reaching the destination IS the success condition; disposing
+        // of the husk afterwards is cleanup. A Trash failure must not fail a
+        // download whose image is already complete and correctly in place.
+        let temp = try Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+
+        let payload = Data(repeating: 0xAA, count: 4096)
+        StubURLProtocol.handler = { request in
+            .fullResponse(url: request.url ?? Self.remoteURL, body: payload, etag: "\"v1\"")
+        }
+        defer { StubURLProtocol.handler = nil }
+
+        let fileSystem = MockFileSystem()
+        // A generic failure, deliberately NOT `.fileNoSuchFile` — that one is
+        // swallowed silently as the ordinary "nothing to discard" case and
+        // would not exercise this path.
+        fileSystem.trashError = CocoaError(.fileWriteNoPermission)
+        let service = Self.makeServiceWithStub(fileSystem: fileSystem)
+
+        try await service.downloadRestoreImage(
+            from: Self.remoteURL,
+            to: destination,
+            progressHandler: { _ in }
+        )
+
+        let written = try Data(contentsOf: destination)
+        #expect(written == payload)
+
+        // The husk is now a deliberately permitted state: the directory
+        // survives the failed disposal, but holds no bytes to resume from.
+        let bundle = IPSWBundle(url: IPSWService.resumeBundleURL(for: destination))
+        #expect(bundle.exists)
+        #expect(!bundle.isResumable)
+    }
+
+    @Test("A husk beside a complete IPSW skips the download instead of re-fetching")
+    func huskBesideCompleteImageTakesSkipPath() async throws {
+        // Regression test for the re-download loop: with the skip-existing guard
+        // keyed on `exists`, a husk kept the fast path from firing, the absent
+        // `data` file computed a 0 resume offset (so no Range header), and the
+        // whole multi-GB image was fetched again — only to fail disposal again.
+        let temp = try Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+        let bundleURL = IPSWService.resumeBundleURL(for: destination)
+        let bundle = IPSWBundle(url: bundleURL)
+
+        // A complete image at the destination, plus the husk a failed disposal
+        // left beside it: metadata intact, `data` already moved away.
+        let complete = Data(repeating: 0x99, count: 2048)
+        try complete.write(to: destination)
+        try bundle.prepareForFreshDownload(
+            with: IPSWDownloadMetadata(
+                originalURL: Self.remoteURL,
+                etag: "\"v1\"",
+                lastModified: nil,
+                createdAt: Date()
+            )
+        )
+        try FileManager.default.removeItem(at: bundle.dataURL)
+        #expect(bundle.exists)
+
+        StubURLProtocol.handler = { _ in
+            Issue.record("Husk beside a complete IPSW must not trigger a re-download")
+            return .response(url: Self.remoteURL, statusCode: 500, body: Data(), headers: [:])
+        }
+        defer { StubURLProtocol.handler = nil }
+
+        let recorder = ProgressRecorder()
+        let fileSystem = MockFileSystem()
+        let service = Self.makeServiceWithStub(fileSystem: fileSystem)
+        try await service.downloadRestoreImage(
+            from: Self.remoteURL,
+            to: destination,
+            progressHandler: { [recorder] progress in
+                recorder.record(progress.bytesWritten)
+            }
+        )
+
+        // Destination untouched, and reported as already-complete.
+        #expect(try Data(contentsOf: destination) == complete)
+        let samples = await recorder.snapshot()
+        #expect(samples.last == Int64(complete.count))
+        // Having detected the debris, the skip path retries its disposal.
+        #expect(fileSystem.trashedURLs == [bundleURL])
+    }
+
     @Test("Resume sends Range/If-Range and appends 206 body to existing bytes")
     func resumeAppendsPartialContent() async throws {
         let temp = try Self.makeTempDir()
@@ -209,7 +299,8 @@ struct IPSWServiceDownloadTests {
         }
         defer { StubURLProtocol.handler = nil }
 
-        let service = Self.makeServiceWithStub()
+        let fileSystem = MockFileSystem()
+        let service = Self.makeServiceWithStub(fileSystem: fileSystem)
         try await service.downloadRestoreImage(
             from: Self.remoteURL,
             to: destination,
@@ -218,6 +309,9 @@ struct IPSWServiceDownloadTests {
 
         let written = try Data(contentsOf: destination)
         #expect(written == complete)
+        // Disposal is a separate step from `finalize` on this path too — pin it
+        // here as well as on the success path, so dropping it can't go unnoticed.
+        #expect(fileSystem.trashedURLs == [bundleURL])
     }
 
     @Test("206 response without a parseable Content-Range fails fast")
