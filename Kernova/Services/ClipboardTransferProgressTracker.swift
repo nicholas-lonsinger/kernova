@@ -79,7 +79,7 @@ final class ClipboardTransferProgressTracker: @unchecked Sendable {
 
     /// Drops a finished or aborted transfer.
     func finish(_ id: UInt64) {
-        lock.withLock { _ = entries.removeValue(forKey: id) }
+        lock.withLock { entries[id] = nil }
     }
 
     /// Drops every transfer (channel teardown / `stop()`).

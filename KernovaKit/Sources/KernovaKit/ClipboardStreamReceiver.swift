@@ -472,7 +472,7 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
 
     /// Deregisters a per-transfer delivery handler without firing it.
     public func cancelAwait(_ transferID: UInt64) {
-        lock.withLock { _ = awaiters.removeValue(forKey: transferID) }
+        lock.withLock { awaiters[transferID] = nil }
     }
 
     // MARK: - Private
@@ -482,7 +482,7 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
     }
 
     private func remove(_ id: UInt64) {
-        lock.withLock { _ = transfers.removeValue(forKey: id) }
+        lock.withLock { transfers[id] = nil }
     }
 
     /// Delivers a completed representation to a registered per-transfer awaiter,

@@ -147,7 +147,7 @@ public final class AsyncGate: @unchecked Sendable {
             // genuinely stuck condition fails the wait instead of hanging.
             backstop = Task {
                 try? await Task.sleep(until: deadline, clock: ContinuousClock())
-                self.lock.withLock { _ = self.waiters.removeValue(forKey: id) }
+                self.lock.withLock { self.waiters[id] = nil }
                 once.fire { cont.resume() }
             }
         }
