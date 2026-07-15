@@ -168,7 +168,7 @@ public final class ClipboardStreamSender: @unchecked Sendable {
     }
 
     private func remove(_ id: UInt64) {
-        lock.withLock { _ = transfers.removeValue(forKey: id) }
+        lock.withLock { transfers[id] = nil }
     }
 
     private func run(

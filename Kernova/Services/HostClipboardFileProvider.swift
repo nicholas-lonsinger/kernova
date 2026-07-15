@@ -183,7 +183,7 @@ final class HostClipboardPullRouter: FileProviderPullProvider, @unchecked Sendab
             return current
         }
         guard let source else { return .failure(.noCurrentOffer) }
-        defer { lock.withLock { dispatchedSources.removeValue(forKey: key) } }
+        defer { lock.withLock { dispatchedSources[key] = nil } }
         return source.pullStagedFile(generation: generation, repIndex: repIndex)
     }
 
