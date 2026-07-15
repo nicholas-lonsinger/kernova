@@ -93,6 +93,10 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
         cloneVMBundleCallCount += 1
         if let error = cloneVMBundleError { throw error }
         let url = try bundleURL(for: newConfiguration)
+        // Mirrors the real service actually creating the bundle directory on disk:
+        // a macOS clone's `copyWork` writes a regenerated MachineIdentifier file
+        // straight into this URL afterward, which needs the directory to exist.
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         bundles[url] = newConfiguration
         return url
     }

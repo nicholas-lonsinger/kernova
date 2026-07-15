@@ -141,7 +141,18 @@ final class SidebarViewController: NSViewController {
     private func startObservations() {
         if instancesObservation == nil {
             instancesObservation = observeRecurring(
-                track: { [weak self] in _ = self?.viewModel.instances.map(\.id) },
+                track: { [weak self] in
+                    guard let self else { return }
+                    _ = self.viewModel.instances.map(\.id)
+                    // A phantom clone/import registers before its background copy
+                    // starts (`isPreparing` still false) and its row settles to
+                    // "real" later without any id-list change — tracking this too
+                    // routes that settle through `reloadInstances()`, the same
+                    // proven-correct cycle that renders every row on initial load,
+                    // instead of relying solely on the row's own live-view mutation
+                    // to get flushed to screen (#575).
+                    _ = self.viewModel.instances.map(\.isPreparing)
+                },
                 apply: { [weak self] in self?.reloadInstances() }
             )
         }
@@ -168,7 +179,19 @@ final class SidebarViewController: NSViewController {
         renameObservation = nil
     }
 
+    #if DEBUG
+    /// Number of times `reloadInstances()` has run — exposed so tests can
+    /// assert a specific model change (e.g. a preparing row settling) actually
+    /// routed through the outline view's reload cycle, without depending on
+    /// off-screen `NSOutlineView` row-view realization (rendering itself is
+    /// verified manually, per this file's top-level doc comment).
+    private(set) var reloadInstancesCallCountForTesting = 0
+    #endif
+
     private func reloadInstances() {
+        #if DEBUG
+        reloadInstancesCallCountForTesting += 1
+        #endif
         // Commit any in-flight rename first: a reload tears the field editor
         // down underneath the user, which would otherwise drop keyboard focus
         // and race a partial-text commit. Resigning first responder ends

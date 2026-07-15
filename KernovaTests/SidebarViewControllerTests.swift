@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import KernovaTestSupport
 import Testing
 
 @testable import Kernova
@@ -26,9 +27,11 @@ struct SidebarViewControllerTests {
         self.preferences = makeEphemeralPreferences(suiteName: "test.kernova.sidebar")
     }
 
-    private func makeViewModel() -> VMLibraryViewModel {
+    private func makeViewModel(storageService: MockVMStorageService = MockVMStorageService())
+        -> VMLibraryViewModel
+    {
         VMLibraryViewModel(
-            storageService: MockVMStorageService(),
+            storageService: storageService,
             diskImageService: MockDiskImageService(),
             virtualizationService: MockVirtualizationService(),
             installService: MockMacOSInstallService(),
@@ -382,5 +385,66 @@ struct SidebarViewControllerTests {
         #expect(outline.numberOfRows == 3)
         #expect(outline.item(atRow: 0) is SidebarSection)
         #expect(outline.item(atRow: 1) is VMInstance)
+    }
+
+    // MARK: - Clone completion refresh (#575)
+
+    @Test("A cloned VM's preparing row settling routes through the sidebar's reload cycle")
+    func clonedRowSettlingTriggersReload() async throws {
+        let storage = MockVMStorageService()
+        let viewModel = makeViewModel(storageService: storage)
+        let source = makeInstance(name: "Source", guestOS: .macOS)
+        // Registered with the mock storage so the view model's real
+        // `VMDirectoryWatcher` — which fires on the clone's directory actually
+        // landing on disk (the mock now creates it, matching production) —
+        // doesn't mistake the never-persisted source for a bundle that vanished
+        // and reconcile it away, confounding the reload count below.
+        storage.bundles[source.bundleURL] = source.configuration
+        viewModel.instances.append(source)
+        let controller = SidebarViewController(viewModel: viewModel, preferences: preferences)
+        controller.loadViewIfNeeded()
+        controller.viewDidAppear()
+
+        let reloadsBeforeClone = controller.reloadInstancesCallCountForTesting
+        viewModel.cloneVM(source)
+        guard let phantom = viewModel.instances.first(where: { $0.id != source.id }) else {
+            Issue.record("Expected a cloned phantom instance")
+            return
+        }
+
+        // Await the production Task the row's preparing state is held on, per
+        // docs/TESTING.md's "await the production Task" seam, rather than
+        // polling the flag it flips. (The mock's copy settles fast enough that
+        // polling for an intermediate "still preparing" reload count would
+        // race it — the two reloads below can both have landed by the first
+        // poll tick.)
+        await phantom.preparingState?.task.value
+        #expect(!phantom.isPreparing)
+
+        // Two reloads are expected end to end: one for the phantom's initial
+        // registration (an id-list change) and one for its `isPreparing`
+        // settle — the fix under test (#575). The settle's reload has no
+        // dedicated Observable signal at the controller layer to hang a
+        // `waitForChange` off of (it fires through an internal
+        // `ObservationLoop` cascade), so poll the counter per docs/TESTING.md's
+        // no-signal exception (asserting end-state, not per-iteration).
+        try await waitUntil {
+            controller.reloadInstancesCallCountForTesting >= reloadsBeforeClone + 2
+        }
+
+        // Best-effort: when the row happens to be realized off-screen, confirm
+        // the badge itself reads visible. Pure rendering is otherwise verified
+        // manually (see this file's top-level doc comment).
+        guard let outline = findOutlineView(in: controller.view) else {
+            Issue.record("Expected an NSOutlineView in the sidebar view tree")
+            return
+        }
+        let row = outline.row(forItem: phantom)
+        if row >= 0,
+            let cell = outline.view(atColumn: 0, row: row, makeIfNecessary: false)
+                as? SidebarVMRowCellView
+        {
+            #expect(cell.agentAccessoryHiddenForTesting == false)
+        }
     }
 }
