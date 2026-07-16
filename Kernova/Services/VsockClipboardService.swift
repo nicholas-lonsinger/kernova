@@ -957,7 +957,7 @@ final class VsockClipboardService: ClipboardServicing {
             receiver.awaitTransfer(
                 transferID,
                 onComplete: { pull.resume($0) },
-                onAbort: { info in
+                onAbort: { [weak self] info in
                     // Surface a mid-stream disk-full: the pre-flight above covers
                     // the up-front case; this covers a volume that fills *during*
                     // the transfer (parity with the retired eager onTransferAbort).
