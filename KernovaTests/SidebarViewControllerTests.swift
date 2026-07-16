@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import KernovaTestSupport
 import Testing
 
 @testable import Kernova
@@ -26,9 +27,11 @@ struct SidebarViewControllerTests {
         self.preferences = makeEphemeralPreferences(suiteName: "test.kernova.sidebar")
     }
 
-    private func makeViewModel() -> VMLibraryViewModel {
+    private func makeViewModel(storageService: MockVMStorageService = MockVMStorageService())
+        -> VMLibraryViewModel
+    {
         VMLibraryViewModel(
-            storageService: MockVMStorageService(),
+            storageService: storageService,
             diskImageService: MockDiskImageService(),
             virtualizationService: MockVirtualizationService(),
             installService: MockMacOSInstallService(),
@@ -382,5 +385,63 @@ struct SidebarViewControllerTests {
         #expect(outline.numberOfRows == 3)
         #expect(outline.item(atRow: 0) is SidebarSection)
         #expect(outline.item(atRow: 1) is VMInstance)
+    }
+
+    // MARK: - Clone completion refresh (#575)
+
+    @Test("A cloned VM's preparing row settling routes through the sidebar's reload cycle")
+    func clonedRowSettlingTriggersReload() async throws {
+        let storage = MockVMStorageService()
+        let viewModel = makeViewModel(storageService: storage)
+        let source = makeInstance(name: "Source", guestOS: .macOS)
+        // Registered with the mock storage so the view model's real
+        // `VMDirectoryWatcher` — which fires on the clone's directory actually
+        // landing on disk (the mock now creates it, matching production) —
+        // doesn't mistake the never-persisted source for a bundle that vanished
+        // and reconcile it away, confounding the reload count below.
+        storage.bundles[source.bundleURL] = source.configuration
+        viewModel.instances.append(source)
+        let controller = SidebarViewController(viewModel: viewModel, preferences: preferences)
+        controller.loadViewIfNeeded()
+        controller.viewDidAppear()
+
+        let reloadsBeforeClone = controller.reloadInstancesCallCountForTesting
+        viewModel.cloneVM(source)
+        guard let phantom = viewModel.instances.first(where: { $0.id != source.id }) else {
+            Issue.record("Expected a cloned phantom instance")
+            return
+        }
+
+        // Await the production Task the row's preparing state is held on, per
+        // docs/TESTING.md's "await the production Task" seam, rather than
+        // polling the flag it flips. (The mock's copy settles fast enough that
+        // polling for an intermediate "still preparing" reload count would
+        // race it — the two reloads below can both have landed by the first
+        // poll tick.)
+        await phantom.preparingState?.task.value
+        #expect(!phantom.isPreparing)
+
+        // Exactly two reloads are expected end to end: one for the phantom's
+        // initial registration (an id-list change) and one for its
+        // `isPreparing` settle — the fix under test (#575). The settle's
+        // reload has no dedicated Observable signal at the controller layer to
+        // hang a `waitForChange` off of (it fires through an internal
+        // `ObservationLoop` cascade), so poll the counter.
+        //
+        // RATIONALE: genuine no-signal predicate (docs/TESTING.md) — the
+        // reload count is driven by an internal `ObservationLoop` cascade with
+        // no test-facing signal to await; `==`, not `>=`, so a stray extra
+        // reload (e.g. an unrelated `VMDirectoryWatcher` reconciliation) fails
+        // the test instead of being silently masked by a looser bound.
+        try await waitUntil {
+            controller.reloadInstancesCallCountForTesting == reloadsBeforeClone + 2
+        }
+
+        // The reload count above is the regression guard; the row's actual
+        // rendered badge is left to manual verification, per this file's
+        // top-level doc comment — `NSOutlineView` never realizes a row's cell
+        // view in this off-screen test harness (confirmed: `view(atColumn:
+        // row:makeIfNecessary: false)` is always nil here), so an assertion on
+        // it would silently never execute.
     }
 }
