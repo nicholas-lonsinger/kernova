@@ -421,30 +421,27 @@ struct SidebarViewControllerTests {
         await phantom.preparingState?.task.value
         #expect(!phantom.isPreparing)
 
-        // Two reloads are expected end to end: one for the phantom's initial
-        // registration (an id-list change) and one for its `isPreparing`
-        // settle — the fix under test (#575). The settle's reload has no
-        // dedicated Observable signal at the controller layer to hang a
-        // `waitForChange` off of (it fires through an internal
-        // `ObservationLoop` cascade), so poll the counter per docs/TESTING.md's
-        // no-signal exception (asserting end-state, not per-iteration).
+        // Exactly two reloads are expected end to end: one for the phantom's
+        // initial registration (an id-list change) and one for its
+        // `isPreparing` settle — the fix under test (#575). The settle's
+        // reload has no dedicated Observable signal at the controller layer to
+        // hang a `waitForChange` off of (it fires through an internal
+        // `ObservationLoop` cascade), so poll the counter.
+        //
+        // RATIONALE: genuine no-signal predicate (docs/TESTING.md) — the
+        // reload count is driven by an internal `ObservationLoop` cascade with
+        // no test-facing signal to await; `==`, not `>=`, so a stray extra
+        // reload (e.g. an unrelated `VMDirectoryWatcher` reconciliation) fails
+        // the test instead of being silently masked by a looser bound.
         try await waitUntil {
-            controller.reloadInstancesCallCountForTesting >= reloadsBeforeClone + 2
+            controller.reloadInstancesCallCountForTesting == reloadsBeforeClone + 2
         }
 
-        // Best-effort: when the row happens to be realized off-screen, confirm
-        // the badge itself reads visible. Pure rendering is otherwise verified
-        // manually (see this file's top-level doc comment).
-        guard let outline = findOutlineView(in: controller.view) else {
-            Issue.record("Expected an NSOutlineView in the sidebar view tree")
-            return
-        }
-        let row = outline.row(forItem: phantom)
-        if row >= 0,
-            let cell = outline.view(atColumn: 0, row: row, makeIfNecessary: false)
-                as? SidebarVMRowCellView
-        {
-            #expect(cell.agentAccessoryHiddenForTesting == false)
-        }
+        // The reload count above is the regression guard; the row's actual
+        // rendered badge is left to manual verification, per this file's
+        // top-level doc comment — `NSOutlineView` never realizes a row's cell
+        // view in this off-screen test harness (confirmed: `view(atColumn:
+        // row:makeIfNecessary: false)` is always nil here), so an assertion on
+        // it would silently never execute.
     }
 }

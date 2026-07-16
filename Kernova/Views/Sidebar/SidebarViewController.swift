@@ -150,7 +150,11 @@ final class SidebarViewController: NSViewController {
                     // routes that settle through `reloadInstances()`, the same
                     // proven-correct cycle that renders every row on initial load,
                     // instead of relying solely on the row's own live-view mutation
-                    // to get flushed to screen (#575).
+                    // to get flushed to screen (#575). This is deliberately in
+                    // addition to (not a replacement for) `SidebarVMRowCellView`'s
+                    // own per-row `rowObservation`, which still owns cheap in-place
+                    // updates (name/status/agent-status changes) that don't need a
+                    // full-table reload.
                     _ = self.viewModel.instances.map(\.isPreparing)
                 },
                 apply: { [weak self] in self?.reloadInstances() }

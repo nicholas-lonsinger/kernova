@@ -399,13 +399,6 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
         nameField.currentEditor()?.selectAll(nil)
     }
 
-    #if DEBUG
-    /// Whether the guest-agent badge is currently hidden on the live view —
-    /// exposed so tests can assert the actual rendered state converges after an
-    /// async model change, not just the underlying `visibleAgentStatus` data.
-    var agentAccessoryHiddenForTesting: Bool { agentButton.isHidden }
-    #endif
-
     // MARK: - Reuse
 
     override func prepareForReuse() {

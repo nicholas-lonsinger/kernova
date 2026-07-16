@@ -4,9 +4,17 @@ import Foundation
 /// In-memory mock for `VMStorageProviding` that tracks operations without touching disk —
 /// except `vmsDirectory`, which import/clone tests need as a real, writable directory since
 /// `VMLibraryViewModel.reserveAndImport(from:)` does a raw `FileManager.copyItem` into it rather than
-/// going through this protocol. `baseDirectory` is unique per instance (suffixed with a UUID) so
+/// going through this protocol, and `cloneVMBundle`, which creates its returned URL for the same
+/// reason (see below). `baseDirectory` is unique per instance (suffixed with a UUID) so
 /// parallel/`.serialized` tests copying real bundles into it can't collide or leak state into
 /// each other.
+///
+/// Because `vmsDirectory`/`cloneVMBundle` are real, on-disk paths, and every `VMLibraryViewModel`
+/// starts a real `VMDirectoryWatcher` against `vmsDirectory` in `init`, a test driving an async
+/// clone/import to completion should register every other in-memory instance's `bundleURL` in
+/// `bundles` too (as the existing clone tests do) — otherwise a watcher-triggered
+/// `reconcileWithDisk()` racing the test could mistake an unregistered resting-state instance for a
+/// bundle that vanished from disk and evict it.
 final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
     // MARK: - Storage
 
