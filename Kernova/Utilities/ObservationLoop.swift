@@ -29,7 +29,7 @@ final class ObservationLoop {
         guard !isCancelled else { return }
         withObservationTracking {
             track()
-        } onChange: {
+        } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, !self.isCancelled else { return }
                 // Re-arm BEFORE applying: `apply()` can synchronously mutate

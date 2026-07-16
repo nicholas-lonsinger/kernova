@@ -965,7 +965,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         let firstFileGate = PromiseFirstFileGate()
 
         receiver.receivePromisedFiles(atDestination: destination, options: [:], operationQueue: promiseQueue) {
-            url, error in
+            [weak self] url, error in
             Task { @MainActor [weak self] in
                 // Per-file cleanup happens even if the window closed before
                 // the promise resolved (self gone). Removing the directory
