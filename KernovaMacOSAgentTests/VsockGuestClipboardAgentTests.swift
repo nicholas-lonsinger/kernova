@@ -2187,6 +2187,38 @@ struct VsockGuestClipboardAgentTests {
     }
 
     @Test(
+        "deadline cap: an over-cap directory rep is refused too — a folder paste has no File Provider escape hatch yet (D1b), so it rides the same deadline-bound path as a plain file"
+    )
+    func tooLargeDirectoryPullReturnsNilWithoutRequest() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        let overCap = UInt64(ClipboardStreamTuning.maxDeadlineSafeFileBytes) + 1
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 26,
+                reps: [
+                    RepInfo(
+                        uti: UTType.folder.identifier, byteCount: overCap, filename: "HugeFolder",
+                        isInline: false, isDirectory: true)
+                ]))
+        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
+
+        let pull = lazyPull(pasteboard, forType: .fileURL)
+        let provided = await pull.value
+        #expect(provided == nil)
+        try await expectNoRequest(from: hostChannel)
+    }
+
+    @Test(
         "deadline cap: the guest surfaces the failure to the host as a clipboard.paste.too.large error frame"
     )
     func tooLargeSurfacesErrorFrame() async throws {

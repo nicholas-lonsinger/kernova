@@ -1132,24 +1132,31 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     ) -> ClipboardContent.Representation? {
         let info = promise.reps[repIndex]
         // RATIONALE: mirrors the host's deadline-safe gate
-        // (`VsockClipboardService.isLazyEligibleFile` + `lazyFileItem`) — a
-        // non-inline, non-directory file rep over `maxDeadlineSafeFileBytes` on
-        // the synchronous provider path would block the OS paste deadline with
-        // no progress signal. Checked first (actionable-first: "enable File
-        // Provider" beats a disk-space message) and only on the deadline-bound
-        // caller — the File Provider relay has no deadline and must stay
-        // uncapped (docs/CLIPBOARD.md §2).
-        if deadlineBound, !info.isInline, !info.isDirectory,
+        // (`VsockClipboardService.isLazyEligibleFile` + `lazyFileItem`) for plain
+        // files, and additionally covers directory reps — unlike the host (whose
+        // "Copy to Mac" pulls a directory eagerly, at click time, never through a
+        // deadline-bound pasteboard-provider callback), the guest's inbound
+        // directory extraction runs through this *same* synchronous path as a
+        // plain file (D1b folder File-Provider routing hasn't shipped, so every
+        // inbound directory rep reaches here). A non-inline rep over
+        // `maxDeadlineSafeFileBytes` on the synchronous provider path would block
+        // the OS paste deadline with no progress signal, file or folder alike.
+        // Checked first (actionable-first: "enable File Provider" beats a
+        // disk-space message) and only on the deadline-bound caller — the File
+        // Provider relay has no deadline and must stay uncapped
+        // (docs/CLIPBOARD.md §2).
+        if deadlineBound, !info.isInline,
             info.byteCount > UInt64(ClipboardStreamTuning.maxDeadlineSafeFileBytes)
         {
             Self.logger.warning(
-                "Clipboard file rep '\(info.uti, privacy: .public)' is \(info.byteCount, privacy: .public) bytes — over the deadline-safe cap with the File Provider off; refusing the synchronous paste pull"
+                "Clipboard rep '\(info.uti, privacy: .public)' is \(info.byteCount, privacy: .public) bytes — over the deadline-safe cap with the File Provider off; refusing the synchronous paste pull"
             )
             // The guest has no UI; tell the host so it shows the failure.
+            let kind = info.isDirectory ? "Folder" : "File"
             sendPasteError(
                 code: "clipboard.paste.too.large",
                 message:
-                    "File too large to paste into the guest without File Provider (\(info.byteCount) bytes)",
+                    "\(kind) too large to paste into the guest without File Provider (\(info.byteCount) bytes)",
                 on: channel)
             return nil
         }
