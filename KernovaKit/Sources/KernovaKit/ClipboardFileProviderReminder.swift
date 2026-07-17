@@ -81,10 +81,13 @@ public enum ClipboardFileProviderReminder {
 
     /// Degraded-mode summary for the guest side (host→guest paste).
     ///
-    /// Deliberately makes no size promise: unlike the host direction, this
-    /// mirror-image fallback has no deadline-safe cap yet (open #561) — an
-    /// over-cap paste with the toggle off can fail without any drop message,
-    /// so this must not claim a size ceiling a user could rely on.
+    /// With the toggle off, a file paste falls back to a synchronous,
+    /// deadline-bound pull capped at `ClipboardStreamTuning
+    /// .maxDeadlineSafeFileBytes` — symmetric with the host direction (#561) —
+    /// and an over-cap file is refused with its own `clipboard.paste.too.large`
+    /// error frame, surfaced in the host's clipboard window. This summary
+    /// deliberately doesn't restate the byte figure, matching
+    /// `hostDegradedSummary`.
     public static func guestDegradedSummary() -> String {
         "Text and images paste normally. Enable File Provider to reliably paste files from your Mac."
     }

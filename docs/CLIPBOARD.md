@@ -123,10 +123,13 @@ Honest caveats this principle does **not** waive:
   entirely once the File Provider is enabled — `fetchContents` has no deadline and no size
   limit. This direction (guest→host) is unaffected by §3's advertiser caveat: host "Copy to
   Mac" has published a concrete File Provider placeholder since #434, so the advertiser's
-  offer-time fetch (§3) costs nothing here. The **mirror-image host→guest path has no
-  equivalent cap yet** — see #561. The offer-time advertiser fetch that once made that
-  uncapped pull fire with no paste at all is suppressed — the guest's promise write is
-  `.currentHostOnly` (§3, #542) — so the sync-promise pull now runs only on a real paste.
+  offer-time fetch (§3) costs nothing here. The **mirror-image host→guest path carries the
+  same cap** (#561): the guest's synchronous pull refuses a non-inline, non-directory file
+  rep over `maxDeadlineSafeFileBytes` and reports `clipboard.paste.too.large` back to the
+  host rather than pulling it, mirroring `isLazyEligibleFile`/`lazyFileItem` above. The
+  offer-time advertiser fetch that once made an uncapped pull fire with no paste at all is
+  separately suppressed — the guest's promise write is `.currentHostOnly` (§3, #542) — so
+  the sync-promise pull now runs only on a real paste, and the cap guards that real paste.
 - **Host "Copy to Mac" routes a plain-file rep lazily only when exactly one is offered (D2
   scope).** If two or more plain-file reps are present, all of them are dropped (the user sees
   "Only one file can be copied to your Mac at a time"), regardless of the toggle. Unlike the
@@ -151,8 +154,8 @@ bounded pull — see §5).
   materializes the entire file with no paste ever issued. The rule this establishes: a published
   representation is only genuinely lazy if **every** flavor it exposes is cheap to produce at
   registration time, not merely at the moment we intend it to be consumed. This bit hardest
-  on the host→guest sync-promise fallback, which has no size cap yet (§2, #561) — an
-  already-uncapped pull that the advertiser also made paste-independent, until #542 scoped the
+  on the host→guest sync-promise fallback — an uncapped pull (until #561 added the mirror-image
+  size cap, §2) that the advertiser also made paste-independent, until #542 scoped the
   guest's promise write `.currentHostOnly`: the advertiser then never processes the generation
   at all (no item-to-advertise determination, no flavor fetch — verified live: a 1.5 GiB
   toggle-off offer sat 160 s with zero bytes pulled, and a real paste still streamed
@@ -360,6 +363,7 @@ fix, not just whether to fix it. (macOS-guest issues only; Linux/Windows out of 
 | **#500** — a duplicate pull registration for the same id silently overwrites the prior one | §9 wake immediately, not a backstop stall | `LazyPullCoordinator.pull`/`ClipboardStreamReceiver.awaitTransfer` had no guard against a concurrent duplicate registration (e.g. a File Provider fetch retry after a dropped owner connection). ✓ **Resolved** — a duplicate registration supersedes the prior one, resolving it immediately via a distinct `.superseded` outcome (not `.cancelled`, which would let the displaced caller tear down the live successor's awaiter). |
 | **#560** — Copy to Mac advertises guest clipboard content to other devices over Universal Clipboard | §10 Trust boundary | `HostClipboardPublisher` prepared every write with `clearContents()`, which leaves the pasteboard cross-device-advertisable. ✓ **Resolved** — every host write now prepares with `prepareForNewContents(with: .currentHostOnly)` instead, applied unconditionally at the single inbound-publication choke point (§4) on every write, since the option does not survive a later prepare/clear. |
 | **#542** — guest pulls a host clipboard offer's full payload at offer time, with no paste (toggle-off sync path) | §3 Pay on consume, §10 Trust boundary | The guest's continuity-pasteboard advertiser fetched the promised `public.file-url` at offer time, and fulfilling it materialized the whole file (§3's advertiser caveat). ✓ **Resolved** — the guest's promise write prepares with `.currentHostOnly` (the #560 mechanism applied guest-side), which keeps the advertiser from processing the generation at all; verified live (1.5 GiB toggle-off offer idle 160 s with zero bytes moved, in-guest log shows no advertiser fetch, a real paste still streams immediately). |
+| **#561** — host→guest paste has no deadline-safe size cap, unlike guest→host | §2 Disk-as-fallback (deadline cap), §13 OS deadlines | The two directions were asymmetric: the host's synchronous fallback already refuses an over-cap file (`isLazyEligibleFile`/`lazyFileItem`), but the guest's `pullRepresentation` checked only staging disk capacity. ✓ **Resolved** — the guest's synchronous pasteboard-provider pull now refuses a non-inline, non-directory file rep over `maxDeadlineSafeFileBytes` and reports `clipboard.paste.too.large`, surfaced in the host's clipboard window; the File Provider relay (`fetchStagedFile`, no deadline) stays uncapped via a `deadlineBound` parameter on the shared `pullRepresentation`. |
 
 ---
 

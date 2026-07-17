@@ -1098,7 +1098,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             }
             guard
                 let pulled = pullRepresentation(
-                    repIndex, promise: promise, channel: channel, receiver: receiver)
+                    repIndex, promise: promise, channel: channel, receiver: receiver,
+                    deadlineBound: true)
             else { return nil }
             promise.materialized[repIndex] = pulled
             representation = pulled
@@ -1119,11 +1120,39 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// hopping to the main thread this call holds. The free-space pre-flight runs
     /// here, before the request, so an over-budget file rep never starts a
     /// transfer. [Safeguard 4]
+    ///
+    /// `deadlineBound` gates the deadline-safe size cap (#561): `provideData`'s
+    /// synchronous pasteboard-provider path passes `true` (it blocks the OS paste
+    /// deadline), while the File Provider relay's `fetchStagedFile` passes
+    /// `false` — that path has no deadline and must stay uncapped
+    /// (docs/CLIPBOARD.md §2), the whole reason large files route there.
     private func pullRepresentation(
         _ repIndex: Int, promise: InboundPromise, channel: VsockChannel,
-        receiver: ClipboardStreamReceiver
+        receiver: ClipboardStreamReceiver, deadlineBound: Bool
     ) -> ClipboardContent.Representation? {
         let info = promise.reps[repIndex]
+        // RATIONALE: mirrors the host's deadline-safe gate
+        // (`VsockClipboardService.isLazyEligibleFile` + `lazyFileItem`) — a
+        // non-inline, non-directory file rep over `maxDeadlineSafeFileBytes` on
+        // the synchronous provider path would block the OS paste deadline with
+        // no progress signal. Checked first (actionable-first: "enable File
+        // Provider" beats a disk-space message) and only on the deadline-bound
+        // caller — the File Provider relay has no deadline and must stay
+        // uncapped (docs/CLIPBOARD.md §2).
+        if deadlineBound, !info.isInline, !info.isDirectory,
+            info.byteCount > UInt64(ClipboardStreamTuning.maxDeadlineSafeFileBytes)
+        {
+            Self.logger.warning(
+                "Clipboard file rep '\(info.uti, privacy: .public)' is \(info.byteCount, privacy: .public) bytes — over the deadline-safe cap with the File Provider off; refusing the synchronous paste pull"
+            )
+            // The guest has no UI; tell the host so it shows the failure.
+            sendPasteError(
+                code: "clipboard.paste.too.large",
+                message:
+                    "File too large to paste into the guest without File Provider (\(info.byteCount) bytes)",
+                on: channel)
+            return nil
+        }
         if !info.isInline, !staging.hasCapacity(forByteCount: Int(clamping: info.byteCount)) {
             Self.logger.warning(
                 "Not enough disk space to receive clipboard rep '\(info.uti, privacy: .public)' (\(info.byteCount, privacy: .public) bytes)"
@@ -1474,7 +1503,7 @@ extension VsockGuestClipboardAgent: FileProviderPullProvider {
         guard
             let representation = pullRepresentation(
                 repIndex, promise: context.promise, channel: context.channel,
-                receiver: context.receiver),
+                receiver: context.receiver, deadlineBound: false),
             let url = representation.fileURL
         else { return .failure(.pullFailed) }
         return .success(url.path)

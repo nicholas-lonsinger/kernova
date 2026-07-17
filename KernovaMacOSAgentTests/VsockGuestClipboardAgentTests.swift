@@ -2152,6 +2152,180 @@ struct VsockGuestClipboardAgentTests {
         #expect(error.code == "clipboard.paste.disk.full")
     }
 
+    // MARK: - Deadline-safe size cap (#561)
+
+    @Test(
+        "deadline cap: a `.fileURL` pull for an over-cap file rep returns nil without a request")
+    func tooLargePullReturnsNilWithoutRequest() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        // Ample disk (default free-space provider) — the size cap must refuse the
+        // pull on its own, before the disk-capacity guard is even reached.
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
+        let overCap = UInt64(ClipboardStreamTuning.maxDeadlineSafeFileBytes) + 1
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 21,
+                reps: [
+                    RepInfo(uti: txtUTI, byteCount: overCap, filename: "huge.bin", isInline: false)
+                ]))
+        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
+
+        let pull = lazyPull(pasteboard, forType: .fileURL)
+        let provided = await pull.value
+        #expect(provided == nil)
+        try await expectNoRequest(from: hostChannel)
+    }
+
+    @Test(
+        "deadline cap: the guest surfaces the failure to the host as a clipboard.paste.too.large error frame"
+    )
+    func tooLargeSurfacesErrorFrame() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
+        let overCap = UInt64(ClipboardStreamTuning.maxDeadlineSafeFileBytes) + 1
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 22,
+                reps: [
+                    RepInfo(uti: txtUTI, byteCount: overCap, filename: "huge.bin", isInline: false)
+                ]))
+        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
+
+        let pull = lazyPull(pasteboard, forType: .fileURL)
+        #expect(await pull.value == nil)
+
+        let frame = try await maybeNextFrame(from: hostChannel)
+        guard case .error(let error)? = frame?.payload else {
+            Issue.record("Expected an Error frame, got \(String(describing: frame?.payload))")
+            return
+        }
+        #expect(error.code == "clipboard.paste.too.large")
+    }
+
+    @Test("deadline cap: a file rep exactly at the cap is not refused — the pull still proceeds")
+    func atCapBoundaryIsNotRefused() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
+        let atCap = UInt64(ClipboardStreamTuning.maxDeadlineSafeFileBytes)
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 23,
+                reps: [
+                    RepInfo(uti: txtUTI, byteCount: atCap, filename: "atcap.bin", isInline: false)
+                ]))
+        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
+
+        // The cap uses `>`, not `>=` — an exactly-at-cap rep must issue a real
+        // request rather than being refused pre-flight. Abort it to resolve the
+        // pull without streaming the full 256 MiB in-test.
+        let pull = lazyPull(pasteboard, forType: .fileURL)
+        let req = try await awaitRequest(on: hostChannel)
+        try hostChannel.send(
+            makeAbortFrame(transferID: req.transferID, code: "host.abort", message: "test abort"))
+        _ = await pull.value
+    }
+
+    @Test("deadline cap: an inline over-cap rep is not deadline-capped — the pull still proceeds")
+    func inlineOverCapIsNotDeadlineCapped() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        // Inline reps (§1: no Kernova-imposed size bound) are exempt from the
+        // deadline cap, which only guards non-inline, non-directory file reps —
+        // mirroring the host's `isLazyEligibleFile` gate.
+        let overCap = UInt64(ClipboardStreamTuning.maxDeadlineSafeFileBytes) + 1
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 24,
+                reps: [
+                    RepInfo(uti: ClipboardContent.utf8TextUTI, byteCount: overCap, isInline: true)
+                ]))
+        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.string] }
+
+        let pull = lazyPull(pasteboard, forType: .string)
+        let req = try await awaitRequest(on: hostChannel)
+        try hostChannel.send(
+            makeAbortFrame(transferID: req.transferID, code: "host.abort", message: "test abort"))
+        _ = await pull.value
+    }
+
+    @Test(
+        "deadline cap: the File Provider relay's fetchStagedFile stays uncapped — an over-cap rep still issues a request"
+    )
+    func fileProviderRelayIsNotDeadlineCapped() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
+        let overCap = UInt64(ClipboardStreamTuning.maxDeadlineSafeFileBytes) + 1
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 25,
+                reps: [
+                    RepInfo(uti: txtUTI, byteCount: overCap, filename: "relay-huge.bin", isInline: false)
+                ]))
+        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
+
+        // `fetchStagedFile` (the relay entry point, no OS paste deadline) must
+        // issue a real request for the same over-cap rep the pasteboard path
+        // above refuses — proving `deadlineBound: false` bypasses the cap.
+        let pull = Task.detached { agent.fetchStagedFile(generation: 25, repIndex: 0) }
+        let req = try await awaitRequest(on: hostChannel)
+        try hostChannel.send(
+            makeAbortFrame(transferID: req.transferID, code: "host.abort", message: "test abort"))
+        let outcome = await pull.value
+        guard case .failure(.pullFailed) = outcome else {
+            Issue.record("expected .pullFailed after abort, got \(outcome)")
+            return
+        }
+    }
+
     // MARK: - Request send failure
 
     @Test("a request-send failure resolves the lazy pull promptly with nil instead of blocking")
