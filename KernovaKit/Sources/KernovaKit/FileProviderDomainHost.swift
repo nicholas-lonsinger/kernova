@@ -132,13 +132,13 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     // MARK: Main-queue state
 
     private var enabled = false
+    /// Whether the authoritative `domains()` read (or a successful `add`) has
+    /// confirmed our domain is present in the system registry.
+    ///
+    /// Derived from that read / add outcome — never from a *throwing* availability
+    /// probe, which leaves a genuinely-registered domain marked registered so it
+    /// stays publishable (see `handleRegistrationRead`/`addDomain`).
     private var domainRegistered = false
-    /// Set once `primeDomainChangeNotifications()` has fired. The underlying
-    /// `NSFileProviderDomainDidChange` notification only needs the process's
-    /// first-ever `domains()` call to go live, so repeat enables (e.g. a policy
-    /// off→on toggle, or a VM stop/start cycling `HostClipboardFileProvider`'s
-    /// `activeServiceCount`) skip the redundant IPC round-trip.
-    private var domainChangeNotificationsPrimed = false
     /// User-visible domain root, resolved after registration; `nil` until then
     /// (the File Provider path is unused while it's `nil`).
     private var rootURL: URL?
@@ -180,6 +180,16 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
         dispatchPrecondition(condition: .onQueue(.main))
         return availabilityStorage
     }
+
+    #if DEBUG
+    /// Test-only view of `domainRegistered` (which gates `publishSingleFile`), so a
+    /// test can assert a *throwing* confirm read doesn't clear it — the wedge
+    /// `refreshAvailability` must never cause (state-first registration, #2).
+    var domainRegisteredForTesting: Bool {
+        dispatchPrecondition(condition: .onQueue(.main))
+        return domainRegistered
+    }
+    #endif
 
     /// Registers an observer notified on the main queue whenever `availability`
     /// changes, and immediately delivers the current value.
@@ -285,7 +295,6 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
             // would defeat the connector's "re-arm on next enable" recovery.
             relayTransport.startServing(relayService)
             startObservingDomainChanges()
-            primeDomainChangeNotifications()
             registerDomain()
         } else {
             stopObservingDomainChanges()
@@ -350,64 +359,191 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
         }
     }
 
-    /// Registers (or idempotently re-registers) the clipboard domain, then
-    /// resolves its root URL and probes the user-enablement toggle.
+    /// Brings the clipboard domain to a deliberate, logged registration state
+    /// from the authoritative system registry — never a blind re-add.
     ///
-    /// `add` is idempotent for an existing identifier — it updates the domain and
-    /// **preserves the user's enablement**, so a normal restart never resets the
-    /// toggle. An `add` *failure* is terminal for this cycle: it surfaces as
-    /// `.unavailable` (see `addDomain`) and is not retried automatically (#567:
-    /// no retry/backoff/heal machinery — a registered-but-unusable domain, e.g.
-    /// an orphaned replication directory or a dead-end domain wedged after the
-    /// extension is rebuilt/re-signed (`NSFileProviderError` `-2001`), is
-    /// root-caused directly on recurrence rather than papered over). Toggling
-    /// clipboard sharing off/on re-enters this method with a fresh epoch, which
-    /// only helps a genuinely transient failure — the disable path deliberately
-    /// leaves the domain registered (see `applyEnabledOnMain`), so it does not
-    /// clear a persistent, system-side failure.
+    /// A single `domains()` read decides the action: an already-present domain is
+    /// *adopted* (no `add`, so a healthy registration and the user's toggle are
+    /// never touched); a genuinely absent domain is *added* once; a read that
+    /// *throws* — e.g. the version conflict when a stale older copy of the app is
+    /// registered, where every `NSFileProviderManager` call fails — lands
+    /// `.unavailable` honestly. This read also arms `NSFileProviderDomainDidChange`
+    /// (Apple posts it only after the process's first `domains()` call), replacing
+    /// the old throwaway priming read; a *throwing* read does not arm it, so that
+    /// (unrecoverable-in-process) state clears only on a re-enable.
+    ///
+    /// Per Apple, re-adding an existing identifier would merely update it in place
+    /// and preserve the read-only `userEnabled`, so adopting instead of re-adding
+    /// loses nothing while keeping the action deliberate. (Our `domainDisplayName`
+    /// is a static constant; a future change to it would need a deliberate re-add,
+    /// since the adopt path skips `add`.) An `add` *failure* is not retried or
+    /// healed (#567/#590): availability is reported from the registry, and only
+    /// the orphaned-directory signature is logged (see `diagnoseOrphanIfNeeded`).
+    ///
+    /// This method decides `domainRegistered` and runs the post-registration steps
+    /// on main; availability is always applied by `refreshAvailability()`, the
+    /// single `enabled`+`refreshGeneration`-guarded reader.
     private func registerDomain() {
+        dispatchPrecondition(condition: .onQueue(.main))
         registrationEpoch &+= 1
-        addDomain(epoch: registrationEpoch)
-    }
-
-    private func addDomain(epoch: UInt64) {
-        addDomainToSystem(domain) { [weak self] error in
-            let failure = error?.localizedDescription
-            DispatchQueue.main.async {
-                guard let self, self.registrationEpoch == epoch else { return }
-                if let failure {
-                    self.logger.error(
-                        "Failed to add File Provider domain: \(failure, privacy: .public)")
-                    self.domainRegistered = false
-                    self.setAvailability(.unavailable)
-                    return
+        let epoch = registrationEpoch
+        // Capture only the value-typed identifier off-main — `NSFileProviderDomain`
+        // is not `Sendable`; `self.domain` is touched only on the main queue.
+        let identifier = domain.identifier
+        Task { [weak self, fetchDomains] in
+            do {
+                let domains = try await fetchDomains()
+                let present = domains.contains { $0.identifier == identifier }
+                DispatchQueue.main.async { self?.handleRegistrationRead(epoch: epoch, present: present) }
+            } catch {
+                let message = error.localizedDescription
+                DispatchQueue.main.async {
+                    self?.handleRegistrationReadFailure(epoch: epoch, message: message)
                 }
-                self.domainRegistered = true
-                self.logger.notice(
-                    "File Provider domain registered: \(self.domain.identifier.rawValue, privacy: .public)"
-                )
-                // Warm the servicing connection at registration (not only at
-                // publish) — load-bearing for the reconnect doorbell: after an
-                // owner relaunch, a paste of a still-on-disk placeholder (the
-                // domain stays registered across restarts) rings the doorbell
-                // with no offer having been published yet, and the connector only
-                // acts on the doorbell once a connect has been requested (#460).
-                // Idempotent with the publish-time `ensureConnected`; the
-                // connector runs the connect off its own queue.
-                self.relayTransport.ensureConnected()
-                self.resolveRootURL()
-                self.refreshAvailability()
             }
         }
     }
 
+    /// Applies the authoritative read's verdict: adopt a present domain, or add an
+    /// absent one.
+    ///
+    /// Runs on main; a superseded cycle (epoch bumped by a disable or a newer
+    /// `registerDomain`) or a disable in flight is a no-op.
+    private func handleRegistrationRead(epoch: UInt64, present: Bool) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard enabled, registrationEpoch == epoch else { return }
+        if present {
+            logger.notice(
+                "Adopted existing File Provider domain: \(self.domain.identifier.rawValue, privacy: .public) (no add)"
+            )
+            markRegistered(epoch: epoch)
+        } else {
+            logger.notice(
+                "File Provider domain absent — adding: \(self.domain.identifier.rawValue, privacy: .public)"
+            )
+            addDomain(epoch: epoch)
+        }
+    }
+
+    /// The registry read itself failed — the domain's state is unknown, so report
+    /// `.unavailable` without adding.
+    ///
+    /// Written directly (not via `refreshAvailability`): this is the cycle's first
+    /// read, so no probe is in flight to race, and a re-read would just throw again
+    /// — keeping the write synchronous inside this epoch/`enabled`-guarded handler
+    /// avoids a phantom re-read disagreeing with `domainRegistered = false`.
+    private func handleRegistrationReadFailure(epoch: UInt64, message: String) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard enabled, registrationEpoch == epoch else { return }
+        logger.error(
+            "File Provider registry read failed at enable: \(message, privacy: .public) — unknown/broken File Provider state, reporting unavailable (no add)"
+        )
+        domainRegistered = false
+        setAvailability(.unavailable)
+    }
+
+    /// Marks the domain registered and runs the one-time post-registration steps,
+    /// then applies availability.
+    ///
+    /// Shared by the adopt and add-success paths.
+    private func markRegistered(epoch: UInt64) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        domainRegistered = true
+        // Warm the servicing connection at registration (not only at publish) —
+        // load-bearing for the reconnect doorbell: after an owner relaunch, a paste
+        // of a still-on-disk placeholder (the domain stays registered across
+        // restarts) rings the doorbell with no offer having been published yet, and
+        // the connector only acts on the doorbell once a connect has been requested
+        // (#460). Idempotent with the publish-time `ensureConnected`.
+        relayTransport.ensureConnected()
+        resolveRootURL(epoch: epoch)
+        refreshAvailability()
+    }
+
+    /// Adds the domain when the authoritative read found it absent.
+    ///
+    /// Called on main so `self.domain` (non-`Sendable`) is only ever touched there;
+    /// the completion hops back to main and no-ops for a superseded epoch or after a
+    /// disable (#428).
+    private func addDomain(epoch: UInt64) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        addDomainToSystem(domain) { [weak self] error in
+            DispatchQueue.main.async {
+                guard let self, self.enabled, self.registrationEpoch == epoch else { return }
+                if let error {
+                    self.logger.error(
+                        "Failed to add File Provider domain: \(error.localizedDescription, privacy: .public)"
+                    )
+                    self.domainRegistered = false
+                    self.diagnoseOrphanIfNeeded(error: error)
+                    // Report from the registry (the domain was absent and the add
+                    // failed → `.unavailable`); the guarded reader also orders this
+                    // against any notification-driven probe the armed HOP-1 read
+                    // may have enabled.
+                    self.refreshAvailability()
+                    return
+                }
+                self.logger.notice(
+                    "File Provider domain registered: \(self.domain.identifier.rawValue, privacy: .public)"
+                )
+                self.markRegistered(epoch: epoch)
+            }
+        }
+    }
+
+    /// Logs a diagnostic breadcrumb — no heal — when an `add` fails with
+    /// `NSFileWriteFileExistsError` yet the domain is genuinely absent: the
+    /// signature of an orphaned `~/Library/CloudStorage/<App>-<Domain>/`
+    /// replication directory left by a prior install (#471).
+    ///
+    /// We deliberately do NOT auto-heal. A `remove(domain)`+re-add against an
+    /// orphan the registry doesn't even list is unverified to clear the on-disk
+    /// directory (its documented cleanup is manual), so firing it would risk
+    /// churning without fixing anything — the same reasoning that removed the prior
+    /// blind heal (#567/#590). Root-cause on recurrence.
+    private func diagnoseOrphanIfNeeded(error: Error) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard Self.isFileExistsError(error) else { return }
+        let identifier = domain.identifier
+        Task { [fetchDomains, logger] in
+            guard let domains = try? await fetchDomains(),
+                !domains.contains(where: { $0.identifier == identifier })
+            else { return }
+            logger.warning(
+                "File Provider add failed NSFileWriteFileExistsError and domain \(identifier.rawValue, privacy: .public) is absent — likely orphaned replication directory; not auto-healing (unverified, would risk churn per #567); root-cause on recurrence"
+            )
+        }
+    }
+
+    /// Whether `error` is (or wraps, at any depth) `NSFileWriteFileExistsError`
+    /// (Cocoa 516) — the full `NSUnderlyingErrorKey` chain is walked since File
+    /// Provider's error-wrapping depth isn't contractual.
+    ///
+    /// `internal` (not `private`) so `KernovaKitTests` can lock the chain walk.
+    static func isFileExistsError(_ error: Error) -> Bool {
+        var current: NSError? = error as NSError
+        while let nsError = current {
+            if nsError.domain == NSCocoaErrorDomain, nsError.code == NSFileWriteFileExistsError {
+                return true
+            }
+            current = nsError.userInfo[NSUnderlyingErrorKey] as? NSError
+        }
+        return false
+    }
+
     /// Caches the user-visible root URL so an offer can construct `root/filename`
     /// for the pasteboard without a per-item round-trip.
-    private func resolveRootURL() {
+    ///
+    /// Epoch-guarded: a disable (or a newer registration cycle) landing between the
+    /// async `getUserVisibleURL` call and its completion must not `adoptRootURL` —
+    /// that would re-open a security scope *after* the disable's
+    /// `releaseRootURLScope()`, leaking it until the next disable/deinit.
+    private func resolveRootURL(epoch: UInt64) {
+        dispatchPrecondition(condition: .onQueue(.main))
         guard let manager = NSFileProviderManager(for: domain) else { return }
         manager.getUserVisibleURL(for: .rootContainer) { [weak self] url, error in
             DispatchQueue.main.async {
-                guard let self else { return }
+                guard let self, self.enabled, self.registrationEpoch == epoch else { return }
                 if let url {
                     self.adoptRootURL(url)
                     self.logger.notice("Clipboard domain visible at: \(url.path, privacy: .public)")
@@ -495,33 +631,6 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
             DispatchQueue.main.async {
                 guard let self, self.enabled, generation == self.refreshGeneration else { return }
                 self.setAvailability(availability)
-            }
-        }
-    }
-
-    /// Fires one throwaway `domains()` read so `NSFileProviderDomainDidChange`
-    /// starts posting. Per Apple's header comment on that notification, it only
-    /// goes live after the process's first `NSFileProviderManager.domains()`
-    /// call completes; `refreshAvailability()`'s first call is gated on
-    /// `addDomain` succeeding, which is async and can fail, leaving a window at
-    /// enable where a System-Settings toggle flip wouldn't be observed. This
-    /// primes delivery immediately and independent of registration outcome. The
-    /// result is intentionally discarded — availability stays driven solely by
-    /// `addDomain`'s outcome and subsequent notification-triggered refreshes.
-    ///
-    /// Only needs to run once per process (the notification, once armed, stays
-    /// armed) — `domainChangeNotificationsPrimed` skips the IPC round-trip on
-    /// every subsequent enable.
-    private func primeDomainChangeNotifications() {
-        guard !domainChangeNotificationsPrimed else { return }
-        domainChangeNotificationsPrimed = true
-        Task { [weak self, fetchDomains] in
-            do {
-                _ = try await fetchDomains()
-            } catch {
-                self?.logger.warning(
-                    "Priming domains() read failed: \(error.localizedDescription, privacy: .public)"
-                )
             }
         }
     }
