@@ -52,48 +52,67 @@ struct FileProviderDomainHostAvailabilityTests {
                 forDomainMatching: identifier, in: [domain], error: nil)
                 == FileProviderDomainHost.availability(userEnabled: domain.userEnabled))
     }
+
+    // MARK: - Orphan-diagnostic error gate (the deferred-heal breadcrumb)
+
+    @Test("isFileExistsError detects a top-level NSFileWriteFileExistsError")
+    func fileExistsErrorTopLevel() {
+        let error = NSError(domain: NSCocoaErrorDomain, code: NSFileWriteFileExistsError)
+        #expect(FileProviderDomainHost.isFileExistsError(error))
+    }
+
+    @Test("isFileExistsError walks the NSUnderlyingErrorKey chain")
+    func fileExistsErrorNested() {
+        let underlying = NSError(domain: NSCocoaErrorDomain, code: NSFileWriteFileExistsError)
+        let middle = NSError(
+            domain: "Intermediate", code: 1, userInfo: [NSUnderlyingErrorKey: underlying])
+        let wrapper = NSError(
+            domain: NSFileProviderErrorDomain, code: -2001,
+            userInfo: [NSUnderlyingErrorKey: middle])
+        #expect(FileProviderDomainHost.isFileExistsError(wrapper))
+    }
+
+    @Test("isFileExistsError is false for an unrelated error")
+    func fileExistsErrorUnrelated() {
+        let error = NSError(domain: NSCocoaErrorDomain, code: NSFileNoSuchFileError)
+        #expect(!FileProviderDomainHost.isFileExistsError(error))
+    }
 }
 
 // MARK: - Enablement / notification wiring
 
-/// Exercises the `NSFileProviderDomainDidChange`-observer wiring added to replace
-/// the old poll timer: `setEnabled(true)` arms the observer, a post on the
-/// injected `notificationCenter` re-probes availability through the injected
-/// `fetchDomains`, and a post while never enabled is a no-op.
+/// Exercises the state-first registration cycle and the availability wiring.
 ///
-/// `setEnabled(true)` also fires a throwaway, discarded `fetchDomains` read via
-/// `primeDomainChangeNotifications()` (issue #448) to arm the real
-/// `NSFileProviderDomainDidChange` notification immediately rather than waiting
-/// on registration to succeed — so `domainSource.callCount` is no longer
-/// guaranteed zero right after enable. That read is gated to fire at most once
-/// per host instance (the notification, once armed, stays armed), so a single
-/// enable in a fresh test host contributes exactly one extra call. Tests below
-/// that care about call count use relative deltas, gate on a specific count, or
-/// (for the one-enable-per-test common case) pin the exact expected count.
+/// `setEnabled(true)` installs the `NSFileProviderDomainDidChange` observer, then
+/// runs `registerDomain()`, whose one authoritative `domains()` read (the injected
+/// `fetchDomains`) both arms the notification and decides the action: an
+/// already-present domain is *adopted* (no `add`); a genuinely absent domain is
+/// *added once*; a read that *throws* lands `.unavailable`. Availability is applied
+/// by `refreshAvailability()`, which re-reads `fetchDomains` — so `domainSource
+/// .callCount` reflects the state read plus any confirm/refresh reads, and tests
+/// use gates on the observed availability rather than pinning exact read counts.
 ///
-/// `setEnabled(true)` also runs `registerDomain()` → `addDomain(epoch:)`, which
-/// calls the injectable `addDomainToSystem` seam (#428) — `makeHost` omits it by
-/// default, so most tests below exercise the *real*, non-stubbable
-/// `NSFileProviderManager.add(domain)`. In this test process (a bare `swift test`
-/// executable, not an app bundle with a registered File Provider extension) that
-/// call reliably fails, which is exactly what `registrationFailureReportsUnavailable`
-/// below exercises. A failed `add` is terminal (#567: no retry/backoff/heal) —
-/// `failedRegistrationDoesNotWarmServicingConnection` locks that a terminally
-/// failed registration never warms the servicing connection. Every fake domain
-/// identifier is a fresh UUID so the (failing) registration attempts from
-/// different tests can never collide.
+/// `addDomainToSystem` is injected via `FakeAddDomain` (which, on success, appends
+/// the added domain into its linked `FakeDomainSource` so the confirm read sees
+/// it). Tests that seed a *present* domain never invoke `add` at all, so they don't
+/// depend on the real, non-stubbable `NSFileProviderManager.add`. Every fake domain
+/// identifier is a fresh UUID so parallel tests can't collide.
 @Suite("FileProviderDomainHost enablement & availability wiring")
 @MainActor
 struct FileProviderDomainHostEnablementTests {
     // MARK: - Fakes
 
-    /// Stands in for `NSFileProviderManager.domains()`, returning (or throwing)
-    /// whatever a test last configured and counting invocations so a test can
-    /// tell a probe actually ran. `gate` fires on every `fetch()` call so a test
-    /// can wait for a specific call count without polling.
+    /// Stands in for `NSFileProviderManager.domains()`.
+    ///
+    /// Returns the current `setResult` value, or — while a scripted
+    /// `enqueueResults` queue is non-empty — the next queued result, so a test can
+    /// drive the HOP-1 read and the confirm read independently. `append` models
+    /// `domains()` listing a domain after a successful `add`. `gate` fires on every
+    /// read so a test can await a specific call count without polling.
     private final class FakeDomainSource: @unchecked Sendable {
         private let lock = NSLock()
         private var result: Result<[NSFileProviderDomain], Error> = .success([])
+        private var queue: [Result<[NSFileProviderDomain], Error>] = []
         private var callCountStorage = 0
         let gate = AsyncGate()
 
@@ -103,9 +122,30 @@ struct FileProviderDomainHostEnablementTests {
             lock.withLock { self.result = result }
         }
 
+        /// Scripts the next reads in order; once exhausted, `fetch` falls back to
+        /// the current `setResult` value.
+        func enqueueResults(_ results: [Result<[NSFileProviderDomain], Error>]) {
+            lock.withLock { queue = results }
+        }
+
+        /// Appends a domain to the current success value (models a post-`add`
+        /// `domains()` listing).
+        ///
+        /// A no-op ordering-wise: callers append under the lock before the add
+        /// completion runs, so the confirm read can't miss it.
+        func append(_ domain: NSFileProviderDomain) {
+            lock.withLock {
+                switch result {
+                case .success(let domains): result = .success(domains + [domain])
+                case .failure: result = .success([domain])
+                }
+            }
+        }
+
         func fetch() async throws -> [NSFileProviderDomain] {
             let outcome = lock.withLock { () -> Result<[NSFileProviderDomain], Error> in
                 callCountStorage += 1
+                if !queue.isEmpty { return queue.removeFirst() }
                 return result
             }
             gate.notify()
@@ -133,8 +173,8 @@ struct FileProviderDomainHostEnablementTests {
         var values: [FileProviderAvailability] { lock.withLock { valuesStorage } }
     }
 
-    /// Never asked to pull a file in these tests (none call `publishSingleFile`),
-    /// so a fixed failure reply is fine.
+    /// Never asked to pull a file in these tests (none call `publishSingleFile`
+    /// on a usable domain), so a fixed failure reply is fine.
     private final class NeverCalledPullProvider: FileProviderPullProvider,
         @unchecked Sendable
     {
@@ -151,8 +191,7 @@ struct FileProviderDomainHostEnablementTests {
 
     /// No-op transport — these tests exercise availability wiring, not the relay
     /// servicing path, so `startServing`/`stopServing`/`ensureConnected` need no
-    /// real anonymous-XPC connection (mirrors the servicing-relay tests, which
-    /// exercise `FileProviderRelayService` without a live connection).
+    /// real anonymous-XPC connection.
     private final class NoOpRelayTransport: FileProviderRelayTransport,
         @unchecked Sendable
     {
@@ -162,8 +201,8 @@ struct FileProviderDomainHostEnablementTests {
     }
 
     /// Counts `ensureConnected()` calls (notifying `gate` on each) so a test can
-    /// assert the registration-time servicing warm-up actually fires — the
-    /// load-bearing #460/#539 behavior `NoOpRelayTransport` can't observe.
+    /// assert the registration-time servicing warm-up fires exactly on the
+    /// register (adopt or add-success) paths and never on failure.
     private final class RecordingRelayTransport: FileProviderRelayTransport,
         @unchecked Sendable
     {
@@ -183,31 +222,76 @@ struct FileProviderDomainHostEnablementTests {
 
     private struct FakeFetchError: Error {}
 
-    /// Stands in for `NSFileProviderManager.add(domain:completionHandler:)` (#428).
+    /// Stands in for `NSFileProviderManager.add(domain:completionHandler:)`.
     ///
-    /// Fails the first `failCount` calls (`NSError` with a nonsense domain/code —
-    /// `addDomain` only inspects `localizedDescription` for logging, never the
-    /// domain/code), then succeeds. Dispatches the completion asynchronously off a
-    /// global queue to mirror the real API's async delivery, so a test can't rely
-    /// on completion having already run by the time the call returns.
+    /// Fails the first `failCount` calls (with `makeError`), then succeeds. On a
+    /// successful add it appends the domain into `appendingTo` — synchronously,
+    /// under that source's lock, before the completion runs — so the confirm read
+    /// deterministically sees the just-added domain. In `hold` mode it captures the
+    /// (success-path) completion instead of firing it, so a test can disable the
+    /// host mid-registration and then `releaseHeld()` a now-stale completion; the
+    /// release runs on a private serial queue so `drainToMain()` can await the
+    /// stale completion's main-hop deterministically.
     private final class FakeAddDomain: @unchecked Sendable {
         private let lock = NSLock()
         private let failCount: Int
+        private let linkedSource: FakeDomainSource?
+        private let hold: Bool
+        private let makeError: @Sendable (Int) -> Error
         private var callCountStorage = 0
+        private var heldCompletion: (@Sendable (Error?) -> Void)?
+        private let releaseQueue = DispatchQueue(label: "app.kernova.test.fakeadd.release")
+        let addCalledGate = AsyncGate()
 
-        init(failCount: Int) {
+        init(
+            failCount: Int,
+            appendingTo linkedSource: FakeDomainSource? = nil,
+            hold: Bool = false,
+            makeError: @escaping @Sendable (Int) -> Error = {
+                NSError(domain: "FakeAddDomain", code: $0)
+            }
+        ) {
             self.failCount = failCount
+            self.linkedSource = linkedSource
+            self.hold = hold
+            self.makeError = makeError
         }
 
         var callCount: Int { lock.withLock { callCountStorage } }
 
-        func add(_: NSFileProviderDomain, completion: @escaping @Sendable (Error?) -> Void) {
+        func add(_ domain: NSFileProviderDomain, completion: @escaping @Sendable (Error?) -> Void) {
             let thisCall = lock.withLock {
                 callCountStorage += 1
                 return callCountStorage
             }
-            let error: Error? = thisCall <= failCount ? NSError(domain: "FakeAddDomain", code: thisCall) : nil
+            let error: Error? = thisCall <= failCount ? makeError(thisCall) : nil
+            if error == nil { linkedSource?.append(domain) }
+            if hold {
+                // Hold mode is used only for the success path; the completion is
+                // fired with `nil` on `releaseHeld()`.
+                lock.withLock { heldCompletion = completion }
+                addCalledGate.notify()
+                return
+            }
             DispatchQueue.global().async { completion(error) }
+        }
+
+        func releaseHeld() {
+            let held = lock.withLock { () -> (@Sendable (Error?) -> Void)? in
+                let captured = heldCompletion
+                heldCompletion = nil
+                return captured
+            }
+            if let held { releaseQueue.async { held(nil) } }
+        }
+
+        /// Resumes after any block enqueued on `releaseQueue` before this call has
+        /// run *and* its resulting main-queue hop has drained — so a test knows a
+        /// released stale completion has been fully processed.
+        func drainToMain() async {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                releaseQueue.async { DispatchQueue.main.async { continuation.resume() } }
+            }
         }
     }
 
@@ -247,61 +331,264 @@ struct FileProviderDomainHostEnablementTests {
             fetchDomains: { try await domainSource.fetch() })
     }
 
+    private func matchingDomain(_ identifier: String) -> NSFileProviderDomain {
+        NSFileProviderDomain(
+            identifier: NSFileProviderDomainIdentifier(identifier), displayName: "Test")
+    }
+
     /// Suspends until every block enqueued on the main queue before this call has
     /// run — used right after `setEnabled` (itself dispatched to main) so
-    /// `applyEnabledOnMain` has deterministically finished, arming the
-    /// domain-change observer, before a test posts to it.
+    /// `applyEnabledOnMain` has deterministically finished before a test proceeds.
     private func awaitMainQueueTurn() async {
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             DispatchQueue.main.async { continuation.resume() }
         }
     }
 
-    // MARK: - Tests
+    // MARK: - Core state-first behavior
 
-    @Test("posting the domain-change notification while enabled re-probes via fetchDomains and applies the result")
-    func notificationTriggersRefetchWhileEnabled() async throws {
-        let domainIdentifierString = "kernova-clipboard-test-\(UUID().uuidString)"
+    @Test("an already-present domain is adopted (never re-added) and reported from its userEnabled flag")
+    func presentDomainAdoptedWithoutAdding() async throws {
+        let identifierString = "kernova-clipboard-test-\(UUID().uuidString)"
         let domainSource = FakeDomainSource()
+        let matching = matchingDomain(identifierString)
+        domainSource.setResult(.success([matching]))
         let collector = AvailabilityCollector()
-        let center = NotificationCenter()
+        let transport = RecordingRelayTransport()
+        // failCount 100: if `add` were ever (wrongly) called, it would fail — but a
+        // present domain must be adopted, so it must never be called at all.
+        let addDomain = FakeAddDomain(failCount: 100)
         let host = makeHost(
-            domainIdentifier: domainIdentifierString, domainSource: domainSource,
-            notificationCenter: center)
+            domainIdentifier: identifierString, domainSource: domainSource,
+            notificationCenter: NotificationCenter(), addDomain: addDomain, relayTransport: transport)
         host.setAvailabilityObserver { collector.record($0) }
         #expect(collector.values == [.inactive])
 
         host.setEnabled(true)
-        await awaitMainQueueTurn()
 
-        // A matching domain — `NSFileProviderDomain.userEnabled` is read-only and
-        // defaults to `false` for a freshly constructed instance (there is no
-        // public initializer that sets it `true`), so a match here always lands
-        // `.needsEnabling`. The `userEnabled == true → .ready` mapping is already
-        // locked directly by `FileProviderDomainHostAvailabilityTests`
-        // above, since no live domain constructible here can produce it.
-        let matching = NSFileProviderDomain(
-            identifier: NSFileProviderDomainIdentifier(domainIdentifierString),
-            displayName: "Test")
-        domainSource.setResult(.success([matching]))
-        center.post(name: .fileProviderDomainDidChange, object: nil)
+        // Adopt → availability delegates to the (read-only, false) userEnabled flag.
+        try await collector.gate.wait {
+            collector.values.contains(FileProviderDomainHost.availability(userEnabled: matching.userEnabled))
+        }
+        #expect(collector.values.contains(.needsEnabling))
+        #expect(addDomain.callCount == 0, "a present domain must be adopted, never re-added")
+        try await transport.gate.wait { transport.ensureConnectedCount == 1 }
+    }
+
+    @Test("re-enabling an already-present domain never re-adds it")
+    func repeatEnablePresentNeverReAdds() async throws {
+        let identifierString = "kernova-clipboard-test-\(UUID().uuidString)"
+        let domainSource = FakeDomainSource()
+        domainSource.setResult(.success([matchingDomain(identifierString)]))
+        let collector = AvailabilityCollector()
+        let addDomain = FakeAddDomain(failCount: 100)
+        let host = makeHost(
+            domainIdentifier: identifierString, domainSource: domainSource,
+            notificationCenter: NotificationCenter(), addDomain: addDomain)
+        host.setAvailabilityObserver { collector.record($0) }
+
+        host.setEnabled(true)
+        try await collector.gate.wait { collector.values.contains(.needsEnabling) }
+        host.setEnabled(false)
+        await awaitMainQueueTurn()
+        host.setEnabled(true)
+        try await collector.gate.wait {
+            collector.values.filter { $0 == .needsEnabling }.count >= 2
+        }
+
+        #expect(
+            addDomain.callCount == 0,
+            "an already-present domain must never be re-added across enables")
+    }
+
+    @Test("a present domain with a different identifier is not adopted — ours is treated as absent and added")
+    func nonMatchingDomainTreatedAsAbsent() async throws {
+        let identifierString = "kernova-clipboard-test-\(UUID().uuidString)"
+        let domainSource = FakeDomainSource()
+        // A domain is present, but NOT ours — identity matching must treat ours as
+        // absent and add it (rather than adopt a stranger's domain).
+        domainSource.setResult(
+            .success([matchingDomain("other-\(UUID().uuidString)")]))
+        let collector = AvailabilityCollector()
+        let addDomain = FakeAddDomain(failCount: 0, appendingTo: domainSource)
+        let host = makeHost(
+            domainIdentifier: identifierString, domainSource: domainSource,
+            notificationCenter: NotificationCenter(), addDomain: addDomain)
+        host.setAvailabilityObserver { collector.record($0) }
+
+        host.setEnabled(true)
 
         try await collector.gate.wait { collector.values.contains(.needsEnabling) }
+        #expect(
+            addDomain.callCount == 1,
+            "our domain must be added, not confused with the other-identifier domain")
+    }
 
-        // Change what the next probe reports, then trigger a second re-probe the
-        // same way — proves the notification drives a fresh `fetchDomains` call
-        // each time, not a cached first result.
+    @Test("an absent domain is added once, then confirmed and reported .needsEnabling")
+    func absentDomainAddedThenConfirmed() async throws {
+        let identifierString = "kernova-clipboard-test-\(UUID().uuidString)"
+        let domainSource = FakeDomainSource()  // empty → absent at the HOP-1 read
+        let collector = AvailabilityCollector()
+        let transport = RecordingRelayTransport()
+        let addDomain = FakeAddDomain(failCount: 0, appendingTo: domainSource)
+        let host = makeHost(
+            domainIdentifier: identifierString, domainSource: domainSource,
+            notificationCenter: NotificationCenter(), addDomain: addDomain, relayTransport: transport)
+        host.setAvailabilityObserver { collector.record($0) }
+
+        host.setEnabled(true)
+
+        try await collector.gate.wait { collector.values.contains(.needsEnabling) }
+        #expect(addDomain.callCount == 1)
+        try await transport.gate.wait { transport.ensureConnectedCount == 1 }
+    }
+
+    @Test("a failed registry read reports .unavailable and never blindly adds")
+    func readFailureReportsUnavailableWithoutAdding() async throws {
+        let domainSource = FakeDomainSource()
+        domainSource.setResult(.failure(FakeFetchError()))
+        let collector = AvailabilityCollector()
+        let addDomain = FakeAddDomain(failCount: 0, appendingTo: domainSource)
+        let host = makeHost(
+            domainIdentifier: "kernova-clipboard-test-\(UUID().uuidString)",
+            domainSource: domainSource, notificationCenter: NotificationCenter(), addDomain: addDomain)
+        host.setAvailabilityObserver { collector.record($0) }
+
+        host.setEnabled(true)
+
+        try await collector.gate.wait(timeout: .seconds(20)) { collector.values.contains(.unavailable) }
+        #expect(
+            addDomain.callCount == 0,
+            "a failed registry read means the state is unknown — it must not blindly add")
+    }
+
+    @Test("add succeeds but the confirm read throws — the domain stays registered and availability recovers")
+    func addSucceedsButConfirmThrowsStaysRegistered() async throws {
+        let identifierString = "kernova-clipboard-test-\(UUID().uuidString)"
+        let domainSource = FakeDomainSource()
+        // HOP-1 read absent (→ add), then the confirm read throws.
+        domainSource.enqueueResults([.success([]), .failure(FakeFetchError())])
+        let collector = AvailabilityCollector()
+        let center = NotificationCenter()
+        // Success add, but do NOT append — the confirm read throws instead.
+        let addDomain = FakeAddDomain(failCount: 0)
+        let host = makeHost(
+            domainIdentifier: identifierString, domainSource: domainSource,
+            notificationCenter: center, addDomain: addDomain)
+        host.setAvailabilityObserver { collector.record($0) }
+
+        host.setEnabled(true)
+
+        // add success → domainRegistered = true → confirm read throws → .unavailable.
+        try await collector.gate.wait(timeout: .seconds(20)) { collector.values.contains(.unavailable) }
+        #expect(
+            host.domainRegisteredForTesting,
+            "a throwing confirm read must not clear domainRegistered (would wedge publish)")
+
+        // Recovery: the registry becomes readable; a domain-change notification
+        // re-probes and reports the true state.
+        domainSource.setResult(.success([matchingDomain(identifierString)]))
+        center.post(name: .fileProviderDomainDidChange, object: nil)
+        try await collector.gate.wait(timeout: .seconds(20)) { collector.values.contains(.needsEnabling) }
+    }
+
+    // MARK: - Servicing warm-up + failure handling
+
+    @Test("registration success warms the servicing connection")
+    func registrationSuccessWarmsServicingConnection() async throws {
+        let identifierString = "kernova-clipboard-test-\(UUID().uuidString)"
+        let domainSource = FakeDomainSource()
+        let transport = RecordingRelayTransport()
+        let host = makeHost(
+            domainIdentifier: identifierString,
+            domainSource: domainSource,
+            notificationCenter: NotificationCenter(),
+            addDomain: FakeAddDomain(failCount: 0, appendingTo: domainSource),
+            relayTransport: transport)
+
+        host.setEnabled(true)
+
+        try await transport.gate.wait { transport.ensureConnectedCount == 1 }
+    }
+
+    @Test("a failed registration doesn't warm the servicing connection, and is not retried")
+    func failedRegistrationDoesNotWarmServicingConnection() async throws {
+        let domainSource = FakeDomainSource()  // stays empty → absent
+        let collector = AvailabilityCollector()
+        let transport = RecordingRelayTransport()
+        // Fails and never appends → the domain remains absent.
+        let addDomain = FakeAddDomain(failCount: 1)
+        let host = makeHost(
+            domainIdentifier: "kernova-clipboard-test-\(UUID().uuidString)", domainSource: domainSource,
+            notificationCenter: NotificationCenter(),
+            addDomain: addDomain,
+            relayTransport: transport)
+        host.setAvailabilityObserver { collector.record($0) }
+
+        host.setEnabled(true)
+
+        try await collector.gate.wait(timeout: .seconds(20)) {
+            collector.values.contains(.unavailable)
+        }
+        #expect(
+            transport.ensureConnectedCount == 0,
+            "a failed registration must not request a connect")
+
+        // Standing in for a real paste: finds the domain unregistered and falls
+        // back (returns nil) — must not trigger any re-registration.
+        let published = host.publishSingleFile(
+            generation: 1, repIndex: 0, filename: "test.txt", byteCount: 10, uti: "public.data")
+        #expect(published == nil)
+
+        #expect(
+            addDomain.callCount == 1,
+            "a failed registration must not be re-added by a subsequent paste")
+    }
+
+    // MARK: - Notification wiring / churn
+
+    @Test("enabling performs the authoritative domains() read that arms the change notification")
+    func enablePerformsAuthoritativeRead() async throws {
+        let identifierString = "kernova-clipboard-test-\(UUID().uuidString)"
+        let domainSource = FakeDomainSource()
+        // Present → adopt, so the real NSFileProviderManager.add is never touched;
+        // the point is only that the read happens at enable.
+        domainSource.setResult(.success([matchingDomain(identifierString)]))
+        let host = makeHost(
+            domainIdentifier: identifierString, domainSource: domainSource,
+            notificationCenter: NotificationCenter())
+
+        host.setEnabled(true)
+
+        try await domainSource.gate.wait(timeout: .seconds(20)) { domainSource.callCount >= 1 }
+    }
+
+    @Test("posting the domain-change notification while enabled re-probes via fetchDomains and applies the result")
+    func notificationTriggersRefetchWhileEnabled() async throws {
+        let identifierString = "kernova-clipboard-test-\(UUID().uuidString)"
+        let domainSource = FakeDomainSource()
+        // Present before enable → HOP-1 adopts (no add), landing .needsEnabling.
+        domainSource.setResult(.success([matchingDomain(identifierString)]))
+        let collector = AvailabilityCollector()
+        let center = NotificationCenter()
+        let host = makeHost(
+            domainIdentifier: identifierString, domainSource: domainSource, notificationCenter: center)
+        host.setAvailabilityObserver { collector.record($0) }
+        #expect(collector.values == [.inactive])
+
+        host.setEnabled(true)
+        try await collector.gate.wait { collector.values.contains(.needsEnabling) }
+
+        // Change what the next probe reports, then trigger a re-probe via the
+        // notification — proves it drives a fresh `fetchDomains` each time.
         domainSource.setResult(.failure(FakeFetchError()))
         let callsBeforeSecondProbe = domainSource.callCount
         center.post(name: .fileProviderDomainDidChange, object: nil)
         try await collector.gate.wait { domainSource.callCount > callsBeforeSecondProbe }
 
-        // `.needsEnabling` → `.unavailable` is a real transition (`setAvailability`
-        // no-ops on a repeat), so an `.unavailable` strictly after the
-        // `.needsEnabling` entry can only be this second, error-driven probe —
-        // robust to the independent, real `NSFileProviderManager.add` failure
-        // (see the suite doc comment) landing its own `.unavailable` at some
-        // unrelated earlier point.
+        // `.needsEnabling` → `.unavailable` is a real transition, so an
+        // `.unavailable` strictly after the `.needsEnabling` entry is this second,
+        // error-driven probe.
         let needsEnablingIndex = try #require(collector.values.firstIndex(of: .needsEnabling))
         try await collector.gate.wait {
             collector.values[(needsEnablingIndex + 1)...].contains(.unavailable)
@@ -321,153 +608,54 @@ struct FileProviderDomainHostEnablementTests {
 
         center.post(name: .fileProviderDomainDidChange, object: nil)
 
-        // `setEnabled` was never called, so `startObservingDomainChanges()` never
-        // registered an observer on `center` — the post above has nothing to
-        // deliver to. Asserted synchronously rather than via a wait: with zero
-        // observers registered, `NotificationCenter.post` has nothing to enqueue,
-        // so there is no async delivery to race.
+        // `setEnabled` was never called, so no observer is registered on `center`
+        // and `registerDomain()` never ran — nothing to deliver, nothing to read.
         #expect(collector.values == [.inactive])
         #expect(domainSource.callCount == 0)
         #expect(host.availability == .inactive)
     }
 
-    @Test(
-        "addDomain's registration failure reports .unavailable directly, without routing through the fetchDomains-driven mapping"
-    )
-    func registrationFailureReportsUnavailable() async throws {
-        // Validates the `addDomain` failure branch's `self.setAvailability(.unavailable)`
-        // consistency fix (previously a direct `self.availabilityStorage = .unavailable`
-        // write that bypassed the observer). `addDomain`/domain registration has no
-        // injected seam (see the suite doc comment), so this relies on the test
-        // process's `NSFileProviderManager.add(domain)` genuinely failing — true for
-        // a bare `swift test` executable with no registered File Provider extension,
-        // which is what this test process is. If that ever stops being true (e.g. a
-        // future test host where registration spuriously succeeds), this test would
-        // need a real seam for `addDomain` to stay meaningful.
-        //
-        // `setEnabled(true)` also fires the discarded, throwaway priming
-        // `fetchDomains` read exactly once (see the suite doc comment / issue
-        // #448), so `domainSource.callCount == 0` no longer holds. Stage a
-        // *matching* domain instead — one that would map to
-        // `.ready`/`.needsEnabling` if it were ever consulted — and assert it's
-        // never observed, while pinning `callCount == 1` to prove the priming
-        // read is the *only* call: an exact count (not just "not zero") still
-        // catches a future failure-branch edit that added its own extra,
-        // similarly-discarded `fetchDomains` call.
-        let domainIdentifierString = "kernova-clipboard-test-\(UUID().uuidString)"
-        let domainSource = FakeDomainSource()
-        let matching = NSFileProviderDomain(
-            identifier: NSFileProviderDomainIdentifier(domainIdentifierString),
-            displayName: "Test")
-        domainSource.setResult(.success([matching]))
+    @Test("disabling mid-registration leaves availability .inactive — a stale add completion is a no-op")
+    func disableMidRegistrationLandsInactive() async throws {
+        let identifierString = "kernova-clipboard-test-\(UUID().uuidString)"
+        let domainSource = FakeDomainSource()  // empty → absent → triggers add
         let collector = AvailabilityCollector()
-        let center = NotificationCenter()
+        let transport = RecordingRelayTransport()
+        // Hold the (success) add completion so we can disable while it's in flight.
+        let addDomain = FakeAddDomain(failCount: 0, hold: true)
         let host = makeHost(
-            domainIdentifier: domainIdentifierString,
-            domainSource: domainSource, notificationCenter: center)
+            domainIdentifier: identifierString, domainSource: domainSource,
+            notificationCenter: NotificationCenter(), addDomain: addDomain, relayTransport: transport)
         host.setAvailabilityObserver { collector.record($0) }
 
         host.setEnabled(true)
+        // Wait until the add is in flight (held) — we're mid-registration.
+        try await addDomain.addCalledGate.wait(timeout: .seconds(20)) { addDomain.callCount >= 1 }
 
-        try await collector.gate.wait(timeout: .seconds(20)) {
-            collector.values.contains(.unavailable)
-        }
-        // The priming read is dispatched from an independent `Task`, so it can
-        // still be in flight when `.unavailable` lands — wait for it too before
-        // pinning the exact count.
-        try await domainSource.gate.wait(timeout: .seconds(20)) { domainSource.callCount >= 1 }
+        // Disable while the add is still outstanding.
+        host.setEnabled(false)
+        await awaitMainQueueTurn()
+        #expect(host.availability == .inactive)
+        let valuesAfterDisable = collector.values
+
+        // Release the now-stale add completion and wait for its main-hop to drain.
+        addDomain.releaseHeld()
+        await addDomain.drainToMain()
+
+        #expect(host.availability == .inactive)
         #expect(
-            !collector.values.contains(.ready) && !collector.values.contains(.needsEnabling),
-            "the addDomain failure branch must write .unavailable directly — a .ready/.needsEnabling here would mean it consulted the discarded priming read's result"
-        )
-        #expect(
-            domainSource.callCount == 1,
-            "only the priming read should ever call fetchDomains here — the addDomain failure branch must not consult it too"
-        )
-    }
-
-    @Test(
-        "enabling arms NSFileProviderDomainDidChange delivery via an eager, throwaway fetchDomains read, independent of registration outcome"
-    )
-    func enableEagerlyPrimesDomainNotifications() async throws {
-        // The real `NSFileProviderManager.add(domain)` call in this test process
-        // never succeeds (see the suite doc comment), so if the priming read were
-        // gated on registration succeeding — as `refreshAvailability()` normally
-        // is, via `addDomain`'s success completion — `domainSource` would never be
-        // consulted here. Proves `primeDomainChangeNotifications()` runs
-        // unconditionally at enable, arming the notification without waiting on
-        // (or being blocked by) registration (issue #448).
-        let domainSource = FakeDomainSource()
-        let center = NotificationCenter()
-        let host = makeHost(
-            domainIdentifier: "kernova-clipboard-test-\(UUID().uuidString)",
-            domainSource: domainSource, notificationCenter: center)
-
-        host.setEnabled(true)
-
-        try await domainSource.gate.wait(timeout: .seconds(20)) { domainSource.callCount >= 1 }
-    }
-
-    @Test("registration success warms the servicing connection")
-    func registrationSuccessWarmsServicingConnection() async throws {
-        // The warm-up must fire in `addDomain`'s success branch (#539) — after an
-        // owner relaunch, the reconnect doorbell can only act once a connect has
-        // been requested, and no offer has been published yet at that point, so
-        // registration is the only trigger (#460).
-        let transport = RecordingRelayTransport()
-        let host = makeHost(
-            domainIdentifier: "kernova-clipboard-test-\(UUID().uuidString)",
-            domainSource: FakeDomainSource(),
-            notificationCenter: NotificationCenter(),
-            addDomain: FakeAddDomain(failCount: 0),
-            relayTransport: transport)
-
-        host.setEnabled(true)
-
-        try await transport.gate.wait { transport.ensureConnectedCount == 1 }
-    }
-
-    @Test("a failed registration doesn't warm the servicing connection, and is not retried")
-    func failedRegistrationDoesNotWarmServicingConnection() async throws {
-        // A failed `add` is terminal (#567: no retry/backoff/heal) — no warm-up
-        // may fire (a connect request against a never-registered domain would be
-        // pointless), and a paste finding the domain unregistered must not kick
-        // any re-registration: `add()` is called exactly once.
-        let domainIdentifierString = "kernova-clipboard-test-\(UUID().uuidString)"
-        let domainSource = FakeDomainSource()
-        let collector = AvailabilityCollector()
-        let transport = RecordingRelayTransport()
-        let addDomain = FakeAddDomain(failCount: 1)
-        let host = makeHost(
-            domainIdentifier: domainIdentifierString, domainSource: domainSource,
-            notificationCenter: NotificationCenter(),
-            addDomain: addDomain,
-            relayTransport: transport)
-        host.setAvailabilityObserver { collector.record($0) }
-
-        host.setEnabled(true)
-
-        try await collector.gate.wait(timeout: .seconds(20)) {
-            collector.values.contains(.unavailable)
-        }
+            collector.values == valuesAfterDisable,
+            "a stale add completion after disable must not write availability")
         #expect(
             transport.ensureConnectedCount == 0,
-            "a terminally failed registration must not request a connect")
-
-        // Standing in for a real paste: finds the domain unregistered and falls
-        // back (returns nil) — must not trigger any re-registration.
-        let published = host.publishSingleFile(
-            generation: 1, repIndex: 0, filename: "test.txt", byteCount: 10, uti: "public.data")
-        #expect(published == nil)
-
-        #expect(
-            addDomain.callCount == 1,
-            "a terminally failed registration must not be retried by a subsequent paste")
+            "a superseded registration must not warm the servicing connection")
     }
 
     @Test("disabling stops observing the domain-change notification; a later post is a no-op")
     func disablingStopsObservingDomainChanges() async throws {
         let domainSource = FakeDomainSource()
+        // A failing read makes the enable land on `.unavailable` deterministically.
+        domainSource.setResult(.failure(FakeFetchError()))
         let collector = AvailabilityCollector()
         let center = NotificationCenter()
         let host = makeHost(
@@ -478,9 +666,7 @@ struct FileProviderDomainHostEnablementTests {
         host.setEnabled(true)
         await awaitMainQueueTurn()
 
-        // Let the real (failing, per the suite doc comment) registration land
-        // before disabling, so its async `.unavailable` write can't race with the
-        // post-disable snapshot below.
+        // Let the (failing) registration land before disabling.
         try await collector.gate.wait(timeout: .seconds(20)) {
             collector.values.contains(.unavailable)
         }
@@ -493,9 +679,8 @@ struct FileProviderDomainHostEnablementTests {
         let callsBeforePost = domainSource.callCount
         center.post(name: .fileProviderDomainDidChange, object: nil)
 
-        // `setEnabled(false)` runs `stopObservingDomainChanges()`, so the observer
-        // is gone before this post — nothing to deliver to, hence a synchronous
-        // assertion rather than a wait (mirrors `notificationIgnoredWhileNeverEnabled`).
+        // `setEnabled(false)` ran `stopObservingDomainChanges()`, so the observer is
+        // gone before this post — nothing to deliver to, hence a synchronous assert.
         #expect(collector.values == valuesBeforePost)
         #expect(domainSource.callCount == callsBeforePost)
     }
