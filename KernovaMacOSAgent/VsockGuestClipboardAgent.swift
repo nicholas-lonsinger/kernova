@@ -29,6 +29,13 @@ protocol Pasteboard: AnyObject {
 
     @discardableResult func clearContents() -> Int
 
+    /// Clears the pasteboard and applies `options` to the contents about to be
+    /// written — the inbound promise write passes `.currentHostOnly` so the
+    /// guest's continuity-pasteboard advertiser never fetches the promised
+    /// flavors. Retractions keep using `clearContents()`: they publish nothing,
+    /// so there is nothing to scope.
+    @discardableResult func prepareForNewContents(with options: NSPasteboard.ContentsOptions) -> Int
+
     /// Writes one pasteboard item per entry, each **promising** its types lazily
     /// served by its own `provider` when the OS asks for one.
     ///
@@ -976,7 +983,14 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             return (types: item.map { $0.type }, provider: provider)
         }
 
-        pasteboard.clearContents()
+        // RATIONALE: `.currentHostOnly` keeps the continuity-pasteboard
+        // advertiser (`useractivityd` → pboard's remote layer, running even with
+        // no Apple Account) from fetching the promised flavors at offer time —
+        // on the sync path, producing `public.file-url` materializes the whole
+        // file with zero user interaction (CLIPBOARD.md §3, #542). Like the
+        // host's publisher, the option is per-write state, reset by every
+        // prepare/clear, so it is applied at this single publication choke point.
+        pasteboard.prepareForNewContents(with: .currentHostOnly)
         let written = pasteboard.writeItems(writes)
         lastPasteboardChangeCount = pasteboard.changeCount
         guard written else { return false }

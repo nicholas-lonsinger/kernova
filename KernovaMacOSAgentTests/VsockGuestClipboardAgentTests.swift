@@ -121,6 +121,27 @@ final class FakePasteboard: Pasteboard, @unchecked Sendable {
         return newCount
     }
 
+    /// Options passed to the most recent `prepareForNewContents(with:)`; `nil`
+    /// until the agent's first promise write.
+    var lastPrepareOptionsForTesting: NSPasteboard.ContentsOptions? {
+        lock.withLock { storedLastPrepareOptions }
+    }
+
+    private var storedLastPrepareOptions: NSPasteboard.ContentsOptions?
+
+    @discardableResult
+    func prepareForNewContents(with options: NSPasteboard.ContentsOptions) -> Int {
+        let newCount = lock.withLock {
+            storedRepresentations.removeAll()
+            promisedItems.removeAll()
+            storedLastPrepareOptions = options
+            storedChangeCount += 1
+            return storedChangeCount
+        }
+        changed.notify()
+        return newCount
+    }
+
     /// Production protocol method: registers one lazy promise per item.
     ///
     /// Each entry promises its `types`, served by its own `provider` when the OS
@@ -915,6 +936,12 @@ struct VsockGuestClipboardAgentTests {
         try hostChannel.send(makeTextOfferFrame(generation: 42, text: "clipboard payload"))
         try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.string] }
         try await expectNoRequest(from: hostChannel)
+
+        // The promise write is scoped `.currentHostOnly` so the guest's
+        // continuity-pasteboard advertiser can't fetch the promised flavors at
+        // offer time (#542) — an unscoped write would let the OS pull the full
+        // payload with zero user interaction on the sync path.
+        #expect(pasteboard.lastPrepareOptionsForTesting == .currentHostOnly)
 
         // The promise generation is recorded; a poll afterward does not re-offer.
         let promiseGen = DispatchQueue.main.sync { agent.inboundPromiseGenerationForTesting }

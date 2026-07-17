@@ -35,7 +35,8 @@ Guiding principles for host↔guest clipboard sharing in Kernova.
     (#542 ground-truth). This advertiser is account-independent OS infrastructure, distinct from
     Universal Clipboard the feature; this section's reference model must not be read as implying
     the fetch only happens when Universal Clipboard is configured. See §3's caveat for the
-    consequence for representations whose fulfillment materializes bytes.
+    consequence for representations whose fulfillment materializes bytes — and for the
+    neutralization: a `.currentHostOnly` write is never processed by the advertiser (#542).
 
 ---
 
@@ -123,9 +124,9 @@ Honest caveats this principle does **not** waive:
   limit. This direction (guest→host) is unaffected by §3's advertiser caveat: host "Copy to
   Mac" has published a concrete File Provider placeholder since #434, so the advertiser's
   offer-time fetch (§3) costs nothing here. The **mirror-image host→guest path has no
-  equivalent cap yet** — see #561 — and it is exactly there, on the guest's sync-promise
-  fallback, that the same offer-time fetch turns an already-uncapped pull into one that fires
-  with no paste at all (#542).
+  equivalent cap yet** — see #561. The offer-time advertiser fetch that once made that
+  uncapped pull fire with no paste at all is suppressed — the guest's promise write is
+  `.currentHostOnly` (§3, #542) — so the sync-promise pull now runs only on a real paste.
 - **Host "Copy to Mac" routes a plain-file rep lazily only when exactly one is offered (D2
   scope).** If two or more plain-file reps are present, all of them are dropped (the user sees
   "Only one file can be copied to your Mac at a time"), regardless of the toggle. Unlike the
@@ -149,9 +150,14 @@ bounded pull — see §5).
   its fulfillment runs the full pull (`pullRepresentation`), so the advertiser's offer-time fetch
   materializes the entire file with no paste ever issued. The rule this establishes: a published
   representation is only genuinely lazy if **every** flavor it exposes is cheap to produce at
-  registration time, not merely at the moment we intend it to be consumed. This bites hardest
+  registration time, not merely at the moment we intend it to be consumed. This bit hardest
   on the host→guest sync-promise fallback, which has no size cap yet (§2, #561) — an
-  already-uncapped pull that the advertiser also makes paste-independent.
+  already-uncapped pull that the advertiser also made paste-independent, until #542 scoped the
+  guest's promise write `.currentHostOnly`: the advertiser then never processes the generation
+  at all (no item-to-advertise determination, no flavor fetch — verified live: a 1.5 GiB
+  toggle-off offer sat 160 s with zero bytes pulled, and a real paste still streamed
+  immediately). The rule above still governs any surface that publishes an **unscoped**
+  promise; host-only scoping is the escape hatch when a flavor cannot be cheap.
 - This applies in **both directions**, including host "Copy to Mac": the host pasteboard write
   must be lazy (a provider), not an eager read at the moment the button is clicked.
 - **Serializing a directory into an archive is materialization.** Building a folder's `.aar` at
@@ -250,6 +256,10 @@ toggle and (in gated mode) explicit user intent.
   pasteboard write `.currentHostOnly`, unconditionally — guest content becomes host-owned data on
   arrival and must not be re-advertised to the user's other Apple-Account-linked devices over
   Universal Clipboard (#560).
+- **Host→guest promise writes are host-only too.** The guest agent prepares every inbound
+  promise write with `.currentHostOnly` — primarily so the continuity-pasteboard advertiser
+  never fetches the promised flavors at offer time (§3, #542), and equally so host-originated
+  content is not re-advertised off the guest.
 - Before non-trusted guest workloads are supported, the vsock listener must authenticate per VM.
 
 ### 11. Sandbox-forward by construction
@@ -349,6 +359,7 @@ fix, not just whether to fix it. (macOS-guest issues only; Linux/Windows out of 
 | **#499** — a stale cancel/abort for one pull attempt can land on a same-id retry instead | §9 idempotent/bidirectional abort | The `transfer_id`'s determinism from `(generation, repIndex, direction)` is load-bearing (cancel re-derives it; `cancelPull`'s race guard depends on it) — an id-format change to disambiguate attempts was rejected as disproportionate. ✓ **Resolved as documented-benign** — the residual (a spurious re-abort/retry, never corruption) is pinned by a regression test and the invariant is documented on `ClipboardTransferID` itself. |
 | **#500** — a duplicate pull registration for the same id silently overwrites the prior one | §9 wake immediately, not a backstop stall | `LazyPullCoordinator.pull`/`ClipboardStreamReceiver.awaitTransfer` had no guard against a concurrent duplicate registration (e.g. a File Provider fetch retry after a dropped owner connection). ✓ **Resolved** — a duplicate registration supersedes the prior one, resolving it immediately via a distinct `.superseded` outcome (not `.cancelled`, which would let the displaced caller tear down the live successor's awaiter). |
 | **#560** — Copy to Mac advertises guest clipboard content to other devices over Universal Clipboard | §10 Trust boundary | `HostClipboardPublisher` prepared every write with `clearContents()`, which leaves the pasteboard cross-device-advertisable. ✓ **Resolved** — every host write now prepares with `prepareForNewContents(with: .currentHostOnly)` instead, applied unconditionally at the single inbound-publication choke point (§4) on every write, since the option does not survive a later prepare/clear. |
+| **#542** — guest pulls a host clipboard offer's full payload at offer time, with no paste (toggle-off sync path) | §3 Pay on consume, §10 Trust boundary | The guest's continuity-pasteboard advertiser fetched the promised `public.file-url` at offer time, and fulfilling it materialized the whole file (§3's advertiser caveat). ✓ **Resolved** — the guest's promise write prepares with `.currentHostOnly` (the #560 mechanism applied guest-side), which keeps the advertiser from processing the generation at all; verified live (1.5 GiB toggle-off offer idle 160 s with zero bytes moved, in-guest log shows no advertiser fetch, a real paste still streams immediately). |
 
 ---
 
