@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import KernovaTestSupport
 
 // A fixed suite name (rather than a fresh UUID per call) bounds the on-disk
 // footprint to a single tombstone plist regardless of how many times the
@@ -12,20 +13,14 @@ struct AgentPreferencesTests {
     /// Runs `body` with a fresh `AgentPreferences` over an isolated defaults
     /// suite, then tears the suite down so tests never touch the real
     /// `.standard` domain, each other's state, or leak a persisted plist.
+    ///
+    /// Thin wrapper over `KernovaTestSupport.withEphemeralDefaults` — see its
+    /// doc for the create/teardown ceremony (#449, #581).
     private func withEphemeralPreferences(
         _ body: (AgentPreferences, UserDefaults) throws -> Void
     ) throws {
-        let suiteName = Self.suiteName
-        let defaults = makeEphemeralDefaults(suiteName: suiteName)
-        defer {
-            defaults.removePersistentDomain(forName: suiteName)
-            if let plistURL = FileManager.default.urls(
-                for: .libraryDirectory, in: .userDomainMask
-            ).first?.appending(path: "Preferences/\(suiteName).plist") {
-                try? FileManager.default.removeItem(at: plistURL)
-            }
-        }
-        try body(AgentPreferences(defaults: defaults), defaults)
+        try withEphemeralDefaults(
+            suiteName: Self.suiteName, wrap: AgentPreferences.init(defaults:), body: body)
     }
 
     @Test("fileProviderReminderDismissed defaults to false")

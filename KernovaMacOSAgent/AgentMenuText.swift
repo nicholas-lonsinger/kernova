@@ -47,20 +47,10 @@ enum AgentMenuText {
         }
     }
 
-    /// Actionable command opening System Settings to enable the extension.
-    ///
-    /// Ellipsis: it navigates to System Settings to gather the user's action.
-    static func fileProviderEnableCommand() -> String {
-        "Enable in System Settings…"
-    }
-
-    /// Command silencing the proactive status-item badge reminder (#581).
-    ///
-    /// No ellipsis: it acts immediately, gathering no further input. The
-    /// passive dropdown line + enable command stay regardless.
-    static func fileProviderStopRemindingCommand() -> String {
-        "Stop Reminding Me"
-    }
+    // File Provider reminder command titles (#581) are identical on the host
+    // and guest sides, so they live in the shared `KernovaKit
+    // .ClipboardFileProviderReminder.enableCommandTitle()` /
+    // `.stopRemindingCommandTitle()` instead of being mirrored here.
 
     /// Quit command title.
     static func quit() -> String { "Quit Kernova Guest Agent" }

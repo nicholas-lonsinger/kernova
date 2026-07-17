@@ -89,12 +89,10 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
     /// delivers synchronously on main, so `availability` is trusted directly
     /// rather than re-read.
     func fileProviderAvailabilityChanged(_ availability: FileProviderAvailability) {
-        // A fresh disablement is a louder event than a dismissal the user once
-        // chose to silence — reset it once the toggle is confirmed working
-        // again, so a later, genuinely new disablement nags again.
-        if availability == .ready, preferences.fileProviderReminderDismissed {
-            preferences.fileProviderReminderDismissed = false
-        }
+        preferences.fileProviderReminderDismissed =
+            ClipboardFileProviderReminder
+            .dismissalAfterAvailabilityChange(
+                availability, dismissed: preferences.fileProviderReminderDismissed)
         setIcon(for: connectionState())
     }
 
@@ -156,16 +154,19 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
         // user to act before large-file paste reliably works. This passive line
         // shows regardless of whether the proactive badge reminder was
         // dismissed (#581); "Stop Reminding Me" only silences the badge.
-        if fileProviderAvailability() == .needsEnabling {
+        let availability = fileProviderAvailability()
+        if availability == .needsEnabling {
             addInfoItem(ClipboardFileProviderReminder.guestDegradedSummary())
             let enable = NSMenuItem(
-                title: AgentMenuText.fileProviderEnableCommand(),
+                title: ClipboardFileProviderReminder.enableCommandTitle(),
                 action: #selector(enableFileSharingTapped), keyEquivalent: "")
             enable.target = self
             menu.addItem(enable)
-            if reminderActive {
+            if ClipboardFileProviderReminder.shouldShowReminder(
+                availability: availability, dismissed: preferences.fileProviderReminderDismissed)
+            {
                 let stop = NSMenuItem(
-                    title: AgentMenuText.fileProviderStopRemindingCommand(),
+                    title: ClipboardFileProviderReminder.stopRemindingCommandTitle(),
                     action: #selector(stopRemindingTapped), keyEquivalent: "")
                 stop.target = self
                 menu.addItem(stop)
@@ -245,17 +246,12 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
         onQuit()
     }
 
-    /// Opens System Settings so the user can enable the File Provider extension.
-    ///
-    /// Tries the shared `x-apple.systempreferences:` deep links in order (see
-    /// `ClipboardFileProviderSettings.enablementDeepLinks`); either way the user
-    /// lands in System Settings and can enable "Kernova Guest Agent" under File
-    /// Providers.
+    /// Opens System Settings so the user can enable the File Provider extension
+    /// (see `ClipboardFileProviderSettings.openEnablementSettings()`).
     @objc private func enableFileSharingTapped() {
-        for string in ClipboardFileProviderSettings.enablementDeepLinks {
-            if let url = URL(string: string), NSWorkspace.shared.open(url) { return }
+        if !ClipboardFileProviderSettings.openEnablementSettings() {
+            Self.logger.error("Failed to open File Providers settings deep link")
         }
-        Self.logger.error("Failed to open File Providers settings deep link")
     }
 
     /// Silences the proactive badge reminder for the current `.needsEnabling`

@@ -17,13 +17,32 @@ public enum ClipboardFileProviderReminder {
     /// System-Settings toggle for — is actionable; `.inactive` (clipboard
     /// sharing off), `.ready`, and `.unavailable` (an install/signing problem,
     /// not a user toggle) never show a badge. `dismissed` silences the current
-    /// `.needsEnabling` episode; the owner resets it back to `false` once
-    /// availability reaches `.ready`, so a later, genuinely new disablement
-    /// nags again rather than staying silenced forever.
+    /// `.needsEnabling` episode — see `dismissalAfterAvailabilityChange` for
+    /// when the owner should clear it.
     public static func shouldShowReminder(
         availability: FileProviderAvailability, dismissed: Bool
     ) -> Bool {
         availability == .needsEnabling && !dismissed
+    }
+
+    /// The dismissal value the owner should persist after an availability
+    /// change, given the `dismissed` value it currently holds.
+    ///
+    /// Resets to `false` whenever `availability` is anything other than
+    /// `.needsEnabling` — `.ready` is the common case (the user flipped the
+    /// toggle), but `.inactive`/`.unavailable` also end the "episode" a
+    /// dismissal was silencing: a `.needsEnabling` → transient-failure →
+    /// `.needsEnabling` cycle (the domain host's own reregistration/
+    /// orphan-heal retries, or clipboard sharing toggled off and back on)
+    /// never passes through `.ready` at all, and without this broader reset
+    /// the badge would stay silently suppressed even though the user never
+    /// confirmed the newer `.needsEnabling` episode is the same one they
+    /// dismissed. Staying in `.needsEnabling` leaves `dismissed` untouched, so
+    /// "Stop Reminding Me" keeps silencing the badge across the same episode.
+    public static func dismissalAfterAvailabilityChange(
+        _ availability: FileProviderAvailability, dismissed: Bool
+    ) -> Bool {
+        availability == .needsEnabling ? dismissed : false
     }
 
     /// Degraded-mode summary for the host side (guest→host "Copy to Mac").
@@ -46,5 +65,23 @@ public enum ClipboardFileProviderReminder {
     /// so this must not claim a size ceiling a user could rely on.
     public static func guestDegradedSummary() -> String {
         "Text and images paste normally. Enable File Provider to reliably paste files from your Mac."
+    }
+
+    /// Actionable command opening System Settings to enable the extension —
+    /// identical wording on both sides (see `ClipboardFileProviderSettings
+    /// .openEnablementSettings()`).
+    ///
+    /// Ellipsis: it navigates to System Settings to gather the user's action.
+    public static func enableCommandTitle() -> String {
+        "Enable in System Settings…"
+    }
+
+    /// Command silencing the proactive status-item badge — identical wording
+    /// on both sides.
+    ///
+    /// No ellipsis: it acts immediately, gathering no further input. The
+    /// passive dropdown line + enable command stay regardless.
+    public static func stopRemindingCommandTitle() -> String {
+        "Stop Reminding Me"
     }
 }

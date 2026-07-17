@@ -54,4 +54,42 @@ struct ClipboardFileProviderReminderTests {
             ClipboardFileProviderReminder.hostDegradedSummary()
                 != ClipboardFileProviderReminder.guestDegradedSummary())
     }
+
+    // MARK: - dismissalAfterAvailabilityChange
+
+    @Test("dismissal is preserved while availability stays .needsEnabling")
+    func dismissalPreservedWhileNeedsEnabling() {
+        #expect(
+            ClipboardFileProviderReminder.dismissalAfterAvailabilityChange(
+                .needsEnabling, dismissed: true) == true)
+        #expect(
+            ClipboardFileProviderReminder.dismissalAfterAvailabilityChange(
+                .needsEnabling, dismissed: false) == false)
+    }
+
+    @Test("dismissal resets to false for every availability other than .needsEnabling")
+    func dismissalResetsOnLeavingNeedsEnabling() {
+        // Not just `.ready` — `.inactive`/`.unavailable` also end the episode a
+        // dismissal was silencing, so a `.needsEnabling` → transient-failure →
+        // `.needsEnabling` cycle that never visits `.ready` still re-arms (#581).
+        for availability: FileProviderAvailability in [.ready, .inactive, .unavailable] {
+            #expect(
+                ClipboardFileProviderReminder.dismissalAfterAvailabilityChange(
+                    availability, dismissed: true) == false)
+            #expect(
+                ClipboardFileProviderReminder.dismissalAfterAvailabilityChange(
+                    availability, dismissed: false) == false)
+        }
+    }
+
+    // MARK: - Command titles
+
+    @Test("enableCommandTitle and stopRemindingCommandTitle are stable, distinct strings")
+    func commandTitles() {
+        #expect(ClipboardFileProviderReminder.enableCommandTitle() == "Enable in System Settings…")
+        #expect(ClipboardFileProviderReminder.stopRemindingCommandTitle() == "Stop Reminding Me")
+        #expect(
+            ClipboardFileProviderReminder.enableCommandTitle()
+                != ClipboardFileProviderReminder.stopRemindingCommandTitle())
+    }
 }
