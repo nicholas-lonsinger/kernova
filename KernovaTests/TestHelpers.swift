@@ -8,9 +8,12 @@ import KernovaTestSupport
 @testable import Kernova
 
 // Bundle-specific test helpers for KernovaTests. The event-driven/poll wait
-// primitives (`AsyncGate`, `waitUntil`, `TestFailure`) live in the shared
-// `KernovaTestSupport` package product — see its doc comment for why they
-// were hoisted out of this file (formerly triplicated, #526).
+// primitives (`AsyncGate`, `waitUntil`, `TestFailure`) and the ephemeral-
+// `UserDefaults` helpers (`makeEphemeralDefaults`, `withEphemeralDefaults`)
+// live in the shared `KernovaTestSupport` package product — see its doc
+// comments for why they were hoisted out of this file (formerly
+// triplicated, #526; the ephemeral-defaults helpers followed in #581 once a
+// second bundle needed the identical ceremony for `AgentPreferences`).
 //
 // `waitForChange` below is KernovaTests-only and was never one of the
 // triplicated copies: it observes `@MainActor` `@Observable` production state
@@ -20,31 +23,7 @@ import KernovaTestSupport
 
 // MARK: - Ephemeral UserDefaults
 
-/// Opens an isolated, pre-cleaned `UserDefaults` suite for a `.serialized` test suite.
-///
-/// State never bleeds in from another test or a prior run: a run hard-killed
-/// mid-test (CI timeout, SIGKILL) skips any `defer`, so clearing *before* use is
-/// the load-bearing half. Pass a fixed `suiteName` unique to the calling suite —
-/// a fixed name (not a per-call UUID) bounds the on-disk footprint to a single
-/// reusable tombstone plist. Shared by every suite (e.g. `AppPreferencesTests`,
-/// #449/#506) that needs a test never to read or write the real `.standard`
-/// domain; callers that also need after-the-fact teardown (e.g. because they
-/// reuse one suite across multiple `@Test`s) should wrap the returned instance
-/// in their own `defer { defaults.removePersistentDomain(forName:) }`.
-func makeEphemeralDefaults(suiteName: String) -> UserDefaults {
-    guard let defaults = UserDefaults(suiteName: suiteName) else {
-        fatalError("Could not open test UserDefaults suite '\(suiteName)'")
-    }
-    defaults.removePersistentDomain(forName: suiteName)
-    if let plistURL = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)
-        .first?.appending(path: "Preferences/\(suiteName).plist")
-    {
-        try? FileManager.default.removeItem(at: plistURL)
-    }
-    return defaults
-}
-
-/// Wraps `makeEphemeralDefaults` in an `AppPreferences`, for suites that only
+/// Wraps `makeEphemeralDefaults` (`KernovaTestSupport`) in an `AppPreferences`, for suites that only
 /// need the typed wrapper (e.g. to construct a `VMLibraryViewModel`) and never
 /// inspect the raw `UserDefaults` store directly.
 func makeEphemeralPreferences(suiteName: String) -> AppPreferences {

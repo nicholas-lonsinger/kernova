@@ -5,9 +5,13 @@ import KernovaKit
 import KernovaTestSupport
 
 // Bundle-specific test helpers for KernovaMacOSAgentTests. The event-driven/
-// poll wait primitives (`AsyncGate`, `waitUntil`, `TestFailure`) live in the
-// shared `KernovaTestSupport` package product — see its doc comment for why
-// they were hoisted out of this file (formerly triplicated, #526).
+// poll wait primitives (`AsyncGate`, `waitUntil`, `TestFailure`) and the
+// ephemeral-`UserDefaults` helpers (`makeEphemeralDefaults`,
+// `withEphemeralDefaults`) live in the shared `KernovaTestSupport` package
+// product — see its doc comments for why they were hoisted out of this file
+// (formerly triplicated, #526; the ephemeral-defaults helpers followed in
+// #581 for `AgentPreferencesTests`, mirroring `KernovaTests`' identically-
+// shaped `AppPreferencesTests`).
 
 // MARK: - Socket / channel factories
 

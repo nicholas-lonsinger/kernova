@@ -15,6 +15,14 @@ import os
 /// through the closures supplied at init; the status-item icon is updated live
 /// via `connectionStateChanged()` so it tracks the connection even while the
 /// menu is closed.
+///
+/// Also surfaces a proactive "enable File Provider" reminder (#581): while the
+/// guest clipboard domain is registered but the user hasn't flipped the
+/// System-Settings toggle (`fileProviderAvailability() == .needsEnabling`),
+/// the icon gets a small attention badge and the dropdown gains a "Stop
+/// Reminding Me" command that silences just the badge — the passive
+/// explanatory line + "Enable in System Settings…" command stay regardless of
+/// dismissal. Mirrors the host app's `HostAgentStatusItemController`.
 @MainActor
 final class AgentStatusItemController: NSObject, NSMenuDelegate {
     private static let logger = Logger(subsystem: "app.kernova.macosagent", category: "AgentStatusItem")
@@ -23,6 +31,7 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
     private let menu = NSMenu()
 
     private let version: String
+    private let preferences: AgentPreferences
     private let connectionState: () -> HostConnectionState
     private let hostBundledVersion: () -> String
     private let logForwardingEnabled: () -> Bool
@@ -32,6 +41,7 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
 
     init(
         version: String,
+        preferences: AgentPreferences = .shared,
         connectionState: @escaping () -> HostConnectionState,
         hostBundledVersion: @escaping () -> String,
         logForwardingEnabled: @escaping () -> Bool,
@@ -41,6 +51,7 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
     ) {
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         self.version = version
+        self.preferences = preferences
         self.connectionState = connectionState
         self.hostBundledVersion = hostBundledVersion
         self.logForwardingEnabled = logForwardingEnabled
@@ -70,6 +81,31 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
         setIcon(for: connectionState())
     }
 
+    /// Updates the menu-bar icon (and resets a stale dismissal) to reflect a
+    /// File Provider availability change (#581).
+    ///
+    /// Called by the app delegate from `FileProviderDomainHost
+    /// .setAvailabilityObserver`, which — unlike `onStateChange` above —
+    /// delivers synchronously on main, so `availability` is trusted directly
+    /// rather than re-read.
+    func fileProviderAvailabilityChanged(_ availability: FileProviderAvailability) {
+        preferences.fileProviderReminderDismissed =
+            ClipboardFileProviderReminder
+            .dismissalAfterAvailabilityChange(
+                availability, dismissed: preferences.fileProviderReminderDismissed)
+        setIcon(for: connectionState())
+    }
+
+    /// Whether the proactive badge/menu-command reminder should currently show.
+    ///
+    /// Distinct from the always-present passive menu line below, which shows
+    /// whenever the toggle is off regardless of dismissal.
+    private var reminderActive: Bool {
+        ClipboardFileProviderReminder.shouldShowReminder(
+            availability: fileProviderAvailability(),
+            dismissed: preferences.fileProviderReminderDismissed)
+    }
+
     private static func symbolName(for state: HostConnectionState) -> String {
         switch state {
         case .connected:
@@ -95,7 +131,9 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
         }
         image.isTemplate = true
         statusItem.button?.title = ""
-        statusItem.button?.image = image
+        statusItem.button?.image = reminderActive ? image.withAttentionBadge() : image
+        statusItem.button?.toolTip =
+            reminderActive ? ClipboardFileProviderReminder.guestDegradedSummary() : nil
     }
 
     // MARK: - NSMenuDelegate
@@ -113,14 +151,26 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
         // Surface an actionable affordance only when the File Provider extension
         // is registered but the user hasn't enabled it (the System-Settings
         // toggle is off), which is the one File-Provider state that needs the
-        // user to act before large-file paste works.
-        if fileProviderAvailability() == .needsEnabling {
-            addInfoItem(AgentMenuText.fileProviderNeedsEnablingLine())
+        // user to act before large-file paste reliably works. This passive line
+        // shows regardless of whether the proactive badge reminder was
+        // dismissed (#581); "Stop Reminding Me" only silences the badge.
+        let availability = fileProviderAvailability()
+        if availability == .needsEnabling {
+            addInfoItem(ClipboardFileProviderReminder.guestDegradedSummary())
             let enable = NSMenuItem(
-                title: AgentMenuText.fileProviderEnableCommand(),
+                title: ClipboardFileProviderReminder.enableCommandTitle(),
                 action: #selector(enableFileSharingTapped), keyEquivalent: "")
             enable.target = self
             menu.addItem(enable)
+            if ClipboardFileProviderReminder.shouldShowReminder(
+                availability: availability, dismissed: preferences.fileProviderReminderDismissed)
+            {
+                let stop = NSMenuItem(
+                    title: ClipboardFileProviderReminder.stopRemindingCommandTitle(),
+                    action: #selector(stopRemindingTapped), keyEquivalent: "")
+                stop.target = self
+                menu.addItem(stop)
+            }
             menu.addItem(.separator())
         }
 
@@ -196,16 +246,18 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
         onQuit()
     }
 
-    /// Opens System Settings so the user can enable the File Provider extension.
-    ///
-    /// Tries the shared `x-apple.systempreferences:` deep links in order (see
-    /// `ClipboardFileProviderSettings.enablementDeepLinks`); either way the user
-    /// lands in System Settings and can enable "Kernova Guest Agent" under File
-    /// Providers.
+    /// Opens System Settings so the user can enable the File Provider extension
+    /// (see `ClipboardFileProviderSettings.openEnablementSettings()`).
     @objc private func enableFileSharingTapped() {
-        for string in ClipboardFileProviderSettings.enablementDeepLinks {
-            if let url = URL(string: string), NSWorkspace.shared.open(url) { return }
+        if !ClipboardFileProviderSettings.openEnablementSettings() {
+            Self.logger.error("Failed to open File Providers settings deep link")
         }
-        Self.logger.error("Failed to open File Providers settings deep link")
+    }
+
+    /// Silences the proactive badge reminder for the current `.needsEnabling`
+    /// episode (#581); the passive dropdown line + enable command stay.
+    @objc private func stopRemindingTapped() {
+        preferences.fileProviderReminderDismissed = true
+        setIcon(for: connectionState())
     }
 }

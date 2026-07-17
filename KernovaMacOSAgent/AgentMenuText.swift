@@ -47,20 +47,10 @@ enum AgentMenuText {
         }
     }
 
-    /// Top-level hint shown when large-file clipboard paste needs enabling.
-    ///
-    /// Surfaced when the File Provider extension's per-extension System-Settings
-    /// toggle is off; informational, paired with the actionable command below.
-    static func fileProviderNeedsEnablingLine() -> String {
-        "Large-file paste needs enabling"
-    }
-
-    /// Actionable command opening System Settings to enable the extension.
-    ///
-    /// Ellipsis: it navigates to System Settings to gather the user's action.
-    static func fileProviderEnableCommand() -> String {
-        "Enable in System Settings…"
-    }
+    // File Provider reminder command titles (#581) are identical on the host
+    // and guest sides, so they live in the shared `KernovaKit
+    // .ClipboardFileProviderReminder.enableCommandTitle()` /
+    // `.stopRemindingCommandTitle()` instead of being mirrored here.
 
     /// Quit command title.
     static func quit() -> String { "Quit Kernova Guest Agent" }

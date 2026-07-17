@@ -603,14 +603,12 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         bannerCollapsed.isActive = !needsEnabling
     }
 
-    /// Opens System Settings so the user can enable the host File Provider, trying
-    /// the shared deep links in order (see
-    /// `ClipboardFileProviderSettings.enablementDeepLinks`).
+    /// Opens System Settings so the user can enable the host File Provider
+    /// (see `ClipboardFileProviderSettings.openEnablementSettings()`).
     private func openFileProviderSettings() {
-        for string in ClipboardFileProviderSettings.enablementDeepLinks {
-            if let url = URL(string: string), NSWorkspace.shared.open(url) { return }
+        if !ClipboardFileProviderSettings.openEnablementSettings() {
+            Self.logger.error("Failed to open File Providers settings deep link")
         }
-        Self.logger.error("Failed to open File Providers settings deep link")
     }
 
     /// Pulls the representations the window renders richly for the current guest

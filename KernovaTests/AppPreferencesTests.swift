@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import KernovaTestSupport
 @testable import Kernova
 
 // A fixed suite name (rather than a fresh UUID per call) bounds the on-disk
@@ -13,23 +14,14 @@ struct AppPreferencesTests {
     /// Runs `body` with a fresh `AppPreferences` over an isolated defaults
     /// suite, then tears the suite down so tests never touch the real
     /// `.standard` domain, each other's state, or leak a persisted plist.
+    ///
+    /// Thin wrapper over `KernovaTestSupport.withEphemeralDefaults` — see its
+    /// doc for the create/teardown ceremony (#449, #581).
     private func withEphemeralPreferences(
         _ body: (AppPreferences, UserDefaults) throws -> Void
     ) throws {
-        let suiteName = Self.suiteName
-        let defaults = makeEphemeralDefaults(suiteName: suiteName)
-        defer {
-            defaults.removePersistentDomain(forName: suiteName)
-            // cfprefsd leaves an empty tombstone plist behind even after
-            // removePersistentDomain empties the in-memory domain; delete it
-            // so repeated test runs don't accumulate files (#449).
-            if let plistURL = FileManager.default.urls(
-                for: .libraryDirectory, in: .userDomainMask
-            ).first?.appending(path: "Preferences/\(suiteName).plist") {
-                try? FileManager.default.removeItem(at: plistURL)
-            }
-        }
-        try body(AppPreferences(defaults: defaults), defaults)
+        try withEphemeralDefaults(
+            suiteName: Self.suiteName, wrap: AppPreferences.init(defaults:), body: body)
     }
 
     @Test("alwaysShowAdvancedOptions defaults to false")
@@ -89,6 +81,25 @@ struct AppPreferencesTests {
 
             prefs.vmOrder = nil
             #expect(prefs.vmOrder == nil)
+        }
+    }
+
+    @Test("fileProviderReminderDismissed defaults to false")
+    func fileProviderReminderDismissedDefaultsToFalse() throws {
+        try withEphemeralPreferences { prefs, _ in
+            #expect(prefs.fileProviderReminderDismissed == false)
+        }
+    }
+
+    @Test("fileProviderReminderDismissed round-trips through UserDefaults")
+    func fileProviderReminderDismissedRoundTrips() throws {
+        try withEphemeralPreferences { prefs, defaults in
+            prefs.fileProviderReminderDismissed = true
+            #expect(prefs.fileProviderReminderDismissed == true)
+            #expect(defaults.bool(forKey: "fileProviderReminderDismissed") == true)
+
+            prefs.fileProviderReminderDismissed = false
+            #expect(prefs.fileProviderReminderDismissed == false)
         }
     }
 }
