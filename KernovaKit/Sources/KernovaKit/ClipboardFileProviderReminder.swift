@@ -32,8 +32,7 @@ public enum ClipboardFileProviderReminder {
     /// `.needsEnabling` — `.ready` is the common case (the user flipped the
     /// toggle), but `.inactive`/`.unavailable` also end the "episode" a
     /// dismissal was silencing: a `.needsEnabling` → transient-failure →
-    /// `.needsEnabling` cycle (the domain host's own reregistration/
-    /// orphan-heal retries, or clipboard sharing toggled off and back on)
+    /// `.needsEnabling` cycle (e.g. clipboard sharing toggled off and back on)
     /// never passes through `.ready` at all, and without this broader reset
     /// the badge would stay silently suppressed even though the user never
     /// confirmed the newer `.needsEnabling` episode is the same one they
