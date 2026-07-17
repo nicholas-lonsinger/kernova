@@ -356,12 +356,15 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     /// `add` is idempotent for an existing identifier — it updates the domain and
     /// **preserves the user's enablement**, so a normal restart never resets the
     /// toggle. An `add` *failure* is terminal for this cycle: it surfaces as
-    /// `.unavailable` (see `addDomain`) and is not retried automatically. Per
-    /// #567, a registered-but-unusable domain (an orphaned replication directory,
-    /// or a dead-end domain wedged after the extension is rebuilt/re-signed,
-    /// `NSFileProviderError` `-2001`) is root-caused directly rather than papered
-    /// over with a retry/backoff/heal — the user's explicit recovery is toggling
-    /// clipboard sharing off/on, which re-enters this method with a fresh epoch.
+    /// `.unavailable` (see `addDomain`) and is not retried automatically (#567:
+    /// no retry/backoff/heal machinery — a registered-but-unusable domain, e.g.
+    /// an orphaned replication directory or a dead-end domain wedged after the
+    /// extension is rebuilt/re-signed (`NSFileProviderError` `-2001`), is
+    /// root-caused directly on recurrence rather than papered over). Toggling
+    /// clipboard sharing off/on re-enters this method with a fresh epoch, which
+    /// only helps a genuinely transient failure — the disable path deliberately
+    /// leaves the domain registered (see `applyEnabledOnMain`), so it does not
+    /// clear a persistent, system-side failure.
     private func registerDomain() {
         registrationEpoch &+= 1
         addDomain(epoch: registrationEpoch)
