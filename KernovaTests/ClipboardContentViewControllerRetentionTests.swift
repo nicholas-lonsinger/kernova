@@ -151,7 +151,7 @@ struct ClipboardContentViewControllerRetentionTests {
             writePasteboard: pasteboard, providerRegistry: registry)
 
         #expect(registry.countForTesting == 0)
-        // → copyToMac → finishCopyToMac → clearContents() then writeObjects(→ false).
+        // → copyToMac → finishCopyToMac → prepareForNewContents(with:) then writeObjects(→ false).
         vc.copy(nil)
         try await wrote.wait { pasteboard.writeAttempts == 1 }
 
@@ -159,9 +159,36 @@ struct ClipboardContentViewControllerRetentionTests {
         // leaves the registry empty — the providers deallocate with the copy Task's
         // local array, never getting a finish callback (so no rollback is needed).
         #expect(registry.countForTesting == 0)
-        // clearContents ran before the failed write — a latent wipe-on-failure of
-        // the real clipboard, tracked as a follow-up and observable via this seam.
-        #expect(pasteboard.clearCount == 1)
+        // prepareForNewContents ran before the failed write — a latent
+        // wipe-on-failure of the real clipboard, tracked as a follow-up and
+        // observable via this seam.
+        #expect(pasteboard.prepareCount == 1)
+        // Marked host-only even though the write went on to fail — the option is
+        // applied unconditionally up front, before writeObjects is attempted.
+        #expect(pasteboard.lastPrepareOptions == .currentHostOnly)
+    }
+
+    @Test("copyToMac marks the host pasteboard write .currentHostOnly (#560)")
+    func copyToMacMarksHostOnly() async throws {
+        let registry = LazyClipboardProviderRegistry()
+        defer { registry.releaseAllForTesting() }
+        let pasteboard = FakeWritePasteboard()
+        let wrote = AsyncGate()
+        pasteboard.onWrite = { wrote.notify() }
+
+        let service = FakeClipboardService(content: ClipboardContent(text: "host only"))
+        let instance = makeInstance()
+        instance.clipboardService = service
+        let vc = ClipboardContentViewController(
+            instance: instance, viewModel: makeViewModel(),
+            writePasteboard: pasteboard, providerRegistry: registry)
+
+        vc.copy(nil)
+        try await wrote.wait { pasteboard.writeAttempts == 1 }
+
+        // Guest clipboard content must never be re-advertised to the user's other
+        // Apple-Account-linked devices over Universal Clipboard (#560).
+        #expect(pasteboard.lastPrepareOptions == .currentHostOnly)
     }
 }
 
@@ -293,7 +320,8 @@ private final class FakeClipboardService: ClipboardServicing {
 /// fires inside `writeObjects` so a test can await the write attempt event-driven
 /// rather than polling.
 private final class FakeWritePasteboard: HostWritePasteboard {
-    private(set) var clearCount = 0
+    private(set) var prepareCount = 0
+    private(set) var lastPrepareOptions: NSPasteboard.ContentsOptions?
     private(set) var writeAttempts = 0
     var failNextWrite = false
     var onWrite: (() -> Void)?
@@ -301,9 +329,10 @@ private final class FakeWritePasteboard: HostWritePasteboard {
     /// Bumped on every successful write so it mirrors `NSPasteboard.changeCount`.
     private(set) var changeCount = 0
 
-    @discardableResult func clearContents() -> Int {
-        clearCount += 1
-        return clearCount
+    @discardableResult func prepareForNewContents(with options: NSPasteboard.ContentsOptions) -> Int {
+        prepareCount += 1
+        lastPrepareOptions = options
+        return prepareCount
     }
 
     func writeObjects(_ objects: [any NSPasteboardWriting]) -> Bool {

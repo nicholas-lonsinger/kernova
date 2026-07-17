@@ -221,6 +221,10 @@ toggle and (in gated mode) explicit user intent.
 - **Honor pasteboard privacy markers.** Transient / auto-generated snapshots
   (`org.nspasteboard.*`) are not synced. Concealed (password) content may sync but its bytes
   must never reach a view — only its presence is shown (§5).
+- **Guest→host writes never leave the host.** `HostClipboardPublisher` marks every "Copy to Mac"
+  pasteboard write `.currentHostOnly`, unconditionally — guest content becomes host-owned data on
+  arrival and must not be re-advertised to the user's other Apple-Account-linked devices over
+  Universal Clipboard (#560).
 - Before non-trusted guest workloads are supported, the vsock listener must authenticate per VM.
 
 ### 11. Sandbox-forward by construction
@@ -319,6 +323,7 @@ fix, not just whether to fix it. (macOS-guest issues only; Linux/Windows out of 
 | **#330** — preference to disable the guest-agent install prompt | §10 (consent/UX) | Peripheral to transport; a consent/UX affordance, not a data-path change. |
 | **#499** — a stale cancel/abort for one pull attempt can land on a same-id retry instead | §9 idempotent/bidirectional abort | The `transfer_id`'s determinism from `(generation, repIndex, direction)` is load-bearing (cancel re-derives it; `cancelPull`'s race guard depends on it) — an id-format change to disambiguate attempts was rejected as disproportionate. ✓ **Resolved as documented-benign** — the residual (a spurious re-abort/retry, never corruption) is pinned by a regression test and the invariant is documented on `ClipboardTransferID` itself. |
 | **#500** — a duplicate pull registration for the same id silently overwrites the prior one | §9 wake immediately, not a backstop stall | `LazyPullCoordinator.pull`/`ClipboardStreamReceiver.awaitTransfer` had no guard against a concurrent duplicate registration (e.g. a File Provider fetch retry after a dropped owner connection). ✓ **Resolved** — a duplicate registration supersedes the prior one, resolving it immediately via a distinct `.superseded` outcome (not `.cancelled`, which would let the displaced caller tear down the live successor's awaiter). |
+| **#560** — Copy to Mac advertises guest clipboard content to other devices over Universal Clipboard | §10 Trust boundary | `HostClipboardPublisher` prepared every write with `clearContents()`, which leaves the pasteboard cross-device-advertisable. ✓ **Resolved** — every host write now prepares with `prepareForNewContents(with: .currentHostOnly)` instead, applied unconditionally at the single inbound-publication choke point (§4) on every write, since the option does not survive a later prepare/clear. |
 
 ---
 
