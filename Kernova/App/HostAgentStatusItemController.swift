@@ -19,7 +19,9 @@ import os
 /// gains an explanatory line, an "Enable in System Settings…" command, and a
 /// "Stop Reminding Me" command that silences just the badge — the passive
 /// affordances (the clipboard window's `ClipboardEnablementBanner`, this same
-/// menu line) stay regardless of dismissal.
+/// menu line) stay regardless of dismissal. A registration/install failure
+/// (`.unavailable`, #591) badges the icon too, with its own non-dismissible
+/// explanatory line (no toggle to flip, so no enable/stop commands).
 @MainActor
 final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     private static let logger = Logger(subsystem: "app.kernova", category: "HostAgentStatusItem")
@@ -79,12 +81,15 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
 
     // MARK: - File Provider reminder
 
-    /// Whether the proactive badge/menu-command reminder should currently show.
+    /// Whether the proactive status-item badge should currently show.
     ///
     /// Distinct from the always-present passive menu line below, which shows
-    /// whenever the toggle is off regardless of dismissal.
+    /// whenever the toggle is off regardless of dismissal. Covers both the
+    /// dismissible `.needsEnabling` nudge and the non-dismissible
+    /// `.unavailable` failure badge (#591) — see `ClipboardFileProviderReminder
+    /// .shouldShowBadge`.
     private var reminderActive: Bool {
-        ClipboardFileProviderReminder.shouldShowReminder(
+        ClipboardFileProviderReminder.shouldShowBadge(
             availability: HostClipboardFileProvider.shared.availability,
             dismissed: preferences.fileProviderReminderDismissed)
     }
@@ -141,7 +146,17 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
             statusItem.button?.toolTip = countLine
             return
         }
-        statusItem.button?.toolTip = "\(countLine)\n\(ClipboardFileProviderReminder.hostDegradedSummary())"
+        statusItem.button?.toolTip = "\(countLine)\n\(badgeSummary())"
+    }
+
+    /// The badge tooltip's second line for the current availability, picking
+    /// the distinct `.unavailable` (#591) copy over the routine
+    /// `.needsEnabling` (#581) copy so an install/signing problem reads
+    /// differently from "flip this toggle".
+    private func badgeSummary() -> String {
+        HostClipboardFileProvider.shared.availability == .unavailable
+            ? ClipboardFileProviderReminder.hostUnavailableSummary()
+            : ClipboardFileProviderReminder.hostDegradedSummary()
     }
 
     // MARK: - NSMenuDelegate
@@ -177,6 +192,11 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
                 menu.addItem(stop)
             }
 
+            menu.addItem(.separator())
+        } else if availability == .unavailable {
+            // Registration/install failure (#591) — no user toggle to flip, so
+            // no enable/stop commands; the explanatory line is the correction.
+            addInfoItem(ClipboardFileProviderReminder.hostUnavailableSummary())
             menu.addItem(.separator())
         }
 

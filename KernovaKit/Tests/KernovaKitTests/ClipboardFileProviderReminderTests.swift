@@ -28,6 +28,40 @@ struct ClipboardFileProviderReminderTests {
         }
     }
 
+    // MARK: - shouldShowBadge
+
+    @Test("badge shows for .needsEnabling only when not dismissed")
+    func badgeShowsForNeedsEnablingWhenNotDismissed() {
+        #expect(
+            ClipboardFileProviderReminder.shouldShowBadge(
+                availability: .needsEnabling, dismissed: false) == true)
+        #expect(
+            ClipboardFileProviderReminder.shouldShowBadge(
+                availability: .needsEnabling, dismissed: true) == false)
+    }
+
+    @Test("badge shows for .unavailable regardless of dismissed (#591)")
+    func badgeAlwaysShowsForUnavailable() {
+        #expect(
+            ClipboardFileProviderReminder.shouldShowBadge(
+                availability: .unavailable, dismissed: false) == true)
+        #expect(
+            ClipboardFileProviderReminder.shouldShowBadge(
+                availability: .unavailable, dismissed: true) == true)
+    }
+
+    @Test("badge never shows for .inactive or .ready, dismissed or not")
+    func badgeNeverShowsForInactiveOrReady() {
+        for availability: FileProviderAvailability in [.inactive, .ready] {
+            #expect(
+                ClipboardFileProviderReminder.shouldShowBadge(
+                    availability: availability, dismissed: false) == false)
+            #expect(
+                ClipboardFileProviderReminder.shouldShowBadge(
+                    availability: availability, dismissed: true) == false)
+        }
+    }
+
     // MARK: - Degraded-mode summaries
 
     @Test("hostDegradedSummary mentions files, not text/images, as limited")
@@ -52,6 +86,43 @@ struct ClipboardFileProviderReminderTests {
     func summariesDiffer() {
         #expect(
             ClipboardFileProviderReminder.hostDegradedSummary()
+                != ClipboardFileProviderReminder.guestDegradedSummary())
+    }
+
+    // MARK: - Unavailable-mode summaries (#591)
+
+    @Test("hostUnavailableSummary mentions files, not text/images, as unavailable")
+    func hostUnavailableSummaryMentionsFiles() {
+        let summary = ClipboardFileProviderReminder.hostUnavailableSummary()
+        #expect(summary.contains("Text and images copy normally"))
+        #expect(summary.contains("unavailable"))
+    }
+
+    @Test("guestUnavailableSummary makes no size promise")
+    func guestUnavailableSummaryMakesNoSizePromise() {
+        let summary = ClipboardFileProviderReminder.guestUnavailableSummary()
+        #expect(summary.contains("Text and images paste normally"))
+        #expect(summary.contains("unavailable"))
+        // #561: the host→guest direction has no deadline-safe size cap yet, so
+        // the guest-side copy must never cite a byte figure a user could rely on.
+        #expect(!summary.contains("MB"))
+        #expect(!summary.contains("MiB"))
+    }
+
+    @Test("host and guest unavailable summaries are distinct")
+    func unavailableSummariesDiffer() {
+        #expect(
+            ClipboardFileProviderReminder.hostUnavailableSummary()
+                != ClipboardFileProviderReminder.guestUnavailableSummary())
+    }
+
+    @Test("unavailable summaries are distinct from degraded-mode summaries")
+    func unavailableSummariesDifferFromDegradedSummaries() {
+        #expect(
+            ClipboardFileProviderReminder.hostUnavailableSummary()
+                != ClipboardFileProviderReminder.hostDegradedSummary())
+        #expect(
+            ClipboardFileProviderReminder.guestUnavailableSummary()
                 != ClipboardFileProviderReminder.guestDegradedSummary())
     }
 

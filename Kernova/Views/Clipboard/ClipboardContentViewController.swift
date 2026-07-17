@@ -591,16 +591,27 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         viewModel?.updateConfiguration(of: instance) { $0.clipboardPassthroughEnabled = false }
     }
 
-    /// Reveals the top-of-window banner only in the `.needsEnabling` state.
-    ///
-    /// That's the one host "Copy to Mac" File Provider state the user can act on
-    /// (registered but the System-Settings toggle is off); every other state
-    /// (off, ready, or an install problem) keeps it collapsed.
+    /// Reveals the top-of-window banner for the host "Copy to Mac" File
+    /// Provider states that need attention: `.needsEnabling` (registered but
+    /// the System-Settings toggle is off — the user can act) and
+    /// `.unavailable` (a registration/install failure with no toggle to flip,
+    /// #591). `.inactive`/`.ready` keep it collapsed. `ClipboardEnablementBanner
+    /// .present(_:)` picks the mode-appropriate copy and button visibility.
     private func updateEnablementBanner() {
-        let needsEnabling = HostClipboardFileProvider.shared.availability == .needsEnabling
-        guard enablementBanner.isHidden == needsEnabling else { return }
-        enablementBanner.isHidden = !needsEnabling
-        bannerCollapsed.isActive = !needsEnabling
+        let visible: Bool
+        switch HostClipboardFileProvider.shared.availability {
+        case .needsEnabling:
+            enablementBanner.present(.needsEnabling)
+            visible = true
+        case .unavailable:
+            enablementBanner.present(.unavailable)
+            visible = true
+        case .inactive, .ready:
+            visible = false
+        }
+        guard enablementBanner.isHidden == visible else { return }
+        enablementBanner.isHidden = !visible
+        bannerCollapsed.isActive = !visible
     }
 
     /// Opens System Settings so the user can enable the host File Provider
