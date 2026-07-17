@@ -1,28 +1,51 @@
 import Foundation
 
-/// Decision + copy for the "enable File Provider" status-item reminder (#581).
+/// Decision + copy for the File Provider status-item badge (#581) and its
+/// `.unavailable` counterpart (#591).
 ///
 /// Shared by the host app (`HostAgentStatusItemController`) and the guest
-/// agent (`AgentStatusItemController`) so the badge-visibility rule lives in
-/// one place; each side supplies its own direction-specific degraded-mode
-/// summary, since the toggle-off fallback differs between the two directions
-/// (see the per-method docs). Free of AppKit so it's unit-testable without a
-/// status item — the same pure-mapper convention as `AgentMenuText` and
-/// `MicPermissionPresentation`.
+/// agent (`AgentStatusItemController`) so the badge-visibility rules live in
+/// one place; each side supplies its own direction-specific summaries, since
+/// the toggle-off (and unavailable) fallback differs between the two
+/// directions (see the per-method docs). Free of AppKit so it's unit-testable
+/// without a status item — the same pure-mapper convention as `AgentMenuText`
+/// and `MicPermissionPresentation`.
 public enum ClipboardFileProviderReminder {
-    /// Whether the status-item badge (and its menu "Stop Reminding Me"
-    /// command) should currently show.
+    /// Whether the menu's dismissible "Stop Reminding Me" command applies to
+    /// the current availability.
     ///
     /// Only `.needsEnabling` — a registered domain the user hasn't flipped the
-    /// System-Settings toggle for — is actionable; `.inactive` (clipboard
-    /// sharing off), `.ready`, and `.unavailable` (an install/signing problem,
-    /// not a user toggle) never show a badge. `dismissed` silences the current
-    /// `.needsEnabling` episode — see `dismissalAfterAvailabilityChange` for
-    /// when the owner should clear it.
+    /// System-Settings toggle for — is a routine, silenceable nudge (every
+    /// fresh install hits it, since the toggle defaults off); `.inactive`
+    /// (clipboard sharing off), `.ready`, and `.unavailable` never offer this
+    /// command. `dismissed` silences the current `.needsEnabling` episode —
+    /// see `dismissalAfterAvailabilityChange` for when the owner should clear
+    /// it. For whether the status-item badge itself should show, see
+    /// `shouldShowBadge` — `.unavailable` badges too, but isn't dismissible.
     public static func shouldShowReminder(
         availability: FileProviderAvailability, dismissed: Bool
     ) -> Bool {
         availability == .needsEnabling && !dismissed
+    }
+
+    /// Whether the proactive status-item badge (and tooltip) should currently
+    /// show.
+    ///
+    /// `.needsEnabling` is the routine, dismissible nudge covered by
+    /// `shouldShowReminder` above. `.unavailable` (#591) is a should-never-
+    /// happen registration/install failure with no user toggle to flip — it
+    /// always badges, regardless of `dismissed`, until the domain becomes
+    /// usable again (`dismissalAfterAvailabilityChange` still resets
+    /// `dismissed` to `false` on `.unavailable`, so a later `.needsEnabling`
+    /// episode isn't pre-silenced). `.inactive` and `.ready` never badge.
+    public static func shouldShowBadge(
+        availability: FileProviderAvailability, dismissed: Bool
+    ) -> Bool {
+        switch availability {
+        case .needsEnabling: return !dismissed
+        case .unavailable: return true
+        case .inactive, .ready: return false
+        }
     }
 
     /// The dismissal value the owner should persist after an availability
@@ -64,6 +87,24 @@ public enum ClipboardFileProviderReminder {
     /// so this must not claim a size ceiling a user could rely on.
     public static func guestDegradedSummary() -> String {
         "Text and images paste normally. Enable File Provider to reliably paste files from your Mac."
+    }
+
+    /// Unavailable-mode summary for the host side (guest→host "Copy to Mac").
+    ///
+    /// `.unavailable` (#591) is a registration/install failure, not a user
+    /// toggle — there's nothing to enable in System Settings, so unlike
+    /// `hostDegradedSummary` this doesn't point there; reopening the app
+    /// retries domain registration from scratch.
+    public static func hostUnavailableSummary() -> String {
+        "Text and images copy normally. File sharing for larger files is unavailable — reopen Kernova to restore it."
+    }
+
+    /// Unavailable-mode summary for the guest side (host→guest paste).
+    ///
+    /// Mirrors `hostUnavailableSummary`, but the guest's corrective action is
+    /// reinstalling the guest agent rather than reopening an app.
+    public static func guestUnavailableSummary() -> String {
+        "Text and images paste normally. File sharing from your Mac is unavailable — reinstall the Kernova guest agent to restore it."
     }
 
     /// Actionable command opening System Settings to enable the extension —

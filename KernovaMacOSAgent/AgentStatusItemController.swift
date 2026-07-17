@@ -22,7 +22,10 @@ import os
 /// the icon gets a small attention badge and the dropdown gains a "Stop
 /// Reminding Me" command that silences just the badge — the passive
 /// explanatory line + "Enable in System Settings…" command stay regardless of
-/// dismissal. Mirrors the host app's `HostAgentStatusItemController`.
+/// dismissal. A registration/install failure (`.unavailable`, #591) badges the
+/// icon too, with its own non-dismissible explanatory line (no toggle to
+/// flip, so no enable/stop commands). Mirrors the host app's
+/// `HostAgentStatusItemController`.
 @MainActor
 final class AgentStatusItemController: NSObject, NSMenuDelegate {
     private static let logger = Logger(subsystem: "app.kernova.macosagent", category: "AgentStatusItem")
@@ -96,12 +99,15 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
         setIcon(for: connectionState())
     }
 
-    /// Whether the proactive badge/menu-command reminder should currently show.
+    /// Whether the proactive status-item badge should currently show.
     ///
     /// Distinct from the always-present passive menu line below, which shows
-    /// whenever the toggle is off regardless of dismissal.
+    /// whenever the toggle is off regardless of dismissal. Covers both the
+    /// dismissible `.needsEnabling` nudge and the non-dismissible
+    /// `.unavailable` failure badge (#591) — see `ClipboardFileProviderReminder
+    /// .shouldShowBadge`.
     private var reminderActive: Bool {
-        ClipboardFileProviderReminder.shouldShowReminder(
+        ClipboardFileProviderReminder.shouldShowBadge(
             availability: fileProviderAvailability(),
             dismissed: preferences.fileProviderReminderDismissed)
     }
@@ -132,8 +138,17 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
         image.isTemplate = true
         statusItem.button?.title = ""
         statusItem.button?.image = reminderActive ? image.withAttentionBadge() : image
-        statusItem.button?.toolTip =
-            reminderActive ? ClipboardFileProviderReminder.guestDegradedSummary() : nil
+        statusItem.button?.toolTip = reminderActive ? badgeSummary() : nil
+    }
+
+    /// The badge tooltip text for the current availability, picking the
+    /// distinct `.unavailable` (#591) copy over the routine `.needsEnabling`
+    /// (#581) copy so an install/signing problem reads differently from
+    /// "flip this toggle".
+    private func badgeSummary() -> String {
+        fileProviderAvailability() == .unavailable
+            ? ClipboardFileProviderReminder.guestUnavailableSummary()
+            : ClipboardFileProviderReminder.guestDegradedSummary()
     }
 
     // MARK: - NSMenuDelegate
@@ -171,6 +186,11 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
                 stop.target = self
                 menu.addItem(stop)
             }
+            menu.addItem(.separator())
+        } else if availability == .unavailable {
+            // Registration/install failure (#591) — no user toggle to flip, so
+            // no enable/stop commands; the explanatory line is the correction.
+            addInfoItem(ClipboardFileProviderReminder.guestUnavailableSummary())
             menu.addItem(.separator())
         }
 
