@@ -27,6 +27,15 @@ Guiding principles for host↔guest clipboard sharing in Kernova.
   §3 (pay on consume) are how we match that; the synchronous pasteboard provider is reserved for
   inline content that comfortably fits the OS paste deadline (plus the size-capped file fallback
   when the File Provider toggle is off — see §2's honest caveats).
+  - **"On demand at paste" is not a platform guarantee — it is ours to build.** The guest's OS
+    continuity-pasteboard advertiser (`useractivityd`, via pboard's remote layer) fetches the
+    promised `public.file-url` flavor from the publishing provider on **every new pasteboard
+    generation**, independent of paste and independent of Apple Account state — observed live on
+    a guest with no Apple Account signed in, `useractivityd`/`sharingd`/`rapportd` all running
+    (#542 ground-truth). This advertiser is account-independent OS infrastructure, distinct from
+    Universal Clipboard the feature; this section's reference model must not be read as implying
+    the fetch only happens when Universal Clipboard is configured. See §3's caveat for the
+    consequence for representations whose fulfillment materializes bytes.
 
 ---
 
@@ -111,7 +120,10 @@ Honest caveats this principle does **not** waive:
   is **accepted-under-constraint**, not a §1 defect: it is deadline-derived (the OS paste
   clock, not Kernova, bounds the fallback), exists only on the toggle-off path, and vanishes
   entirely once the File Provider is enabled — `fetchContents` has no deadline and no size
-  limit.
+  limit. On this same toggle-off fallback, the pull is not paste-gated either: the guest's OS
+  continuity-pasteboard advertiser fetches the promised flavor at offer time (§3's caveat),
+  which is why the deadline-safe cap and #561's cost model are analyzed at **offer** time, not
+  at paste (#542).
 - **Host "Copy to Mac" routes a plain-file rep lazily only when exactly one is offered (D2
   scope).** If two or more plain-file reps are present, all of them are dropped (the user sees
   "Only one file can be copied to your Mac at a time"), regardless of the toggle. Unlike the
@@ -127,6 +139,16 @@ bounded pull — see §5).
 
 - No surface may eagerly read a full payload "to be ready." Cost that is paid for bytes the user
   never pastes is forbidden.
+- **Honest caveat: "pulled only on paste" assumes every published flavor is cheap to produce.**
+  On every new pasteboard generation, the guest's OS continuity-pasteboard advertiser fetches the
+  promised `public.file-url` flavor from the publishing provider — with no user paste (Scope's
+  Universal Clipboard note, #542 ground-truth). A dataless File Provider placeholder URL and
+  inline concrete values satisfy that fetch for free; a **sync-path file promise does not** —
+  its fulfillment runs the full pull (`pullRepresentation`), so the advertiser's offer-time fetch
+  materializes the entire file with no paste ever issued. The rule this establishes: a published
+  representation is only genuinely lazy if **every** flavor it exposes is cheap to produce at
+  registration time, not merely at the moment we intend it to be consumed. This is where the
+  §2 toggle-off fallback bites today (#561).
 - This applies in **both directions**, including host "Copy to Mac": the host pasteboard write
   must be lazy (a provider), not an eager read at the moment the button is clicked.
 - **Serializing a directory into an archive is materialization.** Building a folder's `.aar` at
