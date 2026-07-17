@@ -18,6 +18,10 @@ import os
 /// destination pastes. The providers outlive this object — a paste can land long
 /// after the window (or the VM) is gone — so they are handed to the app-scoped
 /// `LazyClipboardProviderRegistry` on a successful write.
+///
+/// Every write is marked `.currentHostOnly` (CLIPBOARD.md §10): guest content
+/// becomes host-owned data on arrival, so it must not be re-advertised to the
+/// user's other Apple-Account-linked devices over Universal Clipboard.
 @MainActor
 final class HostClipboardPublisher {
     /// Label for the host-side clipboard staging root.
@@ -141,7 +145,11 @@ final class HostClipboardPublisher {
         }
 
         let pasteboard = writePasteboard
-        pasteboard.clearContents()
+        // RATIONALE: `.currentHostOnly` (see class doc) is reset by the next
+        // `prepareForNewContents`/`clearContents`, so it must be (re)applied at
+        // this single inbound-publication choke point on every write, not once
+        // at init.
+        pasteboard.prepareForNewContents(with: .currentHostOnly)
         guard pasteboard.writeObjects(items) else {
             // The write failed, so the providers were never retained — the local
             // array drops them and no finish callback fires.
