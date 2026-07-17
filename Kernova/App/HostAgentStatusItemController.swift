@@ -1,4 +1,5 @@
 import AppKit
+import KernovaKit
 import os
 
 /// Owns the resident agent's menu-bar `NSStatusItem` and its dropdown.
@@ -10,6 +11,15 @@ import os
 /// on it), and ends with Quit; it is rebuilt from live view-model state each time
 /// it opens. A live tooltip reflects the running count. Mirrors the guest agent's
 /// `AgentStatusItemController`.
+///
+/// Also surfaces a proactive "enable File Provider" reminder (#581): while the
+/// host "Copy to Mac" domain is registered but the user hasn't flipped the
+/// System-Settings toggle (`HostClipboardFileProvider.shared.availability ==
+/// .needsEnabling`), the icon gets a small attention badge and the dropdown
+/// gains an explanatory line, an "Enable in System Settings…" command, and a
+/// "Stop Reminding Me" command that silences just the badge — the passive
+/// affordances (the clipboard window's `ClipboardEnablementBanner`, this same
+/// menu line) stay regardless of dismissal.
 @MainActor
 final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     private static let logger = Logger(subsystem: "app.kernova", category: "HostAgentStatusItem")
@@ -19,20 +29,25 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     private let menu = NSMenu()
 
     private let viewModel: VMLibraryViewModel
+    private let preferences: AppPreferences
     /// Summons the GUI; a non-`nil` id selects that VM first.
     private let onOpen: (UUID?) -> Void
     private let onQuit: () -> Void
 
     /// Keeps the tooltip in sync with how many VMs are running headless.
     private var runningObservation: ObservationLoop?
+    /// Keeps the icon/tooltip in sync with the host File Provider toggle.
+    private var fileProviderObservation: ObservationLoop?
 
     init(
         viewModel: VMLibraryViewModel,
+        preferences: AppPreferences = .shared,
         onOpen: @escaping (UUID?) -> Void,
         onQuit: @escaping () -> Void
     ) {
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         self.viewModel = viewModel
+        self.preferences = preferences
         self.onOpen = onOpen
         self.onQuit = onQuit
         super.init()
@@ -52,6 +67,39 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
             },
             apply: { [weak self] in self?.updateTooltip() }
         )
+
+        // Keeps the badge live as the System-Settings toggle changes — the
+        // domain-change observer inside `FileProviderDomainHost` reacts
+        // instantly, so this needs no polling.
+        fileProviderObservation = observeRecurring(
+            track: { _ = HostClipboardFileProvider.shared.availability },
+            apply: { [weak self] in self?.fileProviderAvailabilityChanged() }
+        )
+    }
+
+    // MARK: - File Provider reminder
+
+    /// Whether the proactive badge/menu-command reminder should currently show.
+    ///
+    /// Distinct from the always-present passive menu line below, which shows
+    /// whenever the toggle is off regardless of dismissal.
+    private var reminderActive: Bool {
+        ClipboardFileProviderReminder.shouldShowReminder(
+            availability: HostClipboardFileProvider.shared.availability,
+            dismissed: preferences.fileProviderReminderDismissed)
+    }
+
+    private func fileProviderAvailabilityChanged() {
+        // A fresh disablement is a louder event than a dismissal the user once
+        // chose to silence — reset it once the toggle is confirmed working
+        // again, so a later, genuinely new disablement nags again.
+        if HostClipboardFileProvider.shared.availability == .ready,
+            preferences.fileProviderReminderDismissed
+        {
+            preferences.fileProviderReminderDismissed = false
+        }
+        setIcon()
+        updateTooltip()
     }
 
     // MARK: - Icon / tooltip
@@ -75,10 +123,14 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
             return
         }
         image.isTemplate = true
-        statusItem.button?.image = image
+        statusItem.button?.image = reminderActive ? image.withAttentionBadge(color: StatusColor.warning) : image
     }
 
     private func updateTooltip() {
+        if reminderActive {
+            statusItem.button?.toolTip = ClipboardFileProviderReminder.hostDegradedSummary()
+            return
+        }
         let count = viewModel.instances.lazy.filter(\.isKeepingAppAlive).count
         switch count {
         case 0: statusItem.button?.toolTip = "Kernova"
@@ -97,6 +149,28 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         menu.addItem(open)
 
         menu.addItem(.separator())
+
+        // Passive affordance: shown whenever the toggle is off, independent of
+        // whether the proactive badge reminder was dismissed (#581).
+        if HostClipboardFileProvider.shared.availability == .needsEnabling {
+            addInfoItem(ClipboardFileProviderReminder.hostDegradedSummary())
+
+            let enable = NSMenuItem(
+                title: "Enable in System Settings…", action: #selector(enableFileSharingTapped),
+                keyEquivalent: "")
+            enable.target = self
+            menu.addItem(enable)
+
+            if reminderActive {
+                let stop = NSMenuItem(
+                    title: "Stop Reminding Me", action: #selector(stopRemindingTapped),
+                    keyEquivalent: "")
+                stop.target = self
+                menu.addItem(stop)
+            }
+
+            menu.addItem(.separator())
+        }
 
         let running = viewModel.instances.filter(\.isKeepingAppAlive)
         if running.isEmpty {
@@ -122,6 +196,13 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         menu.addItem(quit)
     }
 
+    /// Appends a disabled, informational (non-actionable) line to the dropdown.
+    private func addInfoItem(_ title: String) {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.isEnabled = false
+        menu.addItem(item)
+    }
+
     // MARK: - Actions
 
     @objc private func openTapped() { onOpen(nil) }
@@ -131,4 +212,21 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     }
 
     @objc private func quitTapped() { onQuit() }
+
+    /// Opens System Settings so the user can enable the host File Provider extension.
+    ///
+    /// Tries the shared `x-apple.systempreferences:` deep links in order (see
+    /// `ClipboardFileProviderSettings.enablementDeepLinks`).
+    @objc private func enableFileSharingTapped() {
+        for string in ClipboardFileProviderSettings.enablementDeepLinks {
+            if let url = URL(string: string), NSWorkspace.shared.open(url) { return }
+        }
+        Self.logger.error("Failed to open File Providers settings deep link")
+    }
+
+    @objc private func stopRemindingTapped() {
+        preferences.fileProviderReminderDismissed = true
+        setIcon()
+        updateTooltip()
+    }
 }

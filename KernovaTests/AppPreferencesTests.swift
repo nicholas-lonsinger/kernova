@@ -91,4 +91,23 @@ struct AppPreferencesTests {
             #expect(prefs.vmOrder == nil)
         }
     }
+
+    @Test("fileProviderReminderDismissed defaults to false")
+    func fileProviderReminderDismissedDefaultsToFalse() throws {
+        try withEphemeralPreferences { prefs, _ in
+            #expect(prefs.fileProviderReminderDismissed == false)
+        }
+    }
+
+    @Test("fileProviderReminderDismissed round-trips through UserDefaults")
+    func fileProviderReminderDismissedRoundTrips() throws {
+        try withEphemeralPreferences { prefs, defaults in
+            prefs.fileProviderReminderDismissed = true
+            #expect(prefs.fileProviderReminderDismissed == true)
+            #expect(defaults.bool(forKey: "fileProviderReminderDismissed") == true)
+
+            prefs.fileProviderReminderDismissed = false
+            #expect(prefs.fileProviderReminderDismissed == false)
+        }
+    }
 }

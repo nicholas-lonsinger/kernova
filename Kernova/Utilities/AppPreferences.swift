@@ -29,6 +29,7 @@ struct AppPreferences {
         // Not a namespacing inconsistency to "fix" — changing them drops saved state.
         static let lastSelectedVMID = "lastSelectedVMID"
         static let vmOrder = "vmOrder"
+        static let fileProviderReminderDismissed = "fileProviderReminderDismissed"
     }
 
     /// When `true`, advanced menu actions (e.g. *Start in Recovery Mode*) are
@@ -70,5 +71,17 @@ struct AppPreferences {
     var vmOrder: [UUID]? {
         get { defaults.stringArray(forKey: Keys.vmOrder)?.compactMap { UUID(uuidString: $0) } }
         nonmutating set { defaults.set(newValue?.map(\.uuidString), forKey: Keys.vmOrder) }
+    }
+
+    /// Whether the user dismissed the current "enable File Provider"
+    /// status-item reminder (#581).
+    ///
+    /// Set by "Stop Reminding Me" in `HostAgentStatusItemController`'s
+    /// dropdown; reset back to `false` once availability reaches `.ready`, so
+    /// a later, genuinely new disablement nags again rather than staying
+    /// silenced forever.
+    var fileProviderReminderDismissed: Bool {
+        get { defaults.bool(forKey: Keys.fileProviderReminderDismissed) }
+        nonmutating set { defaults.set(newValue, forKey: Keys.fileProviderReminderDismissed) }
     }
 }

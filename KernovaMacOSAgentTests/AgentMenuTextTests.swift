@@ -52,4 +52,16 @@ struct AgentMenuTextTests {
     func statusSubmenuTitle() {
         #expect(AgentMenuText.statusSubmenu() == "Status")
     }
+
+    // MARK: - File Provider reminder (#581)
+
+    @Test("fileProviderEnableCommand title")
+    func fileProviderEnableCommand() {
+        #expect(AgentMenuText.fileProviderEnableCommand() == "Enable in System Settings…")
+    }
+
+    @Test("fileProviderStopRemindingCommand title")
+    func fileProviderStopRemindingCommand() {
+        #expect(AgentMenuText.fileProviderStopRemindingCommand() == "Stop Reminding Me")
+    }
 }

@@ -125,14 +125,6 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         let fileProviderHost = FileProviderDomainHost(
             config: .guest(), pullProvider: clipboardAgent)
         clipboardAgent.fileProvider = fileProviderHost
-        // Re-publish a live inbound offer through the File Provider once the
-        // domain becomes user-enabled — an offer that arrived before the
-        // availability probe settled (fresh VM / just-flipped toggle) missed the
-        // FP path and landed on the synchronous provider (#429). Delivered on
-        // main; the immediate `.inactive` delivery here is a no-op.
-        fileProviderHost.setAvailabilityObserver { [weak clipboardAgent] availability in
-            clipboardAgent?.fileProviderAvailabilityChanged(availability)
-        }
 
         // Control plane: always-on handshake/heartbeat/policy. `onPolicy` gates the
         // log + clipboard + File Provider capabilities; `onStateChange` drives the
@@ -177,6 +169,19 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
             },
             onQuit: { NSApp.terminate(nil) }
         )
+
+        // Re-publish a live inbound offer through the File Provider once the
+        // domain becomes user-enabled — an offer that arrived before the
+        // availability probe settled (fresh VM / just-flipped toggle) missed the
+        // FP path and landed on the synchronous provider (#429) — and refresh the
+        // status-item reminder badge (#581). Registered after both observers
+        // exist so this single observer slot (`setAvailabilityObserver` keeps
+        // only the most recent registration) can drive them together. Delivered
+        // on main; the immediate `.inactive` delivery here is a no-op for both.
+        fileProviderHost.setAvailabilityObserver { [weak self, weak clipboardAgent] availability in
+            clipboardAgent?.fileProviderAvailabilityChanged(availability)
+            self?.statusItemController?.fileProviderAvailabilityChanged(availability)
+        }
 
         installSignalHandlers(
             vsockConnection: vsockConnection,
