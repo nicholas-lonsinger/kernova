@@ -145,14 +145,10 @@ final class HostClipboardPublisher {
         }
 
         let pasteboard = writePasteboard
-        // RATIONALE: Guest clipboard content crosses the guest→host trust
-        // boundary here (CLIPBOARD.md §10) and becomes host-owned data, not the
-        // user's own cross-device clipboard content — so it must not be
-        // re-advertised to the user's other Apple-Account-linked devices over
-        // Universal Clipboard. `.currentHostOnly` is reset by the next
-        // `prepareForNewContents`/`clearContents`, so it has to be (re)applied
-        // at this single inbound-publication choke point on every write, not
-        // once at init.
+        // RATIONALE: `.currentHostOnly` (see class doc) is reset by the next
+        // `prepareForNewContents`/`clearContents`, so it must be (re)applied at
+        // this single inbound-publication choke point on every write, not once
+        // at init.
         pasteboard.prepareForNewContents(with: .currentHostOnly)
         guard pasteboard.writeObjects(items) else {
             // The write failed, so the providers were never retained — the local

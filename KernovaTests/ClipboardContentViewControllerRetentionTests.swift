@@ -164,30 +164,8 @@ struct ClipboardContentViewControllerRetentionTests {
         // observable via this seam.
         #expect(pasteboard.prepareCount == 1)
         // Marked host-only even though the write went on to fail — the option is
-        // applied unconditionally up front, before writeObjects is attempted.
-        #expect(pasteboard.lastPrepareOptions == .currentHostOnly)
-    }
-
-    @Test("copyToMac marks the host pasteboard write .currentHostOnly (#560)")
-    func copyToMacMarksHostOnly() async throws {
-        let registry = LazyClipboardProviderRegistry()
-        defer { registry.releaseAllForTesting() }
-        let pasteboard = FakeWritePasteboard()
-        let wrote = AsyncGate()
-        pasteboard.onWrite = { wrote.notify() }
-
-        let service = FakeClipboardService(content: ClipboardContent(text: "host only"))
-        let instance = makeInstance()
-        instance.clipboardService = service
-        let vc = ClipboardContentViewController(
-            instance: instance, viewModel: makeViewModel(),
-            writePasteboard: pasteboard, providerRegistry: registry)
-
-        vc.copy(nil)
-        try await wrote.wait { pasteboard.writeAttempts == 1 }
-
-        // Guest clipboard content must never be re-advertised to the user's other
-        // Apple-Account-linked devices over Universal Clipboard (#560).
+        // applied unconditionally up front, before writeObjects is attempted, so
+        // this failure-path write already proves every write is marked (#560).
         #expect(pasteboard.lastPrepareOptions == .currentHostOnly)
     }
 }
