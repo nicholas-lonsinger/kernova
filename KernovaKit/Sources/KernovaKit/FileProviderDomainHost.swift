@@ -189,7 +189,7 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     /// Notified on the main queue on every availability transition.
     ///
     /// Lets an owner mirror availability into observable UI state. Set on main;
-    /// invoked on main.
+    /// invoked on main. Single-slot; see `setAvailabilityObserver`.
     private var availabilityObserver: (@MainActor (FileProviderAvailability) -> Void)?
 
     /// Current File Provider usability, for the UI.
@@ -206,6 +206,20 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     /// The owner mirrors this into observable UI state; the domain-change
     /// observer keeps it live, so a user flipping the System-Settings toggle is
     /// reflected without a restart.
+    ///
+    /// Single-observer by design: each host instance has exactly one owner, so a
+    /// later call replaces the prior registration (standard setter semantics,
+    /// the same shape as a Cocoa `delegate`). An owner driving several consumers
+    /// fans them out inside its one closure — see the guest agent's
+    /// `AgentAppDelegate`, which forwards to both the #429 re-publish path and
+    /// the #581 status-item badge.
+    ///
+    /// `RATIONALE:` a multicast observer registry here would be speculative
+    /// structure for a second registrant that doesn't exist — no instance
+    /// registers twice today (the host side has one observer; the guest fans
+    /// out at its single call site). The single-slot contract is documented
+    /// here and at that call site instead of defended with new machinery. See
+    /// #588.
     public func setAvailabilityObserver(
         _ observer: @escaping @MainActor (FileProviderAvailability) -> Void
     ) {
