@@ -1037,9 +1037,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// representation at most once per offer — caching it so an image rep
     /// promised as both its UTI and `public.file-url` is fetched a single time —
     /// then formats it for the requested type. Returns `nil` (empty) on a stale
-    /// generation, a type this item never promised, a not-yet-cached rep the
-    /// availability-flip re-publish (#429) has since re-routed to the File
-    /// Provider (#510), or a failed pull.
+    /// generation, a type this item never promised, or a failed pull.
     private func provideData(
         _ type: NSPasteboard.PasteboardType, itemTypes: PromisedItem, generation: UInt64
     ) -> Data? {
