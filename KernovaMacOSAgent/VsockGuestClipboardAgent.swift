@@ -126,6 +126,18 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// the synchronous provider path. Set once on main at app wiring.
     weak var fileProvider: (any FileProviderPublishing)?
 
+    /// Whether the peer (host) advertised the folder placeholder-tree capability
+    /// (`clipboard.dirtree.v1`) — the mutually negotiated gate.
+    ///
+    /// Read at
+    /// offer-build and paste time: with it, a copied folder crosses as a File
+    /// Provider placeholder tree (source walked on demand, no archive); without
+    /// it, the eager-archive fallback. Wired from the control agent at app
+    /// startup; `{ false }` in tests and before the control Hello lands (safe —
+    /// the archive path always works). Thread-safe (the control agent's value is
+    /// lock-guarded).
+    var peerSupportsDirTree: @Sendable () -> Bool = { false }
+
     // MARK: - Main-queue state
 
     /// Live channel for the current connection, if any.
@@ -649,6 +661,9 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         let filename: String
         let byteCount: Int
         let isDirectory: Bool
+        /// Whether a directory is an OS package (.app/.rtfd), so the folder tree's
+        /// root gets a package content type.
+        let isPackage: Bool
     }
 
     /// Cheap main-queue metadata check for copied *files and folders*, one per
@@ -666,21 +681,22 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         for url in pasteboard.itemFileURLs where !staging.isInStagingRoot(url) {
             guard
                 let values = try? url.resourceValues(forKeys: [
-                    .contentTypeKey, .isDirectoryKey, .fileSizeKey,
+                    .contentTypeKey, .isDirectoryKey, .fileSizeKey, .isPackageKey,
                 ])
             else { continue }
             if values.isDirectory == true {
                 candidates.append(
                     FileCandidate(
-                        url: url, type: .folder, filename: url.lastPathComponent, byteCount: 0,
-                        isDirectory: true))
+                        url: url, type: values.contentType ?? .folder,
+                        filename: url.lastPathComponent, byteCount: 0, isDirectory: true,
+                        isPackage: values.isPackage == true))
             } else {
                 guard let type = values.contentType, let size = values.fileSize, size > 0
                 else { continue }
                 candidates.append(
                     FileCandidate(
                         url: url, type: type, filename: url.lastPathComponent, byteCount: size,
-                        isDirectory: false))
+                        isDirectory: false, isPackage: false))
             }
         }
         return candidates
@@ -702,9 +718,22 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         let generation = sendArchiveGeneration
         sendArchiveGeneration += 1
         let sendStaging = self.sendStaging
+        // With the folder placeholder-tree capability negotiated, a copied folder
+        // crosses as a `.directory` source rep (walked on demand, no archive);
+        // otherwise it is archived eagerly here (the old path). Read once, off the
+        // main queue below, so the decision is stable for this offer.
+        let dirTree = peerSupportsDirTree()
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let reps: [ClipboardContent.Representation] = candidates.compactMap { candidate in
                 if candidate.isDirectory {
+                    if dirTree {
+                        // Metadata-only stat-walk estimate for the offer; no archive.
+                        return ClipboardContent.Representation(
+                            directorySourceURL: candidate.url,
+                            estimatedByteCount: ClipboardDirectoryTree.estimatedByteCount(
+                                at: candidate.url),
+                            filename: candidate.filename, uti: candidate.type.identifier)
+                    }
                     return Self.archivedDirectoryRep(
                         candidate, staging: sendStaging, generation: generation)
                 }
@@ -765,6 +794,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             handleOffer(offer)
         case .clipboardRequest(let request):
             handleRequest(request)
+        case .clipboardTreeFetch(let fetch):
+            handleTreeFetch(fetch)
         case .clipboardRelease(let release):
             handleRelease(release)
         case .error(let error):
@@ -816,6 +847,19 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             return
         }
         let generation = currentOutboundGeneration
+        // A source-directory rep (folder placeholder tree) has no archive to
+        // stream: the consumer that couldn't route it through its File Provider is
+        // falling back to the archive path, so archive it at REQUEST time (off the
+        // main run loop) and stream that (#422 endgame — no eager copy-time
+        // archive). The tree path (listing + per-child) uses `ClipboardTreeFetch`,
+        // never this plain `ClipboardRequest`.
+        if case .directory(let sourceURL, _) = representation.source {
+            archiveAndStream(
+                sourceURL: sourceURL, folderName: representation.filename, request: request,
+                isCurrent: generation)
+            clipboardActivityStorage = .sentToHost
+            return
+        }
         sender?.startTransfer(
             transferID: request.transferID,
             generation: request.generation,
@@ -829,6 +873,69 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         Self.logger.debug(
             "Streaming clipboard rep \(repIndex, privacy: .public) (gen=\(request.generation, privacy: .public), \(representation.byteCount, privacy: .public) bytes)"
         )
+    }
+
+    /// Archives a source directory at request time and streams the `.aar` — the
+    /// toggle-off fallback for a folder the consumer couldn't route through its
+    /// File Provider.
+    ///
+    /// Runs off the main run loop (walk + LZFSE compress).
+    private func archiveAndStream(
+        sourceURL: URL, folderName: String, request: Kernova_V1_ClipboardRequest,
+        isCurrent: AtomicGeneration
+    ) {
+        guard let sender else { return }
+        let staging = self.sendStaging
+        let archiveGeneration = sendArchiveGeneration
+        sendArchiveGeneration += 1
+        let transferID = request.transferID
+        let requestGeneration = request.generation
+        let maxAccept = request.maxAcceptByteCount
+        DispatchQueue.global(qos: .userInitiated).async {
+            guard
+                let rep = try? ClipboardDirectoryArchive.archivedRepresentation(
+                    ofDirectoryAt: sourceURL, named: folderName, into: staging,
+                    generation: archiveGeneration)
+            else {
+                Self.logger.error(
+                    "Failed to archive folder '\(folderName, privacy: .public)' at request time")
+                sender.rejectRequest(
+                    transferID: transferID, code: "archive.error",
+                    message: "Could not archive the folder")
+                return
+            }
+            sender.startTransfer(
+                transferID: transferID, generation: requestGeneration, representation: rep,
+                maxAcceptByteCount: maxAccept, isInline: false,
+                isCurrent: { value in isCurrent.isCurrent(value) })
+        }
+    }
+
+    /// Serves a directory rep's placeholder-tree fetch (folder D1b): a tree
+    /// listing (empty `relative_path`) or one confined child file, streamed back
+    /// over the shared stream transport keyed by the fetch's `transfer_id`.
+    private func handleTreeFetch(_ fetch: Kernova_V1_ClipboardTreeFetch) {
+        guard let sender else { return }
+        guard let pending = pendingOutbound, pending.generation == fetch.generation else {
+            sender.rejectRequest(
+                transferID: fetch.transferID, code: "request.stale",
+                message: "Tree fetch for superseded generation \(fetch.generation)")
+            return
+        }
+        let repIndex = Int(fetch.repIndex)
+        guard repIndex < pending.content.representations.count,
+            let sourceURL = pending.content.representations[repIndex].directorySourceURL
+        else {
+            sender.rejectRequest(
+                transferID: fetch.transferID, code: "request.range",
+                message: "Tree fetch for a non-directory or out-of-range rep \(repIndex)")
+            return
+        }
+        let isCurrent = currentOutboundGeneration
+        ClipboardDirectoryTree.serveFetch(fetch, sourceURL: sourceURL, sender: sender) { value in
+            isCurrent.isCurrent(value)
+        }
+        clipboardActivityStorage = .sentToHost
     }
 
     // MARK: - Inbound (we are the receiver)
@@ -867,7 +974,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         // provider closure (#427 leading edge) — offer time only warms the
         // servicing path so a paste-time publish doesn't also pay
         // doorbell/extension-launch latency inside the paste.
-        if !Self.fileProviderEligibleIndices(in: offer.repInfo).isEmpty {
+        if !fileProviderEligibleIndices(in: offer.repInfo).isEmpty {
             fileProvider?.prepareForOffer()
         }
 
@@ -902,7 +1009,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     @discardableResult
     private func writePasteboardPromise(promise: InboundPromise, items: [PromisedItem]) -> Bool {
         let generation = promise.generation
-        let eligible = Set(Self.fileProviderEligibleIndices(in: promise.reps))
+        let eligible = Set(fileProviderEligibleIndices(in: promise.reps))
         var newProviders: [LazyClipboardDataProvider] = []
         let writes = items.map {
             item -> (types: [NSPasteboard.PasteboardType], provider: NSPasteboardItemDataProvider) in
@@ -944,19 +1051,26 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         return true
     }
 
-    /// Rep indices eligible for File-Provider routing: promisable, non-inline,
-    /// non-directory, named file reps.
+    /// Rep indices eligible for File-Provider routing: named, non-inline plain
+    /// file reps, plus directory reps when the folder placeholder-tree capability
+    /// (`clipboard.dirtree.v1`) is negotiated with the peer.
     ///
-    /// Directory reps stay on the synchronous path until D1b folders ship
-    /// (placeholder-tree design, PR 4 of the #376 arc); image-file reps are
-    /// inline (dual-flavor items) and also stay synchronous.
-    private static func fileProviderEligibleIndices(
+    /// Image-file reps are inline (dual-flavor items) and stay on the synchronous
+    /// path. A directory rep routes as a placeholder tree only when both sides
+    /// advertise the capability; otherwise it rides the synchronous archive
+    /// fallback. A directory's estimate `byteCount` may be 0 (an empty folder), so
+    /// it is not gated on a non-zero size.
+    private func fileProviderEligibleIndices(
         in reps: [Kernova_V1_ClipboardRepresentationInfo]
     ) -> [Int] {
-        reps.indices.filter { index in
+        let dirTree = peerSupportsDirTree()
+        return reps.indices.filter { index in
             let info = reps[index]
-            return !info.isInline && !info.isDirectory && !info.filename.isEmpty
-                && isPromisable(info)
+            guard !info.filename.isEmpty else { return false }
+            if info.isDirectory {
+                return dirTree && !ClipboardSnapshotPolicy.shouldSkipBeforeReading(uti: info.uti)
+            }
+            return !info.isInline && Self.isPromisable(info)
         }
     }
 
@@ -999,22 +1113,77 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         dispatchPrecondition(condition: .onQueue(.main))
         if let latched = promise.fpRoutedURLs { return latched }
         guard let fileProvider else { return [:] }
-        let eligible = Self.fileProviderEligibleIndices(in: promise.reps)
+        let eligible = fileProviderEligibleIndices(in: promise.reps)
         guard !eligible.isEmpty else { return [:] }
-        let items = eligible.map { index -> FileProviderPublishItem in
+        // Plain files publish as flat placeholders; directory reps publish as
+        // placeholder trees — each first fetching its listing (a bounded vsock
+        // round-trip, within the publish barrier's budget). A folder's listing is
+        // fetched only when the domain is `.ready`, so the toggle-off path never
+        // pays a wasted tree-listing pull (§3, pay on consume); a skipped folder
+        // falls back to the sync archive path on its own provider fire. Plain files
+        // always go through `publishItems` (which declines when not ready), matching
+        // the single-file path.
+        let treeReady = fileProvider.availability == .ready
+        var items: [FileProviderPublishItem] = []
+        var folders: [FileProviderPublishFolder] = []
+        for index in eligible {
             let info = promise.reps[index]
-            return FileProviderPublishItem(
-                repIndex: index, filename: info.filename, byteCount: info.byteCount, uti: info.uti)
+            if info.isDirectory {
+                guard treeReady, let channel = liveChannel, let receiver = receiver,
+                    let folder = buildPublishFolder(
+                        repIndex: index, info: info, promise: promise, channel: channel,
+                        receiver: receiver)
+                else { continue }
+                folders.append(folder)
+            } else {
+                items.append(
+                    FileProviderPublishItem(
+                        repIndex: index, filename: info.filename, byteCount: info.byteCount,
+                        uti: info.uti))
+            }
         }
+        guard !items.isEmpty || !folders.isEmpty else { return [:] }
         guard
             let urls = fileProvider.publishItems(
-                generation: promise.generation, items: items, waitForPlaceholder: true)
+                generation: promise.generation, items: items, folders: folders,
+                waitForPlaceholder: true)
         else { return [:] }
         promise.fpRoutedURLs = urls
         Self.logger.notice(
-            "Routed \(urls.count, privacy: .public) file rep(s) through the File Provider at paste (gen=\(promise.generation, privacy: .public))"
+            "Routed \(items.count, privacy: .public) file(s) + \(folders.count, privacy: .public) folder(s) through the File Provider at paste (gen=\(promise.generation, privacy: .public))"
         )
         return urls
+    }
+
+    /// Fetches a directory rep's tree listing and builds a publishable folder tree
+    /// (folder D1b).
+    ///
+    /// Returns `nil` when the listing can't be fetched, so the caller
+    /// falls back to the archive path. Runs on the main queue (paste-time routing);
+    /// the listing pull blocks (woken off-main), like every paste-time pull.
+    private func buildPublishFolder(
+        repIndex: Int, info: Kernova_V1_ClipboardRepresentationInfo, promise: InboundPromise,
+        channel: VsockChannel, receiver: ClipboardStreamReceiver
+    ) -> FileProviderPublishFolder? {
+        guard
+            let entries = pullTreeListing(
+                repIndex: repIndex, promise: promise, channel: channel, receiver: receiver)
+        else { return nil }
+        let isPackage = Self.isPackageUTI(info.uti)
+        let folder = ClipboardDirectoryTree.makeFolderRep(
+            sessionSalt: 0, generation: promise.generation, repIndex: repIndex,
+            filename: info.filename, isPackage: isPackage, estimatedByteCount: info.byteCount,
+            rootMtimeMs: 0, entries: entries)
+        return FileProviderPublishFolder(
+            repIndex: repIndex, filename: info.filename, uti: folder.uti, isPackage: isPackage,
+            byteCount: info.byteCount, mtimeMs: folder.mtimeMs, nodes: folder.nodes)
+    }
+
+    /// Whether an offered directory rep's content UTI names an OS package
+    /// (.app/.rtfd/…), so the pasted folder root opens as a bundle.
+    private static func isPackageUTI(_ uti: String) -> Bool {
+        guard let type = UTType(uti) else { return false }
+        return type.conforms(to: .package) || type.conforms(to: .bundle)
     }
 
     /// Runs `body` on the main queue, synchronously from either context.
@@ -1074,6 +1243,55 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                 from: representation, repIndex: repIndex, promise: promise, generation: generation)
         }
         return representation.inMemoryData
+    }
+
+    /// Registers a per-transfer awaiter, sends the request via `sendRequest`, and
+    /// blocks the calling thread until the transfer resolves — the shared
+    /// transport core of every inbound pull (single file, tree listing, and tree
+    /// child).
+    ///
+    /// The deadlock-safe wakeup: the receiver's `awaitTransfer` handler fires
+    /// off-main into the coordinator, never hopping to the thread this call holds.
+    /// `sendRequest` throws on a channel-write failure, which resolves the pull
+    /// immediately (no wire request went out) instead of parking to the backstop.
+    private func awaitPull(
+        transferID: UInt64, receiver: ClipboardStreamReceiver,
+        onProgress: (@Sendable (_ bytesTransferred: UInt64, _ totalBytes: UInt64) -> Void)?,
+        sendRequest: @escaping () throws -> Void
+    ) -> LazyPullOutcome {
+        let coordinator = lazyCoordinator
+        receiver.awaitTransfer(
+            transferID,
+            onComplete: { rep in coordinator.deliver(transferID, rep) },
+            onAbort: { abort in coordinator.abort(transferID, abort) },
+            // Re-arm the pull's inactivity backstop on every chunk so a large
+            // still-streaming transfer is never timed out mid-flight [large-paste].
+            // The guest has no in-app progress UI, but the File Provider relay path
+            // forwards the bytes so the guest's *Finder* renders a determinate
+            // download bar (#426); the synchronous pasteboard path passes no
+            // `onProgress` and the counts are ignored.
+            onProgress: { bytes, total in
+                coordinator.heartbeat(transferID)
+                onProgress?(UInt64(bytes), UInt64(total))
+            })
+        return coordinator.pull(transferID: transferID) {
+            do {
+                try sendRequest()
+            } catch {
+                Self.logger.warning(
+                    "Failed to send clipboard request: \(error.localizedDescription, privacy: .public)"
+                )
+                // No request went out, so no reply will arrive — resolve the pull
+                // now instead of blocking the calling thread to the backstop timeout.
+                receiver.cancelAwait(transferID)
+                coordinator.abort(
+                    transferID,
+                    ClipboardStreamAbortInfo(
+                        transferID: transferID, code: "send.failed",
+                        message: "Failed to send clipboard request", neededBytes: nil,
+                        availableBytes: nil))
+            }
+        }
     }
 
     /// Sends one `ClipboardRequest` and blocks the main thread until the streamed
@@ -1164,47 +1382,20 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             staging.availableCapacity().map { UInt64(clamping: $0) }
             ?? ClipboardStreamTuning.unlimitedAcceptByteCount
 
-        let coordinator = lazyCoordinator
-        receiver.awaitTransfer(
-            transferID,
-            onComplete: { rep in coordinator.deliver(transferID, rep) },
-            onAbort: { abort in coordinator.abort(transferID, abort) },
-            // Re-arm the pull's inactivity backstop on every chunk so a large
-            // still-streaming file is never timed out mid-transfer [large-paste].
-            // The guest has no in-app progress UI, but the File Provider relay path
-            // forwards the bytes so the guest's *Finder* renders a determinate
-            // download bar (#426); the synchronous pasteboard path passes no
-            // `onProgress` and the counts are ignored.
-            onProgress: { bytes, total in
-                coordinator.heartbeat(transferID)
-                onProgress?(UInt64(bytes), UInt64(total))
-            })
-
-        let outcome = lazyCoordinator.pull(transferID: transferID) {
+        let generation = promise.generation
+        let uti = info.uti
+        let outcome = awaitPull(
+            transferID: transferID, receiver: receiver, onProgress: onProgress
+        ) {
             var request = Frame()
             request.protocolVersion = 1
             request.clipboardRequest = Kernova_V1_ClipboardRequest.with {
-                $0.generation = promise.generation
+                $0.generation = generation
                 $0.transferID = transferID
-                $0.uti = info.uti
+                $0.uti = uti
                 $0.maxAcceptByteCount = maxAccept
             }
-            do {
-                try channel.send(request)
-            } catch {
-                Self.logger.warning(
-                    "Failed to send clipboard request: \(error.localizedDescription, privacy: .public)"
-                )
-                // No request went out, so no reply will arrive — resolve the pull
-                // now instead of blocking the main thread to the backstop timeout.
-                receiver.cancelAwait(transferID)
-                coordinator.abort(
-                    transferID,
-                    ClipboardStreamAbortInfo(
-                        transferID: transferID, code: "send.failed",
-                        message: "Failed to send clipboard request", neededBytes: nil,
-                        availableBytes: nil))
-            }
+            try channel.send(request)
         }
 
         switch outcome {
@@ -1264,6 +1455,94 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             Self.logger.debug("Inbound clipboard pull \(transferID, privacy: .public) superseded by a newer fetch")
         }
         return nil
+    }
+
+    /// Pulls a directory rep's tree listing (folder D1b), blocking until the
+    /// serialized `ClipboardTreeListing` lands, and returns its entries.
+    ///
+    /// Runs on the main queue (paste-time routing); the pull is woken off-main.
+    /// Returns `nil` on any failure so the caller falls back to the archive path.
+    private func pullTreeListing(
+        repIndex: Int, promise: InboundPromise, channel: VsockChannel,
+        receiver: ClipboardStreamReceiver
+    ) -> [Kernova_V1_ClipboardTreeEntry]? {
+        let transferID = ClipboardTransferID.makeChild(
+            generation: promise.generation, repIndex: repIndex, childSeq: 0, hostMinted: false)
+        let generation = promise.generation
+        let outcome = awaitPull(transferID: transferID, receiver: receiver, onProgress: nil) {
+            var frame = Frame()
+            frame.protocolVersion = 1
+            frame.clipboardTreeFetch = Kernova_V1_ClipboardTreeFetch.with {
+                $0.generation = generation
+                $0.transferID = transferID
+                $0.repIndex = UInt32(repIndex)
+                $0.relativePath = ""
+                $0.maxAcceptByteCount = ClipboardStreamTuning.unlimitedAcceptByteCount
+            }
+            try channel.send(frame)
+        }
+        switch outcome {
+        case .delivered(let rep):
+            guard let data = rep.inMemoryData,
+                let entries = try? ClipboardDirectoryTree.deserializeListing(data)
+            else {
+                Self.logger.warning(
+                    "Tree listing for rep \(repIndex, privacy: .public) could not be decoded")
+                return nil
+            }
+            return entries
+        case .timedOut:
+            receiver.cancelAwait(transferID)
+            Self.logger.warning("Tree listing pull \(transferID, privacy: .public) timed out")
+            return nil
+        case .aborted(let abort):
+            Self.logger.warning(
+                "Tree listing pull aborted (\(abort.code, privacy: .public))")
+            return nil
+        case .cancelled, .superseded:
+            return nil
+        }
+    }
+
+    /// Pulls one child file of a directory rep's tree (folder D1b) — off-main, for
+    /// the File Provider relay.
+    ///
+    /// Returns the staged `.file` rep, or `nil` on failure.
+    private func pullChild(
+        generation: UInt64, repIndex: Int, childSeq: UInt32, relativePath: String,
+        channel: VsockChannel, receiver: ClipboardStreamReceiver,
+        onProgress: @escaping @Sendable (UInt64, UInt64) -> Void
+    ) -> ClipboardContent.Representation? {
+        let transferID = ClipboardTransferID.makeChild(
+            generation: generation, repIndex: repIndex, childSeq: childSeq, hostMinted: false)
+        let maxAccept =
+            staging.availableCapacity().map { UInt64(clamping: $0) }
+            ?? ClipboardStreamTuning.unlimitedAcceptByteCount
+        let outcome = awaitPull(transferID: transferID, receiver: receiver, onProgress: onProgress) {
+            var frame = Frame()
+            frame.protocolVersion = 1
+            frame.clipboardTreeFetch = Kernova_V1_ClipboardTreeFetch.with {
+                $0.generation = generation
+                $0.transferID = transferID
+                $0.repIndex = UInt32(repIndex)
+                $0.relativePath = relativePath
+                $0.maxAcceptByteCount = maxAccept
+            }
+            try channel.send(frame)
+        }
+        switch outcome {
+        case .delivered(let rep):
+            return rep
+        case .timedOut:
+            receiver.cancelAwait(transferID)
+            Self.logger.warning("Child pull \(transferID, privacy: .public) timed out")
+            return nil
+        case .aborted(let abort):
+            Self.logger.warning("Child pull aborted (\(abort.code, privacy: .public))")
+            return nil
+        case .cancelled, .superseded:
+            return nil
+        }
     }
 
     /// Records the "received from host" menu signal, hopping to the main queue so
@@ -1560,6 +1839,54 @@ extension VsockGuestClipboardAgent: FileProviderPullProvider {
         let receiver: ClipboardStreamReceiver? = DispatchQueue.main.sync { self.receiver }
         Self.logger.notice(
             "Cancelling file clipboard pull \(transferID, privacy: .public) on consumer request")
+        receiver?.cancel(transferID: transferID)
+        lazyCoordinator.cancelBeforeStart(transferID)
+    }
+
+    /// Off-main entry point for a folder placeholder tree's per-child fetch (folder
+    /// D1b): pulls the child at `relativePath` within directory rep `(generation,
+    /// repIndex)` and returns the path of its staged file in the shared container.
+    ///
+    /// Mirrors `fetchStagedFile` — snapshots the main-confined connection state,
+    /// then performs the same blocking pull off-main (the File Provider read path
+    /// has no deadline) — but addresses a child by its confined `relativePath` via
+    /// `ClipboardTreeFetch` rather than the whole rep.
+    func fetchStagedChild(
+        generation: UInt64, repIndex: Int, childSeq: UInt32, relativePath: String,
+        onProgress: @escaping @Sendable (UInt64, UInt64) -> Void = { _, _ in }
+    ) -> Result<String, FileProviderPullError> {
+        dispatchPrecondition(condition: .notOnQueue(.main))
+        let context: (channel: VsockChannel, receiver: ClipboardStreamReceiver)? =
+            DispatchQueue.main.sync {
+                guard let promise = inboundPromise, promise.generation == generation,
+                    promise.reps.indices.contains(repIndex),
+                    let channel = liveChannel, let receiver = receiver
+                else { return nil }
+                return (channel, receiver)
+            }
+        guard let context else { return .failure(.noCurrentOffer) }
+        guard
+            let representation = pullChild(
+                generation: generation, repIndex: repIndex, childSeq: childSeq,
+                relativePath: relativePath, channel: context.channel, receiver: context.receiver,
+                onProgress: onProgress),
+            let url = representation.fileURL
+        else { return .failure(.pullFailed) }
+        return .success(url.path)
+    }
+
+    /// Aborts an in-flight `fetchStagedChild` for `(generation, repIndex,
+    /// childSeq)` (#464).
+    ///
+    /// Off-main only, addressing the transfer by its
+    /// deterministic child `transferID`.
+    func cancelStagedChildPull(generation: UInt64, repIndex: Int, childSeq: UInt32) {
+        dispatchPrecondition(condition: .notOnQueue(.main))
+        let transferID = ClipboardTransferID.makeChild(
+            generation: generation, repIndex: repIndex, childSeq: childSeq, hostMinted: false)
+        let receiver: ClipboardStreamReceiver? = DispatchQueue.main.sync { self.receiver }
+        Self.logger.notice(
+            "Cancelling child clipboard pull \(transferID, privacy: .public) on consumer request")
         receiver?.cancel(transferID: transferID)
         lazyCoordinator.cancelBeforeStart(transferID)
     }
