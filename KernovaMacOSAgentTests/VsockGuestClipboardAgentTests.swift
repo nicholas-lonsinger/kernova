@@ -2041,7 +2041,16 @@ struct VsockGuestClipboardAgentTests {
         let pull = lazyPull(pasteboard, forType: .fileURL)
         let provided = await pull.value
         #expect(provided == nil)
-        try await expectNoRequest(from: hostChannel)
+
+        // A directories-only refusal reports the folder-specific code: "enable
+        // File Provider" can't help a folder until D1b folders ship, so the
+        // host renders an honest folder message instead.
+        let frame = try await maybeNextFrame(from: hostChannel)
+        guard case .error(let error)? = frame?.payload else {
+            Issue.record("Expected an Error frame, got \(String(describing: frame?.payload))")
+            return
+        }
+        #expect(error.code == "clipboard.paste.folder.too.large")
     }
 
     @Test(

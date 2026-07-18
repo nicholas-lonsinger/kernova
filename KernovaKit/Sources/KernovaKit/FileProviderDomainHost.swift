@@ -846,7 +846,7 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     /// cold extension launch), yet comfortably inside Finder's ~60 s paste
     /// deadline with headroom left for the sync fallback the timeout degrades
     /// to.
-    private static let placeholderEnumerationWait: TimeInterval = 15
+    private static let placeholderEnumerationWait: TimeInterval = 30
 
     /// Runs `enumerateRoot` off-queue and waits up to
     /// `placeholderEnumerationWait` for it to finish.

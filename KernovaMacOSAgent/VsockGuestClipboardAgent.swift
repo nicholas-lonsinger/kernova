@@ -1113,19 +1113,34 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         // (docs/CLIPBOARD.md §2). The error frame is deduped per offer so a
         // multi-file paste's N provider fires surface one message, not N.
         if deadlineBound, !info.isInline {
-            let syncTotal = Self.syncDeadlineTotalBytes(for: promise)
-            if syncTotal > UInt64(ClipboardStreamTuning.maxDeadlineSafeFileBytes) {
+            let load = Self.syncDeadlineBoundLoad(for: promise)
+            if load.totalBytes > UInt64(ClipboardStreamTuning.maxDeadlineSafeFileBytes) {
                 Self.logger.warning(
-                    "Sync-bound clipboard reps total \(syncTotal, privacy: .public) bytes — over the deadline-safe cap with the File Provider off; refusing the synchronous paste pull"
+                    "Sync-bound clipboard reps total \(load.totalBytes, privacy: .public) bytes — over the deadline-safe cap with the File Provider off; refusing the synchronous paste pull"
                 )
-                // The guest has no UI; tell the host so it shows the failure.
+                // The guest has no UI; tell the host so it shows the failure. The
+                // code picks the host's rendered text: when the refused set is
+                // directories only, "enable File Provider" would be a lie — a
+                // folder has no File-Provider route until D1b folders ship — so a
+                // distinct code renders an honest folder message instead. A mixed
+                // set keeps the enable-File-Provider code: enabling routes the
+                // files, and a next paste with only the folder left sync-bound
+                // self-corrects to the folder code.
                 if !promise.tooLargeReported {
                     promise.tooLargeReported = true
-                    sendPasteError(
-                        code: "clipboard.paste.too.large",
-                        message:
-                            "Too large to paste into the guest without File Provider (\(syncTotal) bytes total)",
-                        on: channel)
+                    if load.allDirectories {
+                        sendPasteError(
+                            code: "clipboard.paste.folder.too.large",
+                            message:
+                                "Folders this large can't be pasted into the guest yet (\(load.totalBytes) bytes total)",
+                            on: channel)
+                    } else {
+                        sendPasteError(
+                            code: "clipboard.paste.too.large",
+                            message:
+                                "Too large to paste into the guest without File Provider (\(load.totalBytes) bytes total)",
+                            on: channel)
+                    }
                 }
                 return nil
             }
@@ -1372,22 +1387,28 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         info.byteCount != 0 && !ClipboardSnapshotPolicy.shouldSkipBeforeReading(uti: info.uti)
     }
 
-    /// Total byte count of the offer's sync-bound reps — non-inline, promisable,
-    /// and not routed through the File Provider — the payload a synchronous
-    /// paste pulls against the OS deadline.
+    /// The offer's sync-bound load — the total byte count of its non-inline,
+    /// promisable, not-File-Provider-routed reps (the payload a synchronous
+    /// paste pulls against the OS deadline), and whether that set is
+    /// directories only, which picks the refusal code: enabling the File
+    /// Provider cannot help a folder until D1b folders ship.
     ///
-    /// The deadline-safe cap compares against this total (see the RATIONALE in
+    /// The deadline-safe cap compares against the total (see the RATIONALE in
     /// `pullRepresentation`). Reads the promise's routing latch, so it is for
     /// deadline-bound callers only — the provider-callback path, which runs the
     /// routing hop before any pull.
-    private static func syncDeadlineTotalBytes(for promise: InboundPromise) -> UInt64 {
+    private static func syncDeadlineBoundLoad(
+        for promise: InboundPromise
+    ) -> (totalBytes: UInt64, allDirectories: Bool) {
         let routed = promise.fpRoutedURLs ?? [:]
         var total: UInt64 = 0
+        var allDirectories = true
         for (index, info) in promise.reps.enumerated() {
             guard !info.isInline, isPromisable(info), routed[index] == nil else { continue }
             total &+= info.byteCount
+            if !info.isDirectory { allDirectories = false }
         }
-        return total
+        return (totalBytes: total, allDirectories: allDirectories)
     }
 
     /// The promised pasteboard items for an offer, applying the same
