@@ -1478,7 +1478,10 @@ extension VsockGuestClipboardAgent: FileProviderPullProvider {
         // `fetchContents` for a single, constant `itemVersion`. Multi-file
         // offers hold the invariant per rep: each rep has its own
         // deterministic id, and the relay's concurrent pulls address distinct
-        // reps.
+        // reps. (One adversarial edge: an availability flip *mid-paste* can
+        // route a rep whose sync pull is already in flight; the duplicate id
+        // registration then resolves via the #500 supersession path — the
+        // displaced sync pull returns `.superseded` — rather than colliding.)
         struct PullContext {
             let promise: InboundPromise
             let channel: VsockChannel

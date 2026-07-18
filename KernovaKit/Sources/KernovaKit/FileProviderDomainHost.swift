@@ -764,15 +764,22 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
         // ENOENT before the kernel's dataless trap can call `fetchContents`.
         if waitForPlaceholder {
             // Paste-time publish (#427 leading edge): the caller is about to hand
-            // the URLs to a consumer that resolves them immediately, so block on
-            // the enumeration round-trip here — bounded, metadata-only work, the
-            // same class of main-thread wait as the synchronous pull itself. The
-            // enumeration never calls back into this process (the extension reads
-            // the manifest from the shared container), so blocking cannot
-            // deadlock. Then verify the dirents actually landed: a `nil` return
-            // on a missing dirent degrades to the size-capped sync path instead
-            // of advertising a URL that would ENOENT.
-            enumerateRoot(root: rootURL)
+            // the URLs to a consumer that resolves them immediately, so wait for
+            // the enumeration round-trip here — normally metadata-only,
+            // millisecond-scale work. The wait is BOUNDED: a hung fileproviderd
+            // must not strand the caller's (main) thread past the paste deadline,
+            // so a timeout degrades to the size-capped sync path (`nil`) instead
+            // of blocking indefinitely — the enumeration itself never calls back
+            // into this process (the extension reads the manifest from the shared
+            // container), so the bound is purely defensive. Then verify the
+            // dirents actually landed: a `nil` return on a missing dirent also
+            // degrades to the sync path instead of advertising a URL that would
+            // ENOENT.
+            guard enumerateRootBounded(root: rootURL) else {
+                logger.warning(
+                    "FP publish timed out waiting for the root enumeration — using sync path")
+                return nil
+            }
             let missing = filenames.filter {
                 !FileManager.default.fileExists(atPath: rootURL.appendingPathComponent($0).path)
             }
@@ -831,6 +838,28 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
                 counter += 1
             }
         }
+    }
+
+    /// Upper bound on the paste-time wait for the root enumeration.
+    ///
+    /// Generous against the normal millisecond-scale round-trip (it covers a
+    /// cold extension launch), yet comfortably inside Finder's ~60 s paste
+    /// deadline with headroom left for the sync fallback the timeout degrades
+    /// to.
+    private static let placeholderEnumerationWait: TimeInterval = 15
+
+    /// Runs `enumerateRoot` off-queue and waits up to
+    /// `placeholderEnumerationWait` for it to finish.
+    ///
+    /// Returns `false` on timeout; the readdir then completes (or hangs)
+    /// harmlessly on its background thread and is not retried.
+    private func enumerateRootBounded(root: URL) -> Bool {
+        let semaphore = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            self?.enumerateRoot(root: root)
+            semaphore.signal()
+        }
+        return semaphore.wait(timeout: .now() + Self.placeholderEnumerationWait) == .success
     }
 
     /// Reads the domain root directory to trigger a root-container enumeration,
