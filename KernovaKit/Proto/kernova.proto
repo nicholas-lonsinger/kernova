@@ -51,6 +51,12 @@ message Frame {
     ClipboardStreamAck clipboard_stream_ack = 27;
     ClipboardStreamAbort clipboard_stream_abort = 28;
 
+    // Directory placeholder-tree fetch (folder D1b, capability
+    // `clipboard.dirtree.v1`). Requests either a directory rep's tree listing
+    // or one child file within it; the reply reuses the
+    // ClipboardStreamBegin/Chunk/End transport keyed by `transfer_id`.
+    ClipboardTreeFetch clipboard_tree_fetch = 29;
+
     LogRecord log_record = 30;
   }
 }
@@ -130,6 +136,14 @@ message ClipboardRepresentationInfo {
 
   // Size of the representation's bytes. For a copied file this is the file's
   // size from a stat — the bytes themselves are never read to build the offer.
+  // For a directory rep (`is_directory`) the meaning depends on the negotiated
+  // `clipboard.dirtree.v1` capability: without it, the exact byte count of the
+  // eagerly-built archive; with it, a stat-walk size ESTIMATE of the source
+  // tree (no archive is built at copy time — see the placeholder-tree design,
+  // #422/#376). The estimate is advisory (UI/free-space preflight only): each
+  // child file's exact size + SHA-256 ride the per-child stream, and the
+  // request-time-archived fallback carries its own exact size in its
+  // `ClipboardStreamBegin`.
   uint64 byte_count = 2;
 
   // Suggested filename when this representation is a file payload (e.g. a
@@ -150,12 +164,23 @@ message ClipboardRepresentationInfo {
   bool is_inline = 4;
 
   // Whether this file representation is a *directory* (folder, or an OS
-  // package such as .app/.rtfd). When set, the streamed bytes are an
-  // in-process AppleArchive (.aar, LZFSE) of the tree, not the file itself;
-  // the receiver extracts them into a real directory and offers that folder's
-  // URL so a Finder paste recreates the tree. Implies a non-empty `filename`
-  // (the folder name, without an archive suffix) and `is_inline = false`. The
-  // stream layer is offer-agnostic, so this flag is re-applied to the
+  // package such as .app/.rtfd). Implies a non-empty `filename` (the folder
+  // name, without an archive suffix) and `is_inline = false`.
+  //
+  // How the tree crosses depends on the negotiated `clipboard.dirtree.v1`
+  // capability:
+  //  - Without it (old peer): the directory rides the plain-file stream path —
+  //    the streamed bytes are an in-process AppleArchive (.aar, LZFSE) of the
+  //    tree, which the receiver extracts into a real directory. `byte_count`
+  //    is the archive's exact size.
+  //  - With it: the directory pastes as a File Provider placeholder *tree*.
+  //    The consumer fetches a listing (`ClipboardTreeFetch` with an empty
+  //    `relative_path`) and each child file individually (`ClipboardTreeFetch`
+  //    with the child's `relative_path`); no archive is built at copy time.
+  //    A toggle-off fallback still uses the archive path, but the producer
+  //    archives at request time rather than at copy time.
+  //
+  // The stream layer is offer-agnostic, so this flag is re-applied to the
   // delivered representation by the offer-aware layer on the receiver. Excluded
   // from the content digest — the archive's SHA-256 and the folded filename
   // already identify it.
@@ -311,6 +336,98 @@ message ClipboardStreamAbort {
 
   // Human-readable detail for logs / user-facing messages.
   string message = 3;
+}
+
+// Requests part of a directory representation's placeholder tree (folder D1b,
+// capability `clipboard.dirtree.v1`). Sent by the consumer (the side pasting a
+// folder) to the producer (the side that copied it), which retains the source
+// folder and walks it on demand rather than archiving eagerly.
+//
+// Two modes, selected by `relative_path`:
+//  - Empty `relative_path`: request the directory rep's **tree listing**. The
+//    producer walks the source tree and streams a serialized
+//    `ClipboardTreeListing` back over the ClipboardStreamBegin/Chunk/End
+//    transport as an inline payload (SHA-256-verified like any transfer).
+//  - Non-empty `relative_path`: request **one child file** at that POSIX path
+//    within the directory rep. The producer opens the confined child and
+//    streams its bytes back over the same transport.
+//
+// The reply is correlated by `transfer_id`, whose child layout encodes
+// `(generation, rep_index, child_seq)` with `child_seq = 0` reserved for the
+// listing and `child_seq >= 1` naming a tree node (see `ClipboardTransferID`).
+message ClipboardTreeFetch {
+  // Echoes the offer's generation so a fetch racing a newer offer is dropped.
+  uint64 generation = 1;
+
+  // Correlates the streamed reply (Begin/Chunk/End/Ack/Abort). Uses the child
+  // transfer-id layout; `child_seq = 0` is the listing, `>= 1` a tree node.
+  uint64 transfer_id = 2;
+
+  // The directory representation's index within the offer (`rep_info`). Carried
+  // explicitly rather than decoded from `transfer_id` for clarity.
+  uint32 rep_index = 3;
+
+  // POSIX path of the child file relative to the directory rep's root (e.g.
+  // "sub/dir/file.txt"). Empty selects the tree-listing mode. The producer
+  // confines resolution beneath the source folder (no `..`/absolute escape).
+  string relative_path = 4;
+
+  // The requester's free-space ceiling for a child transfer: the producer
+  // aborts (`disk.full`) rather than start a transfer the requester cannot
+  // stage. 0 means "no ceiling advertised". Ignored for the listing mode.
+  uint64 max_accept_byte_count = 5;
+}
+
+// One node in a directory representation's tree listing.
+//
+// Metadata only — no bytes. The consumer builds a File Provider placeholder
+// from each entry; a file's bytes are pulled later via a child
+// `ClipboardTreeFetch`. Sizes/permissions/mtimes carry fidelity so the pasted
+// tree matches the source (CLIPBOARD.md §6); the per-child stream's exact size
+// + SHA-256 are authoritative for the actual transfer.
+message ClipboardTreeEntry {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    FILE = 1;
+    DIRECTORY = 2;
+    SYMLINK = 3;
+  }
+
+  // POSIX path relative to the directory rep's root (e.g. "sub/file.txt").
+  string relative_path = 1;
+
+  Kind kind = 2;
+
+  // File size in bytes (0 for a directory or symlink).
+  uint64 byte_count = 3;
+
+  // POSIX mode permission bits (the low 12 bits of `st_mode`), carrying the
+  // executable bit and other permissions so the pasted file preserves them.
+  uint32 posix_permissions = 4;
+
+  // Modification time in milliseconds since the Unix epoch (UTC).
+  int64 mtime_ms = 5;
+
+  // For a symlink, the raw (unresolved) link target; empty otherwise.
+  string symlink_target = 6;
+
+  // Whether a directory node is an OS package (.app/.rtfd/…), so the consumer
+  // gives it a package `contentType` and the pasted folder opens as a bundle.
+  bool is_package = 7;
+
+  // Stable per-tree sequence number identifying this node within the directory
+  // rep (assigned by the producer's walk, 1-based). Encoded into a child
+  // fetch's `transfer_id` so cancels/aborts route deterministically.
+  uint32 child_seq = 8;
+}
+
+// A directory representation's full tree listing, streamed (serialized) as the
+// inline payload of a listing-mode `ClipboardTreeFetch` reply. One message
+// carries every node; it is metadata-sized (a 100k-entry tree serializes to a
+// few MiB) and rides the SHA-256-verified stream transport, so it needs no
+// separate pagination frame — the chunked transport paginates it.
+message ClipboardTreeListing {
+  repeated ClipboardTreeEntry entries = 1;
 }
 
 // Liveness ping exchanged on the control channel. Each side sends one on a

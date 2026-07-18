@@ -46,6 +46,19 @@ struct FileProviderRelayServiceTests {
             lastCancelCallBox.value = (generation, repIndex)
             cancelled.notify()
         }
+
+        func fetchStagedChild(
+            generation: UInt64, repIndex: Int, childSeq: UInt32, relativePath: String,
+            onProgress: @escaping @Sendable (UInt64, UInt64) -> Void
+        ) -> Result<String, FileProviderPullError> {
+            lastFetchCallBox.value = (generation, repIndex)
+            return result
+        }
+
+        func cancelStagedChildPull(generation: UInt64, repIndex: Int, childSeq: UInt32) {
+            lastCancelCallBox.value = (generation, repIndex)
+            cancelled.notify()
+        }
     }
 
     /// Blocks inside `fetchStagedFile` until the test releases it, and records
@@ -85,6 +98,21 @@ struct FileProviderRelayServiceTests {
         }
 
         func cancelStagedPull(generation: UInt64, repIndex: Int) {
+            lastCancelCallBox.value = (generation, repIndex)
+            cancelled.notify()
+        }
+
+        func fetchStagedChild(
+            generation: UInt64, repIndex: Int, childSeq: UInt32, relativePath: String,
+            onProgress: @escaping @Sendable (UInt64, UInt64) -> Void
+        ) -> Result<String, FileProviderPullError> {
+            hasEnteredBox.value = true
+            entered.notify()
+            releaseSemaphore.wait()
+            return .success("/staged/child")
+        }
+
+        func cancelStagedChildPull(generation: UInt64, repIndex: Int, childSeq: UInt32) {
             lastCancelCallBox.value = (generation, repIndex)
             cancelled.notify()
         }

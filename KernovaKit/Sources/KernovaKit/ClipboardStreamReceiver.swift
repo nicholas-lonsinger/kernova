@@ -548,9 +548,10 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
         }
     }
 
-    /// The generation encoded in a `transfer_id`, ignoring the direction bit.
+    /// The generation encoded in a `transfer_id`, ignoring the direction bit and
+    /// honoring both the legacy and child (folder-tree) layouts.
     private static func generation(ofTransferID id: UInt64) -> UInt64 {
-        (id & ~ClipboardTransferID.hostReceivesBit) >> 16
+        ClipboardTransferID.generation(of: id)
     }
 
     private func teardown(_ transfer: InboundTransfer) {

@@ -103,12 +103,30 @@ open class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
         logger.debug("item(for: \(identifier.rawValue, privacy: .public))")
         if identifier == .rootContainer {
             completionHandler(ClipboardRootItem(displayName: config.domainDisplayName), nil)
-        } else if let manifestItem = store.readManifest().item(for: identifier.rawValue) {
-            completionHandler(ClipboardFileItem(manifestItem: manifestItem), nil)
+        } else if let item = Self.item(for: identifier.rawValue, in: store.readManifest()) {
+            completionHandler(item, nil)
         } else {
             completionHandler(nil, NSFileProviderError(.noSuchItem))
         }
         return Progress()
+    }
+
+    /// Builds the `NSFileProviderItem` for a manifest identifier — a flat file, a
+    /// directory rep's folder root, or one of its tree nodes — or `nil` when it
+    /// isn't in the current offer.
+    static func item(
+        for rawIdentifier: String, in manifest: FileProviderManifest
+    ) -> NSFileProviderItem? {
+        switch manifest.resolve(rawIdentifier) {
+        case .flatFile(let item):
+            return ClipboardFileItem(manifestItem: item)
+        case .folderRoot(let folder):
+            return ClipboardTreeItem(folderRoot: folder)
+        case .node(let folder, let node):
+            return ClipboardTreeItem(folder: folder, node: node)
+        case .none:
+            return nil
+        }
     }
 
     open func fetchContents(
@@ -120,9 +138,25 @@ open class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
         logger.debug("fetchContents START (item=\(itemIdentifier.rawValue, privacy: .public))")
         // The identifier carries the addressing; the manifest carries the metadata
         // for the returned item. A superseded item is gone from both → noSuchItem.
-        guard let decoded = FileProviderItemIdentifier.decode(itemIdentifier.rawValue),
-            let manifestItem = store.readManifest().item(for: itemIdentifier.rawValue)
-        else {
+        // Only a byte-bearing regular file is fetched: a flat single-file rep, or a
+        // file node within a directory rep's placeholder tree. A directory/symlink
+        // node is enumerated / resolved from metadata, never fetched.
+        let manifest = store.readManifest()
+        let target: (returnedItem: NSFileProviderItem, byteCount: UInt64, pull: FetchPull)
+        switch manifest.resolve(itemIdentifier.rawValue) {
+        case .flatFile(let item):
+            target = (
+                ClipboardFileItem(manifestItem: item), item.byteCount,
+                .flat(generation: item.generation, repIndex: item.repIndex)
+            )
+        case .node(let folder, let node) where node.kind == .file:
+            target = (
+                ClipboardTreeItem(folder: folder, node: node), node.byteCount,
+                .child(
+                    generation: folder.generation, repIndex: folder.repIndex,
+                    childSeq: node.childSeq, relativePath: node.relativePath)
+            )
+        default:
             completionHandler(nil, nil, NSFileProviderError(.noSuchItem))
             return Progress()
         }
@@ -134,11 +168,22 @@ open class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
         // a file download. `byteCount` is the manifest's declared size; a zero-byte
         // rep gets a unit of 1 (a 0/0 progress reads as indeterminate) and completes
         // instantly in `materialize`.
-        let totalUnitCount = manifestItem.byteCount > 0 ? Int64(clamping: manifestItem.byteCount) : 1
+        let totalUnitCount = target.byteCount > 0 ? Int64(clamping: target.byteCount) : 1
         let progress = Progress(totalUnitCount: totalUnitCount)
         progress.kind = .file
         progress.fileOperationKind = .downloading
 
+        let returnedItem = target.returnedItem
+        // Advance the determinate bar from the owner's coalesced pushes (#426).
+        // `progress` is captured weakly (same reason as the completion below — the
+        // cancellation strongly retains this closure via the pull); the system owns
+        // `progress` for the fetch's duration, so it's non-nil here. Clamp to
+        // `totalUnitCount`: the final push carries bytes == total, and `materialize`
+        // sets the terminal 100% regardless.
+        let onProgress: @Sendable (UInt64, UInt64) -> Void = { [weak progress] bytesTransferred, _ in
+            guard let progress else { return }
+            progress.completedUnitCount = min(Int64(clamping: bytesTransferred), totalUnitCount)
+        }
         // Relay the byte pull to the owner over the servicing connection — the
         // sandboxed extension can't open vsock (CLIPBOARD.md §11). INVERTED wiring:
         // the owner is the XPC client and exported the relay; we call it back
@@ -148,20 +193,10 @@ open class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
         // the framework serialises the owner's `getFileProviderConnection` behind an
         // in-flight `fetchContents`, so blocking here would deadlock the very
         // reconnect we're waiting for. Return `progress` now; complete when the
-        // staged path (or an error) lands.
-        let cancellation = serviceSource.fetchStagedFile(
-            generation: decoded.generation, repIndex: decoded.repIndex,
-            // Advance the determinate bar from the owner's coalesced pushes (#426).
-            // `progress` is captured weakly (same reason as the completion below —
-            // the cancellation strongly retains this closure via the pull); the
-            // system owns `progress` for the fetch's duration, so it's non-nil here.
-            // Clamp to `totalUnitCount`: the final push carries bytes == total, and
-            // `materialize` sets the terminal 100% regardless.
-            onProgress: { [weak progress] bytesTransferred, _ in
-                guard let progress else { return }
-                progress.completedUnitCount = min(Int64(clamping: bytesTransferred), totalUnitCount)
-            }
-        ) { [weak self, weak progress] result in
+        // staged path (or an error) lands. A flat rep pulls the whole file; a tree
+        // node pulls the addressed child (folder D1b).
+        let completion: (Result<String, NSError>) -> Void = {
+            [weak self, weak progress] result in
             guard let self else {
                 completionHandler(nil, nil, NSFileProviderError(.providerNotFound))
                 return
@@ -169,7 +204,7 @@ open class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
             switch result {
             case .success(let stagedPath):
                 self.materialize(
-                    stagedPath: stagedPath, manifestItem: manifestItem, progress: progress,
+                    stagedPath: stagedPath, returnedItem: returnedItem, progress: progress,
                     completionHandler: completionHandler)
             case .failure(let error):
                 // A user cancellation (Finder's cancel button → `progress.cancel()`)
@@ -184,6 +219,17 @@ open class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
                 completionHandler(nil, nil, error)
             }
         }
+        let cancellation: FileProviderPullCancellation
+        switch target.pull {
+        case .flat(let generation, let repIndex):
+            cancellation = serviceSource.fetchStagedFile(
+                generation: generation, repIndex: repIndex, onProgress: onProgress,
+                completion: completion)
+        case .child(let generation, let repIndex, let childSeq, let relativePath):
+            cancellation = serviceSource.fetchStagedChild(
+                generation: generation, repIndex: repIndex, childSeq: childSeq,
+                relativePath: relativePath, onProgress: onProgress, completion: completion)
+        }
         // Wire Finder's cancel button to the pull. RATIONALE: the completion closure
         // above captures `progress` WEAKLY so this handler — which strongly holds
         // `cancellation` → the pull → that completion — can't form a retain cycle back
@@ -191,6 +237,13 @@ open class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
         // system owns it until the fetch completes), so the weak ref is never nil there.
         progress.cancellationHandler = { cancellation.cancel() }
         return progress
+    }
+
+    /// Which relay pull backs a `fetchContents`: a flat single-file rep, or a
+    /// child file within a directory rep's placeholder tree (folder D1b).
+    private enum FetchPull {
+        case flat(generation: UInt64, repIndex: Int)
+        case child(generation: UInt64, repIndex: Int, childSeq: UInt32, relativePath: String)
     }
 
     /// Clones the owner-staged file into the domain's temporary directory and hands
@@ -203,7 +256,7 @@ open class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
     /// see `fetchContents`), so it's optional here; it's non-nil on the success path
     /// in practice because the system owns it until the fetch completes.
     private func materialize(
-        stagedPath: String, manifestItem: FileProviderManifest.Item, progress: Progress?,
+        stagedPath: String, returnedItem: NSFileProviderItem, progress: Progress?,
         completionHandler: @escaping (URL?, NSFileProviderItem?, Error?) -> Void
     ) {
         // Clone the owner-staged file (shared app-group container) into the domain's
@@ -219,11 +272,13 @@ open class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
             let tempDir = try manager.temporaryDirectoryURL()
             let destination = tempDir.appendingPathComponent(UUID().uuidString)
             try FileManager.default.copyItem(at: URL(fileURLWithPath: stagedPath), to: destination)
-            logger.notice("fetchContents materialized \(manifestItem.byteCount, privacy: .public) bytes")
+            logger.notice(
+                "fetchContents materialized \(returnedItem.documentSize??.int64Value ?? 0, privacy: .public) bytes"
+            )
             // Complete the byte-denominated bar (#426): a throttled final push may
             // have been coalesced away, and a zero-byte rep never pushed at all.
             if let progress { progress.completedUnitCount = progress.totalUnitCount }
-            completionHandler(destination, ClipboardFileItem(manifestItem: manifestItem), nil)
+            completionHandler(destination, returnedItem, nil)
         } catch {
             logger.error("fetchContents clone failed: \(error.localizedDescription, privacy: .public)")
             completionHandler(nil, nil, error)
@@ -349,6 +404,123 @@ final class ClipboardFileItem: NSObject, NSFileProviderItem, @unchecked Sendable
     }
 }
 
+/// One node of a directory rep's placeholder tree — the folder root, a
+/// subdirectory, a file, or a symlink (folder D1b, `clipboard.dirtree.v1`).
+///
+/// Carries fidelity from the manifest (CLIPBOARD.md §6): a package folder's
+/// `contentType` so a pasted bundle opens as a package, a file's executable bit
+/// via `fileSystemFlags`, a symlink's target via `symlinkTargetPath`, and the
+/// modification date. A directory node's `childItemCount` drives Finder's count.
+// RATIONALE: every stored property is an immutable `let` of a Sendable type, so
+// the system reading it from any thread is safe.
+final class ClipboardTreeItem: NSObject, NSFileProviderItem, @unchecked Sendable {
+    let itemIdentifier: NSFileProviderItemIdentifier
+    let parentItemIdentifier: NSFileProviderItemIdentifier
+    let filename: String
+    let contentType: UTType
+    private let isDirectory: Bool
+    private let byteCount: Int
+    private let symlinkTarget: String?
+    private let posixPermissions: UInt32
+    private let modificationDate: Date?
+    private let directChildCount: Int?
+
+    /// The folder root of a directory rep.
+    init(folderRoot folder: FileProviderManifest.FolderRep) {
+        self.itemIdentifier = NSFileProviderItemIdentifier(folder.rootIdentifier)
+        self.parentItemIdentifier = .rootContainer
+        self.filename = folder.filename
+        self.contentType = UTType(folder.uti) ?? .folder
+        self.isDirectory = true
+        self.byteCount = 0
+        self.symlinkTarget = nil
+        self.posixPermissions = 0
+        self.modificationDate = Self.date(fromMillis: folder.mtimeMs)
+        self.directChildCount = folder.nodes.filter { $0.parentChildSeq == 0 }.count
+        super.init()
+    }
+
+    /// A descendant node of a directory rep.
+    init(folder: FileProviderManifest.FolderRep, node: FileProviderManifest.FolderRep.Node) {
+        self.itemIdentifier = NSFileProviderItemIdentifier(folder.identifier(for: node))
+        // Parent is the folder root when `parentChildSeq == 0`, else the parent node.
+        self.parentItemIdentifier =
+            node.parentChildSeq == 0
+            ? NSFileProviderItemIdentifier(folder.rootIdentifier)
+            : NSFileProviderItemIdentifier(
+                FileProviderItemIdentifier.makeNode(
+                    sessionSalt: folder.sessionSalt, generation: folder.generation,
+                    repIndex: folder.repIndex, childSeq: node.parentChildSeq))
+        self.filename = node.filename
+        switch node.kind {
+        case .symlink:
+            self.contentType = .symbolicLink
+            self.symlinkTarget = node.symlinkTarget
+            self.isDirectory = false
+        case .directory:
+            self.contentType = UTType(node.uti) ?? .folder
+            self.symlinkTarget = nil
+            self.isDirectory = true
+        case .file:
+            self.contentType = UTType(node.uti) ?? .data
+            self.symlinkTarget = nil
+            self.isDirectory = false
+        }
+        self.byteCount = Int(clamping: node.byteCount)
+        self.posixPermissions = node.posixPermissions
+        self.modificationDate = Self.date(fromMillis: node.mtimeMs)
+        self.directChildCount =
+            node.kind == .directory
+            ? folder.nodes.filter { $0.parentChildSeq == node.childSeq }.count : nil
+        super.init()
+    }
+
+    private static func date(fromMillis millis: Int64) -> Date? {
+        guard millis > 0 else { return nil }
+        return Date(timeIntervalSince1970: Double(millis) / 1000)
+    }
+
+    // RATIONALE: full capabilities so the pasted copy is an ordinary file/folder
+    // the user owns rather than a locked File Provider item (see `ClipboardFileItem`);
+    // the extension's mutating methods still reject in-place edits.
+    var capabilities: NSFileProviderItemCapabilities {
+        var caps: NSFileProviderItemCapabilities = [
+            .allowsReading, .allowsWriting, .allowsReparenting, .allowsRenaming, .allowsTrashing,
+            .allowsDeleting,
+        ]
+        if isDirectory { caps.insert(.allowsContentEnumerating) }
+        return caps
+    }
+
+    var documentSize: NSNumber? { isDirectory ? nil : NSNumber(value: byteCount) }
+
+    var childItemCount: NSNumber? { directChildCount.map { NSNumber(value: $0) } }
+
+    var symlinkTargetPath: String? { symlinkTarget }
+
+    var contentModificationDate: Date? { modificationDate }
+
+    /// Preserves the executable bit (critical for a pasted app bundle's binaries)
+    /// and keeps files readable/writable so the copy is usable; a directory needs
+    /// no flags.
+    ///
+    /// A `0` permission set (unknown) degrades to readable/writable.
+    var fileSystemFlags: NSFileProviderFileSystemFlags {
+        guard !isDirectory else { return [.userReadable, .userWritable] }
+        var flags: NSFileProviderFileSystemFlags = [.userReadable, .userWritable]
+        if posixPermissions & 0o111 != 0 { flags.insert(.userExecutable) }
+        return flags
+    }
+
+    // The bytes and metadata of a given item identifier never change within an
+    // offer (a new offer mints new session-salted identifiers), so a constant
+    // version is correct and keeps fetchContents' returned version matching the
+    // enumerated one (the framework requires the match).
+    var itemVersion: NSFileProviderItemVersion {
+        NSFileProviderItemVersion(contentVersion: Data("1".utf8), metadataVersion: Data("1".utf8))
+    }
+}
+
 /// Enumerates the domain's contents from the current offer manifest.
 final class ClipboardEnumerator: NSObject, NSFileProviderEnumerator {
     let container: NSFileProviderItemIdentifier
@@ -370,10 +542,21 @@ final class ClipboardEnumerator: NSObject, NSFileProviderEnumerator {
     func enumerateItems(
         for observer: NSFileProviderEnumerationObserver, startingAt page: NSFileProviderPage
     ) {
+        let manifest = store.readManifest()
         if container == .rootContainer || container == .workingSet {
-            let items = store.readManifest().items.map { ClipboardFileItem(manifestItem: $0) }
+            let (files, folderRoots) = manifest.rootEntries()
+            var items: [NSFileProviderItem] = files.map { ClipboardFileItem(manifestItem: $0) }
+            items += folderRoots.map { ClipboardTreeItem(folderRoot: $0) }
             logger.debug(
-                "enumerateItems(\(self.container.rawValue, privacy: .public)) → \(items.count, privacy: .public) item(s)"
+                "enumerateItems(\(self.container.rawValue, privacy: .public)) → \(items.count, privacy: .public) root item(s)"
+            )
+            observer.didEnumerate(items)
+        } else if let children = manifest.children(ofContainer: container.rawValue) {
+            // A directory rep's folder root or a subdirectory node: serve its
+            // direct children (folder D1b placeholder tree).
+            let items = children.map { ClipboardTreeItem(folder: $0.0, node: $0.1) }
+            logger.debug(
+                "enumerateItems(\(self.container.rawValue, privacy: .public)) → \(items.count, privacy: .public) child item(s)"
             )
             observer.didEnumerate(items)
         }

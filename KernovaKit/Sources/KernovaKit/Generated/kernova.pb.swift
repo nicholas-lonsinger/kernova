@@ -154,6 +154,18 @@ public nonisolated struct Kernova_V1_Frame: Sendable {
     set {payload = .clipboardStreamAbort(newValue)}
   }
 
+  /// Directory placeholder-tree fetch (folder D1b, capability
+  /// `clipboard.dirtree.v1`). Requests either a directory rep's tree listing
+  /// or one child file within it; the reply reuses the
+  /// ClipboardStreamBegin/Chunk/End transport keyed by `transfer_id`.
+  public var clipboardTreeFetch: Kernova_V1_ClipboardTreeFetch {
+    get {
+      if case .clipboardTreeFetch(let v)? = payload {return v}
+      return Kernova_V1_ClipboardTreeFetch()
+    }
+    set {payload = .clipboardTreeFetch(newValue)}
+  }
+
   public var logRecord: Kernova_V1_LogRecord {
     get {
       if case .logRecord(let v)? = payload {return v}
@@ -188,6 +200,11 @@ public nonisolated struct Kernova_V1_Frame: Sendable {
     case clipboardStreamEnd(Kernova_V1_ClipboardStreamEnd)
     case clipboardStreamAck(Kernova_V1_ClipboardStreamAck)
     case clipboardStreamAbort(Kernova_V1_ClipboardStreamAbort)
+    /// Directory placeholder-tree fetch (folder D1b, capability
+    /// `clipboard.dirtree.v1`). Requests either a directory rep's tree listing
+    /// or one child file within it; the reply reuses the
+    /// ClipboardStreamBegin/Chunk/End transport keyed by `transfer_id`.
+    case clipboardTreeFetch(Kernova_V1_ClipboardTreeFetch)
     case logRecord(Kernova_V1_LogRecord)
 
   }
@@ -358,6 +375,14 @@ public nonisolated struct Kernova_V1_ClipboardRepresentationInfo: Sendable {
 
   /// Size of the representation's bytes. For a copied file this is the file's
   /// size from a stat — the bytes themselves are never read to build the offer.
+  /// For a directory rep (`is_directory`) the meaning depends on the negotiated
+  /// `clipboard.dirtree.v1` capability: without it, the exact byte count of the
+  /// eagerly-built archive; with it, a stat-walk size ESTIMATE of the source
+  /// tree (no archive is built at copy time — see the placeholder-tree design,
+  /// #422/#376). The estimate is advisory (UI/free-space preflight only): each
+  /// child file's exact size + SHA-256 ride the per-child stream, and the
+  /// request-time-archived fallback carries its own exact size in its
+  /// `ClipboardStreamBegin`.
   public var byteCount: UInt64 = 0
 
   /// Suggested filename when this representation is a file payload (e.g. a
@@ -378,12 +403,23 @@ public nonisolated struct Kernova_V1_ClipboardRepresentationInfo: Sendable {
   public var isInline: Bool = false
 
   /// Whether this file representation is a *directory* (folder, or an OS
-  /// package such as .app/.rtfd). When set, the streamed bytes are an
-  /// in-process AppleArchive (.aar, LZFSE) of the tree, not the file itself;
-  /// the receiver extracts them into a real directory and offers that folder's
-  /// URL so a Finder paste recreates the tree. Implies a non-empty `filename`
-  /// (the folder name, without an archive suffix) and `is_inline = false`. The
-  /// stream layer is offer-agnostic, so this flag is re-applied to the
+  /// package such as .app/.rtfd). Implies a non-empty `filename` (the folder
+  /// name, without an archive suffix) and `is_inline = false`.
+  ///
+  /// How the tree crosses depends on the negotiated `clipboard.dirtree.v1`
+  /// capability:
+  ///  - Without it (old peer): the directory rides the plain-file stream path —
+  ///    the streamed bytes are an in-process AppleArchive (.aar, LZFSE) of the
+  ///    tree, which the receiver extracts into a real directory. `byte_count`
+  ///    is the archive's exact size.
+  ///  - With it: the directory pastes as a File Provider placeholder *tree*.
+  ///    The consumer fetches a listing (`ClipboardTreeFetch` with an empty
+  ///    `relative_path`) and each child file individually (`ClipboardTreeFetch`
+  ///    with the child's `relative_path`); no archive is built at copy time.
+  ///    A toggle-off fallback still uses the archive path, but the producer
+  ///    archives at request time rather than at copy time.
+  ///
+  /// The stream layer is offer-agnostic, so this flag is re-applied to the
   /// delivered representation by the offer-aware layer on the receiver. Excluded
   /// from the content digest — the archive's SHA-256 and the folded filename
   /// already identify it.
@@ -597,6 +633,157 @@ public nonisolated struct Kernova_V1_ClipboardStreamAbort: Sendable {
   public init() {}
 }
 
+/// Requests part of a directory representation's placeholder tree (folder D1b,
+/// capability `clipboard.dirtree.v1`). Sent by the consumer (the side pasting a
+/// folder) to the producer (the side that copied it), which retains the source
+/// folder and walks it on demand rather than archiving eagerly.
+///
+/// Two modes, selected by `relative_path`:
+///  - Empty `relative_path`: request the directory rep's **tree listing**. The
+///    producer walks the source tree and streams a serialized
+///    `ClipboardTreeListing` back over the ClipboardStreamBegin/Chunk/End
+///    transport as an inline payload (SHA-256-verified like any transfer).
+///  - Non-empty `relative_path`: request **one child file** at that POSIX path
+///    within the directory rep. The producer opens the confined child and
+///    streams its bytes back over the same transport.
+///
+/// The reply is correlated by `transfer_id`, whose child layout encodes
+/// `(generation, rep_index, child_seq)` with `child_seq = 0` reserved for the
+/// listing and `child_seq >= 1` naming a tree node (see `ClipboardTransferID`).
+public nonisolated struct Kernova_V1_ClipboardTreeFetch: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// Echoes the offer's generation so a fetch racing a newer offer is dropped.
+  public var generation: UInt64 = 0
+
+  /// Correlates the streamed reply (Begin/Chunk/End/Ack/Abort). Uses the child
+  /// transfer-id layout; `child_seq = 0` is the listing, `>= 1` a tree node.
+  public var transferID: UInt64 = 0
+
+  /// The directory representation's index within the offer (`rep_info`). Carried
+  /// explicitly rather than decoded from `transfer_id` for clarity.
+  public var repIndex: UInt32 = 0
+
+  /// POSIX path of the child file relative to the directory rep's root (e.g.
+  /// "sub/dir/file.txt"). Empty selects the tree-listing mode. The producer
+  /// confines resolution beneath the source folder (no `..`/absolute escape).
+  public var relativePath: String = String()
+
+  /// The requester's free-space ceiling for a child transfer: the producer
+  /// aborts (`disk.full`) rather than start a transfer the requester cannot
+  /// stage. 0 means "no ceiling advertised". Ignored for the listing mode.
+  public var maxAcceptByteCount: UInt64 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// One node in a directory representation's tree listing.
+///
+/// Metadata only — no bytes. The consumer builds a File Provider placeholder
+/// from each entry; a file's bytes are pulled later via a child
+/// `ClipboardTreeFetch`. Sizes/permissions/mtimes carry fidelity so the pasted
+/// tree matches the source (CLIPBOARD.md §6); the per-child stream's exact size
+/// + SHA-256 are authoritative for the actual transfer.
+public nonisolated struct Kernova_V1_ClipboardTreeEntry: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// POSIX path relative to the directory rep's root (e.g. "sub/file.txt").
+  public var relativePath: String = String()
+
+  public var kind: Kernova_V1_ClipboardTreeEntry.Kind = .unspecified
+
+  /// File size in bytes (0 for a directory or symlink).
+  public var byteCount: UInt64 = 0
+
+  /// POSIX mode permission bits (the low 12 bits of `st_mode`), carrying the
+  /// executable bit and other permissions so the pasted file preserves them.
+  public var posixPermissions: UInt32 = 0
+
+  /// Modification time in milliseconds since the Unix epoch (UTC).
+  public var mtimeMs: Int64 = 0
+
+  /// For a symlink, the raw (unresolved) link target; empty otherwise.
+  public var symlinkTarget: String = String()
+
+  /// Whether a directory node is an OS package (.app/.rtfd/…), so the consumer
+  /// gives it a package `contentType` and the pasted folder opens as a bundle.
+  public var isPackage: Bool = false
+
+  /// Stable per-tree sequence number identifying this node within the directory
+  /// rep (assigned by the producer's walk, 1-based). Encoded into a child
+  /// fetch's `transfer_id` so cancels/aborts route deterministically.
+  public var childSeq: UInt32 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public nonisolated enum Kind: SwiftProtobuf.Enum, Swift.CaseIterable {
+    public typealias RawValue = Int
+    case unspecified // = 0
+    case file // = 1
+    case directory // = 2
+    case symlink // = 3
+    case UNRECOGNIZED(Int)
+
+    public init() {
+      self = .unspecified
+    }
+
+    public init?(rawValue: Int) {
+      switch rawValue {
+      case 0: self = .unspecified
+      case 1: self = .file
+      case 2: self = .directory
+      case 3: self = .symlink
+      default: self = .UNRECOGNIZED(rawValue)
+      }
+    }
+
+    public var rawValue: Int {
+      switch self {
+      case .unspecified: return 0
+      case .file: return 1
+      case .directory: return 2
+      case .symlink: return 3
+      case .UNRECOGNIZED(let i): return i
+      }
+    }
+
+    // The compiler won't synthesize support with the UNRECOGNIZED case.
+    public static let allCases: [Kernova_V1_ClipboardTreeEntry.Kind] = [
+      .unspecified,
+      .file,
+      .directory,
+      .symlink,
+    ]
+
+  }
+
+  public init() {}
+}
+
+/// A directory representation's full tree listing, streamed (serialized) as the
+/// inline payload of a listing-mode `ClipboardTreeFetch` reply. One message
+/// carries every node; it is metadata-sized (a 100k-entry tree serializes to a
+/// few MiB) and rides the SHA-256-verified stream transport, so it needs no
+/// separate pagination frame — the chunked transport paginates it.
+public nonisolated struct Kernova_V1_ClipboardTreeListing: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var entries: [Kernova_V1_ClipboardTreeEntry] = []
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 /// Liveness ping exchanged on the control channel. Each side sends one on a
 /// recurring timer (default ~5 seconds). Receivers refresh their "last seen"
 /// clock for the peer and treat extended silence as the peer being hung —
@@ -687,7 +874,7 @@ fileprivate nonisolated let _protobuf_package = "kernova.v1"
 
 nonisolated extension Kernova_V1_Frame: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Frame"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}protocol_version\0\u{2}\u{9}hello\0\u{1}error\0\u{1}heartbeat\0\u{3}policy_update\0\u{4}\u{7}clipboard_offer\0\u{3}clipboard_request\0\u{4}\u{2}clipboard_release\0\u{3}clipboard_stream_begin\0\u{3}clipboard_chunk\0\u{3}clipboard_stream_end\0\u{3}clipboard_stream_ack\0\u{3}clipboard_stream_abort\0\u{4}\u{2}log_record\0\u{c}\u{16}\u{1}")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}protocol_version\0\u{2}\u{9}hello\0\u{1}error\0\u{1}heartbeat\0\u{3}policy_update\0\u{4}\u{7}clipboard_offer\0\u{3}clipboard_request\0\u{4}\u{2}clipboard_release\0\u{3}clipboard_stream_begin\0\u{3}clipboard_chunk\0\u{3}clipboard_stream_end\0\u{3}clipboard_stream_ack\0\u{3}clipboard_stream_abort\0\u{3}clipboard_tree_fetch\0\u{3}log_record\0\u{c}\u{16}\u{1}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -852,6 +1039,19 @@ nonisolated extension Kernova_V1_Frame: SwiftProtobuf.Message, SwiftProtobuf._Me
           self.payload = .clipboardStreamAbort(v)
         }
       }()
+      case 29: try {
+        var v: Kernova_V1_ClipboardTreeFetch?
+        var hadOneofValue = false
+        if let current = self.payload {
+          hadOneofValue = true
+          if case .clipboardTreeFetch(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.payload = .clipboardTreeFetch(v)
+        }
+      }()
       case 30: try {
         var v: Kernova_V1_LogRecord?
         var hadOneofValue = false
@@ -926,6 +1126,10 @@ nonisolated extension Kernova_V1_Frame: SwiftProtobuf.Message, SwiftProtobuf._Me
     case .clipboardStreamAbort?: try {
       guard case .clipboardStreamAbort(let v)? = self.payload else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 28)
+    }()
+    case .clipboardTreeFetch?: try {
+      guard case .clipboardTreeFetch(let v)? = self.payload else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 29)
     }()
     case .logRecord?: try {
       guard case .logRecord(let v)? = self.payload else { preconditionFailure() }
@@ -1462,6 +1666,155 @@ nonisolated extension Kernova_V1_ClipboardStreamAbort: SwiftProtobuf.Message, Sw
     if lhs.transferID != rhs.transferID {return false}
     if lhs.code != rhs.code {return false}
     if lhs.message != rhs.message {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Kernova_V1_ClipboardTreeFetch: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ClipboardTreeFetch"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}generation\0\u{3}transfer_id\0\u{3}rep_index\0\u{3}relative_path\0\u{3}max_accept_byte_count\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt64Field(value: &self.generation) }()
+      case 2: try { try decoder.decodeSingularUInt64Field(value: &self.transferID) }()
+      case 3: try { try decoder.decodeSingularUInt32Field(value: &self.repIndex) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.relativePath) }()
+      case 5: try { try decoder.decodeSingularUInt64Field(value: &self.maxAcceptByteCount) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.generation != 0 {
+      try visitor.visitSingularUInt64Field(value: self.generation, fieldNumber: 1)
+    }
+    if self.transferID != 0 {
+      try visitor.visitSingularUInt64Field(value: self.transferID, fieldNumber: 2)
+    }
+    if self.repIndex != 0 {
+      try visitor.visitSingularUInt32Field(value: self.repIndex, fieldNumber: 3)
+    }
+    if !self.relativePath.isEmpty {
+      try visitor.visitSingularStringField(value: self.relativePath, fieldNumber: 4)
+    }
+    if self.maxAcceptByteCount != 0 {
+      try visitor.visitSingularUInt64Field(value: self.maxAcceptByteCount, fieldNumber: 5)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Kernova_V1_ClipboardTreeFetch, rhs: Kernova_V1_ClipboardTreeFetch) -> Bool {
+    if lhs.generation != rhs.generation {return false}
+    if lhs.transferID != rhs.transferID {return false}
+    if lhs.repIndex != rhs.repIndex {return false}
+    if lhs.relativePath != rhs.relativePath {return false}
+    if lhs.maxAcceptByteCount != rhs.maxAcceptByteCount {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Kernova_V1_ClipboardTreeEntry: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ClipboardTreeEntry"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}relative_path\0\u{1}kind\0\u{3}byte_count\0\u{3}posix_permissions\0\u{3}mtime_ms\0\u{3}symlink_target\0\u{3}is_package\0\u{3}child_seq\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.relativePath) }()
+      case 2: try { try decoder.decodeSingularEnumField(value: &self.kind) }()
+      case 3: try { try decoder.decodeSingularUInt64Field(value: &self.byteCount) }()
+      case 4: try { try decoder.decodeSingularUInt32Field(value: &self.posixPermissions) }()
+      case 5: try { try decoder.decodeSingularInt64Field(value: &self.mtimeMs) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.symlinkTarget) }()
+      case 7: try { try decoder.decodeSingularBoolField(value: &self.isPackage) }()
+      case 8: try { try decoder.decodeSingularUInt32Field(value: &self.childSeq) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.relativePath.isEmpty {
+      try visitor.visitSingularStringField(value: self.relativePath, fieldNumber: 1)
+    }
+    if self.kind != .unspecified {
+      try visitor.visitSingularEnumField(value: self.kind, fieldNumber: 2)
+    }
+    if self.byteCount != 0 {
+      try visitor.visitSingularUInt64Field(value: self.byteCount, fieldNumber: 3)
+    }
+    if self.posixPermissions != 0 {
+      try visitor.visitSingularUInt32Field(value: self.posixPermissions, fieldNumber: 4)
+    }
+    if self.mtimeMs != 0 {
+      try visitor.visitSingularInt64Field(value: self.mtimeMs, fieldNumber: 5)
+    }
+    if !self.symlinkTarget.isEmpty {
+      try visitor.visitSingularStringField(value: self.symlinkTarget, fieldNumber: 6)
+    }
+    if self.isPackage != false {
+      try visitor.visitSingularBoolField(value: self.isPackage, fieldNumber: 7)
+    }
+    if self.childSeq != 0 {
+      try visitor.visitSingularUInt32Field(value: self.childSeq, fieldNumber: 8)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Kernova_V1_ClipboardTreeEntry, rhs: Kernova_V1_ClipboardTreeEntry) -> Bool {
+    if lhs.relativePath != rhs.relativePath {return false}
+    if lhs.kind != rhs.kind {return false}
+    if lhs.byteCount != rhs.byteCount {return false}
+    if lhs.posixPermissions != rhs.posixPermissions {return false}
+    if lhs.mtimeMs != rhs.mtimeMs {return false}
+    if lhs.symlinkTarget != rhs.symlinkTarget {return false}
+    if lhs.isPackage != rhs.isPackage {return false}
+    if lhs.childSeq != rhs.childSeq {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Kernova_V1_ClipboardTreeEntry.Kind: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0KIND_UNSPECIFIED\0\u{1}FILE\0\u{1}DIRECTORY\0\u{1}SYMLINK\0")
+}
+
+nonisolated extension Kernova_V1_ClipboardTreeListing: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ClipboardTreeListing"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}entries\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeRepeatedMessageField(value: &self.entries) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.entries.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.entries, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Kernova_V1_ClipboardTreeListing, rhs: Kernova_V1_ClipboardTreeListing) -> Bool {
+    if lhs.entries != rhs.entries {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

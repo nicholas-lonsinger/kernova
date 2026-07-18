@@ -81,6 +81,20 @@ struct FileProviderServiceSourceTests {
             cancelFetchCalled.notify()
         }
 
+        func fetchChild(
+            generation: UInt64, repIndex: Int, childSeq: UInt32, relativePath: String,
+            reply: @escaping @Sendable (String?, NSError?) -> Void
+        ) {
+            fetchFileEnteredBox.value = true
+            fetchFileEntered.notify()
+            if repliesImmediately.value { reply("/staged/child", nil) }
+        }
+
+        func cancelChildFetch(generation: UInt64, repIndex: Int, childSeq: UInt32) {
+            cancelCallBox.value = (generation, repIndex)
+            cancelFetchCalled.notify()
+        }
+
         func invalidate() {
             listener.invalidate()
         }
