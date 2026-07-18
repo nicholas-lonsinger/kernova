@@ -36,7 +36,7 @@ Valid findings that are **out of scope** for the current task must be captured a
 ~~~bash
 gh issue create \
   --title "<concise description of the finding>" \
-  --label "<review-debt/label>" \
+  --label "Review Debt" --label "Type: <Fix|Refactor|Test>" \
   --body "$(cat <<'EOF'
 ## Found during
 <PR #N / review of `FileName.swift` / context description>
@@ -53,16 +53,12 @@ EOF
 )"
 ~~~
 
-**Labels** — use the most specific match:
+**Labels** — the label inventory lives on GitHub, not in this file: run `gh label list` and pick by the descriptions there; they are the source of truth. The structural rules that don't fit in a label description:
 
-| Label | When to use |
-|-------|-------------|
-| `review-debt/bug` | Correctness issues, logic errors, potential crashes |
-| `review-debt/security` | Security concerns, unsafe patterns |
-| `review-debt/performance` | Inefficient code paths, unnecessary allocations |
-| `review-debt/refactor` | Code smells, duplication, poor abstractions |
-| `review-debt/test-gap` | Missing or insufficient tests for critical code |
-| `review-debt/dead-code` | Dead code surfaced by the Periphery scan (applied automatically by `dead-code.yml`; use for manually-filed dead-code findings too) |
+- Labels come in three prefix families — `Type:` (mirrors the PR/commit type prefixes), `Area:` (subsystem), `OS:` (guest-OS support) — plus standalone flags (`Review Debt`, `Dead Code`, `Performance`, `Security`). Apply **at most one label per family**; families compose freely.
+- Every issue gets a `Type:` label, and an `Area:` label when it clearly belongs to one subsystem.
+- Review-debt issues additionally get `Review Debt` — it marks the *origin* (filed from review) while `Type:` carries the category: `Type: Fix` for correctness findings, `Type: Refactor` for code smells/duplication, `Type: Test` for coverage gaps. Performance and security findings add the `Performance` / `Security` flag on top (their eventual PR is still a `fix:`/`refactor:`, so the flag rides alongside the `Type:` rather than replacing it).
+- `Dead Code` is applied automatically by `dead-code.yml` to its scan-tracker issues; use it for manually-filed dead-code findings too.
 
 **Guidelines:**
 - **File issues immediately** — do not list qualifying findings as "skipped" and wait to be asked. If a finding meets the severity criteria above, create the issue as part of the review flow before summarizing results.

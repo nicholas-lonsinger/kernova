@@ -112,7 +112,7 @@ jobs:
           # a complete snapshot — findings are never merged across runs — and
           # closed issues are immutable history.
           OPEN_ISSUE=$(gh issue list \
-            --label "review-debt/dead-code" \
+            --label "Dead Code" \
             --state open \
             --limit 1 \
             --json number,title \
@@ -153,7 +153,7 @@ jobs:
             # exists, cross-link it so it is unambiguous that this new set
             # supersedes, and does not extend, the old one.
             PREV_CLOSED=$(gh issue list \
-              --label "review-debt/dead-code" \
+              --label "Dead Code" \
               --state closed \
               --limit 1 \
               --json number,title \
@@ -166,7 +166,7 @@ jobs:
 
             NEW_URL=$(gh issue create \
               --title "Dead-code scan: $FINDINGS finding(s)" \
-              --label "review-debt/dead-code" \
+              --label "Dead Code" \
               --body-file "$BODY_FILE")
             echo "Opened $NEW_URL"
 
