@@ -102,14 +102,23 @@ final class HostClipboardFileProvider {
     /// Returns the placeholder's pasteboard URL, or `nil` when the File Provider
     /// isn't usable (no transport attached / toggle off / not ready) so the
     /// caller falls back to the size-capped synchronous paste.
+    ///
+    /// The host still publishes at Copy-to-Mac click time, so the click→paste
+    /// gap covers the async placeholder enumeration (`waitForPlaceholder:
+    /// false`); the paste-time unified routing lands host-side with the D2
+    /// multi-file reshape (#559).
     func publishSingleFile(
         source: any HostClipboardFileRepProviding,
         generation: UInt64, repIndex: Int, filename: String, byteCount: UInt64, uti: String
     ) -> URL? {
         router.setSource(source)
-        return domainHost.publishSingleFile(
-            generation: generation, repIndex: repIndex, filename: filename,
-            byteCount: byteCount, uti: uti)
+        return domainHost.publishItems(
+            generation: generation,
+            items: [
+                FileProviderPublishItem(
+                    repIndex: repIndex, filename: filename, byteCount: byteCount, uti: uti)
+            ],
+            waitForPlaceholder: false)?[repIndex]
     }
 
     /// Clears the current offer, but only if `source` is the one that published

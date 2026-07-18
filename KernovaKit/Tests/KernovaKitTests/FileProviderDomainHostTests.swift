@@ -173,7 +173,7 @@ struct FileProviderDomainHostEnablementTests {
         var values: [FileProviderAvailability] { lock.withLock { valuesStorage } }
     }
 
-    /// Never asked to pull a file in these tests (none call `publishSingleFile`
+    /// Never asked to pull a file in these tests (none call `publishItems`
     /// on a usable domain), so a fixed failure reply is fine.
     private final class NeverCalledPullProvider: FileProviderPullProvider,
         @unchecked Sendable
@@ -301,7 +301,8 @@ struct FileProviderDomainHostEnablementTests {
         domainIdentifier: String, domainSource: FakeDomainSource,
         notificationCenter: NotificationCenter,
         addDomain: FakeAddDomain? = nil,
-        relayTransport: FileProviderRelayTransport? = nil
+        relayTransport: FileProviderRelayTransport? = nil,
+        waitForStabilization: (@Sendable (@escaping @Sendable (Error?) -> Void) -> Void)? = nil
     ) -> FileProviderDomainHost {
         let config = FileProviderConfig(
             appGroupIdentifier: "8MT4P4GZL2.app.kernova.test",
@@ -314,6 +315,10 @@ struct FileProviderDomainHostEnablementTests {
             extensionLoggerSubsystem: "app.kernova.test.fileprovider",
             ownerCodeSigningRequirement: nil,
             extensionCodeSigningRequirement: nil)
+        // The stabilization seam defaults to an immediate no-op success so
+        // tests that don't observe the flush never wait on the real
+        // fileproviderd barrier.
+        let stabilization = waitForStabilization ?? { completion in completion(nil) }
         if let addDomain {
             return FileProviderDomainHost(
                 config: config,
@@ -321,14 +326,16 @@ struct FileProviderDomainHostEnablementTests {
                 relayTransport: relayTransport ?? NoOpRelayTransport(),
                 notificationCenter: notificationCenter,
                 fetchDomains: { try await domainSource.fetch() },
-                addDomainToSystem: { domain, completion in addDomain.add(domain, completion: completion) })
+                addDomainToSystem: { domain, completion in addDomain.add(domain, completion: completion) },
+                waitForStabilization: stabilization)
         }
         return FileProviderDomainHost(
             config: config,
             pullProvider: NeverCalledPullProvider(),
             relayTransport: relayTransport ?? NoOpRelayTransport(),
             notificationCenter: notificationCenter,
-            fetchDomains: { try await domainSource.fetch() })
+            fetchDomains: { try await domainSource.fetch() },
+            waitForStabilization: stabilization)
     }
 
     private func matchingDomain(_ identifier: String) -> NSFileProviderDomain {
@@ -536,8 +543,13 @@ struct FileProviderDomainHostEnablementTests {
 
         // Standing in for a real paste: finds the domain unregistered and falls
         // back (returns nil) — must not trigger any re-registration.
-        let published = host.publishSingleFile(
-            generation: 1, repIndex: 0, filename: "test.txt", byteCount: 10, uti: "public.data")
+        let published = host.publishItems(
+            generation: 1,
+            items: [
+                FileProviderPublishItem(
+                    repIndex: 0, filename: "test.txt", byteCount: 10, uti: "public.data")
+            ],
+            waitForPlaceholder: true)
         #expect(published == nil)
 
         #expect(
@@ -683,5 +695,187 @@ struct FileProviderDomainHostEnablementTests {
         // gone before this post — nothing to deliver to, hence a synchronous assert.
         #expect(collector.values == valuesBeforePost)
         #expect(domainSource.callCount == callsBeforePost)
+    }
+
+    // MARK: - Clear-path reconciliation flush
+
+    /// Builds a host registered via the adopt path with the stabilization
+    /// recorder injected, ready for `clearOffer` to schedule flushes.
+    private func makeRegisteredHost(
+        recorder: StabilizationRecorder
+    ) async throws -> FileProviderDomainHost {
+        let identifierString = "kernova-clipboard-test-\(UUID().uuidString)"
+        let domainSource = FakeDomainSource()
+        domainSource.setResult(.success([matchingDomain(identifierString)]))
+        let collector = AvailabilityCollector()
+        let host = makeHost(
+            domainIdentifier: identifierString, domainSource: domainSource,
+            notificationCenter: NotificationCenter(),
+            waitForStabilization: recorder.seam)
+        host.setAvailabilityObserver { collector.record($0) }
+        host.setEnabled(true)
+        try await collector.gate.wait { collector.values.contains(.needsEnabling) }
+        return host
+    }
+
+    @Test("clearing a registered offer schedules one stabilization flush")
+    func clearSchedulesFlush() async throws {
+        let recorder = StabilizationRecorder()
+        let host = try await makeRegisteredHost(recorder: recorder)
+
+        host.clearOffer()
+        try await recorder.gate.wait { recorder.callCount == 1 }
+        recorder.completeAll()
+    }
+
+    @Test("a clear while a flush is still waiting coalesces instead of stacking a second wait")
+    func clearCoalescesInFlightFlush() async throws {
+        let recorder = StabilizationRecorder()
+        let host = try await makeRegisteredHost(recorder: recorder)
+
+        // First clear parks a flush (the recorder holds its completion).
+        host.clearOffer()
+        try await recorder.gate.wait { recorder.callCount == 1 }
+
+        // A second clear during the in-flight flush must not start another.
+        host.clearOffer()
+        #expect(recorder.callCount == 1)
+
+        // Once the flush completes, the next clear schedules a fresh one.
+        recorder.completeAll()
+        // RATIONALE: the in-flight flag clears on the flush's background thread
+        // after the completion fires, with no external signal to await — a
+        // sanctioned no-signal poll (docs/TESTING.md) on the DEBUG seam.
+        try await waitUntil { !host.clearReconciliationInFlightForTesting }
+        host.clearOffer()
+        try await recorder.gate.wait { recorder.callCount == 2 }
+        recorder.completeAll()
+    }
+}
+
+@Suite("FileProviderDomainHost filename de-duplication")
+struct FileProviderDomainHostFilenameTests {
+    @Test("unique names pass through unchanged")
+    func uniqueNamesUnchanged() {
+        #expect(
+            FileProviderDomainHost.deduplicatedFilenames(["a.pdf", "b.pdf"]) == ["a.pdf", "b.pdf"])
+    }
+
+    @Test("a colliding name gets a ' (2)' suffix before the extension")
+    func collisionSuffixesBeforeExtension() {
+        #expect(
+            FileProviderDomainHost.deduplicatedFilenames(["report.pdf", "report.pdf"])
+                == ["report.pdf", "report (2).pdf"])
+    }
+
+    @Test("three-way collisions count up, and a compound extension splits at the last dot")
+    func multiCollisionAndCompoundExtension() {
+        #expect(
+            FileProviderDomainHost.deduplicatedFilenames([
+                "archive.tar.gz", "archive.tar.gz", "archive.tar.gz",
+            ]) == ["archive.tar.gz", "archive.tar (2).gz", "archive.tar (3).gz"])
+    }
+
+    @Test("an extensionless name suffixes at the end")
+    func extensionlessCollision() {
+        #expect(
+            FileProviderDomainHost.deduplicatedFilenames(["Makefile", "Makefile"])
+                == ["Makefile", "Makefile (2)"])
+    }
+
+    @Test("a de-duplicated name that itself collides with a later original keeps all names unique")
+    func generatedNameCollidesWithOriginal() {
+        #expect(
+            FileProviderDomainHost.deduplicatedFilenames(["a.txt", "a.txt", "a (2).txt"])
+                == ["a.txt", "a (2).txt", "a (2) (2).txt"])
+    }
+}
+
+@Suite("FileProviderDomainHost replica verdict")
+struct FileProviderDomainHostReplicaVerdictTests {
+    @Test("all expected dirents present with matching identifiers and no extras → verified")
+    func allPresentMatching() {
+        #expect(
+            FileProviderDomainHost.replicaVerdict(
+                expected: ["a.pdf": "clipfile.1.5.0", "b.pdf": "clipfile.1.5.1"],
+                listedNames: ["a.pdf", "b.pdf"],
+                resolvedIdentifiers: ["a.pdf": "clipfile.1.5.0", "b.pdf": "clipfile.1.5.1"])
+                == .verified)
+    }
+
+    @Test("a missing dirent → missingOrMismatched")
+    func missingDirent() {
+        #expect(
+            FileProviderDomainHost.replicaVerdict(
+                expected: ["a.pdf": "clipfile.1.5.0"],
+                listedNames: [],
+                resolvedIdentifiers: [:])
+                == .missingOrMismatched)
+    }
+
+    @Test(
+        "a same-named dirent resolving to the superseded offer's identifier → missingOrMismatched (the -43 case)"
+    )
+    func sameNameStaleIdentifier() {
+        // The dirent EXISTS by name — a bare existence check passes — but it is
+        // still the previous generation's item mid-swap.
+        #expect(
+            FileProviderDomainHost.replicaVerdict(
+                expected: ["ChatGPT.dmg": "clipfile.1.6.0"],
+                listedNames: ["ChatGPT.dmg"],
+                resolvedIdentifiers: ["ChatGPT.dmg": "clipfile.1.5.0"])
+                == .missingOrMismatched)
+    }
+
+    @Test("an unresolvable identifier for a listed dirent → missingOrMismatched")
+    func unresolvedIdentifier() {
+        #expect(
+            FileProviderDomainHost.replicaVerdict(
+                expected: ["a.pdf": "clipfile.1.5.0"],
+                listedNames: ["a.pdf"],
+                resolvedIdentifiers: [:])
+                == .missingOrMismatched)
+    }
+
+    @Test("expected verified but a stale sibling remains → staleExtras with its name")
+    func staleSibling() {
+        #expect(
+            FileProviderDomainHost.replicaVerdict(
+                expected: ["b.pdf": "clipfile.1.6.0"],
+                listedNames: ["b.pdf", "old.pdf"],
+                resolvedIdentifiers: ["b.pdf": "clipfile.1.6.0"])
+                == .staleExtras(["old.pdf"]))
+    }
+}
+
+/// Records `waitForStabilization` invocations and lets a test choose when (or
+/// whether) each completes.
+final class StabilizationRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var callCountStorage = 0
+    private var pendingStorage: [@Sendable (Error?) -> Void] = []
+    let gate = AsyncGate()
+
+    /// The injectable seam: records the call and parks the completion.
+    var seam: @Sendable (@escaping @Sendable (Error?) -> Void) -> Void {
+        { [self] completion in
+            lock.withLock {
+                callCountStorage += 1
+                pendingStorage.append(completion)
+            }
+            gate.notify()
+        }
+    }
+
+    var callCount: Int { lock.withLock { callCountStorage } }
+
+    /// Completes every parked wait with `error`.
+    func completeAll(error: Error? = nil) {
+        let pending = lock.withLock {
+            let parked = pendingStorage
+            pendingStorage = []
+            return parked
+        }
+        for completion in pending { completion(error) }
     }
 }

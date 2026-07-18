@@ -170,16 +170,13 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
             onQuit: { NSApp.terminate(nil) }
         )
 
-        // Re-publish a live inbound offer through the File Provider once the
-        // domain becomes user-enabled — an offer that arrived before the
-        // availability probe settled (fresh VM / just-flipped toggle) missed the
-        // FP path and landed on the synchronous provider (#429) — and refresh the
-        // status-item reminder badge (#581). Registered after both observers
-        // exist so this single observer slot (`setAvailabilityObserver` keeps
-        // only the most recent registration) can drive them together. Delivered
-        // on main; the immediate `.inactive` delivery here is a no-op for both.
-        fileProviderHost.setAvailabilityObserver { [weak self, weak clipboardAgent] availability in
-            clipboardAgent?.fileProviderAvailabilityChanged(availability)
+        // Refresh the status-item reminder badge on availability transitions
+        // (#581). The clipboard agent no longer needs an availability-flip
+        // re-publish here: the unified provider closure re-checks the File
+        // Provider at paste time (#427), so an offer that arrived before the
+        // probe settled routes lazily on its next paste without a re-write.
+        // Delivered on main; the immediate `.inactive` delivery is a no-op.
+        fileProviderHost.setAvailabilityObserver { [weak self] availability in
             self?.statusItemController?.fileProviderAvailabilityChanged(availability)
         }
 
