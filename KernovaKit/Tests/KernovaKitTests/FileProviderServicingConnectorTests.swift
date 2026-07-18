@@ -135,6 +135,13 @@ struct FileProviderServicingConnectorTests {
             reply()
         }
 
+        // Not exercised by the connector tests (they cover the handshake/reconnect
+        // state machine, not the byte-progress channel), but required for
+        // conformance to the extended `FileProviderControl`.
+        func fetchProgressed(
+            generation: UInt64, repIndex: Int, bytesTransferred: UInt64, totalBytes: UInt64
+        ) {}
+
         /// Invalidates the accepted connection (breaking the connection↔peer
         /// retain cycle `exportedObject` holds) and the listener.
         func invalidate() {

@@ -64,6 +64,33 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
     /// Byte-pulls awaiting a live owner connection, drained on accept.
     private var pendingPulls: [PendingPull] = []
 
+    /// In-flight progress handlers keyed by `(generation, repIndex)` (#426).
+    ///
+    /// An owner `fetchProgressed` push during a live pull reaches that pull's
+    /// `Progress` through this map. Registered by `fetchStagedFile` when the pull
+    /// starts, removed when it completes — a late push for a finished pull finds no
+    /// handler and no-ops.
+    ///
+    /// Each entry carries a monotonic `token` so a pull's completion only removes
+    /// *its own* registration: if a same-`(generation, repIndex)` retry re-registered
+    /// (the #500 supersession edge), the displaced pull's completion must not evict
+    /// the successor's handler.
+    private var progressHandlers: [ProgressKey: ProgressRegistration] = [:]
+    private var nextProgressToken: UInt64 = 0
+
+    /// Addresses one in-flight pull's progress handler — the same
+    /// `(generation, repIndex)` the owner keys its `fetchProgressed` push on.
+    private struct ProgressKey: Hashable {
+        let generation: UInt64
+        let repIndex: Int
+    }
+
+    /// A registered progress handler plus the token that identifies its pull.
+    private struct ProgressRegistration {
+        let token: UInt64
+        let handler: @Sendable (UInt64, UInt64) -> Void
+    }
+
     /// A byte-pull waiting for the owner to connect.
     ///
     /// Reference type so the connect-timeout timer and the accept-time drain can
@@ -234,6 +261,30 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
         reply()
     }
 
+    /// The owner's byte-progress push for an in-flight pull (#426): routes it to
+    /// the pull's registered handler, or no-ops when none is registered.
+    ///
+    /// A no-op for an unknown or already-finished `(generation, repIndex)` — the
+    /// handler is removed the instant the pull completes, so a push racing (or
+    /// arriving after) the terminal harmlessly finds nothing. The handler is read
+    /// under `lock` and invoked outside it (it only advances an `NSProgress`).
+    func fetchProgressed(
+        generation: UInt64, repIndex: Int, bytesTransferred: UInt64, totalBytes: UInt64
+    ) {
+        let key = ProgressKey(generation: generation, repIndex: repIndex)
+        let handler = lock.withLock { progressHandlers[key]?.handler }
+        handler?(bytesTransferred, totalBytes)
+    }
+
+    /// Removes a pull's progress handler, but only if it's still the same
+    /// registration (`token` match) — so a displaced pull's completion can't evict
+    /// a same-key retry's handler (the #500 supersession edge).
+    private func unregisterProgress(key: ProgressKey, token: UInt64) {
+        lock.withLock {
+            if progressHandlers[key]?.token == token { progressHandlers[key] = nil }
+        }
+    }
+
     // MARK: - Byte pull (called from the extension's fetchContents)
 
     /// Pulls `(generation, repIndex)` through the owner and completes with the
@@ -246,8 +297,24 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
     /// arbitrary queue.
     func fetchStagedFile(
         generation: UInt64, repIndex: Int,
+        onProgress: @escaping @Sendable (_ bytesTransferred: UInt64, _ totalBytes: UInt64) -> Void =
+            { _, _ in },
         completion: @escaping (Result<String, NSError>) -> Void
     ) -> FileProviderPullCancellation {
+        // Register the progress handler for the pull's lifetime and wrap the
+        // completion so it is removed exactly once, on whichever terminal wins the
+        // pull's one-shot. A late `fetchProgressed` after this finds no handler.
+        let progressKey = ProgressKey(generation: generation, repIndex: repIndex)
+        let progressToken: UInt64 = lock.withLock {
+            nextProgressToken &+= 1
+            let token = nextProgressToken
+            progressHandlers[progressKey] = ProgressRegistration(token: token, handler: onProgress)
+            return token
+        }
+        let completion: (Result<String, NSError>) -> Void = { [weak self] result in
+            self?.unregisterProgress(key: progressKey, token: progressToken)
+            completion(result)
+        }
         let pull = PendingPull(generation: generation, repIndex: repIndex, completion: completion)
         // The cancel handle the extension wires to `fetchContents`' `Progress`. It
         // strongly holds `pull` (but only weakly `self`), so a cancel after this

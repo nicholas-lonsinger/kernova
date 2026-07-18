@@ -35,7 +35,8 @@ struct FileProviderRelayServiceTests {
         }
 
         func fetchStagedFile(
-            generation: UInt64, repIndex: Int
+            generation: UInt64, repIndex: Int,
+            onProgress: @escaping @Sendable (UInt64, UInt64) -> Void
         ) -> Result<String, FileProviderPullError> {
             lastFetchCallBox.value = (generation, repIndex)
             return result
@@ -74,7 +75,8 @@ struct FileProviderRelayServiceTests {
         var lastCancelCall: (UInt64, Int)? { lastCancelCallBox.value }
 
         func fetchStagedFile(
-            generation: UInt64, repIndex: Int
+            generation: UInt64, repIndex: Int,
+            onProgress: @escaping @Sendable (UInt64, UInt64) -> Void
         ) -> Result<String, FileProviderPullError> {
             hasEnteredBox.value = true
             entered.notify()

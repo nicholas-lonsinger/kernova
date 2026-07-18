@@ -1105,6 +1105,52 @@ struct VsockGuestClipboardAgentTests {
         #expect(try Data(contentsOf: stagedURL) == contents)
     }
 
+    @Test("File Provider relay: fetchStagedFile forwards cumulative byte progress via onProgress (#426)")
+    func fileProviderRelayForwardsProgress() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
+        // > one 64 KiB chunk so at least one intermediate progress callback fires
+        // before the final one carrying bytes == total.
+        let contents = Data(repeating: 0xAB, count: 200 * 1024)
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 11,
+                reps: [
+                    RepInfo(
+                        uti: txtUTI, byteCount: UInt64(contents.count), filename: "relay.txt",
+                        isInline: false)
+                ]))
+        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
+
+        let log = ServicingProgressLog()
+        let pull = Task.detached {
+            agent.fetchStagedFile(
+                generation: 11, repIndex: 0, onProgress: { log.record($0, $1) })
+        }
+        try await driveInboundStream(
+            generation: 11, uti: txtUTI, filename: "relay.txt", payload: contents,
+            isInline: false, on: hostChannel)
+        _ = try await pull.value.get()
+
+        // Progress was surfaced, cumulative (non-decreasing), and reached the total
+        // on the final push — what drives the extension's determinate download bar.
+        #expect(log.count >= 1)
+        #expect(log.last?.bytes == UInt64(contents.count))
+        #expect(log.last?.total == UInt64(contents.count))
+        let byteSequence = log.all.map(\.bytes)
+        #expect(byteSequence == byteSequence.sorted())
+    }
+
     @Test("File Provider relay: a stale generation resolves to noCurrentOffer with no request")
     func fileProviderRelayStaleGeneration() async throws {
         let pasteboard = FakePasteboard()
@@ -2940,6 +2986,19 @@ struct VsockGuestClipboardAgentTests {
         try data.write(to: url)
         return url
     }
+}
+
+// MARK: - Servicing progress recorder
+
+/// Thread-safe recorder for the `fetchStagedFile` `onProgress` pushes (#426),
+/// which fire off the main queue on the transfer's serial queue.
+final class ServicingProgressLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var entries: [(bytes: UInt64, total: UInt64)] = []
+    func record(_ bytes: UInt64, _ total: UInt64) { lock.withLock { entries.append((bytes, total)) } }
+    var all: [(bytes: UInt64, total: UInt64)] { lock.withLock { entries } }
+    var last: (bytes: UInt64, total: UInt64)? { lock.withLock { entries.last } }
+    var count: Int { lock.withLock { entries.count } }
 }
 
 // MARK: - Thread-safe fd array
