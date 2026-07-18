@@ -883,6 +883,19 @@ struct VsockClipboardServiceTests {
         }
     }
 
+    /// Thread-safe recorder for the `pullStagedFile` `onProgress` pushes (#426),
+    /// which fire off the main actor on the transfer's serial queue.
+    private final class ServicingProgressLog: @unchecked Sendable {
+        private let lock = NSLock()
+        private var entries: [(bytes: UInt64, total: UInt64)] = []
+        func record(_ bytes: UInt64, _ total: UInt64) {
+            lock.withLock { entries.append((bytes, total)) }
+        }
+        var all: [(bytes: UInt64, total: UInt64)] { lock.withLock { entries } }
+        var last: (bytes: UInt64, total: UInt64)? { lock.withLock { entries.last } }
+        var count: Int { lock.withLock { entries.count } }
+    }
+
     @Test("An offer publishes metadata-only .pendingRemote placeholders and sends no request")
     func offerPublishesPlaceholdersWithoutRequesting() async throws {
         let (guest, host) = try makePair()
@@ -1703,6 +1716,104 @@ struct VsockClipboardServiceTests {
             Issue.record("Expected noCurrentOffer, got \(outcome)")
             return
         }
+    }
+
+    @Test("pullStagedFile forwards cumulative byte progress via onProgress (#426)")
+    func pullStagedFileForwardsProgress() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        service.start()
+        defer { service.stop() }
+
+        // > one 64 KiB chunk so at least one intermediate progress callback fires
+        // before the final one carrying bytes == total.
+        let fileBytes = Data((0..<(200 * 1024)).map { UInt8(truncatingIfNeeded: $0) })
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        responder.register(
+            generation: 40, repIndex: 0, uti: "public.data", bytes: fileBytes,
+            filename: "big.bin", isInline: false)
+        responder.start()
+
+        try guest.send(
+            makeOffer(
+                generation: 40,
+                reps: [(uti: "public.data", byteCount: fileBytes.count, filename: "big.bin", isInline: false)]))
+        try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
+
+        let log = ServicingProgressLog()
+        let outcome = await Task.detached {
+            service.pullStagedFile(
+                generation: 40, repIndex: 0, onProgress: { log.record($0, $1) })
+        }.value
+        guard case .success = outcome else {
+            Issue.record("Expected pullStagedFile to succeed, got \(outcome)")
+            return
+        }
+
+        // The relay forwarded cumulative, non-decreasing progress ending at the
+        // total — what drives the extension's determinate download bar.
+        #expect(log.count >= 1)
+        #expect(log.last?.bytes == UInt64(fileBytes.count))
+        #expect(log.last?.total == UInt64(fileBytes.count))
+        let byteSequence = log.all.map(\.bytes)
+        #expect(byteSequence == byteSequence.sorted())
+    }
+
+    @Test(
+        "pullStagedFile records the guest→host pull in the window's in-app bar, cleared at the terminal (#426/#354)"
+    )
+    func pullStagedFileRecordsInAppProgress() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        // Reveal instantly so the mid-flight transfer surfaces (the sanctioned
+        // "drive the shown path" test value; see VsockClipboardService's doc).
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", progressRevealDelay: .zero)
+        service.start()
+        defer { service.stop() }
+
+        let fileBytes = Data((0..<(200 * 1024)).map { UInt8(truncatingIfNeeded: $0) })
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        // Park before End so the transfer is live (bytes received, pull unresolved)
+        // while we observe the bar.
+        responder.holdEnd = true
+        responder.register(
+            generation: 41, repIndex: 0, uti: "public.data", bytes: fileBytes,
+            filename: "big.bin", isInline: false)
+        responder.start()
+
+        try guest.send(
+            makeOffer(
+                generation: 41,
+                reps: [(uti: "public.data", byteCount: fileBytes.count, filename: "big.bin", isInline: false)]))
+        try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
+
+        let pull = Task.detached { service.pullStagedFile(generation: 41, repIndex: 0) }
+
+        // The bar reveals mid-flight: inbound, denominated by the rep's total, and
+        // labelled with the filename (#426 — LazyPullSnapshot.filename).
+        try await waitForChange { service.transferProgress?.direction == .inbound }
+        #expect(service.transferProgress?.totalBytes == fileBytes.count)
+        #expect(service.transferProgress?.label == "big.bin")
+
+        // Releasing End resolves the pull; the terminal clears the bar (§13: never
+        // leave a stuck bar).
+        responder.releaseEnd()
+        let outcome = await pull.value
+        guard case .success = outcome else {
+            Issue.record("Expected pullStagedFile to succeed, got \(outcome)")
+            return
+        }
+        try await waitForChange { service.transferProgress == nil }
     }
 
     @Test(

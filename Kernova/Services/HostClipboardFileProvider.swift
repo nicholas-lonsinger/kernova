@@ -219,7 +219,8 @@ final class HostClipboardPullRouter: FileProviderPullProvider, @unchecked Sendab
     }
 
     func fetchStagedFile(
-        generation: UInt64, repIndex: Int
+        generation: UInt64, repIndex: Int,
+        onProgress: @escaping @Sendable (UInt64, UInt64) -> Void = { _, _ in }
     ) -> Result<String, FileProviderPullError> {
         let key = PullKey(generation: generation, repIndex: repIndex)
         let source: (any HostClipboardFileRepProviding)? = lock.withLock {
@@ -229,7 +230,8 @@ final class HostClipboardPullRouter: FileProviderPullProvider, @unchecked Sendab
         }
         guard let source else { return .failure(.noCurrentOffer) }
         defer { lock.withLock { dispatchedSources[key] = nil } }
-        return source.pullStagedFile(generation: generation, repIndex: repIndex)
+        return source.pullStagedFile(
+            generation: generation, repIndex: repIndex, onProgress: onProgress)
     }
 
     func cancelStagedPull(generation: UInt64, repIndex: Int) {
@@ -254,8 +256,13 @@ protocol HostClipboardFileRepProviding: AnyObject, Sendable {
     /// `NSPasteboardItemDataProvider` callback) or off-main (the File Provider
     /// relay's XPC queue) — the implementation snapshots per the calling thread
     /// and is woken off-main by the stream receiver.
+    ///
+    /// `onProgress` is fed the receiver's cumulative `(bytesTransferred,
+    /// totalBytes)` per chunk, so the relay can drive the extension's determinate
+    /// download bar (#426). Fires off-main on the transfer's queue.
     func pullStagedFile(
-        generation: UInt64, repIndex: Int
+        generation: UInt64, repIndex: Int,
+        onProgress: @escaping @Sendable (UInt64, UInt64) -> Void
     ) -> Result<String, FileProviderPullError>
 
     /// Aborts an in-flight `pullStagedFile` for `(generation, repIndex)` (#464):

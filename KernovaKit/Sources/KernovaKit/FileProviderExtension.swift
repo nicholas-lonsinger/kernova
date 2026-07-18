@@ -118,16 +118,26 @@ open class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
         completionHandler: @escaping (URL?, NSFileProviderItem?, Error?) -> Void
     ) -> Progress {
         logger.debug("fetchContents START (item=\(itemIdentifier.rawValue, privacy: .public))")
-        let progress = Progress(totalUnitCount: 100)
-
         // The identifier carries the addressing; the manifest carries the metadata
         // for the returned item. A superseded item is gone from both → noSuchItem.
         guard let decoded = FileProviderItemIdentifier.decode(itemIdentifier.rawValue),
             let manifestItem = store.readManifest().item(for: itemIdentifier.rawValue)
         else {
             completionHandler(nil, nil, NSFileProviderError(.noSuchItem))
-            return progress
+            return Progress()
         }
+
+        // A byte-denominated download progress (#426): the owner pushes per-chunk
+        // `(bytesTransferred, totalBytes)` over the servicing connection during the
+        // pull, so Finder renders a determinate download bar instead of the pulsing
+        // indeterminate one. `kind`/`fileOperationKind` make the system present it as
+        // a file download. `byteCount` is the manifest's declared size; a zero-byte
+        // rep gets a unit of 1 (a 0/0 progress reads as indeterminate) and completes
+        // instantly in `materialize`.
+        let totalUnitCount = manifestItem.byteCount > 0 ? Int64(clamping: manifestItem.byteCount) : 1
+        let progress = Progress(totalUnitCount: totalUnitCount)
+        progress.kind = .file
+        progress.fileOperationKind = .downloading
 
         // Relay the byte pull to the owner over the servicing connection — the
         // sandboxed extension can't open vsock (CLIPBOARD.md §11). INVERTED wiring:
@@ -140,7 +150,17 @@ open class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
         // reconnect we're waiting for. Return `progress` now; complete when the
         // staged path (or an error) lands.
         let cancellation = serviceSource.fetchStagedFile(
-            generation: decoded.generation, repIndex: decoded.repIndex
+            generation: decoded.generation, repIndex: decoded.repIndex,
+            // Advance the determinate bar from the owner's coalesced pushes (#426).
+            // `progress` is captured weakly (same reason as the completion below —
+            // the cancellation strongly retains this closure via the pull); the
+            // system owns `progress` for the fetch's duration, so it's non-nil here.
+            // Clamp to `totalUnitCount`: the final push carries bytes == total, and
+            // `materialize` sets the terminal 100% regardless.
+            onProgress: { [weak progress] bytesTransferred, _ in
+                guard let progress else { return }
+                progress.completedUnitCount = min(Int64(clamping: bytesTransferred), totalUnitCount)
+            }
         ) { [weak self, weak progress] result in
             guard let self else {
                 completionHandler(nil, nil, NSFileProviderError(.providerNotFound))
@@ -200,7 +220,9 @@ open class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
             let destination = tempDir.appendingPathComponent(UUID().uuidString)
             try FileManager.default.copyItem(at: URL(fileURLWithPath: stagedPath), to: destination)
             logger.notice("fetchContents materialized \(manifestItem.byteCount, privacy: .public) bytes")
-            progress?.completedUnitCount = 100
+            // Complete the byte-denominated bar (#426): a throttled final push may
+            // have been coalesced away, and a zero-byte rep never pushed at all.
+            if let progress { progress.completedUnitCount = progress.totalUnitCount }
             completionHandler(destination, ClipboardFileItem(manifestItem: manifestItem), nil)
         } catch {
             logger.error("fetchContents clone failed: \(error.localizedDescription, privacy: .public)")

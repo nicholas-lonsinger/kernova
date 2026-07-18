@@ -65,4 +65,25 @@ import Foundation
     /// the relay back. The body is intentionally trivial — the send itself is the
     /// signal.
     func ownerDidConnect(reply: @escaping @Sendable () -> Void)
+
+    /// One-way progress push for an in-flight `fetchFile` pull (#426), so the
+    /// extension can drive a byte-denominated `Progress` in `fetchContents` and
+    /// Finder renders a *determinate* download bar instead of the pulsing
+    /// indeterminate one. The owner pushes coalesced `(bytesTransferred,
+    /// totalBytes)` from the receiver's per-chunk callback for the pull's
+    /// duration, keyed by the same `(generation, repIndex)` addressing as
+    /// `fetchFile`; the extension routes it to that pull's registered handler.
+    ///
+    /// One-way (no reply) and best-effort, exactly like `cancelFetch`: a push
+    /// for an unknown or already-finished pull is a no-op on the extension side,
+    /// and a version-skewed extension that predates this selector simply drops
+    /// the message — `NSXPCConnection` discards an unrecognized incoming call
+    /// without tearing the connection down — so a missing peer degrades to
+    /// no-progress rather than breaking the fetch.
+    ///
+    /// Delivered on the connection's serial delivery queue (like every incoming
+    /// call), so it can arrive interleaved with the owner's other traffic; it
+    /// never blocks — the handler only advances an `NSProgress`.
+    func fetchProgressed(
+        generation: UInt64, repIndex: Int, bytesTransferred: UInt64, totalBytes: UInt64)
 }

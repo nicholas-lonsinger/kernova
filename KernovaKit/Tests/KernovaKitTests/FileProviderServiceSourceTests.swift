@@ -318,6 +318,63 @@ struct FileProviderServiceSourceTests {
         #expect(relay.cancelCall == nil)
     }
 
+    // MARK: - Servicing progress registry (#426)
+
+    @Test(
+        "a fetchProgressed push during an in-flight pull reaches its onProgress handler; a late push after completion is a no-op"
+    )
+    func fetchProgressedRoutesThenNoOpsAfterCompletion() {
+        let source = makeSource()
+        let pushes = Box<[(UInt64, UInt64)]>([])
+
+        // No accepted connection → the pull stays pending, but its progress
+        // handler is registered for the pull's lifetime regardless.
+        let cancellation = source.fetchStagedFile(
+            generation: 7, repIndex: 2,
+            onProgress: { bytes, total in pushes.value.append((bytes, total)) }
+        ) { _ in }
+
+        // A push for the in-flight pull routes to its handler.
+        source.fetchProgressed(generation: 7, repIndex: 2, bytesTransferred: 100, totalBytes: 1000)
+        #expect(pushes.value.count == 1)
+        #expect(pushes.value.first?.0 == 100)
+        #expect(pushes.value.first?.1 == 1000)
+
+        // Completing the pull (here via cancel) unregisters the handler.
+        cancellation.cancel()
+
+        // A late push after completion finds no handler and is a no-op.
+        source.fetchProgressed(generation: 7, repIndex: 2, bytesTransferred: 500, totalBytes: 1000)
+        #expect(pushes.value.count == 1)
+    }
+
+    @Test("a fetchProgressed push for an unregistered pull is a harmless no-op")
+    func fetchProgressedForUnknownPullNoOps() {
+        let source = makeSource()
+        // No pull registered for this key — must not crash or route anywhere.
+        source.fetchProgressed(generation: 1, repIndex: 0, bytesTransferred: 10, totalBytes: 20)
+    }
+
+    @Test("a fetchProgressed push routes only to the matching (generation, repIndex)")
+    func fetchProgressedRoutesByKey() {
+        let source = makeSource()
+        let pushes = Box<[(UInt64, UInt64)]>([])
+        let cancellation = source.fetchStagedFile(
+            generation: 7, repIndex: 2,
+            onProgress: { bytes, total in pushes.value.append((bytes, total)) }
+        ) { _ in }
+        defer { cancellation.cancel() }
+
+        // A wrong repIndex and a wrong generation both miss the handler.
+        source.fetchProgressed(generation: 7, repIndex: 3, bytesTransferred: 1, totalBytes: 2)
+        source.fetchProgressed(generation: 8, repIndex: 2, bytesTransferred: 1, totalBytes: 2)
+        #expect(pushes.value.isEmpty)
+
+        // The exact key hits.
+        source.fetchProgressed(generation: 7, repIndex: 2, bytesTransferred: 1, totalBytes: 2)
+        #expect(pushes.value.count == 1)
+    }
+
     // MARK: - Accept-time owner-identity log line (#518)
 
     /// The pure formatter behind the accept-time `.notice` log line.

@@ -1092,7 +1092,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// (docs/CLIPBOARD.md §2), the whole reason large files route there.
     private func pullRepresentation(
         _ repIndex: Int, promise: InboundPromise, channel: VsockChannel,
-        receiver: ClipboardStreamReceiver, deadlineBound: Bool
+        receiver: ClipboardStreamReceiver, deadlineBound: Bool,
+        onProgress: (@Sendable (_ bytesTransferred: UInt64, _ totalBytes: UInt64) -> Void)? = nil
     ) -> ClipboardContent.Representation? {
         let info = promise.reps[repIndex]
         // RATIONALE: the deadline-safe cap (#561) applies to the TOTAL of the
@@ -1169,9 +1170,15 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             onComplete: { rep in coordinator.deliver(transferID, rep) },
             onAbort: { abort in coordinator.abort(transferID, abort) },
             // Re-arm the pull's inactivity backstop on every chunk so a large
-            // still-streaming file is never timed out mid-transfer. [large-paste]
-            // The guest has no progress UI, so the byte counts are ignored.
-            onProgress: { _, _ in coordinator.heartbeat(transferID) })
+            // still-streaming file is never timed out mid-transfer [large-paste].
+            // The guest has no in-app progress UI, but the File Provider relay path
+            // forwards the bytes so the guest's *Finder* renders a determinate
+            // download bar (#426); the synchronous pasteboard path passes no
+            // `onProgress` and the counts are ignored.
+            onProgress: { bytes, total in
+                coordinator.heartbeat(transferID)
+                onProgress?(UInt64(bytes), UInt64(total))
+            })
 
         let outcome = lazyCoordinator.pull(transferID: transferID) {
             var request = Frame()
@@ -1477,7 +1484,8 @@ extension VsockGuestClipboardAgent: FileProviderPullProvider {
     /// the XPC thread for a multi-GB transfer is safe — and it never holds the
     /// agent's main thread (unlike the synchronous `provideData` path).
     func fetchStagedFile(
-        generation: UInt64, repIndex: Int
+        generation: UInt64, repIndex: Int,
+        onProgress: @escaping @Sendable (UInt64, UInt64) -> Void = { _, _ in }
     ) -> Result<String, FileProviderPullError> {
         // Enforce the off-main contract: this method does `DispatchQueue.main.sync`
         // below and then blocks on the pull, so running it on main would deadlock
@@ -1519,11 +1527,12 @@ extension VsockGuestClipboardAgent: FileProviderPullProvider {
         guard let context else { return .failure(.noCurrentOffer) }
 
         // Blocking pull off-main; a delivered file rep carries its staged URL in
-        // the shared container.
+        // the shared container. `onProgress` feeds the servicing-XPC progress push
+        // so the guest's Finder renders a determinate download bar (#426).
         guard
             let representation = pullRepresentation(
                 repIndex, promise: context.promise, channel: context.channel,
-                receiver: context.receiver, deadlineBound: false),
+                receiver: context.receiver, deadlineBound: false, onProgress: onProgress),
             let url = representation.fileURL
         else { return .failure(.pullFailed) }
         return .success(url.path)

@@ -33,7 +33,8 @@ struct HostClipboardPullRouterTests {
         }
 
         func pullStagedFile(
-            generation: UInt64, repIndex: Int
+            generation: UInt64, repIndex: Int,
+            onProgress: @escaping @Sendable (UInt64, UInt64) -> Void
         ) -> Result<String, FileProviderPullError> {
             .success("/staged/\(label)")
         }
@@ -61,7 +62,8 @@ struct HostClipboardPullRouterTests {
         var cancelCall: (UInt64, Int)? { lock.withLock { cancelCallStorage } }
 
         func pullStagedFile(
-            generation: UInt64, repIndex: Int
+            generation: UInt64, repIndex: Int,
+            onProgress: @escaping @Sendable (UInt64, UInt64) -> Void
         ) -> Result<String, FileProviderPullError> {
             lock.withLock { hasEnteredStorage = true }
             entered.notify()

@@ -179,7 +179,8 @@ struct FileProviderDomainHostEnablementTests {
         @unchecked Sendable
     {
         func fetchStagedFile(
-            generation: UInt64, repIndex: Int
+            generation: UInt64, repIndex: Int,
+            onProgress: @escaping @Sendable (UInt64, UInt64) -> Void
         ) -> Result<String, FileProviderPullError> {
             .failure(.noCurrentOffer)
         }

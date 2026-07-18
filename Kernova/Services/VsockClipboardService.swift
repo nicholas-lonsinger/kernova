@@ -1179,6 +1179,9 @@ final class VsockClipboardService: ClipboardServicing {
         let byteCount: UInt64
         let isInline: Bool
         let isDirectory: Bool
+        /// Filename for the in-app progress bar's label (#426); `nil`-mapped when
+        /// empty at the record site.
+        let filename: String
         let generation: UInt64
         let repIndex: Int
         let receiver: ClipboardStreamReceiver
@@ -1199,7 +1202,8 @@ final class VsockClipboardService: ClipboardServicing {
         let info = promise.reps[repIndex]
         return LazyPullSnapshot(
             uti: info.uti, byteCount: info.byteCount, isInline: info.isInline,
-            isDirectory: info.isDirectory, generation: generation, repIndex: repIndex,
+            isDirectory: info.isDirectory, filename: info.filename,
+            generation: generation, repIndex: repIndex,
             receiver: receiver, channel: channel, staging: staging, timeout: lazyPullTimeout)
     }
 
@@ -1212,10 +1216,19 @@ final class VsockClipboardService: ClipboardServicing {
     /// `provide`) or off-main (the relay's XPC queue). The File Provider read path
     /// has no 60 s deadline, so holding the thread for a multi-GB transfer is safe.
     ///
-    /// `nonisolated`: touches only the `Sendable` snapshot and the `Sendable`
-    /// coordinator/logger, never main-actor state.
+    /// `nonisolated`: touches only the `Sendable` snapshot, the `Sendable`
+    /// coordinator/logger, and the `Sendable` progress tracker — never main-actor
+    /// state directly (the in-app bar clears via a `finishProgress` main hop).
+    ///
+    /// `onProgress` forwards the receiver's cumulative `(bytesTransferred,
+    /// totalBytes)` to the servicing-XPC push (the relay path passes a real
+    /// closure; the toggle-off sync paste passes the default no-op). Independently,
+    /// this records the same bytes into the window's in-app bar (#426, #354),
+    /// direction `.inbound`, cleared at every terminal (except supersession — the
+    /// #500 retry owns the shared `transferID` entry and clears it itself).
     nonisolated private func performBlockingPull(
-        _ snapshot: LazyPullSnapshot
+        _ snapshot: LazyPullSnapshot,
+        onProgress: @escaping @Sendable (UInt64, UInt64) -> Void = { _, _ in }
     ) -> ClipboardContent.Representation? {
         // Free-space pre-flight before the request, so an over-budget rep never
         // starts a transfer [Safeguard 4].
@@ -1238,13 +1251,32 @@ final class VsockClipboardService: ClipboardServicing {
         let channel = snapshot.channel
         let uti = snapshot.uti
         let generation = snapshot.generation
+        let label = snapshot.filename.isEmpty ? nil : snapshot.filename
         receiver.awaitTransfer(
             transferID,
             onComplete: { rep in coordinator.deliver(transferID, rep) },
             onAbort: { abort in coordinator.abort(transferID, abort) },
             // Re-arm the inactivity backstop on each chunk so a large still-
-            // streaming file is never timed out mid-transfer. [large-paste]
-            onProgress: { _, _ in coordinator.heartbeat(transferID) })
+            // streaming file is never timed out mid-transfer [large-paste]; push
+            // the bytes to the servicing-XPC channel (the extension's determinate
+            // download bar, #426); and record the same bytes into the window's
+            // in-app bar (#354/#426, direction `.inbound`).
+            //
+            // No resurrection gate is needed here (unlike the async `pull`, which
+            // has off-transfer-queue resume racers): this `onProgress` and the
+            // terminal `onComplete`/`onAbort` fire in order on the receiver's
+            // transfer queue, and the coordinator's timeout is inactivity-gated
+            // (re-armed by `heartbeat`), so no chunk can record after the terminal
+            // that triggers `finishProgress` — the same reasoning the sender path
+            // documents in `handleRequest`.
+            onProgress: { [weak self] bytes, total in
+                coordinator.heartbeat(transferID)
+                onProgress(UInt64(bytes), UInt64(total))
+                guard let self else { return }
+                let outcome = self.progress.record(
+                    transferID, direction: .inbound, bytes: bytes, total: total, label: label)
+                self.scheduleProgressFollowUp(outcome, transferID: transferID)
+            })
         let outcome = coordinator.pull(transferID: transferID, timeout: snapshot.timeout) {
             var request = Frame()
             request.protocolVersion = 1
@@ -1270,6 +1302,16 @@ final class VsockClipboardService: ClipboardServicing {
                         message: "Failed to send clipboard request", neededBytes: nil,
                         availableBytes: nil))
             }
+        }
+        // Clear the in-app bar at the terminal — success, abort, timeout, or
+        // consumer-cancel. Supersession is the exception (#500): the retry now owns
+        // this transferID's shared tracker entry and clears it at its own terminal,
+        // so clearing here would wipe the successor's live bar.
+        if case .superseded = outcome {
+            // The retry owns this transferID's shared tracker entry and clears the
+            // bar itself; clearing here would wipe the successor's live bar.
+        } else {
+            Task { @MainActor [weak self] in self?.finishProgress(transferID) }
         }
         switch outcome {
         case .delivered(let rep):
@@ -1372,11 +1414,13 @@ extension VsockClipboardService: HostClipboardFileRepProviding {
     /// cooperative thread, which routes control frames to main fire-and-forget
     /// (never awaited) and so never parks waiting on this very thread (#458).
     nonisolated func pullStagedFile(
-        generation: UInt64, repIndex: Int
+        generation: UInt64, repIndex: Int,
+        onProgress: @escaping @Sendable (UInt64, UInt64) -> Void = { _, _ in }
     ) -> Result<String, FileProviderPullError> {
         let snapshot = onMain { self.lazyPullSnapshot(generation: generation, repIndex: repIndex) }
         guard let snapshot else { return .failure(.noCurrentOffer) }
-        guard let rep = performBlockingPull(snapshot), let url = rep.fileURL else {
+        guard let rep = performBlockingPull(snapshot, onProgress: onProgress), let url = rep.fileURL
+        else {
             return .failure(.pullFailed)
         }
         return .success(url.path)
