@@ -730,6 +730,12 @@ final class VMInstance {
                 }
                 self.clipboardService?.stop()
                 let service = VsockClipboardService(channel: channel, label: self.name)
+                // Fold the mutually-negotiated folder placeholder-tree capability
+                // from the control channel's Hello into the clipboard service, read
+                // lazily at offer/paste time so it tracks reconnects.
+                service.peerSupportsDirTree = { [weak self] in
+                    self?.vsockControlService?.guestSupportsClipboardDirTree ?? false
+                }
                 self.clipboardService = service
                 service.start()
             }
@@ -1006,6 +1012,12 @@ final class VMInstance {
                 }
                 self.clipboardService?.stop()
                 let service = VsockClipboardService(channel: channel, label: self.name)
+                // Fold the mutually-negotiated folder placeholder-tree capability
+                // from the control channel's Hello into the clipboard service, read
+                // lazily at offer/paste time so it tracks reconnects.
+                service.peerSupportsDirTree = { [weak self] in
+                    self?.vsockControlService?.guestSupportsClipboardDirTree ?? false
+                }
                 self.clipboardService = service
                 service.start()
             }

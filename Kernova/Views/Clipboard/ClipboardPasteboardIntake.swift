@@ -216,16 +216,18 @@ enum ClipboardPasteboardIntake {
     /// Runs off the main actor (stat + archive are I/O). A plain file is stat'd
     /// into a `.file` representation (name + size + content UTI), its bytes
     /// streamed on demand. A directory — including an OS package such as
-    /// `.app`/`.rtfd` — is packed *eagerly* into a single AppleArchive (`.aar`,
-    /// LZFSE) under `staging`/`generation` and crosses as one directory
-    /// representation (`uti = public.folder`, `isDirectory = true`, the folder
-    /// name in `filename`); the receiver extracts it back into a real folder so
-    /// a Finder paste recreates the tree. Eager archiving is required because the
-    /// offer needs the archive's size up front and the stream its SHA-256.
+    /// `.app`/`.rtfd` — crosses as one directory representation:
+    ///  - `dirTree == true` (`clipboard.dirtree.v1` negotiated with the guest): a
+    ///    `.directory` **source** rep (no archive) with a stat-walk size estimate,
+    ///    walked and streamed on demand as a placeholder tree (folder D1b).
+    ///  - `dirTree == false` (old guest): the folder is packed *eagerly* into a
+    ///    single AppleArchive (`.aar`, LZFSE) under `staging`/`generation`, which
+    ///    the receiver extracts back into a real folder.
     /// An item that fails to stat/archive is skipped and noted; if *every* item
     /// fails the result is `.rejected`. Text-only transports can't carry files.
     nonisolated static func read(
-        filesAt urls: [URL], allowsBinary: Bool, staging: ClipboardFileStaging, generation: UInt64
+        filesAt urls: [URL], allowsBinary: Bool, staging: ClipboardFileStaging, generation: UInt64,
+        dirTree: Bool
     ) async -> ClipboardIntakeResult {
         guard allowsBinary else {
             return .rejected(message: Self.textOnlyTransportMessage)
@@ -238,10 +240,15 @@ enum ClipboardPasteboardIntake {
                 skipped += 1
                 continue
             }
-            let rep =
-                isDirectory.boolValue
-                ? directoryRepresentation(at: url, staging: staging, generation: generation)
-                : fileRepresentation(at: url)
+            let rep: ClipboardContent.Representation?
+            if isDirectory.boolValue {
+                rep =
+                    dirTree
+                    ? directorySourceRepresentation(at: url)
+                    : directoryRepresentation(at: url, staging: staging, generation: generation)
+            } else {
+                rep = fileRepresentation(at: url)
+            }
             if let rep {
                 representations.append(rep)
             } else {
@@ -273,6 +280,24 @@ enum ClipboardPasteboardIntake {
         return ClipboardContent.Representation(
             uti: type.identifier, fileURL: url, byteCount: fileSize,
             filename: url.lastPathComponent)
+    }
+
+    /// Builds a `.directory` **source** representation for a folder (folder D1b,
+    /// `clipboard.dirtree.v1`) — no archive, a stat-walk size estimate, and the
+    /// folder's content UTI (a package UTI for a bundle).
+    ///
+    /// The tree is walked and
+    /// streamed on demand by the producer.
+    nonisolated private static func directorySourceRepresentation(
+        at url: URL
+    ) -> ClipboardContent.Representation? {
+        let uti =
+            (try? url.resourceValues(forKeys: [.contentTypeKey]))?.contentType?.identifier
+            ?? ClipboardDirectoryTree.folderUTI
+        return ClipboardContent.Representation(
+            directorySourceURL: url,
+            estimatedByteCount: ClipboardDirectoryTree.estimatedByteCount(at: url),
+            filename: url.lastPathComponent, uti: uti)
     }
 
     /// Archives the directory at `url` into a staged directory representation, or

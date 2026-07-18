@@ -117,6 +117,19 @@ final class VsockControlService {
     /// version is bumped in lockstep with the capability).
     private var guestSupportsClipboardStreaming = false
 
+    /// Whether the guest agent advertised the folder placeholder-tree capability
+    /// (`clipboard.dirtree.v1`) in its `Hello`.
+    ///
+    /// Set on Hello; read (via `guestSupportsClipboardDirTree`) at offer/consume
+    /// time by the per-VM `VsockClipboardService` to decide whether a directory
+    /// rep crosses as a placeholder tree or the eager-archive fallback. `@MainActor`
+    /// state; reset on stop.
+    private var guestSupportsClipboardDirTreeStorage = false
+
+    /// Whether the guest advertised `clipboard.dirtree.v1` — the mutually
+    /// negotiated gate for folder placeholder trees.
+    var guestSupportsClipboardDirTree: Bool { guestSupportsClipboardDirTreeStorage }
+
     #if DEBUG
     /// Test seam: whether the guest advertised `clipboard.stream.v1`.
     var guestSupportsClipboardStreamingForTesting: Bool { guestSupportsClipboardStreaming }
@@ -215,6 +228,7 @@ final class VsockControlService {
         isUnresponsive = false
         lastInboundFrame = nil
         guestSupportsClipboardStreaming = false
+        guestSupportsClipboardDirTreeStorage = false
         Self.logger.info("Vsock control service stopped for '\(self.label, privacy: .public)'")
     }
 
@@ -370,6 +384,8 @@ final class VsockControlService {
             agentVersion = reportedVersion.isEmpty ? nil : reportedVersion
             guestSupportsClipboardStreaming = hello.capabilities.contains(
                 KernovaCapability.clipboardStreamV1)
+            guestSupportsClipboardDirTreeStorage = hello.capabilities.contains(
+                KernovaCapability.clipboardDirTreeV1)
             Self.logger.notice(
                 "Guest agent connected for '\(self.label, privacy: .public)' (service=\(hello.serviceVersion, privacy: .public), agent=\(reportedVersion, privacy: .public), caps=\(hello.capabilities.joined(separator: ","), privacy: .public))"
             )
@@ -396,9 +412,9 @@ final class VsockControlService {
             Self.logger.warning(
                 "Guest control error for '\(self.label, privacy: .public)': \(error.code, privacy: .public) — \(error.message, privacy: .public)"
             )
-        case .policyUpdate, .clipboardOffer, .clipboardRequest, .clipboardRelease,
-            .clipboardStreamBegin, .clipboardChunk, .clipboardStreamEnd, .clipboardStreamAck,
-            .clipboardStreamAbort, .logRecord, .none:
+        case .policyUpdate, .clipboardOffer, .clipboardRequest, .clipboardTreeFetch,
+            .clipboardRelease, .clipboardStreamBegin, .clipboardChunk, .clipboardStreamEnd,
+            .clipboardStreamAck, .clipboardStreamAbort, .logRecord, .none:
             // PolicyUpdate is a host→guest message and never arrives on the
             // host side; other payloads belong on other channels. Log and
             // ignore.

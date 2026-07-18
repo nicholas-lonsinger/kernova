@@ -551,7 +551,7 @@ struct ClipboardPasteboardIntakeTests {
 
         guard
             case .content(let content, let note) = await ClipboardPasteboardIntake.read(
-                filesAt: [folder], allowsBinary: true, staging: staging, generation: 1)
+                filesAt: [folder], allowsBinary: true, staging: staging, generation: 1, dirTree: false)
         else {
             Issue.record("Expected content")
             return
@@ -574,6 +574,32 @@ struct ClipboardPasteboardIntakeTests {
             try String(contentsOf: dest.appendingPathComponent("b.txt"), encoding: .utf8) == "bee")
     }
 
+    @Test("with the dir-tree capability, a copied folder is a source-directory rep (no archive)")
+    func folderAsSourceDirectoryRepWithDirTree() async throws {
+        let staging = makeStaging()
+        defer { staging.sweep() }
+        let folder = try makeTempFolder(
+            name: "Tree", files: [("a.txt", Data("a".utf8)), ("b.txt", Data("bee".utf8))])
+        defer { try? FileManager.default.removeItem(at: folder.deletingLastPathComponent()) }
+
+        guard
+            case .content(let content, _) = await ClipboardPasteboardIntake.read(
+                filesAt: [folder], allowsBinary: true, staging: staging, generation: 1,
+                dirTree: true)
+        else {
+            Issue.record("Expected content")
+            return
+        }
+        let rep = try #require(content.representations.first)
+        #expect(rep.isDirectory)
+        #expect(rep.filename == "Tree")
+        // A source-directory rep: the URL is the original folder, not a staged
+        // `.aar`, and the byte count is a stat-walk estimate (1 + 3 bytes).
+        #expect(rep.directorySourceURL == folder)
+        #expect(rep.fileURL == nil)
+        #expect(rep.byteCount == 4)
+    }
+
     @Test("a mixed file + folder selection yields one rep each, in order")
     func mixedFileAndFolder() async throws {
         let staging = makeStaging()
@@ -584,7 +610,7 @@ struct ClipboardPasteboardIntakeTests {
 
         guard
             case .content(let content, _) = await ClipboardPasteboardIntake.read(
-                filesAt: [file, folder], allowsBinary: true, staging: staging, generation: 1)
+                filesAt: [file, folder], allowsBinary: true, staging: staging, generation: 1, dirTree: false)
         else {
             Issue.record("Expected content")
             return
@@ -604,7 +630,7 @@ struct ClipboardPasteboardIntakeTests {
         defer { try? FileManager.default.removeItem(at: folder.deletingLastPathComponent()) }
         guard
             case .rejected = await ClipboardPasteboardIntake.read(
-                filesAt: [folder], allowsBinary: false, staging: staging, generation: 1)
+                filesAt: [folder], allowsBinary: false, staging: staging, generation: 1, dirTree: false)
         else {
             Issue.record("Expected rejection")
             return

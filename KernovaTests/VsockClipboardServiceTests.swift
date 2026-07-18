@@ -1328,6 +1328,49 @@ struct VsockClipboardServiceTests {
         #expect(try Data(contentsOf: url) == aarBytes)
     }
 
+    @Test("with the dir-tree capability, a directory rep defers as a lazy tree instead of being pulled")
+    func copyDirectoryRepDefersLazilyWithDirTree() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        // Availability unprobed at click (`.inactive`), so no advisory refusal;
+        // the directory rep routes at paste time as a placeholder tree.
+        let coordinator = FakeHostClipboardDomainCoordinator(availability: .inactive)
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", fileProvider: coordinator)
+        // The guest advertised `clipboard.dirtree.v1`.
+        service.peerSupportsDirTree = { true }
+        service.start()
+        defer { service.stop() }
+
+        var offer = Frame()
+        offer.protocolVersion = 1
+        offer.clipboardOffer = Kernova_V1_ClipboardOffer.with {
+            $0.generation = 61
+            $0.repInfo = [
+                Kernova_V1_ClipboardRepresentationInfo.with {
+                    $0.uti = UTType.folder.identifier
+                    $0.byteCount = 4_096  // stat-walk estimate
+                    $0.filename = "MyFolder"
+                    $0.isInline = false
+                    $0.isDirectory = true
+                }
+            ]
+        }
+        try guest.send(offer)
+        try await waitForChange { service.clipboardContent.representations.count == 1 }
+
+        // With the capability, the directory rep is lazy-eligible: it defers as a
+        // `.lazyFile` (routed as a placeholder tree at paste), not pulled eagerly.
+        let items = await service.materializeForCopy()
+        #expect(items.resolvedReps.isEmpty)
+        #expect(items.lazyFiles.map(\.repIndex) == [0])
+        #expect(items.lazyFiles.first?.filename == "MyFolder")
+        #expect(items.droppedReasons.isEmpty)
+    }
+
     @Test("materializeForCopy resolves preview-pulled reps without re-requesting them")
     func copyReusesPreviewMaterializedReps() async throws {
         let (guest, host) = try makePair()
@@ -2828,6 +2871,7 @@ final class FakeHostClipboardDomainCoordinator: HostClipboardDomainCoordinating 
     var rootToReturn: URL?
 
     private(set) var published: [Published] = []
+    private(set) var publishedFolders: [FileProviderPublishFolder] = []
     private(set) var publishCallCount = 0
     private(set) var startCount = 0
     private(set) var stopCount = 0
@@ -2845,7 +2889,7 @@ final class FakeHostClipboardDomainCoordinator: HostClipboardDomainCoordinating 
 
     func publishItemsForPaste(
         source: any HostClipboardFileRepProviding, generation: UInt64,
-        items: [FileProviderPublishItem]
+        items: [FileProviderPublishItem], folders: [FileProviderPublishFolder]
     ) -> [Int: URL]? {
         publishCallCount += 1
         published.append(
@@ -2854,9 +2898,11 @@ final class FakeHostClipboardDomainCoordinator: HostClipboardDomainCoordinating 
                     generation: generation, repIndex: $0.repIndex, filename: $0.filename,
                     byteCount: $0.byteCount, uti: $0.uti)
             })
+        publishedFolders.append(contentsOf: folders)
         guard let root = rootToReturn else { return nil }
         var urls: [Int: URL] = [:]
         for item in items { urls[item.repIndex] = root.appendingPathComponent(item.filename) }
+        for folder in folders { urls[folder.repIndex] = root.appendingPathComponent(folder.filename) }
         return urls
     }
 
