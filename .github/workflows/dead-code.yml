@@ -105,6 +105,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FINDINGS: ${{ steps.scan.outputs.findings }}
+          TRACKER_LABEL: "Dead Code"
         run: |
           set -euo pipefail
 
@@ -112,7 +113,7 @@ jobs:
           # a complete snapshot — findings are never merged across runs — and
           # closed issues are immutable history.
           OPEN_ISSUE=$(gh issue list \
-            --label "Dead Code" \
+            --label "$TRACKER_LABEL" \
             --state open \
             --limit 1 \
             --json number,title \
@@ -153,7 +154,7 @@ jobs:
             # exists, cross-link it so it is unambiguous that this new set
             # supersedes, and does not extend, the old one.
             PREV_CLOSED=$(gh issue list \
-              --label "Dead Code" \
+              --label "$TRACKER_LABEL" \
               --state closed \
               --limit 1 \
               --json number,title \
@@ -166,7 +167,7 @@ jobs:
 
             NEW_URL=$(gh issue create \
               --title "Dead-code scan: $FINDINGS finding(s)" \
-              --label "Dead Code" \
+              --label "$TRACKER_LABEL" \
               --body-file "$BODY_FILE")
             echo "Opened $NEW_URL"
 
