@@ -1639,6 +1639,44 @@ struct VsockClipboardServiceTests {
         #expect(coordinator.publishCallCount == 2)
     }
 
+    @Test("a superseding offer retracts this service's File Provider offer; same-offer ops don't")
+    func supersedingOfferClearsFileProvider() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let coordinator = FakeHostClipboardDomainCoordinator(
+            availability: .ready, rootToReturn: Self.fakeDomainRoot)
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", fileProvider: coordinator)
+        service.start()
+        defer { service.stop() }
+
+        // gen=1: the first offer has nothing to supersede, and building its
+        // metadata placeholder must not clear the domain.
+        try guest.send(
+            makeOffer(
+                generation: 1,
+                reps: [(uti: "public.data", byteCount: 10, filename: "a.bin", isInline: false)]))
+        try await waitForChange { service.clipboardContent.representations.count == 1 }
+        #expect(coordinator.clearCount == 0)
+
+        // Materializing the SAME offer (no new generation) must not clear either —
+        // only a genuine new offer retracts the prior placeholder.
+        _ = await service.materializeForCopy()
+        #expect(coordinator.clearCount == 0)
+
+        // gen=2 supersedes the live gen=1 promise → clearOffer invoked exactly once,
+        // so the stale gen=1 placeholders don't linger in "Kernova Clipboard (Mac)".
+        try guest.send(
+            makeOffer(
+                generation: 2,
+                reps: [(uti: "public.data", byteCount: 20, filename: "b.bin", isInline: false)]))
+        try await waitForChange { service.clipboardContent.representations.first?.filename == "b.bin" }
+        #expect(coordinator.clearCount == 1)
+    }
+
     @Test("pullStagedFile for a stale generation returns noCurrentOffer")
     func pullStagedFileStaleGenerationFails() async throws {
         let (guest, host) = try makePair()

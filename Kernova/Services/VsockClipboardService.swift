@@ -634,8 +634,19 @@ final class VsockClipboardService: ClipboardServicing {
 
     private func handleOffer(_ offer: Kernova_V1_ClipboardOffer) {
         // A newer offer supersedes the previous one: cancel any in-flight pull so
-        // its partial temp file is deleted and a blocked continuation resumes.
-        if let previous = inboundPromise { receiver?.cancel(generation: previous.generation) }
+        // its partial temp file is deleted and a blocked continuation resumes, and
+        // retract this service's paste-published File Provider placeholder so the
+        // superseded offer's dirents don't linger in "Kernova Clipboard (Mac)".
+        // With placeholders now paste-scoped (#559), a new offer no longer
+        // overwrites the manifest at copy-click, so nothing else clears the stale
+        // offer until some later paste — hence the explicit retract here, mirroring
+        // the guest agent's `handleOffer` clear. `clearOffer(from:)` is
+        // source-guarded, so a stopping/older service can't wipe a newer service's
+        // live offer.
+        if let previous = inboundPromise {
+            receiver?.cancel(generation: previous.generation)
+            fileProvider.clearOffer(from: self)
+        }
 
         guard !offer.repInfo.isEmpty else {
             dropInboundPromise()
