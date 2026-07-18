@@ -127,7 +127,9 @@ public enum FileProviderAvailability: Equatable, Sendable {
 ///
 /// `@unchecked Sendable`: registration/manifest/availability state is touched
 /// only on the main queue; `pullProvider`, `config`, `logger`, and `container`
-/// are immutable `let`s the XPC listener delegate reads off-main.
+/// are immutable `let`s the XPC listener delegate reads off-main; the two
+/// exceptions (`domainChangeObserver`, `clearReconciliationInFlight`) are
+/// guarded by their own locks — see each property's doc.
 public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     @unchecked Sendable
 {
@@ -155,6 +157,21 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     private let notificationCenter: NotificationCenter
     private let fetchDomains: @Sendable () async throws -> [NSFileProviderDomain]
     private let addDomainToSystem: @Sendable (NSFileProviderDomain, @escaping @Sendable (Error?) -> Void) -> Void
+    /// The reconciliation barrier, injected for tests.
+    ///
+    /// Production is `NSFileProviderManager.waitForStabilization`: completes
+    /// once the system is caught up with both the file system's and the
+    /// provider's changes up to the time of the call (per its header doc) —
+    /// i.e. once manifest-reported creations/deletions have been applied to
+    /// the on-disk replica.
+    private let waitForStabilization: @Sendable (_ completion: @escaping @Sendable (Error?) -> Void) -> Void
+    /// Maps a user-visible URL to its provider-assigned item identifier,
+    /// injected for tests.
+    ///
+    /// Production is `NSFileProviderManager.getIdentifierForUserVisibleFile`;
+    /// completes `nil` when the dirent is absent or not yet assigned.
+    private let resolveItemIdentifier:
+        @Sendable (_ url: URL, _ completion: @escaping @Sendable (String?) -> Void) -> Void
     /// Guards `domainChangeObserver`, which — unlike the rest of the state
     /// below — is also read/removed from `deinit`. `deinit` runs on whatever
     /// thread drops the last strong reference, not necessarily main, so that
@@ -270,7 +287,11 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     ///
     /// `relayTransport` defaults to a `FileProviderServicingConnector`
     /// built from `config` — production callers omit it; tests inject a no-op so
-    /// they never stand up a live anonymous-XPC connection.
+    /// they never stand up a live anonymous-XPC connection. `waitForStabilization`
+    /// and `resolveItemIdentifier` are the reconciliation seams (production:
+    /// `NSFileProviderManager.waitForStabilization` /
+    /// `getIdentifierForUserVisibleFile`); tests inject recorders, since
+    /// fileproviderd's reconciliation itself is not unit-testable.
     public init(
         config: FileProviderConfig,
         pullProvider: FileProviderPullProvider,
@@ -284,7 +305,12 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
                 NSFileProviderDomain, @escaping @Sendable (Error?) -> Void
             ) -> Void = { domain, completion in
                 NSFileProviderManager.add(domain, completionHandler: completion)
-            }
+            },
+        waitForStabilization: (@Sendable (_ completion: @escaping @Sendable (Error?) -> Void) -> Void)? =
+            nil,
+        resolveItemIdentifier:
+            (@Sendable (_ url: URL, _ completion: @escaping @Sendable (String?) -> Void) -> Void)? =
+            nil
     ) {
         self.config = config
         self.logger = KernovaLogger(subsystem: config.loggerSubsystem, category: "FileProviderHost")
@@ -298,6 +324,26 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
         self.notificationCenter = notificationCenter
         self.fetchDomains = fetchDomains
         self.addDomainToSystem = addDomainToSystem
+        // The domain is rebuilt from `config` inside the closure — the stored
+        // `self.domain` is main-queue state a `@Sendable` closure can't capture
+        // (same shape as the connector's per-attempt `config.makeDomain()`).
+        self.waitForStabilization =
+            waitForStabilization
+            ?? { completion in
+                guard let manager = NSFileProviderManager(for: config.makeDomain()) else {
+                    completion(CocoaError(.fileNoSuchFile))
+                    return
+                }
+                manager.waitForStabilization(completionHandler: completion)
+            }
+        self.resolveItemIdentifier =
+            resolveItemIdentifier
+            ?? { url, completion in
+                NSFileProviderManager.getIdentifierForUserVisibleFile(at: url) {
+                    identifier, _, _ in
+                    completion(identifier?.rawValue)
+                }
+            }
         super.init()
     }
 
@@ -756,42 +802,36 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
             return nil
         }
         signalEnumerator()
-        // Force the dataless placeholder dirents onto disk by making the system
-        // enumerate the root. `signalEnumerator` alone only refreshes the index /
-        // working set; the on-disk file for a never-browsed child is written only
-        // when the root container is actually read (a `readdir`). Without this the
-        // pasteboard URL points at a path that doesn't exist, so a paste fails with
-        // ENOENT before the kernel's dataless trap can call `fetchContents`.
+        // `signalEnumerator`'s completion means only that the signal was
+        // delivered — NOT that the manifest change has been applied to the
+        // on-disk replica. Observed live: a root readdir can still serve the
+        // pre-signal listing (a paste hit Finder error -43 because the fresh
+        // dirent hadn't landed), and a same-named dirent from the superseded
+        // offer can satisfy a bare existence check while reconciliation is
+        // mid-swap. The paste-time branch below is therefore a real
+        // reconciliation barrier, not a courtesy readdir.
         if waitForPlaceholder {
             // Paste-time publish (#427 leading edge): the caller is about to hand
-            // the URLs to a consumer that resolves them immediately, so wait for
-            // the enumeration round-trip here — normally metadata-only,
-            // millisecond-scale work. The wait is BOUNDED: a hung fileproviderd
-            // must not strand the caller's (main) thread past the paste deadline,
-            // so a timeout degrades to the size-capped sync path (`nil`) instead
-            // of blocking indefinitely — the enumeration itself never calls back
-            // into this process (the extension reads the manifest from the shared
-            // container), so the bound is purely defensive. Then verify the
-            // dirents actually landed: a `nil` return on a missing dirent also
-            // degrades to the sync path instead of advertising a URL that would
-            // ENOENT.
-            guard enumerateRootBounded(root: rootURL) else {
-                logger.warning(
-                    "FP publish timed out waiting for the root enumeration — using sync path")
-                return nil
-            }
-            let missing = filenames.filter {
-                !FileManager.default.fileExists(atPath: rootURL.appendingPathComponent($0).path)
-            }
-            guard missing.isEmpty else {
-                logger.warning(
-                    "FP publish enumerated but \(missing.count, privacy: .public) placeholder(s) missing — using sync path"
-                )
+            // the URLs to a consumer that resolves them immediately, so wait on
+            // `waitForStabilization` — the documented catch-up barrier ("wait
+            // until [the system] is caught up with the provider's changes up to
+            // the time of the call") — and then verify each returned item's
+            // dirent resolves to ITS OWN manifest identifier via
+            // `getIdentifierForUserVisibleFile`: identity, not just presence.
+            // Bounded (`placeholderEnumerationWait` total): a hung fileproviderd
+            // must not strand the caller's (main) thread past the paste deadline;
+            // on timeout or an unverified dirent this degrades to the size-capped
+            // sync path (`nil`) instead of advertising a URL that would fail the
+            // paste with -43.
+            let expected = Dictionary(
+                uniqueKeysWithValues: manifestItems.map { ($0.filename, $0.itemIdentifier) })
+            guard awaitPlaceholderReconciliation(rootURL: rootURL, expected: expected) else {
                 return nil
             }
         } else {
             // Offer-time publish: the offer→paste gap (the user switches and
-            // pastes) is far longer than the listing, so run the readdir off-main.
+            // pastes) is far longer than the reconciliation, so run the readdir
+            // off-main and let the paste-time consumers re-verify.
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 self?.enumerateRoot(root: rootURL)
             }
@@ -840,26 +880,188 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
         }
     }
 
-    /// Upper bound on the paste-time wait for the root enumeration.
+    /// Upper bound on the paste-time reconciliation barrier (and the async
+    /// clear flush).
     ///
-    /// Generous against the normal millisecond-scale round-trip (it covers a
-    /// cold extension launch), yet comfortably inside Finder's ~60 s paste
-    /// deadline with headroom left for the sync fallback the timeout degrades
-    /// to.
+    /// Generous against the normal sub-second stabilization (it covers a cold
+    /// extension launch), yet comfortably inside Finder's ~60 s paste deadline
+    /// with headroom left for the sync fallback the timeout degrades to.
     private static let placeholderEnumerationWait: TimeInterval = 30
 
-    /// Runs `enumerateRoot` off-queue and waits up to
-    /// `placeholderEnumerationWait` for it to finish.
+    /// Pacing between reconciliation verification rounds.
     ///
-    /// Returns `false` on timeout; the readdir then completes (or hangs)
-    /// harmlessly on its background thread and is not retried.
-    private func enumerateRootBounded(root: URL) -> Bool {
+    /// RATIONALE: the event-driven wait is `waitForStabilization` itself —
+    /// this delay only paces the round where stabilization returns while the
+    /// verification still fails (state landed mid-flight), so the loop can't
+    /// spin hot. It is not a poll substitute for a missing signal.
+    private static let reconciliationRecheckDelay: TimeInterval = 0.2
+
+    /// Outcome of one replica verification round.
+    ///
+    /// `internal` (not `private`) so `KernovaKitTests` can lock the decision.
+    enum ReplicaVerdict: Equatable {
+        /// Every expected dirent resolves to its own identifier and nothing
+        /// else remains under the root.
+        case verified
+        /// Every expected dirent verified, but stale sibling dirents remain.
+        case staleExtras(Set<String>)
+        /// At least one expected dirent is missing or resolves to a different
+        /// item (e.g. a same-named dirent from the superseded offer).
+        case missingOrMismatched
+    }
+
+    /// Pure decision for one verification round: compares the expected
+    /// `filename → itemIdentifier` map against the listed dirent names and the
+    /// identifiers those dirents resolved to.
+    static func replicaVerdict(
+        expected: [String: String], listedNames: Set<String>,
+        resolvedIdentifiers: [String: String]
+    ) -> ReplicaVerdict {
+        for (filename, identifier) in expected {
+            guard listedNames.contains(filename), resolvedIdentifiers[filename] == identifier
+            else { return .missingOrMismatched }
+        }
+        let extras = listedNames.subtracting(expected.keys)
+        return extras.isEmpty ? .verified : .staleExtras(extras)
+    }
+
+    /// Blocks the calling thread until every published placeholder is verified
+    /// on disk, or the bounded barrier gives up.
+    ///
+    /// Returns `false` when any EXPECTED dirent stays missing or mismatched at
+    /// the deadline — the caller then falls back to the sync path. Stale extras
+    /// alone do not fail the paste: the returned URLs are already
+    /// verified-correct, and refusing a valid paste over a leftover sibling
+    /// would cost more than the cosmetic lag — that case proceeds with a
+    /// `.warning`. The loop runs off-thread so the outer wait can bound even a
+    /// wedged readdir.
+    private func awaitPlaceholderReconciliation(
+        rootURL: URL, expected: [String: String]
+    ) -> Bool {
         let semaphore = DispatchSemaphore(value: 0)
+        let verdict = ResultBox(false)
+        let deadline = DispatchTime.now() + Self.placeholderEnumerationWait
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            self?.enumerateRoot(root: root)
+            verdict.value =
+                self?.reconcileUntilVerified(rootURL: rootURL, expected: expected, deadline: deadline)
+                ?? false
             semaphore.signal()
         }
-        return semaphore.wait(timeout: .now() + Self.placeholderEnumerationWait) == .success
+        // +1 s over the inner deadline: the loop self-bounds every step; the
+        // outer wait only catches the loop's own thread wedging (e.g. inside a
+        // hung readdir).
+        guard semaphore.wait(timeout: deadline + 1) == .success else {
+            logger.warning(
+                "FP publish barrier thread stalled past its deadline — using sync path")
+            return false
+        }
+        return verdict.value
+    }
+
+    /// The barrier loop: stabilize → verify → pace → repeat until the deadline.
+    ///
+    /// Runs on a background thread; every step is bounded by the remaining
+    /// budget.
+    private func reconcileUntilVerified(
+        rootURL: URL, expected: [String: String], deadline: DispatchTime
+    ) -> Bool {
+        while true {
+            _ = boundedStabilizationWait(deadline: deadline)
+            let listed = listRootNames(rootURL: rootURL)
+            let resolved = resolveIdentifiersBounded(
+                rootURL: rootURL, filenames: Array(expected.keys), deadline: deadline)
+            let verdict = Self.replicaVerdict(
+                expected: expected, listedNames: listed, resolvedIdentifiers: resolved)
+            if verdict == .verified {
+                logger.info(
+                    "FP publish barrier verified \(expected.count, privacy: .public) placeholder(s)")
+                return true
+            }
+            if DispatchTime.now() >= deadline {
+                if case .staleExtras(let extras) = verdict {
+                    logger.warning(
+                        "FP publish verified every expected placeholder, but \(extras.count, privacy: .public) stale sibling(s) remain after the barrier — proceeding"
+                    )
+                    return true
+                }
+                logger.warning(
+                    "FP publish barrier could not verify the placeholders before the deadline — using sync path"
+                )
+                return false
+            }
+            Thread.sleep(forTimeInterval: Self.reconciliationRecheckDelay)
+        }
+    }
+
+    /// One bounded `waitForStabilization` round; `false` on timeout or error
+    /// (the verification pass decides what that means).
+    private func boundedStabilizationWait(deadline: DispatchTime) -> Bool {
+        let semaphore = DispatchSemaphore(value: 0)
+        let failure = ResultBox<Error?>(nil)
+        waitForStabilization { error in
+            failure.value = error
+            semaphore.signal()
+        }
+        guard semaphore.wait(timeout: deadline) == .success else {
+            logger.warning("waitForStabilization did not complete before the barrier deadline")
+            return false
+        }
+        if let error = failure.value {
+            logger.warning(
+                "waitForStabilization failed: \(error.localizedDescription, privacy: .public)")
+            return false
+        }
+        return true
+    }
+
+    /// User-visible dirent names under the domain root (hidden files skipped).
+    ///
+    /// Sandbox access comes from the security scope held while the root is
+    /// current (`adoptRootURL`, #539). A failed listing returns empty — the
+    /// verdict then reads missing and the barrier keeps waiting.
+    private func listRootNames(rootURL: URL) -> Set<String> {
+        let entries =
+            (try? FileManager.default.contentsOfDirectory(
+                at: rootURL, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? []
+        return Set(entries.map(\.lastPathComponent))
+    }
+
+    /// Resolves each filename's provider-assigned item identifier, bounded by
+    /// the remaining budget; unresolved names are absent from the result.
+    private func resolveIdentifiersBounded(
+        rootURL: URL, filenames: [String], deadline: DispatchTime
+    ) -> [String: String] {
+        let box = ResultBox<[String: String]>([:])
+        let group = DispatchGroup()
+        for filename in filenames {
+            group.enter()
+            resolveItemIdentifier(rootURL.appendingPathComponent(filename)) { identifier in
+                if let identifier { box.withLock { $0[filename] = identifier } }
+                group.leave()
+            }
+        }
+        guard group.wait(timeout: deadline) == .success else {
+            logger.warning("Identifier resolution did not complete before the barrier deadline")
+            return box.value
+        }
+        return box.value
+    }
+
+    /// Minimal lock-guarded slot for a value produced on another thread.
+    private final class ResultBox<Value>: @unchecked Sendable {
+        private let lock = NSLock()
+        private var stored: Value
+
+        init(_ initial: Value) { stored = initial }
+
+        var value: Value {
+            get { lock.withLock { stored } }
+            set { lock.withLock { stored = newValue } }
+        }
+
+        func withLock<R>(_ body: (inout Value) -> R) -> R {
+            lock.withLock { body(&stored) }
+        }
     }
 
     /// Reads the domain root directory to trigger a root-container enumeration,
@@ -912,6 +1114,69 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
                 "Failed to clear File Provider manifest: \(error.localizedDescription, privacy: .public)")
         }
         signalEnumerator()
+        scheduleClearReconciliation()
+    }
+
+    /// Guards `clearReconciliationInFlight`, which — unlike the main-queue state
+    /// above — is also cleared from the flush's background completion.
+    private let clearReconciliationLock = NSLock()
+    /// Whether a clear-path stabilization flush is currently running, so a
+    /// burst of supersessions (e.g. passthrough copies every poll tick) queues
+    /// at most one flush instead of stacking a blocked thread per copy.
+    private var clearReconciliationInFlight = false
+
+    #if DEBUG
+    /// Test-only view of the flush latch, so the coalescing test can await the
+    /// background completion clearing it before driving the next clear.
+    var clearReconciliationInFlightForTesting: Bool {
+        clearReconciliationLock.withLock { clearReconciliationInFlight }
+    }
+    #endif
+
+    /// Drives reconciliation of a cleared offer without blocking main.
+    ///
+    /// Observed live: the empty-manifest write + `signalEnumerator` alone left
+    /// superseded dirents on disk indefinitely (they accumulated across offers)
+    /// — nothing forces fileproviderd to apply the deletions until something
+    /// waits for stabilization. This runs the bounded wait on a background
+    /// queue so superseded items disappear at copy time; the paste-time barrier
+    /// remains the correctness backstop. Coalesced: a clear landing while a
+    /// flush is already waiting is skipped — its deletions are picked up by the
+    /// next clear or the next paste barrier, which is tolerable staleness in
+    /// exchange for never stacking blocked threads under a copy burst.
+    private func scheduleClearReconciliation() {
+        let alreadyRunning: Bool = clearReconciliationLock.withLock {
+            if clearReconciliationInFlight { return true }
+            clearReconciliationInFlight = true
+            return false
+        }
+        if alreadyRunning {
+            logger.debug("File Provider clear reconciliation already in flight — skipping")
+            return
+        }
+        DispatchQueue.global(qos: .utility).async { [weak self, logger, waitForStabilization] in
+            let semaphore = DispatchSemaphore(value: 0)
+            let failure = ResultBox<Error?>(nil)
+            waitForStabilization { error in
+                failure.value = error
+                semaphore.signal()
+            }
+            let outcome = semaphore.wait(timeout: .now() + Self.placeholderEnumerationWait)
+            self?.clearReconciliationLock.withLock {
+                self?.clearReconciliationInFlight = false
+            }
+            guard outcome == .success else {
+                logger.warning("File Provider clear reconciliation timed out")
+                return
+            }
+            if let error = failure.value {
+                logger.warning(
+                    "File Provider clear reconciliation failed: \(error.localizedDescription, privacy: .public)"
+                )
+            } else {
+                logger.notice("File Provider clear reconciled — superseded placeholders flushed")
+            }
+        }
     }
 
     /// Signals both the working set (always tracked — the reliable channel to get
