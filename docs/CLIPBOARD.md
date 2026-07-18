@@ -115,32 +115,33 @@ Honest caveats this principle does **not** waive:
   and direct-to-RAM is reserved for inline content that comfortably fits the deadline.
 - The **File Provider ships behind an OS enablement toggle that defaults off.** macOS gates
   every File Provider domain behind an off-by-default System Settings switch. With it off, a
-  file "Copy to Mac" falls back to the synchronous provider, capped at
-  `ClipboardStreamTuning.maxDeadlineSafeFileBytes` (256 MiB); an over-cap file is dropped with
-  an enable-File-Sharing affordance rather than beachball into the deadline. That residual cap
-  is **accepted-under-constraint**, not a §1 defect: it is deadline-derived (the OS paste
-  clock, not Kernova, bounds the fallback), exists only on the toggle-off path, and vanishes
-  entirely once the File Provider is enabled — `fetchContents` has no deadline and no size
-  limit. This direction (guest→host) is unaffected by §3's advertiser caveat: host "Copy to
-  Mac" has published a concrete File Provider placeholder since #434, so the advertiser's
-  offer-time fetch (§3) costs nothing here. The **mirror-image host→guest path carries the
-  same cap** (#561), applied to the **total** of the paste's sync-bound reps, all-or-nothing:
-  one paste is one deadline-bound operation — the OS clock sees the sum, not each file — so
-  the guest's synchronous pull refuses the whole non-inline set (files **and** directories,
-  minus any File-Provider-routed reps) when it totals over `maxDeadlineSafeFileBytes`,
-  reporting one `clipboard.paste.too.large` back to the host rather than delivering a
-  piecemeal subset. Directories always count toward that total: a folder paste has no
-  File-Provider-routed escape hatch on the guest yet (D1b folders), so it rides this same
-  synchronous path regardless of the toggle, unlike the host's directory pull (eager, at
-  "Copy to Mac" click time, never through a deadline-bound pasteboard callback at all). The offer-time advertiser fetch that once made an
-  uncapped pull fire with no paste at all is separately suppressed — the guest's promise write
-  is `.currentHostOnly` (§3, #542) — so the sync-promise pull now runs only on a real paste,
-  and the cap guards that real paste.
-- **Host "Copy to Mac" routes a plain-file rep lazily only when exactly one is offered (D2
-  scope).** If two or more plain-file reps are present, all of them are dropped (the user sees
-  "Only one file can be copied to your Mac at a time"), regardless of the toggle. Unlike the
-  deadline cap, this is not OS-derived — it is a remaining scope limit of the File Provider arc,
-  a §6 fidelity gap still to dissolve, not a sanctioned end state.
+  file "Copy to Mac" (guest→host) falls back to the synchronous provider, capped at
+  `ClipboardStreamTuning.maxDeadlineSafeFileBytes` (256 MiB) — applied to the **total** of the
+  offer's sync-bound plain-file reps, all-or-nothing: one paste is one deadline-bound operation
+  (the OS clock sees the sum, not each file), so a plain-file set that together exceeds the cap
+  is refused whole with an enable-File-Provider affordance rather than beachballing into the
+  deadline, while under the cap every plain-file rep pastes as its own capped synchronous item.
+  Routing is decided per rep at *paste* time (§3): each eligible plain-file rep tries the File
+  Provider first (no cap, no deadline once enabled) and falls back to this capped sync pull, so
+  the cap exists only on the toggle-off path and vanishes entirely once the File Provider is
+  enabled — `fetchContents` has no deadline and no size limit. A copy-click advisory surfaces
+  the over-total refusal in the clipboard window immediately when the toggle is already known
+  off, so the user isn't left with a silent paste failure. That residual cap is
+  **accepted-under-constraint**, not a §1 defect: it is deadline-derived (the OS paste clock,
+  not Kernova, bounds the fallback). On the host, only plain-file reps count toward the total —
+  directories are pulled eagerly at "Copy to Mac" click, never through a deadline-bound
+  pasteboard callback.
+- The **mirror-image host→guest path carries the same total cap** (#561), symmetric with
+  "Copy to Mac": the guest's synchronous pull refuses the whole non-inline set (files **and**
+  directories, minus any File-Provider-routed reps) when it totals over
+  `maxDeadlineSafeFileBytes`, reporting one `clipboard.paste.too.large` back to the host rather
+  than delivering a piecemeal subset. Directories always count toward the guest's total: a
+  folder paste has no File-Provider-routed escape hatch on the guest yet (D1b folders), so it
+  rides this same synchronous path regardless of the toggle — the one asymmetry with the host,
+  whose directory pull is eager and never deadline-bound. Both directions suppress the
+  offer-time advertiser fetch that once made an uncapped pull fire with no paste at all — each
+  side's promise write is `.currentHostOnly` (§3, #542/#408) — so the sync-promise pull runs
+  only on a real paste, and the cap guards that real paste.
 
 ### 3. Pay on consume (laziness is the rule)
 
@@ -182,7 +183,12 @@ bounded pull — see §5).
   immediately). The rule above still governs any surface that publishes an **unscoped**
   promise; host-only scoping is the escape hatch when a flavor cannot be cheap.
 - This applies in **both directions**, including host "Copy to Mac": the host pasteboard write
-  must be lazy (a provider), not an eager read at the moment the button is clicked.
+  is lazy (a provider), and since #559 its File-Provider-vs-synchronous routing and placeholder
+  creation are likewise paste-scoped — decided inside the provider closure on the first real
+  paste (the #427 leading edge, host mirror), not at the moment the button is clicked. The one
+  host-side exception is a copy-click advisory that refuses an over-total plain-file set up
+  front when the File Provider toggle is already known off (§2), so the user gets the message
+  in the window instead of a silent paste failure.
 - **Serializing a directory into an archive is materialization.** Building a folder's `.aar` at
   copy time — a standing, full-size on-disk duplicate of the source paid before any paste — is the
   forbidden eager case, not an exception to it. Defer the archive to consume, and stream it (§2).
@@ -370,10 +376,10 @@ fix, not just whether to fix it. (macOS-guest issues only; Linux/Windows out of 
 |-------|------------------------|------------------------------|
 | **#370** — image files > 256 MiB can't paste (force-inlined, rejected by `maxInlineBytes`) | §1 No size bound, §2 Disk-as-fallback | There is no legitimate cap. The fix is not "fall back to file-only over the cap" — it is to make inline reps disk/mmap-backed so the inline image bytes are uncapped too. **Folds into #393.** ✓ **Resolved** — the receiver spills a large inline rep to disk and serves it back via mmap. |
 | **#393** — mmap staged files when materializing inline pasteboard bytes | §1, §2, §8 | mmap is the mechanism that makes inline residency an implementation detail (§1), keeps Kernova's added RAM near zero (§2/ordering), and keeps the main thread off payload-sized reads (§8). Doing this **dissolves the §1 cap** and resolves #370. ✓ **Resolved** — `maxInlineBytes` is now `maxResidentInlineBytes`, a residency spill threshold. |
-| **#392** — make host "Copy to Mac" write the pasteboard lazily | §3 Pay on consume | The one place inbound content is still eager. Convert to a provider so bytes are read only when the destination pastes — in both directions, laziness is the rule. ✓ **Resolved** — the host pasteboard write is a lazy provider (#408); the single-file rep is now a host File Provider placeholder (#434). |
+| **#392** — make host "Copy to Mac" write the pasteboard lazily | §3 Pay on consume | The one place inbound content is still eager. Convert to a provider so bytes are read only when the destination pastes — in both directions, laziness is the rule. ✓ **Resolved** — the host pasteboard write is a lazy provider (#408); every plain-file rep is routed through a host File Provider placeholder at paste time (#434 single-file, #559 multi-file). |
 | **#394** — inline payloads SHA-256'd redundantly and on the main thread | §8 Keep the thread free, §7 Integrity | Remove the **redundant** hashes and move the unavoidable one off the main actor (§8). Do **not** drop the end-to-end verify hash (§7) — redundant work goes, the only integrity check stays. ✓ **Resolved** — editor hashing moved off the main actor on a debounce (#413). |
 | **#377** — throughput is software-bound; validate on real vsock, then cut per-chunk overhead | Ordering (marginal overhead), Engineering practices | Capability is already met; this is pure §-ordering step 2. **Measure on real vsock first** (verify at the seam), then cut the avoidable per-chunk copy. Never ship a chunk-size bump without co-scaling the window. |
-| **#376** — File Provider domain for large-file paste (no 60 s deadline) | §2 Disk-as-fallback (on-demand), §13 OS deadlines, §11 Sandbox-forward | This is the canonical §2 mechanism: instant placeholder, on-demand `fetchContents`, write once at the destination, native progress, no deadline. Also killed #371's 2×-disk. Extension can't open vsock — relay through the agent (§11). **Partially shipped** — D1a (guest transport) landed in #425; the host-side "Copy to Mac" mirror (D2) is the separate issue #424, shipped in #434; D1b multi-file landed with the unified paste-time routing (§3's routing bullet — every eligible plain-file rep in an offer routes, not just a single one). Remaining phases (folders via the placeholder-tree design, host multi-file #559, progress #426) tracked on the issue. |
+| **#376** — File Provider domain for large-file paste (no 60 s deadline) | §2 Disk-as-fallback (on-demand), §13 OS deadlines, §11 Sandbox-forward | This is the canonical §2 mechanism: instant placeholder, on-demand `fetchContents`, write once at the destination, native progress, no deadline. Also killed #371's 2×-disk. Extension can't open vsock — relay through the agent (§11). **Partially shipped** — D1a (guest transport) landed in #425; the host-side "Copy to Mac" mirror (D2) is the separate issue #424, shipped in #434; D1b multi-file landed with the unified paste-time routing (§3's routing bullet — every eligible plain-file rep in an offer routes, not just a single one), and the host "Copy to Mac" mirror of that reshape landed in #559. Remaining phases (folders via the placeholder-tree design, progress #426) tracked on the issue. |
 | **#422** — a directory crosses as a fully materialized archive, staged whole on **both** sides (≈3N peak disk) | §2 (no reflexive intermediate copy), §3 (pay on consume), ordering (bounded peak), §12 (smarter wins) | Stream the (de)serialization both ways and hash **inline** (§7); defer source archiving to paste via a negotiated offer that doesn't need exact size/SHA up front. Kernova's own disk for the transfer must approach zero beyond the destination. The File Provider arc it was sequenced after has landed — #376 D1a (#425) and the #424 host mirror (#434) — no longer blocked. |
 | **#354** — clipboard transfer progress UI (bar + ring) | §13 Legibility, §9 bidirectional, §5 preview-only | Drive both indicators off existing transport progress, both directions; clear on terminal states. Progress is a window affordance — it must not touch the data path (§5). ✓ **Resolved** — progress bar + ring driven off transport progress (#417). |
 | **#82** — opt-in automatic clipboard passthrough | §4 One data plane | Passthrough is the gate-less mode of the **same** path — a change to *when consume is authorized*, not a parallel transport. ✓ **Resolved** — `ClipboardPassthroughCoordinator` (per VM, host-side only, no proto/`PolicyUpdate` change) polls the host pasteboard and funnels changes through the identical `ClipboardPasteboardIntake` → `grabIfChanged()` choke-point the window's Paste uses, and auto-invokes the shared `HostClipboardPublisher.publish` (the same lazy write "Copy to Mac" uses) on each new inbound offer. Marker filtering (§10) is inherited from the shared intake; echo is suppressed by the publisher's post-write `changeCount` (a digest can't be the key — inbound writes are lazy promises). Drives both transports; the `clipboardPassthroughEnabled` toggle requires explicit confirmation to enable and is hot-toggleable. |
@@ -383,8 +389,9 @@ fix, not just whether to fix it. (macOS-guest issues only; Linux/Windows out of 
 | **#500** — a duplicate pull registration for the same id silently overwrites the prior one | §9 wake immediately, not a backstop stall | `LazyPullCoordinator.pull`/`ClipboardStreamReceiver.awaitTransfer` had no guard against a concurrent duplicate registration (e.g. a File Provider fetch retry after a dropped owner connection). ✓ **Resolved** — a duplicate registration supersedes the prior one, resolving it immediately via a distinct `.superseded` outcome (not `.cancelled`, which would let the displaced caller tear down the live successor's awaiter). |
 | **#560** — Copy to Mac advertises guest clipboard content to other devices over Universal Clipboard | §10 Trust boundary | `HostClipboardPublisher` prepared every write with `clearContents()`, which leaves the pasteboard cross-device-advertisable. ✓ **Resolved** — every host write now prepares with `prepareForNewContents(with: .currentHostOnly)` instead, applied unconditionally at the single inbound-publication choke point (§4) on every write, since the option does not survive a later prepare/clear. |
 | **#542** — guest pulls a host clipboard offer's full payload at offer time, with no paste (toggle-off sync path) | §3 Pay on consume, §10 Trust boundary | The guest's continuity-pasteboard advertiser fetched the promised `public.file-url` at offer time, and fulfilling it materialized the whole file (§3's advertiser caveat). ✓ **Resolved** — the guest's promise write prepares with `.currentHostOnly` (the #560 mechanism applied guest-side), which keeps the advertiser from processing the generation at all; verified live (1.5 GiB toggle-off offer idle 160 s with zero bytes moved, in-guest log shows no advertiser fetch, a real paste still streams immediately). |
-| **#561** — host→guest paste has no deadline-safe size cap, unlike guest→host | §2 Disk-as-fallback (deadline cap), §13 OS deadlines | The two directions were asymmetric: the host's synchronous fallback already refuses an over-cap file (`isLazyEligibleFile`/`lazyFileItem`), but the guest's `pullRepresentation` checked only staging disk capacity. ✓ **Resolved** — the guest's synchronous pasteboard-provider pull refuses when the paste's sync-bound reps (non-inline, minus File-Provider-routed) **total** over `maxDeadlineSafeFileBytes`, all-or-nothing (one `clipboard.paste.too.large` per offer, surfaced in the host's clipboard window — no piecemeal subset); the File Provider relay (`fetchStagedFile`, no deadline) stays uncapped via a `deadlineBound` parameter on the shared `pullRepresentation`. Directories are covered too, going beyond the host mirror: the guest has no File-Provider escape hatch for folders yet (D1b folders), so every inbound directory rep rides this same deadline-bound path today, unlike the host's eager (never deadline-bound) directory pull. |
-| **#427** — File Provider placeholder scoped to the paste lifetime, not the offer | §3 Pay on consume, §2 (on-demand) | The placeholder existed for the whole offer lifetime — created the instant the host copied, lingering after a paste. ✓ **Resolved** — routing (and so placeholder creation) moved into the unified paste-time provider closure (§3's routing bullet): the folder stays empty until a real paste, and an offer that missed a ready domain re-checks on its next fire (deleting the #429 re-publish and #510 stale-pull refusal machinery). The trailing edge is deliberately supersession-scoped — post-paste eviction reclaims no physical disk (the pasted copy is an APFS clone) and dirent removal would dangle the pasteboard's cached URL, breaking second pastes and drag-out. |
+| **#561** — host→guest paste has no deadline-safe size cap, unlike guest→host | §2 Disk-as-fallback (deadline cap), §13 OS deadlines | The two directions were asymmetric: the host's synchronous fallback already refused an over-cap file, but the guest's `pullRepresentation` checked only staging disk capacity. ✓ **Resolved** — the guest's synchronous pasteboard-provider pull refuses when the paste's sync-bound reps (non-inline, minus File-Provider-routed) **total** over `maxDeadlineSafeFileBytes`, all-or-nothing (one `clipboard.paste.too.large` per offer, surfaced in the host's clipboard window — no piecemeal subset); the File Provider relay (`fetchStagedFile`, no deadline) stays uncapped via a `deadlineBound` parameter on the shared `pullRepresentation`. The host "Copy to Mac" total gate is now symmetric (#559, `syncBoundTotalBytes`). One asymmetry remains: the guest has no File-Provider escape hatch for folders yet (D1b folders), so every inbound directory rep rides this same deadline-bound path today, while the host's directory pull is eager and never deadline-bound (so host directories don't count toward its total). |
+| **#427** — File Provider placeholder scoped to the paste lifetime, not the offer | §3 Pay on consume, §2 (on-demand) | The placeholder existed for the whole offer lifetime — created the instant the host copied, lingering after a paste. ✓ **Resolved** — routing (and so placeholder creation) moved into the unified paste-time provider closure (§3's routing bullet): the folder stays empty until a real paste, and an offer that missed a ready domain re-checks on its next fire (deleting the #429 re-publish and #510 stale-pull refusal machinery). The trailing edge is deliberately supersession-scoped — post-paste eviction reclaims no physical disk (the pasted copy is an APFS clone) and dirent removal would dangle the pasteboard's cached URL, breaking second pastes and drag-out. The host side of this paste-scoping landed with #559. |
+| **#559** — host "Copy to Mac" routes only a single plain-file rep lazily (D2 scope limit) | §2 Disk-as-fallback (deadline cap), §3 Pay on consume | The host mirror of D1b: dissolve the single-file gate so every eligible plain-file rep routes, and move routing into the paste-time provider closure. ✓ **Resolved** — `materializeForCopy` defers every lazy-eligible plain-file rep as a `.lazyFile`; the pasteboard closure (`copyToMacFileURL`) tries the File Provider first (publishing all eligible reps together, latched on success) and falls back to a size-capped sync pull gated by the offer's plain-file **total** (`syncBoundTotalBytes`), all-or-nothing, with a copy-click advisory when the toggle is already known off. Placeholder creation is now paste-scoped (#427 host mirror); `CopyToMacDropReason.multipleFiles` and its "Only one file…" message are removed. |
 
 ---
 

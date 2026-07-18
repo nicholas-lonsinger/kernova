@@ -41,6 +41,9 @@ struct HostClipboardPullRouterTests {
         func cancelStagedPull(generation: UInt64, repIndex: Int) {
             lock.withLock { cancelCallStorage = (generation, repIndex) }
         }
+
+        // Unused by the router tests, which exercise only the relay pull path.
+        func copyToMacFileURL(generation: UInt64, repIndex: Int) -> URL? { nil }
     }
 
     /// A source whose `pullStagedFile` blocks until released, so a test can
@@ -69,6 +72,9 @@ struct HostClipboardPullRouterTests {
         func cancelStagedPull(generation: UInt64, repIndex: Int) {
             lock.withLock { cancelCallStorage = (generation, repIndex) }
         }
+
+        // Unused by the router tests, which exercise only the relay pull path.
+        func copyToMacFileURL(generation: UInt64, repIndex: Int) -> URL? { nil }
 
         func release() {
             releaseSemaphore.signal()

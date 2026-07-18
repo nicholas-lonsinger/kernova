@@ -82,10 +82,11 @@ final class HostClipboardPublisher {
     /// pasteboard as lazy promised items, returning the terminal outcome.
     ///
     /// Inline/preview/directory reps are pulled eagerly and grouped by the shared
-    /// planner; a single plain file rep rides a File Provider placeholder or a
-    /// size-capped lazy paste. The byte reads themselves are deferred into each
-    /// item's provider closure (paste time). On a successful write the providers
-    /// are handed to the app-scoped registry so a later paste is still served.
+    /// planner; every plain file rep rides its own lazy item whose File-Provider-
+    /// vs-size-capped-sync routing is decided at paste time. The byte reads
+    /// themselves are deferred into each item's provider closure (paste time). On a
+    /// successful write the providers are handed to the app-scoped registry so a
+    /// later paste is still served.
     func publish(from service: any ClipboardServicing) async -> HostPublishOutcome {
         let staging = self.staging
         let generation = stagingGeneration
@@ -107,9 +108,9 @@ final class HostClipboardPublisher {
         }
 
         // Eager reps go through the shared planner (inline grouping, image-file
-        // staging, directory extraction). The single lazy file rep gets its own
-        // item whose `.fileURL` is pulled + staged on paste (the File-Provider-off
-        // fallback); only `VsockClipboardService` produces `.lazyFile`.
+        // staging, directory extraction). Each lazy file rep gets its own item
+        // whose `.fileURL` is routed at paste time — File Provider first, else a
+        // size-capped sync pull; only `VsockClipboardService` produces `.lazyFile`.
         var specs = await Self.hostPasteboardItems(
             for: ClipboardContent(representations: resolvedReps), generation: generation,
             staging: staging)
@@ -181,25 +182,25 @@ final class HostClipboardPublisher {
         let provide: @Sendable (NSPasteboard.PasteboardType) -> Data?
     }
 
-    /// A pasteboard item for the single lazy file rep served when the host File
-    /// Provider is off: `provide(.fileURL)` pulls + stages the bytes on demand and
-    /// returns the staged file URL.
+    /// A pasteboard item for a lazy plain-file rep whose File-Provider-vs-sync
+    /// routing is decided at paste time: `provide(.fileURL)` calls
+    /// `copyToMacFileURL`, which tries the host File Provider first (a dataless
+    /// placeholder that materializes on read, no deadline) and falls back to a
+    /// size-capped synchronous pull when the File Provider is off.
     ///
-    /// The pull runs synchronously on the main thread (the pasteboard server's
-    /// `provideData` callback), blocking it while the stream receiver delivers
-    /// off-main — the same `pullStagedFile` bridge the File Provider relay uses.
-    /// The rep was size-capped at copy time (`maxDeadlineSafeFileBytes`) so the
-    /// pull + stage completes within the OS paste deadline.
+    /// On the sync-fallback path the pull runs synchronously on the main thread
+    /// (the pasteboard server's `provideData` callback), blocking it while the
+    /// stream receiver delivers off-main — the same bridge the File Provider relay
+    /// uses. The offer's sync-bound total is size-capped (`maxDeadlineSafeFileBytes`)
+    /// so the pull + stage completes within the OS paste deadline.
     nonisolated private static func lazyFileSpec(
         generation: UInt64, repIndex: Int, fileProvider: any HostClipboardFileRepProviding
     ) -> PasteboardItemSpec {
         PasteboardItemSpec(types: [.fileURL]) { type in
             guard type == .fileURL else { return nil }
-            guard
-                case .success(let path) = fileProvider.pullStagedFile(
-                    generation: generation, repIndex: repIndex)
+            guard let url = fileProvider.copyToMacFileURL(generation: generation, repIndex: repIndex)
             else { return nil }
-            return Data(URL(fileURLWithPath: path).absoluteString.utf8)
+            return Data(url.absoluteString.utf8)
         }
     }
 

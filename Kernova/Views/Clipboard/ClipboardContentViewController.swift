@@ -746,10 +746,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     private static func dropMessage(for reasons: [CopyToMacDropReason]) -> String {
         guard !reasons.isEmpty else { return "Couldn't fetch the clipboard content to copy" }
         if reasons.contains(.tooLargeWithoutFileProvider) {
-            return "File too large to copy to your Mac — enable 'File Provider' in System Settings."
-        }
-        if reasons.contains(.multipleFiles) {
-            return "Only one file can be copied to your Mac at a time"
+            return "Too large to copy to your Mac — enable 'File Provider' in System Settings."
         }
         return "Couldn't prepare the clipboard file to copy"
     }
@@ -809,8 +806,8 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         switch outcome {
         case .nothingServed(let reasons):
             // `materializeForCopy` counted the file payloads it couldn't serve
-            // (over the deadline-safe cap with the File Provider off, an extra file
-            // beyond the single lazy one, or a failed eager pull).
+            // (the plain-file set over the deadline-safe cap with the File Provider
+            // off, or a failed eager pull).
             indicatorView.showTransientMessage(Self.dropMessage(for: reasons), style: .error)
         case .stagingFailed:
             indicatorView.showTransientMessage(

@@ -3,6 +3,45 @@ import KernovaKit
 import Observation
 import os
 
+/// The app-level host File Provider coordinator surface `VsockClipboardService`
+/// depends on.
+///
+/// Injected into the service (defaulting to `HostClipboardFileProvider.shared`)
+/// so tests can drive paste-time routing and the copy-click advisory without a
+/// live File Provider domain — the host analog of the guest agent's injectable
+/// `FileProviderPublishing` seam.
+@MainActor
+protocol HostClipboardDomainCoordinating: AnyObject {
+    /// Current File Provider usability, for the Copy-to-Mac advisory check.
+    var availability: FileProviderAvailability { get }
+
+    /// A clipboard service started — ref-count the shared domain up (0→1 stands
+    /// it up).
+    func serviceDidStart()
+
+    /// A clipboard service stopped — ref-count the shared domain down (1→0 tears
+    /// it down), also releasing `source` as the relay pull source.
+    func serviceDidStop(_ source: any HostClipboardFileRepProviding)
+
+    /// Cheap warm-up at Copy-to-Mac click: pre-connects the servicing relay so a
+    /// later paste-time publish doesn't also pay doorbell/extension-launch
+    /// latency inside the paste (host mirror of the guest's `prepareForOffer`).
+    func prepareForCopy()
+
+    /// Paste-time publish of an offer's eligible plain-file reps as dataless
+    /// placeholders, setting the relay pull source to `source` and waiting for
+    /// the placeholders. Returns each rep's domain URL keyed by rep index, or
+    /// `nil` when the File Provider isn't usable so the caller falls back to the
+    /// size-capped synchronous pull.
+    func publishItemsForPaste(
+        source: any HostClipboardFileRepProviding, generation: UInt64,
+        items: [FileProviderPublishItem]
+    ) -> [Int: URL]?
+
+    /// Clears the current offer, but only if `source` published it.
+    func clearOffer(from source: any HostClipboardFileRepProviding)
+}
+
 /// App-level coordinator that owns the single host "Copy to Mac" File Provider
 /// domain (issue #424 / #460 servicing migration).
 ///
@@ -21,7 +60,7 @@ import os
 /// app-group path do.
 @MainActor
 @Observable
-final class HostClipboardFileProvider {
+final class HostClipboardFileProvider: HostClipboardDomainCoordinating {
     /// The process-wide coordinator.
     static let shared = HostClipboardFileProvider()
 
@@ -97,28 +136,25 @@ final class HostClipboardFileProvider {
         domainHost.setEnabled(false)
     }
 
-    /// Publishes a single file rep from `source` as the current File Provider offer.
+    func prepareForCopy() {
+        domainHost.prepareForOffer()
+    }
+
+    /// Publishes `items` from `source` as the current File Provider offer at paste
+    /// time and returns each item's placeholder URL keyed by rep index.
     ///
-    /// Returns the placeholder's pasteboard URL, or `nil` when the File Provider
-    /// isn't usable (no transport attached / toggle off / not ready) so the
-    /// caller falls back to the size-capped synchronous paste.
-    ///
-    /// The host still publishes at Copy-to-Mac click time, so the click→paste
-    /// gap covers the async placeholder enumeration (`waitForPlaceholder:
-    /// false`); the paste-time unified routing lands host-side with the D2
-    /// multi-file reshape (#559).
-    func publishSingleFile(
+    /// Returns `nil` when the File Provider isn't usable (no transport attached /
+    /// toggle off / not ready) so the caller falls back to the size-capped
+    /// synchronous paste. The consumer resolves the URLs immediately, so it waits
+    /// for the placeholder dirents (`waitForPlaceholder: true`) — the #427 host
+    /// mirror: nothing exists in the domain until a paste.
+    func publishItemsForPaste(
         source: any HostClipboardFileRepProviding,
-        generation: UInt64, repIndex: Int, filename: String, byteCount: UInt64, uti: String
-    ) -> URL? {
+        generation: UInt64, items: [FileProviderPublishItem]
+    ) -> [Int: URL]? {
         router.setSource(source)
         return domainHost.publishItems(
-            generation: generation,
-            items: [
-                FileProviderPublishItem(
-                    repIndex: repIndex, filename: filename, byteCount: byteCount, uti: uti)
-            ],
-            waitForPlaceholder: false)?[repIndex]
+            generation: generation, items: items, waitForPlaceholder: true)
     }
 
     /// Clears the current offer, but only if `source` is the one that published
@@ -227,4 +263,19 @@ protocol HostClipboardFileRepProviding: AnyObject, Sendable {
     /// idempotent — a cancel for an unknown or already-finished transfer is a
     /// no-op. Called off-main on the File Provider relay's XPC queue.
     func cancelStagedPull(generation: UInt64, repIndex: Int)
+
+    /// Resolves the pasteboard `.fileURL` for a lazy plain-file rep at paste time.
+    ///
+    /// The host mirror of the guest's paste-time routing: it tries the File
+    /// Provider first (publishing every eligible plain-file rep of the offer
+    /// together on the first fire, latching on success so a sibling fire reads
+    /// the latch and a failed publish retries on the next paste), returning the
+    /// dataless placeholder's domain URL. When the File Provider is unusable it
+    /// falls back to a deadline-bound synchronous pull, gated by the offer's
+    /// total sync-bound byte count (all-or-nothing over the cap). Returns the
+    /// URL to place on the pasteboard, or `nil` when nothing can be served.
+    ///
+    /// Synchronous and blocking on the sync-fallback path; safe to call on the
+    /// main thread (the pasteboard server's `provideData` callback) or off-main.
+    func copyToMacFileURL(generation: UInt64, repIndex: Int) -> URL?
 }
