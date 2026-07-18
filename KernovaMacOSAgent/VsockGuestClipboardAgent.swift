@@ -1339,15 +1339,16 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
                 )
                 // The guest has no UI; tell the host so it shows the failure. The
                 // code picks the host's rendered text: when the refused set is
-                // directories only, "enable File Provider" would be a lie — a
-                // folder has no File-Provider route until D1b folders ship — so a
-                // distinct code renders an honest folder message instead. A mixed
-                // set keeps the enable-File-Provider code: enabling routes the
-                // files, and a next paste with only the folder left sync-bound
-                // self-corrects to the folder code.
+                // directories only AND the peer can't route a folder tree
+                // (`clipboard.dirtree.v1` not negotiated), "enable File Provider"
+                // would be a lie — a folder has no File-Provider route — so a
+                // distinct code renders an honest folder message. When the peer
+                // DOES support the folder tree, enabling the File Provider routes
+                // the folder, so the mixed/enable-File-Provider code is correct
+                // even for a directories-only set.
                 if !promise.tooLargeReported {
                     promise.tooLargeReported = true
-                    if load.allDirectories {
+                    if load.allDirectories, !peerSupportsDirTree() {
                         sendPasteError(
                             code: "clipboard.paste.folder.too.large",
                             message:

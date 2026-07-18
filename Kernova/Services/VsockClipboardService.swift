@@ -1764,8 +1764,17 @@ extension VsockClipboardService: HostClipboardFileRepProviding {
         case .routed(let url):
             return url
         case .sync(let snapshot):
-            guard let rep = performBlockingPull(snapshot), let url = rep.fileURL else { return nil }
-            return url
+            guard let rep = performBlockingPull(snapshot) else { return nil }
+            // A directory rep's synchronous fallback streams the request-time
+            // archive; extract it into a real folder and return the folder URL so
+            // a Finder paste recreates the tree (not the `.aar`) — the host mirror
+            // of the guest's `fileURLData` directory handling. A plain file returns
+            // its staged URL directly.
+            if snapshot.isDirectory {
+                return ClipboardDirectoryArchive.extractedDirectoryURL(
+                    for: rep, into: snapshot.staging, generation: snapshot.generation)
+            }
+            return rep.fileURL
         case .none:
             return nil
         }
