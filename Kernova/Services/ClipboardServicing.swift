@@ -92,11 +92,11 @@ protocol ClipboardServicing: AnyObject {
     /// Prepares the items to write to the host pasteboard for "Copy to Mac".
     ///
     /// Inline, preview, and directory representations are pulled eagerly and
-    /// returned resolved; a single plain file representation is published as a
-    /// lazy host File Provider placeholder (materialized on read via
-    /// `fetchContents`, no deadline) or, when the File Provider is off, deferred
-    /// to a size-capped synchronous paste (`.lazyFile`); files that can't be
-    /// served are reported as `.droppedFile`. Default maps `clipboardContent`'s
+    /// returned resolved; every lazy-eligible plain file representation becomes a
+    /// `.lazyFile` whose routing (a lazy host File Provider placeholder, or a
+    /// size-capped synchronous paste when the File Provider is off) is decided at
+    /// paste time inside the provider closure; files that can't be served are
+    /// reported as `.droppedFile`. Default maps `clipboardContent`'s
     /// representations to `.resolved` for eager transports (SPICE text).
     func materializeForCopy() async -> [CopyToMacItem]
 }
@@ -105,17 +105,17 @@ protocol ClipboardServicing: AnyObject {
 ///
 /// `materializeForCopy()` classifies each offered representation into one of
 /// these; the clipboard window turns them into `NSPasteboardItem`s. A directory
-/// or inline payload is `.resolved` (bytes/URL in hand); the single lazy-eligible
-/// plain file is either `.resolved` with a File Provider placeholder URL or
-/// `.lazyFile` (pulled on paste when the File Provider is off); anything that
-/// can't be served is `.droppedFile`.
+/// or inline payload is `.resolved` (bytes/URL in hand); every lazy-eligible
+/// plain file is a `.lazyFile` (its File-Provider-vs-sync routing is decided at
+/// paste time); anything that can't be served is `.droppedFile`.
 enum CopyToMacItem: Sendable {
     /// A representation whose bytes are already resolved — an inline/preview rep
-    /// pulled eagerly, an extracted directory, or a File Provider placeholder URL.
+    /// pulled eagerly, or an extracted directory.
     case resolved(ClipboardContent.Representation)
-    /// The single plain file rep to serve lazily at paste time when the host File
-    /// Provider is off: pulled + staged on demand within the OS paste deadline,
-    /// addressed by its offer coordinates so the paste-time provider can request it.
+    /// A plain file rep served lazily at paste time: the provider closure tries
+    /// the host File Provider first (a dataless placeholder that materializes on
+    /// read with no deadline), then falls back to a size-capped synchronous pull.
+    /// Addressed by its offer coordinates so the paste-time provider can request it.
     case lazyFile(generation: UInt64, repIndex: Int, uti: String, filename: String)
     /// A file payload that couldn't be served — the `reason` drives the user-facing
     /// message (and, for the over-cap case, points the user at enabling the File
@@ -128,11 +128,10 @@ enum CopyToMacItem: Sendable {
 /// Distinguished so the clipboard window can show a specific, actionable message
 /// rather than a generic failure.
 enum CopyToMacDropReason: Sendable, Equatable {
-    /// Over the deadline-safe size cap while the host File Provider is off —
-    /// enabling it routes the file lazily (no cap, no deadline).
+    /// The plain-file set's total is over the deadline-safe size cap while the
+    /// host File Provider is off — enabling it routes the files lazily (no cap,
+    /// no deadline). All-or-nothing: the whole set is refused together.
     case tooLargeWithoutFileProvider
-    /// More than one file was offered; "Copy to Mac" serves a single file (D2).
-    case multipleFiles
     /// An eager pull (a directory or image file) failed.
     case pullFailed
 }

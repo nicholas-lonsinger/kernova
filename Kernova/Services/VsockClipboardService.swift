@@ -64,6 +64,12 @@ final class VsockClipboardService: ClipboardServicing {
     private let label: String
     private let staging: ClipboardFileStaging
 
+    /// The app-level host File Provider coordinator (`HostClipboardFileProvider`
+    /// in production, a fake in tests): stands the shared domain up/down, warms
+    /// the relay before a paste, publishes the offer's file reps as placeholders
+    /// at paste time, and reports availability for the Copy-to-Mac advisory.
+    private let fileProvider: any HostClipboardDomainCoordinating
+
     /// Backstop for a lazy pull the peer never answers while the channel stays
     /// open — the host counterpart of the guest's `LazyPullCoordinator` timeout.
     ///
@@ -170,6 +176,15 @@ final class VsockClipboardService: ClipboardServicing {
         /// share one pull per rep instead of minting a duplicate (same-transfer_id)
         /// request that would orphan a continuation.
         var inFlight: [Int: Task<ClipboardContent.Representation?, Never>] = [:]
+        /// File-Provider routing for this offer — rep index → domain URL —
+        /// latched by the first paste-time provider fire whose publish succeeded.
+        ///
+        /// `nil` while undecided. A failed/unusable publish deliberately does NOT
+        /// latch, so a later provider fire retries the File Provider — the
+        /// paste-time re-check that replaced the #429 availability-flip re-publish
+        /// (enable the toggle, paste again, and it routes lazily). Mirrors the
+        /// guest agent's `InboundPromise.fpRoutedURLs`.
+        var fpRoutedURLs: [Int: URL]?
         /// Monotonic count of materializations cached into `materialized`, bumped
         /// on each pulled rep. `republishOffActor` captures it before its
         /// off-actor hash and re-checks it after, so a snapshot taken before the
@@ -202,17 +217,23 @@ final class VsockClipboardService: ClipboardServicing {
     ///     extension can read staged bytes), falling back to the system temp dir
     ///     when the container is unavailable (e.g. the CI test host). Tests inject
     ///     a unique temp root for isolation.
+    ///   - fileProvider: the app-level host File Provider coordinator; defaults to
+    ///     the process-wide `HostClipboardFileProvider.shared`, injected in tests
+    ///     to drive paste-time routing and the copy-click advisory without a live
+    ///     domain.
     init(
         channel: VsockChannel, label: String,
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
         lazyPullTimeout: Duration = ClipboardStreamTuning.lazyPullTimeout,
         progressRevealDelay: Duration = VsockClipboardService.defaultProgressRevealDelay,
-        stagingTempRoot: URL? = nil
+        stagingTempRoot: URL? = nil,
+        fileProvider: any HostClipboardDomainCoordinating = HostClipboardFileProvider.shared
     ) {
         self.channel = channel
         self.label = label
         self.lazyPullTimeout = lazyPullTimeout
         self.progressRevealDelay = progressRevealDelay
+        self.fileProvider = fileProvider
         self.staging = ClipboardFileStaging(
             label: "host-\(label)",
             tempRoot: stagingTempRoot
@@ -231,7 +252,7 @@ final class VsockClipboardService: ClipboardServicing {
         // per-VM services that share it). This is the host "clipboard enabled"
         // signal — the service exists only when the VM enabled clipboard sharing,
         // so the domain + broker never start in the CI test host.
-        HostClipboardFileProvider.shared.serviceDidStart()
+        fileProvider.serviceDidStart()
 
         let sender = ClipboardStreamSender(channel: channel)
         let receiver = ClipboardStreamReceiver(
@@ -312,7 +333,7 @@ final class VsockClipboardService: ClipboardServicing {
         staging.sweep()
         // Ref-count down the shared host File Provider domain; the last service to
         // stop tears the domain + broker down.
-        HostClipboardFileProvider.shared.serviceDidStop(self)
+        fileProvider.serviceDidStop(self)
         Self.logger.notice("Vsock clipboard service stopped for '\(self.label, privacy: .public)'")
     }
 
@@ -715,7 +736,7 @@ final class VsockClipboardService: ClipboardServicing {
         inboundPromise = nil
         previewMaterializationStarted = 0
         lastInboundPublishedDigest = nil
-        HostClipboardFileProvider.shared.clearOffer(from: self)
+        fileProvider.clearOffer(from: self)
     }
 
     /// Drops any `.pendingRemote` placeholder reps — content that can't be
@@ -767,15 +788,19 @@ final class VsockClipboardService: ClipboardServicing {
         if allSucceeded { previewMaterializationStarted = promise.generation }
     }
 
-    /// Prepares the "Copy to Mac" items: inline/preview/directory reps pulled
-    /// eagerly (`.resolved`), the single plain file rep published as a lazy File
-    /// Provider placeholder or deferred to a size-capped synchronous paste
-    /// (`.lazyFile`), and any file that can't be served reported as `.droppedFile`.
+    /// Prepares the "Copy to Mac" items.
     ///
-    /// Files are no longer pulled at copy-click — the bytes materialize on read via
-    /// the File Provider's `fetchContents` (no deadline), or, with the File
-    /// Provider off, on paste via the size-capped fallback. This is where the eager
-    /// staging bridge is gone (#424, CLIPBOARD.md §2/§3).
+    /// Inline/preview/directory reps are pulled eagerly (`.resolved`); every
+    /// lazy-eligible plain file rep is deferred as a `.lazyFile` whose routing — a
+    /// host File Provider placeholder or a size-capped synchronous paste — is
+    /// decided at paste time inside the provider closure (`copyToMacFileURL`,
+    /// decision 1). Files that can't be served are reported as `.droppedFile`.
+    ///
+    /// Files are no longer pulled — nor is the File Provider published — at
+    /// copy-click: the bytes materialize on read via the File Provider's
+    /// `fetchContents` (no deadline), or, with the File Provider off, on paste via
+    /// the size-capped fallback (#424/#427 host mirror, CLIPBOARD.md §2/§3). The
+    /// one exception is an advisory up-front refusal (below).
     func materializeForCopy() async -> [CopyToMacItem] {
         // No active promise, or the user replaced the offered content with their
         // own edit: copy what's actually shown (resolved bytes), never a stale
@@ -786,18 +811,34 @@ final class VsockClipboardService: ClipboardServicing {
             return Self.withoutPlaceholders(clipboardContent).representations.map { .resolved($0) }
         }
 
-        // The single promisable, non-inline, non-directory file rep is eligible
-        // for lazy routing; every other plain file rep is dropped. Single-file
-        // is the remaining D2 scope limit (#559) — the guest side now routes
-        // every eligible plain-file rep at paste time (D1b multi-file).
+        // Every promisable, non-inline, non-directory file rep is lazy-eligible;
+        // routing (File Provider vs. size-capped sync) is decided per rep at paste
+        // time. The single-file D2 scope limit is dissolved (#559) — the host now
+        // mirrors the guest's D1b multi-file routing.
         let plainFileIndices = promise.reps.indices.filter { index in
             Self.isLazyEligibleFile(promise.reps[index])
         }
-        let lazyFileIndex = plainFileIndices.count == 1 ? plainFileIndices.first : nil
-        if plainFileIndices.count > 1 {
+        // Advisory up-front over-total refusal (decision 4): only when the File
+        // Provider is ALREADY known unusable at click, so the user sees the
+        // enable-File-Provider message in the window immediately instead of a
+        // silent paste failure. When usable/unprobed, the paste-time total gate in
+        // `copyToMacFileURL` enforces it. The total counts plain-file reps only —
+        // directories are pulled eagerly here, never through a deadline-bound
+        // callback (unlike the guest).
+        let advisoryRefusal =
+            !plainFileIndices.isEmpty
+            && Self.isKnownUnusable(fileProvider.availability)
+            && plainFileIndices.reduce(UInt64(0)) { $0 &+ promise.reps[$1].byteCount }
+                > UInt64(ClipboardStreamTuning.maxDeadlineSafeFileBytes)
+        if advisoryRefusal {
             Self.logger.notice(
-                "Copy-to-Mac offer has \(plainFileIndices.count, privacy: .public) file reps — only single-file is routed lazily (D2 scope); extras dropped"
+                "Copy-to-Mac plain-file set (\(plainFileIndices.count, privacy: .public) reps) totals over the deadline-safe cap with the File Provider unusable — refusing the whole set"
             )
+        } else if !plainFileIndices.isEmpty {
+            // Warm the servicing relay so the first paste-time publish doesn't also
+            // pay doorbell/extension-launch latency inside the paste (mirrors the
+            // guest's offer-time `prepareForOffer`).
+            fileProvider.prepareForCopy()
         }
 
         // Collect each eager pull's RETURN value rather than re-reading
@@ -809,13 +850,13 @@ final class VsockClipboardService: ClipboardServicing {
             // A supersession mid-loop: return what THIS generation resolved.
             guard inboundPromise === promise else { return items }
             guard !Self.shouldSkip(info) else { continue }
-            if index == lazyFileIndex {
-                items.append(lazyFileItem(index: index, info: info, generation: promise.generation))
-                continue
-            }
             if Self.isLazyEligibleFile(info) {
-                // An extra plain file rep beyond the single lazy-eligible one.
-                items.append(.droppedFile(.multipleFiles))
+                items.append(
+                    advisoryRefusal
+                        ? .droppedFile(.tooLargeWithoutFileProvider)
+                        : .lazyFile(
+                            generation: promise.generation, repIndex: index, uti: info.uti,
+                            filename: info.filename))
                 continue
             }
             // Inline, previewable, or directory rep — pull eagerly as before.
@@ -838,34 +879,105 @@ final class VsockClipboardService: ClipboardServicing {
         !info.isInline && !info.isDirectory && !info.filename.isEmpty && !shouldSkip(info)
     }
 
-    /// Routes the single lazy-eligible file rep: a host File Provider placeholder
-    /// (no bytes pulled now; materialized on read via `fetchContents`), or — when
-    /// the File Provider is off — a size-capped synchronous paste, or a drop when
-    /// it's too large to serve within the paste deadline.
-    private func lazyFileItem(
-        index: Int, info: Kernova_V1_ClipboardRepresentationInfo, generation: UInt64
-    ) -> CopyToMacItem {
-        if let url = HostClipboardFileProvider.shared.publishSingleFile(
-            source: self, generation: generation, repIndex: index, filename: info.filename,
-            byteCount: info.byteCount, uti: info.uti)
-        {
-            // A concrete placeholder URL in the File Provider domain — bytes pull
-            // lazily on read, with no deadline.
-            return .resolved(
-                ClipboardContent.Representation(
-                    uti: info.uti, fileURL: url, byteCount: Int(clamping: info.byteCount),
-                    filename: info.filename))
+    /// Whether the File Provider is confirmed off (toggle off, or the extension is
+    /// broken), so a large paste is certain to hit the size-capped sync path — the
+    /// copy-click advisory refusal fires. `.inactive` (not yet probed) and
+    /// `.ready` do not, so routing is left to the paste-time re-check.
+    private static func isKnownUnusable(_ availability: FileProviderAvailability) -> Bool {
+        switch availability {
+        case .needsEnabling, .unavailable: return true
+        case .inactive, .ready: return false
         }
-        // File Provider off / not ready: defer to a synchronous paste that pulls +
-        // stages the bytes on demand, gated by a deadline-safe size cap.
-        guard info.byteCount <= UInt64(ClipboardStreamTuning.maxDeadlineSafeFileBytes) else {
+    }
+
+    // MARK: - Paste-time file routing (we are the receiver)
+
+    /// How a lazy plain-file rep's `.fileURL` is served at paste time, decided on
+    /// the main actor: an FP-routed domain URL, a snapshot for the deadline-bound
+    /// synchronous pull, or nothing (stale offer / over-total refusal).
+    private enum CopyFileURLDecision: Sendable {
+        case routed(URL)
+        case sync(LazyPullSnapshot)
+        case none
+    }
+
+    /// Decides how to serve a lazy plain-file rep's `.fileURL` at paste time.
+    ///
+    /// The host mirror of the guest's `provideRoutedFileURL`: File Provider first
+    /// (every eligible rep published together, latched on success), else the
+    /// deadline-bound synchronous pull gated by the offer's sync-bound total.
+    @MainActor
+    private func decideCopyFileURL(generation: UInt64, repIndex: Int) -> CopyFileURLDecision {
+        guard let promise = inboundPromise, promise.generation == generation,
+            promise.reps.indices.contains(repIndex)
+        else { return .none }
+        if let url = ensureCopyFileProviderRouting(promise)[repIndex] { return .routed(url) }
+        // File Provider unusable: the deadline-safe cap (#561) applies to the
+        // TOTAL of the offer's sync-bound plain-file reps, all-or-nothing
+        // (decision 4) — a set that together exceeds the cap is refused whole
+        // rather than pasted piecemeal (a paste that silently lands 2 of 3 files
+        // misleads more than one that refuses). The copy-click advisory already
+        // surfaced the enable-File-Provider message when availability was known
+        // unusable; this enforces the gate at paste.
+        let total = Self.syncBoundTotalBytes(for: promise)
+        guard total <= UInt64(ClipboardStreamTuning.maxDeadlineSafeFileBytes) else {
             Self.logger.notice(
-                "Copy-to-Mac file rep \(index, privacy: .public) is \(info.byteCount, privacy: .public) bytes — over the deadline-safe cap with the File Provider off; dropped"
+                "Copy-to-Mac sync-bound file reps total \(total, privacy: .public) bytes — over the deadline-safe cap with the File Provider off; refusing the paste"
             )
-            return .droppedFile(.tooLargeWithoutFileProvider)
+            return .none
         }
-        return .lazyFile(
-            generation: generation, repIndex: index, uti: info.uti, filename: info.filename)
+        guard let snapshot = lazyPullSnapshot(generation: generation, repIndex: repIndex) else {
+            return .none
+        }
+        return .sync(snapshot)
+    }
+
+    /// The offer's File-Provider routing, publishing every eligible plain-file rep
+    /// on first use.
+    ///
+    /// Latched on SUCCESS only: a failed/unusable publish returns empty without
+    /// latching, so THIS fire falls back to the synchronous path and a later fire
+    /// retries the File Provider — the paste-time re-check that replaced the #429
+    /// availability-flip re-publish. All eligible reps publish together on the
+    /// first fire (one manifest write, one enumeration), and every sibling fire of
+    /// the same paste reads the latch. Mirrors the guest's `ensureFileProviderRouting`.
+    @MainActor
+    private func ensureCopyFileProviderRouting(_ promise: InboundPromise) -> [Int: URL] {
+        if let latched = promise.fpRoutedURLs { return latched }
+        let eligible = promise.reps.indices.filter { Self.isLazyEligibleFile(promise.reps[$0]) }
+        guard !eligible.isEmpty else { return [:] }
+        let items = eligible.map { index -> FileProviderPublishItem in
+            let info = promise.reps[index]
+            return FileProviderPublishItem(
+                repIndex: index, filename: info.filename, byteCount: info.byteCount, uti: info.uti)
+        }
+        guard
+            let urls = fileProvider.publishItemsForPaste(
+                source: self, generation: promise.generation, items: items)
+        else { return [:] }
+        promise.fpRoutedURLs = urls
+        Self.logger.notice(
+            "Routed \(urls.count, privacy: .public) file rep(s) through the File Provider at paste (gen=\(promise.generation, privacy: .public))"
+        )
+        return urls
+    }
+
+    /// Total byte count of the offer's sync-bound plain-file reps — the
+    /// lazy-eligible file reps NOT routed through the File Provider — against which
+    /// the deadline-safe cap is compared (decision 4).
+    ///
+    /// Directories are excluded: on the host they're pulled eagerly at copy-click,
+    /// never through a deadline-bound callback (unlike the guest, whose inbound
+    /// directory extraction rides the synchronous path). Reads the routing latch,
+    /// so it is for paste-time callers only.
+    private static func syncBoundTotalBytes(for promise: InboundPromise) -> UInt64 {
+        let routed = promise.fpRoutedURLs ?? [:]
+        var total: UInt64 = 0
+        for (index, info) in promise.reps.enumerated()
+        where isLazyEligibleFile(info) && routed[index] == nil {
+            total &+= info.byteCount
+        }
+        return total
     }
 
     /// Pulls representation `index` at most once across concurrent callers
@@ -1251,21 +1363,45 @@ extension VsockClipboardService: HostClipboardFileRepProviding {
     nonisolated func pullStagedFile(
         generation: UInt64, repIndex: Int
     ) -> Result<String, FileProviderPullError> {
-        let snapshot: LazyPullSnapshot? =
-            Thread.isMainThread
-            ? MainActor.assumeIsolated {
-                lazyPullSnapshot(generation: generation, repIndex: repIndex)
-            }
-            : DispatchQueue.main.sync {
-                MainActor.assumeIsolated {
-                    lazyPullSnapshot(generation: generation, repIndex: repIndex)
-                }
-            }
+        let snapshot = onMain { self.lazyPullSnapshot(generation: generation, repIndex: repIndex) }
         guard let snapshot else { return .failure(.noCurrentOffer) }
         guard let rep = performBlockingPull(snapshot), let url = rep.fileURL else {
             return .failure(.pullFailed)
         }
         return .success(url.path)
+    }
+
+    /// Serves the pasteboard `.fileURL` for a lazy plain-file rep at paste time.
+    ///
+    /// File Provider routing first (latched on success), else the
+    /// offer-total-gated deadline-bound synchronous pull — the host mirror of the
+    /// guest's `provideRoutedFileURL`.
+    ///
+    /// Thread-aware like `pullStagedFile`: the routing decision hops to main (it
+    /// reads/latches main-confined promise state and calls the main-only
+    /// `publishItemsForPaste`); the blocking sync pull then runs on the calling
+    /// thread, woken off-main by the receiver.
+    nonisolated func copyToMacFileURL(generation: UInt64, repIndex: Int) -> URL? {
+        switch onMain({ self.decideCopyFileURL(generation: generation, repIndex: repIndex) }) {
+        case .routed(let url):
+            return url
+        case .sync(let snapshot):
+            guard let rep = performBlockingPull(snapshot), let url = rep.fileURL else { return nil }
+            return url
+        case .none:
+            return nil
+        }
+    }
+
+    /// Runs `body` on the main actor synchronously, from either the main thread
+    /// (the toggle-off pasteboard `provide` callback) or off-main (the File
+    /// Provider relay's XPC queue) — the shared thread-hop for every synchronous
+    /// file-pull bridge, so the `isMainThread`/`DispatchQueue.main.sync` pattern
+    /// lives in one place.
+    nonisolated private func onMain<T: Sendable>(_ body: @MainActor () -> T) -> T {
+        Thread.isMainThread
+            ? MainActor.assumeIsolated { body() }
+            : DispatchQueue.main.sync { MainActor.assumeIsolated { body() } }
     }
 
     /// Aborts an in-flight `pullStagedFile` for `(generation, repIndex)` (#464).
@@ -1286,10 +1422,7 @@ extension VsockClipboardService: HostClipboardFileRepProviding {
     nonisolated func cancelStagedPull(generation: UInt64, repIndex: Int) {
         let transferID = ClipboardTransferID.make(
             generation: generation, repIndex: repIndex, hostMinted: true)
-        let receiver: ClipboardStreamReceiver? =
-            Thread.isMainThread
-            ? MainActor.assumeIsolated { self.receiver }
-            : DispatchQueue.main.sync { MainActor.assumeIsolated { self.receiver } }
+        let receiver = onMain { self.receiver }
         Self.logger.notice(
             "Cancelling file clipboard pull \(transferID, privacy: .public) on consumer request")
         receiver?.cancel(transferID: transferID)

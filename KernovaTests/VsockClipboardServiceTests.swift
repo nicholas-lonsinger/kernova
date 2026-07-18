@@ -12,6 +12,10 @@ import UniformTypeIdentifiers
 struct VsockClipboardServiceTests {
     // MARK: - Helpers
 
+    /// The canned domain root the fake coordinator builds paste-routed URLs under.
+    private static let fakeDomainRoot = URL(
+        fileURLWithPath: "/Users/Shared/KernovaClipboardMac", isDirectory: true)
+
     private func makePair() throws -> (sender: VsockChannel, receiver: VsockChannel) {
         let (a, b) = try makeRawSocketPair()
         return (VsockChannel(fileDescriptor: a), VsockChannel(fileDescriptor: b))
@@ -1371,8 +1375,8 @@ struct VsockClipboardServiceTests {
         #expect(Set(responder.requests.map(\.transferID)).count == 2)
     }
 
-    @Test("materializeForCopy drops extra file reps beyond the single lazy-eligible one")
-    func copyDropsExtraFileReps() async throws {
+    @Test("materializeForCopy defers every plain-file rep as its own lazy item (D1b multi-file)")
+    func copyDefersEveryPlainFileRep() async throws {
         let (guest, host) = try makePair()
         guest.start()
         host.start()
@@ -1382,8 +1386,9 @@ struct VsockClipboardServiceTests {
         service.start()
         defer { service.stop() }
 
-        // Two plain file reps — D2 routes only a single file lazily, so with more
-        // than one, none qualifies and all are dropped (no pull is issued).
+        // Two plain file reps — the single-file D2 scope limit is dissolved (#559):
+        // every eligible plain-file rep defers as its own lazy item, routed at
+        // paste time. Nothing is pulled at copy-click.
         try guest.send(
             makeOffer(
                 generation: 12,
@@ -1399,40 +1404,239 @@ struct VsockClipboardServiceTests {
 
         let items = await service.materializeForCopy()
         #expect(items.resolvedReps.isEmpty)
-        #expect(items.lazyFiles.isEmpty)
-        #expect(items.droppedFileCount == 2)
-        #expect(items.droppedReasons.allSatisfy { $0 == .multipleFiles })
+        #expect(items.lazyFiles.map(\.repIndex) == [0, 1])
+        #expect(items.lazyFiles.map(\.filename) == ["a.bin", "b.bin"])
+        #expect(items.droppedReasons.isEmpty)
+        // No pull at copy-click — bytes materialize on read at paste.
         #expect(responder.requests.isEmpty)
     }
 
-    @Test("materializeForCopy drops a single file rep over the deadline-safe cap (File Provider off)")
-    func copyDropsOverCapFileWhenFileProviderOff() async throws {
+    @Test("advisory refuses the over-total plain-file set when the File Provider is known unusable")
+    func copyAdvisoryRefusesOverTotalWhenUnusable() async throws {
         let (guest, host) = try makePair()
         guest.start()
         host.start()
         defer { guest.close() }
 
-        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        // The File Provider is confirmed off (toggle off), so the copy-click
+        // advisory fires and the user sees the message in the window immediately.
+        let coordinator = FakeHostClipboardDomainCoordinator(availability: .needsEnabling)
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", fileProvider: coordinator)
         service.start()
         defer { service.stop() }
 
-        // A single file rep larger than the deadline-safe cap: with the File
-        // Provider off (the test host), it can't be served within the paste
-        // deadline, so it's dropped rather than offered as a lazy paste.
-        let overCap = UInt64(ClipboardStreamTuning.maxDeadlineSafeFileBytes) + 1
+        // Two files each under the cap but whose TOTAL exceeds it — the deadline
+        // gate is all-or-nothing over the total (decision 4), so the whole set is
+        // refused rather than pasted piecemeal.
+        let half = UInt64(ClipboardStreamTuning.maxDeadlineSafeFileBytes) / 2 + 1
         try guest.send(
             makeOffer(
                 generation: 13,
                 reps: [
-                    (uti: "public.data", byteCount: Int(overCap), filename: "huge.bin", isInline: false)
+                    (uti: "public.data", byteCount: Int(half), filename: "a.bin", isInline: false),
+                    (uti: "public.data", byteCount: Int(half), filename: "b.bin", isInline: false),
                 ]))
-        try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
+        try await waitForChange { service.clipboardContent.representations.count == 2 }
 
         let items = await service.materializeForCopy()
         #expect(items.resolvedReps.isEmpty)
         #expect(items.lazyFiles.isEmpty)
-        #expect(items.droppedFileCount == 1)
-        #expect(items.droppedReasons == [.tooLargeWithoutFileProvider])
+        #expect(items.droppedReasons == [.tooLargeWithoutFileProvider, .tooLargeWithoutFileProvider])
+        // The advisory refuses up-front — no File Provider publish at click.
+        #expect(coordinator.publishCallCount == 0)
+        #expect(coordinator.prepareCount == 0)
+    }
+
+    @Test("multi-file: every plain-file rep routes through the File Provider on the first paste fire")
+    func copyRoutesEveryFileThroughFileProvider() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let coordinator = FakeHostClipboardDomainCoordinator(
+            availability: .ready, rootToReturn: Self.fakeDomainRoot)
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", fileProvider: coordinator)
+        service.start()
+        defer { service.stop() }
+
+        try guest.send(
+            makeOffer(
+                generation: 40,
+                reps: [
+                    (uti: "public.data", byteCount: 10, filename: "a.bin", isInline: false),
+                    (uti: "public.data", byteCount: 20, filename: "b.bin", isInline: false),
+                ]))
+        try await waitForChange { service.clipboardContent.representations.count == 2 }
+
+        // Every plain-file rep defers as a lazy item — nothing publishes at click,
+        // but the servicing relay is warmed for the paste.
+        let items = await service.materializeForCopy()
+        #expect(items.lazyFiles.map(\.repIndex) == [0, 1])
+        #expect(items.droppedReasons.isEmpty)
+        #expect(coordinator.publishCallCount == 0)
+        #expect(coordinator.prepareCount == 1)
+
+        // The first `.fileURL` fire publishes ALL eligible reps together (one call)
+        // and serves its own item's domain URL — no host stream (bytes page in via
+        // fetchContents).
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        responder.start()
+        let first = service.copyToMacFileURL(generation: 40, repIndex: 0)
+        #expect(first == Self.fakeDomainRoot.appendingPathComponent("a.bin"))
+        #expect(coordinator.publishCallCount == 1)
+        #expect(coordinator.published.map(\.repIndex) == [0, 1])
+
+        // The sibling item's fire reads the latch — no second publish.
+        let second = service.copyToMacFileURL(generation: 40, repIndex: 1)
+        #expect(second == Self.fakeDomainRoot.appendingPathComponent("b.bin"))
+        #expect(coordinator.publishCallCount == 1)
+        #expect(responder.requests.isEmpty)
+    }
+
+    @Test("File Provider unusable + under the total cap: every plain-file rep pastes as its own capped sync item")
+    func copyUnusableUnderTotalPastesSyncItems() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        // Registered but toggle off → publishes decline; under-total, so no
+        // advisory refusal — each rep pastes via the size-capped sync fallback.
+        let coordinator = FakeHostClipboardDomainCoordinator(
+            availability: .needsEnabling, rootToReturn: nil)
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", fileProvider: coordinator)
+        service.start()
+        defer { service.stop() }
+
+        let aBytes = Data((0..<(40 * 1024)).map { UInt8(truncatingIfNeeded: $0) })
+        let bBytes = Data((0..<(30 * 1024)).map { UInt8(truncatingIfNeeded: $0 &* 7) })
+
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        responder.register(
+            generation: 41, repIndex: 0, uti: "public.data", bytes: aBytes, filename: "a.bin",
+            isInline: false)
+        responder.register(
+            generation: 41, repIndex: 1, uti: "public.data", bytes: bBytes, filename: "b.bin",
+            isInline: false)
+        responder.start()
+
+        try guest.send(
+            makeOffer(
+                generation: 41,
+                reps: [
+                    (uti: "public.data", byteCount: aBytes.count, filename: "a.bin", isInline: false),
+                    (uti: "public.data", byteCount: bBytes.count, filename: "b.bin", isInline: false),
+                ]))
+        try await waitForChange { service.clipboardContent.representations.count == 2 }
+
+        let items = await service.materializeForCopy()
+        #expect(items.lazyFiles.map(\.repIndex) == [0, 1])
+        #expect(items.droppedReasons.isEmpty)
+
+        // Each pastes via the sync fallback (the File Provider declines): the bytes
+        // pull + stage on demand off the main thread.
+        let firstURL = await Task.detached { service.copyToMacFileURL(generation: 41, repIndex: 0) }
+            .value
+        #expect(try Data(contentsOf: #require(firstURL)) == aBytes)
+        let secondURL = await Task.detached { service.copyToMacFileURL(generation: 41, repIndex: 1) }
+            .value
+        #expect(try Data(contentsOf: #require(secondURL)) == bBytes)
+        // Each fire consults the File Provider; the declined publish doesn't latch,
+        // so the sibling fire retries it.
+        #expect(coordinator.publishCallCount == 2)
+    }
+
+    @Test("paste-time over-total refusal: the whole plain-file set is refused when the File Provider is unusable")
+    func copyPasteTimeRefusesOverTotal() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        // Availability unprobed at click (`.inactive`) → the advisory does NOT fire,
+        // so both reps defer lazily; the paste-time total gate enforces the refusal.
+        let coordinator = FakeHostClipboardDomainCoordinator(availability: .inactive, rootToReturn: nil)
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", fileProvider: coordinator)
+        service.start()
+        defer { service.stop() }
+
+        let half = UInt64(ClipboardStreamTuning.maxDeadlineSafeFileBytes) / 2 + 1
+        try guest.send(
+            makeOffer(
+                generation: 43,
+                reps: [
+                    (uti: "public.data", byteCount: Int(half), filename: "a.bin", isInline: false),
+                    (uti: "public.data", byteCount: Int(half), filename: "b.bin", isInline: false),
+                ]))
+        try await waitForChange { service.clipboardContent.representations.count == 2 }
+
+        let items = await service.materializeForCopy()
+        #expect(items.lazyFiles.map(\.repIndex) == [0, 1])
+        #expect(items.droppedReasons.isEmpty)
+
+        // At paste the File Provider is unusable and the sync-bound total is over
+        // the cap → each fire refuses (nil), never pasting piecemeal, and no host
+        // stream is requested.
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        responder.start()
+        #expect(service.copyToMacFileURL(generation: 43, repIndex: 0) == nil)
+        #expect(service.copyToMacFileURL(generation: 43, repIndex: 1) == nil)
+        #expect(responder.requests.isEmpty)
+    }
+
+    @Test("paste-time routing re-check: an unusable File Provider falls back; a later fire re-checks and routes lazily")
+    func copyRetriesFileProviderOnLaterFire() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        // Domain not usable yet — the publish declines, the fire falls back.
+        let coordinator = FakeHostClipboardDomainCoordinator(availability: .inactive, rootToReturn: nil)
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)", fileProvider: coordinator)
+        service.start()
+        defer { service.stop() }
+
+        // Over the deadline cap, so the sync fallback refuses (nil) and the routing
+        // isn't latched — the production story: big file + toggle off → refuse;
+        // user enables; paste again → lazy route.
+        let overCap = UInt64(ClipboardStreamTuning.maxDeadlineSafeFileBytes) + 1
+        try guest.send(
+            makeOffer(
+                generation: 44,
+                reps: [
+                    (uti: "public.data", byteCount: Int(overCap), filename: "huge.bin", isInline: false)
+                ]))
+        try await waitForChange {
+            service.clipboardContent.representations.first?.isPendingRemote == true
+        }
+
+        // `.inactive` at click → deferred, not dropped.
+        let items = await service.materializeForCopy()
+        #expect(items.lazyFiles.count == 1)
+
+        // First fire: the File Provider declines (unusable) and the single over-cap
+        // file is over the total → the sync fallback refuses. The failure isn't
+        // latched, so the next fire retries.
+        #expect(service.copyToMacFileURL(generation: 44, repIndex: 0) == nil)
+        #expect(coordinator.publishCallCount == 1)
+
+        // The domain becomes usable; the next fire re-checks and routes lazily.
+        coordinator.availability = .ready
+        coordinator.rootToReturn = Self.fakeDomainRoot
+        #expect(
+            service.copyToMacFileURL(generation: 44, repIndex: 0)
+                == Self.fakeDomainRoot.appendingPathComponent("huge.bin"))
+        #expect(coordinator.publishCallCount == 2)
     }
 
     @Test("pullStagedFile for a stale generation returns noCurrentOffer")
@@ -2437,9 +2641,6 @@ extension [CopyToMacItem] {
         }
     }
 
-    /// Count of file payloads `materializeForCopy` couldn't serve.
-    fileprivate var droppedFileCount: Int { droppedReasons.count }
-
     /// The reasons file payloads were dropped, for asserting the user-facing
     /// message routing.
     fileprivate var droppedReasons: [CopyToMacDropReason] {
@@ -2450,4 +2651,65 @@ extension [CopyToMacItem] {
             }
         }
     }
+}
+
+/// Records the service's host File Provider coordinator calls and returns canned
+/// URLs, so paste-time routing and the copy-click advisory can be asserted
+/// without a live domain — the host analog of the guest's `FakeFileProviderPublisher`.
+///
+/// `@MainActor` matching the protocol: every call arrives on the main actor (the
+/// service invokes it there, and `copyToMacFileURL`'s thread-hop re-enters main),
+/// so the recorded state needs no lock.
+@MainActor
+final class FakeHostClipboardDomainCoordinator: HostClipboardDomainCoordinating {
+    struct Published: Equatable {
+        let generation: UInt64
+        let repIndex: Int
+        let filename: String
+        let byteCount: UInt64
+        let uti: String
+    }
+
+    var availability: FileProviderAvailability
+    /// The domain root `publishItemsForPaste` builds its returned URLs under.
+    ///
+    /// `nil` models an unusable File Provider (the publish declines, callers fall
+    /// back). Mutable so a test can model the domain becoming usable between two
+    /// paste fires — the paste-time re-check that replaced the #429 re-publish.
+    var rootToReturn: URL?
+
+    private(set) var published: [Published] = []
+    private(set) var publishCallCount = 0
+    private(set) var startCount = 0
+    private(set) var stopCount = 0
+    private(set) var clearCount = 0
+    private(set) var prepareCount = 0
+
+    init(availability: FileProviderAvailability = .inactive, rootToReturn: URL? = nil) {
+        self.availability = availability
+        self.rootToReturn = rootToReturn
+    }
+
+    func serviceDidStart() { startCount += 1 }
+    func serviceDidStop(_ source: any HostClipboardFileRepProviding) { stopCount += 1 }
+    func prepareForCopy() { prepareCount += 1 }
+
+    func publishItemsForPaste(
+        source: any HostClipboardFileRepProviding, generation: UInt64,
+        items: [FileProviderPublishItem]
+    ) -> [Int: URL]? {
+        publishCallCount += 1
+        published.append(
+            contentsOf: items.map {
+                Published(
+                    generation: generation, repIndex: $0.repIndex, filename: $0.filename,
+                    byteCount: $0.byteCount, uti: $0.uti)
+            })
+        guard let root = rootToReturn else { return nil }
+        var urls: [Int: URL] = [:]
+        for item in items { urls[item.repIndex] = root.appendingPathComponent(item.filename) }
+        return urls
+    }
+
+    func clearOffer(from source: any HostClipboardFileRepProviding) { clearCount += 1 }
 }
