@@ -248,9 +248,10 @@ final class FakePasteboard: Pasteboard, @unchecked Sendable {
 
 // MARK: - File Provider publishing double
 
-/// Records the agent's File Provider publish calls and returns a canned URL.
+/// Records the agent's File Provider publish calls and returns canned URLs.
 ///
-/// Lets `handleOffer`'s routing decision be asserted without a real domain.
+/// Lets the unified closure's paste-time routing decision be asserted without a
+/// real domain.
 final class FakeFileProviderPublisher: FileProviderPublishing, @unchecked Sendable {
     struct Published: Equatable {
         let generation: UInt64
@@ -262,38 +263,51 @@ final class FakeFileProviderPublisher: FileProviderPublishing, @unchecked Sendab
 
     private let lock = NSLock()
     private var publishedStorage: [Published] = []
+    private var publishCallCountStorage = 0
     private var clearCountStorage = 0
-    private var urlToReturnStorage: URL?
+    private var prepareCountStorage = 0
+    private var rootToReturnStorage: URL?
 
-    init(urlToReturn: URL?) { self.urlToReturnStorage = urlToReturn }
+    init(rootToReturn: URL?) { self.rootToReturnStorage = rootToReturn }
 
-    /// The URL the next `publishSingleFile` call returns.
+    /// The domain root `publishItems` builds its returned URLs under; `nil`
+    /// models an unusable File Provider (publish declines, callers fall back).
     ///
-    /// Mutable so a test can model an availability flip: start `nil` (the
-    /// domain wasn't `.ready`, so the offer lands on the sync path), then set a
-    /// URL before driving the re-publish (#429).
-    var urlToReturn: URL? {
-        get { lock.withLock { urlToReturnStorage } }
-        set { lock.withLock { urlToReturnStorage = newValue } }
+    /// Mutable so a test can model the domain becoming usable between two
+    /// provider fires — the paste-time re-check that replaced the #429
+    /// availability-flip re-publish.
+    var rootToReturn: URL? {
+        get { lock.withLock { rootToReturnStorage } }
+        set { lock.withLock { rootToReturnStorage = newValue } }
     }
 
-    func publishSingleFile(
-        generation: UInt64, repIndex: Int, filename: String, byteCount: UInt64, uti: String
-    ) -> URL? {
-        let url = lock.withLock {
+    func publishItems(
+        generation: UInt64, items: [FileProviderPublishItem], waitForPlaceholder: Bool
+    ) -> [Int: URL]? {
+        lock.withLock {
+            publishCallCountStorage += 1
             publishedStorage.append(
-                Published(
-                    generation: generation, repIndex: repIndex, filename: filename,
-                    byteCount: byteCount, uti: uti))
-            return urlToReturnStorage
+                contentsOf: items.map {
+                    Published(
+                        generation: generation, repIndex: $0.repIndex, filename: $0.filename,
+                        byteCount: $0.byteCount, uti: $0.uti)
+                })
+            guard let root = rootToReturnStorage else { return nil }
+            var urls: [Int: URL] = [:]
+            for item in items { urls[item.repIndex] = root.appendingPathComponent(item.filename) }
+            return urls
         }
-        return url
     }
+
+    func prepareForOffer() { lock.withLock { prepareCountStorage += 1 } }
 
     func clearOffer() { lock.withLock { clearCountStorage += 1 } }
 
     var published: [Published] { lock.withLock { publishedStorage } }
+    /// Number of `publishItems` calls (each may carry several items).
+    var publishCallCount: Int { lock.withLock { publishCallCountStorage } }
     var clearCount: Int { lock.withLock { clearCountStorage } }
+    var prepareCount: Int { lock.withLock { prepareCountStorage } }
 }
 
 // MARK: - Test Suite
@@ -1202,32 +1216,36 @@ struct VsockGuestClipboardAgentTests {
         }
     }
 
-    // MARK: - handleOffer File Provider routing
+    // MARK: - Unified paste-time File Provider routing
 
     /// Builds an agent with a `FakeFileProviderPublisher` wired in.
     ///
     /// The fake is returned alongside so the test can keep its strong reference
     /// (the agent holds it weakly) and assert against it.
     private func makeAgentWithPublisher(
-        pasteboard: FakePasteboard, agentFd: Int32, publisherURL: URL?
+        pasteboard: FakePasteboard, agentFd: Int32, publisherRoot: URL?
     ) -> (agent: VsockGuestClipboardAgent, publisher: FakeFileProviderPublisher) {
-        let publisher = FakeFileProviderPublisher(urlToReturn: publisherURL)
+        let publisher = FakeFileProviderPublisher(rootToReturn: publisherRoot)
         let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
         agent.fileProvider = publisher
         return (agent, publisher)
     }
 
-    @Test("a single file rep is published through the File Provider; its domain URL goes on the pasteboard")
-    func fileProviderSingleFileRouting() async throws {
+    /// The canned domain root the publisher fakes build URLs under.
+    private var fakeDomainRoot: URL {
+        URL(fileURLWithPath: "/Users/Shared/KernovaClipboard", isDirectory: true)
+    }
+
+    @Test("a plain-file rep routes through the File Provider at paste time — nothing publishes at offer")
+    func fileProviderPasteTimeSingleFileRouting() async throws {
         let pasteboard = FakePasteboard()
         let (agentFd, remoteFd) = try makeRawSocketPair()
         let hostChannel = VsockChannel(fileDescriptor: remoteFd)
         hostChannel.start()
         defer { hostChannel.close() }
 
-        let domainURL = URL(fileURLWithPath: "/Users/Shared/KernovaClipboard/report.pdf")
         let (agent, publisher) = makeAgentWithPublisher(
-            pasteboard: pasteboard, agentFd: agentFd, publisherURL: domainURL)
+            pasteboard: pasteboard, agentFd: agentFd, publisherRoot: fakeDomainRoot)
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -1240,19 +1258,25 @@ struct VsockGuestClipboardAgentTests {
                 ]))
         try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
 
-        // The single file rep was published through the File Provider.
+        // Offer time publishes nothing (#427 leading edge) — only the servicing
+        // warm-up ran.
+        #expect(publisher.published.isEmpty)
+        #expect(publisher.prepareCount == 1)
+
+        // The first `.fileURL` fire routes at paste time: one publish, then the
+        // domain URL — no host stream (bytes page in via fetchContents).
+        let provided = await lazyPull(pasteboard, forType: .fileURL).value
+        #expect(
+            provided
+                == Data(fakeDomainRoot.appendingPathComponent("report.pdf").absoluteString.utf8))
         #expect(
             publisher.published == [
                 .init(generation: 21, repIndex: 0, filename: "report.pdf", byteCount: 9_000, uti: "com.adobe.pdf")
             ])
-        // A `.fileURL` paste returns the domain URL immediately — no host stream
-        // is needed (the bytes page in lazily via the extension's fetchContents).
-        let provided = await lazyPull(pasteboard, forType: .fileURL).value
-        #expect(provided == Data(domainURL.absoluteString.utf8))
         try await expectNoRequest(from: hostChannel)
     }
 
-    @Test("a file rep alongside an inline rep: only the file is routed through the File Provider")
+    @Test("a file rep alongside an inline rep: only the file routes through the File Provider at paste")
     func fileProviderRoutesOnlyTheFileAmongInline() async throws {
         let pasteboard = FakePasteboard()
         let (agentFd, remoteFd) = try makeRawSocketPair()
@@ -1260,9 +1284,8 @@ struct VsockGuestClipboardAgentTests {
         hostChannel.start()
         defer { hostChannel.close() }
 
-        let domainURL = URL(fileURLWithPath: "/Users/Shared/KernovaClipboard/report.pdf")
         let (agent, publisher) = makeAgentWithPublisher(
-            pasteboard: pasteboard, agentFd: agentFd, publisherURL: domainURL)
+            pasteboard: pasteboard, agentFd: agentFd, publisherRoot: fakeDomainRoot)
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -1279,14 +1302,18 @@ struct VsockGuestClipboardAgentTests {
             DispatchQueue.main.sync { agent.inboundPromiseGenerationForTesting } == 22
         }
 
-        // Only the file rep (index 1) is published; the inline rep stays on the
-        // synchronous provider path.
+        // The file item's paste fire publishes only the file rep (index 1); the
+        // inline rep stays on the synchronous provider path.
+        let provided = await lazyPull(pasteboard, forType: .fileURL).value
+        #expect(
+            provided
+                == Data(fakeDomainRoot.appendingPathComponent("report.pdf").absoluteString.utf8))
         #expect(publisher.published.map(\.repIndex) == [1])
         #expect(publisher.published.first?.filename == "report.pdf")
     }
 
-    @Test("a multi-file offer is not routed through the File Provider (D1a is single-file)")
-    func fileProviderMultiFileFallsBack() async throws {
+    @Test("a multi-file offer routes every plain-file rep on the first paste fire; siblings read the latch (D1b)")
+    func fileProviderMultiFileRoutesAll() async throws {
         let pasteboard = FakePasteboard()
         let (agentFd, remoteFd) = try makeRawSocketPair()
         let hostChannel = VsockChannel(fileDescriptor: remoteFd)
@@ -1294,8 +1321,7 @@ struct VsockGuestClipboardAgentTests {
         defer { hostChannel.close() }
 
         let (agent, publisher) = makeAgentWithPublisher(
-            pasteboard: pasteboard, agentFd: agentFd,
-            publisherURL: URL(fileURLWithPath: "/unused"))
+            pasteboard: pasteboard, agentFd: agentFd, publisherRoot: fakeDomainRoot)
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -1307,15 +1333,24 @@ struct VsockGuestClipboardAgentTests {
                     RepInfo(uti: "com.adobe.pdf", byteCount: 10, filename: "a.pdf", isInline: false),
                     RepInfo(uti: "com.adobe.pdf", byteCount: 20, filename: "b.pdf", isInline: false),
                 ]))
-        try await waitUntil {
-            DispatchQueue.main.sync { agent.inboundPromiseGenerationForTesting } == 23
-        }
-
-        // Two file reps → the single-file gate declines → nothing published.
+        try await pasteboard.changed.wait { pasteboard.promisedItemCountForTesting == 2 }
         #expect(publisher.published.isEmpty)
+
+        // The first fire publishes ALL eligible reps together (one manifest
+        // write) and serves its own item's URL.
+        let first = await lazyPull(pasteboard, forType: .fileURL, itemIndex: 0).value
+        #expect(first == Data(fakeDomainRoot.appendingPathComponent("a.pdf").absoluteString.utf8))
+        #expect(publisher.publishCallCount == 1)
+        #expect(publisher.published.map(\.repIndex) == [0, 1])
+
+        // The sibling item's fire reads the latch — no second publish.
+        let second = await lazyPull(pasteboard, forType: .fileURL, itemIndex: 1).value
+        #expect(second == Data(fakeDomainRoot.appendingPathComponent("b.pdf").absoluteString.utf8))
+        #expect(publisher.publishCallCount == 1)
+        try await expectNoRequest(from: hostChannel)
     }
 
-    @Test("a superseding offer clears the prior File Provider offer before publishing")
+    @Test("a superseding offer retracts a paste-published File Provider offer")
     func fileProviderSupersessionClears() async throws {
         let pasteboard = FakePasteboard()
         let (agentFd, remoteFd) = try makeRawSocketPair()
@@ -1323,9 +1358,8 @@ struct VsockGuestClipboardAgentTests {
         hostChannel.start()
         defer { hostChannel.close() }
 
-        let domainURL = URL(fileURLWithPath: "/Users/Shared/KernovaClipboard/a.pdf")
         let (agent, publisher) = makeAgentWithPublisher(
-            pasteboard: pasteboard, agentFd: agentFd, publisherURL: domainURL)
+            pasteboard: pasteboard, agentFd: agentFd, publisherRoot: fakeDomainRoot)
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -1338,10 +1372,14 @@ struct VsockGuestClipboardAgentTests {
         try await waitUntil {
             DispatchQueue.main.sync { agent.inboundPromiseGenerationForTesting } == 1
         }
+        // Paste gen 1 so a placeholder is actually published.
+        _ = await lazyPull(pasteboard, forType: .fileURL).value
+        #expect(publisher.published.map(\.filename) == ["a.pdf"])
         let clearsAfterFirst = publisher.clearCount
 
-        // A superseding offer must retract the prior FP offer (clearOffer fires at
-        // the top of handleOffer) before publishing the new one.
+        // A superseding offer must retract the pasted offer's placeholder
+        // (clearOffer fires at the top of handleOffer); the new offer publishes
+        // nothing until it is itself pasted.
         try hostChannel.send(
             makeOfferFrame(
                 generation: 2,
@@ -1351,132 +1389,81 @@ struct VsockGuestClipboardAgentTests {
             DispatchQueue.main.sync { agent.inboundPromiseGenerationForTesting } == 2
         }
         #expect(publisher.clearCount > clearsAfterFirst)
-        #expect(publisher.published.last?.filename == "b.pdf")
+        #expect(publisher.published.map(\.filename) == ["a.pdf"])
+
+        let provided = await lazyPull(pasteboard, forType: .fileURL).value
+        #expect(provided == Data(fakeDomainRoot.appendingPathComponent("b.pdf").absoluteString.utf8))
+        #expect(
+            publisher.published.last
+                == .init(
+                    generation: 2, repIndex: 0, filename: "b.pdf", byteCount: 20,
+                    uti: "com.adobe.pdf"))
     }
 
-    // MARK: - fileProviderAvailabilityChanged re-publish (#429)
+    // MARK: - Paste-time routing re-check (replaces the #429 re-publish)
 
-    @Test("availability flip to .ready re-publishes a live single-file offer that missed the File Provider path")
-    func availabilityFlipRepublishesLiveSingleFileOffer() async throws {
+    @Test(
+        "a paste while the File Provider is unusable falls back; a later fire re-checks and routes lazily"
+    )
+    func pasteRetriesFileProviderOnLaterFire() async throws {
         let pasteboard = FakePasteboard()
         let (agentFd, remoteFd) = try makeRawSocketPair()
         let hostChannel = VsockChannel(fileDescriptor: remoteFd)
         hostChannel.start()
         defer { hostChannel.close() }
 
-        // Domain not `.ready` yet — publisher declines, so the offer lands on
-        // the synchronous provider path.
+        // Domain not usable yet — publishes decline, fires fall back to sync.
         let (agent, publisher) = makeAgentWithPublisher(
-            pasteboard: pasteboard, agentFd: agentFd, publisherURL: nil)
+            pasteboard: pasteboard, agentFd: agentFd, publisherRoot: nil)
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
-        let contents = Data("report bytes on disk".utf8)
+        // Over the deadline cap, so the sync fallback refuses (returns nil, no
+        // pasteboard cache) and the promise stays unfulfilled for a re-fire —
+        // the production story: big file + toggle off → refuse with the
+        // enable-File-Provider message; user enables; paste again → lazy route.
+        let overCap = UInt64(ClipboardStreamTuning.maxDeadlineSafeFileBytes) + 1
         try hostChannel.send(
             makeOfferFrame(
                 generation: 30,
                 reps: [
-                    RepInfo(
-                        uti: "com.adobe.pdf", byteCount: UInt64(contents.count),
-                        filename: "report.pdf", isInline: false)
-                ]))
-        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
-        #expect(publisher.published.map(\.repIndex) == [0])
-
-        // A `.fileURL` paste on the sync path pulls the bytes over the host
-        // stream (no File Provider domain URL was available at offer time).
-        let firstPull = lazyPull(pasteboard, forType: .fileURL)
-        try await driveInboundStream(
-            generation: 30, uti: "com.adobe.pdf", filename: "report.pdf", payload: contents,
-            isInline: false, on: hostChannel)
-        _ = await firstPull.value
-
-        // The domain becomes user-enabled; the publisher now returns a URL.
-        let domainURL = URL(fileURLWithPath: "/Users/Shared/KernovaClipboard/report.pdf")
-        publisher.urlToReturn = domainURL
-        DispatchQueue.main.sync { agent.fileProviderAvailabilityChanged(.ready) }
-        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
-
-        // Re-published: a `.fileURL` paste now returns the domain URL directly,
-        // with no host stream.
-        let provided = await lazyPull(pasteboard, forType: .fileURL).value
-        #expect(provided == Data(domainURL.absoluteString.utf8))
-        try await expectNoRequest(from: hostChannel)
-    }
-
-    @Test(
-        "provideData refuses a stale sync-path pull for a rep the availability flip re-routed to the File Provider (#510)"
-    )
-    func provideDataRefusesStalePullAfterAvailabilityFlipReroute() async throws {
-        let pasteboard = FakePasteboard()
-        let (agentFd, remoteFd) = try makeRawSocketPair()
-        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
-        hostChannel.start()
-        defer { hostChannel.close() }
-
-        // Domain not `.ready` yet — the offer lands on the synchronous provider path.
-        let (agent, publisher) = makeAgentWithPublisher(
-            pasteboard: pasteboard, agentFd: agentFd, publisherURL: nil)
-        defer { agent.stop() }
-
-        try await startAgentAndWaitForLiveChannel(agent: agent)
-
-        try hostChannel.send(
-            makeOfferFrame(
-                generation: 40,
-                reps: [
-                    RepInfo(
-                        uti: "com.adobe.pdf", byteCount: 9_000, filename: "report.pdf",
-                        isInline: false)
+                    RepInfo(uti: "com.adobe.pdf", byteCount: overCap, filename: "huge.bin", isInline: false)
                 ]))
         try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
 
-        // An external process retains a reference to the pre-switch sync-path
-        // provider before the domain becomes ready (e.g. a receiver that
-        // enumerated types on a slow drag but hasn't fetched this rep yet).
-        let staleProvider = pasteboard.captureProviderForTesting()
-
-        // The domain becomes user-enabled; the live offer is re-published
-        // through the File Provider (#429), keeping the same generation.
-        let domainURL = URL(fileURLWithPath: "/Users/Shared/KernovaClipboard/report.pdf")
-        publisher.urlToReturn = domainURL
-        DispatchQueue.main.sync { agent.fileProviderAvailabilityChanged(.ready) }
-        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
-
-        // The stale, pre-switch provider is invoked for the same rep it always
-        // promised. It must be refused -- returning nil and minting no
-        // transfer id / starting no host pull -- rather than colliding with a
-        // concurrent File Provider fetch for the same (generation, repIndex).
-        let item = NSPasteboardItem()
-        // RATIONALE: see `newerOfferSupersedesOldPromise` above — the provider
-        // must run off-main and is a non-Sendable AppKit type; the
-        // continuation joins the closure before `item` is read below.
-        nonisolated(unsafe) let provider = staleProvider
-        nonisolated(unsafe) let capturedItem = item
-        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
-            DispatchQueue.global().async {
-                provider?.pasteboard(nil, item: capturedItem, provideDataForType: .fileURL)
-                cont.resume()
-            }
+        let first = await lazyPull(pasteboard, forType: .fileURL).value
+        #expect(first == nil)
+        // The File Provider WAS consulted (and declined) — the failure is not
+        // latched, so the next fire retries.
+        #expect(publisher.publishCallCount == 1)
+        // Drain the too-large error frame the refused sync fallback sent.
+        let frame = try await maybeNextFrame(from: hostChannel)
+        guard case .error(let error)? = frame?.payload else {
+            Issue.record("Expected a too-large Error frame, got \(String(describing: frame?.payload))")
+            return
         }
-        #expect(item.data(forType: .fileURL) == nil)
+        #expect(error.code == "clipboard.paste.too.large")
+
+        // The domain becomes usable; the next fire re-checks and routes lazily.
+        publisher.rootToReturn = fakeDomainRoot
+        let second = await lazyPull(pasteboard, forType: .fileURL).value
+        #expect(
+            second == Data(fakeDomainRoot.appendingPathComponent("huge.bin").absoluteString.utf8))
+        #expect(publisher.publishCallCount == 2)
         try await expectNoRequest(from: hostChannel)
     }
 
-    @Test(
-        "provideData still serves a rep from cache to a stale sync-path pull after the availability flip re-routed it"
-    )
-    func provideDataServesCachedRepToStalePullAfterAvailabilityFlipReroute() async throws {
+    @Test("a rep already sync-pulled serves its cache on a re-fire — the File Provider is skipped")
+    func cachedSyncRepSkipsFileProviderOnReFire() async throws {
         let pasteboard = FakePasteboard()
         let (agentFd, remoteFd) = try makeRawSocketPair()
         let hostChannel = VsockChannel(fileDescriptor: remoteFd)
         hostChannel.start()
         defer { hostChannel.close() }
 
-        // Domain not `.ready` yet — the offer lands on the synchronous provider path.
         let (agent, publisher) = makeAgentWithPublisher(
-            pasteboard: pasteboard, agentFd: agentFd, publisherURL: nil)
+            pasteboard: pasteboard, agentFd: agentFd, publisherRoot: nil)
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -1492,9 +1479,7 @@ struct VsockGuestClipboardAgentTests {
                 ]))
         try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
 
-        // Capture the pre-switch provider, then pull through it so the rep is
-        // materialized (cached) on the sync path before the domain flips.
-        let staleProvider = pasteboard.captureProviderForTesting()
+        // First fire: the File Provider declines, the sync path pulls + stages.
         let firstPull = lazyPull(pasteboard, forType: .fileURL)
         try await driveInboundStream(
             generation: 42, uti: "com.adobe.pdf", filename: "report.pdf", payload: contents,
@@ -1502,179 +1487,20 @@ struct VsockGuestClipboardAgentTests {
         let firstStaged = try #require(
             (await firstPull.value).flatMap { String(data: $0, encoding: .utf8) }
                 .flatMap(URL.init(string:)))
+        #expect(publisher.publishCallCount == 1)
 
-        // The domain becomes user-enabled; the live offer is re-published
-        // through the File Provider (#429), keeping the same generation.
-        let domainURL = URL(fileURLWithPath: "/Users/Shared/KernovaClipboard/report.pdf")
-        publisher.urlToReturn = domainURL
-        DispatchQueue.main.sync { agent.fileProviderAvailabilityChanged(.ready) }
-        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
-
-        // The stale, pre-switch provider is asked for the SAME rep again. It
-        // was already materialized before the flip, so serving it from cache
-        // mints no new transfer id and can't collide with a concurrent File
-        // Provider fetch — the (#510) guard must not refuse it.
-        let item = NSPasteboardItem()
-        nonisolated(unsafe) let provider = staleProvider
-        nonisolated(unsafe) let capturedItem = item
-        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
-            DispatchQueue.global().async {
-                provider?.pasteboard(nil, item: capturedItem, provideDataForType: .fileURL)
-                cont.resume()
-            }
-        }
+        // The domain becomes usable, but the rep is already materialized: a
+        // re-fire (an external process's reference to the promised item) serves
+        // the cached staged file — no publish, no new transfer id, so it cannot
+        // collide with a concurrent File Provider fetch.
+        publisher.rootToReturn = fakeDomainRoot
         let restaged = try #require(
-            item.data(forType: .fileURL).flatMap { String(data: $0, encoding: .utf8) }
+            (await lazyPull(pasteboard, forType: .fileURL).value)
+                .flatMap { String(data: $0, encoding: .utf8) }
                 .flatMap(URL.init(string:)))
         #expect(restaged == firstStaged)
+        #expect(publisher.publishCallCount == 1)
         try await expectNoRequest(from: hostChannel)
-    }
-
-    @Test("availability flip is a no-op when the guest clipboard changed since the offer was written")
-    func availabilityFlipNoOpWhenClipboardReplaced() async throws {
-        let pasteboard = FakePasteboard()
-        let (agentFd, remoteFd) = try makeRawSocketPair()
-        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
-        hostChannel.start()
-        defer { hostChannel.close() }
-
-        let (agent, publisher) = makeAgentWithPublisher(
-            pasteboard: pasteboard, agentFd: agentFd, publisherURL: nil)
-        defer { agent.stop() }
-
-        try await startAgentAndWaitForLiveChannel(agent: agent)
-
-        try hostChannel.send(
-            makeOfferFrame(
-                generation: 31,
-                reps: [
-                    RepInfo(uti: "com.adobe.pdf", byteCount: 9_000, filename: "report.pdf", isInline: false)
-                ]))
-        try await waitUntil {
-            DispatchQueue.main.sync { agent.inboundPromiseGenerationForTesting } == 31
-        }
-        let publishedBeforeFlip = publisher.published.count
-
-        // The user copies something else inside the guest before the domain
-        // becomes ready.
-        pasteboard.setString("something else", forType: .string)
-
-        publisher.urlToReturn = URL(fileURLWithPath: "/Users/Shared/KernovaClipboard/report.pdf")
-        DispatchQueue.main.sync { agent.fileProviderAvailabilityChanged(.ready) }
-
-        // No re-publish — the promise we wrote is no longer on the pasteboard.
-        #expect(publisher.published.count == publishedBeforeFlip)
-    }
-
-    @Test("availability flip is a no-op when the live offer is already File-Provider-routed")
-    func availabilityFlipNoOpWhenAlreadyFileProviderRouted() async throws {
-        let pasteboard = FakePasteboard()
-        let (agentFd, remoteFd) = try makeRawSocketPair()
-        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
-        hostChannel.start()
-        defer { hostChannel.close() }
-
-        let domainURL = URL(fileURLWithPath: "/Users/Shared/KernovaClipboard/report.pdf")
-        let (agent, publisher) = makeAgentWithPublisher(
-            pasteboard: pasteboard, agentFd: agentFd, publisherURL: domainURL)
-        defer { agent.stop() }
-
-        try await startAgentAndWaitForLiveChannel(agent: agent)
-
-        try hostChannel.send(
-            makeOfferFrame(
-                generation: 32,
-                reps: [
-                    RepInfo(uti: "com.adobe.pdf", byteCount: 9_000, filename: "report.pdf", isInline: false)
-                ]))
-        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
-        let publishedBeforeFlip = publisher.published.count
-
-        DispatchQueue.main.sync { agent.fileProviderAvailabilityChanged(.ready) }
-
-        // Already FP-routed at offer time — no re-publish.
-        #expect(publisher.published.count == publishedBeforeFlip)
-    }
-
-    @Test("availability flip does not route a multi-file offer through the File Provider")
-    func availabilityFlipNoOpForMultiFileOffer() async throws {
-        let pasteboard = FakePasteboard()
-        let (agentFd, remoteFd) = try makeRawSocketPair()
-        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
-        hostChannel.start()
-        defer { hostChannel.close() }
-
-        let (agent, publisher) = makeAgentWithPublisher(
-            pasteboard: pasteboard, agentFd: agentFd, publisherURL: nil)
-        defer { agent.stop() }
-
-        try await startAgentAndWaitForLiveChannel(agent: agent)
-
-        try hostChannel.send(
-            makeOfferFrame(
-                generation: 33,
-                reps: [
-                    RepInfo(uti: "com.adobe.pdf", byteCount: 10, filename: "a.pdf", isInline: false),
-                    RepInfo(uti: "com.adobe.pdf", byteCount: 20, filename: "b.pdf", isInline: false),
-                ]))
-        try await waitUntil {
-            DispatchQueue.main.sync { agent.inboundPromiseGenerationForTesting } == 33
-        }
-
-        publisher.urlToReturn = URL(fileURLWithPath: "/unused")
-        DispatchQueue.main.sync { agent.fileProviderAvailabilityChanged(.ready) }
-
-        // The single-file gate still declines — nothing published.
-        #expect(publisher.published.isEmpty)
-    }
-
-    @Test(
-        "availability flip other than .ready is a no-op",
-        arguments: [
-            FileProviderAvailability.inactive, .needsEnabling, .unavailable,
-        ])
-    func availabilityFlipNonReadyIsNoOp(_ availability: FileProviderAvailability) async throws {
-        let pasteboard = FakePasteboard()
-        let (agentFd, remoteFd) = try makeRawSocketPair()
-        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
-        hostChannel.start()
-        defer { hostChannel.close() }
-
-        let (agent, publisher) = makeAgentWithPublisher(
-            pasteboard: pasteboard, agentFd: agentFd, publisherURL: nil)
-        defer { agent.stop() }
-
-        try await startAgentAndWaitForLiveChannel(agent: agent)
-
-        try hostChannel.send(
-            makeOfferFrame(
-                generation: 34,
-                reps: [
-                    RepInfo(uti: "com.adobe.pdf", byteCount: 9_000, filename: "report.pdf", isInline: false)
-                ]))
-        try await waitUntil {
-            DispatchQueue.main.sync { agent.inboundPromiseGenerationForTesting } == 34
-        }
-
-        publisher.urlToReturn = URL(fileURLWithPath: "/Users/Shared/KernovaClipboard/report.pdf")
-        DispatchQueue.main.sync { agent.fileProviderAvailabilityChanged(availability) }
-
-        #expect(publisher.published.count == 1)
-    }
-
-    @Test("availability flip is a no-op when there is no live inbound promise")
-    func availabilityFlipNoOpWhenNoLivePromise() async throws {
-        let pasteboard = FakePasteboard()
-        let (agentFd, _) = try makeRawSocketPair()
-
-        let (agent, publisher) = makeAgentWithPublisher(
-            pasteboard: pasteboard, agentFd: agentFd,
-            publisherURL: URL(fileURLWithPath: "/unused"))
-        defer { agent.stop() }
-
-        DispatchQueue.main.sync { agent.fileProviderAvailabilityChanged(.ready) }
-
-        #expect(publisher.published.isEmpty)
     }
 
     @Test("inbound image file: promises both the image UTI and `.fileURL`")
@@ -2356,6 +2182,126 @@ struct VsockGuestClipboardAgentTests {
             Issue.record("expected .pullFailed after abort, got \(outcome)")
             return
         }
+    }
+
+    @Test(
+        "deadline cap totals: two under-cap files whose sum exceeds the cap are refused whole with one error frame (all-or-nothing)"
+    )
+    func overCapTotalRefusesAllFilesWithOneError() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        // Each file is individually under the cap; together they exceed it. The
+        // whole set refuses — no piecemeal partial paste — with exactly one
+        // error frame across both fires.
+        let half = UInt64(ClipboardStreamTuning.maxDeadlineSafeFileBytes / 2) + 1
+        let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 27,
+                reps: [
+                    RepInfo(uti: txtUTI, byteCount: half, filename: "a.bin", isInline: false),
+                    RepInfo(uti: txtUTI, byteCount: half, filename: "b.bin", isInline: false),
+                ]))
+        try await pasteboard.changed.wait { pasteboard.promisedItemCountForTesting == 2 }
+
+        #expect(await lazyPull(pasteboard, forType: .fileURL, itemIndex: 0).value == nil)
+        #expect(await lazyPull(pasteboard, forType: .fileURL, itemIndex: 1).value == nil)
+
+        let frame = try await maybeNextFrame(from: hostChannel)
+        guard case .error(let error)? = frame?.payload else {
+            Issue.record("Expected an Error frame, got \(String(describing: frame?.payload))")
+            return
+        }
+        #expect(error.code == "clipboard.paste.too.large")
+        // The second fire is deduped — one message per offer, and no request.
+        #expect(try await maybeNextFrame(from: hostChannel) == nil)
+    }
+
+    @Test("deadline cap totals: a directory rep counts toward the sync total")
+    func directoryCountsTowardSyncTotal() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        // A tiny file rides with an at-cap folder: the sync total exceeds the
+        // cap, so even the tiny file's pull refuses (all-or-nothing).
+        let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
+        let atCap = UInt64(ClipboardStreamTuning.maxDeadlineSafeFileBytes)
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 28,
+                reps: [
+                    RepInfo(uti: txtUTI, byteCount: 10, filename: "notes.txt", isInline: false),
+                    RepInfo(
+                        uti: UTType.folder.identifier, byteCount: atCap, filename: "HugeFolder",
+                        isInline: false, isDirectory: true),
+                ]))
+        try await pasteboard.changed.wait { pasteboard.promisedItemCountForTesting == 2 }
+
+        #expect(await lazyPull(pasteboard, forType: .fileURL, itemIndex: 0).value == nil)
+        try await expectNoRequest(from: hostChannel)
+    }
+
+    @Test(
+        "deadline cap totals: File-Provider-routed reps are excluded from the sync total"
+    )
+    func fpRoutedRepsExcludedFromSyncTotal() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let (agent, publisher) = makeAgentWithPublisher(
+            pasteboard: pasteboard, agentFd: agentFd, publisherRoot: fakeDomainRoot)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        // An over-cap plain file plus a small folder. The file routes through
+        // the File Provider on its fire, so the folder's deadline-bound pull
+        // sees a sync total of just the folder — under the cap — and proceeds.
+        let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
+        let overCap = UInt64(ClipboardStreamTuning.maxDeadlineSafeFileBytes) + 1
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 29,
+                reps: [
+                    RepInfo(uti: txtUTI, byteCount: overCap, filename: "huge.bin", isInline: false),
+                    RepInfo(
+                        uti: UTType.folder.identifier, byteCount: 10, filename: "Folder",
+                        isInline: false, isDirectory: true),
+                ]))
+        try await pasteboard.changed.wait { pasteboard.promisedItemCountForTesting == 2 }
+
+        let fileURL = await lazyPull(pasteboard, forType: .fileURL, itemIndex: 0).value
+        #expect(
+            fileURL == Data(fakeDomainRoot.appendingPathComponent("huge.bin").absoluteString.utf8))
+        #expect(publisher.published.map(\.repIndex) == [0])
+
+        // The folder's pull now issues a real request (abort it rather than
+        // stream a folder archive in-test).
+        let dirPull = lazyPull(pasteboard, forType: .fileURL, itemIndex: 1)
+        let req = try await awaitRequest(on: hostChannel)
+        try hostChannel.send(
+            makeAbortFrame(transferID: req.transferID, code: "host.abort", message: "test abort"))
+        _ = await dirPull.value
     }
 
     // MARK: - Request send failure

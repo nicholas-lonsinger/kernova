@@ -55,19 +55,51 @@ public enum FileProviderPullError: Error {
     case pullFailed
 }
 
-/// Implemented by the host so the clipboard owner can surface a file rep as a
-/// placeholder.
+/// One file representation to publish as a dataless placeholder.
+public struct FileProviderPublishItem: Equatable, Sendable {
+    /// Index of the file representation within the offer.
+    public var repIndex: Int
+    /// Suggested filename — de-duplicated within the offer before it becomes
+    /// the placeholder's name under the domain root.
+    public var filename: String
+    /// Total byte count, surfaced as the item's `documentSize`.
+    public var byteCount: UInt64
+    /// Content UTI, mapped to the item's `contentType`.
+    public var uti: String
+
+    /// Creates a publishable item from a file rep's identity and metadata.
+    public init(repIndex: Int, filename: String, byteCount: UInt64, uti: String) {
+        self.repIndex = repIndex
+        self.filename = filename
+        self.byteCount = byteCount
+        self.uti = uti
+    }
+}
+
+/// Implemented by the host so the clipboard owner can surface file reps as
+/// placeholders.
 ///
-/// Lets the clipboard owner publish a single inbound file rep as a dataless
-/// placeholder and get its pasteboard URL. Called only on the main queue.
+/// Lets the clipboard owner publish an offer's file reps as dataless
+/// placeholders and get their pasteboard URLs. Called only on the main queue.
 public protocol FileProviderPublishing: AnyObject, Sendable {
-    /// Publishes a single file item as the current offer and returns the
-    /// `file://` URL to advertise on the pasteboard, or `nil` when the File
-    /// Provider isn't usable (sharing off, domain not registered, or the user
-    /// toggle is off) so the caller falls back to the synchronous provider path.
-    func publishSingleFile(
-        generation: UInt64, repIndex: Int, filename: String, byteCount: UInt64, uti: String
-    ) -> URL?
+    /// Publishes `items` as the current offer and returns each item's `file://`
+    /// pasteboard URL keyed by rep index, or `nil` when the File Provider isn't
+    /// usable (sharing off, domain not registered, or the user toggle is off)
+    /// so the caller falls back to the synchronous provider path.
+    ///
+    /// `waitForPlaceholder` selects when the placeholder dirents must exist:
+    /// `true` blocks on a root enumeration before returning — the paste-time
+    /// caller hands the URLs straight to a consumer that resolves them
+    /// immediately — while `false` forces the enumeration asynchronously, for
+    /// an offer-time caller whose offer→paste gap covers the listing.
+    func publishItems(
+        generation: UInt64, items: [FileProviderPublishItem], waitForPlaceholder: Bool
+    ) -> [Int: URL]?
+
+    /// Cheap warm-up ahead of a possible paste-time publish: pre-connects the
+    /// servicing control connection so `publishItems` isn't also paying
+    /// doorbell/extension-launch latency inside the paste.
+    func prepareForOffer()
 
     /// Clears the current offer's items on supersession/teardown.
     func clearOffer()
@@ -182,7 +214,7 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     }
 
     #if DEBUG
-    /// Test-only view of `domainRegistered` (which gates `publishSingleFile`), so a
+    /// Test-only view of `domainRegistered` (which gates `publishItems`), so a
     /// test can assert a *throwing* confirm read doesn't clear it — the wedge
     /// `refreshAvailability` must never cause (state-first registration, #2).
     var domainRegisteredForTesting: Bool {
@@ -322,14 +354,14 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
         }
     }
 
-    // RATIONALE: `publishSingleFile` is synchronous and decides
+    // RATIONALE: `publishItems` is synchronous and decides
     // File-Provider-vs-sync-fallback purely from the cached `availabilityStorage`;
     // it never re-probes (it can't await an async `signalEnumerator`). A prior
     // version kept that cache honest with a 3s repeating poll timer for the whole
     // enabled lifetime. That's replaced by event/usage-driven refreshes instead of
     // indefinite polling: `NSFileProviderDomainDidChange` (below) is the primary
     // detector for a mid-session System-Settings disable — the system posts it on
-    // a `userEnabled` flip. `publishSingleFile`'s usage-triggered refresh is a
+    // a `userEnabled` flip. `publishItems`'s usage-triggered refresh is a
     // backstop that bounds staleness to at most one publish cycle if a
     // notification is ever missed, so a disabled domain is caught by the next
     // paste even without the notification firing. `signalEnumerator` error
@@ -602,11 +634,11 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     /// signal. A `signalEnumerator` probe is unreliable for this: its completion
     /// reports only that the *signal was delivered*, so it returns success even
     /// when the domain is disabled — the `-2011` surfaces later, on an actual
-    /// content fetch, too late to gate `publishSingleFile`. The locally-held
+    /// content fetch, too late to gate `publishItems`. The locally-held
     /// `domain` carries a stale flag, so the live copy is fetched via `domains()`.
     ///
     /// Called on registration, on an `NSFileProviderDomainDidChange` notification,
-    /// on every `publishSingleFile` usage, and on `signalEnumerator` error
+    /// on every `publishItems` usage, and on `signalEnumerator` error
     /// feedback — so flipping the toggle in System Settings takes effect without
     /// restarting the owner, with no indefinite polling. Each call is async, so
     /// it only ever lands on a *later* read of `availabilityStorage`, never the
@@ -664,13 +696,15 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
 
     // MARK: - FileProviderPublishing
 
-    /// Publishes a single file rep as the current offer's placeholder and returns
-    /// its domain URL, or `nil` to fall back to the synchronous provider path.
-    public func publishSingleFile(
-        generation: UInt64, repIndex: Int, filename: String, byteCount: UInt64, uti: String
-    ) -> URL? {
+    /// Publishes the offer's file reps as the current placeholders and returns
+    /// their domain URLs by rep index, or `nil` to fall back to the synchronous
+    /// provider path.
+    public func publishItems(
+        generation: UInt64, items: [FileProviderPublishItem], waitForPlaceholder: Bool
+    ) -> [Int: URL]? {
         dispatchPrecondition(condition: .onQueue(.main))
-        // Only advertise a placeholder we can actually materialize: a disabled or
+        guard !items.isEmpty else { return nil }
+        // Only advertise placeholders we can actually materialize: a disabled or
         // not-yet-ready domain would leave a paste that never completes, so fall
         // back to the synchronous provider path in those cases.
         guard enabled, domainRegistered, let rootURL else {
@@ -694,19 +728,26 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
             return nil
         }
         // Warm the servicing control connection PROACTIVELY (not an optimization):
-        // useractivityd/sharingd fire `fetchContents` on copy, before any paste
-        // (clipboard-universal-clipboard-eager-read). With the pipe already up, that
-        // eager read doesn't race the doorbell handshake inside `fetchContents` and
-        // blow Finder's ~60s deadline (clipboard-paste-finder-60s-deadline). The
-        // connection carries NO bytes — the vsock pull stays fully lazy, running only
-        // when `fetchContents` is actually invoked. The connector runs the connect on
-        // its own queue, so this call doesn't block main. #460.
+        // a consumer can read the placeholder immediately after the URL lands on
+        // the pasteboard, and with the pipe already up that read doesn't race the
+        // doorbell handshake inside `fetchContents` and blow Finder's ~60s paste
+        // deadline (clipboard-paste-finder-60s-deadline). The connection carries
+        // NO bytes — the vsock pull stays fully lazy, running only when
+        // `fetchContents` is actually invoked. The connector runs the connect on
+        // its own queue, so this call doesn't block main. #460. Idempotent with
+        // the offer-time `prepareForOffer` warm-up.
         relayTransport.ensureConnected()
 
-        let item = FileProviderManifest.Item(
-            sessionSalt: sessionSalt, generation: generation, repIndex: repIndex,
-            filename: filename, byteCount: byteCount, uti: uti)
-        let manifest = FileProviderManifest(generation: generation, items: [item])
+        // Placeholders share one flat domain root, so names must be unique
+        // within the offer — a multi-item copy can legitimately carry two
+        // same-named files from different folders.
+        let filenames = Self.deduplicatedFilenames(items.map(\.filename))
+        let manifestItems = zip(items, filenames).map { item, filename in
+            FileProviderManifest.Item(
+                sessionSalt: sessionSalt, generation: generation, repIndex: item.repIndex,
+                filename: filename, byteCount: item.byteCount, uti: item.uti)
+        }
+        let manifest = FileProviderManifest(generation: generation, items: manifestItems)
         do {
             try container.writeManifest(manifest)
         } catch {
@@ -715,43 +756,103 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
             return nil
         }
         signalEnumerator()
-        // Force the dataless placeholder dirent onto disk by making the system
+        // Force the dataless placeholder dirents onto disk by making the system
         // enumerate the root. `signalEnumerator` alone only refreshes the index /
         // working set; the on-disk file for a never-browsed child is written only
         // when the root container is actually read (a `readdir`). Without this the
         // pasteboard URL points at a path that doesn't exist, so a paste fails with
         // ENOENT before the kernel's dataless trap can call `fetchContents`.
-        forceRootEnumeration(root: rootURL)
-        let url = rootURL.appendingPathComponent(filename)
+        if waitForPlaceholder {
+            // Paste-time publish (#427 leading edge): the caller is about to hand
+            // the URLs to a consumer that resolves them immediately, so block on
+            // the enumeration round-trip here — bounded, metadata-only work, the
+            // same class of main-thread wait as the synchronous pull itself. The
+            // enumeration never calls back into this process (the extension reads
+            // the manifest from the shared container), so blocking cannot
+            // deadlock. Then verify the dirents actually landed: a `nil` return
+            // on a missing dirent degrades to the size-capped sync path instead
+            // of advertising a URL that would ENOENT.
+            enumerateRoot(root: rootURL)
+            let missing = filenames.filter {
+                !FileManager.default.fileExists(atPath: rootURL.appendingPathComponent($0).path)
+            }
+            guard missing.isEmpty else {
+                logger.warning(
+                    "FP publish enumerated but \(missing.count, privacy: .public) placeholder(s) missing — using sync path"
+                )
+                return nil
+            }
+        } else {
+            // Offer-time publish: the offer→paste gap (the user switches and
+            // pastes) is far longer than the listing, so run the readdir off-main.
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                self?.enumerateRoot(root: rootURL)
+            }
+        }
+        var urls: [Int: URL] = [:]
+        for (item, filename) in zip(items, filenames) {
+            urls[item.repIndex] = rootURL.appendingPathComponent(filename)
+        }
         logger.info(
-            "FP published item (gen=\(generation, privacy: .public), rep=\(repIndex, privacy: .public)) at \(url.path, privacy: .public)"
+            "FP published \(items.count, privacy: .public) item(s) (gen=\(generation, privacy: .public))"
         )
-        return url
+        return urls
     }
 
-    /// Reads the domain root directory off-main to trigger a root-container
-    /// enumeration, which writes the offered item's dataless placeholder to disk.
+    /// Warms the paste path at offer time: pre-connects the servicing control
+    /// connection so a paste-time `publishItems` doesn't also pay
+    /// doorbell/extension-launch latency inside the paste.
     ///
-    /// Off-main because the `readdir` blocks on the extension's enumeration
-    /// round-trip; the offer→paste gap (the user switches and pastes) is far
-    /// longer than the listing, so the placeholder exists by paste time.
-    private func forceRootEnumeration(root: URL) {
-        DispatchQueue.global(qos: .userInitiated).async { [logger] in
-            // Sandbox access to the domain root comes from the security scope the
-            // domain host holds open while the root is current (`adoptRootURL`,
-            // #539) — publishSingleFile's `enabled`+`rootURL` guard means it is
-            // always active here.
-            do {
-                // `.skipsHiddenFiles` so the diagnostic count reflects user-visible
-                // entries, not bookkeeping dirents (`.Trash`, `.DS_Store`).
-                let entries = try FileManager.default.contentsOfDirectory(
-                    at: root, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
-                logger.debug(
-                    "Root listing returned \(entries.count, privacy: .public) entr(ies)")
-            } catch {
-                logger.error(
-                    "Root enumeration readdir failed: \(error.localizedDescription, privacy: .public)")
+    /// Deliberately publishes nothing — routing is decided at paste (#427
+    /// leading edge) — and skips a `signalEnumerator` ping: the owner clears the
+    /// superseded offer right before calling this, and that clear already
+    /// signals the enumerator, spinning the extension up.
+    public func prepareForOffer() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard enabled, domainRegistered else { return }
+        relayTransport.ensureConnected()
+    }
+
+    /// De-duplicates colliding filenames within one offer, in order: the second
+    /// "report.pdf" becomes "report (2).pdf" — the same collision style
+    /// `ClipboardFileStaging` mints for staged files.
+    ///
+    /// `internal` (not `private`) so `KernovaKitTests` can lock the scheme.
+    static func deduplicatedFilenames(_ filenames: [String]) -> [String] {
+        var used = Set<String>()
+        return filenames.map { name in
+            if used.insert(name).inserted { return name }
+            let base = (name as NSString).deletingPathExtension
+            let ext = (name as NSString).pathExtension
+            var counter = 2
+            while true {
+                let candidate = ext.isEmpty ? "\(base) (\(counter))" : "\(base) (\(counter)).\(ext)"
+                if used.insert(candidate).inserted { return candidate }
+                counter += 1
             }
+        }
+    }
+
+    /// Reads the domain root directory to trigger a root-container enumeration,
+    /// which writes the offered items' dataless placeholders to disk.
+    ///
+    /// Blocks the calling thread on the extension's enumeration round-trip; see
+    /// `publishItems` for who calls it where.
+    private func enumerateRoot(root: URL) {
+        // Sandbox access to the domain root comes from the security scope the
+        // domain host holds open while the root is current (`adoptRootURL`,
+        // #539) — publishItems' `enabled`+`rootURL` guard means it is always
+        // active here.
+        do {
+            // `.skipsHiddenFiles` so the diagnostic count reflects user-visible
+            // entries, not bookkeeping dirents (`.Trash`, `.DS_Store`).
+            let entries = try FileManager.default.contentsOfDirectory(
+                at: root, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
+            logger.debug(
+                "Root listing returned \(entries.count, privacy: .public) entr(ies)")
+        } catch {
+            logger.error(
+                "Root enumeration readdir failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -760,7 +861,7 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
         // Runs synchronously on the main queue — all callers (handleOffer,
         // handleRelease, teardown) are already there. This is load-bearing: in
         // handleOffer the supersession clear is immediately followed by a
-        // synchronous publishSingleFile, so an async clear would be reordered to
+        // synchronous publishItems, so an async clear would be reordered to
         // run AFTER the publish and overwrite the just-written item manifest back
         // to empty (the extension then enumerates 0 items and no placeholder is
         // created). The async branch is a defensive fallback only.

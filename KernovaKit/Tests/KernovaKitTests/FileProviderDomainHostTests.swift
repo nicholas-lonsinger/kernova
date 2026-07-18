@@ -173,7 +173,7 @@ struct FileProviderDomainHostEnablementTests {
         var values: [FileProviderAvailability] { lock.withLock { valuesStorage } }
     }
 
-    /// Never asked to pull a file in these tests (none call `publishSingleFile`
+    /// Never asked to pull a file in these tests (none call `publishItems`
     /// on a usable domain), so a fixed failure reply is fine.
     private final class NeverCalledPullProvider: FileProviderPullProvider,
         @unchecked Sendable
@@ -536,8 +536,13 @@ struct FileProviderDomainHostEnablementTests {
 
         // Standing in for a real paste: finds the domain unregistered and falls
         // back (returns nil) — must not trigger any re-registration.
-        let published = host.publishSingleFile(
-            generation: 1, repIndex: 0, filename: "test.txt", byteCount: 10, uti: "public.data")
+        let published = host.publishItems(
+            generation: 1,
+            items: [
+                FileProviderPublishItem(
+                    repIndex: 0, filename: "test.txt", byteCount: 10, uti: "public.data")
+            ],
+            waitForPlaceholder: true)
         #expect(published == nil)
 
         #expect(
@@ -683,5 +688,43 @@ struct FileProviderDomainHostEnablementTests {
         // gone before this post — nothing to deliver to, hence a synchronous assert.
         #expect(collector.values == valuesBeforePost)
         #expect(domainSource.callCount == callsBeforePost)
+    }
+}
+
+@Suite("FileProviderDomainHost filename de-duplication")
+struct FileProviderDomainHostFilenameTests {
+    @Test("unique names pass through unchanged")
+    func uniqueNamesUnchanged() {
+        #expect(
+            FileProviderDomainHost.deduplicatedFilenames(["a.pdf", "b.pdf"]) == ["a.pdf", "b.pdf"])
+    }
+
+    @Test("a colliding name gets a ' (2)' suffix before the extension")
+    func collisionSuffixesBeforeExtension() {
+        #expect(
+            FileProviderDomainHost.deduplicatedFilenames(["report.pdf", "report.pdf"])
+                == ["report.pdf", "report (2).pdf"])
+    }
+
+    @Test("three-way collisions count up, and a compound extension splits at the last dot")
+    func multiCollisionAndCompoundExtension() {
+        #expect(
+            FileProviderDomainHost.deduplicatedFilenames([
+                "archive.tar.gz", "archive.tar.gz", "archive.tar.gz",
+            ]) == ["archive.tar.gz", "archive.tar (2).gz", "archive.tar (3).gz"])
+    }
+
+    @Test("an extensionless name suffixes at the end")
+    func extensionlessCollision() {
+        #expect(
+            FileProviderDomainHost.deduplicatedFilenames(["Makefile", "Makefile"])
+                == ["Makefile", "Makefile (2)"])
+    }
+
+    @Test("a de-duplicated name that itself collides with a later original keeps all names unique")
+    func generatedNameCollidesWithOriginal() {
+        #expect(
+            FileProviderDomainHost.deduplicatedFilenames(["a.txt", "a.txt", "a (2).txt"])
+                == ["a.txt", "a (2).txt", "a (2) (2).txt"])
     }
 }

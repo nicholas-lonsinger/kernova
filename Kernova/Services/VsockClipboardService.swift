@@ -786,9 +786,10 @@ final class VsockClipboardService: ClipboardServicing {
             return Self.withoutPlaceholders(clipboardContent).representations.map { .resolved($0) }
         }
 
-        // The single promisable, non-inline, non-directory file rep is eligible for
-        // lazy routing (mirror the guest's `fileProviderURLs` single-file gate);
-        // every other plain file rep is dropped (D2 is single-file, like D1a).
+        // The single promisable, non-inline, non-directory file rep is eligible
+        // for lazy routing; every other plain file rep is dropped. Single-file
+        // is the remaining D2 scope limit (#559) — the guest side now routes
+        // every eligible plain-file rep at paste time (D1b multi-file).
         let plainFileIndices = promise.reps.indices.filter { index in
             Self.isLazyEligibleFile(promise.reps[index])
         }
@@ -831,7 +832,7 @@ final class VsockClipboardService: ClipboardServicing {
     /// Whether `info` is a file rep eligible for lazy File Provider routing.
     ///
     /// A promisable, non-inline (so not an image file), non-directory, named file
-    /// — a plain file like a PDF or archive. Mirrors the guest's `fileProviderURLs`
+    /// — a plain file like a PDF or archive. Mirrors the guest's eligibility
     /// gate.
     private static func isLazyEligibleFile(_ info: Kernova_V1_ClipboardRepresentationInfo) -> Bool {
         !info.isInline && !info.isDirectory && !info.filename.isEmpty && !shouldSkip(info)
