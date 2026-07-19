@@ -48,10 +48,15 @@ struct VsockListenerHostTests {
 
         #expect(host.acceptDuplicatedFd(a, dupErrno: 0) == false)
         #expect(connected == false)
-        // The refused duplicate must not leak: the listener closes it, so a
-        // second close attempt reports EBADF.
-        #expect(fcntl(a, F_GETFD) == -1)
-        #expect(errno == EBADF)
+        // The refused duplicate must not leak. Observe the closure from the
+        // peer end: the refusal path close(2)s `a` synchronously before
+        // returning, so a non-blocking read on `b` sees EOF (0) — a
+        // leaked-open `a` would yield -1/EAGAIN instead. (Asserting on `a`
+        // itself via fcntl would race fd-number reuse by concurrently-running
+        // suites in this process.)
+        #expect(fcntl(b, F_SETFL, O_NONBLOCK) >= 0)
+        var byte: UInt8 = 0
+        #expect(recv(b, &byte, 1, 0) == 0)
     }
 
     @Test("A passing admission check accepts and hands over the channel")
