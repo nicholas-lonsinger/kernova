@@ -116,15 +116,31 @@ public enum ClipboardDirectoryTree {
 
     /// Serializes a tree listing for the wire (the inline payload of a
     /// listing-mode `ClipboardTreeFetch` reply).
-    public static func serializeListing(_ entries: [Kernova_V1_ClipboardTreeEntry]) throws -> Data {
+    ///
+    /// `rootMtimeMs` is the source folder's own modification time (ms since
+    /// epoch, 0 when unknown) — the entries carry only descendants' mtimes.
+    public static func serializeListing(
+        _ entries: [Kernova_V1_ClipboardTreeEntry], rootMtimeMs: Int64
+    ) throws -> Data {
         var listing = Kernova_V1_ClipboardTreeListing()
         listing.entries = entries
+        listing.rootMtimeMs = rootMtimeMs
         return try listing.serializedData()
     }
 
     /// Deserializes a tree listing received over the wire.
-    public static func deserializeListing(_ data: Data) throws -> [Kernova_V1_ClipboardTreeEntry] {
-        try Kernova_V1_ClipboardTreeListing(serializedBytes: data).entries
+    public static func deserializeListing(_ data: Data) throws -> Kernova_V1_ClipboardTreeListing {
+        try Kernova_V1_ClipboardTreeListing(serializedBytes: data)
+    }
+
+    /// The modification time of the item at `url` in milliseconds since the Unix
+    /// epoch, or 0 when it cannot be read.
+    public static func mtimeMs(at url: URL) -> Int64 {
+        guard
+            let mtime = (try? FileManager.default.attributesOfItem(atPath: url.path))?[
+                .modificationDate] as? Date
+        else { return 0 }
+        return Int64(mtime.timeIntervalSince1970 * 1000)
     }
 
     // MARK: - Estimate
@@ -214,7 +230,8 @@ public enum ClipboardDirectoryTree {
         DispatchQueue.global(qos: .userInitiated).async {
             if relativePath.isEmpty {
                 guard let entries = try? enumerateTree(at: sourceURL),
-                    let data = try? serializeListing(entries)
+                    let data = try? serializeListing(
+                        entries, rootMtimeMs: mtimeMs(at: sourceURL))
                 else {
                     sender.rejectRequest(
                         transferID: transferID, code: "tree.error",

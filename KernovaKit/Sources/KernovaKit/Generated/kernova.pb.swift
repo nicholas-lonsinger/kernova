@@ -779,6 +779,12 @@ public nonisolated struct Kernova_V1_ClipboardTreeListing: Sendable {
 
   public var entries: [Kernova_V1_ClipboardTreeEntry] = []
 
+  /// The directory rep's own (root folder's) modification time in milliseconds
+  /// since the Unix epoch (UTC). The entries carry every descendant's mtime but
+  /// not the root's — without this the pasted folder lands with an epoch date.
+  /// 0 when unknown (the consumer leaves the date unset).
+  public var rootMtimeMs: Int64 = 0
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -1792,7 +1798,7 @@ nonisolated extension Kernova_V1_ClipboardTreeEntry.Kind: SwiftProtobuf._ProtoNa
 
 nonisolated extension Kernova_V1_ClipboardTreeListing: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ClipboardTreeListing"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}entries\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}entries\0\u{3}root_mtime_ms\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1801,6 +1807,7 @@ nonisolated extension Kernova_V1_ClipboardTreeListing: SwiftProtobuf.Message, Sw
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
       case 1: try { try decoder.decodeRepeatedMessageField(value: &self.entries) }()
+      case 2: try { try decoder.decodeSingularInt64Field(value: &self.rootMtimeMs) }()
       default: break
       }
     }
@@ -1810,11 +1817,15 @@ nonisolated extension Kernova_V1_ClipboardTreeListing: SwiftProtobuf.Message, Sw
     if !self.entries.isEmpty {
       try visitor.visitRepeatedMessageField(value: self.entries, fieldNumber: 1)
     }
+    if self.rootMtimeMs != 0 {
+      try visitor.visitSingularInt64Field(value: self.rootMtimeMs, fieldNumber: 2)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Kernova_V1_ClipboardTreeListing, rhs: Kernova_V1_ClipboardTreeListing) -> Bool {
     if lhs.entries != rhs.entries {return false}
+    if lhs.rootMtimeMs != rhs.rootMtimeMs {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

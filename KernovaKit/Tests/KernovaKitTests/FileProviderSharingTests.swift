@@ -263,15 +263,17 @@ struct ClipboardTreeItemFidelityTests {
         #expect(item.contentType == .symbolicLink)
     }
 
-    @Test("a package folder root carries a package content type")
+    @Test("a package folder root is served as a plain folder container")
     func packageContentType() throws {
         let appType = UTType(filenameExtension: "app")!
         let m = manifest(nodes: [], rootUTI: appType.identifier)
         let item = try treeItem(m, m.folders[0].rootIdentifier)
-        // The root carries the bundle content type, so a pasted .app opens as a
-        // package rather than a plain folder.
-        #expect(item.contentType == appType)
-        #expect(item.contentType != .folder)
+        // A package contentType would make the system fetch the container as one
+        // atomic file (Finder -36) instead of enumerating its children, so every
+        // container is served as `.folder`; the pasted copy's packageness comes
+        // from its on-disk extension/bundle bit (see ClipboardTreeItem's
+        // RATIONALE).
+        #expect(item.contentType == .folder)
     }
 
     @Test("a directory node reports its direct child count and a folder content type")

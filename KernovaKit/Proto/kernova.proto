@@ -428,6 +428,12 @@ message ClipboardTreeEntry {
 // separate pagination frame — the chunked transport paginates it.
 message ClipboardTreeListing {
   repeated ClipboardTreeEntry entries = 1;
+
+  // The directory rep's own (root folder's) modification time in milliseconds
+  // since the Unix epoch (UTC). The entries carry every descendant's mtime but
+  // not the root's — without this the pasted folder lands with an epoch date.
+  // 0 when unknown (the consumer leaves the date unset).
+  int64 root_mtime_ms = 2;
 }
 
 // Liveness ping exchanged on the control channel. Each side sends one on a

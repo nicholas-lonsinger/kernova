@@ -407,10 +407,19 @@ final class ClipboardFileItem: NSObject, NSFileProviderItem, @unchecked Sendable
 /// One node of a directory rep's placeholder tree — the folder root, a
 /// subdirectory, a file, or a symlink (folder D1b, `clipboard.dirtree.v1`).
 ///
-/// Carries fidelity from the manifest (CLIPBOARD.md §6): a package folder's
-/// `contentType` so a pasted bundle opens as a package, a file's executable bit
+/// Carries fidelity from the manifest (CLIPBOARD.md §6): a file's executable bit
 /// via `fileSystemFlags`, a symlink's target via `symlinkTargetPath`, and the
 /// modification date. A directory node's `childItemCount` drives Finder's count.
+///
+/// `RATIONALE:` every container (the folder root and directory nodes) is served
+/// with a plain `.folder` contentType even when the manifest marks it a package
+/// (.app/.rtfd): a package-conforming contentType makes the system treat the
+/// item as an atomic *file* — it calls `fetchContents` on the container itself
+/// instead of enumerating its children, which a placeholder tree cannot serve
+/// (observed live: a pasted `.app` failed with Finder error -36). The pasted
+/// copy still lands as a package on disk — LaunchServices derives packageness
+/// of a real directory from its extension/bundle bit, not from the provider's
+/// contentType — so only the transient placeholder's icon is generic.
 // RATIONALE: every stored property is an immutable `let` of a Sendable type, so
 // the system reading it from any thread is safe.
 final class ClipboardTreeItem: NSObject, NSFileProviderItem, @unchecked Sendable {
@@ -430,7 +439,7 @@ final class ClipboardTreeItem: NSObject, NSFileProviderItem, @unchecked Sendable
         self.itemIdentifier = NSFileProviderItemIdentifier(folder.rootIdentifier)
         self.parentItemIdentifier = .rootContainer
         self.filename = folder.filename
-        self.contentType = UTType(folder.uti) ?? .folder
+        self.contentType = .folder
         self.isDirectory = true
         self.byteCount = 0
         self.symlinkTarget = nil
@@ -458,7 +467,7 @@ final class ClipboardTreeItem: NSObject, NSFileProviderItem, @unchecked Sendable
             self.symlinkTarget = node.symlinkTarget
             self.isDirectory = false
         case .directory:
-            self.contentType = UTType(node.uti) ?? .folder
+            self.contentType = .folder
             self.symlinkTarget = nil
             self.isDirectory = true
         case .file:

@@ -113,8 +113,9 @@ struct ClipboardTreeProtoTests {
         link.childSeq = 3
         let entries = [file, dir, link]
         let restored = try ClipboardDirectoryTree.deserializeListing(
-            ClipboardDirectoryTree.serializeListing(entries))
-        #expect(restored == entries)
+            ClipboardDirectoryTree.serializeListing(entries, rootMtimeMs: 1_700_000_000_500))
+        #expect(restored.entries == entries)
+        #expect(restored.rootMtimeMs == 1_700_000_000_500)
     }
 }
 

@@ -1110,13 +1110,13 @@ final class VsockClipboardService: ClipboardServicing {
     private func buildPublishFolder(
         repIndex: Int, info: Kernova_V1_ClipboardRepresentationInfo, promise: InboundPromise
     ) -> FileProviderPublishFolder? {
-        guard let entries = pullTreeListing(generation: promise.generation, repIndex: repIndex)
+        guard let listing = pullTreeListing(generation: promise.generation, repIndex: repIndex)
         else { return nil }
         let isPackage = Self.isPackageUTI(info.uti)
         let folder = ClipboardDirectoryTree.makeFolderRep(
             sessionSalt: 0, generation: promise.generation, repIndex: repIndex,
             filename: info.filename, isPackage: isPackage, estimatedByteCount: info.byteCount,
-            rootMtimeMs: 0, entries: entries)
+            rootMtimeMs: listing.rootMtimeMs, entries: listing.entries)
         return FileProviderPublishFolder(
             repIndex: repIndex, filename: info.filename, uti: folder.uti, isPackage: isPackage,
             byteCount: info.byteCount, mtimeMs: folder.mtimeMs, nodes: folder.nodes)
@@ -1557,7 +1557,7 @@ final class VsockClipboardService: ClipboardServicing {
     /// Returns its entries, or `nil`.
     @MainActor
     private func pullTreeListing(generation: UInt64, repIndex: Int)
-        -> [Kernova_V1_ClipboardTreeEntry]?
+        -> Kernova_V1_ClipboardTreeListing?
     {
         guard let receiver else { return nil }
         // The host is the receiver, so it sets the direction bit. [H3]
@@ -1579,13 +1579,13 @@ final class VsockClipboardService: ClipboardServicing {
         switch outcome {
         case .delivered(let rep):
             guard let data = rep.inMemoryData,
-                let entries = try? ClipboardDirectoryTree.deserializeListing(data)
+                let listing = try? ClipboardDirectoryTree.deserializeListing(data)
             else {
                 Self.logger.warning(
                     "Tree listing for rep \(repIndex, privacy: .public) could not be decoded")
                 return nil
             }
-            return entries
+            return listing
         case .timedOut:
             receiver.cancelAwait(transferID)
             Self.logger.warning("Tree listing pull \(transferID, privacy: .public) timed out")

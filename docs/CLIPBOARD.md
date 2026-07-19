@@ -250,13 +250,19 @@ the destination asks — not earlier.
   indistinguishable from a native copy/paste, across every flavor the destination might request.
 - **Directory fidelity rides File Provider item metadata, not AppleArchive** (folder D1b,
   `clipboard.dirtree.v1`, #422). A folder placeholder tree carries per-node fidelity in its
-  `ClipboardTreeListing` and reconstructs it on the `NSFileProviderItem`: symlinks via
-  `symlinkTargetPath` + `UTType.symbolicLink` (recorded, never followed), executable and
-  permission bits via `fileSystemFlags`, empty directories as enumerable containers, modification
-  dates via `contentModificationDate`, and OS packages (.app/.rtfd) via the folder's package
-  `contentType` so a pasted bundle opens as a package (the `.app`-signature acid test: a bundle's
-  code signature lives in ordinary files — the Mach-O and `_CodeSignature/` — which a faithful
-  per-child copy preserves). **Known gap:** extended attributes (`xattr`) are **not** carried
+  `ClipboardTreeListing` (each node's kind/size/perms/mtime, plus the root folder's own mtime via
+  `root_mtime_ms` — without it the pasted folder lands with an epoch date) and reconstructs it on
+  the `NSFileProviderItem`: symlinks via `symlinkTargetPath` + `UTType.symbolicLink` (recorded,
+  never followed), the executable bit via `fileSystemFlags` (the FP item surface carries **user**
+  read/write/execute only — group/other permission bits do not cross on this path), empty
+  directories as enumerable containers, and modification dates via `contentModificationDate`.
+  **OS packages (.app/.rtfd) are served as plain `.folder` containers in the domain** — a
+  package-conforming `contentType` makes the system fetch the container as one atomic file
+  (observed live as Finder error -36) instead of enumerating its children; the pasted copy still
+  opens as a package because LaunchServices derives packageness of an on-disk directory from its
+  extension/bundle bit (the `.app`-signature acid test: a bundle's code signature lives in
+  ordinary files — the Mach-O and `_CodeSignature/` — which a faithful per-child copy preserves).
+  **Known gap:** extended attributes (`xattr`) are **not** carried
   through the File Provider item surface today (`NSFileProviderItem.extendedAttributes` governs
   the domain's own sync, and whether it materializes onto a pasted-out copy is unverified). A
   file's data, structure, permissions, and mtime cross faithfully; xattrs (e.g.
