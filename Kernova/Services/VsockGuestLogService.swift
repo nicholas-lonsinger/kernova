@@ -63,7 +63,14 @@ final class VsockGuestLogService {
     ) async {
         do {
             for try await frame in channel.incoming {
-                handle(frame: frame, emitter: emitter, label: label)
+                guard handle(frame: frame, emitter: emitter, label: label) else {
+                    // A wrong-port payload — the peer either crossed wires or is
+                    // not the guest agent at all (#145). Drop the channel rather
+                    // than keep serving a non-conformant peer; a conformant
+                    // agent's reconnect loop re-establishes it.
+                    channel.close()
+                    break
+                }
             }
             logger.info("Guest log channel closed for '\(label, privacy: .public)'")
         } catch {
@@ -73,34 +80,42 @@ final class VsockGuestLogService {
         }
     }
 
+    /// Processes one inbound frame; returns `false` when the frame is a
+    /// protocol violation that must close the channel (#145).
     private static func handle(
         frame: Frame,
         emitter: any GuestLogEmitter,
         label: String
-    ) {
+    ) -> Bool {
         guard frame.protocolVersion == 1 else {
             logger.warning(
                 "Dropping frame with unsupported protocol version \(frame.protocolVersion, privacy: .public) for '\(label, privacy: .public)'"
             )
-            return
+            return true
         }
         switch frame.payload {
         case .logRecord(let record):
             emitter.emit(record)
+            return true
         case .error(let error):
             logger.warning(
                 "Guest agent error for '\(label, privacy: .public)': \(error.code, privacy: .public) — \(error.message, privacy: .public)"
             )
+            return true
         case .hello, .heartbeat, .policyUpdate, .clipboardOffer, .clipboardRequest,
             .clipboardTreeFetch, .clipboardRelease, .clipboardStreamBegin, .clipboardChunk,
             .clipboardStreamEnd, .clipboardStreamAck, .clipboardStreamAbort:
             // Hello, Heartbeat, and PolicyUpdate belong on the control
             // channel; clipboard payloads belong on the clipboard channel.
             // Anything other than LogRecord/Error reaching here means the peer
-            // crossed wires.
-            logger.warning("Unexpected payload on log channel for '\(label, privacy: .public)' — wrong port")
+            // crossed wires — close the channel (#145).
+            logger.warning(
+                "Unexpected payload on log channel for '\(label, privacy: .public)' — wrong port; closing the channel"
+            )
+            return false
         case .none:
             logger.debug("Frame with no payload for '\(label, privacy: .public)'")
+            return true
         }
     }
 }

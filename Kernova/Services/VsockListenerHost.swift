@@ -13,14 +13,24 @@ import Virtualization
 final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate {
     typealias OnConnect = @MainActor (VsockChannel) -> Void
 
+    /// Owner-supplied admission predicate, evaluated per accepted connection
+    /// (#145).
+    ///
+    /// Returning `false` refuses the connection at the VZ level — no channel is
+    /// built and `onConnect` never fires. `nil` admits every connection.
+    typealias ShouldAdmit = @MainActor () -> Bool
+
     private static let logger = Logger(subsystem: "app.kernova", category: "VsockListenerHost")
 
     let port: UInt32
+    private let shouldAdmit: ShouldAdmit?
     private let onConnect: OnConnect
+
     private let listener: VZVirtioSocketListener
 
-    init(port: UInt32, onConnect: @escaping OnConnect) {
+    init(port: UInt32, shouldAdmit: ShouldAdmit? = nil, onConnect: @escaping OnConnect) {
         self.port = port
+        self.shouldAdmit = shouldAdmit
         self.onConnect = onConnect
         self.listener = VZVirtioSocketListener()
         super.init()
@@ -58,7 +68,16 @@ final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate {
         }
     }
 
-    private func acceptDuplicatedFd(_ fd: Int32, dupErrno: Int32) -> Bool {
+    /// Resolves one accepted connection: admission check, socket configuration,
+    /// channel construction, `onConnect`.
+    ///
+    /// Takes ownership of `fd` on every path (the built channel closes it, or a
+    /// refusal closes it here). `internal` (not `private`) purely as a test seam,
+    /// like `configureAcceptedSocket`: the production caller is the nonisolated
+    /// VZ delegate above, whose `VZVirtioSocketConnection` a unit test cannot
+    /// construct, so admission tests drive this against an injected `socketpair`
+    /// fd instead.
+    func acceptDuplicatedFd(_ fd: Int32, dupErrno: Int32) -> Bool {
         // RATIONALE: dup() above gives us a fully independent fd referencing
         // the same socket file description. The framework can release its
         // own copy without affecting ours — `VsockChannel`/`FileHandle`
@@ -67,6 +86,20 @@ final class VsockListenerHost: NSObject, VZVirtioSocketListenerDelegate {
             Self.logger.error(
                 "dup() failed for accepted vsock connection on port \(self.port, privacy: .public): errno=\(dupErrno, privacy: .public)"
             )
+            return false
+        }
+
+        // #145 hardening: let the owner veto the connection (e.g. no control
+        // channel with a completed Hello handshake exists for the VM yet).
+        // Refusing here — before any channel exists — means the peer sees the
+        // connection reset; a conformant guest agent's reconnect loop simply
+        // retries within its retry interval, by which time the control
+        // handshake has normally landed.
+        if let shouldAdmit, !shouldAdmit() {
+            Self.logger.warning(
+                "Refusing vsock connection on port \(self.port, privacy: .public) — admission check failed"
+            )
+            close(fd)
             return false
         }
 

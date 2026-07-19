@@ -267,8 +267,11 @@ final class VsockGuestControlAgent: @unchecked Sendable {
                 hostSupportsClipboardDirTreeStorage = hostDirTree
                 hostBundledAgentVersionStorage = hello.bundledAgentVersion
             }
+            // `logDescription` bounds the peer-supplied capability strings —
+            // symmetric with the host's Hello logging (#145), and these guest
+            // records can be forwarded into the host's log store.
             Self.logger.notice(
-                "Host control service ready (service=\(hello.serviceVersion, privacy: .public), caps=\(hello.capabilities.joined(separator: ","), privacy: .public))"
+                "Host control service ready (service=\(hello.serviceVersion, privacy: .public), caps=\(KernovaCapability.logDescription(of: hello.capabilities), privacy: .public))"
             )
         case .heartbeat:
             // The frame itself is the signal. Liveness clock already refreshed.

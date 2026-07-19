@@ -708,42 +708,87 @@ final class VMInstance {
         vsockControlListenerHost = controlHost
 
         if configuration.agentLogForwardingEnabled {
-            let logHost = VsockListenerHost(port: KernovaVsockPort.log) { [weak self] channel in
-                guard let self else {
-                    channel.close()
-                    return
-                }
-                self.vsockLogService?.stop()
-                let service = VsockGuestLogService(channel: channel, label: self.name)
-                self.vsockLogService = service
-                service.start()
-            }
+            let logHost = makeLogListenerHost()
             logHost.attach(to: socketDevice)
             vsockLogListenerHost = logHost
         }
 
         if configuration.clipboardSharingEnabled {
-            let clipHost = VsockListenerHost(port: KernovaVsockPort.clipboard) { [weak self] channel in
-                guard let self else {
-                    channel.close()
-                    return
-                }
-                self.clipboardService?.stop()
-                let service = VsockClipboardService(channel: channel, label: self.name)
-                // Fold the mutually-negotiated folder placeholder-tree capability
-                // from the control channel's Hello into the clipboard service, read
-                // lazily at offer/paste time so it tracks reconnects.
-                service.peerSupportsDirTree = { [weak self] in
-                    self?.vsockControlService?.guestSupportsClipboardDirTree ?? false
-                }
-                self.clipboardService = service
-                service.start()
-            }
+            let clipHost = makeClipboardListenerHost()
             clipHost.attach(to: socketDevice)
             vsockClipboardListenerHost = clipHost
         }
 
         Self.logger.info("Vsock services started for '\(self.name, privacy: .public)'")
+    }
+
+    // MARK: - Vsock Feature-Channel Admission (#145)
+
+    /// Whether a feature vsock channel (log or clipboard) may be admitted right
+    /// now: a control channel whose `Hello` handshake completed must exist —
+    /// and, for the clipboard port, its `Hello` must have advertised
+    /// `clipboard.stream.v1`.
+    ///
+    /// This is the per-VM admission boundary (#145): a peer that skips the
+    /// control handshake is refused at the listener before any channel exists.
+    /// Evaluated at accept time so it tracks reconnects. A conformant agent is
+    /// never refused in steady state — it connects the feature ports only after
+    /// receiving the `PolicyUpdate` that follows its control `Hello` — and a
+    /// transient refusal (e.g. the feature client reconnecting ahead of the
+    /// control handshake after a save/restore) self-heals via the agent's
+    /// reconnect loop.
+    func admitsFeatureChannel(requiringClipboardStreaming: Bool) -> Bool {
+        guard let control = vsockControlService, control.isConnected else { return false }
+        return !requiringClipboardStreaming || control.guestSupportsClipboardStreaming
+    }
+
+    /// Builds the log-channel listener (shared by `startVsockServices()` and
+    /// `applyLiveLogPolicy`): admission gated on the control handshake (#145);
+    /// each accepted channel replaces any prior log service.
+    private func makeLogListenerHost() -> VsockListenerHost {
+        VsockListenerHost(
+            port: KernovaVsockPort.log,
+            shouldAdmit: { [weak self] in
+                self?.admitsFeatureChannel(requiringClipboardStreaming: false) ?? false
+            }
+        ) { [weak self] channel in
+            guard let self else {
+                channel.close()
+                return
+            }
+            self.vsockLogService?.stop()
+            let service = VsockGuestLogService(channel: channel, label: self.name)
+            self.vsockLogService = service
+            service.start()
+        }
+    }
+
+    /// Builds the clipboard-channel listener (shared by `startVsockServices()`
+    /// and `applyLiveClipboardPolicy`): admission additionally requires the
+    /// negotiated `clipboard.stream.v1` capability (#145); each accepted channel
+    /// replaces any prior clipboard service.
+    private func makeClipboardListenerHost() -> VsockListenerHost {
+        VsockListenerHost(
+            port: KernovaVsockPort.clipboard,
+            shouldAdmit: { [weak self] in
+                self?.admitsFeatureChannel(requiringClipboardStreaming: true) ?? false
+            }
+        ) { [weak self] channel in
+            guard let self else {
+                channel.close()
+                return
+            }
+            self.clipboardService?.stop()
+            let service = VsockClipboardService(channel: channel, label: self.name)
+            // Fold the mutually-negotiated folder placeholder-tree capability
+            // from the control channel's Hello into the clipboard service, read
+            // lazily at offer/paste time so it tracks reconnects.
+            service.peerSupportsDirTree = { [weak self] in
+                self?.vsockControlService?.guestSupportsClipboardDirTree ?? false
+            }
+            self.clipboardService = service
+            service.start()
+        }
     }
 
     // MARK: - Agent Post-Start Watchdog
@@ -983,16 +1028,7 @@ final class VMInstance {
             // Idempotent reinstall: tear down any prior listener so a stale
             // accept callback doesn't race a new one.
             vsockLogListenerHost = nil
-            let logHost = VsockListenerHost(port: KernovaVsockPort.log) { [weak self] channel in
-                guard let self else {
-                    channel.close()
-                    return
-                }
-                self.vsockLogService?.stop()
-                let service = VsockGuestLogService(channel: channel, label: self.name)
-                self.vsockLogService = service
-                service.start()
-            }
+            let logHost = makeLogListenerHost()
             logHost.attach(to: socketDevice)
             vsockLogListenerHost = logHost
         } else {
@@ -1005,22 +1041,7 @@ final class VMInstance {
     private func applyLiveClipboardPolicy(enabled: Bool, on socketDevice: VZVirtioSocketDevice) {
         if enabled {
             vsockClipboardListenerHost = nil
-            let clipHost = VsockListenerHost(port: KernovaVsockPort.clipboard) { [weak self] channel in
-                guard let self else {
-                    channel.close()
-                    return
-                }
-                self.clipboardService?.stop()
-                let service = VsockClipboardService(channel: channel, label: self.name)
-                // Fold the mutually-negotiated folder placeholder-tree capability
-                // from the control channel's Hello into the clipboard service, read
-                // lazily at offer/paste time so it tracks reconnects.
-                service.peerSupportsDirTree = { [weak self] in
-                    self?.vsockControlService?.guestSupportsClipboardDirTree ?? false
-                }
-                self.clipboardService = service
-                service.start()
-            }
+            let clipHost = makeClipboardListenerHost()
             clipHost.attach(to: socketDevice)
             vsockClipboardListenerHost = clipHost
         } else {

@@ -91,8 +91,8 @@ struct VsockGuestLogServiceTests {
         #expect(messages == ["msg 1", "msg 2", "msg 3", "msg 4"])
     }
 
-    @Test("Hello and Error frames are not emitted as guest log records")
-    func nonLogRecordFramesAreFiltered() async throws {
+    @Test("Error frames are logged but not emitted; the channel stays open")
+    func errorFramesAreFilteredWithoutClosing() async throws {
         let emitter = RecordingEmitter()
         let (sender, receiver) = try makePair()
         sender.start()
@@ -103,11 +103,6 @@ struct VsockGuestLogServiceTests {
         service.start()
         defer { service.stop() }
 
-        var hello = Frame()
-        hello.protocolVersion = 1
-        hello.hello = Kernova_V1_Hello.with { $0.serviceVersion = 1 }
-        try sender.send(hello)
-
         var errorFrame = Frame()
         errorFrame.protocolVersion = 1
         errorFrame.error = Kernova_V1_Error.with {
@@ -117,13 +112,39 @@ struct VsockGuestLogServiceTests {
         try sender.send(errorFrame)
 
         // Send a real LogRecord afterwards so we can wait for it — that lets
-        // us assert hello/error were processed by the time we check.
+        // us assert the error frame was processed (and didn't close the
+        // channel) by the time we check.
         try sender.send(makeLogFrame(level: .debug, message: "real record"))
         try await waitForRecords(emitter, count: 1)
 
         let records = emitter.snapshot()
         #expect(records.count == 1)
         #expect(records.first?.message == "real record")
+    }
+
+    @Test("A wrong-port payload closes the channel and emits nothing")
+    func wrongPortPayloadClosesChannel() async throws {
+        let emitter = RecordingEmitter()
+        let (sender, receiver) = try makePair()
+        sender.start()
+        receiver.start()
+        defer { sender.close() }
+
+        let service = VsockGuestLogService(channel: receiver, label: "test", emitter: emitter)
+        service.start()
+        defer { service.stop() }
+
+        // Hello belongs on the control channel — on the log channel it is a
+        // protocol violation the service answers by dropping the channel (#145).
+        var hello = Frame()
+        hello.protocolVersion = 1
+        hello.hello = Kernova_V1_Hello.with { $0.serviceVersion = 1 }
+        try sender.send(hello)
+
+        // The service closes its end; the sender observes EOF. EOF also proves
+        // the hello was fully processed, so the emitter check below is not racy.
+        await expectEOF(on: sender)
+        #expect(emitter.snapshot().isEmpty)
     }
 
     @Test("All log levels round-trip with the correct enum value")

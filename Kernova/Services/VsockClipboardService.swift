@@ -573,10 +573,18 @@ final class VsockClipboardService: ClipboardServicing {
         case .clipboardStreamBegin, .clipboardChunk, .clipboardStreamEnd, .clipboardStreamAck:
             // Routed off-main by the consume loop; never reaches here.
             break
-        case .hello, .heartbeat, .policyUpdate, .logRecord, .none:
+        case .hello, .heartbeat, .policyUpdate, .logRecord:
+            // Control-plane and log payloads belong on their own channels. A
+            // peer sending them here either crossed wires or is not the guest
+            // agent at all — close the channel (#145); the consume loop then
+            // ends and cancels the stream engines. A conformant agent's
+            // reconnect loop re-establishes the channel.
             Self.logger.warning(
-                "Unexpected payload on clipboard channel for '\(self.label, privacy: .public)' — wrong port"
+                "Unexpected payload on clipboard channel for '\(self.label, privacy: .public)' — wrong port; closing the channel"
             )
+            channel.close()
+        case .none:
+            Self.logger.debug("Frame with no payload for '\(self.label, privacy: .public)'")
         }
     }
 

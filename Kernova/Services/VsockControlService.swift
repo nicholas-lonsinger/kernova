@@ -114,8 +114,10 @@ final class VsockControlService {
     /// Set on Hello; gates the clipboard bit of every
     /// `PolicyUpdate` we send, so an agent that can't stream never has clipboard
     /// sharing turned on (it surfaces as `.outdated` instead, since the agent
-    /// version is bumped in lockstep with the capability).
-    private var guestSupportsClipboardStreaming = false
+    /// version is bumped in lockstep with the capability). Read (via
+    /// `guestSupportsClipboardStreaming`) by the clipboard listener's admission
+    /// check (#145). `@MainActor` state; reset on stop.
+    private var guestSupportsClipboardStreamingStorage = false
 
     /// Whether the guest agent advertised the folder placeholder-tree capability
     /// (`clipboard.dirtree.v1`) in its `Hello`.
@@ -130,10 +132,9 @@ final class VsockControlService {
     /// negotiated gate for folder placeholder trees.
     var guestSupportsClipboardDirTree: Bool { guestSupportsClipboardDirTreeStorage }
 
-    #if DEBUG
-    /// Test seam: whether the guest advertised `clipboard.stream.v1`.
-    var guestSupportsClipboardStreamingForTesting: Bool { guestSupportsClipboardStreaming }
-    #endif
+    /// Whether the guest advertised `clipboard.stream.v1` — the capability the
+    /// clipboard-channel admission check requires (#145).
+    var guestSupportsClipboardStreaming: Bool { guestSupportsClipboardStreamingStorage }
 
     private static let logger = Logger(subsystem: "app.kernova", category: "VsockControlService")
 
@@ -227,7 +228,7 @@ final class VsockControlService {
         agentVersion = nil
         isUnresponsive = false
         lastInboundFrame = nil
-        guestSupportsClipboardStreaming = false
+        guestSupportsClipboardStreamingStorage = false
         guestSupportsClipboardDirTreeStorage = false
         Self.logger.info("Vsock control service stopped for '\(self.label, privacy: .public)'")
     }
@@ -382,12 +383,14 @@ final class VsockControlService {
             isUnresponsive = false
             let reportedVersion = hello.agentInfo.agentVersion
             agentVersion = reportedVersion.isEmpty ? nil : reportedVersion
-            guestSupportsClipboardStreaming = hello.capabilities.contains(
+            guestSupportsClipboardStreamingStorage = hello.capabilities.contains(
                 KernovaCapability.clipboardStreamV1)
             guestSupportsClipboardDirTreeStorage = hello.capabilities.contains(
                 KernovaCapability.clipboardDirTreeV1)
+            // `logDescription` bounds the peer-supplied capability strings so a
+            // malicious peer can't write arbitrary content into the host log (#145).
             Self.logger.notice(
-                "Guest agent connected for '\(self.label, privacy: .public)' (service=\(hello.serviceVersion, privacy: .public), agent=\(reportedVersion, privacy: .public), caps=\(hello.capabilities.joined(separator: ","), privacy: .public))"
+                "Guest agent connected for '\(self.label, privacy: .public)' (service=\(hello.serviceVersion, privacy: .public), agent=\(reportedVersion, privacy: .public), caps=\(KernovaCapability.logDescription(of: hello.capabilities), privacy: .public))"
             )
             // Notify the host that we have a fresh version sample. Empty
             // strings indicate an agent that didn't populate the field — skip
@@ -417,7 +420,11 @@ final class VsockControlService {
             .clipboardStreamAck, .clipboardStreamAbort, .logRecord, .none:
             // PolicyUpdate is a host→guest message and never arrives on the
             // host side; other payloads belong on other channels. Log and
-            // ignore.
+            // ignore. RATIONALE: unlike the feature channels (which close on a
+            // wrong-port payload, #145), the control channel stays up — it is
+            // the admission anchor those channels gate on, ignoring the frame
+            // discloses nothing, and closing it would flap the agent-status UI
+            // and every dependent channel on a single stray frame.
             Self.logger.warning(
                 "Unexpected payload on control channel for '\(self.label, privacy: .public)' — wrong port"
             )
