@@ -75,17 +75,19 @@ struct VsockClipboardServiceTests {
         }
     }
 
-    /// Awaits the recorder's gate (fired per frame) until `frames.count ==
-    /// expected`.
+    /// Awaits the recorder's gate (fired per frame) until the recorded frame
+    /// count reaches `expected`.
     ///
-    /// The `timeout` is a stuck-stream backstop, not the success deadline.
+    /// The gate's stuck-stream backstop bounds the wait.
     private func waitForFrameCount(
         _ recorder: FrameRecorder,
-        equals expected: Int,
-        timeout: Duration = .seconds(10)
+        reaches expected: Int
     ) async throws {
-        try await recorder.recorded.wait(timeout: timeout) {
-            recorder.frames.count == expected
+        // `>=` (matching `waitForRecords`): a burst of frames could skip past
+        // an `==` check between observations and hang the wait to its backstop;
+        // callers assert the exact frame content/count separately.
+        try await recorder.recorded.wait {
+            recorder.frames.count >= expected
         }
     }
 
@@ -93,10 +95,9 @@ struct VsockClipboardServiceTests {
     /// frame count is unknown (a multi-chunk transfer's chunk count varies).
     private func waitForFrames(
         _ recorder: FrameRecorder,
-        timeout: Duration = .seconds(10),
         until predicate: @escaping () -> Bool
     ) async throws {
-        try await recorder.recorded.wait(timeout: timeout, until: predicate)
+        try await recorder.recorded.wait(until: predicate)
     }
 
     /// Sleeps `duration` then asserts no frames arrived since `before`.
@@ -496,7 +497,7 @@ struct VsockClipboardServiceTests {
         // First non-empty content → exactly one offer.
         service.clipboardContent = ClipboardContent(text: "alpha")
         service.grabIfChanged()
-        try await waitForFrameCount(recorder, equals: snapshot + 1)
+        try await waitForFrameCount(recorder, reaches: snapshot + 1)
         guard case .clipboardOffer = recorder.frames[snapshot].payload else {
             Issue.record(
                 "Expected clipboardOffer for 'alpha', got \(String(describing: recorder.frames[snapshot].payload))")
@@ -511,7 +512,7 @@ struct VsockClipboardServiceTests {
         // Fresh content → another offer.
         service.clipboardContent = ClipboardContent(text: "beta")
         service.grabIfChanged()
-        try await waitForFrameCount(recorder, equals: snapshot + 1)
+        try await waitForFrameCount(recorder, reaches: snapshot + 1)
         guard case .clipboardOffer = recorder.frames[snapshot].payload else {
             Issue.record(
                 "Expected clipboardOffer for 'beta', got \(String(describing: recorder.frames[snapshot].payload))")
@@ -1254,9 +1255,9 @@ struct VsockClipboardServiceTests {
 
         // The lazy file pulls + stages its bytes on demand through the shared
         // bridge (the toggle-off paste path), off the main thread.
-        let outcome = await Task.detached {
+        let outcome = await offCooperativePool {
             service.pullStagedFile(generation: 9, repIndex: 1)
-        }.value
+        }
         guard case .success(let path) = outcome else {
             Issue.record("Expected pullStagedFile to succeed, got \(outcome)")
             return
@@ -1419,9 +1420,9 @@ struct VsockClipboardServiceTests {
 
         // The deferred file pulls its bytes on demand through the shared bridge —
         // now the second request goes out, the file rep was never double-requested.
-        let outcome = await Task.detached {
+        let outcome = await offCooperativePool {
             service.pullStagedFile(generation: 6, repIndex: 1)
-        }.value
+        }
         guard case .success(let path) = outcome else {
             Issue.record("Expected pullStagedFile to succeed, got \(outcome)")
             return
@@ -1597,11 +1598,9 @@ struct VsockClipboardServiceTests {
 
         // Each pastes via the sync fallback (the File Provider declines): the bytes
         // pull + stage on demand off the main thread.
-        let firstURL = await Task.detached { service.copyToMacFileURL(generation: 41, repIndex: 0) }
-            .value
+        let firstURL = await offCooperativePool { service.copyToMacFileURL(generation: 41, repIndex: 0) }
         #expect(try Data(contentsOf: #require(firstURL)) == aBytes)
-        let secondURL = await Task.detached { service.copyToMacFileURL(generation: 41, repIndex: 1) }
-            .value
+        let secondURL = await offCooperativePool { service.copyToMacFileURL(generation: 41, repIndex: 1) }
         #expect(try Data(contentsOf: #require(secondURL)) == bBytes)
         // Each fire consults the File Provider; the declined publish doesn't latch,
         // so the sibling fire retries it.
@@ -1752,9 +1751,9 @@ struct VsockClipboardServiceTests {
 
         // A pull for a generation that isn't the current offer resolves to
         // noCurrentOffer (the relay maps it to .noSuchItem), without a vsock pull.
-        let outcome = await Task.detached {
+        let outcome = await offCooperativePool {
             service.pullStagedFile(generation: 999, repIndex: 0)
-        }.value
+        }
         guard case .failure(.noCurrentOffer) = outcome else {
             Issue.record("Expected noCurrentOffer, got \(outcome)")
             return
@@ -1789,10 +1788,10 @@ struct VsockClipboardServiceTests {
         try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
 
         let log = ServicingProgressLog()
-        let outcome = await Task.detached {
+        let outcome = await offCooperativePool {
             service.pullStagedFile(
                 generation: 40, repIndex: 0, onProgress: { log.record($0, $1) })
-        }.value
+        }
         guard case .success = outcome else {
             Issue.record("Expected pullStagedFile to succeed, got \(outcome)")
             return
@@ -1840,7 +1839,7 @@ struct VsockClipboardServiceTests {
                 reps: [(uti: "public.data", byteCount: fileBytes.count, filename: "big.bin", isInline: false)]))
         try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
 
-        let pull = Task.detached { service.pullStagedFile(generation: 41, repIndex: 0) }
+        let pull = Task { await offCooperativePool { service.pullStagedFile(generation: 41, repIndex: 0) } }
 
         // The bar reveals mid-flight: inbound, denominated by the rep's total, and
         // labelled with the filename (#426 — LazyPullSnapshot.filename).
@@ -1868,10 +1867,18 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        // A backstop, not the success path: under the fix this resolves in
-        // milliseconds via genuine delivery. A few seconds' slack absorbs macOS
-        // CI's heavy @MainActor scheduling jitter (docs/TESTING.md's "Async waits in
-        // tests") without masking a real regression with an overly generous wait.
+        // RATIONALE: deliberately far BELOW `testWaitBackstop`, not ≥60 s. This
+        // test blocks the real main thread inside `pullStagedFile`, so this
+        // injected timeout is the ceiling on how long the whole bundle's
+        // MainActor can be held hostage if the fast path loses — every
+        // concurrently running test's waits freeze for exactly this long. A
+        // 60 s value once froze the bundle wall-to-wall and mass-failed 17
+        // tests whose 60 s backstops could not outlast it; 5 s bounds the
+        // blast radius while staying orders of magnitude above the genuine
+        // ms-scale delivery (the responder runs on the now-unpoisoned
+        // cooperative pool — see `offCooperativePool`). Under a #458
+        // regression the pull resolves `.pullFailed` when this fires, so the
+        // test fails either way and the value's size never masks it.
         let service = VsockClipboardService(
             channel: host, label: "test-\(UUID().uuidString)", lazyPullTimeout: .seconds(5))
         service.start()
@@ -2003,7 +2010,7 @@ struct VsockClipboardServiceTests {
         let copyTask = Task { await service.materializeForCopy() }
         // Wait until the host has actually sent the pull request — that's the
         // in-flight window we want to interrupt.
-        try await responder.answered.wait(timeout: .seconds(5)) {
+        try await responder.answered.wait {
             responder.requests.contains { $0.generation == 1 }
         }
 
@@ -2067,7 +2074,7 @@ struct VsockClipboardServiceTests {
             parkedOnce = true
             didEnter = true
             entered.notify()
-            try? await release.wait(timeout: .seconds(5)) { released }
+            try? await release.wait { released }
         }
 
         // gen=1 — a single inline rep, a placeholder until pulled.
@@ -2076,7 +2083,7 @@ struct VsockClipboardServiceTests {
 
         // Copy issues the gen=1 pull; it completes and parks in the seam.
         let copyTask = Task { await service.materializeForCopy() }
-        try await entered.wait(timeout: .seconds(5)) { didEnter }
+        try await entered.wait { didEnter }
 
         // The materialize call is parked, so the main actor is free: a newer offer
         // lands and republishes gen=2's placeholder.
@@ -2131,14 +2138,14 @@ struct VsockClipboardServiceTests {
             parkedOnce = true
             didEnter = true
             entered.notify()
-            try? await release.wait(timeout: .seconds(5)) { released }
+            try? await release.wait { released }
         }
 
         try guest.send(makeTextOffer(generation: 1, text: "stale"))
         try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
 
         let copyTask = Task { await service.materializeForCopy() }
-        try await entered.wait(timeout: .seconds(5)) { didEnter }
+        try await entered.wait { didEnter }
 
         // stop() drops the inbound promise (via dropInboundPromise) but leaves
         // clipboardContent intact — so the resumed guard sees nil !== promise and
@@ -2308,7 +2315,7 @@ struct VsockClipboardServiceTests {
         // Wait until EXACTLY one request for rep 0 has been recorded — the
         // in-flight window we want the Copy caller to coalesce into.
         let rep0XID = inboundTransferID(generation: generation, repIndex: 0)
-        try await responder.answered.wait(timeout: .seconds(5)) {
+        try await responder.answered.wait {
             responder.requests.contains { $0.transferID == rep0XID }
         }
         #expect(responder.requests.filter { $0.transferID == rep0XID }.count == 1)
@@ -2396,7 +2403,7 @@ struct VsockClipboardServiceTests {
 
         // The request DID go out (proving the pull started and the backstop, not a
         // pre-send failure, resolved it), and the rep stays a placeholder.
-        try await responder.answered.wait(timeout: .seconds(5)) {
+        try await responder.answered.wait {
             responder.requests.contains { $0.generation == 5 }
         }
         #expect(service.clipboardContent.representations.first?.isPendingRemote == true)
@@ -2442,22 +2449,42 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        // Tiny backstop so the first (unanswered) pull fails fast.
+        // The first pull is failed via an explicit abort (below), not the
+        // lazyPullTimeout backstop: the same injected timeout also governs the
+        // second pull whose SUCCESS this test asserts, so a small value races
+        // the responder's genuine delivery on a stalled runner (docs/TESTING.md's
+        // injected-timeout rule). The no-latch-on-failure property under test is
+        // failure-kind-agnostic — materializeForPreview skips the generation
+        // latch on any nil pull result, timeout and abort alike.
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", lazyPullTimeout: .milliseconds(150))
+            channel: host, label: "test-\(UUID().uuidString)", lazyPullTimeout: .seconds(60))
         service.start()
         defer { service.stop() }
 
         let responder = FakeGuestResponder(guest: guest)
         defer { responder.cancel() }
-        // No reply registered yet → the first pull times out.
+        // No reply registered yet → the first pull parks until aborted.
         responder.start()
 
         try guest.send(makeTextOffer(generation: 2, text: "retry me"))
         try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
 
-        // First attempt: the pull times out, the rep stays a placeholder.
-        await service.materializeForPreview()
+        // First attempt: park the pull, then abort it from the guest side. The
+        // pull resolves nil and the rep stays a placeholder.
+        let firstPreview = Task { await service.materializeForPreview() }
+        let xid = inboundTransferID(generation: 2, repIndex: 0)
+        try await responder.answered.wait {
+            responder.requests.contains { $0.transferID == xid }
+        }
+        var abort = Frame()
+        abort.protocolVersion = 1
+        abort.clipboardStreamAbort = Kernova_V1_ClipboardStreamAbort.with {
+            $0.transferID = xid
+            $0.code = "cancelled"
+            $0.message = "test: first pull aborted"
+        }
+        try guest.send(abort)
+        await firstPreview.value
         #expect(service.clipboardContent.representations.first?.isPendingRemote == true)
 
         // The guest can now answer; a second attempt must retry (not be blocked by
@@ -2549,7 +2576,7 @@ struct VsockClipboardServiceTests {
 
         let copyTask = Task { await service.materializeForCopy() }
         let xid = inboundTransferID(generation: 5, repIndex: 0)
-        try await responder.answered.wait(timeout: .seconds(5)) {
+        try await responder.answered.wait {
             responder.requests.contains { $0.transferID == xid }
         }
 

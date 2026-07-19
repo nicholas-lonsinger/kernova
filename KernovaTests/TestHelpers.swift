@@ -44,20 +44,40 @@ func makeRawSocketPair() throws -> (Int32, Int32) {
     return (fds[0], fds[1])
 }
 
+// MARK: - offCooperativePool
+
+/// Runs a blocking bridge call (`pullStagedFile` / `copyToMacFileURL` /
+/// `fetchStagedFile`) on a GCD global-queue thread, mirroring production's
+/// callers (the relay's XPC queue, the pasteboard's provide callback).
+///
+/// RATIONALE: never `Task.detached` for these. A parked blocking pull occupies
+/// one of the cooperative pool's few threads (CI runners have 3-4); when parked
+/// pulls overlapped the #458 test's deliberate main-thread block, the pool
+/// exhausted, the `@MainActor` responders those pulls were waiting on starved,
+/// and the whole bundle froze until the shortest injected pull timeout fired —
+/// the 2026-07-19 CI mass failures. GCD global queues overcommit, so a parked
+/// pull costs a kernel thread, never a cooperative slot.
+func offCooperativePool<T: Sendable>(
+    _ body: @escaping @Sendable () -> T
+) async -> T {
+    await withCheckedContinuation { cont in
+        DispatchQueue.global().async { cont.resume(returning: body()) }
+    }
+}
+
 // MARK: - nextFrame
 
 /// Reads the next frame from `channel`, distinguishing timeout from EOF.
 ///
-/// - Throws: `TestFailure("Timed out…")` when no frame arrives within `timeout`.
+/// - Throws: `TestFailure("Timed out…")` when no frame arrives within the
+///   `testWaitBackstop` deadline.
 /// - Throws: `TestFailure("Channel finished…")` when the channel closes without
 ///   producing a frame (EOF), so the two failure shapes are identifiable in
 ///   post-mortem logs. Conflating them once masked a CI flake as a
 ///   peer-disconnect bug.
 @MainActor
-func nextFrame(
-    from channel: VsockChannel,
-    timeout: Duration = .seconds(5)
-) async throws -> Frame {
+func nextFrame(from channel: VsockChannel) async throws -> Frame {
+    let timeout = testWaitBackstop
     let receiver = Task<Frame?, Error> {
         var iterator = channel.incoming.makeAsyncIterator()
         return try await iterator.next()
@@ -109,7 +129,7 @@ func nextFrame(
 /// keep `waitUntil`.
 @MainActor
 func waitForChange(
-    timeout: Duration = .seconds(10),
+    timeout: Duration = testWaitBackstop,
     until predicate: @escaping @MainActor () -> Bool
 ) async throws {
     let deadline = ContinuousClock.now.advanced(by: timeout)

@@ -108,7 +108,7 @@ struct AttachmentFileMonitorTests {
 
         FileManager.default.createFile(atPath: target, contents: Data([0]))
 
-        try await waitForChange(timeout: .seconds(5)) {
+        try await waitForChange {
             monitor.exists(target) == true
         }
     }
@@ -126,7 +126,7 @@ struct AttachmentFileMonitorTests {
 
         try FileManager.default.removeItem(atPath: target)
 
-        try await waitForChange(timeout: .seconds(5)) {
+        try await waitForChange {
             monitor.exists(target) == false
         }
     }

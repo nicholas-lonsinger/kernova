@@ -18,6 +18,19 @@ import Foundation
 // `KernovaTests/TestHelpers.swift`; it was never one of the triplicated
 // copies.
 
+// MARK: - testWaitBackstop
+
+/// Default stuck-condition backstop for every test wait helper.
+///
+/// Sized past any plausible CI scheduler stall (starved macos-26 runners have
+/// defeated 5 s and 10 s backstops). The happy path resolves via
+/// `notify()`/observation and never reaches this deadline, so the generous
+/// value costs nothing on a green run — it only delays the failure report for
+/// a genuinely stuck condition. Success-path waits should not pass a smaller
+/// explicit timeout; explicit values are for behavior-under-test deadlines
+/// only. See docs/TESTING.md "Async waits in tests".
+public let testWaitBackstop: Duration = .seconds(60)
+
 // MARK: - TestFailure
 
 /// A test failure with a diagnostic message, thrown by the wait helpers below.
@@ -92,7 +105,7 @@ public final class AsyncGate: @unchecked Sendable {
     /// Suspend until `predicate()` holds (re-checked on each `notify()`), or
     /// throw `TestFailure` after `timeout`.
     public func wait(
-        timeout: Duration = .seconds(10),
+        timeout: Duration = testWaitBackstop,
         isolation: isolated (any Actor)? = #isolation,
         until predicate: () -> Bool
     ) async throws {
@@ -165,12 +178,13 @@ public final class AsyncGate: @unchecked Sendable {
 // periphery:ignore:parameters isolation
 /// Polls `predicate` every 50 ms until it returns `true` or `timeout` elapses.
 ///
-/// Default deadline is generous (5 s) to absorb scheduling jitter on CI
-/// runners. See docs/TESTING.md's "Async waits in tests" — prefer the event-driven
+/// Unlike the event-driven helpers, the deadline here *is* the pass/fail
+/// criterion, so the generous `testWaitBackstop` default matters even more.
+/// See docs/TESTING.md's "Async waits in tests" — prefer the event-driven
 /// `AsyncGate` above for new timing-sensitive waits; polling is retained for
 /// predicates with no underlying signal to await.
 public func waitUntil(
-    timeout: Duration = .seconds(5),
+    timeout: Duration = testWaitBackstop,
     isolation: isolated (any Actor)? = #isolation,
     _ predicate: () -> Bool
 ) async throws {

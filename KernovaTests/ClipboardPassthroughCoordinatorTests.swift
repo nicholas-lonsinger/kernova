@@ -156,7 +156,7 @@ struct ClipboardPassthroughCoordinatorTests {
         h.service.simulateInboundOffer(ClipboardContent(text: "guest copied this"))
 
         let textType = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
-        try await published.wait(timeout: .seconds(30)) {
+        try await published.wait {
             h.pasteboard.data(forType: textType) == Data("guest copied this".utf8)
         }
     }

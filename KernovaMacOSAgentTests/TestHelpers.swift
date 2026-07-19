@@ -41,13 +41,12 @@ func makeChannelPair() throws -> (VsockChannel, VsockChannel) {
 
 /// Reads the next frame from `channel`, distinguishing timeout from EOF.
 ///
-/// - Throws: `TestFailure("Timed out…")` when no frame arrives within `timeout`.
+/// - Throws: `TestFailure("Timed out…")` when no frame arrives within the
+///   `testWaitBackstop` deadline.
 /// - Throws: `TestFailure("Channel finished…")` when the channel closes without
 ///   producing a frame (EOF), so the two failure shapes are identifiable.
-func nextFrame(
-    from channel: VsockChannel,
-    timeout: Duration = .seconds(5)
-) async throws -> Frame {
+func nextFrame(from channel: VsockChannel) async throws -> Frame {
+    let timeout = testWaitBackstop
     let receiver = Task<Frame?, Error> {
         var iterator = channel.incoming.makeAsyncIterator()
         return try await iterator.next()
@@ -70,13 +69,12 @@ func nextFrame(
 
 // MARK: - awaitFirst
 
-/// Awaits the first value emitted by `stream`, with a timeout.
+/// Awaits the first value emitted by `stream`, with the `testWaitBackstop`
+/// deadline.
 ///
-/// - Throws: `TestFailure("Timed out…")` if no value arrives within `timeout`.
-func awaitFirst<T: Sendable>(
-    _ stream: AsyncStream<T>,
-    timeout: Duration = .seconds(5)
-) async throws -> T {
+/// - Throws: `TestFailure("Timed out…")` if no value arrives in time.
+func awaitFirst<T: Sendable>(_ stream: AsyncStream<T>) async throws -> T {
+    let timeout = testWaitBackstop
     let task = Task<T?, Never> {
         var iterator = stream.makeAsyncIterator()
         return await iterator.next()
@@ -292,13 +290,13 @@ struct CollectedTransfer {
 /// sent before the `ClipboardRequest` is handled could overtake it and be
 /// dropped before the transfer is registered.)
 func collectOutboundTransfer(
-    transferID: UInt64, from channel: VsockChannel, timeout: Duration = .seconds(5)
+    transferID: UInt64, from channel: VsockChannel
 ) async throws -> CollectedTransfer {
     var begin: Kernova_V1_ClipboardStreamBegin?
     var assembled = Data()
 
     while true {
-        let frame = try await nextFrame(from: channel, timeout: timeout)
+        let frame = try await nextFrame(from: channel)
         switch frame.payload {
         case .clipboardStreamBegin(let b) where b.transferID == transferID:
             begin = b

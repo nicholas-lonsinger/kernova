@@ -118,8 +118,8 @@ struct HostClipboardPullRouterTests {
         // service handling generation 1) — and is still genuinely in flight,
         // blocked exactly like a real, slow vsock pull.
         router.setSource(vmA)
-        let fetchTask = Task.detached {
-            _ = router.fetchStagedFile(generation: 1, repIndex: 0)
+        let fetchTask = Task {
+            _ = await offCooperativePool { router.fetchStagedFile(generation: 1, repIndex: 0) }
         }
         try await vmA.entered.wait { vmA.hasEntered }
 

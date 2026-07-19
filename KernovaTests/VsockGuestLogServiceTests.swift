@@ -16,15 +16,14 @@ struct VsockGuestLogServiceTests {
     }
 
     // Event-driven: awaits the emitter's gate (fired on each `emit`) until at
-    // least `count` records have arrived. The `timeout` is a backstop for a
-    // genuinely stuck stream, not the success deadline — so a slow CI runner
-    // no longer trips it.
+    // least `count` records have arrived. The gate's stuck-stream backstop
+    // bounds the wait, not a success deadline — so a slow CI runner no longer
+    // trips it.
     private func waitForRecords(
         _ emitter: RecordingEmitter,
-        count: Int,
-        timeout: Duration = .seconds(10)
+        count: Int
     ) async throws {
-        try await emitter.recorded.wait(timeout: timeout) {
+        try await emitter.recorded.wait {
             emitter.snapshot().count >= count
         }
     }
