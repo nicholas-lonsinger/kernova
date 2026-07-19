@@ -489,6 +489,80 @@ struct ClipboardStreamTests {
         #expect(harness.collector.representation(1) == nil)
     }
 
+    @Test("a child-layout transfer_id round-trips a listing payload and a child file")
+    func childLayoutTransferRoundTrips() async throws {
+        let harness = try roomyHarness()
+        defer { harness.tearDown() }
+
+        // The tree listing rides an inline transfer with childSeq 0.
+        let listingID = ClipboardTransferID.makeChild(
+            generation: 3, repIndex: 0, childSeq: 0, hostMinted: false)
+        let listingBytes = Data((0..<(Self.chunk * 2 + 9)).map { UInt8(($0 &* 13) & 0xFF) })
+        harness.sender.startTransfer(
+            transferID: listingID, generation: 3,
+            representation: ClipboardContent.Representation(
+                uti: "app.kernova.clipboard.tree-listing", data: listingBytes),
+            maxAcceptByteCount: .max, isInline: true, isCurrent: { _ in true })
+
+        // A child file rides a file transfer with childSeq >= 1.
+        let childID = ClipboardTransferID.makeChild(
+            generation: 3, repIndex: 0, childSeq: 1, hostMinted: false)
+        let childBytes = Data((0..<(Self.chunk * 3 + 5)).map { UInt8(($0 &* 7) & 0xFF) })
+        let source = try tempFile(bytes: childBytes)
+        defer { try? FileManager.default.removeItem(at: source) }
+        harness.sender.startTransfer(
+            transferID: childID, generation: 3,
+            representation: ClipboardContent.Representation(
+                uti: "public.data", fileURL: source, byteCount: childBytes.count, filename: "c.bin"),
+            maxAcceptByteCount: .max, isInline: false, isCurrent: { _ in true })
+
+        try await harness.collector.gate.wait {
+            harness.collector.representation(listingID) != nil
+                && harness.collector.representation(childID) != nil
+        }
+        #expect(harness.collector.representation(listingID)?.inMemoryData == listingBytes)
+        let child = try #require(harness.collector.representation(childID))
+        #expect(child.fileURL != nil)
+        #expect(try Data(contentsOf: #require(child.fileURL)) == childBytes)
+        #expect(harness.collector.abortCount == 0)
+    }
+
+    @Test("cancel(generation:) cancels an in-flight child-layout transfer")
+    func cancelGenerationCancelsChildTransfer() async throws {
+        let harness = try roomyHarness()
+        defer { harness.tearDown() }
+        // A large offer generation forces the child layout's own generation field
+        // (not the legacy bit position); cancel must still match it.
+        let generation: UInt64 = 5
+        let childID = ClipboardTransferID.makeChild(
+            generation: generation, repIndex: 0, childSeq: 9, hostMinted: false)
+        harness.receiver.handleBegin(
+            .with {
+                $0.generation = generation
+                $0.transferID = childID
+                $0.uti = "public.data"
+                $0.totalBytes = 1_000_000
+                $0.isInline = false
+                $0.filename = "childpartial.bin"
+            })
+        harness.receiver.handleChunk(
+            .with {
+                $0.transferID = childID; $0.offset = 0; $0.data = Data(count: Self.chunk)
+            })
+        try await pollUntil {
+            materializedFiles(under: harness.stagingTempRoot).contains {
+                $0.lastPathComponent == "childpartial.bin"
+            }
+        }
+        harness.receiver.cancel(generation: generation)
+        try await pollUntil {
+            !materializedFiles(under: harness.stagingTempRoot).contains {
+                $0.lastPathComponent == "childpartial.bin"
+            }
+        }
+        #expect(harness.collector.representation(childID) == nil)
+    }
+
     @Test("an orphan chunk for an unknown transfer is ignored")
     func orphanChunkIgnored() async throws {
         let harness = try roomyHarness()

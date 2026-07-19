@@ -43,6 +43,17 @@ struct HostClipboardPullRouterTests {
             lock.withLock { cancelCallStorage = (generation, repIndex) }
         }
 
+        func pullStagedChild(
+            generation: UInt64, repIndex: Int, childSeq: UInt32, relativePath: String,
+            onProgress: @escaping @Sendable (UInt64, UInt64) -> Void
+        ) -> Result<String, FileProviderPullError> {
+            .success("/staged/\(label)/child")
+        }
+
+        func cancelStagedChildPull(generation: UInt64, repIndex: Int, childSeq: UInt32) {
+            lock.withLock { cancelCallStorage = (generation, repIndex) }
+        }
+
         // Unused by the router tests, which exercise only the relay pull path.
         func copyToMacFileURL(generation: UInt64, repIndex: Int) -> URL? { nil }
     }
@@ -72,6 +83,20 @@ struct HostClipboardPullRouterTests {
         }
 
         func cancelStagedPull(generation: UInt64, repIndex: Int) {
+            lock.withLock { cancelCallStorage = (generation, repIndex) }
+        }
+
+        func pullStagedChild(
+            generation: UInt64, repIndex: Int, childSeq: UInt32, relativePath: String,
+            onProgress: @escaping @Sendable (UInt64, UInt64) -> Void
+        ) -> Result<String, FileProviderPullError> {
+            lock.withLock { hasEnteredStorage = true }
+            entered.notify()
+            releaseSemaphore.wait()
+            return .success("/staged/blocked/child")
+        }
+
+        func cancelStagedChildPull(generation: UInt64, repIndex: Int, childSeq: UInt32) {
             lock.withLock { cancelCallStorage = (generation, repIndex) }
         }
 

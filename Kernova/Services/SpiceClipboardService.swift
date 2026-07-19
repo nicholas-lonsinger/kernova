@@ -43,6 +43,9 @@ final class SpiceClipboardService: ClipboardServicing {
     /// Text-only until the SPICE rich-format follow-up to issue #112.
     var supportsBinaryRepresentations: Bool { false }
 
+    // Linux/SPICE is text-only, so folder placeholder trees never apply.
+    var supportsDirectoryTree: Bool { false }
+
     /// Bumped once per inbound guest clipboard text (see `ClipboardServicing`),
     /// so the passthrough coordinator writes guest content to the host pasteboard.
     private(set) var inboundOfferSeq: UInt64 = 0

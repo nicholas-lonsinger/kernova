@@ -76,6 +76,21 @@ final class VsockGuestControlAgent: @unchecked Sendable {
     /// (symmetric with the host's own gate). Guarded by `lock`.
     private var hostSupportsClipboardStreaming = false
 
+    /// Whether the host advertised the folder placeholder-tree capability
+    /// (`clipboard.dirtree.v1`) in its `Hello`.
+    ///
+    /// Guarded by `lock`; read (via
+    /// `hostSupportsClipboardDirTree`) at offer/consume time by the clipboard
+    /// agent to decide whether a directory rep crosses as a placeholder tree or
+    /// the eager-archive fallback. Reset per connection.
+    private var hostSupportsClipboardDirTreeStorage = false
+
+    /// Whether the host advertised `clipboard.dirtree.v1` — the mutually
+    /// negotiated gate for folder placeholder trees.
+    ///
+    /// Thread-safe.
+    var hostSupportsClipboardDirTree: Bool { lock.withLock { hostSupportsClipboardDirTreeStorage } }
+
     /// Production init — connects to the control port with default cadences.
     convenience init(
         onPolicy: (@Sendable (Kernova_V1_PolicyUpdate) -> Void)? = nil,
@@ -246,8 +261,10 @@ final class VsockGuestControlAgent: @unchecked Sendable {
         switch frame.payload {
         case .hello(let hello):
             let hostStreams = hello.capabilities.contains(KernovaCapability.clipboardStreamV1)
+            let hostDirTree = hello.capabilities.contains(KernovaCapability.clipboardDirTreeV1)
             lock.withLock {
                 hostSupportsClipboardStreaming = hostStreams
+                hostSupportsClipboardDirTreeStorage = hostDirTree
                 hostBundledAgentVersionStorage = hello.bundledAgentVersion
             }
             Self.logger.notice(
@@ -275,9 +292,9 @@ final class VsockGuestControlAgent: @unchecked Sendable {
                 "PolicyUpdate received (logForwarding=\(effective.logForwardingEnabled, privacy: .public), clipboard=\(effective.clipboardSharingEnabled, privacy: .public))"
             )
             onPolicy?(effective)
-        case .clipboardOffer, .clipboardRequest, .clipboardRelease, .clipboardStreamBegin,
-            .clipboardChunk, .clipboardStreamEnd, .clipboardStreamAck, .clipboardStreamAbort,
-            .logRecord, .none:
+        case .clipboardOffer, .clipboardRequest, .clipboardTreeFetch, .clipboardRelease,
+            .clipboardStreamBegin, .clipboardChunk, .clipboardStreamEnd, .clipboardStreamAck,
+            .clipboardStreamAbort, .logRecord, .none:
             Self.logger.warning("Unexpected payload on control channel — wrong port")
         }
     }

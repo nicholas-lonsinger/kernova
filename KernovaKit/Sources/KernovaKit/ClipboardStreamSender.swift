@@ -220,6 +220,16 @@ public final class ClipboardStreamSender: @unchecked Sendable {
                 transfer: transfer, code: "read.error",
                 message: "Cannot stream a pending-remote representation")
             return
+        case .directory:
+            // A source-directory rep (folder placeholder tree) is never streamed
+            // directly — the producer walks it for a listing, streams a confined
+            // child, or archives it at request time, converting to `.inMemory`/
+            // `.file` first.
+            assertionFailure("Cannot stream a source-directory representation")
+            sendAbort(
+                transfer: transfer, code: "read.error",
+                message: "Cannot stream a source-directory representation")
+            return
         }
         defer { reader.close() }
 

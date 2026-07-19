@@ -128,17 +128,23 @@ Honest caveats this principle does **not** waive:
   the over-total refusal in the clipboard window immediately when the toggle is already known
   off, so the user isn't left with a silent paste failure. That residual cap is
   **accepted-under-constraint**, not a §1 defect: it is deadline-derived (the OS paste clock,
-  not Kernova, bounds the fallback). On the host, only plain-file reps count toward the total —
-  directories are pulled eagerly at "Copy to Mac" click, never through a deadline-bound
-  pasteboard callback.
+  not Kernova, bounds the fallback). With the `clipboard.dirtree.v1` capability negotiated (§6,
+  #422) a copied directory is lazy-eligible on both directions and routes through the File
+  Provider as a placeholder tree when the toggle is on; only when the capability is absent (an
+  old peer) or the toggle is off does a directory fall back to the size-capped sync path, where
+  it counts toward the total by its stat-walk estimate and the producer archives it at request
+  time (never at copy). Without the capability, a copied directory on the host is pulled eagerly
+  at "Copy to Mac" click (the pre-D1b-folders behavior), never through a deadline-bound callback.
 - The **mirror-image host→guest path carries the same total cap** (#561), symmetric with
   "Copy to Mac": the guest's synchronous pull refuses the whole non-inline set (files **and**
   directories, minus any File-Provider-routed reps) when it totals over
   `maxDeadlineSafeFileBytes`, reporting one `clipboard.paste.too.large` back to the host rather
-  than delivering a piecemeal subset. Directories always count toward the guest's total: a
-  folder paste has no File-Provider-routed escape hatch on the guest yet (D1b folders), so it
-  rides this same synchronous path regardless of the toggle — the one asymmetry with the host,
-  whose directory pull is eager and never deadline-bound. Both directions suppress the
+  than delivering a piecemeal subset. A directory counts toward the guest's total only when it
+  is *not* File-Provider-routed: with `clipboard.dirtree.v1` negotiated and the toggle on, a
+  folder paste routes through the guest File Provider as a placeholder tree (no deadline, no
+  cap) exactly like a plain file; without the capability, or with the toggle off, the folder
+  rides this synchronous path (counting toward the total by its estimate, extracting the
+  request-time-built archive). The two directions are now symmetric on folders. Both suppress the
   offer-time advertiser fetch that once made an uncapped pull fire with no paste at all — each
   side's promise write is `.currentHostOnly` (§3, #542/#408) — so the sync-promise pull runs
   only on a real paste, and the cap guards that real paste.
@@ -191,7 +197,11 @@ bounded pull — see §5).
   in the window instead of a silent paste failure.
 - **Serializing a directory into an archive is materialization.** Building a folder's `.aar` at
   copy time — a standing, full-size on-disk duplicate of the source paid before any paste — is the
-  forbidden eager case, not an exception to it. Defer the archive to consume, and stream it (§2).
+  forbidden eager case, not an exception to it. With `clipboard.dirtree.v1` negotiated (§6, #422)
+  no archive is built at all: the producer retains the *source* folder and walks it on demand
+  (a listing, then per-child streams), so a folder paste pays for exactly the child files the
+  consumer materializes. Only the capability-absent / toggle-off fallback still archives, and it
+  is deferred to **request** time (never copy time) and bounded by the deadline-safe cap (§2).
 
 ### 4. One data plane; gating is a checkpoint, not a fork
 
@@ -238,6 +248,32 @@ the destination asks — not earlier.
   text) is a fidelity defect.
 - Round-trip equality is the bar: content copied on one side and pasted on the other must be
   indistinguishable from a native copy/paste, across every flavor the destination might request.
+- **Directory fidelity rides File Provider item metadata, not AppleArchive** (folder D1b,
+  `clipboard.dirtree.v1`, #422). A folder placeholder tree carries per-node fidelity in its
+  `ClipboardTreeListing` (each node's kind/size/perms/mtime, plus the root folder's own mtime via
+  `root_mtime_ms` — without it the pasted folder lands with an epoch date) and reconstructs it on
+  the `NSFileProviderItem`: symlinks via `symlinkTargetPath` + `UTType.symbolicLink` (recorded,
+  never followed), the executable bit via `fileSystemFlags` (the FP item surface carries **user**
+  read/write/execute only — group/other permission bits do not cross on this path), empty
+  directories as enumerable containers, and modification dates via `contentModificationDate`.
+  **OS packages (.app/.rtfd) are served as plain `.folder` containers in the domain** — a
+  package-conforming `contentType` makes the system fetch the container as one atomic file
+  (observed live as Finder error -36) instead of enumerating its children; the pasted copy still
+  opens as a package because LaunchServices derives packageness of an on-disk directory from its
+  extension/bundle bit (the `.app`-signature acid test: a bundle's code signature lives in
+  ordinary files — the Mach-O and `_CodeSignature/` — which a faithful per-child copy preserves).
+  **Known gap:** extended attributes (`xattr`) are **not** carried
+  through the File Provider item surface today (`NSFileProviderItem.extendedAttributes` governs
+  the domain's own sync, and whether it materializes onto a pasted-out copy is unverified). A
+  file's data, structure, permissions, and mtime cross faithfully; xattrs (e.g.
+  `com.apple.quarantine`, Finder tags) do not. Tracked as a follow-up (#603) — verify live before
+  relying on xattr round-trip. The destination side can also *add* metadata: Finder stamps
+  `com.apple.FinderInfo` on bundle-named directories (.app/.appex/.bundle) it creates during the
+  copy, which `codesign --verify --strict` reports as detritus on an otherwise byte-identical
+  bundle (verified live: the pasted bundle passes strict verification after `xattr -cr`; a plain
+  `cp -R` of a sealed system app shows the same class of divergence). The capability-absent / toggle-off archive fallback preserves the
+  full canonical key set (including xattrs) via AppleArchive, so it is the higher-fidelity path
+  when xattrs matter.
 
 ### 7. Integrity is not negotiable for speed
 
@@ -391,8 +427,8 @@ fix, not just whether to fix it. (macOS-guest issues only; Linux/Windows out of 
 | **#392** — make host "Copy to Mac" write the pasteboard lazily | §3 Pay on consume | The one place inbound content is still eager. Convert to a provider so bytes are read only when the destination pastes — in both directions, laziness is the rule. ✓ **Resolved** — the host pasteboard write is a lazy provider (#408); every plain-file rep is routed through a host File Provider placeholder at paste time (#434 single-file, #559 multi-file). |
 | **#394** — inline payloads SHA-256'd redundantly and on the main thread | §8 Keep the thread free, §7 Integrity | Remove the **redundant** hashes and move the unavoidable one off the main actor (§8). Do **not** drop the end-to-end verify hash (§7) — redundant work goes, the only integrity check stays. ✓ **Resolved** — editor hashing moved off the main actor on a debounce (#413). |
 | **#377** — throughput is software-bound; validate on real vsock, then cut per-chunk overhead | Ordering (marginal overhead), Engineering practices | Capability is already met; this is pure §-ordering step 2. **Measure on real vsock first** (verify at the seam), then cut the avoidable per-chunk copy. Never ship a chunk-size bump without co-scaling the window. |
-| **#376** — File Provider domain for large-file paste (no 60 s deadline) | §2 Disk-as-fallback (on-demand), §13 OS deadlines, §11 Sandbox-forward | This is the canonical §2 mechanism: instant placeholder, on-demand `fetchContents`, write once at the destination, native progress, no deadline. Also killed #371's 2×-disk. Extension can't open vsock — relay through the agent (§11). **Partially shipped** — D1a (guest transport) landed in #425; the host-side "Copy to Mac" mirror (D2) is the separate issue #424, shipped in #434; D1b multi-file landed with the unified paste-time routing (§3's routing bullet — every eligible plain-file rep in an offer routes, not just a single one), and the host "Copy to Mac" mirror of that reshape landed in #559. Remaining phases (folders via the placeholder-tree design, progress #426) tracked on the issue. |
-| **#422** — a directory crosses as a fully materialized archive, staged whole on **both** sides (≈3N peak disk) | §2 (no reflexive intermediate copy), §3 (pay on consume), ordering (bounded peak), §12 (smarter wins) | Stream the (de)serialization both ways and hash **inline** (§7); defer source archiving to paste via a negotiated offer that doesn't need exact size/SHA up front. Kernova's own disk for the transfer must approach zero beyond the destination. The File Provider arc it was sequenced after has landed — #376 D1a (#425) and the #424 host mirror (#434) — no longer blocked. |
+| **#376** — File Provider domain for large-file paste (no 60 s deadline) | §2 Disk-as-fallback (on-demand), §13 OS deadlines, §11 Sandbox-forward | This is the canonical §2 mechanism: instant placeholder, on-demand `fetchContents`, write once at the destination, native progress, no deadline. Also killed #371's 2×-disk. Extension can't open vsock — relay through the agent (§11). **Partially shipped** — D1a (guest transport) landed in #425; the host-side "Copy to Mac" mirror (D2) is the separate issue #424, shipped in #434; D1b multi-file landed with the unified paste-time routing (§3's routing bullet — every eligible plain-file rep in an offer routes, not just a single one), and the host "Copy to Mac" mirror of that reshape landed in #559. Folders now cross via the placeholder-tree design too (D1b folders, negotiated `clipboard.dirtree.v1`, #422) — a directory rep pastes as a placeholder tree with per-child fetch on both directions, with the eager-archive path kept only as the capability-absent / toggle-off fallback (archived at request time). Progress (#426) landed. |
+| **#422** — a directory crosses as a fully materialized archive, staged whole on **both** sides (≈3N peak disk) | §2 (no reflexive intermediate copy), §3 (pay on consume), ordering (bounded peak), §12 (smarter wins) | ✓ **Resolved** — the folder placeholder-tree design (D1b folders, negotiated `clipboard.dirtree.v1`): a copied folder crosses as a File Provider placeholder *tree* — the producer retains the **source** folder and walks it on demand (a listing, then each child file over the SHA-verified stream), so **no archive is built at copy time on either side** and Kernova's own disk for the transfer approaches zero beyond the destination. The offer carries a stat-walk size *estimate* instead of the archive's exact byteCount+SHA. The toggle-off (or capability-absent) fallback keeps the capped archive path but archives at **request** time, not copy time; its intermediate is bounded because the deadline-safe total gate refuses a sync-bound directory set over `maxDeadlineSafeFileBytes` (§2) — that ≤`maxDeadlineSafeFileBytes` bound on the only path that still archives is what lets this close. Fidelity moved from AppleArchive to FP item metadata (§6). |
 | **#354** — clipboard transfer progress UI (bar + ring) | §13 Legibility, §9 bidirectional, §5 preview-only | Drive both indicators off existing transport progress, both directions; clear on terminal states. Progress is a window affordance — it must not touch the data path (§5). ✓ **Resolved** — progress bar + ring driven off transport progress (#417). |
 | **#82** — opt-in automatic clipboard passthrough | §4 One data plane | Passthrough is the gate-less mode of the **same** path — a change to *when consume is authorized*, not a parallel transport. ✓ **Resolved** — `ClipboardPassthroughCoordinator` (per VM, host-side only, no proto/`PolicyUpdate` change) polls the host pasteboard and funnels changes through the identical `ClipboardPasteboardIntake` → `grabIfChanged()` choke-point the window's Paste uses, and auto-invokes the shared `HostClipboardPublisher.publish` (the same lazy write "Copy to Mac" uses) on each new inbound offer. Marker filtering (§10) is inherited from the shared intake; echo is suppressed by the publisher's post-write `changeCount` (a digest can't be the key — inbound writes are lazy promises). Drives both transports; the `clipboardPassthroughEnabled` toggle requires explicit confirmation to enable and is hot-toggleable. |
 | **#145** — per-VM auth on the vsock listener | §10 Trust boundary | Required before non-trusted guest workloads; the host must authenticate the guest per VM. |

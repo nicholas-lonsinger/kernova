@@ -47,6 +47,21 @@ import Foundation
     /// whole pull, this call can reach the owner while a fetch is still in
     /// flight.
     func cancelFetch(generation: UInt64, repIndex: Int)
+
+    /// Pulls one **child** file of a directory rep's placeholder tree (folder
+    /// D1b, `clipboard.dirtree.v1`): the owner walks/opens the confined child at
+    /// `relativePath` within the source folder, streams it over vsock, stages it
+    /// into the shared app-group container, and replies with the staged path (or
+    /// an `NSError`). `childSeq` scopes the transfer distinctly from the rep and
+    /// its siblings (see `ClipboardTransferID`). Same non-blocking contract as
+    /// `fetchFile`.
+    func fetchChild(
+        generation: UInt64, repIndex: Int, childSeq: UInt32, relativePath: String,
+        reply: @escaping @Sendable (_ stagedPath: String?, _ error: NSError?) -> Void)
+
+    /// Best-effort abort of an in-flight `fetchChild` for `(generation, repIndex,
+    /// childSeq)`. One-way and idempotent, exactly like `cancelFetch`.
+    func cancelChildFetch(generation: UInt64, repIndex: Int, childSeq: UInt32)
 }
 
 /// The XPC interface the File Provider extension exports to the container app.
@@ -86,4 +101,12 @@ import Foundation
     /// never blocks — the handler only advances an `NSProgress`.
     func fetchProgressed(
         generation: UInt64, repIndex: Int, bytesTransferred: UInt64, totalBytes: UInt64)
+
+    /// The `fetchChild` counterpart of `fetchProgressed`, keyed additionally by
+    /// `childSeq` so a directory rep's concurrent child pulls drive their own
+    /// determinate download bars (folder D1b). Same one-way, best-effort,
+    /// version-skew-tolerant contract as `fetchProgressed`.
+    func childFetchProgressed(
+        generation: UInt64, repIndex: Int, childSeq: UInt32, bytesTransferred: UInt64,
+        totalBytes: UInt64)
 }

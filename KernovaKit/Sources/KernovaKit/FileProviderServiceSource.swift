@@ -79,10 +79,26 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
     private var nextProgressToken: UInt64 = 0
 
     /// Addresses one in-flight pull's progress handler — the same
-    /// `(generation, repIndex)` the owner keys its `fetchProgressed` push on.
+    /// `(generation, repIndex, childSeq)` the owner keys its progress push on
+    /// (`childSeq == 0` for a flat rep; `>= 1` for a directory rep's file node,
+    /// so a folder's concurrent child pulls each key distinctly — folder D1b).
     private struct ProgressKey: Hashable {
         let generation: UInt64
         let repIndex: Int
+        let childSeq: UInt32
+    }
+
+    /// What a pending pull addresses: a flat single-file rep, or one child file
+    /// of a directory rep's placeholder tree (folder D1b).
+    private enum PullTarget {
+        case flat
+        case child(childSeq: UInt32, relativePath: String)
+
+        /// `childSeq` for the progress key — `0` for a flat rep.
+        var childSeq: UInt32 {
+            if case .child(let childSeq, _) = self { return childSeq }
+            return 0
+        }
     }
 
     /// A registered progress handler plus the token that identifies its pull.
@@ -102,6 +118,8 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
     private final class PendingPull: Sendable {
         let generation: UInt64
         let repIndex: Int
+        /// What this pull addresses (a flat rep or a directory-tree child).
+        let target: PullTarget
         /// One-shot completion — the single arbiter across every racer that can
         /// finish this pull: the owner's reply, an XPC error, the reply timeout, the
         /// connect timeout, and user cancellation.
@@ -110,11 +128,12 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
         let once: OnceCompletion
 
         init(
-            generation: UInt64, repIndex: Int,
+            generation: UInt64, repIndex: Int, target: PullTarget,
             completion: @escaping (Result<String, NSError>) -> Void
         ) {
             self.generation = generation
             self.repIndex = repIndex
+            self.target = target
             self.once = OnceCompletion(completion)
         }
     }
@@ -271,7 +290,23 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
     func fetchProgressed(
         generation: UInt64, repIndex: Int, bytesTransferred: UInt64, totalBytes: UInt64
     ) {
-        let key = ProgressKey(generation: generation, repIndex: repIndex)
+        routeProgress(
+            key: ProgressKey(generation: generation, repIndex: repIndex, childSeq: 0),
+            bytesTransferred: bytesTransferred, totalBytes: totalBytes)
+    }
+
+    func childFetchProgressed(
+        generation: UInt64, repIndex: Int, childSeq: UInt32, bytesTransferred: UInt64,
+        totalBytes: UInt64
+    ) {
+        routeProgress(
+            key: ProgressKey(generation: generation, repIndex: repIndex, childSeq: childSeq),
+            bytesTransferred: bytesTransferred, totalBytes: totalBytes)
+    }
+
+    /// Routes an owner progress push to the keyed pull's registered handler, or
+    /// no-ops when none is registered (a late push for a finished pull).
+    private func routeProgress(key: ProgressKey, bytesTransferred: UInt64, totalBytes: UInt64) {
         let handler = lock.withLock { progressHandlers[key]?.handler }
         handler?(bytesTransferred, totalBytes)
     }
@@ -301,10 +336,42 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
             { _, _ in },
         completion: @escaping (Result<String, NSError>) -> Void
     ) -> FileProviderPullCancellation {
+        enqueue(
+            generation: generation, repIndex: repIndex, target: .flat, onProgress: onProgress,
+            completion: completion)
+    }
+
+    /// Pulls one child file of a directory rep's placeholder tree (folder D1b),
+    /// addressed by `(generation, repIndex, childSeq, relativePath)`.
+    ///
+    /// Same
+    /// non-blocking, one-shot, doorbell-and-timeout semantics as
+    /// `fetchStagedFile`.
+    func fetchStagedChild(
+        generation: UInt64, repIndex: Int, childSeq: UInt32, relativePath: String,
+        onProgress: @escaping @Sendable (_ bytesTransferred: UInt64, _ totalBytes: UInt64) -> Void =
+            { _, _ in },
+        completion: @escaping (Result<String, NSError>) -> Void
+    ) -> FileProviderPullCancellation {
+        enqueue(
+            generation: generation, repIndex: repIndex,
+            target: .child(childSeq: childSeq, relativePath: relativePath), onProgress: onProgress,
+            completion: completion)
+    }
+
+    /// Shared body of `fetchStagedFile`/`fetchStagedChild`: registers the pull's
+    /// progress handler, enqueues (or fast-paths) the pull, and returns its
+    /// cancellation handle.
+    private func enqueue(
+        generation: UInt64, repIndex: Int, target: PullTarget,
+        onProgress: @escaping @Sendable (_ bytesTransferred: UInt64, _ totalBytes: UInt64) -> Void,
+        completion: @escaping (Result<String, NSError>) -> Void
+    ) -> FileProviderPullCancellation {
         // Register the progress handler for the pull's lifetime and wrap the
         // completion so it is removed exactly once, on whichever terminal wins the
-        // pull's one-shot. A late `fetchProgressed` after this finds no handler.
-        let progressKey = ProgressKey(generation: generation, repIndex: repIndex)
+        // pull's one-shot. A late progress push after this finds no handler.
+        let progressKey = ProgressKey(
+            generation: generation, repIndex: repIndex, childSeq: target.childSeq)
         let progressToken: UInt64 = lock.withLock {
             nextProgressToken &+= 1
             let token = nextProgressToken
@@ -315,7 +382,8 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
             self?.unregisterProgress(key: progressKey, token: progressToken)
             completion(result)
         }
-        let pull = PendingPull(generation: generation, repIndex: repIndex, completion: completion)
+        let pull = PendingPull(
+            generation: generation, repIndex: repIndex, target: target, completion: completion)
         // The cancel handle the extension wires to `fetchContents`' `Progress`. It
         // strongly holds `pull` (but only weakly `self`), so a cancel after this
         // source is gone is a harmless no-op; `cancelPull` funnels through the pull's
@@ -383,8 +451,14 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
             logger.debug("fetchContents pull cancelled by user")
         }
         if wonRace, let dispatchedTo {
-            (dispatchedTo.remoteObjectProxy as? FileProviderRelay)?
-                .cancelFetch(generation: pull.generation, repIndex: pull.repIndex)
+            let relay = dispatchedTo.remoteObjectProxy as? FileProviderRelay
+            switch pull.target {
+            case .flat:
+                relay?.cancelFetch(generation: pull.generation, repIndex: pull.repIndex)
+            case .child(let childSeq, _):
+                relay?.cancelChildFetch(
+                    generation: pull.generation, repIndex: pull.repIndex, childSeq: childSeq)
+            }
         }
     }
 
@@ -424,12 +498,20 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
             once.fire(.failure(Self.serverUnreachable))
             return
         }
-        proxy.fetchFile(generation: pull.generation, repIndex: pull.repIndex) { path, error in
+        let reply: @Sendable (String?, NSError?) -> Void = { path, error in
             if let path {
                 once.fire(.success(path))
             } else {
                 once.fire(.failure(error ?? Self.serverUnreachable))
             }
+        }
+        switch pull.target {
+        case .flat:
+            proxy.fetchFile(generation: pull.generation, repIndex: pull.repIndex, reply: reply)
+        case .child(let childSeq, let relativePath):
+            proxy.fetchChild(
+                generation: pull.generation, repIndex: pull.repIndex, childSeq: childSeq,
+                relativePath: relativePath, reply: reply)
         }
     }
 

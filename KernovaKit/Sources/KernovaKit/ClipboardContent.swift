@@ -49,6 +49,15 @@ public struct ClipboardContent: Equatable, Sendable {
             /// preview (type · size · filename) without pulling, and is never
             /// handed to the sender.
             case pendingRemote(byteCount: Int)
+
+            /// A copied **source directory** whose tree is walked and streamed on
+            /// demand (folder placeholder tree, `clipboard.dirtree.v1`) rather
+            /// than archived at copy time. Producer side only: `url` is the
+            /// original folder and `byteCount` a stat-walk size estimate for the
+            /// offer/UI. Never handed to the stream sender (which refuses it) —
+            /// the producer walks it for a listing, opens a confined child, or
+            /// archives it at *request* time for the toggle-off fallback.
+            case directory(url: URL, estimatedByteCount: Int)
         }
 
         /// Uniform Type Identifier naming the format.
@@ -137,6 +146,24 @@ public struct ClipboardContent: Equatable, Sendable {
                 isDirectory: isDirectory)
         }
 
+        /// Creates a producer-side directory representation backed by its source
+        /// folder (folder placeholder tree).
+        ///
+        /// No archive is built: the tree is
+        /// walked/streamed on demand, with `estimatedByteCount` a stat-walk size
+        /// estimate for the offer. `uti` is the folder's content type (a package
+        /// UTI for a bundle so the pasted tree opens as a package, else
+        /// `public.folder`).
+        public init(
+            directorySourceURL url: URL, estimatedByteCount: Int, filename: String,
+            uti: String = ClipboardDirectoryArchive.directoryUTI
+        ) {
+            self.init(
+                uti: uti,
+                source: .directory(url: url, estimatedByteCount: estimatedByteCount),
+                filename: filename, isDirectory: true)
+        }
+
         /// Size of the representation's bytes, without loading a file-backed
         /// payload.
         public var byteCount: Int {
@@ -144,6 +171,7 @@ public struct ClipboardContent: Equatable, Sendable {
             case .inMemory(let data): return data.count
             case .file(_, let byteCount, _): return byteCount
             case .pendingRemote(let byteCount): return byteCount
+            case .directory(_, let byteCount): return byteCount
             }
         }
 
@@ -152,6 +180,13 @@ public struct ClipboardContent: Equatable, Sendable {
         public var isPendingRemote: Bool {
             if case .pendingRemote = source { return true }
             return false
+        }
+
+        /// The source folder URL for a producer-side `.directory` representation
+        /// (folder placeholder tree), or `nil` otherwise.
+        public var directorySourceURL: URL? {
+            if case .directory(let url, _) = source { return url }
+            return nil
         }
 
         /// The in-memory bytes, or `nil` for a file-backed representation
@@ -416,6 +451,17 @@ public struct ClipboardContent: Equatable, Sendable {
                 // materialized (.inMemory/.file) form. Echo suppression for these
                 // relies on change-count/identity guards, not digest equality.
                 hasher.update(data: Data([3]))
+                withUnsafeBytes(of: UInt64(byteCount).bigEndian) {
+                    hasher.update(bufferPointer: $0)
+                }
+            case .directory(_, let byteCount):
+                // Distinct domain tag (4) for a producer-side source-directory
+                // rep (folder placeholder tree): the source path and mtime are
+                // never hashed (they differ between hosts), so its identity is
+                // the folded folder name + this estimate. Stable per poll tick so
+                // the producer's own offer dedup works; directory reps are not
+                // cross-process digest-matched.
+                hasher.update(data: Data([4]))
                 withUnsafeBytes(of: UInt64(byteCount).bigEndian) {
                     hasher.update(bufferPointer: $0)
                 }

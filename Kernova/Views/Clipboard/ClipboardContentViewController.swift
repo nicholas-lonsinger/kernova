@@ -858,8 +858,10 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         }
         Task { @MainActor [weak self] in
             guard let self else { return }
+            let dirTree = self.instance.clipboardService?.supportsDirectoryTree ?? false
             let resolved = await ClipboardPasteboardIntake.read(
-                filesAt: urls, allowsBinary: allowsBinary, staging: staging, generation: generation)
+                filesAt: urls, allowsBinary: allowsBinary, staging: staging, generation: generation,
+                dirTree: dirTree)
             _ = self.apply(intake: resolved)
         }
     }
@@ -1008,9 +1010,10 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 let generation = self.stagingGeneration
                 self.stagingGeneration += 1
                 let staging = self.staging
+                let dirTree = self.instance.clipboardService?.supportsDirectoryTree ?? false
                 let resolved = await ClipboardPasteboardIntake.read(
                     filesAt: [url], allowsBinary: allowsBinary, staging: staging,
-                    generation: generation)
+                    generation: generation, dirTree: dirTree)
                 _ = self.apply(intake: resolved)
             }
         }

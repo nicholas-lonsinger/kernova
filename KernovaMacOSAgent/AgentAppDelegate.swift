@@ -151,6 +151,13 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
             }
         )
 
+        // Fold the mutually-negotiated folder placeholder-tree capability
+        // (`clipboard.dirtree.v1`) from the control Hello into the clipboard
+        // agent, read lazily at offer/paste time so it tracks reconnects.
+        clipboardAgent.peerSupportsDirTree = { [weak controlAgent] in
+            controlAgent?.hostSupportsClipboardDirTree ?? false
+        }
+
         self.vsockConnection = vsockConnection
         self.clipboardAgent = clipboardAgent
         self.controlAgent = controlAgent

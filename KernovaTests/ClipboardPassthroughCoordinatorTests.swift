@@ -26,6 +26,7 @@ struct ClipboardPassthroughCoordinatorTests {
         var clipboardContent: ClipboardContent = .empty
         var isConnected = true
         var supportsBinaryRepresentations = true
+        var supportsDirectoryTree = false
         var lastTransferIssue: ClipboardTransferIssue?
         private(set) var inboundOfferSeq: UInt64 = 0
 

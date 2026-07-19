@@ -200,8 +200,10 @@ final class ClipboardPassthroughCoordinator {
         stagingGeneration += 1
         Task { @MainActor [weak self] in
             guard let self else { return }
+            let dirTree = self.instance?.clipboardService?.supportsDirectoryTree ?? false
             let resolved = await ClipboardPasteboardIntake.read(
-                filesAt: urls, allowsBinary: allowsBinary, staging: staging, generation: generation)
+                filesAt: urls, allowsBinary: allowsBinary, staging: staging, generation: generation,
+                dirTree: dirTree)
             // The live service may have been torn down or replaced during the resolve.
             guard let service = self.instance?.clipboardService else { return }
             if case .content(let content, _) = resolved {

@@ -40,6 +40,19 @@ struct FileProviderServicingConnectorTests {
         func cancelFetch(generation: UInt64, repIndex: Int) {
             Issue.record("cancelFetch should never be called in FileProviderServicingConnector tests")
         }
+
+        func fetchChild(
+            generation: UInt64, repIndex: Int, childSeq: UInt32, relativePath: String,
+            reply: @escaping @Sendable (String?, NSError?) -> Void
+        ) {
+            Issue.record("fetchChild should never be called in FileProviderServicingConnector tests")
+            reply(nil, NSError(domain: NSCocoaErrorDomain, code: -1))
+        }
+
+        func cancelChildFetch(generation: UInt64, repIndex: Int, childSeq: UInt32) {
+            Issue.record(
+                "cancelChildFetch should never be called in FileProviderServicingConnector tests")
+        }
     }
 
     /// A `FileProviderServicingConnector.ConnectOperation` test double.
@@ -140,6 +153,11 @@ struct FileProviderServicingConnectorTests {
         // conformance to the extended `FileProviderControl`.
         func fetchProgressed(
             generation: UInt64, repIndex: Int, bytesTransferred: UInt64, totalBytes: UInt64
+        ) {}
+
+        func childFetchProgressed(
+            generation: UInt64, repIndex: Int, childSeq: UInt32, bytesTransferred: UInt64,
+            totalBytes: UInt64
         ) {}
 
         /// Invalidates the accepted connection (breaking the connection↔peer

@@ -92,8 +92,8 @@ final class VsockGuestLogService {
                 "Guest agent error for '\(label, privacy: .public)': \(error.code, privacy: .public) — \(error.message, privacy: .public)"
             )
         case .hello, .heartbeat, .policyUpdate, .clipboardOffer, .clipboardRequest,
-            .clipboardRelease, .clipboardStreamBegin, .clipboardChunk, .clipboardStreamEnd,
-            .clipboardStreamAck, .clipboardStreamAbort:
+            .clipboardTreeFetch, .clipboardRelease, .clipboardStreamBegin, .clipboardChunk,
+            .clipboardStreamEnd, .clipboardStreamAck, .clipboardStreamAbort:
             // Hello, Heartbeat, and PolicyUpdate belong on the control
             // channel; clipboard payloads belong on the clipboard channel.
             // Anything other than LogRecord/Error reaching here means the peer

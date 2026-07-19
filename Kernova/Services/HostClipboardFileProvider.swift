@@ -28,14 +28,14 @@ protocol HostClipboardDomainCoordinating: AnyObject {
     /// latency inside the paste (host mirror of the guest's `prepareForOffer`).
     func prepareForCopy()
 
-    /// Paste-time publish of an offer's eligible plain-file reps as dataless
-    /// placeholders, setting the relay pull source to `source` and waiting for
-    /// the placeholders. Returns each rep's domain URL keyed by rep index, or
-    /// `nil` when the File Provider isn't usable so the caller falls back to the
-    /// size-capped synchronous pull.
+    /// Paste-time publish of an offer's eligible plain-file reps (and directory
+    /// reps as placeholder trees, folder D1b) as dataless placeholders, setting
+    /// the relay pull source to `source` and waiting for the placeholders. Returns
+    /// each rep's domain URL keyed by rep index, or `nil` when the File Provider
+    /// isn't usable so the caller falls back to the size-capped synchronous pull.
     func publishItemsForPaste(
         source: any HostClipboardFileRepProviding, generation: UInt64,
-        items: [FileProviderPublishItem]
+        items: [FileProviderPublishItem], folders: [FileProviderPublishFolder]
     ) -> [Int: URL]?
 
     /// Clears the current offer, but only if `source` published it.
@@ -150,11 +150,11 @@ final class HostClipboardFileProvider: HostClipboardDomainCoordinating {
     /// mirror: nothing exists in the domain until a paste.
     func publishItemsForPaste(
         source: any HostClipboardFileRepProviding,
-        generation: UInt64, items: [FileProviderPublishItem]
+        generation: UInt64, items: [FileProviderPublishItem], folders: [FileProviderPublishFolder]
     ) -> [Int: URL]? {
         router.setSource(source)
         return domainHost.publishItems(
-            generation: generation, items: items, waitForPlaceholder: true)
+            generation: generation, items: items, folders: folders, waitForPlaceholder: true)
     }
 
     /// Clears the current offer, but only if `source` is the one that published
@@ -243,6 +243,35 @@ final class HostClipboardPullRouter: FileProviderPullProvider, @unchecked Sendab
         let source = lock.withLock { dispatchedSources[key] ?? self.source }
         source?.cancelStagedPull(generation: generation, repIndex: repIndex)
     }
+
+    func fetchStagedChild(
+        generation: UInt64, repIndex: Int, childSeq: UInt32, relativePath: String,
+        onProgress: @escaping @Sendable (UInt64, UInt64) -> Void = { _, _ in }
+    ) -> Result<String, FileProviderPullError> {
+        // Route the same way `fetchStagedFile` does — a folder's children are
+        // pulled from the service that published the offer. `PullKey` keys on
+        // (generation, repIndex), which is enough: only one directory rep per
+        // (generation, repIndex) exists, and its children serialize through the
+        // same publishing service.
+        let key = PullKey(generation: generation, repIndex: repIndex)
+        let source: (any HostClipboardFileRepProviding)? = lock.withLock {
+            guard let current = self.source else { return nil }
+            dispatchedSources[key] = current
+            return current
+        }
+        guard let source else { return .failure(.noCurrentOffer) }
+        defer { lock.withLock { dispatchedSources[key] = nil } }
+        return source.pullStagedChild(
+            generation: generation, repIndex: repIndex, childSeq: childSeq,
+            relativePath: relativePath, onProgress: onProgress)
+    }
+
+    func cancelStagedChildPull(generation: UInt64, repIndex: Int, childSeq: UInt32) {
+        let key = PullKey(generation: generation, repIndex: repIndex)
+        let source = lock.withLock { dispatchedSources[key] ?? self.source }
+        source?.cancelStagedChildPull(
+            generation: generation, repIndex: repIndex, childSeq: childSeq)
+    }
 }
 
 /// Implemented by a clipboard service so the host File Provider coordinator — and
@@ -270,6 +299,19 @@ protocol HostClipboardFileRepProviding: AnyObject, Sendable {
     /// idempotent — a cancel for an unknown or already-finished transfer is a
     /// no-op. Called off-main on the File Provider relay's XPC queue.
     func cancelStagedPull(generation: UInt64, repIndex: Int)
+
+    /// Pulls one child file `(generation, repIndex, childSeq)` at `relativePath`
+    /// within a directory rep's placeholder tree (folder D1b), stages it, and
+    /// returns the staged path. Same off-main, no-deadline contract as
+    /// `pullStagedFile`.
+    func pullStagedChild(
+        generation: UInt64, repIndex: Int, childSeq: UInt32, relativePath: String,
+        onProgress: @escaping @Sendable (UInt64, UInt64) -> Void
+    ) -> Result<String, FileProviderPullError>
+
+    /// Aborts an in-flight `pullStagedChild` for `(generation, repIndex,
+    /// childSeq)`. Best-effort and idempotent.
+    func cancelStagedChildPull(generation: UInt64, repIndex: Int, childSeq: UInt32)
 
     /// Resolves the pasteboard `.fileURL` for a lazy plain-file rep at paste time.
     ///

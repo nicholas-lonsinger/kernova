@@ -263,12 +263,26 @@ final class FakeFileProviderPublisher: FileProviderPublishing, @unchecked Sendab
 
     private let lock = NSLock()
     private var publishedStorage: [Published] = []
+    private var publishedFoldersStorage: [FileProviderPublishFolder] = []
     private var publishCallCountStorage = 0
     private var clearCountStorage = 0
     private var prepareCountStorage = 0
     private var rootToReturnStorage: URL?
+    private var availabilityStorage: FileProviderAvailability = .ready
 
     init(rootToReturn: URL?) { self.rootToReturnStorage = rootToReturn }
+
+    /// The availability the routing gate checks before publishing; defaults to
+    /// `.ready` so a non-nil `rootToReturn` routes.
+    ///
+    /// Set `.needsEnabling` to model
+    /// the toggle-off gate (routing skipped entirely).
+    var availabilityToReturn: FileProviderAvailability {
+        get { lock.withLock { availabilityStorage } }
+        set { lock.withLock { availabilityStorage = newValue } }
+    }
+
+    var availability: FileProviderAvailability { lock.withLock { availabilityStorage } }
 
     /// The domain root `publishItems` builds its returned URLs under; `nil`
     /// models an unusable File Provider (publish declines, callers fall back).
@@ -282,7 +296,8 @@ final class FakeFileProviderPublisher: FileProviderPublishing, @unchecked Sendab
     }
 
     func publishItems(
-        generation: UInt64, items: [FileProviderPublishItem], waitForPlaceholder: Bool
+        generation: UInt64, items: [FileProviderPublishItem],
+        folders: [FileProviderPublishFolder], waitForPlaceholder: Bool
     ) -> [Int: URL]? {
         lock.withLock {
             publishCallCountStorage += 1
@@ -292,9 +307,13 @@ final class FakeFileProviderPublisher: FileProviderPublishing, @unchecked Sendab
                         generation: generation, repIndex: $0.repIndex, filename: $0.filename,
                         byteCount: $0.byteCount, uti: $0.uti)
                 })
+            publishedFoldersStorage.append(contentsOf: folders)
             guard let root = rootToReturnStorage else { return nil }
             var urls: [Int: URL] = [:]
             for item in items { urls[item.repIndex] = root.appendingPathComponent(item.filename) }
+            for folder in folders {
+                urls[folder.repIndex] = root.appendingPathComponent(folder.filename)
+            }
             return urls
         }
     }
@@ -304,6 +323,7 @@ final class FakeFileProviderPublisher: FileProviderPublishing, @unchecked Sendab
     func clearOffer() { lock.withLock { clearCountStorage += 1 } }
 
     var published: [Published] { lock.withLock { publishedStorage } }
+    var publishedFolders: [FileProviderPublishFolder] { lock.withLock { publishedFoldersStorage } }
     /// Number of `publishItems` calls (each may carry several items).
     var publishCallCount: Int { lock.withLock { publishCallCountStorage } }
     var clearCount: Int { lock.withLock { clearCountStorage } }

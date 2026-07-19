@@ -50,6 +50,19 @@ public protocol FileProviderPullProvider: AnyObject, Sendable {
     /// idempotent — a cancel for an unknown or already-finished transfer is a
     /// no-op.
     func cancelStagedPull(generation: UInt64, repIndex: Int)
+
+    /// Pulls one child file `(generation, repIndex, childSeq)` at `relativePath`
+    /// within a directory rep (folder D1b), stages it into the shared container,
+    /// and returns the staged path (or why it failed). Same off-main, no-deadline
+    /// contract as `fetchStagedFile`.
+    func fetchStagedChild(
+        generation: UInt64, repIndex: Int, childSeq: UInt32, relativePath: String,
+        onProgress: @escaping @Sendable (_ bytesTransferred: UInt64, _ totalBytes: UInt64) -> Void
+    ) -> Result<String, FileProviderPullError>
+
+    /// Aborts an in-flight `fetchStagedChild` for `(generation, repIndex,
+    /// childSeq)`. Best-effort and idempotent.
+    func cancelStagedChildPull(generation: UInt64, repIndex: Int, childSeq: UInt32)
 }
 
 /// Why a relay pull failed, mapped to an `NSFileProviderError` by the relay.
@@ -82,12 +95,55 @@ public struct FileProviderPublishItem: Equatable, Sendable {
     }
 }
 
+/// A directory representation to publish as a placeholder **tree** (folder D1b).
+///
+/// Salt-less: the domain host stamps its own `sessionSalt` (#541) onto the
+/// resulting `FileProviderManifest.FolderRep`. The consumer builds this from a
+/// received tree listing (see `ClipboardDirectoryTree.makeFolderRep`, whose
+/// `nodes` this carries).
+public struct FileProviderPublishFolder: Equatable, Sendable {
+    /// Index of the directory representation within the offer.
+    public var repIndex: Int
+    /// Folder name — the root placeholder's name under the domain root.
+    public var filename: String
+    /// Folder/package content UTI (root `contentType`).
+    public var uti: String
+    /// Whether the root folder is an OS package.
+    public var isPackage: Bool
+    /// Stat-walk size estimate for the root's `documentSize`.
+    public var byteCount: UInt64
+    /// Root folder modification time (ms since epoch).
+    public var mtimeMs: Int64
+    /// Every descendant node (salt-independent).
+    public var nodes: [FileProviderManifest.FolderRep.Node]
+
+    /// Creates a publishable folder tree.
+    public init(
+        repIndex: Int, filename: String, uti: String, isPackage: Bool, byteCount: UInt64,
+        mtimeMs: Int64, nodes: [FileProviderManifest.FolderRep.Node]
+    ) {
+        self.repIndex = repIndex
+        self.filename = filename
+        self.uti = uti
+        self.isPackage = isPackage
+        self.byteCount = byteCount
+        self.mtimeMs = mtimeMs
+        self.nodes = nodes
+    }
+}
+
 /// Implemented by the host so the clipboard owner can surface file reps as
 /// placeholders.
 ///
 /// Lets the clipboard owner publish an offer's file reps as dataless
 /// placeholders and get their pasteboard URLs. Called only on the main queue.
 public protocol FileProviderPublishing: AnyObject, Sendable {
+    /// Current File Provider usability, read on the main queue (like every method
+    /// here). Lets a paste-time caller skip the more expensive routing work (e.g.
+    /// a folder tree's listing fetch) when the domain isn't `.ready`, rather than
+    /// doing it only for `publishItems` to fall back to `nil`.
+    var availability: FileProviderAvailability { get }
+
     /// Publishes `items` as the current offer and returns each item's `file://`
     /// pasteboard URL keyed by rep index, or `nil` when the File Provider isn't
     /// usable (sharing off, domain not registered, or the user toggle is off)
@@ -98,8 +154,15 @@ public protocol FileProviderPublishing: AnyObject, Sendable {
     /// caller hands the URLs straight to a consumer that resolves them
     /// immediately — while `false` forces the enumeration asynchronously, for
     /// an offer-time caller whose offer→paste gap covers the listing.
+    ///
+    /// `folders` publishes directory reps as placeholder *trees* (folder D1b)
+    /// alongside the flat `items`; the returned map keys both by rep index. The
+    /// paste-time barrier verifies only the root-level dirents (flat files +
+    /// folder roots) — a folder's descendants enumerate lazily as the consumer
+    /// descends.
     func publishItems(
-        generation: UInt64, items: [FileProviderPublishItem], waitForPlaceholder: Bool
+        generation: UInt64, items: [FileProviderPublishItem],
+        folders: [FileProviderPublishFolder], waitForPlaceholder: Bool
     ) -> [Int: URL]?
 
     /// Cheap warm-up ahead of a possible paste-time publish: pre-connects the
@@ -752,10 +815,11 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     /// their domain URLs by rep index, or `nil` to fall back to the synchronous
     /// provider path.
     public func publishItems(
-        generation: UInt64, items: [FileProviderPublishItem], waitForPlaceholder: Bool
+        generation: UInt64, items: [FileProviderPublishItem],
+        folders: [FileProviderPublishFolder], waitForPlaceholder: Bool
     ) -> [Int: URL]? {
         dispatchPrecondition(condition: .onQueue(.main))
-        guard !items.isEmpty else { return nil }
+        guard !items.isEmpty || !folders.isEmpty else { return nil }
         // Only advertise placeholders we can actually materialize: a disabled or
         // not-yet-ready domain would leave a paste that never completes, so fall
         // back to the synchronous provider path in those cases.
@@ -790,16 +854,27 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
         // the offer-time `prepareForOffer` warm-up.
         relayTransport.ensureConnected()
 
-        // Placeholders share one flat domain root, so names must be unique
-        // within the offer — a multi-item copy can legitimately carry two
-        // same-named files from different folders.
-        let filenames = Self.deduplicatedFilenames(items.map(\.filename))
-        let manifestItems = zip(items, filenames).map { item, filename in
+        // Root-level placeholders (flat files + folder roots) share one flat
+        // domain root, so names must be unique across BOTH — a multi-item copy
+        // can legitimately carry two same-named entries from different folders.
+        // Dedup them together in a stable order (flat items first, then folder
+        // roots) so a flat file and a folder root never collide on a dirent.
+        let rootNames = Self.deduplicatedFilenames(items.map(\.filename) + folders.map(\.filename))
+        let itemNames = Array(rootNames.prefix(items.count))
+        let folderNames = Array(rootNames.suffix(folders.count))
+        let manifestItems = zip(items, itemNames).map { item, filename in
             FileProviderManifest.Item(
                 sessionSalt: sessionSalt, generation: generation, repIndex: item.repIndex,
                 filename: filename, byteCount: item.byteCount, uti: item.uti)
         }
-        let manifest = FileProviderManifest(generation: generation, items: manifestItems)
+        let manifestFolders = zip(folders, folderNames).map { folder, filename in
+            FileProviderManifest.FolderRep(
+                sessionSalt: sessionSalt, generation: generation, repIndex: folder.repIndex,
+                filename: filename, uti: folder.uti, isPackage: folder.isPackage,
+                byteCount: folder.byteCount, mtimeMs: folder.mtimeMs, nodes: folder.nodes)
+        }
+        let manifest = FileProviderManifest(
+            generation: generation, items: manifestItems, folders: manifestFolders)
         do {
             try container.writeManifest(manifest)
         } catch {
@@ -829,8 +904,13 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
             // on timeout or an unverified dirent this degrades to the size-capped
             // sync path (`nil`) instead of advertising a URL that would fail the
             // paste with -43.
-            let expected = Dictionary(
+            // Root-level dirents only (flat files + folder roots); a folder's
+            // descendants enumerate lazily as the consumer descends, so verifying
+            // them here would be both unnecessary and (for a 100k-entry tree)
+            // impossible within the barrier budget.
+            var expected: [String: String] = Dictionary(
                 uniqueKeysWithValues: manifestItems.map { ($0.filename, $0.itemIdentifier) })
+            for folder in manifestFolders { expected[folder.filename] = folder.rootIdentifier }
             guard awaitPlaceholderReconciliation(rootURL: rootURL, expected: expected) else {
                 return nil
             }
@@ -843,11 +923,14 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
             }
         }
         var urls: [Int: URL] = [:]
-        for (item, filename) in zip(items, filenames) {
+        for (item, filename) in zip(manifestItems, itemNames) {
             urls[item.repIndex] = rootURL.appendingPathComponent(filename)
         }
+        for (folder, filename) in zip(manifestFolders, folderNames) {
+            urls[folder.repIndex] = rootURL.appendingPathComponent(filename)
+        }
         logger.info(
-            "FP published \(items.count, privacy: .public) item(s) (gen=\(generation, privacy: .public))"
+            "FP published \(items.count, privacy: .public) file(s) + \(folders.count, privacy: .public) folder(s) (gen=\(generation, privacy: .public))"
         )
         return urls
     }
@@ -1317,6 +1400,52 @@ public final class FileProviderRelayService: NSObject, FileProviderRelay {
         }
     }
 
+    /// Pulls one child file of a directory rep's placeholder tree through the
+    /// owner and replies with the staged path (folder D1b).
+    ///
+    /// Mirrors `fetchFile`.
+    public func fetchChild(
+        generation: UInt64, repIndex: Int, childSeq: UInt32, relativePath: String,
+        reply: @escaping @Sendable (String?, NSError?) -> Void
+    ) {
+        logger.debug(
+            "Relay fetchChild (gen=\(generation, privacy: .public), rep=\(repIndex, privacy: .public), seq=\(childSeq, privacy: .public))"
+        )
+        let pusher = NSXPCConnection.current().map {
+            FetchProgressPusher(
+                connection: $0, generation: generation, repIndex: repIndex, childSeq: childSeq,
+                logger: logger)
+        }
+        pullQueue.async { [pullProvider, logger] in
+            let onProgress: @Sendable (UInt64, UInt64) -> Void = { bytes, total in
+                pusher?.record(bytesTransferred: bytes, totalBytes: total)
+            }
+            switch pullProvider.fetchStagedChild(
+                generation: generation, repIndex: repIndex, childSeq: childSeq,
+                relativePath: relativePath, onProgress: onProgress)
+            {
+            case .success(let path):
+                logger.debug("Relay staged child \(path, privacy: .public)")
+                reply(path, nil)
+            case .failure(let error):
+                logger.error(
+                    "Relay fetchChild failed: \(String(describing: error), privacy: .public)")
+                reply(nil, Self.nsError(for: error))
+            }
+        }
+    }
+
+    /// Relays a best-effort child-fetch cancel to the owner's pull provider.
+    public func cancelChildFetch(generation: UInt64, repIndex: Int, childSeq: UInt32) {
+        logger.debug(
+            "Relay cancelChildFetch (gen=\(generation, privacy: .public), rep=\(repIndex, privacy: .public), seq=\(childSeq, privacy: .public))"
+        )
+        pullQueue.async { [pullProvider] in
+            pullProvider.cancelStagedChildPull(
+                generation: generation, repIndex: repIndex, childSeq: childSeq)
+        }
+    }
+
     private static func nsError(for error: FileProviderPullError) -> NSError {
         let code: NSFileProviderError.Code
         switch error {
@@ -1379,6 +1508,9 @@ final class FetchProgressPusher: @unchecked Sendable {
     private let connection: NSXPCConnection
     private let generation: UInt64
     private let repIndex: Int
+    /// `nil` for a flat rep (pushes `fetchProgressed`); a child seq for a
+    /// directory rep's file node (pushes `childFetchProgressed`, folder D1b).
+    private let childSeq: UInt32?
     private let logger: KernovaLogger
     private let lock = NSLock()
     private var lastPushedBytes: UInt64 = 0
@@ -1386,10 +1518,14 @@ final class FetchProgressPusher: @unchecked Sendable {
     /// chunk always pushes (elapsed reads as effectively infinite).
     private var lastPushAt: DispatchTime?
 
-    init(connection: NSXPCConnection, generation: UInt64, repIndex: Int, logger: KernovaLogger) {
+    init(
+        connection: NSXPCConnection, generation: UInt64, repIndex: Int, childSeq: UInt32? = nil,
+        logger: KernovaLogger
+    ) {
         self.connection = connection
         self.generation = generation
         self.repIndex = repIndex
+        self.childSeq = childSeq
         self.logger = logger
     }
 
@@ -1413,10 +1549,16 @@ final class FetchProgressPusher: @unchecked Sendable {
         let control =
             connection.remoteObjectProxyWithErrorHandler { [logger] error in
                 logger.debug(
-                    "fetchProgressed push failed: \(error.localizedDescription, privacy: .public)")
+                    "fetch progress push failed: \(error.localizedDescription, privacy: .public)")
             } as? FileProviderControl
-        control?.fetchProgressed(
-            generation: generation, repIndex: repIndex,
-            bytesTransferred: bytesTransferred, totalBytes: totalBytes)
+        if let childSeq {
+            control?.childFetchProgressed(
+                generation: generation, repIndex: repIndex, childSeq: childSeq,
+                bytesTransferred: bytesTransferred, totalBytes: totalBytes)
+        } else {
+            control?.fetchProgressed(
+                generation: generation, repIndex: repIndex,
+                bytesTransferred: bytesTransferred, totalBytes: totalBytes)
+        }
     }
 }
