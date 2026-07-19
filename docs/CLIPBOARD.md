@@ -267,7 +267,11 @@ the destination asks — not earlier.
   the domain's own sync, and whether it materializes onto a pasted-out copy is unverified). A
   file's data, structure, permissions, and mtime cross faithfully; xattrs (e.g.
   `com.apple.quarantine`, Finder tags) do not. Tracked as a follow-up (#603) — verify live before
-  relying on xattr round-trip. The capability-absent / toggle-off archive fallback preserves the
+  relying on xattr round-trip. The destination side can also *add* metadata: Finder stamps
+  `com.apple.FinderInfo` on bundle-named directories (.app/.appex/.bundle) it creates during the
+  copy, which `codesign --verify --strict` reports as detritus on an otherwise byte-identical
+  bundle (verified live: the pasted bundle passes strict verification after `xattr -cr`; a plain
+  `cp -R` of a sealed system app shows the same class of divergence). The capability-absent / toggle-off archive fallback preserves the
   full canonical key set (including xattrs) via AppleArchive, so it is the higher-fidelity path
   when xattrs matter.
 
