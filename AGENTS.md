@@ -73,7 +73,19 @@ When adding new functionality or modifying existing behavior, include unit tests
 
 ### Logging
 
-The app uses Apple's `os.Logger` (subsystem `app.kernova`) with per-component categories. Each service, view model, or model that logs declares a `private static let logger`. When adding or modifying functionality, include log calls at appropriate levels:
+The app uses Apple's `os.Logger` with per-component categories. Each service, view model, or model that logs declares a `private static let logger`. Subsystems are per-target:
+
+| Subsystem | Who logs there |
+|-----------|----------------|
+| `app.kernova` | The host app and all `KernovaKit` shared code — including KernovaKit types running *inside* the guest agent's processes |
+| `app.kernova.fileprovider` | The host clipboard File Provider extension |
+| `app.kernova.macosagent` | The guest agent's own components |
+| `app.kernova.macosagent.fileprovider` | The guest agent's File Provider extension |
+| `app.kernova.guest` | Host-side re-logging of forwarded guest records (the log-forwarding toggle; category = VM name) |
+
+When capturing logs with `log stream`/`log show`, filter with `subsystem BEGINSWITH "app.kernova"`. An exact `subsystem == "app.kernova"` match silently drops the agent's and both extensions' records — and because KernovaKit code inside those processes still matches, the truncated capture *looks* complete.
+
+When adding or modifying functionality, include log calls at appropriate levels:
 
 | Level | When to use | Persistence |
 |-------|-------------|-------------|

@@ -412,6 +412,16 @@ These are not negotiable mechanics for *how* clipboard changes ship:
   not exist.
 - **Log at the right level.** Lifecycle transitions (transfer started/completed/aborted) at
   `.notice`; recoverable degradations at `.warning`; failures at `.error`. No `print`/`NSLog`.
+  When capturing, filter `subsystem BEGINSWITH "app.kernova"` — the agent and the File Provider
+  extensions log under their own subsystems (see AGENTS.md's Logging table), and an exact match
+  on `app.kernova` yields a misleadingly complete-looking partial capture.
+- **A reinstalled guest agent does not replace its running File Provider extension.**
+  `fileproviderd` keeps the already-spawned extension process (the old binary) serving the domain
+  across an agent reinstall + relaunch. When live-testing an extension change, kill it
+  (`pkill -f KernovaMacOSAgentFileProvider`; `fileproviderd` respawns the new binary on demand) —
+  or reboot the guest — before attributing File Provider behavior to the new build (observed in
+  #604's verification: a fixed extension appeared to still fail until the stale process was
+  killed).
 
 ---
 
