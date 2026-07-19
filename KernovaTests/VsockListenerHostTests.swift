@@ -1,12 +1,13 @@
 import Darwin
 import Foundation
+import KernovaKit
 import Testing
 import Virtualization
 
 @testable import Kernova
 
 @MainActor
-@Suite("VsockListenerHost socket configuration")
+@Suite("VsockListenerHost")
 struct VsockListenerHostTests {
     /// `configureAcceptedSocket` must raise `SO_SNDBUF` on the accepted fd.
     ///
@@ -31,5 +32,55 @@ struct VsockListenerHostTests {
         var len = socklen_t(MemoryLayout<Int32>.size)
         #expect(getsockopt(a, SOL_SOCKET, SO_SNDBUF, &applied, &len) == 0)
         #expect(applied >= 256 * 1024)
+    }
+
+    // MARK: - Admission (#145)
+
+    @Test("A failing admission check refuses the connection and closes the fd")
+    func admissionRefusalClosesFd() throws {
+        let (a, b) = try makeRawSocketPair()
+        defer { close(b) }  // `a` is owned — and must be closed — by the listener.
+
+        var connected = false
+        let host = VsockListenerHost(port: 49_153, shouldAdmit: { false }) { _ in
+            connected = true
+        }
+
+        #expect(host.acceptDuplicatedFd(a, dupErrno: 0) == false)
+        #expect(connected == false)
+        // The refused duplicate must not leak: the listener closes it, so a
+        // second close attempt reports EBADF.
+        #expect(fcntl(a, F_GETFD) == -1)
+        #expect(errno == EBADF)
+    }
+
+    @Test("A passing admission check accepts and hands over the channel")
+    func admissionPassAcceptsConnection() throws {
+        let (a, b) = try makeRawSocketPair()
+        defer { close(b) }
+
+        var received: VsockChannel?
+        let host = VsockListenerHost(port: 49_153, shouldAdmit: { true }) { channel in
+            received = channel
+        }
+
+        #expect(host.acceptDuplicatedFd(a, dupErrno: 0) == true)
+        let channel = try #require(received)
+        channel.close()
+    }
+
+    @Test("No admission check admits every connection (control listener)")
+    func nilAdmissionAdmits() throws {
+        let (a, b) = try makeRawSocketPair()
+        defer { close(b) }
+
+        var received: VsockChannel?
+        let host = VsockListenerHost(port: 49_154) { channel in
+            received = channel
+        }
+
+        #expect(host.acceptDuplicatedFd(a, dupErrno: 0) == true)
+        let channel = try #require(received)
+        channel.close()
     }
 }

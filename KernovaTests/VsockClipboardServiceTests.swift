@@ -293,6 +293,49 @@ struct VsockClipboardServiceTests {
         #expect(service.isConnected)
     }
 
+    @Test("A control-plane payload on the clipboard channel closes it")
+    func wrongPortPayloadClosesChannel() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        service.start()
+        defer { service.stop() }
+
+        // Hello belongs on the control channel — on the clipboard channel it is
+        // a protocol violation the service answers by dropping the channel (#145).
+        var hello = Frame()
+        hello.protocolVersion = 1
+        hello.hello = Kernova_V1_Hello.with { $0.serviceVersion = 1 }
+        try guest.send(hello)
+
+        // The service closes its end; the guest observes EOF.
+        await expectEOF(on: guest)
+    }
+
+    @Test("A payload-less frame is dropped without closing the clipboard channel")
+    func payloadLessFrameIsDropped() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        let service = VsockClipboardService(channel: host, label: "test-\(UUID().uuidString)")
+        service.start()
+        defer { service.stop() }
+
+        var empty = Frame()
+        empty.protocolVersion = 1
+        try guest.send(empty)
+
+        // A subsequent offer still lands — proof the empty frame was dropped
+        // benignly rather than treated as a wrong-port violation.
+        try guest.send(makeTextOffer(generation: 1, text: "still alive"))
+        try await waitForChange { !service.clipboardContent.isEmpty }
+    }
+
     // MARK: - Outbound (we grab; the service offers and streams)
 
     @Test("grabIfChanged sends a metadata-only offer describing each representation")

@@ -38,4 +38,30 @@ public enum KernovaCapability {
     public static let controlChannelDefaults = [
         controlV1, controlHeartbeatV1, clipboardStreamV1, clipboardDirTreeV1,
     ]
+
+    /// Every capability tag this build recognizes — the allowlist for
+    /// `logDescription(of:)`.
+    public static let recognized: Set<String> = Set(controlChannelDefaults)
+
+    /// A log-safe rendering of a peer-supplied capability list (#145).
+    ///
+    /// The `Hello.capabilities` strings arrive from the peer unauthenticated, so
+    /// interpolating them verbatim would let a malicious peer write arbitrary
+    /// content into the persisted log. Recognized tags render verbatim (first
+    /// occurrence order, duplicates collapsed); everything else is reduced to a
+    /// count — bounded output no matter what the peer advertises. A newer peer's
+    /// genuinely-new tag surfaces as unrecognized; the logged agent/service
+    /// versions identify it.
+    public static func logDescription(of capabilities: [String]) -> String {
+        var seen: Set<String> = []
+        var known: [String] = []
+        for capability in capabilities
+        where recognized.contains(capability) && seen.insert(capability).inserted {
+            known.append(capability)
+        }
+        let otherCount = capabilities.count(where: { !recognized.contains($0) })
+        guard otherCount > 0 else { return known.joined(separator: ",") }
+        let suffix = "+\(otherCount) unrecognized"
+        return known.isEmpty ? suffix : known.joined(separator: ",") + " " + suffix
+    }
 }

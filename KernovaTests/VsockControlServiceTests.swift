@@ -689,7 +689,7 @@ struct VsockControlServiceTests {
         // guest must Hello with the capability before a clipboard=true policy
         // survives the gate — and the service must have *observed* that Hello.
         try guest.send(makeGuestHello(agentVersion: "0.16.0"))
-        try await waitForChange { service.guestSupportsClipboardStreamingForTesting }
+        try await waitForChange { service.guestSupportsClipboardStreaming }
 
         service.sendPolicyUpdate(
             AgentPolicySnapshot(logForwardingEnabled: false, clipboardSharingEnabled: true)
@@ -739,7 +739,7 @@ struct VsockControlServiceTests {
         // Log forwarding passes through; clipboard is forced off by the gate.
         #expect(received.logForwardingEnabled == true)
         #expect(received.clipboardSharingEnabled == false)
-        #expect(service.guestSupportsClipboardStreamingForTesting == false)
+        #expect(service.guestSupportsClipboardStreaming == false)
     }
 
     @Test("clipboard is enabled when the guest advertises the streaming capability")
@@ -769,7 +769,7 @@ struct VsockControlServiceTests {
         }
         let received = try #require(policy)
         #expect(received.clipboardSharingEnabled == true)
-        #expect(service.guestSupportsClipboardStreamingForTesting == true)
+        #expect(service.guestSupportsClipboardStreaming == true)
     }
 }
 

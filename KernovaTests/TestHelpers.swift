@@ -4,6 +4,7 @@ import Darwin
 import Observation
 import KernovaKit
 import KernovaTestSupport
+import Testing
 
 @testable import Kernova
 
@@ -100,6 +101,27 @@ func nextFrame(from channel: VsockChannel) async throws -> Frame {
         return frame
     } catch is CancellationError {
         throw TestFailure("Timed out waiting for a frame after \(timeout)")
+    }
+}
+
+// MARK: - expectEOF
+
+/// Asserts `channel` reaches EOF — the peer closed its end — rather than
+/// producing another frame.
+///
+/// Event-driven via `nextFrame`, whose stuck-stream backstop bounds the wait:
+/// EOF resolves it immediately, a frame or a timeout records a test failure.
+/// Used by the #145 channel-admission tests to observe a service dropping a
+/// non-conformant peer.
+@MainActor
+func expectEOF(on channel: VsockChannel) async {
+    do {
+        let frame = try await nextFrame(from: channel)
+        Issue.record("Expected channel EOF, got frame \(String(describing: frame.payload))")
+    } catch let failure as TestFailure {
+        #expect(failure.message.contains("EOF"), "Expected EOF, got: \(failure.message)")
+    } catch {
+        Issue.record("Expected channel EOF, got error \(error)")
     }
 }
 
