@@ -68,6 +68,13 @@ if [[ "${choice}" =~ ^[Yy]$ ]]; then
     # pre-rename install ran under app.kernova.agent and is booted out below).
     launchctl bootout "gui/$(id -u)/${LABEL}" 2>/dev/null || true
 
+    # fileproviderd does not replace a running File Provider extension when its
+    # app bundle is replaced — the already-spawned process (the old binary) keeps
+    # serving the domain (docs/CLIPBOARD.md, Engineering practices). Kill it so
+    # the system respawns the new one on demand; a no-match (fresh install, or
+    # the extension never launched) is fine.
+    pkill -f KernovaMacOSAgentFileProvider 2>/dev/null || true
+
     # Copy the app bundle with ditto so its code signature and layout survive — a
     # flattened or re-permissioned copy would invalidate the bundle signature and
     # launchd would refuse to exec it.

@@ -31,6 +31,11 @@ if [[ "${choice}" =~ ^[Yy]$ ]]; then
     # Stop the agent
     launchctl bootout "gui/$(id -u)/${LABEL}" 2>/dev/null || true
 
+    # Also kill the running File Provider extension so no process lingers from
+    # the deleted bundle — fileproviderd would keep the already-spawned process
+    # serving the domain otherwise (docs/CLIPBOARD.md, Engineering practices).
+    pkill -f KernovaMacOSAgentFileProvider 2>/dev/null || true
+
     # RATIONALE: rm is used instead of trash because this runs inside a guest VM
     # where the trash CLI is not a standard macOS utility, and Finder-based trash
     # (osascript) requires a GUI session that may not be available in headless VMs.
