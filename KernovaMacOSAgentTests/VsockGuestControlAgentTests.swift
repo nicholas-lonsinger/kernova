@@ -244,14 +244,14 @@ struct VsockGuestControlAgentTests {
         host.start()
         defer { host.close() }
 
-        // Short unresponsive window, long terminate window: the watchdog flags
-        // "unresponsive" without tearing the channel down during the test.
+        // Short unresponsive window; terminate stays disabled (the makeAgent
+        // default), so the watchdog flags "unresponsive" without tearing the
+        // channel down during the test.
         let states = StateBox()
         let agent = makeAgent(
             agentFd: agentFd,
             heartbeatInterval: .milliseconds(50),
             unresponsiveAfter: .milliseconds(150),
-            terminateAfter: .seconds(3_600),
             onStateChange: { states.record($0) })
         defer { agent.stop() }
         agent.start()

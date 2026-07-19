@@ -48,16 +48,15 @@ func makeRawSocketPair() throws -> (Int32, Int32) {
 
 /// Reads the next frame from `channel`, distinguishing timeout from EOF.
 ///
-/// - Throws: `TestFailure("Timed out…")` when no frame arrives within `timeout`.
+/// - Throws: `TestFailure("Timed out…")` when no frame arrives within the
+///   `testWaitBackstop` deadline.
 /// - Throws: `TestFailure("Channel finished…")` when the channel closes without
 ///   producing a frame (EOF), so the two failure shapes are identifiable in
 ///   post-mortem logs. Conflating them once masked a CI flake as a
 ///   peer-disconnect bug.
 @MainActor
-func nextFrame(
-    from channel: VsockChannel,
-    timeout: Duration = testWaitBackstop
-) async throws -> Frame {
+func nextFrame(from channel: VsockChannel) async throws -> Frame {
+    let timeout = testWaitBackstop
     let receiver = Task<Frame?, Error> {
         var iterator = channel.incoming.makeAsyncIterator()
         return try await iterator.next()

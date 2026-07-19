@@ -49,6 +49,29 @@ struct VsockControlServiceTests {
     /// keep the connection alive).
     private static let testHeartbeat: Duration = .milliseconds(40)
 
+    /// Starts a background task sending guest heartbeats every `interval`,
+    /// until cancelled (callers pair it with a `defer { task.cancel() }`).
+    ///
+    /// A live guest sends heartbeats continuously, so liveness tests emit a
+    /// sustained stream rather than a fixed batch: status changes are driven by
+    /// a liveness tick observing a fresh `lastInboundFrame`, and that clock is
+    /// refreshed *only* by inbound frames. If the stream stopped before the
+    /// test's final wait resolved, a tick starved past `unresponsiveAfter`
+    /// would latch `.unresponsive` with no further inbound frames to recover
+    /// it, and the test would hang to its backstop. (The heartbeat nonce is
+    /// ignored by the service — liveness keys only off the frame arriving — so
+    /// the default nonce is fine.)
+    private func sustainHeartbeats(
+        on guest: VsockChannel, every interval: Duration
+    ) -> Task<Void, Never> {
+        Task {
+            while !Task.isCancelled {
+                try? guest.send(makeHeartbeat())
+                try? await Task.sleep(for: interval)
+            }
+        }
+    }
+
     /// Default liveness windows, set far beyond any test's wall-clock budget.
     ///
     /// The watchdog can't tear the channel down mid-test at these values. Tests
@@ -331,16 +354,15 @@ struct VsockControlServiceTests {
         // busy with the heartbeat + liveness tasks), `now - lastInboundFrame`
         // could exceed `unresponsiveAfter` between sleep wake and assertion,
         // flipping status to .unresponsive briefly even though the test had
-        // just sent a heartbeat. The watchdog's terminate stage is disabled
-        // outright (it is not under test, and a multi-second stall in the
-        // sender loop once let a 5 s `terminateAfter` close the channel out
-        // from under the test — the send then threw `.closed`).
+        // just sent a heartbeat. The watchdog's terminate stage stays disabled
+        // (the makeService default): it is not under test, and a multi-second
+        // stall in the sender loop once let a finite 5 s `terminateAfter` close
+        // the channel out from under the test — the send then threw `.closed`.
         let service = makeService(
             channel: host,
             bundledAgentVersion: "0.9.0",
             heartbeatInterval: .milliseconds(200),
-            unresponsiveAfter: .milliseconds(400),
-            terminateAfter: Self.watchdogDisabledTerminate
+            unresponsiveAfter: .milliseconds(400)
         )
         service.start()
         defer { service.stop() }
@@ -350,18 +372,9 @@ struct VsockControlServiceTests {
         try await waitForChange { service.isConnected }
 
         // Sustained heartbeats every 100 ms (well below the 400 ms unresponsive
-        // window), kept running through the assertion below: recovery from a
-        // jitter-induced transient `.unresponsive` flip is driven by a liveness
-        // tick observing a fresh `lastInboundFrame`, so the stream must not stop
-        // before the wait resolves (same rationale as `recoveryFromUnresponsive`).
-        let sustainedHeartbeats = Task {
-            var nonce: UInt64 = 1
-            while !Task.isCancelled {
-                try? guest.send(makeHeartbeat(nonce: nonce))
-                nonce += 1
-                try? await Task.sleep(for: .milliseconds(100))
-            }
-        }
+        // window), kept running through the assertion below so a jitter-induced
+        // transient `.unresponsive` flip can recover (see `sustainHeartbeats`).
+        let sustainedHeartbeats = sustainHeartbeats(on: guest, every: .milliseconds(100))
         defer { sustainedHeartbeats.cancel() }
 
         // Let a window > 2× unresponsiveAfter elapse, then assert end-state. If
@@ -380,18 +393,17 @@ struct VsockControlServiceTests {
         host.start()
         defer { guest.close() }
 
-        // Terminate is disabled: it is not under test here, and with the old
-        // 2 s value a starved scheduler could delay the first liveness tick
-        // past `terminateAfter`, so that tick closed the channel *without ever
-        // latching `.unresponsive`* — the waited condition then could never
-        // become true (see checkLiveness: the terminate branch skips the
-        // unresponsive latch).
+        // Terminate stays disabled (the makeService default): it is not under
+        // test here, and with the old finite 2 s value a starved scheduler
+        // could delay the first liveness tick past `terminateAfter`, so that
+        // tick closed the channel *without ever latching `.unresponsive`* —
+        // the waited condition then could never become true (see checkLiveness:
+        // the terminate branch skips the unresponsive latch).
         let service = makeService(
             channel: host,
             bundledAgentVersion: "0.9.0",
             heartbeatInterval: .milliseconds(60),
-            unresponsiveAfter: .milliseconds(100),
-            terminateAfter: Self.watchdogDisabledTerminate
+            unresponsiveAfter: .milliseconds(100)
         )
         service.start()
         defer { service.stop() }
@@ -414,15 +426,15 @@ struct VsockControlServiceTests {
         host.start()
         defer { guest.close() }
 
-        // Terminate is disabled: it is not under test, and any finite value
-        // races the test body — on slow runners the original 2 s fired between
-        // detecting `.unresponsive` and recovery, leaving the service stuck.
+        // Terminate stays disabled (the makeService default): it is not under
+        // test, and any finite value races the test body — on slow runners the
+        // original 2 s fired between detecting `.unresponsive` and recovery,
+        // leaving the service stuck.
         let service = makeService(
             channel: host,
             bundledAgentVersion: "0.9.0",
             heartbeatInterval: .milliseconds(60),
-            unresponsiveAfter: .milliseconds(100),
-            terminateAfter: Self.watchdogDisabledTerminate
+            unresponsiveAfter: .milliseconds(100)
         )
         service.start()
         defer { service.stop() }
@@ -436,23 +448,10 @@ struct VsockControlServiceTests {
             service.agentStatus == .unresponsive(version: "0.9.0")
         }
 
-        // Resume heartbeats. A live guest sends them continuously, so emit a
-        // sustained stream rather than a single frame: recovery is driven by a
-        // liveness tick observing a fresh `lastInboundFrame`, and that clock is
-        // refreshed *only* by inbound frames. A lone heartbeat opens just one
-        // ~unresponsiveAfter-wide window for a tick to land; if MainActor jitter
-        // starves that tick the next one sees a stale timestamp, re-latches
-        // `.unresponsive`, and — with no further inbound frames — the service
-        // stays stuck forever. Sustained heartbeats guarantee some tick sees a
-        // recent frame regardless of scheduling. Cancelled once recovered. (The
-        // heartbeat nonce is ignored by the service — recovery keys only off the
-        // frame arriving — so the default nonce is fine.)
-        let resumeHeartbeats = Task {
-            while !Task.isCancelled {
-                try? guest.send(makeHeartbeat())
-                try? await Task.sleep(for: .milliseconds(60))
-            }
-        }
+        // Resume heartbeats as a sustained stream, not a single frame — a lone
+        // heartbeat opens just one ~unresponsiveAfter-wide recovery window a
+        // starved tick can miss (see `sustainHeartbeats`).
+        let resumeHeartbeats = sustainHeartbeats(on: guest, every: .milliseconds(60))
         defer { resumeHeartbeats.cancel() }
 
         // The recovery → .current transition was the original CI flake (the poll

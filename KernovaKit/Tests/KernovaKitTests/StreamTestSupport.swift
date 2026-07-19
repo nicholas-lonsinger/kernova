@@ -81,7 +81,7 @@ func materializedFiles(under directory: URL) -> [URL] {
 
 /// Polls `predicate` until it holds or `timeout` elapses.
 func pollUntil(
-    timeout: Duration = .seconds(5), _ predicate: @Sendable () -> Bool
+    timeout: Duration = testWaitBackstop, _ predicate: @Sendable () -> Bool
 ) async throws {
     let deadline = ContinuousClock.now.advanced(by: timeout)
     while !predicate() {

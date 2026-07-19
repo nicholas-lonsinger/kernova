@@ -81,10 +81,13 @@ struct VsockClipboardServiceTests {
     /// The gate's stuck-stream backstop bounds the wait.
     private func waitForFrameCount(
         _ recorder: FrameRecorder,
-        equals expected: Int
+        reaches expected: Int
     ) async throws {
+        // `>=` (matching `waitForRecords`): a burst of frames could skip past
+        // an `==` check between observations and hang the wait to its backstop;
+        // callers assert the exact frame content/count separately.
         try await recorder.recorded.wait {
-            recorder.frames.count == expected
+            recorder.frames.count >= expected
         }
     }
 
@@ -494,7 +497,7 @@ struct VsockClipboardServiceTests {
         // First non-empty content → exactly one offer.
         service.clipboardContent = ClipboardContent(text: "alpha")
         service.grabIfChanged()
-        try await waitForFrameCount(recorder, equals: snapshot + 1)
+        try await waitForFrameCount(recorder, reaches: snapshot + 1)
         guard case .clipboardOffer = recorder.frames[snapshot].payload else {
             Issue.record(
                 "Expected clipboardOffer for 'alpha', got \(String(describing: recorder.frames[snapshot].payload))")
@@ -509,7 +512,7 @@ struct VsockClipboardServiceTests {
         // Fresh content → another offer.
         service.clipboardContent = ClipboardContent(text: "beta")
         service.grabIfChanged()
-        try await waitForFrameCount(recorder, equals: snapshot + 1)
+        try await waitForFrameCount(recorder, reaches: snapshot + 1)
         guard case .clipboardOffer = recorder.frames[snapshot].payload else {
             Issue.record(
                 "Expected clipboardOffer for 'beta', got \(String(describing: recorder.frames[snapshot].payload))")
@@ -2443,22 +2446,42 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        // Tiny backstop so the first (unanswered) pull fails fast.
+        // The first pull is failed via an explicit abort (below), not the
+        // lazyPullTimeout backstop: the same injected timeout also governs the
+        // second pull whose SUCCESS this test asserts, so a small value races
+        // the responder's genuine delivery on a stalled runner (docs/TESTING.md's
+        // injected-timeout rule). The no-latch-on-failure property under test is
+        // failure-kind-agnostic — materializeForPreview skips the generation
+        // latch on any nil pull result, timeout and abort alike.
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", lazyPullTimeout: .milliseconds(150))
+            channel: host, label: "test-\(UUID().uuidString)", lazyPullTimeout: .seconds(60))
         service.start()
         defer { service.stop() }
 
         let responder = FakeGuestResponder(guest: guest)
         defer { responder.cancel() }
-        // No reply registered yet → the first pull times out.
+        // No reply registered yet → the first pull parks until aborted.
         responder.start()
 
         try guest.send(makeTextOffer(generation: 2, text: "retry me"))
         try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
 
-        // First attempt: the pull times out, the rep stays a placeholder.
-        await service.materializeForPreview()
+        // First attempt: park the pull, then abort it from the guest side. The
+        // pull resolves nil and the rep stays a placeholder.
+        let firstPreview = Task { await service.materializeForPreview() }
+        let xid = inboundTransferID(generation: 2, repIndex: 0)
+        try await responder.answered.wait {
+            responder.requests.contains { $0.transferID == xid }
+        }
+        var abort = Frame()
+        abort.protocolVersion = 1
+        abort.clipboardStreamAbort = Kernova_V1_ClipboardStreamAbort.with {
+            $0.transferID = xid
+            $0.code = "cancelled"
+            $0.message = "test: first pull aborted"
+        }
+        try guest.send(abort)
+        await firstPreview.value
         #expect(service.clipboardContent.representations.first?.isPendingRemote == true)
 
         // The guest can now answer; a second attempt must retry (not be blocked by

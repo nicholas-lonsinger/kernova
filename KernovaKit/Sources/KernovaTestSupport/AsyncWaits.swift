@@ -22,15 +22,13 @@ import Foundation
 
 /// Default stuck-condition backstop for every test wait helper.
 ///
-/// Sized past any plausible CI scheduler stall: macos-26 runners have shown
-/// multi-second `@MainActor` starvation that defeated the previous 5 s and
-/// 10 s defaults (two consecutive main-branch runs on 2026-07-19 timed out
-/// 12 event-driven waits). The happy path resolves via `notify()`/observation
-/// and never reaches this deadline, so a generous value costs nothing on a
-/// green run — it only delays the failure report for a genuinely stuck
-/// condition. Matches the ≥60 s bar docs/TESTING.md sets for injected
-/// production timeouts. Success-path waits should not pass a smaller explicit
-/// timeout; explicit values are for behavior-under-test deadlines only.
+/// Sized past any plausible CI scheduler stall (starved macos-26 runners have
+/// defeated 5 s and 10 s backstops). The happy path resolves via
+/// `notify()`/observation and never reaches this deadline, so the generous
+/// value costs nothing on a green run — it only delays the failure report for
+/// a genuinely stuck condition. Success-path waits should not pass a smaller
+/// explicit timeout; explicit values are for behavior-under-test deadlines
+/// only. See docs/TESTING.md "Async waits in tests".
 public let testWaitBackstop: Duration = .seconds(60)
 
 // MARK: - TestFailure
