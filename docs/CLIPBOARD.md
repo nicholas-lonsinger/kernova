@@ -417,11 +417,12 @@ These are not negotiable mechanics for *how* clipboard changes ship:
   on `app.kernova` yields a misleadingly complete-looking partial capture.
 - **A reinstalled guest agent does not replace its running File Provider extension.**
   `fileproviderd` keeps the already-spawned extension process (the old binary) serving the domain
-  across an agent reinstall + relaunch. When live-testing an extension change, kill it
-  (`pkill -f KernovaMacOSAgentFileProvider`; `fileproviderd` respawns the new binary on demand) —
-  or reboot the guest — before attributing File Provider behavior to the new build (observed in
-  #604's verification: a fixed extension appeared to still fail until the stale process was
-  killed).
+  across an agent reinstall + relaunch. `install.command` and `uninstall.command` kill it
+  (`pkill -f KernovaMacOSAgentFileProvider`; `fileproviderd` respawns the new binary on demand),
+  so a scripted reinstall is safe — but when replacing the bundle any other way (Xcode build,
+  manual copy), kill it yourself or reboot the guest before attributing File Provider behavior
+  to the new build (observed in #604's verification: a fixed extension appeared to still fail
+  until the stale process was killed).
 
 ---
 
