@@ -44,6 +44,27 @@ func makeRawSocketPair() throws -> (Int32, Int32) {
     return (fds[0], fds[1])
 }
 
+// MARK: - offCooperativePool
+
+/// Runs a blocking bridge call (`pullStagedFile` / `copyToMacFileURL` /
+/// `fetchStagedFile`) on a GCD global-queue thread, mirroring production's
+/// callers (the relay's XPC queue, the pasteboard's provide callback).
+///
+/// RATIONALE: never `Task.detached` for these. A parked blocking pull occupies
+/// one of the cooperative pool's few threads (CI runners have 3-4); when parked
+/// pulls overlapped the #458 test's deliberate main-thread block, the pool
+/// exhausted, the `@MainActor` responders those pulls were waiting on starved,
+/// and the whole bundle froze until the shortest injected pull timeout fired —
+/// the 2026-07-19 CI mass failures. GCD global queues overcommit, so a parked
+/// pull costs a kernel thread, never a cooperative slot.
+func offCooperativePool<T: Sendable>(
+    _ body: @escaping @Sendable () -> T
+) async -> T {
+    await withCheckedContinuation { cont in
+        DispatchQueue.global().async { cont.resume(returning: body()) }
+    }
+}
+
 // MARK: - nextFrame
 
 /// Reads the next frame from `channel`, distinguishing timeout from EOF.

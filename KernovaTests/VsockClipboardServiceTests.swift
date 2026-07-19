@@ -1255,9 +1255,9 @@ struct VsockClipboardServiceTests {
 
         // The lazy file pulls + stages its bytes on demand through the shared
         // bridge (the toggle-off paste path), off the main thread.
-        let outcome = await Task.detached {
+        let outcome = await offCooperativePool {
             service.pullStagedFile(generation: 9, repIndex: 1)
-        }.value
+        }
         guard case .success(let path) = outcome else {
             Issue.record("Expected pullStagedFile to succeed, got \(outcome)")
             return
@@ -1420,9 +1420,9 @@ struct VsockClipboardServiceTests {
 
         // The deferred file pulls its bytes on demand through the shared bridge —
         // now the second request goes out, the file rep was never double-requested.
-        let outcome = await Task.detached {
+        let outcome = await offCooperativePool {
             service.pullStagedFile(generation: 6, repIndex: 1)
-        }.value
+        }
         guard case .success(let path) = outcome else {
             Issue.record("Expected pullStagedFile to succeed, got \(outcome)")
             return
@@ -1598,11 +1598,9 @@ struct VsockClipboardServiceTests {
 
         // Each pastes via the sync fallback (the File Provider declines): the bytes
         // pull + stage on demand off the main thread.
-        let firstURL = await Task.detached { service.copyToMacFileURL(generation: 41, repIndex: 0) }
-            .value
+        let firstURL = await offCooperativePool { service.copyToMacFileURL(generation: 41, repIndex: 0) }
         #expect(try Data(contentsOf: #require(firstURL)) == aBytes)
-        let secondURL = await Task.detached { service.copyToMacFileURL(generation: 41, repIndex: 1) }
-            .value
+        let secondURL = await offCooperativePool { service.copyToMacFileURL(generation: 41, repIndex: 1) }
         #expect(try Data(contentsOf: #require(secondURL)) == bBytes)
         // Each fire consults the File Provider; the declined publish doesn't latch,
         // so the sibling fire retries it.
@@ -1753,9 +1751,9 @@ struct VsockClipboardServiceTests {
 
         // A pull for a generation that isn't the current offer resolves to
         // noCurrentOffer (the relay maps it to .noSuchItem), without a vsock pull.
-        let outcome = await Task.detached {
+        let outcome = await offCooperativePool {
             service.pullStagedFile(generation: 999, repIndex: 0)
-        }.value
+        }
         guard case .failure(.noCurrentOffer) = outcome else {
             Issue.record("Expected noCurrentOffer, got \(outcome)")
             return
@@ -1790,10 +1788,10 @@ struct VsockClipboardServiceTests {
         try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
 
         let log = ServicingProgressLog()
-        let outcome = await Task.detached {
+        let outcome = await offCooperativePool {
             service.pullStagedFile(
                 generation: 40, repIndex: 0, onProgress: { log.record($0, $1) })
-        }.value
+        }
         guard case .success = outcome else {
             Issue.record("Expected pullStagedFile to succeed, got \(outcome)")
             return
@@ -1841,7 +1839,7 @@ struct VsockClipboardServiceTests {
                 reps: [(uti: "public.data", byteCount: fileBytes.count, filename: "big.bin", isInline: false)]))
         try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
 
-        let pull = Task.detached { service.pullStagedFile(generation: 41, repIndex: 0) }
+        let pull = Task { await offCooperativePool { service.pullStagedFile(generation: 41, repIndex: 0) } }
 
         // The bar reveals mid-flight: inbound, denominated by the rep's total, and
         // labelled with the filename (#426 — LazyPullSnapshot.filename).
@@ -1869,15 +1867,20 @@ struct VsockClipboardServiceTests {
         host.start()
         defer { guest.close() }
 
-        // A backstop, not the success path: under the fix this resolves in
-        // milliseconds via genuine delivery, and under a regression the pull
-        // blocks until this fires and resolves to `.pullFailed` — the test fails
-        // either way, so the value's size never masks a regression. It must be
-        // ≥60 s per docs/TESTING.md's injected-timeout rule: a CI scheduler
-        // stall once let a 5 s value fire before the detached responder's
-        // genuine delivery, turning the success path into `.pullFailed`.
+        // RATIONALE: deliberately far BELOW `testWaitBackstop`, not ≥60 s. This
+        // test blocks the real main thread inside `pullStagedFile`, so this
+        // injected timeout is the ceiling on how long the whole bundle's
+        // MainActor can be held hostage if the fast path loses — every
+        // concurrently running test's waits freeze for exactly this long. A
+        // 60 s value once froze the bundle wall-to-wall and mass-failed 17
+        // tests whose 60 s backstops could not outlast it; 5 s bounds the
+        // blast radius while staying orders of magnitude above the genuine
+        // ms-scale delivery (the responder runs on the now-unpoisoned
+        // cooperative pool — see `offCooperativePool`). Under a #458
+        // regression the pull resolves `.pullFailed` when this fires, so the
+        // test fails either way and the value's size never masks it.
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", lazyPullTimeout: .seconds(60))
+            channel: host, label: "test-\(UUID().uuidString)", lazyPullTimeout: .seconds(5))
         service.start()
         defer { service.stop() }
 
