@@ -46,7 +46,7 @@ func makeChannelPair() throws -> (VsockChannel, VsockChannel) {
 ///   producing a frame (EOF), so the two failure shapes are identifiable.
 func nextFrame(
     from channel: VsockChannel,
-    timeout: Duration = .seconds(5)
+    timeout: Duration = testWaitBackstop
 ) async throws -> Frame {
     let receiver = Task<Frame?, Error> {
         var iterator = channel.incoming.makeAsyncIterator()
@@ -75,7 +75,7 @@ func nextFrame(
 /// - Throws: `TestFailure("Timed out…")` if no value arrives within `timeout`.
 func awaitFirst<T: Sendable>(
     _ stream: AsyncStream<T>,
-    timeout: Duration = .seconds(5)
+    timeout: Duration = testWaitBackstop
 ) async throws -> T {
     let task = Task<T?, Never> {
         var iterator = stream.makeAsyncIterator()
@@ -292,7 +292,7 @@ struct CollectedTransfer {
 /// sent before the `ClipboardRequest` is handled could overtake it and be
 /// dropped before the transfer is registered.)
 func collectOutboundTransfer(
-    transferID: UInt64, from channel: VsockChannel, timeout: Duration = .seconds(5)
+    transferID: UInt64, from channel: VsockChannel, timeout: Duration = testWaitBackstop
 ) async throws -> CollectedTransfer {
     var begin: Kernova_V1_ClipboardStreamBegin?
     var assembled = Data()

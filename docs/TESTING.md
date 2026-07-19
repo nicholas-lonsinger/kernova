@@ -6,6 +6,8 @@ Deep dives for test-writing: the async-wait seams, the injected-timeout rule, an
 
 macos-26 CI runners have heavy `@MainActor` scheduling jitter. With a `waitUntil`/`pollUntil` poll loop, the timeout deadline *is* the pass/fail criterion — so a starved scheduler fails a test whose condition would have become true. **When a test waits for async state that has an underlying signal, make the wait event-driven from the start — do not reach for a poll loop.** With event-driven waits the timeout is only a stuck-condition backstop the happy path never reaches.
 
+**Wait timeouts default to the shared `testWaitBackstop` (60 s in `KernovaTestSupport`) — don't pass a smaller explicit value.** Runner stalls have defeated 5 s *and* 10 s backstops (2026-07-19: two consecutive main-branch runs timed out 12 event-driven waits whose conditions were sound), and since the happy path resolves via the signal, a generous backstop costs nothing on a green run — it only delays the failure report of a genuinely stuck test. An explicit shorter timeout on a wait is reserved for the rare case where the deadline itself is the assertion; negative assertions ("prove nothing arrived") don't qualify — they use a fixed observation window (`expectNoNewFrames`-style), not a wait timeout.
+
 Pick the seam by what produces the state. `AsyncGate`/`waitUntil`/`TestFailure` live in the shared `KernovaTestSupport` SwiftPM product (`KernovaKit/Sources/KernovaTestSupport/`), imported by all three test targets; `waitForChange` is KernovaTests-only and stays in `KernovaTests/TestHelpers.swift`:
 
 | Seam | Use when | Notes |

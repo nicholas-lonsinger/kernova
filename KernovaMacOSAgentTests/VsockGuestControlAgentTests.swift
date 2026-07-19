@@ -202,7 +202,7 @@ struct VsockGuestControlAgentTests {
         // The agent should still be sending heartbeats: read the next frame
         // and expect either a heartbeat or — at worst — a successful round
         // trip without a thrown error.
-        let frame = try await nextFrame(from: host, timeout: .seconds(2))
+        let frame = try await nextFrame(from: host)
         switch frame.payload {
         case .heartbeat:
             break
@@ -310,7 +310,7 @@ struct VsockGuestControlAgentTests {
         // failures plus the liveness watchdog will tear down the channel.
         // The client then reconnects with the second fd. Wait for the agent's
         // Hello on host1 — proof the reconnect cycle ran end to end.
-        let firstFrame = try await nextFrame(from: host1, timeout: .seconds(5))
+        let firstFrame = try await nextFrame(from: host1)
         guard case .hello(let hello) = firstFrame.payload else {
             throw TestFailure("Expected Hello on reconnect, got \(String(describing: firstFrame.payload))")
         }

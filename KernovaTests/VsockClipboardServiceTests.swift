@@ -75,16 +75,15 @@ struct VsockClipboardServiceTests {
         }
     }
 
-    /// Awaits the recorder's gate (fired per frame) until `frames.count ==
-    /// expected`.
+    /// Awaits the recorder's gate (fired per frame) until the recorded frame
+    /// count reaches `expected`.
     ///
-    /// The `timeout` is a stuck-stream backstop, not the success deadline.
+    /// The gate's stuck-stream backstop bounds the wait.
     private func waitForFrameCount(
         _ recorder: FrameRecorder,
-        equals expected: Int,
-        timeout: Duration = .seconds(10)
+        equals expected: Int
     ) async throws {
-        try await recorder.recorded.wait(timeout: timeout) {
+        try await recorder.recorded.wait {
             recorder.frames.count == expected
         }
     }
@@ -93,10 +92,9 @@ struct VsockClipboardServiceTests {
     /// frame count is unknown (a multi-chunk transfer's chunk count varies).
     private func waitForFrames(
         _ recorder: FrameRecorder,
-        timeout: Duration = .seconds(10),
         until predicate: @escaping () -> Bool
     ) async throws {
-        try await recorder.recorded.wait(timeout: timeout, until: predicate)
+        try await recorder.recorded.wait(until: predicate)
     }
 
     /// Sleeps `duration` then asserts no frames arrived since `before`.
@@ -1869,11 +1867,14 @@ struct VsockClipboardServiceTests {
         defer { guest.close() }
 
         // A backstop, not the success path: under the fix this resolves in
-        // milliseconds via genuine delivery. A few seconds' slack absorbs macOS
-        // CI's heavy @MainActor scheduling jitter (docs/TESTING.md's "Async waits in
-        // tests") without masking a real regression with an overly generous wait.
+        // milliseconds via genuine delivery, and under a regression the pull
+        // blocks until this fires and resolves to `.pullFailed` — the test fails
+        // either way, so the value's size never masks a regression. It must be
+        // ≥60 s per docs/TESTING.md's injected-timeout rule: a CI scheduler
+        // stall once let a 5 s value fire before the detached responder's
+        // genuine delivery, turning the success path into `.pullFailed`.
         let service = VsockClipboardService(
-            channel: host, label: "test-\(UUID().uuidString)", lazyPullTimeout: .seconds(5))
+            channel: host, label: "test-\(UUID().uuidString)", lazyPullTimeout: .seconds(60))
         service.start()
         defer { service.stop() }
 
@@ -2003,7 +2004,7 @@ struct VsockClipboardServiceTests {
         let copyTask = Task { await service.materializeForCopy() }
         // Wait until the host has actually sent the pull request — that's the
         // in-flight window we want to interrupt.
-        try await responder.answered.wait(timeout: .seconds(5)) {
+        try await responder.answered.wait {
             responder.requests.contains { $0.generation == 1 }
         }
 
@@ -2067,7 +2068,7 @@ struct VsockClipboardServiceTests {
             parkedOnce = true
             didEnter = true
             entered.notify()
-            try? await release.wait(timeout: .seconds(5)) { released }
+            try? await release.wait { released }
         }
 
         // gen=1 — a single inline rep, a placeholder until pulled.
@@ -2076,7 +2077,7 @@ struct VsockClipboardServiceTests {
 
         // Copy issues the gen=1 pull; it completes and parks in the seam.
         let copyTask = Task { await service.materializeForCopy() }
-        try await entered.wait(timeout: .seconds(5)) { didEnter }
+        try await entered.wait { didEnter }
 
         // The materialize call is parked, so the main actor is free: a newer offer
         // lands and republishes gen=2's placeholder.
@@ -2131,14 +2132,14 @@ struct VsockClipboardServiceTests {
             parkedOnce = true
             didEnter = true
             entered.notify()
-            try? await release.wait(timeout: .seconds(5)) { released }
+            try? await release.wait { released }
         }
 
         try guest.send(makeTextOffer(generation: 1, text: "stale"))
         try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
 
         let copyTask = Task { await service.materializeForCopy() }
-        try await entered.wait(timeout: .seconds(5)) { didEnter }
+        try await entered.wait { didEnter }
 
         // stop() drops the inbound promise (via dropInboundPromise) but leaves
         // clipboardContent intact — so the resumed guard sees nil !== promise and
@@ -2308,7 +2309,7 @@ struct VsockClipboardServiceTests {
         // Wait until EXACTLY one request for rep 0 has been recorded — the
         // in-flight window we want the Copy caller to coalesce into.
         let rep0XID = inboundTransferID(generation: generation, repIndex: 0)
-        try await responder.answered.wait(timeout: .seconds(5)) {
+        try await responder.answered.wait {
             responder.requests.contains { $0.transferID == rep0XID }
         }
         #expect(responder.requests.filter { $0.transferID == rep0XID }.count == 1)
@@ -2396,7 +2397,7 @@ struct VsockClipboardServiceTests {
 
         // The request DID go out (proving the pull started and the backstop, not a
         // pre-send failure, resolved it), and the rep stays a placeholder.
-        try await responder.answered.wait(timeout: .seconds(5)) {
+        try await responder.answered.wait {
             responder.requests.contains { $0.generation == 5 }
         }
         #expect(service.clipboardContent.representations.first?.isPendingRemote == true)
@@ -2549,7 +2550,7 @@ struct VsockClipboardServiceTests {
 
         let copyTask = Task { await service.materializeForCopy() }
         let xid = inboundTransferID(generation: 5, repIndex: 0)
-        try await responder.answered.wait(timeout: .seconds(5)) {
+        try await responder.answered.wait {
             responder.requests.contains { $0.transferID == xid }
         }
 

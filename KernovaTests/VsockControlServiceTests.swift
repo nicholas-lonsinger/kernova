@@ -331,17 +331,16 @@ struct VsockControlServiceTests {
         // busy with the heartbeat + liveness tasks), `now - lastInboundFrame`
         // could exceed `unresponsiveAfter` between sleep wake and assertion,
         // flipping status to .unresponsive briefly even though the test had
-        // just sent a heartbeat. Widening the unresponsive window to 400 ms
-        // and asserting only at end-of-test (rather than per-iteration)
-        // removes the race while still proving the property under test:
-        // sustained inbound heartbeats reset the inbound-liveness clock so
-        // status remains .current across a window > unresponsiveAfter.
+        // just sent a heartbeat. The watchdog's terminate stage is disabled
+        // outright (it is not under test, and a multi-second stall in the
+        // sender loop once let a 5 s `terminateAfter` close the channel out
+        // from under the test — the send then threw `.closed`).
         let service = makeService(
             channel: host,
             bundledAgentVersion: "0.9.0",
             heartbeatInterval: .milliseconds(200),
             unresponsiveAfter: .milliseconds(400),
-            terminateAfter: .seconds(5)
+            terminateAfter: Self.watchdogDisabledTerminate
         )
         service.start()
         defer { service.stop() }
@@ -350,17 +349,28 @@ struct VsockControlServiceTests {
         try guest.send(makeGuestHello(agentVersion: "0.9.0"))
         try await waitForChange { service.isConnected }
 
-        // Send heartbeats every 100 ms (well below the 400 ms unresponsive
-        // window) for ~800 ms total — twice unresponsiveAfter.
-        for nonce in 1...8 {
-            try guest.send(makeHeartbeat(nonce: UInt64(nonce)))
-            try await Task.sleep(for: .milliseconds(100))
+        // Sustained heartbeats every 100 ms (well below the 400 ms unresponsive
+        // window), kept running through the assertion below: recovery from a
+        // jitter-induced transient `.unresponsive` flip is driven by a liveness
+        // tick observing a fresh `lastInboundFrame`, so the stream must not stop
+        // before the wait resolves (same rationale as `recoveryFromUnresponsive`).
+        let sustainedHeartbeats = Task {
+            var nonce: UInt64 = 1
+            while !Task.isCancelled {
+                try? guest.send(makeHeartbeat(nonce: nonce))
+                nonce += 1
+                try? await Task.sleep(for: .milliseconds(100))
+            }
         }
+        defer { sustainedHeartbeats.cancel() }
 
-        // End-state check: total elapsed > 2× unresponsiveAfter. If
-        // heartbeats had not been resetting the clock, status would now be
-        // .unresponsive. .current here proves the sustained-liveness path.
-        #expect(service.agentStatus == .current(version: "0.9.0"))
+        // Let a window > 2× unresponsiveAfter elapse, then assert end-state. If
+        // heartbeats had not been resetting the inbound-liveness clock, status
+        // would be (and stay) .unresponsive — the wait would hit its backstop.
+        // The event-driven wait absorbs a starved-scheduler transient flip: the
+        // continuing heartbeats recover it, and the observation wakes the wait.
+        try await Task.sleep(for: .milliseconds(800))
+        try await waitForChange { service.agentStatus == .current(version: "0.9.0") }
     }
 
     @Test("Silence past unresponsiveAfter flips agentStatus to .unresponsive")
@@ -370,12 +380,18 @@ struct VsockControlServiceTests {
         host.start()
         defer { guest.close() }
 
+        // Terminate is disabled: it is not under test here, and with the old
+        // 2 s value a starved scheduler could delay the first liveness tick
+        // past `terminateAfter`, so that tick closed the channel *without ever
+        // latching `.unresponsive`* — the waited condition then could never
+        // become true (see checkLiveness: the terminate branch skips the
+        // unresponsive latch).
         let service = makeService(
             channel: host,
             bundledAgentVersion: "0.9.0",
             heartbeatInterval: .milliseconds(60),
             unresponsiveAfter: .milliseconds(100),
-            terminateAfter: .milliseconds(2_000)
+            terminateAfter: Self.watchdogDisabledTerminate
         )
         service.start()
         defer { service.stop() }
@@ -385,7 +401,7 @@ struct VsockControlServiceTests {
         try await waitForChange { service.isConnected }
 
         // Don't send any further inbound. After ~100ms+ the watchdog flips.
-        try await waitForChange(timeout: .seconds(5)) {
+        try await waitForChange {
             service.agentStatus == .unresponsive(version: "0.9.0")
         }
         #expect(service.agentStatus == .unresponsive(version: "0.9.0"))
@@ -398,17 +414,15 @@ struct VsockControlServiceTests {
         host.start()
         defer { guest.close() }
 
-        // `terminateAfter` is set well beyond the test's wall-clock budget so
-        // the watchdog cannot close the channel before recovery lands. Same
-        // CI-jitter rationale as `terminateClosesChannel`: on slow runners the
-        // original 2 s value occasionally fired between detecting `.unresponsive`
-        // and recovery, leaving the service stuck.
+        // Terminate is disabled: it is not under test, and any finite value
+        // races the test body — on slow runners the original 2 s fired between
+        // detecting `.unresponsive` and recovery, leaving the service stuck.
         let service = makeService(
             channel: host,
             bundledAgentVersion: "0.9.0",
             heartbeatInterval: .milliseconds(60),
             unresponsiveAfter: .milliseconds(100),
-            terminateAfter: .seconds(60)
+            terminateAfter: Self.watchdogDisabledTerminate
         )
         service.start()
         defer { service.stop() }
@@ -418,7 +432,7 @@ struct VsockControlServiceTests {
         try await waitForChange { service.isConnected }
 
         // Go silent → unresponsive.
-        try await waitForChange(timeout: .seconds(5)) {
+        try await waitForChange {
             service.agentStatus == .unresponsive(version: "0.9.0")
         }
 
@@ -444,7 +458,7 @@ struct VsockControlServiceTests {
         // The recovery → .current transition was the original CI flake (the poll
         // budget timed out under jitter). This suite's agentStatus/isConnected
         // waits are all event-driven now; see docs/TESTING.md "Async waits in tests".
-        try await waitForChange(timeout: .seconds(5)) {
+        try await waitForChange {
             service.agentStatus == .current(version: "0.9.0")
         }
         #expect(service.agentStatus == .current(version: "0.9.0"))
@@ -482,7 +496,7 @@ struct VsockControlServiceTests {
         // catching `.closed` — there is no @Observable property or signal to
         // await (the watchdog closes the socket directly), so this is one of the
         // sanctioned no-signal polls per docs/TESTING.md "Async waits in tests".
-        try await waitUntil(timeout: .seconds(5)) {
+        try await waitUntil {
             do {
                 try host.send(makeHeartbeat(nonce: 1))
                 return false
@@ -568,11 +582,11 @@ struct VsockControlServiceTests {
         try await waitForChange { service.isConnected }
 
         // Read a few frames; none should be PolicyUpdate. Each read returns as
-        // soon as a frame arrives (heartbeats fire every 40 ms), so the timeout
-        // only bounds the worst case — keep it generous so a CI scheduling
-        // stall between heartbeats doesn't time out and flake the test.
+        // soon as a frame arrives (heartbeats fire every 40 ms), so the default
+        // backstop only bounds a genuinely stuck stream — a CI scheduling
+        // stall between heartbeats can't time out and flake the test.
         for _ in 0..<3 {
-            let next = try await nextFrame(from: guest, timeout: .seconds(2))
+            let next = try await nextFrame(from: guest)
             if case .policyUpdate = next.payload {
                 Issue.record("Unexpected PolicyUpdate when no provider was supplied")
                 return

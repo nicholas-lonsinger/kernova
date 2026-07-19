@@ -56,7 +56,7 @@ func makeRawSocketPair() throws -> (Int32, Int32) {
 @MainActor
 func nextFrame(
     from channel: VsockChannel,
-    timeout: Duration = .seconds(5)
+    timeout: Duration = testWaitBackstop
 ) async throws -> Frame {
     let receiver = Task<Frame?, Error> {
         var iterator = channel.incoming.makeAsyncIterator()
@@ -109,7 +109,7 @@ func nextFrame(
 /// keep `waitUntil`.
 @MainActor
 func waitForChange(
-    timeout: Duration = .seconds(10),
+    timeout: Duration = testWaitBackstop,
     until predicate: @escaping @MainActor () -> Bool
 ) async throws {
     let deadline = ContinuousClock.now.advanced(by: timeout)

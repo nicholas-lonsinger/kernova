@@ -473,7 +473,7 @@ struct VsockGuestClipboardAgentTests {
                 generation: offer.generation, transferID: transferID, uti: info.uti))
 
         let transfer = try await collectOutboundTransfer(
-            transferID: transferID, from: hostChannel, timeout: .seconds(10))
+            transferID: transferID, from: hostChannel)
         #expect(!transfer.begin.isInline)
         #expect(transfer.begin.filename == "notes.bin")
         #expect(transfer.bytes == contents)
@@ -635,7 +635,7 @@ struct VsockGuestClipboardAgentTests {
         try hostChannel.send(
             makeRequestFrame(generation: offer.generation, transferID: transferID, uti: info.uti))
         let transfer = try await collectOutboundTransfer(
-            transferID: transferID, from: hostChannel, timeout: .seconds(10))
+            transferID: transferID, from: hostChannel)
         #expect(!transfer.begin.isInline)
         #expect(transfer.begin.filename == "Project")
 
@@ -2477,7 +2477,7 @@ struct VsockGuestClipboardAgentTests {
         try await waitUntil { agent.liveChannelForTesting == nil }
 
         // Wait for second connection
-        try await waitUntil(timeout: .seconds(2)) { agent.liveChannelForTesting != nil }
+        try await waitUntil { agent.liveChannelForTesting != nil }
 
         // After reconnect, lastSeenDigest is cleared — next poll should re-offer
         await MainActor.run { agent.checkClipboardChange() }
@@ -2681,7 +2681,7 @@ struct VsockGuestClipboardAgentTests {
 
         // The agent reads the request, tries to stream, fails (peer gone), and
         // must not crash; liveChannel is cleared once the receive loop observes EOF.
-        try await waitUntil(timeout: .seconds(2)) { agent.liveChannelForTesting == nil }
+        try await waitUntil { agent.liveChannelForTesting == nil }
         #expect(agent.liveChannelForTesting == nil, "liveChannel should be nil after peer EOF")
     }
 

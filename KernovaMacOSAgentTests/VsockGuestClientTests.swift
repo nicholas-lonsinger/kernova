@@ -241,7 +241,7 @@ struct VsockGuestClientTests {
             do { for try await _ in channel.incoming {} } catch {}
         }
 
-        _ = try await awaitFirst(servedStream, timeout: .seconds(2))
+        _ = try await awaitFirst(servedStream)
 
         #expect(attemptCounter.value >= targetAttempt)
         #expect(client.liveChannel != nil)
