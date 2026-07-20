@@ -6,6 +6,29 @@ import KernovaTestSupport
 @testable import Kernova
 @testable import KernovaKit
 
+/// Fresh per-test "Copy to Mac" harness: a private destination pasteboard, an
+/// isolated provider registry, and an `AsyncGate` already wired to the
+/// registry's retain/release signal so a test awaits the registration event
+/// rather than polling `countForTesting` — the one-shot effect a starved CI
+/// MainActor can miss inside a poll deadline (docs/TESTING.md "Async waits in tests").
+///
+/// File-scoped so the retention and passthrough-chrome suites share one
+/// definition of the harness.
+///
+/// The caller still owns teardown (`pasteboard.releaseGlobally()` and
+/// `registry.releaseAllForTesting()` in `defer`), since a `defer` only fires
+/// at the end of the scope that declares it.
+@MainActor
+private func makeCopyToMacHarness() -> (
+    pasteboard: NSPasteboard, registry: LazyClipboardProviderRegistry, retained: AsyncGate
+) {
+    let pasteboard = NSPasteboard(name: NSPasteboard.Name("KernovaTest-\(UUID().uuidString)"))
+    let registry = LazyClipboardProviderRegistry()
+    let retained = AsyncGate()
+    registry.onChangeForTesting = { retained.notify() }
+    return (pasteboard, registry, retained)
+}
+
 /// Verifies the host "Copy to Mac" provider-retention lifecycle: each written
 /// item's lazy data provider is retained in the app-scoped
 /// `LazyClipboardProviderRegistry` (not on the per-window controller) so a later
@@ -41,25 +64,6 @@ struct ClipboardContentViewControllerRetentionTests {
         let bundleURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(config.id.uuidString, isDirectory: true)
         return VMInstance(configuration: config, bundleURL: bundleURL)
-    }
-
-    /// Fresh per-test "Copy to Mac" harness: a private destination pasteboard, an
-    /// isolated provider registry, and an `AsyncGate` already wired to the
-    /// registry's retain/release signal so a test awaits the registration event
-    /// rather than polling `countForTesting` — the one-shot effect a starved CI
-    /// MainActor can miss inside a poll deadline (docs/TESTING.md "Async waits in tests").
-    ///
-    /// The caller still owns teardown (`pasteboard.releaseGlobally()` and
-    /// `registry.releaseAllForTesting()` in `defer`), since a `defer` only fires
-    /// at the end of the scope that declares it.
-    private func makeCopyToMacHarness() -> (
-        pasteboard: NSPasteboard, registry: LazyClipboardProviderRegistry, retained: AsyncGate
-    ) {
-        let pasteboard = NSPasteboard(name: NSPasteboard.Name("KernovaTest-\(UUID().uuidString)"))
-        let registry = LazyClipboardProviderRegistry()
-        let retained = AsyncGate()
-        registry.onChangeForTesting = { retained.notify() }
-        return (pasteboard, registry, retained)
     }
 
     @Test("copyToMac retains a provider per item in the registry and serves its bytes")
@@ -315,19 +319,40 @@ struct ClipboardContentViewControllerPassthroughChromeTests {
     }
 
     @Test("toggling passthrough live shows/hides the command bar without reopening the window")
-    func liveToggleUpdatesCommandBarVisibility() {
+    func liveToggleUpdatesCommandBarVisibility() async throws {
         let instance = makeInstance()
         let vc = makeController(instance: instance)
-        _ = vc.view
+        _ = vc.view  // forces loadView + viewDidLoad → observeServiceChanges
         #expect(vc.isCommandBarHiddenForTesting == false)
 
+        // Driven through the production `ObservationLoop`, not
+        // `simulateObservationForTesting()`: a hand-called `updateUI()` would
+        // still pass if `observeServiceChanges`'s track closure stopped reading
+        // `clipboardPassthroughEnabled`, which is exactly the regression that
+        // would freeze the window's chrome until it is reopened.
+        //
+        // RATIONALE: genuine no-signal predicate (docs/TESTING.md "Async waits in
+        // tests") — the observed effect is `commandBar.isHidden`, a plain AppKit
+        // property with no Observable or `AsyncGate` signal to arm against; the
+        // loop's internal re-arm hop is not test-facing.
         instance.configuration.clipboardPassthroughEnabled = true
-        vc.simulateObservationForTesting()
-        #expect(vc.isCommandBarHiddenForTesting == true)
+        try await waitUntil { vc.isCommandBarHiddenForTesting }
 
         instance.configuration.clipboardPassthroughEnabled = false
-        vc.simulateObservationForTesting()
-        #expect(vc.isCommandBarHiddenForTesting == false)
+        try await waitUntil { !vc.isCommandBarHiddenForTesting }
+    }
+
+    @Test("the hidden command bar actually lays out at zero height")
+    func hiddenCommandBarCollapsesToZeroHeight() {
+        let vc = makeController(instance: makeInstance(passthroughEnabled: true))
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 360),
+            styleMask: [.titled], backing: .buffered, defer: true)
+        window.contentViewController = vc
+        vc.view.layoutSubtreeIfNeeded()
+
+        #expect(vc.isCommandBarHiddenForTesting == true)
+        #expect(vc.commandBarLaidOutHeightForTesting == 0)
     }
 
     @Test("paste:/copy: are gated while passthrough is on and restored when it's off")
@@ -351,6 +376,81 @@ struct ClipboardContentViewControllerPassthroughChromeTests {
 
         #expect(vc.validateUserInterfaceItem(pasteItem) == true)
         #expect(vc.validateUserInterfaceItem(copyItem) == true)
+    }
+
+    /// Drives the actions themselves, not just their validation.
+    ///
+    /// Validation is advisory — it greys a menu item out, but a direct
+    /// `sendAction` (scripting, a service, any non-validating sender) reaches the
+    /// action anyway, so the gate is asserted where it is enforced rather than
+    /// where it is merely displayed.
+    @Test("paste: performs no intake while passthrough is on")
+    func pasteActionIsGatedByPassthrough() {
+        let hostPasteboard = NSPasteboard(name: NSPasteboard.Name("KernovaTest-\(UUID().uuidString)"))
+        defer { hostPasteboard.releaseGlobally() }
+        hostPasteboard.clearContents()
+        hostPasteboard.setString("from the Mac", forType: .string)
+
+        let service = FakeClipboardService(content: .empty)
+        let instance = makeInstance(passthroughEnabled: true)
+        instance.clipboardService = service
+        let vc = ClipboardContentViewController(
+            instance: instance, viewModel: makeViewModel(), readPasteboard: hostPasteboard)
+        _ = vc.view
+
+        vc.paste(nil)
+        #expect(service.clipboardContent.isEmpty)
+
+        // Positive control: the same action does take the text in once
+        // passthrough is off, so the assertion above is the gate, not a broken
+        // intake path.
+        instance.configuration.clipboardPassthroughEnabled = false
+        vc.paste(nil)
+        #expect(service.clipboardContent == ClipboardContent(text: "from the Mac"))
+    }
+
+    @Test("copy: publishes nothing while passthrough is on")
+    func copyActionIsGatedByPassthrough() async throws {
+        let (pasteboard, registry, retained) = makeCopyToMacHarness()
+        defer { pasteboard.releaseGlobally() }
+        // The promise is never finished in-test, so break the registry↔provider
+        // cycle by hand (production breaks it on pasteboardFinishedWithDataProvider).
+        defer { registry.releaseAllForTesting() }
+
+        let service = FakeClipboardService(content: ClipboardContent(text: "buffer bytes"))
+        let instance = makeInstance(passthroughEnabled: true)
+        instance.clipboardService = service
+        let vc = ClipboardContentViewController(
+            instance: instance, viewModel: makeViewModel(),
+            writePasteboard: pasteboard, providerRegistry: registry)
+
+        vc.copy(nil)
+
+        // `copyToMac` sets `isCopyingToMac` synchronously, before the publish
+        // Task it launches — still false ⇒ the action returned at the gate.
+        //
+        // This, not the registry count or the served bytes, is the assertion
+        // that separates the two paths: an ungated first copy would leave
+        // `isCopyingToMac` set, whose re-entrancy guard then suppresses the
+        // control copy below — so exactly one provider lands either way, and the
+        // lazy provider reads `clipboardContent` at *paste* time, so the bytes
+        // match either way too.
+        #expect(vc.isCopyingToMacForTesting == false)
+        #expect(registry.countForTesting == 0)
+
+        // Positive control: ungated, the same action does publish.
+        instance.configuration.clipboardPassthroughEnabled = false
+        vc.copy(nil)
+        #expect(vc.isCopyingToMacForTesting == true)
+
+        try await retained.wait { registry.countForTesting == 1 }
+        // Asserted before the read below: serving the promise finishes the
+        // provider, which releases it from the registry and takes the count
+        // back to 0.
+        #expect(registry.countForTesting == 1)
+
+        let textType = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
+        #expect(pasteboard.data(forType: textType) == Data("buffer bytes".utf8))
     }
 }
 

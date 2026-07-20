@@ -159,6 +159,12 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     /// artifacts within the staging recency window.
     private var stagingGeneration: UInt64 = 1
 
+    /// The host pasteboard "Paste from Mac" reads from — `.general` in
+    /// production; tests inject a private one so a paste never depends on (or
+    /// disturbs) the developer's real clipboard, mirroring the injected
+    /// `writePasteboard` on the publish side.
+    private let readPasteboard: NSPasteboard
+
     /// `true` while a "Copy to Mac" is materializing/writing.
     ///
     /// The async pull republishes `clipboardContent`, which re-fires the
@@ -176,12 +182,14 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     init(
         instance: VMInstance, viewModel: VMLibraryViewModel,
         writePasteboard: any HostWritePasteboard = NSPasteboard.general,
+        readPasteboard: NSPasteboard = .general,
         providerRegistry: LazyClipboardProviderRegistry = .shared,
         publisher: HostClipboardPublisher? = nil,
         editDebounceInterval: Duration = .milliseconds(200)
     ) {
         self.instance = instance
         self.viewModel = viewModel
+        self.readPasteboard = readPasteboard
         // In production the window shares the VM's publisher with the passthrough
         // coordinator (so echo suppression sees a manual "Copy to Mac" too); tests
         // inject one over a private pasteboard/registry via the params above.
@@ -472,6 +480,17 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     /// Whether the manual command bar is currently withdrawn, so tests assert
     /// the passthrough chrome without reaching into private views.
     var isCommandBarHiddenForTesting: Bool { commandBar.isHidden }
+
+    /// The command bar's laid-out height, so tests assert the collapse actually
+    /// resolves to zero rather than only that `isHidden` was set.
+    var commandBarLaidOutHeightForTesting: CGFloat { commandBar.frame.height }
+
+    /// Whether a "Copy to Mac" is in flight.
+    ///
+    /// `copyToMac` sets this synchronously before launching its publish `Task`,
+    /// so it is the one signal that distinguishes "the action returned at a
+    /// guard" from "the action started a publish" without awaiting anything.
+    var isCopyingToMacForTesting: Bool { isCopyingToMac }
     #endif
 
     // MARK: - Observation
@@ -773,7 +792,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     // MARK: - Actions
 
     @objc private func pasteFromMac(_: Any?) {
-        takeIn(pasteboard: .general)
+        takeIn(pasteboard: readPasteboard)
     }
 
     /// Empties the window's clipboard buffer.
@@ -1043,11 +1062,19 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     // Cover image/summary/empty-unfocused modes; in text mode the focused
     // NSTextView handles Cmd+V/Cmd+C natively (and pasting an image with the
     // editor focused does nothing — the Paste button is the affordance).
+    //
+    // Each body re-checks `isPassthroughOn` rather than trusting
+    // `validateUserInterfaceItem` to have gated it: validation is advisory — it
+    // runs for menu/toolbar senders, but a direct `sendAction` (scripting, a
+    // service, a future non-validating sender) reaches the action regardless.
+    // The action is the enforcement point; validation only greys the item out.
     @objc func paste(_ sender: Any?) {
-        takeIn(pasteboard: .general)
+        guard !isPassthroughOn else { return }
+        takeIn(pasteboard: readPasteboard)
     }
 
     @objc func copy(_ sender: Any?) {
+        guard !isPassthroughOn else { return }
         copyToMac(sender)
     }
 
