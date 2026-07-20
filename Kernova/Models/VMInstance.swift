@@ -594,12 +594,6 @@ final class VMInstance {
         }
     }
 
-    #if DEBUG
-    /// Whether automatic clipboard passthrough is currently active — test seam so
-    /// wiring tests assert the live-toggle start/stop without a real transport.
-    var isClipboardPassthroughActiveForTesting: Bool { clipboardPassthroughCoordinator != nil }
-    #endif
-
     private func startSpiceClipboardService() {
         guard let inputPipe = clipboardInputPipe,
             let outputPipe = clipboardOutputPipe

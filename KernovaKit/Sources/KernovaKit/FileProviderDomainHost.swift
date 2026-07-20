@@ -1467,11 +1467,11 @@ public final class FileProviderRelayService: NSObject, FileProviderRelay {
 /// final chunk (`bytes >= total`) so the determinate bar reaches 100% before the
 /// clone step. Stateless and testable in isolation; the caller owns the
 /// watermarks (`lastPushedBytes`, elapsed since the last push).
-public enum FetchProgressThrottle {
+enum FetchProgressThrottle {
     /// Minimum fraction of the total that must accumulate since the last push.
-    public static let minByteFraction = 0.01
+    static let minByteFraction = 0.01
     /// Minimum wall-clock gap between time-triggered pushes.
-    public static let minInterval: TimeInterval = 0.1
+    static let minInterval: TimeInterval = 0.1
 
     /// Whether `bytes`/`total` warrants a push given the last pushed byte count and
     /// the time since the last push.
@@ -1481,7 +1481,7 @@ public enum FetchProgressThrottle {
     /// `minByteFraction` of `total` has accrued since the last push. Seed
     /// `elapsedSinceLastPush` with a large value for the first push so the bar
     /// leaves zero promptly.
-    public static func shouldPush(
+    static func shouldPush(
         bytes: UInt64, total: UInt64, lastPushedBytes: UInt64, elapsedSinceLastPush: TimeInterval
     ) -> Bool {
         guard bytes > lastPushedBytes else { return false }

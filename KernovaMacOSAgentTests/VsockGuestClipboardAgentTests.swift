@@ -1287,13 +1287,17 @@ struct VsockGuestClipboardAgentTests {
     /// Builds an agent with a `FakeFileProviderPublisher` wired in.
     ///
     /// The fake is returned alongside so the test can keep its strong reference
-    /// (the agent holds it weakly) and assert against it.
+    /// (the agent holds it weakly) and assert against it. `supportsDirTree`
+    /// models the peer's negotiated folder-tree capability — off by default, as
+    /// in production before the handshake reports it.
     private func makeAgentWithPublisher(
-        pasteboard: FakePasteboard, agentFd: Int32, publisherRoot: URL?
+        pasteboard: FakePasteboard, agentFd: Int32, publisherRoot: URL?,
+        supportsDirTree: Bool = false
     ) -> (agent: VsockGuestClipboardAgent, publisher: FakeFileProviderPublisher) {
         let publisher = FakeFileProviderPublisher(rootToReturn: publisherRoot)
         let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
         agent.fileProvider = publisher
+        agent.peerSupportsDirTree = { supportsDirTree }
         return (agent, publisher)
     }
 
@@ -1567,6 +1571,118 @@ struct VsockGuestClipboardAgentTests {
         #expect(restaged == firstStaged)
         #expect(publisher.publishCallCount == 1)
         try await expectNoRequest(from: hostChannel)
+    }
+
+    // MARK: - Folder placeholder-tree routing (D1b folders)
+
+    @Test("a directory rep publishes as a placeholder tree once its listing lands")
+    func folderRepPublishesPlaceholderTree() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let (agent, publisher) = makeAgentWithPublisher(
+            pasteboard: pasteboard, agentFd: agentFd, publisherRoot: fakeDomainRoot,
+            supportsDirTree: true)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        // The listing the host would serve for the copied folder.
+        let source = try writeTempFolder(
+            name: "Project",
+            files: [("README.md", Data("readme".utf8)), ("sub/n.txt", Data("nested".utf8))])
+        defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
+
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 31,
+                reps: [
+                    RepInfo(
+                        uti: UTType.folder.identifier, byteCount: 12, filename: "Project",
+                        isInline: false, isDirectory: true)
+                ]))
+        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
+
+        // The `.fileURL` fire routes: the agent first pulls the tree listing,
+        // then publishes the folder as a placeholder tree and serves its domain
+        // URL — no archive stream.
+        let pull = lazyPull(pasteboard, forType: .fileURL)
+        try await driveInboundTreeListing(generation: 31, sourceURL: source, on: hostChannel) {
+            fetch in
+            #expect(fetch.repIndex == 0)
+            #expect(fetch.relativePath.isEmpty)
+        }
+        #expect(
+            await pull.value
+                == Data(fakeDomainRoot.appendingPathComponent("Project").absoluteString.utf8))
+
+        // The folder rides as a tree, not as a flat file item.
+        #expect(publisher.published.isEmpty)
+        let folder = try #require(publisher.publishedFolders.first)
+        #expect(publisher.publishedFolders.count == 1)
+        #expect(folder.repIndex == 0)
+        #expect(folder.filename == "Project")
+        #expect(!folder.isPackage)
+        #expect(Set(folder.nodes.map(\.relativePath)) == ["README.md", "sub", "sub/n.txt"])
+        try await expectNoRequest(from: hostChannel)
+    }
+
+    @Test("with the domain not ready, a directory rep skips the listing pull and falls back")
+    func folderRepSkipsListingWhenDomainNotReady() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        // The domain is registered but the user's File-Providers toggle is off:
+        // a folder must not pay for a tree listing it cannot publish (§3, pay on
+        // consume).
+        let (agent, publisher) = makeAgentWithPublisher(
+            pasteboard: pasteboard, agentFd: agentFd, publisherRoot: fakeDomainRoot,
+            supportsDirTree: true)
+        publisher.availabilityToReturn = .needsEnabling
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        let src = try writeTempFolder(name: "Shared", files: [("hello.txt", Data("hi".utf8))])
+        defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
+        let aarDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: aarDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: aarDir) }
+        let aar = aarDir.appendingPathComponent("Shared.aar")
+        try ClipboardDirectoryArchive.archive(directoryAt: src, to: aar)
+        let aarBytes = try Data(contentsOf: aar)
+
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 32,
+                reps: [
+                    RepInfo(
+                        uti: UTType.folder.identifier, byteCount: UInt64(aarBytes.count),
+                        filename: "Shared", isInline: false, isDirectory: true)
+                ]))
+        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
+
+        // The fire asks for the archive (a plain `ClipboardRequest`, never a
+        // tree fetch) and extracts it, exactly like an unnegotiated peer.
+        let pull = lazyPull(pasteboard, forType: .fileURL)
+        try await driveInboundStream(
+            generation: 32, uti: UTType.folder.identifier, filename: "Shared", payload: aarBytes,
+            isInline: false, on: hostChannel)
+        let extracted = try #require(
+            (await pull.value).flatMap { String(data: $0, encoding: .utf8) }
+                .flatMap(URL.init(string:)))
+        #expect(
+            try String(contentsOf: extracted.appendingPathComponent("hello.txt"), encoding: .utf8)
+                == "hi")
+        #expect(publisher.publishedFolders.isEmpty)
+        #expect(publisher.publishCallCount == 0)
     }
 
     @Test("inbound image file: promises both the image UTI and `.fileURL`")
@@ -2934,6 +3050,50 @@ struct VsockGuestClipboardAgentTests {
             offset = end
         }
         try channel.send(makeEndFrame(transferID: req.transferID, payload: payload))
+    }
+
+    /// Reads frames until a `ClipboardTreeFetch` arrives, draining `ack` frames a
+    /// prior inbound stream left queued.
+    private func awaitTreeFetch(on channel: VsockChannel) async throws
+        -> Kernova_V1_ClipboardTreeFetch
+    {
+        while true {
+            let frame = try await nextFrame(from: channel)
+            switch frame.payload {
+            case .clipboardTreeFetch(let fetch):
+                return fetch
+            case .clipboardStreamAck:
+                continue
+            default:
+                throw TestFailure(
+                    "Expected ClipboardTreeFetch, got \(String(describing: frame.payload))")
+            }
+        }
+    }
+
+    /// Responds to the agent's paste-time listing pull for a directory rep.
+    ///
+    /// Awaits the listing-mode `ClipboardTreeFetch` (running `validate` against
+    /// it), then streams the serialized tree of `sourceURL` back inline on the
+    /// fetch's transfer — what `ClipboardDirectoryTree.serveFetch` does on the
+    /// host.
+    private func driveInboundTreeListing(
+        generation: UInt64, sourceURL: URL, on channel: VsockChannel,
+        validate: (Kernova_V1_ClipboardTreeFetch) -> Void = { _ in }
+    ) async throws {
+        let fetch = try await awaitTreeFetch(on: channel)
+        validate(fetch)
+        let payload = try ClipboardDirectoryTree.serializeListing(
+            ClipboardDirectoryTree.enumerateTree(at: sourceURL),
+            rootMtimeMs: ClipboardDirectoryTree.mtimeMs(at: sourceURL))
+        try channel.send(
+            makeBeginFrame(
+                generation: generation, transferID: fetch.transferID,
+                uti: ClipboardDirectoryTree.treeListingUTI, totalBytes: payload.count,
+                isInline: true))
+        try channel.send(
+            makeChunkFrame(transferID: fetch.transferID, offset: 0, data: payload))
+        try channel.send(makeEndFrame(transferID: fetch.transferID, payload: payload))
     }
 
     // MARK: - Negative-wait helpers
