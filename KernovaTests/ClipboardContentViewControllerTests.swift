@@ -261,6 +261,99 @@ struct ClipboardContentViewControllerEditTests {
     }
 }
 
+/// Verifies the command bar's passthrough-driven visibility (#599): the manual
+/// Paste from Mac / Copy to Mac / Clear actions — the command bar and their
+/// responder-chain `paste:`/`copy:` equivalents — are withdrawn while automatic
+/// passthrough is on, both at window-open time and live as the toggle changes,
+/// and restored when it's turned back off.
+@Suite("ClipboardContentViewController passthrough chrome")
+@MainActor
+struct ClipboardContentViewControllerPassthroughChromeTests {
+    /// Isolated, pre-cleaned preferences for this suite's `VMLibraryViewModel`.
+    ///
+    /// Selection/order persistence never touches the real `.standard` domain.
+    private let preferences = makeEphemeralPreferences(suiteName: "test.kernova.clipboard-passthrough-chrome")
+
+    private func makeViewModel() -> VMLibraryViewModel {
+        VMLibraryViewModel(
+            storageService: MockVMStorageService(),
+            diskImageService: MockDiskImageService(),
+            virtualizationService: MockVirtualizationService(),
+            installService: MockMacOSInstallService(),
+            ipswService: MockIPSWService(),
+            usbDeviceService: MockUSBDeviceService(),
+            preferences: preferences
+        )
+    }
+
+    private func makeInstance(passthroughEnabled: Bool = false) -> VMInstance {
+        var config = VMConfiguration(name: "Clipboard VM", guestOS: .linux, bootMode: .efi)
+        config.clipboardPassthroughEnabled = passthroughEnabled
+        let bundleURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(config.id.uuidString, isDirectory: true)
+        return VMInstance(configuration: config, bundleURL: bundleURL)
+    }
+
+    private func makeController(instance: VMInstance) -> ClipboardContentViewController {
+        ClipboardContentViewController(instance: instance, viewModel: makeViewModel())
+    }
+
+    @Test("passthrough off (the default) shows the command bar")
+    func passthroughOffShowsCommandBar() {
+        let vc = makeController(instance: makeInstance())
+        _ = vc.view  // forces loadView + viewDidLoad → updateUI
+
+        #expect(vc.isCommandBarHiddenForTesting == false)
+    }
+
+    @Test("passthrough already on when the window opens hides the command bar")
+    func passthroughOnAtOpenHidesCommandBar() {
+        let vc = makeController(instance: makeInstance(passthroughEnabled: true))
+        _ = vc.view  // forces loadView + viewDidLoad → updateUI
+
+        #expect(vc.isCommandBarHiddenForTesting == true)
+    }
+
+    @Test("toggling passthrough live shows/hides the command bar without reopening the window")
+    func liveToggleUpdatesCommandBarVisibility() {
+        let instance = makeInstance()
+        let vc = makeController(instance: instance)
+        _ = vc.view
+        #expect(vc.isCommandBarHiddenForTesting == false)
+
+        instance.configuration.clipboardPassthroughEnabled = true
+        vc.simulateObservationForTesting()
+        #expect(vc.isCommandBarHiddenForTesting == true)
+
+        instance.configuration.clipboardPassthroughEnabled = false
+        vc.simulateObservationForTesting()
+        #expect(vc.isCommandBarHiddenForTesting == false)
+    }
+
+    @Test("paste:/copy: are gated while passthrough is on and restored when it's off")
+    func responderChainGatedByPassthrough() {
+        let service = FakeClipboardService(content: ClipboardContent(text: "some content"))
+        let instance = makeInstance(passthroughEnabled: true)
+        instance.clipboardService = service
+        let vc = makeController(instance: instance)
+        _ = vc.view
+
+        let pasteItem = NSMenuItem(
+            title: "Paste", action: #selector(ClipboardContentViewController.paste(_:)), keyEquivalent: "")
+        let copyItem = NSMenuItem(
+            title: "Copy", action: #selector(ClipboardContentViewController.copy(_:)), keyEquivalent: "")
+
+        #expect(vc.validateUserInterfaceItem(pasteItem) == false)
+        #expect(vc.validateUserInterfaceItem(copyItem) == false)
+
+        instance.configuration.clipboardPassthroughEnabled = false
+        vc.simulateObservationForTesting()
+
+        #expect(vc.validateUserInterfaceItem(pasteItem) == true)
+        #expect(vc.validateUserInterfaceItem(copyItem) == true)
+    }
+}
+
 /// Minimal in-memory `ClipboardServicing` for driving the controller without a
 /// live VM transport.
 @MainActor
