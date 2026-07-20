@@ -265,18 +265,22 @@ the destination asks — not earlier.
   opens as a package because LaunchServices derives packageness of an on-disk directory from its
   extension/bundle bit (the `.app`-signature acid test: a bundle's code signature lives in
   ordinary files — the Mach-O and `_CodeSignature/` — which a faithful per-child copy preserves).
-  **Known gap:** extended attributes (`xattr`) are **not** carried
-  through the File Provider item surface today (`NSFileProviderItem.extendedAttributes` governs
-  the domain's own sync, and whether it materializes onto a pasted-out copy is unverified). A
-  file's data, structure, permissions, and mtime cross faithfully; xattrs (e.g.
-  `com.apple.quarantine`, Finder tags) do not. Tracked as a follow-up (#603) — verify live before
-  relying on xattr round-trip. The destination side can also *add* metadata: Finder stamps
+  **Accepted gap:** extended attributes (`xattr`) do **not** cross on *any* paste path
+  (decided in #603). A file's data, structure, permissions, and mtime cross faithfully; xattrs
+  (Finder tags, `com.apple.quarantine`, `kMDItemWhereFroms`, …) uniformly do not. Every path
+  streams content bytes into a freshly created destination file, so xattrs are never read or
+  transmitted — and the archive fallback's field key set deliberately omits `XAT`
+  (`ClipboardDirectoryArchive.fieldKeys`), keeping the fallback consistent with the
+  placeholder-tree path rather than a higher-fidelity divergence. Full fidelity was never
+  reachable on the tree path anyway: `NSFileProviderItem.extendedAttributes` carries only
+  syncable-flagged names under a ~32 KiB per-item system budget (resource-fork-sized attributes
+  are stripped regardless), so tags surviving only when the File Provider toggle happens to be
+  off would be a worse inconsistency than uniformly dropping them. The destination side can
+  still *add* metadata: Finder stamps
   `com.apple.FinderInfo` on bundle-named directories (.app/.appex/.bundle) it creates during the
   copy, which `codesign --verify --strict` reports as detritus on an otherwise byte-identical
   bundle (verified live: the pasted bundle passes strict verification after `xattr -cr`; a plain
-  `cp -R` of a sealed system app shows the same class of divergence). The capability-absent / toggle-off archive fallback preserves the
-  full canonical key set (including xattrs) via AppleArchive, so it is the higher-fidelity path
-  when xattrs matter.
+  `cp -R` of a sealed system app shows the same class of divergence).
 
 ### 7. Integrity is not negotiable for speed
 

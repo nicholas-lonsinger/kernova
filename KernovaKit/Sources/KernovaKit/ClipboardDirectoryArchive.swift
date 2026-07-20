@@ -38,6 +38,11 @@ public enum ClipboardDirectoryArchive {
 
     /// Fidelity key set: type, path, link target, device id, data, uid, gid,
     /// permissions, flags, mtime, ctime, and per-entry SHA-256.
+    ///
+    /// RATIONALE: extended attributes (`XAT`) are deliberately omitted — xattrs
+    /// don't cross on any paste path, and carrying them only in this fallback
+    /// would make its fidelity diverge from the placeholder-tree path
+    /// (CLIPBOARD.md §6, #603).
     private static let fieldKeys = "TYP,PAT,LNK,DEV,DAT,UID,GID,MOD,FLG,MTM,CTM,SH2"
 
     /// Packs the directory tree at `directoryURL` into a single LZFSE-compressed
