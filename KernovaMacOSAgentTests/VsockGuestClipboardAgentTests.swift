@@ -1627,6 +1627,8 @@ struct VsockGuestClipboardAgentTests {
         #expect(folder.filename == "Project")
         #expect(!folder.isPackage)
         #expect(Set(folder.nodes.map(\.relativePath)) == ["README.md", "sub", "sub/n.txt"])
+        // The listing's root mtime rides through to the published root (fidelity).
+        #expect(folder.mtimeMs == ClipboardDirectoryTree.mtimeMs(at: source))
         try await expectNoRequest(from: hostChannel)
     }
 
@@ -3038,18 +3040,32 @@ struct VsockGuestClipboardAgentTests {
     ) async throws {
         let req = try await awaitRequest(on: channel)
         validate(req)
+        try streamInbound(
+            generation: generation, transferID: req.transferID, uti: uti, filename: filename,
+            payload: payload, isInline: isInline, chunkSize: chunkSize, on: channel)
+    }
+
+    /// Streams `Begin`/`Chunk`(s)/`End` for one inbound transfer to the agent.
+    ///
+    /// Chunked rather than sent as one frame so a large payload can't outrun the
+    /// receiver's flow-control window — the host's sender chunks for the same
+    /// reason.
+    private func streamInbound(
+        generation: UInt64, transferID: UInt64, uti: String, filename: String = "", payload: Data,
+        isInline: Bool, chunkSize: Int = 64 * 1024, on channel: VsockChannel
+    ) throws {
         try channel.send(
             makeBeginFrame(
-                generation: generation, transferID: req.transferID, uti: uti,
+                generation: generation, transferID: transferID, uti: uti,
                 totalBytes: payload.count, filename: filename, isInline: isInline))
         var offset = 0
         while offset < payload.count {
             let end = min(offset + chunkSize, payload.count)
             let slice = payload.subdata(in: offset..<end)
-            try channel.send(makeChunkFrame(transferID: req.transferID, offset: offset, data: slice))
+            try channel.send(makeChunkFrame(transferID: transferID, offset: offset, data: slice))
             offset = end
         }
-        try channel.send(makeEndFrame(transferID: req.transferID, payload: payload))
+        try channel.send(makeEndFrame(transferID: transferID, payload: payload))
     }
 
     /// Reads frames until a `ClipboardTreeFetch` arrives, draining `ack` frames a
@@ -3086,28 +3102,26 @@ struct VsockGuestClipboardAgentTests {
         let payload = try ClipboardDirectoryTree.serializeListing(
             ClipboardDirectoryTree.enumerateTree(at: sourceURL),
             rootMtimeMs: ClipboardDirectoryTree.mtimeMs(at: sourceURL))
-        try channel.send(
-            makeBeginFrame(
-                generation: generation, transferID: fetch.transferID,
-                uti: ClipboardDirectoryTree.treeListingUTI, totalBytes: payload.count,
-                isInline: true))
-        try channel.send(
-            makeChunkFrame(transferID: fetch.transferID, offset: 0, data: payload))
-        try channel.send(makeEndFrame(transferID: fetch.transferID, payload: payload))
+        try streamInbound(
+            generation: generation, transferID: fetch.transferID,
+            uti: ClipboardDirectoryTree.treeListingUTI, payload: payload, isInline: true,
+            on: channel)
     }
 
     // MARK: - Negative-wait helpers
 
     /// Asserts no `ClipboardOffer` arrives on `channel` within a short window.
     private func expectNoOffer(from channel: VsockChannel) async throws {
-        if let frame = try await maybeNextFrame(from: channel), case .clipboardOffer = frame.payload {
+        if let frame = try await maybeNextFrame(from: channel, skippingAcks: true),
+            case .clipboardOffer = frame.payload
+        {
             throw TestFailure("Unexpected ClipboardOffer; echo/skip suppression failed")
         }
     }
 
     /// Asserts no `ClipboardRequest` arrives on `channel` within a short window.
     private func expectNoRequest(from channel: VsockChannel) async throws {
-        if let frame = try await maybeNextFrame(from: channel),
+        if let frame = try await maybeNextFrame(from: channel, skippingAcks: true),
             case .clipboardRequest = frame.payload
         {
             throw TestFailure("Unexpected ClipboardRequest")
@@ -3116,16 +3130,26 @@ struct VsockGuestClipboardAgentTests {
 
     /// Reads one frame if one arrives within a short window, else returns nil.
     ///
+    /// Pass `skippingAcks` to drain the `ack` frames a prior inbound stream left
+    /// queued (as `awaitRequest` does) — without it a negative assertion made
+    /// after a stream consumes an ack and passes vacuously, never seeing the
+    /// frame it was meant to rule out.
+    ///
     /// NOTE: This is a bounded negative wait. There's no event to await for "no
     /// frame will ever arrive," so a small sleep is the pragmatic backstop — the
     /// agent's reaction (if any) runs on the main queue and would have been
     /// dispatched before this window elapses.
     private func maybeNextFrame(
-        from channel: VsockChannel, window: Duration = .milliseconds(200)
+        from channel: VsockChannel, window: Duration = .milliseconds(200),
+        skippingAcks: Bool = false
     ) async throws -> Frame? {
         let receiver = Task<Frame?, Never> {
             var iterator = channel.incoming.makeAsyncIterator()
-            return try? await iterator.next()
+            while let frame = try? await iterator.next() {
+                if skippingAcks, case .clipboardStreamAck = frame.payload { continue }
+                return frame
+            }
+            return nil
         }
         try await Task.sleep(for: window)
         receiver.cancel()
