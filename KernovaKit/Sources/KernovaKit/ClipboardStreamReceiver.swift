@@ -291,9 +291,9 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
                 return
             }
 
-            if transfer.firstChunkAt == nil { transfer.firstChunkAt = ContinuousClock.now }
-
             let now = ContinuousClock.now
+            if transfer.firstChunkAt == nil { transfer.firstChunkAt = now }
+
             let writeQueue = transfer.writeQueue
             if let writeQueue {
                 // Hand the bytes to the write lane and keep going: the append —
@@ -404,6 +404,24 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
             fail(
                 transfer, code: "commit.error",
                 message: "Finalizing staged file failed: \(error.localizedDescription)")
+            return
+        }
+        // The SHA-256 covers the bytes that *arrived*; nothing so far covers
+        // the bytes that reached the volume. Before the write lane existed
+        // those were one act on one lane and the digest spanned both; now the
+        // staging write sits outside what the digest can see, so confirm the
+        // committed file is the size the verified payload was. One `stat` per
+        // transfer restores end-to-end coverage of the write path — without it
+        // a staging file short of its payload would satisfy every check the
+        // receiver performs (CLIPBOARD.md §7). [L3]
+        let stagedSize = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size]
+        if let stagedSize = (stagedSize as? NSNumber)?.intValue, stagedSize != byteCount {
+            // Committed, so `Sink.abort()` is already a no-op — drop the
+            // truncated file here rather than leave it for generation rotation.
+            try? FileManager.default.removeItem(at: url)
+            fail(
+                transfer, code: "write.short",
+                message: "Staged file is \(stagedSize) bytes, expected \(byteCount)")
             return
         }
         let representation: ClipboardContent.Representation
@@ -703,7 +721,16 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
     /// transfer, so `writtenBytes` is always a true durable *prefix* of the
     /// payload — which is what lets the ack it sends carry credit.
     private func performWrite(_ transfer: InboundTransfer, _ data: Data) {
-        guard !transfer.isFinished, let sink = transfer.sink else { return }
+        guard !transfer.isFinished else { return }
+        guard let sink = transfer.sink else {
+            // Unreachable while Begin opens the sink before the first chunk is
+            // handed over. Fail loudly anyway rather than drop the bytes: the
+            // receive lane has already folded them into `receivedBytes` and the
+            // digest, so a silent skip would let End verify a payload the
+            // staging file never received and commit a truncated result. [L3]
+            fail(transfer, code: "stage.error", message: "Missing staging sink for chunk")
+            return
+        }
         do {
             try sink.write(data)
         } catch {
@@ -820,6 +847,14 @@ public final class ClipboardStreamReceiver: @unchecked Sendable {
     /// flight.
     ///
     /// Pending appends behind it see the claimed terminal state and bail.
+    ///
+    /// The abort is delivered without waiting for this hop, so **an abort does
+    /// not imply the partial is already gone** — it is deleted once the write
+    /// lane drains. That ordering is deliberate: doing it inline would make the
+    /// aborting lane block on the sink's lock behind an in-flight `write(2)`,
+    /// which is exactly the stall this file exists to avoid, and it would not
+    /// delete the file any sooner (the same write has to finish either way).
+    /// A caller that needs the file gone must wait for it, not for the abort.
     ///
     /// A RAM-resident inline transfer has neither a sink nor a write lane, so
     /// there is nothing to clean up.

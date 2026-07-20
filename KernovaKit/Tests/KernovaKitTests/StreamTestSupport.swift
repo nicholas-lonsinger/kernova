@@ -171,6 +171,40 @@ final class GatedSink: StagingSink, @unchecked Sendable {
     func abort() { wrapped.abort() }
 }
 
+/// A `StagingSink` that silently discards its `droppingWrite`-th write
+/// (1-based) — accepting the bytes without storing them, and without throwing.
+///
+/// Models the one corruption the end-to-end digest cannot catch: the digest is
+/// taken over the bytes that *arrive*, so bytes lost between the receive lane
+/// and the file leave both the size and SHA-256 checks satisfied.
+final class SilentlyDroppingSink: StagingSink, @unchecked Sendable {
+    private let wrapped: ClipboardFileStaging.Sink
+    private let droppingWrite: Int
+    private let lock = NSLock()
+    private var attempts = 0
+
+    var url: URL { wrapped.url }
+
+    init(wrapping sink: ClipboardFileStaging.Sink, droppingWrite: Int) {
+        wrapped = sink
+        self.droppingWrite = droppingWrite
+    }
+
+    func write(_ data: Data) throws {
+        let attempt = lock.withLock {
+            attempts += 1
+            return attempts
+        }
+        guard attempt != droppingWrite else { return }
+        try wrapped.write(data)
+    }
+
+    @discardableResult
+    func commit() throws -> URL { try wrapped.commit() }
+
+    func abort() { wrapped.abort() }
+}
+
 /// A `StagingSink` that throws on its `failingWrite`-th write (1-based),
 /// wrapping a real staging sink otherwise — models a volume that fails an
 /// append mid-stream.

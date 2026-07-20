@@ -625,6 +625,59 @@ struct ClipboardStreamTests {
         }
     }
 
+    @Test("a staging sink that silently short-writes is caught at End instead of committing a truncated file")
+    func shortWriteIsCaughtAtEnd() async throws {
+        // The digest is taken over the bytes that *arrive*, so a sink that
+        // accepts a chunk without storing it would sail through both the size
+        // and SHA-256 checks — the receive lane counted those bytes. Only the
+        // written-vs-expected comparison catches it (CLIPBOARD.md §7).
+        let stagingBox = Box<ClipboardFileStaging?>(nil)
+        let harness = try StreamHarness(
+            chunkSize: Self.chunk, windowBytes: Self.window,
+            freeSpaceProvider: { _ in 100 << 30 },
+            sinkFactory: { generation, filename in
+                guard let staging = stagingBox.value else {
+                    throw StreamTestFailure("Sink requested before the harness was wired")
+                }
+                return SilentlyDroppingSink(
+                    wrapping: try staging.makeSink(generation: generation, filename: filename),
+                    droppingWrite: 2)
+            })
+        defer { harness.tearDown() }
+        stagingBox.value = harness.staging
+        let id: UInt64 = 608
+        let total = Self.chunk * 3
+        let bytes = Data((0..<total).map { UInt8((($0 &* 23) &+ 5) & 0xFF) })
+
+        try await beginFileTransfer(harness, id: id, totalBytes: total, filename: "short.bin")
+        for i in 0..<3 {
+            harness.receiver.handleChunk(
+                .with {
+                    $0.transferID = id
+                    $0.offset = UInt64(i * Self.chunk)
+                    $0.data = bytes[(i * Self.chunk)..<((i + 1) * Self.chunk)]
+                })
+        }
+        // Correct total, correct digest — both computed over what arrived.
+        harness.receiver.handleEnd(
+            .with {
+                $0.transferID = id; $0.totalBytes = UInt64(total)
+                $0.sha256 = Data(SHA256.hash(data: bytes))
+            })
+
+        try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
+        #expect(harness.collector.abortInfos.contains { $0.code == "write.short" })
+        #expect(harness.collector.representation(id) == nil)
+        #expect(harness.collector.timedMetrics.isEmpty)
+        // The truncated file was already committed when the size check caught
+        // it, so `Sink.abort()` can no longer remove it — the check deletes it
+        // itself, synchronously, before the abort this test just observed.
+        #expect(
+            !materializedFiles(under: harness.stagingTempRoot).contains {
+                $0.lastPathComponent == "short.bin"
+            })
+    }
+
     @Test("a transfer torn down with a write backlog still deletes its partial")
     func teardownWithWriteBacklogDeletesPartial() async throws {
         let (harness, sinkBox) = try gatedHarness()
@@ -1059,10 +1112,16 @@ struct ClipboardStreamTests {
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
         #expect(harness.collector.abortInfos.contains { $0.code == "stall.timeout" })
         #expect(harness.collector.representation(1) == nil)
-        #expect(
+        // RATIONALE: filesystem-appearance poll (mirrors `cancelDeletesPartial`).
+        // Since #615 the partial is deleted on the transfer's write lane, so the
+        // abort this test just observed is delivered *before* the deletion runs
+        // — deliberately, so a wedged write can't delay waking a blocked pull.
+        // There is no test-owned signal for the deletion itself.
+        try await pollUntil {
             !materializedFiles(under: harness.stagingTempRoot).contains {
                 $0.lastPathComponent == "stalled.bin"
-            })
+            }
+        }
     }
 
     @Test("a sender that goes silent after streaming chunks aborts with stall.timeout")
@@ -1091,10 +1150,13 @@ struct ClipboardStreamTests {
         try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
         #expect(harness.collector.abortInfos.contains { $0.code == "stall.timeout" })
         #expect(harness.collector.representation(8) == nil)
-        #expect(
+        // RATIONALE: filesystem-appearance poll — see `inboundStallTimesOut`.
+        // The partial's deletion runs on the write lane, after the abort.
+        try await pollUntil {
             !materializedFiles(under: harness.stagingTempRoot).contains {
                 $0.lastPathComponent == "mid-stall.bin"
-            })
+            }
+        }
     }
 
     @Test("each arriving chunk advances the stall watchdog's activity anchor")
