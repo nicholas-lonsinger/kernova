@@ -196,3 +196,33 @@ public func waitUntil(
         throw TestFailure("Predicate did not become true within \(timeout)")
     }
 }
+
+// MARK: - offCooperativePool
+
+/// Runs a **synchronous, blocking** bridge call on a GCD global-queue thread,
+/// mirroring production's callers (the File Provider relay's XPC queue, the
+/// pasteboard's `provideData` callback, the guest agent's `fetchStagedFile`).
+///
+/// RATIONALE: never wrap these in `Task.detached`. Such a call parks its thread
+/// until the transfer resolves; on the cooperative pool that pins one of its few
+/// threads (CI runners have 3-4). Enough parked pulls exhaust the pool, the
+/// tasks the transfer's reply depends on (the test driving the host response, a
+/// blocked `@MainActor` responder) starve, and the bundle freezes until the
+/// shortest injected timeout fires — the 2026-07-19 CI mass failures (#608), and
+/// again #618 for the guest bundle, whose inbound-pull tests starved behind the
+/// File-Provider-relay `fetchStagedFile` pulls' parked cooperative threads. GCD
+/// global queues overcommit, so a parked pull costs a kernel thread, never a
+/// cooperative slot. Shared by every test bundle (formerly KernovaTests-only);
+/// see docs/TESTING.md "Blocking bridge calls run on GCD".
+///
+/// The queue is `.userInitiated` to match the paste that drives these bridges in
+/// production: a `.default` thread is scheduled behind the very CPU saturation
+/// that makes the pool exhaust in the first place, which would slow the pulls
+/// whose wall-clock bounds several of these tests assert.
+public func offCooperativePool<T: Sendable>(
+    _ body: @escaping @Sendable () -> T
+) async -> T {
+    await withCheckedContinuation { cont in
+        DispatchQueue.global(qos: .userInitiated).async { cont.resume(returning: body()) }
+    }
+}
