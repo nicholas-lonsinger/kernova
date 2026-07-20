@@ -382,6 +382,367 @@ struct ClipboardStreamTests {
         #expect(harness.collector.ackedByteCounts(21) == [0, 1024])
     }
 
+    // MARK: - Write-lane pipelining (#615)
+
+    /// A harness whose disk-streamed transfers append through a `GatedSink` the
+    /// test releases by hand, plus the box that sink lands in once Begin opens
+    /// it.
+    ///
+    /// The ack latency bound is pushed out of reach so every ack schedule below
+    /// is a pure function of which writes the test released — never of how long
+    /// a loaded CI runner took to run them.
+    private func gatedHarness(freeSpace: @escaping @Sendable () -> Int64 = { 100 << 30 }) throws
+        -> (harness: StreamHarness, sink: Box<GatedSink?>)
+    {
+        let stagingBox = Box<ClipboardFileStaging?>(nil)
+        let sinkBox = Box<GatedSink?>(nil)
+        let harness = try StreamHarness(
+            chunkSize: Self.chunk, windowBytes: Self.window,
+            ackLatencyBound: .seconds(600),
+            freeSpaceProvider: { _ in freeSpace() },
+            sinkFactory: { generation, filename in
+                guard let staging = stagingBox.value else {
+                    throw StreamTestFailure("Sink requested before the harness was wired")
+                }
+                let sink = GatedSink(
+                    wrapping: try staging.makeSink(generation: generation, filename: filename))
+                sinkBox.value = sink
+                return sink
+            })
+        // Set before any transfer can begin — the factory runs on `handleBegin`.
+        stagingBox.value = harness.staging
+        return (harness, sinkBox)
+    }
+
+    /// Opens an inbound file transfer of `totalBytes` and waits for its
+    /// go-signal ack, so the staging sink is open before the test drives chunks.
+    private func beginFileTransfer(
+        _ harness: StreamHarness, id: UInt64, totalBytes: Int, filename: String
+    ) async throws {
+        harness.receiver.handleBegin(
+            .with {
+                $0.generation = 1; $0.transferID = id; $0.uti = "public.data"
+                $0.totalBytes = UInt64(totalBytes); $0.isInline = false; $0.filename = filename
+            })
+        try await harness.collector.gate.wait { harness.collector.ackedByteCounts(id) == [0] }
+    }
+
+    /// Registers a per-transfer awaiter that forwards completion/abort to the
+    /// harness collector and records cumulative received-byte progress.
+    ///
+    /// Progress is the receive lane's own signal — it fires per *accepted*
+    /// chunk, before those bytes reach the sink — which is what makes the write
+    /// lane's independence observable.
+    private func trackProgress(_ harness: StreamHarness, _ id: UInt64) -> (
+        received: Box<Int>, gate: AsyncGate
+    ) {
+        let received = Box<Int>(0)
+        let gate = AsyncGate()
+        let collector = harness.collector
+        harness.receiver.awaitTransfer(
+            id,
+            onComplete: { collector.complete(id, $0) },
+            onAbort: { collector.abort($0) },
+            onProgress: { bytes, _ in
+                received.value = bytes
+                gate.notify()
+            })
+        return (received, gate)
+    }
+
+    @Test("the receive lane keeps accepting and hashing chunks while every staging write is parked")
+    func receiveLaneRunsAheadOfParkedWrites() async throws {
+        // The point of #615: a chunk's staging write no longer sits between it
+        // and the next chunk. With every write parked, all four chunks must
+        // still be validated, hashed, and progress-reported — while the ack
+        // ledger stays at the go-signal, because credit still tracks only
+        // durably-written bytes.
+        let (harness, sinkBox) = try gatedHarness()
+        defer { harness.tearDown() }
+        let id: UInt64 = 601
+        let chunkCount = 4
+        let total = Self.chunk * chunkCount
+
+        let progress = trackProgress(harness, id)
+        try await beginFileTransfer(harness, id: id, totalBytes: total, filename: "parked.bin")
+
+        let bytes = Data((0..<total).map { UInt8((($0 &* 29) &+ 3) & 0xFF) })
+        for i in 0..<chunkCount {
+            harness.receiver.handleChunk(
+                .with {
+                    $0.transferID = id
+                    $0.offset = UInt64(i * Self.chunk)
+                    $0.data = bytes[(i * Self.chunk)..<((i + 1) * Self.chunk)]
+                })
+        }
+
+        try await progress.gate.wait { progress.received.value == total }
+        let sink = try #require(sinkBox.value)
+        // Nothing has been made durable: the first write is parked in the gate
+        // and the rest are queued behind it.
+        #expect(sink.completedWrites == 0)
+        #expect(harness.collector.ackedByteCounts(id) == [0])
+
+        // Releasing the backlog completes the transfer with the right bytes.
+        sink.allowAll()
+        harness.receiver.handleEnd(
+            .with {
+                $0.transferID = id; $0.totalBytes = UInt64(total)
+                $0.sha256 = Data(SHA256.hash(data: bytes))
+            })
+        try await harness.collector.gate.wait { harness.collector.representation(id) != nil }
+        let url = try #require(harness.collector.representation(id)?.fileURL)
+        #expect(try Data(contentsOf: url) == bytes)
+        #expect(harness.collector.abortCount == 0)
+    }
+
+    @Test("acks advance only as the write lane makes bytes durable, never as they arrive")
+    func acksTrackDurableWritesNotArrivals() async throws {
+        // A 4 KiB chunk under a 16 KiB window is exactly one ack quantum, so
+        // each released write produces exactly one ack — the schedule is a pure
+        // function of how many writes the test let through, and the chunks the
+        // receiver has accepted but not written must contribute nothing.
+        let (harness, sinkBox) = try gatedHarness()
+        defer { harness.tearDown() }
+        let id: UInt64 = 602
+        let chunkCount = 4
+        let total = Self.chunk * chunkCount
+
+        let progress = trackProgress(harness, id)
+        try await beginFileTransfer(harness, id: id, totalBytes: total, filename: "durable.bin")
+        for i in 0..<chunkCount {
+            harness.receiver.handleChunk(
+                .with {
+                    $0.transferID = id
+                    $0.offset = UInt64(i * Self.chunk)
+                    $0.data = Data(repeating: UInt8(i), count: Self.chunk)
+                })
+        }
+        try await progress.gate.wait { progress.received.value == total }
+        let sink = try #require(sinkBox.value)
+
+        sink.allow(2)
+        try await harness.collector.gate.wait { harness.collector.ackedByteCounts(id).count == 3 }
+        // All four chunks are in — only the two written ones are acked.
+        #expect(harness.collector.ackedByteCounts(id) == [0, 4096, 8192])
+        #expect(sink.completedWrites == 2)
+        #expect(progress.received.value == total)
+
+        sink.allowAll()
+        try await harness.collector.gate.wait { harness.collector.ackedByteCounts(id).count == 5 }
+        #expect(harness.collector.ackedByteCounts(id) == [0, 4096, 8192, 12288, 16384])
+    }
+
+    @Test("End completes only once the write backlog has drained and committed")
+    func endWaitsForTheWriteBacklog() async throws {
+        let (harness, sinkBox) = try gatedHarness()
+        defer { harness.tearDown() }
+        let id: UInt64 = 603
+        let chunkCount = 4
+        let total = Self.chunk * chunkCount
+        let bytes = Data((0..<total).map { UInt8((($0 &* 37) &+ 11) & 0xFF) })
+
+        try await beginFileTransfer(harness, id: id, totalBytes: total, filename: "drain.bin")
+        for i in 0..<chunkCount {
+            harness.receiver.handleChunk(
+                .with {
+                    $0.transferID = id
+                    $0.offset = UInt64(i * Self.chunk)
+                    $0.data = bytes[(i * Self.chunk)..<((i + 1) * Self.chunk)]
+                })
+        }
+        let sink = try #require(sinkBox.value)
+        sink.allow(chunkCount - 1)
+        harness.receiver.handleEnd(
+            .with {
+                $0.transferID = id; $0.totalBytes = UInt64(total)
+                $0.sha256 = Data(SHA256.hash(data: bytes))
+            })
+
+        // Wait until the write lane is parked *inside* the last chunk's write.
+        // The completion barrier is queued behind that write, so while it is
+        // parked nothing can have been committed or delivered — no settling
+        // delay needed to make the negative assertion sound.
+        try await sink.gate.wait {
+            sink.startedWrites == chunkCount && sink.completedWrites == chunkCount - 1
+        }
+        #expect(harness.collector.completedCount == 0)
+        #expect(harness.collector.abortCount == 0)
+
+        sink.allowAll()
+        try await harness.collector.gate.wait { harness.collector.representation(id) != nil }
+        let received = try #require(harness.collector.representation(id))
+        let url = try #require(received.fileURL)
+        #expect(try Data(contentsOf: url) == bytes)
+        if case .file(_, _, let sha256) = received.source {
+            #expect(sha256 == Data(SHA256.hash(data: bytes)))
+        } else {
+            Issue.record("Expected a .file representation")
+        }
+    }
+
+    @Test("a staging write that fails mid-backlog aborts the transfer and deletes the partial")
+    func writeErrorMidBacklogAborts() async throws {
+        let stagingBox = Box<ClipboardFileStaging?>(nil)
+        let harness = try StreamHarness(
+            chunkSize: Self.chunk, windowBytes: Self.window,
+            freeSpaceProvider: { _ in 100 << 30 },
+            sinkFactory: { generation, filename in
+                guard let staging = stagingBox.value else {
+                    throw StreamTestFailure("Sink requested before the harness was wired")
+                }
+                return FailingSink(
+                    wrapping: try staging.makeSink(generation: generation, filename: filename),
+                    failingWrite: 2)
+            })
+        defer { harness.tearDown() }
+        stagingBox.value = harness.staging
+        let id: UInt64 = 604
+
+        try await beginFileTransfer(
+            harness, id: id, totalBytes: Self.chunk * 3, filename: "failing.bin")
+        for i in 0..<3 {
+            harness.receiver.handleChunk(
+                .with {
+                    $0.transferID = id
+                    $0.offset = UInt64(i * Self.chunk)
+                    $0.data = Data(repeating: UInt8(i), count: Self.chunk)
+                })
+        }
+
+        try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
+        #expect(harness.collector.abortInfos.contains { $0.code == "write.error" })
+        #expect(harness.collector.representation(id) == nil)
+        // Timing metrics report successful transfers only.
+        #expect(harness.collector.timedMetrics.isEmpty)
+        // RATIONALE: filesystem-appearance poll (mirrors `cancelDeletesPartial`)
+        // — the partial's deletion runs on the write lane after the abort has
+        // already been delivered, so there is no test-owned signal to gate on.
+        try await pollUntil {
+            !materializedFiles(under: harness.stagingTempRoot).contains {
+                $0.lastPathComponent == "failing.bin"
+            }
+        }
+    }
+
+    @Test("a transfer torn down with a write backlog still deletes its partial")
+    func teardownWithWriteBacklogDeletesPartial() async throws {
+        let (harness, sinkBox) = try gatedHarness()
+        defer { harness.tearDown() }
+        let id: UInt64 = 605
+
+        try await beginFileTransfer(
+            harness, id: id, totalBytes: 1_000_000, filename: "superseded.bin")
+        for i in 0..<3 {
+            harness.receiver.handleChunk(
+                .with {
+                    $0.transferID = id
+                    $0.offset = UInt64(i * Self.chunk)
+                    $0.data = Data(repeating: 0xC3, count: Self.chunk)
+                })
+        }
+        let sink = try #require(sinkBox.value)
+        // Pin the lane inside the first write, so the teardown below lands with
+        // a genuine backlog queued behind it.
+        try await sink.gate.wait { sink.startedWrites == 1 }
+
+        harness.receiver.cancel(generation: 1)
+        // The cleanup is ordered behind the parked write, exactly as a real slow
+        // volume would order it; releasing lets the lane drain into the abort.
+        sink.allowAll()
+
+        // RATIONALE: filesystem-appearance poll (mirrors `cancelDeletesPartial`)
+        // — supersession is silent on the channel-wide path, so no collector
+        // signal fires for it.
+        try await pollUntil {
+            !materializedFiles(under: harness.stagingTempRoot).contains {
+                $0.lastPathComponent == "superseded.bin"
+            }
+        }
+        #expect(harness.collector.representation(id) == nil)
+    }
+
+    @Test("a volume that fills mid-stream aborts from the write lane with disk.full")
+    func midStreamDiskFullOnWriteLane() async throws {
+        // Roomy at Begin, then nearly full: the write lane's once-per-window
+        // re-check (keyed on written bytes) must catch it and abort cleanly.
+        let free = Box<Int64>(100 << 30)
+        let (harness, sinkBox) = try gatedHarness(freeSpace: { free.value })
+        defer { harness.tearDown() }
+        let id: UInt64 = 606
+        let total = Self.chunk * 6
+
+        try await beginFileTransfer(harness, id: id, totalBytes: total, filename: "filling.bin")
+        free.value = 1024
+
+        // Four chunks == one full window of written bytes, which is when the
+        // re-check fires, with bytes still outstanding.
+        for i in 0..<4 {
+            harness.receiver.handleChunk(
+                .with {
+                    $0.transferID = id
+                    $0.offset = UInt64(i * Self.chunk)
+                    $0.data = Data(repeating: 0x5E, count: Self.chunk)
+                })
+        }
+        try #require(sinkBox.value).allowAll()
+
+        try await harness.collector.gate.wait { harness.collector.abortCount > 0 }
+        let info = try #require(harness.collector.abortInfos.first)
+        #expect(info.code == "disk.full")
+        #expect(info.neededBytes == total)
+        #expect(harness.collector.representation(id) == nil)
+    }
+
+    @Test("a duplicate chunk on the disk path re-acks the durably-written count, not the received one")
+    func duplicateOnDiskPathReAcksDurableCount() async throws {
+        // Sub-quantum chunks so no write of its own triggers an ack: the only
+        // mid-stream ack is the duplicate's, which must report the bytes the
+        // sink has taken (1 KiB) rather than the bytes accepted off the wire
+        // (2 KiB) — the whole point of routing it through the write lane.
+        let (harness, sinkBox) = try gatedHarness()
+        defer { harness.tearDown() }
+        let id: UInt64 = 607
+        let piece = 1024
+        let total = piece * 2
+        let bytes = Data((0..<total).map { UInt8((($0 &* 19) &+ 7) & 0xFF) })
+
+        let progress = trackProgress(harness, id)
+        try await beginFileTransfer(harness, id: id, totalBytes: total, filename: "dup.bin")
+
+        harness.receiver.handleChunk(
+            .with {
+                $0.transferID = id; $0.offset = 0; $0.data = bytes.prefix(piece)
+            })
+        // Duplicate of chunk 0 — its re-ack queues behind chunk 0's write.
+        harness.receiver.handleChunk(
+            .with {
+                $0.transferID = id; $0.offset = 0; $0.data = bytes.prefix(piece)
+            })
+        harness.receiver.handleChunk(
+            .with {
+                $0.transferID = id; $0.offset = UInt64(piece); $0.data = bytes.suffix(piece)
+            })
+
+        // Both real chunks are accepted before any write is released, so
+        // `receivedBytes` is already the full 2 KiB when the re-ack runs.
+        try await progress.gate.wait { progress.received.value == total }
+        let sink = try #require(sinkBox.value)
+        sink.allow(1)
+
+        try await harness.collector.gate.wait { harness.collector.ackedByteCounts(id).count == 2 }
+        #expect(harness.collector.ackedByteCounts(id) == [0, UInt64(piece)])
+
+        sink.allowAll()
+        harness.receiver.handleEnd(
+            .with {
+                $0.transferID = id; $0.totalBytes = UInt64(total)
+                $0.sha256 = Data(SHA256.hash(data: bytes))
+            })
+        try await harness.collector.gate.wait { harness.collector.representation(id) != nil }
+        #expect(try Data(contentsOf: #require(harness.collector.representation(id)?.fileURL)) == bytes)
+    }
+
     // MARK: - Receiver robustness (driven directly)
 
     @Test("a duplicate chunk is ignored and the transfer still completes")
@@ -736,14 +1097,14 @@ struct ClipboardStreamTests {
             })
     }
 
-    @Test("each durably-written chunk advances the stall watchdog's activity anchor")
+    @Test("each arriving chunk advances the stall watchdog's activity anchor")
     func chunkAdvancesStallAnchor() async throws {
         // Deterministic seam check (no timing): the watchdog compares against
-        // `lastChunkAt`, so each written chunk must move the anchor forward —
+        // `lastChunkAt`, so each arriving chunk must move the anchor forward —
         // this is what replaced the per-chunk timer re-arm (#377). The roomy
         // harness's quantum-sized chunks (4 KiB chunk, 16 KiB window → 4 KiB
-        // quantum) make every write emit an ack to gate on, so each anchor read
-        // is ordered after its chunk's queue block.
+        // quantum) make every chunk emit an ack to gate on, so each anchor read
+        // is ordered after its chunk's receive-lane block.
         let harness = try roomyHarness()
         defer { harness.tearDown() }
 

@@ -289,6 +289,12 @@ detector. **It stays.**
 
 - Optimize by removing **redundant** work — re-hashing bytes already hashed, hashing resident
   bytes a second time — **never** by removing the *only* correctness check.
+- **Overlapping** the check with other stages is fair game; *skipping* or deferring it past
+  delivery is not. The stream receiver's two lanes (#615) hash on the receive lane while the
+  previous chunk is still being written, but the ordering constraint is absolute: no
+  representation reaches a consumer until the size and SHA-256 have both been verified and the
+  staging file has been committed. A digest mismatch must abort before anything is delivered and
+  before any timing metric is reported.
 - Echo suppression and dedup are digest-based and must remain correct under concurrency. A
   performance change that weakens a correctness or integrity guard is rejected by default,
   regardless of the speed it buys.
@@ -300,6 +306,11 @@ work that scales with payload size** — hashing, copying, archiving, or disk I/
 
 - Payload-proportional work runs off-actor / off the run loop. Hashing the editor buffer on every
   keystroke, or reading a full payload synchronously on the main actor, is a defect.
+- Off-actor is the floor, not the ceiling: payload-proportional stages that gate the *protocol*
+  need separating from each other too. Staging `write(2)` sat between a chunk's arrival and the
+  ack that reopened the sender's credit window, so the sender spent ~92% of a large transfer
+  blocked on credit; splitting the append onto its own lane (#615) is the same principle applied
+  one level in.
 - This is the clipboard application of the project's `@MainActor` concurrency model: VZ- and
   pasteboard-touching state stays on the main actor; heavy bytes do not.
 
