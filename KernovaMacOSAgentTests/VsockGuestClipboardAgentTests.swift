@@ -1287,13 +1287,17 @@ struct VsockGuestClipboardAgentTests {
     /// Builds an agent with a `FakeFileProviderPublisher` wired in.
     ///
     /// The fake is returned alongside so the test can keep its strong reference
-    /// (the agent holds it weakly) and assert against it.
+    /// (the agent holds it weakly) and assert against it. `supportsDirTree`
+    /// models the peer's negotiated folder-tree capability — off by default, as
+    /// in production before the handshake reports it.
     private func makeAgentWithPublisher(
-        pasteboard: FakePasteboard, agentFd: Int32, publisherRoot: URL?
+        pasteboard: FakePasteboard, agentFd: Int32, publisherRoot: URL?,
+        supportsDirTree: Bool = false
     ) -> (agent: VsockGuestClipboardAgent, publisher: FakeFileProviderPublisher) {
         let publisher = FakeFileProviderPublisher(rootToReturn: publisherRoot)
         let agent = makeAgent(pasteboard: pasteboard, agentFd: agentFd)
         agent.fileProvider = publisher
+        agent.peerSupportsDirTree = { supportsDirTree }
         return (agent, publisher)
     }
 
@@ -1567,6 +1571,120 @@ struct VsockGuestClipboardAgentTests {
         #expect(restaged == firstStaged)
         #expect(publisher.publishCallCount == 1)
         try await expectNoRequest(from: hostChannel)
+    }
+
+    // MARK: - Folder placeholder-tree routing (D1b folders)
+
+    @Test("a directory rep publishes as a placeholder tree once its listing lands")
+    func folderRepPublishesPlaceholderTree() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        let (agent, publisher) = makeAgentWithPublisher(
+            pasteboard: pasteboard, agentFd: agentFd, publisherRoot: fakeDomainRoot,
+            supportsDirTree: true)
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        // The listing the host would serve for the copied folder.
+        let source = try writeTempFolder(
+            name: "Project",
+            files: [("README.md", Data("readme".utf8)), ("sub/n.txt", Data("nested".utf8))])
+        defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
+
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 31,
+                reps: [
+                    RepInfo(
+                        uti: UTType.folder.identifier, byteCount: 12, filename: "Project",
+                        isInline: false, isDirectory: true)
+                ]))
+        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
+
+        // The `.fileURL` fire routes: the agent first pulls the tree listing,
+        // then publishes the folder as a placeholder tree and serves its domain
+        // URL — no archive stream.
+        let pull = lazyPull(pasteboard, forType: .fileURL)
+        try await driveInboundTreeListing(generation: 31, sourceURL: source, on: hostChannel) {
+            fetch in
+            #expect(fetch.repIndex == 0)
+            #expect(fetch.relativePath.isEmpty)
+        }
+        #expect(
+            await pull.value
+                == Data(fakeDomainRoot.appendingPathComponent("Project").absoluteString.utf8))
+
+        // The folder rides as a tree, not as a flat file item.
+        #expect(publisher.published.isEmpty)
+        let folder = try #require(publisher.publishedFolders.first)
+        #expect(publisher.publishedFolders.count == 1)
+        #expect(folder.repIndex == 0)
+        #expect(folder.filename == "Project")
+        #expect(!folder.isPackage)
+        #expect(Set(folder.nodes.map(\.relativePath)) == ["README.md", "sub", "sub/n.txt"])
+        // The listing's root mtime rides through to the published root (fidelity).
+        #expect(folder.mtimeMs == ClipboardDirectoryTree.mtimeMs(at: source))
+        try await expectNoRequest(from: hostChannel)
+    }
+
+    @Test("with the domain not ready, a directory rep skips the listing pull and falls back")
+    func folderRepSkipsListingWhenDomainNotReady() async throws {
+        let pasteboard = FakePasteboard()
+        let (agentFd, remoteFd) = try makeRawSocketPair()
+        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
+        hostChannel.start()
+        defer { hostChannel.close() }
+
+        // The domain is registered but the user's File-Providers toggle is off:
+        // a folder must not pay for a tree listing it cannot publish (§3, pay on
+        // consume).
+        let (agent, publisher) = makeAgentWithPublisher(
+            pasteboard: pasteboard, agentFd: agentFd, publisherRoot: fakeDomainRoot,
+            supportsDirTree: true)
+        publisher.availabilityToReturn = .needsEnabling
+        defer { agent.stop() }
+
+        try await startAgentAndWaitForLiveChannel(agent: agent)
+
+        let src = try writeTempFolder(name: "Shared", files: [("hello.txt", Data("hi".utf8))])
+        defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
+        let aarDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: aarDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: aarDir) }
+        let aar = aarDir.appendingPathComponent("Shared.aar")
+        try ClipboardDirectoryArchive.archive(directoryAt: src, to: aar)
+        let aarBytes = try Data(contentsOf: aar)
+
+        try hostChannel.send(
+            makeOfferFrame(
+                generation: 32,
+                reps: [
+                    RepInfo(
+                        uti: UTType.folder.identifier, byteCount: UInt64(aarBytes.count),
+                        filename: "Shared", isInline: false, isDirectory: true)
+                ]))
+        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
+
+        // The fire asks for the archive (a plain `ClipboardRequest`, never a
+        // tree fetch) and extracts it, exactly like an unnegotiated peer.
+        let pull = lazyPull(pasteboard, forType: .fileURL)
+        try await driveInboundStream(
+            generation: 32, uti: UTType.folder.identifier, filename: "Shared", payload: aarBytes,
+            isInline: false, on: hostChannel)
+        let extracted = try #require(
+            (await pull.value).flatMap { String(data: $0, encoding: .utf8) }
+                .flatMap(URL.init(string:)))
+        #expect(
+            try String(contentsOf: extracted.appendingPathComponent("hello.txt"), encoding: .utf8)
+                == "hi")
+        #expect(publisher.publishedFolders.isEmpty)
+        #expect(publisher.publishCallCount == 0)
     }
 
     @Test("inbound image file: promises both the image UTI and `.fileURL`")
@@ -2922,32 +3040,88 @@ struct VsockGuestClipboardAgentTests {
     ) async throws {
         let req = try await awaitRequest(on: channel)
         validate(req)
+        try streamInbound(
+            generation: generation, transferID: req.transferID, uti: uti, filename: filename,
+            payload: payload, isInline: isInline, chunkSize: chunkSize, on: channel)
+    }
+
+    /// Streams `Begin`/`Chunk`(s)/`End` for one inbound transfer to the agent.
+    ///
+    /// Chunked rather than sent as one frame so a large payload can't outrun the
+    /// receiver's flow-control window — the host's sender chunks for the same
+    /// reason.
+    private func streamInbound(
+        generation: UInt64, transferID: UInt64, uti: String, filename: String = "", payload: Data,
+        isInline: Bool, chunkSize: Int = 64 * 1024, on channel: VsockChannel
+    ) throws {
         try channel.send(
             makeBeginFrame(
-                generation: generation, transferID: req.transferID, uti: uti,
+                generation: generation, transferID: transferID, uti: uti,
                 totalBytes: payload.count, filename: filename, isInline: isInline))
         var offset = 0
         while offset < payload.count {
             let end = min(offset + chunkSize, payload.count)
             let slice = payload.subdata(in: offset..<end)
-            try channel.send(makeChunkFrame(transferID: req.transferID, offset: offset, data: slice))
+            try channel.send(makeChunkFrame(transferID: transferID, offset: offset, data: slice))
             offset = end
         }
-        try channel.send(makeEndFrame(transferID: req.transferID, payload: payload))
+        try channel.send(makeEndFrame(transferID: transferID, payload: payload))
+    }
+
+    /// Reads frames until a `ClipboardTreeFetch` arrives, draining `ack` frames a
+    /// prior inbound stream left queued.
+    private func awaitTreeFetch(on channel: VsockChannel) async throws
+        -> Kernova_V1_ClipboardTreeFetch
+    {
+        while true {
+            let frame = try await nextFrame(from: channel)
+            switch frame.payload {
+            case .clipboardTreeFetch(let fetch):
+                return fetch
+            case .clipboardStreamAck:
+                continue
+            default:
+                throw TestFailure(
+                    "Expected ClipboardTreeFetch, got \(String(describing: frame.payload))")
+            }
+        }
+    }
+
+    /// Responds to the agent's paste-time listing pull for a directory rep.
+    ///
+    /// Awaits the listing-mode `ClipboardTreeFetch` (running `validate` against
+    /// it), then streams the serialized tree of `sourceURL` back inline on the
+    /// fetch's transfer — what `ClipboardDirectoryTree.serveFetch` does on the
+    /// host.
+    private func driveInboundTreeListing(
+        generation: UInt64, sourceURL: URL, on channel: VsockChannel,
+        validate: (Kernova_V1_ClipboardTreeFetch) -> Void = { _ in }
+    ) async throws {
+        let fetch = try await awaitTreeFetch(on: channel)
+        validate(fetch)
+        let payload = try ClipboardDirectoryTree.serializeListing(
+            ClipboardDirectoryTree.enumerateTree(at: sourceURL),
+            rootMtimeMs: ClipboardDirectoryTree.mtimeMs(at: sourceURL))
+        try streamInbound(
+            generation: generation, transferID: fetch.transferID,
+            uti: ClipboardDirectoryTree.treeListingUTI, payload: payload, isInline: true,
+            on: channel)
     }
 
     // MARK: - Negative-wait helpers
 
     /// Asserts no `ClipboardOffer` arrives on `channel` within a short window.
     private func expectNoOffer(from channel: VsockChannel) async throws {
-        if let frame = try await maybeNextFrame(from: channel), case .clipboardOffer = frame.payload {
+        if let frame = try await maybeNextFrame(from: channel, skippingAcks: true),
+            case .clipboardOffer = frame.payload
+        {
             throw TestFailure("Unexpected ClipboardOffer; echo/skip suppression failed")
         }
     }
 
     /// Asserts no `ClipboardRequest` arrives on `channel` within a short window.
     private func expectNoRequest(from channel: VsockChannel) async throws {
-        if let frame = try await maybeNextFrame(from: channel),
+        if let frame = try await maybeNextFrame(from: channel, skippingAcks: true),
             case .clipboardRequest = frame.payload
         {
             throw TestFailure("Unexpected ClipboardRequest")
@@ -2956,16 +3130,26 @@ struct VsockGuestClipboardAgentTests {
 
     /// Reads one frame if one arrives within a short window, else returns nil.
     ///
+    /// Pass `skippingAcks` to drain the `ack` frames a prior inbound stream left
+    /// queued (as `awaitRequest` does) — without it a negative assertion made
+    /// after a stream consumes an ack and passes vacuously, never seeing the
+    /// frame it was meant to rule out.
+    ///
     /// NOTE: This is a bounded negative wait. There's no event to await for "no
     /// frame will ever arrive," so a small sleep is the pragmatic backstop — the
     /// agent's reaction (if any) runs on the main queue and would have been
     /// dispatched before this window elapses.
     private func maybeNextFrame(
-        from channel: VsockChannel, window: Duration = .milliseconds(200)
+        from channel: VsockChannel, window: Duration = .milliseconds(200),
+        skippingAcks: Bool = false
     ) async throws -> Frame? {
         let receiver = Task<Frame?, Never> {
             var iterator = channel.incoming.makeAsyncIterator()
-            return try? await iterator.next()
+            while let frame = try? await iterator.next() {
+                if skippingAcks, case .clipboardStreamAck = frame.payload { continue }
+                return frame
+            }
+            return nil
         }
         try await Task.sleep(for: window)
         receiver.cancel()
