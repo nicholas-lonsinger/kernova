@@ -223,6 +223,9 @@ middle — never in *how bytes move*. There must be no second, parallel transpor
   §3 for the guest→host direction — the auto-publish reuses the same lazy promise write, so bytes are
   still pulled on paste; it does mean an inline rep (text, small image) is materialized once per guest
   copy, exactly as an explicit "Copy to Mac" would.
+- While passthrough is on, the clipboard window drops its manual actions — the command bar (Paste
+  from Mac / Copy to Mac / Clear) and their responder-chain `paste:`/`copy:` equivalents are withdrawn,
+  since the coordinator already keeps both clipboards in sync — but it remains a preview per §5.
 
 ### 5. The window is a preview; the preview is never on the data path
 

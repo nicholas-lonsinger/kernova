@@ -7,7 +7,11 @@ import os
 /// A command bar tops the window: explicit host-pasteboard actions
 /// ("Paste from Mac" / "Copy to Mac", also reachable through the responder
 /// chain as `paste:`/`copy:` outside the editor) plus "Clear" to empty the
-/// buffer. Below it the content area renders the buffer per
+/// buffer. The bar (and those responder-chain equivalents) is hidden while
+/// automatic passthrough is on — the host and guest clipboards sync
+/// automatically, so the manual actions are redundant and the
+/// `ClipboardPassthroughBanner` takes its place. Below it the content area
+/// renders the buffer per
 /// `ClipboardPreviewPolicy`: an editable `NSTextView` for text (and the empty
 /// buffer), a styled-RTF / image / file-chip preview, or a generic
 /// per-representation summary; drag-and-drop anywhere in the window feeds the
@@ -58,6 +62,10 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     /// off, the default); deactivated to reveal it when passthrough is on.
     private lazy var passthroughBannerCollapsed = passthroughBanner.heightAnchor.constraint(
         equalToConstant: 0)
+    /// Active = the command bar is collapsed to zero height (automatic
+    /// passthrough on — the manual transfer/clear actions are redundant);
+    /// deactivated to reveal it in the normal gated mode.
+    private lazy var commandBarCollapsed = commandBar.heightAnchor.constraint(equalToConstant: 0)
     /// Content-type indicator + transient-status surface, placed in the status
     /// row (right-aligned) so the command row stays a clean set of buttons.
     private let indicatorView = ClipboardIndicatorView()
@@ -282,11 +290,6 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         passthroughBanner.onTurnOff = { [weak self] in self?.disablePassthrough() }
         container.addSubview(passthroughBanner)
 
-        let commandDivider = NSBox()
-        commandDivider.boxType = .separator
-        commandDivider.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(commandDivider)
-
         commandBar.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(commandBar)
 
@@ -309,8 +312,9 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         container.addSubview(statusBar)
 
         // Vertical order: enablement banner → passthrough banner (both top,
-        // collapsed when not needed) → command bar → divider → content → divider →
-        // progress bar → status row.
+        // collapsed when not needed) → command bar (self-delineating, and
+        // collapsed while passthrough is on) → content → divider → progress bar →
+        // status row.
         var constraints: [NSLayoutConstraint] = [
             enablementBanner.topAnchor.constraint(equalTo: container.topAnchor),
             enablementBanner.leadingAnchor.constraint(equalTo: container.leadingAnchor),
@@ -325,14 +329,10 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             commandBar.topAnchor.constraint(equalTo: passthroughBanner.bottomAnchor),
             commandBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             commandBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-
-            commandDivider.topAnchor.constraint(equalTo: commandBar.bottomAnchor),
-            commandDivider.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            commandDivider.trailingAnchor.constraint(equalTo: container.trailingAnchor),
         ]
         for contentView in contentViews {
             constraints += [
-                contentView.topAnchor.constraint(equalTo: commandDivider.bottomAnchor),
+                contentView.topAnchor.constraint(equalTo: commandBar.bottomAnchor),
                 contentView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
                 contentView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
                 contentView.bottomAnchor.constraint(equalTo: statusDivider.topAnchor),
@@ -468,6 +468,10 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     func simulateObservationForTesting() {
         updateUI()
     }
+
+    /// Whether the manual command bar is currently withdrawn, so tests assert
+    /// the passthrough chrome without reaching into private views.
+    var isCommandBarHiddenForTesting: Bool { commandBar.isHidden }
     #endif
 
     // MARK: - Observation
@@ -573,16 +577,31 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
         applyStatus(status, canInstallKernovaAgent: canInstallKernovaAgent)
         updateEnablementBanner()
-        updatePassthroughBanner()
+        updatePassthroughChrome()
         triggerPreviewMaterialization()
     }
 
-    /// Reveals the passthrough banner while automatic passthrough is on.
-    private func updatePassthroughBanner() {
+    /// Reveals the passthrough banner and hides the manual command bar while
+    /// automatic passthrough is on: with the host and guest clipboards syncing
+    /// automatically, Paste from Mac / Copy to Mac / Clear are redundant, and the
+    /// banner (which carries its own hairline) delineates the content area
+    /// instead.
+    private func updatePassthroughChrome() {
         let on = instance.configuration.clipboardPassthroughEnabled
-        guard passthroughBanner.isHidden == on else { return }
-        passthroughBanner.isHidden = !on
-        passthroughBannerCollapsed.isActive = !on
+        if passthroughBanner.isHidden == on {
+            passthroughBanner.isHidden = !on
+            passthroughBannerCollapsed.isActive = !on
+        }
+        guard commandBar.isHidden != on else { return }
+        // Full Keyboard Access can park focus on a command button; move it off
+        // before the bar disappears, mirroring `show(contentView:)`.
+        if on, let responder = view.window?.firstResponder as? NSView,
+            responder.isDescendant(of: commandBar)
+        {
+            view.window?.makeFirstResponder(dropContainer)
+        }
+        commandBar.isHidden = on
+        commandBarCollapsed.isActive = on
     }
 
     /// Turns automatic passthrough off from the window banner (no confirmation —
@@ -1035,14 +1054,22 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
         switch item.action {
         case #selector(paste(_:)):
-            return instance.clipboardService != nil
+            return !isPassthroughOn && instance.clipboardService != nil
         case #selector(copy(_:)):
-            guard let service = instance.clipboardService else { return false }
+            guard !isPassthroughOn, let service = instance.clipboardService else { return false }
             return !service.clipboardContent.isEmpty && !isCopyingToMac
         default:
             return true
         }
     }
+
+    /// `true` while automatic passthrough owns the transfer.
+    ///
+    /// The manual actions (buttons, and their responder-chain `paste:`/`copy:`
+    /// equivalents) are redundant and are withdrawn. A focused `NSTextView`
+    /// handles/validates `paste:`/`copy:` itself, so normal editor text editing
+    /// is unaffected.
+    private var isPassthroughOn: Bool { instance.configuration.clipboardPassthroughEnabled }
 
     @objc private func actionButtonClicked(_: Any?) {
         viewModel?.mountGuestAgentInstaller(on: instance)

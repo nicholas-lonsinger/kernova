@@ -6,7 +6,11 @@ import AppKit
 /// Leading-aligned `Paste from Mac` / `Copy to Mac` / `Clear` buttons, each an
 /// SF Symbol plus a short label and a tooltip. The content-type indicator and
 /// transient-status surface live in the status row (`ClipboardIndicatorView`),
-/// so this row is actions only.
+/// so this row is actions only. The owner hides the whole bar (via `isHidden`)
+/// while automatic passthrough is on — the manual transfer/clear actions are
+/// redundant once the host and guest clipboards sync automatically; it carries
+/// its own hairline so it self-delineates from the content area below, the same
+/// pattern `ClipboardPassthroughBanner` uses.
 @MainActor
 final class ClipboardCommandBarView: NSView {
     // RATIONALE: No keyEquivalent on any button — a Cmd+V / Cmd+C equivalent
@@ -42,11 +46,21 @@ final class ClipboardCommandBarView: NSView {
         stack.alignment = .centerY
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
+
+        let hairline = NSBox()
+        hairline.boxType = .separator
+        hairline.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(hairline)
+
         NSLayoutConstraint.activate([
             stack.topAnchor.constraint(equalTo: topAnchor),
             stack.leadingAnchor.constraint(equalTo: leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            stack.bottomAnchor.constraint(equalTo: hairline.topAnchor),
+
+            hairline.leadingAnchor.constraint(equalTo: leadingAnchor),
+            hairline.trailingAnchor.constraint(equalTo: trailingAnchor),
+            hairline.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
     }
 
