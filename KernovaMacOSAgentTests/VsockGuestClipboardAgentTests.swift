@@ -1114,7 +1114,7 @@ struct VsockGuestClipboardAgentTests {
         // The relay entry point blocks on the pull and snapshots state via
         // `DispatchQueue.main.sync`, so it MUST run off the main actor; the host
         // streams the bytes concurrently.
-        let pull = Task.detached { agent.fetchStagedFile(generation: 11, repIndex: 0) }
+        let pull = Task { await offCooperativePool { agent.fetchStagedFile(generation: 11, repIndex: 0) } }
         try await driveInboundStream(
             generation: 11, uti: txtUTI, filename: "relay.txt", payload: contents,
             isInline: false, on: hostChannel)
@@ -1153,9 +1153,11 @@ struct VsockGuestClipboardAgentTests {
         try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
 
         let log = ServicingProgressLog()
-        let pull = Task.detached {
-            agent.fetchStagedFile(
-                generation: 11, repIndex: 0, onProgress: { log.record($0, $1) })
+        let pull = Task {
+            await offCooperativePool {
+                agent.fetchStagedFile(
+                    generation: 11, repIndex: 0, onProgress: { log.record($0, $1) })
+            }
         }
         try await driveInboundStream(
             generation: 11, uti: txtUTI, filename: "relay.txt", payload: contents,
@@ -1195,9 +1197,9 @@ struct VsockGuestClipboardAgentTests {
 
         // A generation that isn't the current offer is rejected before any pull,
         // so no ClipboardRequest goes out.
-        let outcome = await Task.detached {
+        let outcome = await offCooperativePool {
             agent.fetchStagedFile(generation: 999, repIndex: 0)
-        }.value
+        }
         guard case .failure(.noCurrentOffer) = outcome else {
             Issue.record("expected .noCurrentOffer, got \(outcome)")
             return
@@ -1230,7 +1232,7 @@ struct VsockGuestClipboardAgentTests {
         // The host opens the transfer (Begin) then aborts instead of streaming —
         // the off-main pull wakes with .aborted, so fetchStagedFile reports
         // .pullFailed (which the relay maps to serverUnreachable).
-        let pull = Task.detached { agent.fetchStagedFile(generation: 11, repIndex: 0) }
+        let pull = Task { await offCooperativePool { agent.fetchStagedFile(generation: 11, repIndex: 0) } }
         let req = try await awaitRequest(on: hostChannel)
         try hostChannel.send(
             makeBeginFrame(
@@ -1270,7 +1272,7 @@ struct VsockGuestClipboardAgentTests {
         // Park the pull (request sent, awaiting Begin), then drop the connection.
         // serve()'s EOF handler fails the coordinator off-main, so the pull wakes
         // promptly — well under the lazy-pull backstop — rather than hanging.
-        let pull = Task.detached { agent.fetchStagedFile(generation: 11, repIndex: 0) }
+        let pull = Task { await offCooperativePool { agent.fetchStagedFile(generation: 11, repIndex: 0) } }
         _ = try await awaitRequest(on: hostChannel)
         let start = ContinuousClock.now
         hostChannel.close()
@@ -2366,7 +2368,7 @@ struct VsockGuestClipboardAgentTests {
         // `fetchStagedFile` (the relay entry point, no OS paste deadline) must
         // issue a real request for the same over-cap rep the pasteboard path
         // above refuses — proving `deadlineBound: false` bypasses the cap.
-        let pull = Task.detached { agent.fetchStagedFile(generation: 25, repIndex: 0) }
+        let pull = Task { await offCooperativePool { agent.fetchStagedFile(generation: 25, repIndex: 0) } }
         let req = try await awaitRequest(on: hostChannel)
         try hostChannel.send(
             makeAbortFrame(transferID: req.transferID, code: "host.abort", message: "test abort"))
@@ -2525,9 +2527,11 @@ struct VsockGuestClipboardAgentTests {
         // `cancelAwait` + `coordinator.abort`, so `invokeProvider` returns nil on
         // the same thread without ever blocking toward the 120 s backstop.
         let start = ContinuousClock.now
-        let provided: Data? = DispatchQueue.main.sync {
-            agent.liveChannelForTesting?.close()
-            return pasteboard.invokeProvider(forType: .string)
+        let provided: Data? = await offCooperativePool {
+            DispatchQueue.main.sync {
+                agent.liveChannelForTesting?.close()
+                return pasteboard.invokeProvider(forType: .string)
+            }
         }
         let elapsed = ContinuousClock.now - start
 
@@ -2982,13 +2986,10 @@ struct VsockGuestClipboardAgentTests {
         _ pasteboard: FakePasteboard, forType type: NSPasteboard.PasteboardType,
         itemIndex: Int? = nil
     ) -> Task<Data?, Never> {
-        Task.detached {
-            await withCheckedContinuation { (cont: CheckedContinuation<Data?, Never>) in
-                DispatchQueue.global(qos: .userInitiated).async {
-                    cont.resume(
-                        returning: pasteboard.invokeProvider(forType: type, itemIndex: itemIndex))
-                }
-            }
+        // The blocking `invokeProvider` pull runs on a GCD thread, never a parked
+        // cooperative slot — see `offCooperativePool` (#618).
+        Task {
+            await offCooperativePool { pasteboard.invokeProvider(forType: type, itemIndex: itemIndex) }
         }
     }
 
