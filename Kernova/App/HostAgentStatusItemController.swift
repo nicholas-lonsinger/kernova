@@ -7,10 +7,12 @@ import os
 /// Present for the whole life of the background-agent process — the always-visible
 /// "Kernova is running" affordance, and the discoverable way to summon the GUI
 /// when the app is headless (`.accessory`, no Dock icon). The dropdown leads with
-/// "Open Kernova", lists the VMs running headless (click one to open the library
-/// on it), and ends with Quit; it is rebuilt from live view-model state each time
-/// it opens. A live tooltip reflects the running count. Mirrors the guest agent's
-/// `AgentStatusItemController`.
+/// "Open Kernova" (the library), lists the VMs running headless (click one to
+/// open just that VM — its own pop-out/fullscreen display window when that's its
+/// preference, else the library selected on it; see
+/// `AppDelegate.statusItemOpenTarget`), and ends with Quit; it is rebuilt from
+/// live view-model state each time it opens. A live tooltip reflects the running
+/// count. Mirrors the guest agent's `AgentStatusItemController`.
 ///
 /// Also surfaces a proactive "enable File Provider" reminder (#581): while the
 /// host "Copy to Mac" domain is registered but the user hasn't flipped the
@@ -32,7 +34,9 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
 
     private let viewModel: VMLibraryViewModel
     private let preferences: AppPreferences
-    /// Summons the GUI; a non-`nil` id selects that VM first.
+    /// Summons the GUI. `nil` opens the library; a VM id selects that VM and
+    /// opens just it — its own display window or the library, per
+    /// `AppDelegate.statusItemOpenTarget`.
     private let onOpen: (UUID?) -> Void
     private let onQuit: () -> Void
 
@@ -111,6 +115,20 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         // Re-arm cleanly if a prior reminder is still up.
         softQuitReminderDismissTask?.cancel()
 
+        // RATIONALE: detach the dropdown while the reminder popover is anchored.
+        // With `statusItem.menu` assigned, `NSPopover.show(relativeTo:)` against
+        // the status-item button pops the assigned menu open by itself (macOS 26,
+        // observed on every soft quit with a cursor nowhere near the item), and
+        // the menu open then dismisses the reminder via `menuNeedsUpdate` within
+        // a frame — the popover flashed and vanished. Every dismissal path
+        // restores the menu (`dismissSoftQuitReminder`); while the reminder is
+        // up, a click on the item lands on the temporary button action below,
+        // which dismisses the reminder and reopens the dropdown the user asked
+        // for.
+        statusItem.menu = nil
+        button.target = self
+        button.action = #selector(statusItemTappedDuringReminder)
+
         let content = MenuBarQuitReminderViewController(onStopReminding: { [weak self] in
             guard let self else { return }
             self.preferences.menuBarQuitReminderDismissed = true
@@ -141,13 +159,40 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         }
     }
 
-    /// Closes the soft-quit reminder and cancels its auto-dismiss timer.
+    /// Closes the soft-quit reminder, cancels its auto-dismiss timer, and
+    /// reattaches the dropdown the reminder had detached.
     ///
     /// Idempotent.
     private func dismissSoftQuitReminder() {
         softQuitReminderDismissTask?.cancel()
         softQuitReminderDismissTask = nil
         softQuitReminder.close()
+        reattachStatusItemMenu()
+    }
+
+    /// Restores the dropdown after the soft-quit reminder detached it, clearing
+    /// the temporary button action.
+    ///
+    /// Idempotent (no-op when the menu is already attached).
+    private func reattachStatusItemMenu() {
+        guard statusItem.menu == nil else { return }
+        statusItem.button?.target = nil
+        statusItem.button?.action = nil
+        statusItem.menu = menu
+    }
+
+    /// A click on the status item while the soft-quit reminder is up (and the
+    /// dropdown is therefore detached): the reminder has done its job, so
+    /// dismiss it and open the dropdown the click asked for.
+    @objc private func statusItemTappedDuringReminder() {
+        dismissSoftQuitReminder()
+        // Deferred a tick: `dismissSoftQuitReminder` reattached the menu, but
+        // popping it from inside the button-action callback that the same click
+        // is still delivering re-enters menu tracking mid-event; the next
+        // runloop turn opens it cleanly.
+        Task { @MainActor [weak self] in
+            self?.statusItem.button?.performClick(nil)
+        }
     }
 
     // MARK: - File Provider reminder
