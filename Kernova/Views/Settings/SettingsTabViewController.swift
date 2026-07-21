@@ -1,6 +1,18 @@
 import AppKit
 import os
 
+/// Layout tokens shared by every pane of the Settings window.
+///
+/// Surface-specific, so they live here (next to the tab container that owns the
+/// surface) rather than in the context-neutral `GroupedFormStyle`.
+enum SettingsPaneMetrics {
+    /// Fixed content width of every Settings pane.
+    ///
+    /// Each pane's root view pins to this explicitly instead of inheriting the
+    /// tab view's bounds — see `SettingsTabViewController`'s sizing contract.
+    static let width: CGFloat = 520
+}
+
 /// The toolbar-style tab container for the Settings window.
 ///
 /// Holds a **General** tab (Open at Login), a **Reminders** tab (turning
@@ -53,21 +65,44 @@ final class SettingsTabViewController: NSTabViewController {
     /// keeps whatever height the window has, letting a shorter pane stretch and
     /// a taller pane clip. Each pane publishes its content height via
     /// `preferredContentSize` in `viewWillAppear()` (which runs before this
-    /// delegate call), so the target size is already fresh here. The top-left
-    /// corner is kept anchored, matching the system apps' behavior.
+    /// delegate call), so the target size is already fresh here.
     override func tabView(_ tabView: NSTabView, didSelect tabViewItem: NSTabViewItem?) {
         super.tabView(tabView, didSelect: tabViewItem)
-        guard let window = view.window, let selected = tabViewItem?.viewController else { return }
-        var contentSize = selected.preferredContentSize
+        resizeWindow(toFit: tabViewItem?.viewController, animate: true)
+    }
+
+    /// Sizes the window to the pane that is about to become visible.
+    ///
+    /// `tabView(_:didSelect:)` only fires on a tab *switch*, and not for the
+    /// initial selection (during `viewDidLoad` there is no window yet). Without
+    /// this hook the first pane shown is sized by whatever frame the window
+    /// already has — including the stale height `setFrameAutosaveName` restores
+    /// from a previous session's taller tab — and the pane's four-edge pin
+    /// stretches its cards over the excess. No animation: the window has not
+    /// been shown yet, so there is nothing to animate from.
+    override func viewWillAppear() {
+        super.viewWillAppear()
+        resizeWindow(toFit: tabView.selectedTabViewItem?.viewController, animate: false)
+    }
+
+    /// Resizes the window so its content area matches the content size of `pane`.
+    ///
+    /// The top-left corner is kept anchored, matching the system apps' behavior.
+    ///
+    /// No-ops until the window and a measurable pane exist.
+    private func resizeWindow(toFit pane: NSViewController?, animate: Bool) {
+        guard let window = view.window, let pane else { return }
+        var contentSize = pane.preferredContentSize
         if contentSize == .zero {
-            contentSize = selected.view.fittingSize
+            contentSize = pane.view.fittingSize
         }
+        guard contentSize != .zero else { return }
         let contentRect = NSRect(origin: .zero, size: contentSize)
         let targetSize = window.frameRect(forContentRect: contentRect).size
         var frame = window.frame
         frame.origin.y += frame.height - targetSize.height
         frame.size = targetSize
-        window.setFrame(frame, display: true, animate: true)
+        window.setFrame(frame, display: true, animate: animate)
     }
 
     /// Loads an SF Symbol for a tab item, logging and asserting on a typo while

@@ -85,7 +85,7 @@ final class GeneralSettingsViewController: NSViewController {
             section.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: pad),
             section.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -pad),
             section.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -pad),
-            root.widthAnchor.constraint(equalToConstant: 520),
+            root.widthAnchor.constraint(equalToConstant: SettingsPaneMetrics.width),
             loginCard.widthAnchor.constraint(equalTo: section.widthAnchor),
             loginCaption.widthAnchor.constraint(equalTo: section.widthAnchor),
             menuBarCard.widthAnchor.constraint(equalTo: section.widthAnchor),

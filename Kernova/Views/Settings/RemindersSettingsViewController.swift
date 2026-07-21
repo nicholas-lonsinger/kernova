@@ -20,15 +20,16 @@ import os
 /// reach from the host and is called out to the user in a trailing caption
 /// rather than silently ignored.
 ///
-/// Follows the repo's read-on-appear / write-on-action idiom (no live
-/// observation): `viewWillAppear()` rebuilds the per-VM rows from
-/// `viewModel.instances` and refreshes every switch from current state.
+/// `viewWillAppear()` rebuilds the per-VM rows from `viewModel.instances` and
+/// refreshes every switch from current state; an `observeRecurring` loop, live
+/// for as long as the pane is on screen, redoes both whenever the VM list or a
+/// VM's nudge flag changes. Settings is a separate window from the main one, so
+/// VMs can be created or deleted — and the same nudge dismissed from the sidebar
+/// popover or VM Settings — while this pane is visible.
 @MainActor
 final class RemindersSettingsViewController: NSViewController {
     private static let logger = Logger(subsystem: "app.kernova", category: "RemindersSettingsViewController")
 
-    /// Fixed pane width, matching the General/Advanced panes.
-    private static let paneWidth: CGFloat = 520
     /// Height at which the pane stops growing and starts scrolling — keeps a
     /// long VM list from making the Settings window unreasonably tall.
     private static let maxPaneHeight: CGFloat = 520
@@ -44,6 +45,8 @@ final class RemindersSettingsViewController: NSViewController {
     private let vmSection = NSStackView()
     /// The live per-VM switches, paired with their VM, rebuilt on every appear.
     private var vmSwitches: [(instance: VMInstance, control: NSSwitch)] = []
+    /// Keeps the per-VM rows in sync with the library while the pane is visible.
+    private var vmObservation: ObservationLoop?
 
     init(preferences: AppPreferences = .shared, viewModel: VMLibraryViewModel) {
         self.preferences = preferences
@@ -136,7 +139,7 @@ final class RemindersSettingsViewController: NSViewController {
             equalTo: content.heightAnchor, constant: Spacing.large * 2)
         hugHeight.priority = .defaultHigh
         NSLayoutConstraint.activate([
-            scrollView.widthAnchor.constraint(equalToConstant: Self.paneWidth),
+            scrollView.widthAnchor.constraint(equalToConstant: SettingsPaneMetrics.width),
             hugHeight,
             scrollView.heightAnchor.constraint(lessThanOrEqualToConstant: Self.maxPaneHeight),
         ])
@@ -145,8 +148,7 @@ final class RemindersSettingsViewController: NSViewController {
 
     override func viewWillAppear() {
         super.viewWillAppear()
-        rebuildVMRows()
-        refreshSwitches()
+        refreshVMRows()
         // Drive NSTabViewController's per-tab window resize from the measured
         // fitting height (clamped by the height cap) — the scroll view otherwise
         // masks the document's intrinsic height. Must happen here, before the
@@ -154,6 +156,42 @@ final class RemindersSettingsViewController: NSViewController {
         // preferredContentSize when switching and does not react to a later
         // change (e.g. from viewDidLayout).
         preferredContentSize = view.fittingSize
+        startVMObservation()
+    }
+
+    override func viewDidDisappear() {
+        super.viewDidDisappear()
+        vmObservation?.cancel()
+        vmObservation = nil
+    }
+
+    /// Re-arms the observation that keeps the per-VM rows current while the pane
+    /// is on screen.
+    ///
+    /// Tracks the VM list's identity *and* each VM's nudge flag, so a VM created
+    /// or deleted in the main window, or a nudge dismissed from the sidebar
+    /// popover or VM Settings, is reflected here without a tab round-trip.
+    private func startVMObservation() {
+        vmObservation?.cancel()
+        vmObservation = observeRecurring(
+            track: { [weak self] in
+                guard let self else { return }
+                for instance in viewModel.instances {
+                    _ = instance.id
+                    _ = instance.name
+                    _ = instance.configuration.agentInstallNudgeDismissed
+                }
+            },
+            apply: { [weak self] in
+                self?.refreshVMRows()
+            }
+        )
+    }
+
+    /// Rebuilds the per-VM rows and mirrors every switch to current state.
+    private func refreshVMRows() {
+        rebuildVMRows()
+        refreshSwitches()
     }
 
     /// Rebuilds the per-VM section from `viewModel.instances`: one switch row per
