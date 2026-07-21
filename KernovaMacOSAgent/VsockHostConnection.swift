@@ -26,7 +26,10 @@ final class VsockHostConnection: @unchecked Sendable {
     /// Sized for the bursty pre-connect window: agent boot can take 30s+
     /// from VM-start to first vsock connect on macOS, and clipboard activity
     /// from `VsockGuestClipboardAgent` may push `.debug` traffic that could
-    /// fill a smaller buffer well before the log channel comes up. 256 frames
+    /// fill a smaller buffer well before the log channel comes up. Records now
+    /// buffer from process start — the `.undecided` policy state buffers rather
+    /// than drops until the host's first `PolicyUpdate` (#598) — so this window
+    /// is actually reachable, not just from policy-enable onward. 256 frames
     /// at ~200 bytes apiece is ~50 KiB of bounded memory.
     static let logBufferLimit = 256
 
@@ -35,19 +38,31 @@ final class VsockHostConnection: @unchecked Sendable {
     let lock = NSLock()
     var pendingLogs: [Frame] = []
 
-    /// Whether log forwarding is currently allowed by host policy.
+    /// Whether the host has decided log forwarding yet, and if so, its verdict.
     ///
-    /// Default `false` so the agent doesn't connect or buffer until the host's
-    /// initial `PolicyUpdate` says otherwise. Toggled by `setEnabled(_:)`.
-    private var enabled: Bool = false
+    /// Policy defaults to disabled until the host's first `PolicyUpdate` arrives
+    /// (the install/boot window, up to 30 s+), so a plain on/off flag would drop
+    /// every record emitted before that handshake — defeating the pre-connect
+    /// ring's whole purpose. The `.undecided` state buffers those records
+    /// instead, deferring the send/drop verdict to the first `setEnabled(_:)`
+    /// (#598).
+    private enum ForwardingPolicy {
+        case undecided
+        case enabled
+        case disabled
+    }
 
-    /// Lock-guarded read of `enabled` for the main-thread menu.
+    /// Current forwarding policy, guarded by `lock`. `.undecided` until the host's
+    /// first `PolicyUpdate`; then `.enabled`/`.disabled` per `setEnabled(_:)`.
+    private var policy: ForwardingPolicy = .undecided
+
+    /// Lock-guarded read of the forwarding policy for the main-thread menu.
     ///
     /// Renders the "Log Forwarding: enabled/disabled" line; the lock makes the
-    /// cross-thread read safe (`enabled` is mutated from the off-main policy
-    /// callback).
+    /// cross-thread read safe (`policy` is mutated from the off-main policy
+    /// callback). `.undecided` reads as not-yet-enabled.
     var isLogForwardingEnabled: Bool {
-        lock.withLock { enabled }
+        lock.withLock { policy == .enabled }
     }
 
     init() {
@@ -73,17 +88,22 @@ final class VsockHostConnection: @unchecked Sendable {
 
     /// Applies a host policy update for log forwarding.
     ///
-    /// When disabling: closes any active channel via the underlying client,
-    /// discards buffered log frames so the host doesn't get a flood of
-    /// retroactive records on the next enable, and pauses the reconnect
-    /// loop. When enabling: resumes the loop so the next connect happens
-    /// within `retryInterval`. Idempotent — repeated calls with the same
-    /// value are no-ops.
+    /// This is also the first decision that resolves the initial `.undecided`
+    /// policy, so `undecided → enabled/disabled` is always a transition (never a
+    /// no-op). When enabling: resumes the loop so the next connect happens within
+    /// `retryInterval`, flushing any records buffered during the undecided
+    /// window. When disabling: closes any active channel via the underlying
+    /// client, discards buffered log frames (including undecided-era records — an
+    /// explicit "off" ships nothing retroactively, preserving the privacy intent)
+    /// so the host doesn't get a flood on the next enable, and pauses the
+    /// reconnect loop. Idempotent — a repeat call with the already-decided value
+    /// is a no-op.
     func setEnabled(_ enabled: Bool) {
+        let target: ForwardingPolicy = enabled ? .enabled : .disabled
         let needsTransition: Bool = lock.withLock {
-            let was = self.enabled
-            self.enabled = enabled
-            return was != enabled
+            let was = policy
+            policy = target
+            return was != target
         }
         guard needsTransition else { return }
         if enabled {
@@ -110,10 +130,11 @@ final class VsockHostConnection: @unchecked Sendable {
         category: String,
         message: String
     ) -> Bool {
-        // Drop the frame entirely when host policy disables log forwarding —
-        // not just buffer it for later. The user's intent is "stop sending,
-        // don't fill a pipe to flush on the next enable".
-        guard lock.withLock({ enabled }) else { return false }
+        // Drop the frame entirely once host policy has explicitly disabled
+        // forwarding — not just buffer it for later. The user's intent is "stop
+        // sending, don't fill a pipe to flush on the next enable".
+        let policy = lock.withLock { self.policy }
+        if policy == .disabled { return false }
 
         var frame = Frame()
         frame.protocolVersion = 1
@@ -123,6 +144,15 @@ final class VsockHostConnection: @unchecked Sendable {
             $0.subsystem = subsystem
             $0.category = category
             $0.message = message
+        }
+
+        // No policy decision yet: buffer the frame so the install/boot-window
+        // records survive to the first `PolicyUpdate` instead of being dropped
+        // (#598). `timestampMs` is stamped above (forward time), so chronology
+        // survives the deferred flush; a `.disabled` verdict later clears these.
+        guard policy == .enabled else {
+            bufferFrame(frame)
+            return false
         }
 
         if let live = client.liveChannel {
