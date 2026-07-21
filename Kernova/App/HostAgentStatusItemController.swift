@@ -142,9 +142,10 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         // `.transient` popover auto-closes on app deactivation (see
         // `PopoverPresenter`'s `onClose` doc), so the reminder would flash and
         // vanish before the user could read it. Lifetime is bounded instead by
-        // the auto-dismiss timer below, the opt-out tap, and the status menu
-        // opening (`menuNeedsUpdate`) — at which point the reminder has done its
-        // job.
+        // the auto-dismiss timer below, the opt-out tap, and a click on the
+        // status item — which, since the dropdown is detached above, lands on
+        // `statusItemTappedDuringReminder` rather than opening the menu — at
+        // which point the reminder has done its job.
         softQuitReminder.show(
             content: content, from: button, preferredEdge: .minY, behavior: .applicationDefined)
         Self.logger.debug("Showing soft-quit menu-bar reminder")

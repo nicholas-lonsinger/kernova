@@ -447,18 +447,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             preferences: preferences,
             onOpen: { [weak self] vmID in
                 guard let self else { return }
-                let instance = vmID.flatMap { id in
-                    self.viewModel.instances.first(where: { $0.instanceID == id })
+                guard
+                    let instance = vmID.flatMap({ id in
+                        self.viewModel.instances.first(where: { $0.instanceID == id })
+                    })
+                else {
+                    self.summonUserInterface()
+                    return
                 }
-                if let instance { self.viewModel.selectedID = instance.instanceID }
-                if let instance,
-                    Self.statusItemOpenTarget(
-                        displayPreference: instance.configuration.displayPreference,
-                        canUseExternalDisplay: instance.canUseExternalDisplay)
-                        == .displayWindow
+                self.viewModel.selectedID = instance.instanceID
+                switch Self.statusItemOpenTarget(
+                    displayPreference: instance.configuration.displayPreference,
+                    canUseExternalDisplay: instance.canUseExternalDisplay)
                 {
+                case .displayWindow:
                     self.summonUserInterface(showing: .display(instance))
-                } else {
+                case .library:
                     self.summonUserInterface()
                 }
             },
