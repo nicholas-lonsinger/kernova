@@ -1633,7 +1633,10 @@ extension VMSettingsViewController {
     }
 
     @objc private func installReminderToggled() {
-        writeConfig { $0.agentInstallNudgeDismissed = installReminderSwitch.state != .on }
+        // Routed through the view model's named accessor rather than the generic
+        // `writeConfig` so every write of this flag — here, the sidebar popover,
+        // and the Reminders settings pane — shares one logged path.
+        viewModel.setAgentInstallNudgeDismissed(installReminderSwitch.state != .on, for: instance)
     }
 
     @objc private func serialRelayToggled() {
