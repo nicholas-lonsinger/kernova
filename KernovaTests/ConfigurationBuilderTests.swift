@@ -236,7 +236,7 @@ struct ConfigurationBuilderTests {
                 Issue.record("Unexpected path validation error: \(error)")
             // Non-path-validation errors — tolerated if they occur:
             case .invalidHardwareModel, .invalidMachineIdentifier,
-                .missingKernelPath:
+                .missingKernelPath, .storageDiskAttachFailed, .removableMediaAttachFailed:
                 break
             }
         } catch {
@@ -309,6 +309,64 @@ struct ConfigurationBuilderTests {
                 case .removableMediaNotFound = e
             else { return false }
             return true
+        }
+    }
+
+    @Test("Attach failure for removable media throws typed error with item identity")
+    func removableMediaAttachFailureThrowsTypedError() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        // 100 bytes is not a multiple of the 512-byte sector size, so
+        // VZDiskImageStorageDeviceAttachment rejects the file even though it
+        // exists and is readable — the same attach-time failure shape as a
+        // sandbox-denied open of a stale path.
+        let isoPath = bundleURL.appendingPathComponent("bad.iso").path(percentEncoded: false)
+        try Data(count: 100).write(to: URL(fileURLWithPath: isoPath))
+
+        let itemID = UUID()
+        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        config.removableMedia = [
+            RemovableMediaItem(id: itemID, path: isoPath, readOnly: true, label: "Bad ISO")
+        ]
+
+        let builder = ConfigurationBuilder()
+        #expect {
+            try builder.build(from: config, bundleURL: bundleURL)
+        } throws: { error in
+            guard let e = error as? ConfigurationBuilderError,
+                case .removableMediaAttachFailed(let id, let path, let label, _) = e
+            else { return false }
+            return id == itemID && path == isoPath && label == "Bad ISO"
+        }
+    }
+
+    @Test("Attach failure for external storage disk throws typed error with item identity")
+    func storageDiskAttachFailureThrowsTypedError() throws {
+        let bundleURL = try makeTempBundle(withDisk: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+        // Unaligned size — see the removable-media counterpart above.
+        let diskPath = bundleURL.appendingPathComponent("bad.img").path(percentEncoded: false)
+        try Data(count: 100).write(to: URL(fileURLWithPath: diskPath))
+
+        let diskID = UUID()
+        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        config.storageDisks = [
+            ConfigurationBuilder.defaultMainDisk(layout: VMBundleLayout(bundleURL: bundleURL)),
+            StorageDisk(
+                id: diskID, path: diskPath, readOnly: true, label: "Bad Disk",
+                isInternal: false, kind: .virtio),
+        ]
+
+        let builder = ConfigurationBuilder()
+        #expect {
+            try builder.build(from: config, bundleURL: bundleURL)
+        } throws: { error in
+            guard let e = error as? ConfigurationBuilderError,
+                case .storageDiskAttachFailed(let id, let path, let label, _) = e
+            else { return false }
+            return id == diskID && path == diskPath && label == "Bad Disk"
         }
     }
 
@@ -565,7 +623,7 @@ struct ConfigurationBuilderTests {
                 .removableMediaNotFound, .removableMediaPathIsDirectory, .removableMediaNotWritable:
                 Issue.record("Unexpected path validation error: \(error)")
             case .invalidHardwareModel, .invalidMachineIdentifier,
-                .missingKernelPath:
+                .missingKernelPath, .storageDiskAttachFailed, .removableMediaAttachFailed:
                 break
             }
         } catch {
@@ -609,7 +667,7 @@ struct ConfigurationBuilderTests {
                 Issue.record("Unexpected path validation error: \(error)")
             // Non-path-validation errors — tolerated if they occur:
             case .invalidHardwareModel, .invalidMachineIdentifier,
-                .missingKernelPath:
+                .missingKernelPath, .storageDiskAttachFailed, .removableMediaAttachFailed:
                 break
             }
         } catch {
@@ -884,7 +942,7 @@ struct ConfigurationBuilderTests {
                 Issue.record("Unexpected path validation error: \(error)")
             // Non-path-validation errors — tolerated if they occur:
             case .invalidHardwareModel, .invalidMachineIdentifier,
-                .missingKernelPath:
+                .missingKernelPath, .storageDiskAttachFailed, .removableMediaAttachFailed:
                 break
             }
         } catch {

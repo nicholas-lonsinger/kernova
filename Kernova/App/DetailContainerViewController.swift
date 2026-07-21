@@ -279,6 +279,10 @@ extension DetailContainerViewController: VMLibraryPresenting {
         alertsPresenter.presentError(message)
     }
 
+    func presentStartFailedAttachment(_ failure: StartFailedAttachment, for instance: VMInstance) {
+        alertsPresenter.presentStartFailedAttachment(failure, for: instance)
+    }
+
     func presentDeleteSheet(for instance: VMInstance, permanently: Bool) {
         alertsPresenter.presentDeleteSheet(for: instance, permanently: permanently)
     }

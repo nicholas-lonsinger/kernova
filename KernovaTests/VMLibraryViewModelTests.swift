@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import Virtualization
 @testable import Kernova
 
 @Suite("VMLibraryViewModel Tests", .serialized)
@@ -1083,6 +1084,172 @@ struct VMLibraryViewModelTests {
 
         #expect(presenter.showError == true)
         #expect(presenter.errorMessage != nil)
+    }
+
+    @Test("start offers removal when a removable media attach fails")
+    func startOffersRemovalOnRemovableMediaAttachFailure() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let instance = makeInstance()
+        let item = RemovableMediaItem(path: "/tmp/stale.iso", readOnly: true, label: "Stale ISO")
+        instance.configuration.removableMedia = [item]
+        viewModel.instances.append(instance)
+        virtService.startError = ConfigurationBuilderError.removableMediaAttachFailed(
+            id: item.id, path: item.path, label: item.label,
+            underlying: NSError(domain: NSPOSIXErrorDomain, code: Int(ENOTSUP)))
+
+        await viewModel.start(instance)
+
+        // The actionable alert is presented instead of the generic error.
+        #expect(presenter.startFailedAttachments.count == 1)
+        #expect(presenter.startFailedAttachments.first?.kind == .removableMedia)
+        #expect(presenter.startFailedAttachments.first?.id == item.id)
+        #expect(presenter.startFailedAttachments.first?.label == "Stale ISO")
+        #expect(presenter.errors.isEmpty)
+    }
+
+    @Test("removeStartFailedAttachmentAndStart detaches the item and retries the start")
+    func removeStartFailedAttachmentAndStartRetries() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let instance = makeInstance()
+        let item = RemovableMediaItem(path: "/tmp/stale.iso", readOnly: true, label: "Stale ISO")
+        instance.configuration.removableMedia = [item]
+        viewModel.instances.append(instance)
+        instance.status = .error  // where a failed start leaves the VM
+
+        let failure = StartFailedAttachment(
+            kind: .removableMedia, id: item.id, label: item.label, message: "test")
+        await viewModel.removeStartFailedAttachmentAndStart(failure, on: instance)
+
+        #expect(instance.configuration.removableMedia == nil)
+        #expect(virtService.startCallCount == 1)
+        #expect(instance.status == .running)
+        // Detach only — nothing was trashed.
+        #expect(fileSystem.trashedURLs.isEmpty)
+    }
+
+    @Test("start keeps the generic error when the main disk attach fails")
+    func startMainDiskAttachFailureStaysGeneric() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let instance = makeInstance()
+        viewModel.instances.append(instance)
+        // The synthesized main disk is what a nil storageDisks list resolves to.
+        let mainDisk = ConfigurationBuilder.defaultMainDisk(
+            layout: VMBundleLayout(bundleURL: instance.bundleURL))
+        virtService.startError = ConfigurationBuilderError.storageDiskAttachFailed(
+            id: mainDisk.id, path: mainDisk.path, label: mainDisk.label,
+            underlying: NSError(domain: NSPOSIXErrorDomain, code: Int(ENOTSUP)))
+
+        await viewModel.start(instance)
+
+        // Removing the boot disk can't fix the VM, so no removal offer.
+        #expect(presenter.startFailedAttachments.isEmpty)
+        #expect(presenter.showError == true)
+    }
+
+    @Test("start offers removal when an external storage disk attach fails")
+    func startOffersRemovalOnExternalDiskAttachFailure() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let instance = makeInstance()
+        let layout = VMBundleLayout(bundleURL: instance.bundleURL)
+        let external = StorageDisk(
+            id: UUID(), path: "/tmp/gone.img", readOnly: false, label: "External",
+            isInternal: false, kind: .virtio)
+        instance.configuration.storageDisks = [
+            ConfigurationBuilder.defaultMainDisk(layout: layout), external,
+        ]
+        viewModel.instances.append(instance)
+        virtService.startError = ConfigurationBuilderError.storageDiskAttachFailed(
+            id: external.id, path: external.path, label: external.label,
+            underlying: NSError(domain: NSPOSIXErrorDomain, code: Int(ENOTSUP)))
+
+        await viewModel.start(instance)
+
+        #expect(presenter.startFailedAttachments.count == 1)
+        #expect(presenter.startFailedAttachments.first?.kind == .storageDisk)
+        #expect(presenter.startFailedAttachments.first?.id == external.id)
+        #expect(presenter.errors.isEmpty)
+    }
+
+    @Test("start does not offer removal for transient file-lock contention")
+    func startDoesNotOfferRemovalForLockContention() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let instance = makeInstance()
+        let item = RemovableMediaItem(path: "/tmp/shared.iso", readOnly: true, label: "Shared ISO")
+        instance.configuration.removableMedia = [item]
+        viewModel.instances.append(instance)
+        // Contention means the file is fine and a dying VM still holds the
+        // lock — offering to detach a working attachment would be wrong.
+        virtService.startError = ConfigurationBuilderError.removableMediaAttachFailed(
+            id: item.id, path: item.path, label: item.label,
+            underlying: NSError(
+                domain: VZError.errorDomain,
+                code: VZError.Code.invalidVirtualMachineConfiguration.rawValue,
+                userInfo: [
+                    NSUnderlyingErrorKey: NSError(domain: NSPOSIXErrorDomain, code: Int(EAGAIN))
+                ]))
+
+        await viewModel.start(instance)
+
+        #expect(presenter.startFailedAttachments.isEmpty)
+        #expect(presenter.showError == true)
+        #expect(instance.configuration.removableMedia?.count == 1)
+    }
+
+    @Test("removeStartFailedAttachmentAndStart ignores an already-deleted VM")
+    func removeStartFailedAttachmentIgnoresDeletedVM() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let instance = makeInstance()
+        let item = RemovableMediaItem(path: "/tmp/stale.iso", readOnly: true, label: "Stale ISO")
+        instance.configuration.removableMedia = [item]
+        // Never added to `instances` — models the VM being deleted while the
+        // alert sat queued behind another sheet.
+
+        let failure = StartFailedAttachment(
+            kind: .removableMedia, id: item.id, label: item.label, message: "test")
+        await viewModel.removeStartFailedAttachmentAndStart(failure, on: instance)
+
+        // No config write to a deleted bundle, and no boot.
+        #expect(instance.configuration.removableMedia?.count == 1)
+        #expect(virtService.startCallCount == 0)
+    }
+
+    @Test("removeStartFailedAttachmentAndStart does not retry when the entry is already gone")
+    func removeStartFailedAttachmentSkipsRetryWhenEntryGone() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let instance = makeInstance()
+        viewModel.instances.append(instance)
+
+        // The user removed it in Settings before confirming the alert. Retrying
+        // would re-raise the same failure and re-present this alert forever.
+        let failure = StartFailedAttachment(
+            kind: .removableMedia, id: UUID(), label: "Stale ISO", message: "test")
+        await viewModel.removeStartFailedAttachmentAndStart(failure, on: instance)
+
+        #expect(virtService.startCallCount == 0)
+    }
+
+    @Test("start keeps the generic error when the failing media is no longer configured")
+    func startStaysGenericWhenMediaNotConfigured() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let instance = makeInstance()
+        viewModel.instances.append(instance)
+        virtService.startError = ConfigurationBuilderError.removableMediaAttachFailed(
+            id: UUID(), path: "/tmp/ghost.iso", label: "Ghost",
+            underlying: NSError(domain: NSPOSIXErrorDomain, code: Int(ENOTSUP)))
+
+        await viewModel.start(instance)
+
+        // An offer whose action could only no-op is worse than the plain error.
+        #expect(presenter.startFailedAttachments.isEmpty)
+        #expect(presenter.showError == true)
     }
 
     @Test("forceStop presents error on service failure")

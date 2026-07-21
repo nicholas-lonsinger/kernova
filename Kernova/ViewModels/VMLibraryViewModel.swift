@@ -374,8 +374,114 @@ final class VMLibraryViewModel {
         } catch {
             Self.logger.error(
                 "Failed to start '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
-            presentError(error)
+            // An attachment the framework couldn't open gets an actionable
+            // alert (name the item, offer to remove it and start) instead of
+            // the raw error; everything else keeps the generic alert.
+            if let presenter, let failure = startFailedAttachment(from: error, on: instance) {
+                presenter.presentStartFailedAttachment(failure, for: instance)
+            } else {
+                presentError(error)
+            }
         }
+    }
+
+    /// The storage disk `id` refers to, resolving the synthesized main disk
+    /// when the VM has no explicit list.
+    ///
+    /// Shared by the offer and its confirmed action so the two can never
+    /// disagree about which disks exist.
+    private func storageDisk(id: UUID, on instance: VMInstance) -> StorageDisk? {
+        (instance.configuration.storageDisks ?? Self.defaultStorageDisks(for: instance))
+            .first { $0.id == id }
+    }
+
+    /// Maps a start error to a ``StartFailedAttachment`` when it identifies an
+    /// attachment the user can remove to get the VM running, or `nil` when the
+    /// generic error alert is the right surface.
+    ///
+    /// Two exclusions, both cases where removal is the wrong advice: the disk
+    /// the guest boots from (removing it trades an unbootable VM for a
+    /// differently unbootable VM), and file-lock contention, which is
+    /// transient — the file is fine and the lock holder is a VM still tearing
+    /// down, so the fix is to wait and retry, not to detach a working disk.
+    private func startFailedAttachment(
+        from error: Error, on instance: VMInstance
+    ) -> StartFailedAttachment? {
+        guard let builderError = error as? ConfigurationBuilderError,
+            !VirtualizationService.isFileLockContention(builderError)
+        else { return nil }
+        switch builderError {
+        case .storageDiskAttachFailed(let id, _, let label, _):
+            guard let disk = storageDisk(id: id, on: instance),
+                !isMainDisk(disk, of: instance)
+            else { return nil }
+            return StartFailedAttachment(
+                kind: .storageDisk, id: id, label: label,
+                message: builderError.localizedDescription)
+        case .removableMediaAttachFailed(let id, _, let label, _):
+            // Confirm the entry is really in the list, mirroring the disk
+            // branch: an offer whose action could only no-op is worse than
+            // the generic error, because the button appears to do nothing.
+            guard (instance.configuration.removableMedia ?? []).contains(where: { $0.id == id })
+            else { return nil }
+            return StartFailedAttachment(
+                kind: .removableMedia, id: id, label: label,
+                message: builderError.localizedDescription)
+        default:
+            return nil
+        }
+    }
+
+    /// Confirmed action of the start-failed alert: detach the failing
+    /// attachment (file untouched) and immediately retry the start.
+    ///
+    /// No-ops if the VM is gone or the entry has already been removed. Alerts
+    /// are serialized, so this confirmation can arrive arbitrarily long after
+    /// the failed start — by which point the user may have deleted the VM (see
+    /// the same guard in ``deleteConfirmed(_:deletingExternalIDs:permanently:)``)
+    /// or removed the attachment in Settings. Retrying the start after a
+    /// removal that found nothing would just re-raise the identical failure
+    /// and re-present this alert.
+    func removeStartFailedAttachmentAndStart(
+        _ failure: StartFailedAttachment, on instance: VMInstance
+    ) async {
+        guard instances.contains(where: { $0.id == instance.id }) else {
+            Self.logger.debug(
+                "Ignoring start-failed removal for already-removed VM '\(instance.name, privacy: .public)'"
+            )
+            return
+        }
+
+        let removed: Bool
+        switch failure.kind {
+        case .storageDisk:
+            if let disk = storageDisk(id: failure.id, on: instance) {
+                _ = removeStorageDisk(disk, from: instance, trashFile: false)
+                removed = true
+            } else {
+                removed = false
+            }
+        case .removableMedia:
+            if let item = (instance.configuration.removableMedia ?? [])
+                .first(where: { $0.id == failure.id })
+            {
+                removeRemovableMedia(item, from: instance, trashFile: false)
+                removed = true
+            } else {
+                removed = false
+            }
+        }
+
+        guard removed else {
+            Self.logger.notice(
+                "Failed attachment '\(failure.label, privacy: .public)' already gone from '\(instance.name, privacy: .public)'; not retrying start"
+            )
+            return
+        }
+        Self.logger.notice(
+            "Removed failed attachment '\(failure.label, privacy: .public)' from '\(instance.name, privacy: .public)'; retrying start"
+        )
+        await start(instance)
     }
 
     func stop(_ instance: VMInstance) {

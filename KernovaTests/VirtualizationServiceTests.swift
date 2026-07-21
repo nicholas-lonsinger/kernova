@@ -194,6 +194,39 @@ struct VirtualizationServiceTests {
         #expect(VirtualizationService.isTransientStartError(makeFileLockContentionError()))
     }
 
+    @Test("lock contention wrapped in a disk attach failure is still lock contention")
+    func wrappedLockContentionIsLockContention() {
+        // The lock is taken on the disk image, so contention surfaces from the
+        // attach — which the builder wraps to carry the item's identity. If the
+        // classifier stopped unwrapping, the bounded retry would never fire and
+        // a post-install auto-boot would fail on its first attempt.
+        let wrapped = ConfigurationBuilderError.storageDiskAttachFailed(
+            id: UUID(), path: "/tmp/Disk.asif", label: "Main Disk",
+            underlying: makeFileLockContentionError())
+        #expect(VirtualizationService.isFileLockContention(wrapped))
+        #expect(VirtualizationService.isTransientStartError(wrapped))
+    }
+
+    @Test("wrapped removable media lock contention is transient")
+    func wrappedRemovableMediaLockContentionIsTransient() {
+        let wrapped = ConfigurationBuilderError.removableMediaAttachFailed(
+            id: UUID(), path: "/tmp/install.iso", label: "Installer",
+            underlying: makeFileLockContentionError())
+        #expect(VirtualizationService.isFileLockContention(wrapped))
+        #expect(VirtualizationService.isTransientStartError(wrapped))
+    }
+
+    @Test("a non-contention attach failure stays permanent")
+    func wrappedNonContentionAttachFailureIsPermanent() {
+        // The sandbox-denied-open case: real, not transient, and must keep
+        // landing the VM in .error rather than being retried as contention.
+        let wrapped = ConfigurationBuilderError.storageDiskAttachFailed(
+            id: UUID(), path: "/tmp/Disk.asif", label: "Main Disk",
+            underlying: NSError(domain: NSPOSIXErrorDomain, code: Int(ENOTSUP)))
+        #expect(!VirtualizationService.isFileLockContention(wrapped))
+        #expect(!VirtualizationService.isTransientStartError(wrapped))
+    }
+
     @Test("invalid configuration without underlying error is not lock contention")
     func invalidConfigurationAloneIsNotLockContention() {
         let error = NSError(

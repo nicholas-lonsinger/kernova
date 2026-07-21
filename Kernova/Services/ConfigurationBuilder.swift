@@ -357,7 +357,18 @@ struct ConfigurationBuilder: Sendable {
                 Self.logger.error(
                     "Failed to attach storage disk '\(disk.label, privacy: .public)' at '\(attachmentURL.path(percentEncoded: false), privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
-                throw error
+                // Wrap in a typed error carrying the item's identity: the raw
+                // framework error ("Operation not supported") names neither the
+                // file nor the fix, and the start-failure alert needs the ID to
+                // offer removal (see VMLibraryViewModel.start's catch). The
+                // framework error is carried along, not discarded — the start
+                // path classifies file-lock contention off its NSError shape
+                // (`VirtualizationService.isFileLockContention`).
+                throw ConfigurationBuilderError.storageDiskAttachFailed(
+                    id: disk.id,
+                    path: attachmentURL.path(percentEncoded: false),
+                    label: disk.label,
+                    underlying: error)
             }
 
             switch disk.kind {
@@ -422,7 +433,13 @@ struct ConfigurationBuilder: Sendable {
                 Self.logger.error(
                     "Failed to attach removable media '\(item.label, privacy: .public)' at '\(item.path, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
-                throw error
+                // Same wrapping as the storage-disk attach above: typed error
+                // with the item's identity, carrying the framework error.
+                throw ConfigurationBuilderError.removableMediaAttachFailed(
+                    id: item.id,
+                    path: item.path,
+                    label: item.label,
+                    underlying: error)
             }
 
             let usbConfig = VZUSBMassStorageDeviceConfiguration(attachment: attachment)
@@ -781,9 +798,22 @@ enum ConfigurationBuilderError: LocalizedError {
     case storageDiskNotFound(String, String)
     case storageDiskPathIsDirectory(String, String)
     case storageDiskNotWritable(String, String)
+    /// The disk file exists but `VZDiskImageStorageDeviceAttachment` refused
+    /// it — most commonly the sandbox denying `open` on a path the app no
+    /// longer holds a grant for (surfaced by the framework as the unhelpful
+    /// "Operation not supported"), or an invalid/unaligned image.
+    ///
+    /// `underlying` is the framework error verbatim. It must be preserved,
+    /// not flattened to a string: the start path classifies file-lock
+    /// contention (a *transient* condition with its own bounded retry) off
+    /// that error's NSError domain/code, so discarding it would turn a
+    /// retryable boot into a hard failure. Read it via ``underlyingAttachError``.
+    case storageDiskAttachFailed(id: UUID, path: String, label: String, underlying: any Error)
     case removableMediaNotFound(String, String)
     case removableMediaPathIsDirectory(String, String)
     case removableMediaNotWritable(String, String)
+    /// Removable-media counterpart of `storageDiskAttachFailed`.
+    case removableMediaAttachFailed(id: UUID, path: String, label: String, underlying: any Error)
     case sharedDirectoryNotFound(String)
     case sharedDirectoryNotADirectory(String)
     case sharedDirectoryNotReadable(String)
@@ -811,12 +841,16 @@ enum ConfigurationBuilderError: LocalizedError {
             "Storage disk '\(label)' path is a directory, not a file: \(path)."
         case .storageDiskNotWritable(let path, let label):
             "Storage disk '\(label)' is not writable: \(path). Change it to read-only or select a writable file."
+        case .storageDiskAttachFailed(_, let path, let label, let underlying):
+            "Couldn't open storage disk '\(label)' at \(path). The file may have been moved or replaced, or Kernova may no longer have permission to read it. (\(underlying.localizedDescription))"
         case .removableMediaNotFound(let path, let label):
             "Removable media '\(label)' not found at \(path)."
         case .removableMediaPathIsDirectory(let path, let label):
             "Removable media '\(label)' path is a directory, not a file: \(path)."
         case .removableMediaNotWritable(let path, let label):
             "Removable media '\(label)' is not writable: \(path). Change it to read-only or select a writable file."
+        case .removableMediaAttachFailed(_, let path, let label, let underlying):
+            "Couldn't open removable media '\(label)' at \(path). The file may have been moved or replaced, or Kernova may no longer have permission to read it. (\(underlying.localizedDescription))"
         case .sharedDirectoryNotFound(let path):
             "Shared directory not found at \(path)."
         case .sharedDirectoryNotADirectory(let path):
@@ -825,6 +859,22 @@ enum ConfigurationBuilderError: LocalizedError {
             "Shared directory is not readable: \(path)."
         case .sharedDirectoryNotWritable(let path):
             "Shared directory is not writable: \(path)."
+        }
+    }
+
+    /// The framework error behind an attach failure, or `nil` for every other
+    /// case.
+    ///
+    /// The single seam for classifying a wrapped attach failure by what the
+    /// framework actually reported (see the note on
+    /// ``storageDiskAttachFailed(id:path:label:underlying:)``).
+    var underlyingAttachError: (any Error)? {
+        switch self {
+        case .storageDiskAttachFailed(_, _, _, let underlying),
+            .removableMediaAttachFailed(_, _, _, let underlying):
+            underlying
+        default:
+            nil
         }
     }
 }
