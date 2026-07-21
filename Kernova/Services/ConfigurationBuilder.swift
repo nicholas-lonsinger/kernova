@@ -357,7 +357,15 @@ struct ConfigurationBuilder: Sendable {
                 Self.logger.error(
                     "Failed to attach storage disk '\(disk.label, privacy: .public)' at '\(attachmentURL.path(percentEncoded: false), privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
-                throw error
+                // Wrap in a typed error carrying the item's identity: the raw
+                // framework error ("Operation not supported") names neither the
+                // file nor the fix, and the start-failure alert needs the ID to
+                // offer removal (see VMLibraryViewModel.start's catch).
+                throw ConfigurationBuilderError.storageDiskAttachFailed(
+                    id: disk.id,
+                    path: attachmentURL.path(percentEncoded: false),
+                    label: disk.label,
+                    reason: error.localizedDescription)
             }
 
             switch disk.kind {
@@ -422,7 +430,13 @@ struct ConfigurationBuilder: Sendable {
                 Self.logger.error(
                     "Failed to attach removable media '\(item.label, privacy: .public)' at '\(item.path, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
-                throw error
+                // Same wrapping as the storage-disk attach above: typed error
+                // with the item's identity so the failure is actionable.
+                throw ConfigurationBuilderError.removableMediaAttachFailed(
+                    id: item.id,
+                    path: item.path,
+                    label: item.label,
+                    reason: error.localizedDescription)
             }
 
             let usbConfig = VZUSBMassStorageDeviceConfiguration(attachment: attachment)
@@ -781,9 +795,16 @@ enum ConfigurationBuilderError: LocalizedError {
     case storageDiskNotFound(String, String)
     case storageDiskPathIsDirectory(String, String)
     case storageDiskNotWritable(String, String)
+    /// The disk file exists but `VZDiskImageStorageDeviceAttachment` refused
+    /// it — most commonly the sandbox denying `open` on a path the app no
+    /// longer holds a grant for (surfaced by the framework as the unhelpful
+    /// "Operation not supported"), or an invalid/unaligned image.
+    case storageDiskAttachFailed(id: UUID, path: String, label: String, reason: String)
     case removableMediaNotFound(String, String)
     case removableMediaPathIsDirectory(String, String)
     case removableMediaNotWritable(String, String)
+    /// Removable-media counterpart of `storageDiskAttachFailed`.
+    case removableMediaAttachFailed(id: UUID, path: String, label: String, reason: String)
     case sharedDirectoryNotFound(String)
     case sharedDirectoryNotADirectory(String)
     case sharedDirectoryNotReadable(String)
@@ -811,12 +832,16 @@ enum ConfigurationBuilderError: LocalizedError {
             "Storage disk '\(label)' path is a directory, not a file: \(path)."
         case .storageDiskNotWritable(let path, let label):
             "Storage disk '\(label)' is not writable: \(path). Change it to read-only or select a writable file."
+        case .storageDiskAttachFailed(_, let path, let label, let reason):
+            "Couldn't open storage disk '\(label)' at \(path). The file may have been moved or replaced, or Kernova may no longer have permission to read it. (\(reason))"
         case .removableMediaNotFound(let path, let label):
             "Removable media '\(label)' not found at \(path)."
         case .removableMediaPathIsDirectory(let path, let label):
             "Removable media '\(label)' path is a directory, not a file: \(path)."
         case .removableMediaNotWritable(let path, let label):
             "Removable media '\(label)' is not writable: \(path). Change it to read-only or select a writable file."
+        case .removableMediaAttachFailed(_, let path, let label, let reason):
+            "Couldn't open removable media '\(label)' at \(path). The file may have been moved or replaced, or Kernova may no longer have permission to read it. (\(reason))"
         case .sharedDirectoryNotFound(let path):
             "Shared directory not found at \(path)."
         case .sharedDirectoryNotADirectory(let path):

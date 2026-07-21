@@ -374,8 +374,69 @@ final class VMLibraryViewModel {
         } catch {
             Self.logger.error(
                 "Failed to start '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)")
-            presentError(error)
+            // An attachment the framework couldn't open gets an actionable
+            // alert (name the item, offer to remove it and start) instead of
+            // the raw error; everything else keeps the generic alert.
+            if let presenter, let failure = startFailedAttachment(from: error, on: instance) {
+                presenter.presentStartFailedAttachment(failure, for: instance)
+            } else {
+                presentError(error)
+            }
         }
+    }
+
+    /// Maps a start error to a ``StartFailedAttachment`` when it identifies an
+    /// attachment the user can remove to get the VM running, or `nil` when the
+    /// generic error alert is the right surface.
+    ///
+    /// The disk the guest boots from is excluded — offering to remove it would
+    /// trade an unbootable VM for a differently unbootable VM.
+    private func startFailedAttachment(
+        from error: Error, on instance: VMInstance
+    ) -> StartFailedAttachment? {
+        guard let builderError = error as? ConfigurationBuilderError else { return nil }
+        switch builderError {
+        case .storageDiskAttachFailed(let id, _, let label, _):
+            let disks =
+                instance.configuration.storageDisks ?? Self.defaultStorageDisks(for: instance)
+            guard let disk = disks.first(where: { $0.id == id }),
+                !isMainDisk(disk, of: instance)
+            else { return nil }
+            return StartFailedAttachment(
+                kind: .storageDisk, id: id, label: label,
+                message: builderError.localizedDescription)
+        case .removableMediaAttachFailed(let id, _, let label, _):
+            return StartFailedAttachment(
+                kind: .removableMedia, id: id, label: label,
+                message: builderError.localizedDescription)
+        default:
+            return nil
+        }
+    }
+
+    /// Confirmed action of the start-failed alert: detach the failing
+    /// attachment (file untouched) and immediately retry the start.
+    func removeStartFailedAttachmentAndStart(
+        _ failure: StartFailedAttachment, on instance: VMInstance
+    ) async {
+        switch failure.kind {
+        case .storageDisk:
+            let disks =
+                instance.configuration.storageDisks ?? Self.defaultStorageDisks(for: instance)
+            if let disk = disks.first(where: { $0.id == failure.id }) {
+                _ = removeStorageDisk(disk, from: instance, trashFile: false)
+            }
+        case .removableMedia:
+            if let item = (instance.configuration.removableMedia ?? [])
+                .first(where: { $0.id == failure.id })
+            {
+                removeRemovableMedia(item, from: instance, trashFile: false)
+            }
+        }
+        Self.logger.notice(
+            "Removed failed attachment '\(failure.label, privacy: .public)' from '\(instance.name, privacy: .public)'; retrying start"
+        )
+        await start(instance)
     }
 
     func stop(_ instance: VMInstance) {

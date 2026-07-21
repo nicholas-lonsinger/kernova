@@ -142,6 +142,10 @@ final class DetailAlertsPresenter: NSObject {
         enqueue { $0.present($0.errorConfig(message)) }
     }
 
+    func presentStartFailedAttachment(_ failure: StartFailedAttachment, for instance: VMInstance) {
+        enqueue { $0.present($0.startFailedAttachmentConfig(failure, instance)) }
+    }
+
     func presentDeleteSheet(for instance: VMInstance, permanently: Bool = false) {
         // Once a delete sheet is on screen it is an authoritative, window-modal
         // confirmation — ignore further delete gestures (the menu key-equivalents
@@ -369,6 +373,27 @@ final class DetailAlertsPresenter: NSObject {
     private func errorConfig(_ message: String) -> AlertConfiguration {
         AlertConfiguration(
             title: "Error", message: message, buttons: [AlertButton("OK", role: .cancel)])
+    }
+
+    /// The start-failed alert for an attachment that couldn't be opened.
+    ///
+    /// Names the item, explains the likely cause, and offers to remove it
+    /// (detach only — the file is untouched) and start again. No ellipsis on
+    /// "Remove and Start": it neither gathers further input nor destroys data.
+    private func startFailedAttachmentConfig(
+        _ failure: StartFailedAttachment, _ vm: VMInstance
+    ) -> AlertConfiguration {
+        AlertConfiguration(
+            title: "Couldn't Start “\(vm.name)”",
+            message:
+                "\(failure.message)\n\nYou can remove “\(failure.label)” from this virtual machine and start without it. The file itself is not deleted, and you can re-attach it later in Settings.",
+            buttons: [
+                AlertButton("Remove and Start", role: .default) { [weak self] in
+                    guard let self else { return }
+                    Task { await self.viewModel.removeStartFailedAttachmentAndStart(failure, on: vm) }
+                },
+                AlertButton("Cancel", role: .cancel),
+            ])
     }
 
     private func installerMountedConfig(

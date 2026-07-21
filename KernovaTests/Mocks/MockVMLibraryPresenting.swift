@@ -11,6 +11,8 @@ import Foundation
 @MainActor
 final class MockVMLibraryPresenting: VMLibraryPresenting {
     private(set) var errors: [String] = []
+    private(set) var startFailedAttachments: [StartFailedAttachment] = []
+    private(set) var startFailedAttachmentInstances: [VMInstance] = []
     private(set) var deleteSheetInstances: [VMInstance] = []
     /// Parallel to `deleteSheetInstances`: whether each request asked for the
     /// immediate (bypass-Trash) variant.
@@ -24,6 +26,10 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     private(set) var creationWizardCount = 0
 
     func presentError(_ message: String) { errors.append(message) }
+    func presentStartFailedAttachment(_ failure: StartFailedAttachment, for instance: VMInstance) {
+        startFailedAttachments.append(failure)
+        startFailedAttachmentInstances.append(instance)
+    }
     func presentDeleteSheet(for instance: VMInstance, permanently: Bool) {
         deleteSheetInstances.append(instance)
         deleteSheetPermanentlyFlags.append(permanently)
@@ -62,6 +68,8 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     /// Clears all recorded requests (mirrors resetting the former flags).
     func reset() {
         errors.removeAll()
+        startFailedAttachments.removeAll()
+        startFailedAttachmentInstances.removeAll()
         deleteSheetInstances.removeAll()
         deleteSheetPermanentlyFlags.removeAll()
         forceStopInstances.removeAll()
