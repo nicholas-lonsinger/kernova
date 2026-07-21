@@ -114,12 +114,33 @@ struct FileProviderDomainHostEnablementTests {
         private var result: Result<[NSFileProviderDomain], Error> = .success([])
         private var queue: [Result<[NSFileProviderDomain], Error>] = []
         private var callCountStorage = 0
+        /// Parks the first `fetch` on a continuation until `releaseHeldRead()`,
+        /// when armed.
+        ///
+        /// The first `fetch` also signals `readStartedGate`, so the
+        /// retry-cancellation test can deterministically disable the host while
+        /// the enable-time read is still outstanding. Off by default, so every
+        /// other test is unchanged.
+        private var holdFirstReadArmed = false
+        private var heldReadContinuation: CheckedContinuation<Void, Never>?
         let gate = AsyncGate()
+        let readStartedGate = AsyncGate()
 
         var callCount: Int { lock.withLock { callCountStorage } }
 
         func setResult(_ result: Result<[NSFileProviderDomain], Error>) {
             lock.withLock { self.result = result }
+        }
+
+        func armHoldFirstRead() { lock.withLock { holdFirstReadArmed = true } }
+
+        func releaseHeldRead() {
+            let continuation = lock.withLock { () -> CheckedContinuation<Void, Never>? in
+                let captured = heldReadContinuation
+                heldReadContinuation = nil
+                return captured
+            }
+            continuation?.resume()
         }
 
         /// Scripts the next reads in order; once exhausted, `fetch` falls back to
@@ -143,12 +164,21 @@ struct FileProviderDomainHostEnablementTests {
         }
 
         func fetch() async throws -> [NSFileProviderDomain] {
-            let outcome = lock.withLock { () -> Result<[NSFileProviderDomain], Error> in
+            let (outcome, shouldHold) = lock.withLock {
+                () -> (Result<[NSFileProviderDomain], Error>, Bool) in
                 callCountStorage += 1
-                if !queue.isEmpty { return queue.removeFirst() }
-                return result
+                let hold = holdFirstReadArmed && callCountStorage == 1
+                if hold { holdFirstReadArmed = false }
+                let next = queue.isEmpty ? result : queue.removeFirst()
+                return (next, hold)
             }
             gate.notify()
+            if shouldHold {
+                readStartedGate.notify()
+                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                    lock.withLock { heldReadContinuation = continuation }
+                }
+            }
             return try outcome.get()
         }
     }
@@ -315,7 +345,9 @@ struct FileProviderDomainHostEnablementTests {
         notificationCenter: NotificationCenter,
         addDomain: FakeAddDomain? = nil,
         relayTransport: FileProviderRelayTransport? = nil,
-        waitForStabilization: (@Sendable (@escaping @Sendable (Error?) -> Void) -> Void)? = nil
+        waitForStabilization: (@Sendable (@escaping @Sendable (Error?) -> Void) -> Void)? = nil,
+        registrationReadRetryLimit: Int = 12,
+        registrationReadRetryDelay: TimeInterval = 5
     ) -> FileProviderDomainHost {
         let config = FileProviderConfig(
             appGroupIdentifier: "8MT4P4GZL2.app.kernova.test",
@@ -340,7 +372,9 @@ struct FileProviderDomainHostEnablementTests {
                 notificationCenter: notificationCenter,
                 fetchDomains: { try await domainSource.fetch() },
                 addDomainToSystem: { domain, completion in addDomain.add(domain, completion: completion) },
-                waitForStabilization: stabilization)
+                waitForStabilization: stabilization,
+                registrationReadRetryLimit: registrationReadRetryLimit,
+                registrationReadRetryDelay: registrationReadRetryDelay)
         }
         return FileProviderDomainHost(
             config: config,
@@ -348,7 +382,9 @@ struct FileProviderDomainHostEnablementTests {
             relayTransport: relayTransport ?? NoOpRelayTransport(),
             notificationCenter: notificationCenter,
             fetchDomains: { try await domainSource.fetch() },
-            waitForStabilization: stabilization)
+            waitForStabilization: stabilization,
+            registrationReadRetryLimit: registrationReadRetryLimit,
+            registrationReadRetryDelay: registrationReadRetryDelay)
     }
 
     private func matchingDomain(_ identifier: String) -> NSFileProviderDomain {
@@ -709,6 +745,119 @@ struct FileProviderDomainHostEnablementTests {
         // gone before this post — nothing to deliver to, hence a synchronous assert.
         #expect(collector.values == valuesBeforePost)
         #expect(domainSource.callCount == callsBeforePost)
+    }
+
+    // MARK: - Enable-time registry-read retry (#598)
+
+    @Test("a throwing enable-time read is retried, and a later success registers the domain")
+    func readFailureRetriesThenSucceeds() async throws {
+        let identifierString = "kernova-clipboard-test-\(UUID().uuidString)"
+        let domainSource = FakeDomainSource()
+        // Two throwing reads, then an absent read that triggers the add; the add
+        // appends the domain, so the post-registration confirm read sees it.
+        domainSource.enqueueResults([
+            .failure(FakeFetchError()), .failure(FakeFetchError()), .success([]),
+        ])
+        let collector = AvailabilityCollector()
+        let addDomain = FakeAddDomain(failCount: 0, appendingTo: domainSource)
+        let host = makeHost(
+            domainIdentifier: identifierString, domainSource: domainSource,
+            notificationCenter: NotificationCenter(), addDomain: addDomain,
+            registrationReadRetryLimit: 5, registrationReadRetryDelay: 0)
+        host.setAvailabilityObserver { collector.record($0) }
+
+        host.setEnabled(true)
+
+        try await collector.gate.wait { collector.values.contains(.needsEnabling) }
+        #expect(host.domainRegisteredForTesting)
+        #expect(addDomain.callCount == 1)
+        // 3 registration reads (2 throwing + 1 absent→add) + 1 post-registration
+        // confirm read from `refreshAvailability`.
+        #expect(domainSource.callCount == 4)
+    }
+
+    @Test("a persistently throwing read retries up to the limit, then stops at .unavailable")
+    func readFailureRetriesThenExhausts() async throws {
+        let domainSource = FakeDomainSource()
+        domainSource.setResult(.failure(FakeFetchError()))
+        let collector = AvailabilityCollector()
+        let addDomain = FakeAddDomain(failCount: 0)  // never reached — reads throw
+        let host = makeHost(
+            domainIdentifier: "kernova-clipboard-test-\(UUID().uuidString)",
+            domainSource: domainSource, notificationCenter: NotificationCenter(),
+            addDomain: addDomain, registrationReadRetryLimit: 2, registrationReadRetryDelay: 0)
+        host.setAvailabilityObserver { collector.record($0) }
+
+        host.setEnabled(true)
+
+        // limit 2 → 1 initial read + 2 retries = 3 reads, then exhaustion.
+        try await domainSource.gate.wait { domainSource.callCount >= 3 }
+        // Let the exhausting read's handler run, then confirm the chain stopped.
+        await awaitMainQueueTurn()
+        #expect(domainSource.callCount == 3, "the retry chain must stop at the limit")
+        #expect(host.availability == .unavailable)
+        #expect(addDomain.callCount == 0, "a read failure must never add the domain")
+    }
+
+    @Test("disabling while the enable-time read is outstanding cancels the retry cycle")
+    func disableDuringReadWindowCancelsRetry() async throws {
+        let domainSource = FakeDomainSource()
+        // The read would fail; but the disable lands first, so its epoch guard
+        // makes the completion a no-op — nothing schedules a retry.
+        domainSource.setResult(.failure(FakeFetchError()))
+        domainSource.armHoldFirstRead()
+        let collector = AvailabilityCollector()
+        let host = makeHost(
+            domainIdentifier: "kernova-clipboard-test-\(UUID().uuidString)",
+            domainSource: domainSource, notificationCenter: NotificationCenter(),
+            addDomain: FakeAddDomain(failCount: 0), registrationReadRetryDelay: 0)
+        host.setAvailabilityObserver { collector.record($0) }
+
+        host.setEnabled(true)
+        // Read #1 is now parked mid-flight — we're inside the enable-time read.
+        try await domainSource.readStartedGate.wait { domainSource.callCount == 1 }
+
+        host.setEnabled(false)
+        await awaitMainQueueTurn()
+
+        // Release the held read: its completion is now for a superseded epoch, so
+        // it neither writes availability nor schedules a retry.
+        domainSource.releaseHeldRead()
+        await awaitMainQueueTurn()
+        await awaitMainQueueTurn()
+
+        #expect(domainSource.callCount == 1, "a stale cycle must perform no further read")
+        #expect(host.availability == .inactive)
+        #expect(!host.domainRegisteredForTesting)
+    }
+
+    @Test("re-enabling after an exhausted retry cycle starts a fresh budget")
+    func reEnableAfterExhaustionRetriesAgain() async throws {
+        let domainSource = FakeDomainSource()
+        domainSource.setResult(.failure(FakeFetchError()))
+        let collector = AvailabilityCollector()
+        let host = makeHost(
+            domainIdentifier: "kernova-clipboard-test-\(UUID().uuidString)",
+            domainSource: domainSource, notificationCenter: NotificationCenter(),
+            addDomain: FakeAddDomain(failCount: 0), registrationReadRetryLimit: 2,
+            registrationReadRetryDelay: 0)
+        host.setAvailabilityObserver { collector.record($0) }
+
+        host.setEnabled(true)
+        // First cycle exhausts at 3 reads (1 initial + 2 retries).
+        try await domainSource.gate.wait { domainSource.callCount >= 3 }
+        await awaitMainQueueTurn()
+        #expect(domainSource.callCount == 3)
+
+        host.setEnabled(false)
+        await awaitMainQueueTurn()
+
+        host.setEnabled(true)
+        // A re-enable resets the budget, so the cycle retries again: 3 more reads.
+        try await domainSource.gate.wait { domainSource.callCount >= 6 }
+        await awaitMainQueueTurn()
+        #expect(domainSource.callCount == 6, "each enable gets a fresh retry budget")
+        #expect(host.availability == .unavailable)
     }
 
     // MARK: - Clear-path reconciliation flush
