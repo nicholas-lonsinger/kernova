@@ -30,6 +30,12 @@ struct AppPreferences {
         static let lastSelectedVMID = "lastSelectedVMID"
         static let vmOrder = "vmOrder"
         static let fileProviderReminderDismissed = "fileProviderReminderDismissed"
+        // RATIONALE: stored under the inverted sense (`quitTerminatesApp`) so the
+        // false-default `bool(forKey:)` pattern yields `keepInMenuBarOnQuit`'s
+        // desired `true` default without a `register(defaults:)` call. See the
+        // property's doc comment.
+        static let quitTerminatesApp = "quitTerminatesApp"
+        static let menuBarQuitReminderDismissed = "menuBarQuitReminderDismissed"
     }
 
     /// When `true`, advanced menu actions (e.g. *Start in Recovery Mode*) are
@@ -83,5 +89,34 @@ struct AppPreferences {
     var fileProviderReminderDismissed: Bool {
         get { defaults.bool(forKey: Keys.fileProviderReminderDismissed) }
         nonmutating set { defaults.set(newValue, forKey: Keys.fileProviderReminderDismissed) }
+    }
+
+    /// Whether a GUI-origin quit (⌘Q, the app menu's soft-quit item, the Dock's
+    /// Quit) keeps Kernova resident in the menu bar with its VMs running instead
+    /// of terminating it, defaulting to `true` (#624).
+    ///
+    /// RATIONALE: the value is stored *inverted* under `quitTerminatesApp` so the
+    /// file's plain `bool(forKey:)` convention — an unset key reads `false` —
+    /// produces this preference's `true` default without registering defaults: an
+    /// absent key means `quitTerminatesApp == false`, i.e.
+    /// `keepInMenuBarOnQuit == true`. The getter negates the stored value and the
+    /// setter stores the negation, so the key name always names what it literally
+    /// holds ("quitting terminates the app").
+    var keepInMenuBarOnQuit: Bool {
+        get { !defaults.bool(forKey: Keys.quitTerminatesApp) }
+        nonmutating set { defaults.set(!newValue, forKey: Keys.quitTerminatesApp) }
+    }
+
+    /// Whether the user dismissed the "still running in the menu bar" reminder
+    /// popover shown on a soft quit, via its "Stop Reminding Me" button
+    /// (#624).
+    ///
+    /// Once `true`, soft quits no longer show the reminder. Mirrors
+    /// `fileProviderReminderDismissed`'s plain false-default pattern, but is never
+    /// auto-reset: a soft quit is always user-initiated, so there is no
+    /// "genuinely new" condition to re-arm the nag against.
+    var menuBarQuitReminderDismissed: Bool {
+        get { defaults.bool(forKey: Keys.menuBarQuitReminderDismissed) }
+        nonmutating set { defaults.set(newValue, forKey: Keys.menuBarQuitReminderDismissed) }
     }
 }

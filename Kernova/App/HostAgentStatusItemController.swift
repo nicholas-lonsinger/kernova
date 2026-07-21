@@ -41,6 +41,13 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     /// Keeps the icon/tooltip in sync with the host File Provider toggle.
     private var fileProviderObservation: ObservationLoop?
 
+    /// Manages the transient "still running in the menu bar" soft-quit reminder
+    /// popover (#624).
+    private let softQuitReminder = PopoverPresenter()
+    /// Auto-dismiss timer for the soft-quit reminder; cancelled if it closes
+    /// earlier (opt-out tap, opening the status menu, or a second soft quit).
+    private var softQuitReminderDismissTask: Task<Void, Never>?
+
     init(
         viewModel: VMLibraryViewModel,
         preferences: AppPreferences = .shared,
@@ -77,6 +84,70 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
             track: { _ = HostClipboardFileProvider.shared.availability },
             apply: { [weak self] in self?.fileProviderAvailabilityChanged() }
         )
+    }
+
+    // MARK: - Soft-quit reminder (#624)
+
+    /// Shows a transient reminder popover anchored to the status item after a soft
+    /// quit — unless the user has silenced it.
+    ///
+    /// Shown on every soft quit until "Stop Reminding Me". A second soft quit
+    /// while one is still up reuses the slot (`PopoverPresenter` refreshes in
+    /// place) and re-arms the auto-dismiss timer.
+    ///
+    /// Skipped when the status item isn't on screen: macOS hides status items it
+    /// can't fit in a crowded menu bar, and a popover anchored to a hidden button
+    /// would point at nothing. The reminder is a nicety, so dropping it is the
+    /// right degradation — the app stays reachable through the item once the user
+    /// makes room (or via Finder/Dock reopen).
+    func showSoftQuitReminder() {
+        guard !preferences.menuBarQuitReminderDismissed else { return }
+        guard let button = statusItem.button, statusItem.isVisible, button.window != nil else {
+            Self.logger.info(
+                "Soft-quit reminder skipped — the status item is not currently on screen")
+            return
+        }
+
+        // Re-arm cleanly if a prior reminder is still up.
+        softQuitReminderDismissTask?.cancel()
+
+        let content = MenuBarQuitReminderViewController(onStopReminding: { [weak self] in
+            guard let self else { return }
+            self.preferences.menuBarQuitReminderDismissed = true
+            Self.logger.info("Soft-quit menu-bar reminder silenced by the user")
+            self.dismissSoftQuitReminder()
+        })
+        // Anchored below the icon (menu bar sits at the top of the screen).
+        // RATIONALE: `.applicationDefined`, not the default `.transient` — a soft
+        // quit deactivates the app moments after this shows (the GUI windows
+        // close and the activation-policy reconcile drops to `.accessory`), and a
+        // `.transient` popover auto-closes on app deactivation (see
+        // `PopoverPresenter`'s `onClose` doc), so the reminder would flash and
+        // vanish before the user could read it. Lifetime is bounded instead by
+        // the auto-dismiss timer below, the opt-out tap, and the status menu
+        // opening (`menuNeedsUpdate`) — at which point the reminder has done its
+        // job.
+        softQuitReminder.show(
+            content: content, from: button, preferredEdge: .minY, behavior: .applicationDefined)
+        Self.logger.debug("Showing soft-quit menu-bar reminder")
+
+        // RATIONALE: a one-shot auto-dismiss timer, not a poll loop — `Task.sleep`
+        // is the delay itself; with the `.applicationDefined` popover this is the
+        // primary bound on how long an ignored reminder lingers.
+        softQuitReminderDismissTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(4.5))
+            guard !Task.isCancelled else { return }
+            self?.dismissSoftQuitReminder()
+        }
+    }
+
+    /// Closes the soft-quit reminder and cancels its auto-dismiss timer.
+    ///
+    /// Idempotent.
+    private func dismissSoftQuitReminder() {
+        softQuitReminderDismissTask?.cancel()
+        softQuitReminderDismissTask = nil
+        softQuitReminder.close()
     }
 
     // MARK: - File Provider reminder
@@ -162,6 +233,11 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     // MARK: - NSMenuDelegate
 
     func menuNeedsUpdate(_ menu: NSMenu) {
+        // Opening the dropdown means the user found the icon — the soft-quit
+        // reminder (which the `.applicationDefined` popover would otherwise keep
+        // up until its timer) has done its job.
+        dismissSoftQuitReminder()
+
         menu.removeAllItems()
 
         let open = NSMenuItem(title: "Open Kernova", action: #selector(openTapped), keyEquivalent: "")

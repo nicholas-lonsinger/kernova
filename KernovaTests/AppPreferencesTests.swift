@@ -102,4 +102,45 @@ struct AppPreferencesTests {
             #expect(prefs.fileProviderReminderDismissed == false)
         }
     }
+
+    @Test("keepInMenuBarOnQuit defaults to true")
+    func keepInMenuBarOnQuitDefaultsToTrue() throws {
+        try withEphemeralPreferences { prefs, _ in
+            #expect(prefs.keepInMenuBarOnQuit == true)
+        }
+    }
+
+    @Test("keepInMenuBarOnQuit round-trips through UserDefaults with inverted storage")
+    func keepInMenuBarOnQuitRoundTrips() throws {
+        try withEphemeralPreferences { prefs, defaults in
+            // Stored inverted under `quitTerminatesApp`, so the false-default key
+            // yields the desired `true` default (see the property's doc comment).
+            prefs.keepInMenuBarOnQuit = false
+            #expect(prefs.keepInMenuBarOnQuit == false)
+            #expect(defaults.bool(forKey: "quitTerminatesApp") == true)
+
+            prefs.keepInMenuBarOnQuit = true
+            #expect(prefs.keepInMenuBarOnQuit == true)
+            #expect(defaults.bool(forKey: "quitTerminatesApp") == false)
+        }
+    }
+
+    @Test("menuBarQuitReminderDismissed defaults to false")
+    func menuBarQuitReminderDismissedDefaultsToFalse() throws {
+        try withEphemeralPreferences { prefs, _ in
+            #expect(prefs.menuBarQuitReminderDismissed == false)
+        }
+    }
+
+    @Test("menuBarQuitReminderDismissed round-trips through UserDefaults")
+    func menuBarQuitReminderDismissedRoundTrips() throws {
+        try withEphemeralPreferences { prefs, defaults in
+            prefs.menuBarQuitReminderDismissed = true
+            #expect(prefs.menuBarQuitReminderDismissed == true)
+            #expect(defaults.bool(forKey: "menuBarQuitReminderDismissed") == true)
+
+            prefs.menuBarQuitReminderDismissed = false
+            #expect(prefs.menuBarQuitReminderDismissed == false)
+        }
+    }
 }

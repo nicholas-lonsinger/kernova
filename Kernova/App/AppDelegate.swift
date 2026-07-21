@@ -15,6 +15,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// LaunchAgent dropped (#460) there is no launcher/agent split, only this
     /// test-vs-production distinction.
     private let isTestHost: Bool
+    /// App-wide preferences (the single DI seam for `UserDefaults`-backed state).
+    ///
+    /// Read by the quit gate (`quitShouldTerminateAgent`) and the app-menu quit
+    /// items, and shared with the status-item controller so both see one source.
+    private let preferences: AppPreferences
     private var mainWindowController: MainWindowController?
     private let viewModel: VMLibraryViewModel
     private var clipboardWindows: [UUID: ClipboardWindowController] = [:]
@@ -24,6 +29,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private var terminationObservation: ObservationLoop?
     private let clipboardMenuItem: NSMenuItem
     private var settingsWindowController: SettingsWindowController?
+
+    /// The application menu, retained so its quit section can be rebuilt when it
+    /// opens (`rebuildAppMenuQuitItems`, driven via `NSMenuDelegate`).
+    private var appMenu: NSMenu?
+    /// The quit-section items currently installed in `appMenu`, tracked so a
+    /// rebuild removes exactly what it added.
+    private var appMenuQuitItemViews: [NSMenuItem] = []
+    /// The model `appMenuQuitItemViews` was last built from, so a rebuild that
+    /// would produce identical items is skipped — see `rebuildAppMenuQuitItems`.
+    private var appMenuQuitModel: [AppMenuQuitItem] = []
 
     /// Single close-side trigger for the activation-policy reconcile (#437).
     ///
@@ -73,16 +88,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// downgrading the quit to a GUI close.
     private var userRequestedAgentQuit = false
 
-    /// Set by `handleQuitAppleEvent` via `classifyQuit` for a system power-off or an unattributable sender.
+    /// Set by `handleQuitAppleEvent` via `classifyQuit` whenever an external quit
+    /// Apple Event must actually terminate the agent (rather than downgrade to a
+    /// GUI close), short of a TCC revocation.
     ///
-    /// Covers the quit's sender resolving to `loginwindow` (logout / restart /
-    /// shutdown) *or* not being positively classifiable at all (no sender PID
-    /// attribute; the PID no longer resolves to a running process). Either way a
-    /// system-initiated quit terminates the agent (and saves running VMs) rather
-    /// than being downgraded to a GUI close — the agent must never leave the
-    /// system waiting on it at logout, and an unattributable sender fails toward
-    /// saving state rather than vetoing a possible power-off. See `classifyQuit`
-    /// for the full classification matrix.
+    /// Latches for every sender `classifyQuit` maps to `.terminateAndSave`: the
+    /// quit resolving to `loginwindow` (logout / restart / shutdown); a scripted
+    /// or programmatic quit (`osascript`, Script Editor, Shortcuts, an updater —
+    /// a *live* sender that is not a user-facing affordance, #624); or a sender
+    /// that can't be positively classified at all (no PID attribute; the PID no
+    /// longer resolves). In every case the agent terminates and save-suspends its
+    /// running VMs: a system quit must never leave the system waiting on the
+    /// agent at logout, a programmatic quit is explicit and honored, and an
+    /// unattributable sender fails toward saving state rather than vetoing a
+    /// possible power-off. See `classifyQuit` for the full matrix.
+    ///
+    /// Named for the effect, not one cause: it no longer means only "the system
+    /// is powering off" now that scripted quits latch it too.
     ///
     /// Detected synchronously by sender (like `terminationIsTCCRevocation`) rather
     /// than via `NSWorkspace.willPowerOffNotification`: the notification is delivered
@@ -93,16 +115,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// terminate the agent, with no clean "logout aborted" notification to reset it.
     /// Setting it in the same handler that calls `terminate:` avoids both: it is set
     /// immediately before termination and only when a quit actually arrives.
-    private var systemIsPoweringOff = false
+    private var externalQuitRequiresTermination = false
 
     /// Whether a pending quit should actually terminate the resident app.
     ///
-    /// GUI-origin quits (⌘Q, the app menu's Quit item, the Dock's Quit) only close
-    /// the GUI and leave the app resident with its VMs running headless; it truly
-    /// exits only on an explicit status-item Quit, a system logout/shutdown, or a
-    /// TCC revocation. Only consulted for the resident app (not the test host).
+    /// While *Keep Running in Menu Bar* is on (the default), GUI-origin quits (⌘Q
+    /// / the app menu's "Close All Windows" / the Dock's Quit) only close the GUI
+    /// and leave the app resident with its VMs running headless; it then truly
+    /// exits only on the app menu's honest "Quit Kernova" or the status-item Quit
+    /// (both `userRequestedAgentQuit`), a system logout/shutdown or scripted quit
+    /// (`externalQuitRequiresTermination`), or a TCC revocation
+    /// (`terminationIsTCCRevocation`). When the user turns the preference off,
+    /// `!preferences.keepInMenuBarOnQuit` makes every quit terminate — ⌘Q means
+    /// quit. Only consulted for the resident app (not the test host).
     private var quitShouldTerminateAgent: Bool {
-        userRequestedAgentQuit || systemIsPoweringOff || terminationIsTCCRevocation
+        userRequestedAgentQuit || externalQuitRequiresTermination || terminationIsTCCRevocation
+            || !preferences.keepInMenuBarOnQuit
     }
 
     /// Bundle identifiers that indicate a TCC-initiated quit.
@@ -121,14 +149,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// `kAEQuitApplication` event as it tears the session down; that quit must
     /// terminate the agent, never be downgraded to a GUI close.
     ///
-    /// Residual: if `loginwindow` ever resolved to a different (but still valid)
-    /// bundle ID on some macOS version, `classifyQuit` couldn't tell that apart
-    /// from an AppleScript-driven quit by sender alone — the fix would be adding
-    /// that bundle ID here, not more sender heuristics.
+    /// Since #624 the classifier's fallthrough default for any *other* live,
+    /// identifiable sender is also `.terminateAndSave`, so this set's outcome now
+    /// coincides with the default. It is kept explicit for two reasons: it names
+    /// the definitive system-quit sender at the call site, and it produces a
+    /// distinct, greppable classification path for logout post-mortems. If
+    /// `loginwindow` ever resolved to a different (but still valid) bundle ID on
+    /// some macOS version, the quit would still terminate-and-save via the
+    /// default — adding the new ID here would only restore the explicit label.
     ///
     /// `nonisolated` for the same reason as `tccSenderBundleIDs` above.
     private nonisolated static let systemQuitSenderBundleIDs: Set<String> = [
         "com.apple.loginwindow"
+    ]
+
+    /// Bundle identifiers of user-facing quit affordances that must be treated
+    /// like ⌘Q — a soft quit that downgrades to a GUI close, never a real
+    /// termination.
+    ///
+    /// The Dock's "Quit" delivers a `kAEQuitApplication` event from
+    /// `com.apple.dock`; it is a click a user makes expecting the same
+    /// stay-resident behavior as the menu bar's ⌘Q (#624).
+    ///
+    /// `nonisolated` for the same reason as `tccSenderBundleIDs` above.
+    private nonisolated static let dockSenderBundleIDs: Set<String> = [
+        "com.apple.dock"
     ]
 
     /// The outcome `classifyQuit` assigns to a quit Apple Event's sender.
@@ -146,19 +191,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// itself so the full matrix is unit-testable with injected probes instead of
     /// a live Apple Event.
     ///
-    /// ⌘Q, the app-menu Quit item, and the status-item Quit all call `terminate:`
+    /// ⌘Q, the app-menu quit items, and the status-item Quit all call `terminate:`
     /// directly and never reach this classifier (only *external* senders — Dock,
     /// loginwindow, System Settings/TCC, `osascript` — deliver a quit Apple Event).
-    /// So the `senderPID == getpid()` branch below is defensive, not load-bearing:
-    /// ⌘Q's stay-resident behavior rests on the final fallthrough, not on that check.
+    /// So the `senderPID == getpid()` branch below is defensive, not load-bearing.
     ///
-    /// Defaults toward `.terminateAndSave` for any sender this can't positively
-    /// identify (no PID, a non-positive PID, or a PID that no longer resolves to a
-    /// live process) — the fail-safe direction for a possible power-off, since
-    /// staying resident risks vetoing a real logout/shutdown. A *live* but
-    /// unclassified sender (Dock, AppleScript's `osascript`, any other app) falls
-    /// through to `.stayResident` instead, since those are known not to be
-    /// system-initiated quits.
+    /// The governing principle (#624): **user-facing quit affordances soft-quit;
+    /// programmatic and external quits are honored as real quits** — and an
+    /// unattributable sender fails safe toward termination.
+    ///
+    /// - No PID, a non-positive PID (`kill(≤0)` targets a process group), or a PID
+    ///   that no longer resolves to a live process → `.terminateAndSave`: the
+    ///   fail-safe direction for a possible power-off, since staying resident
+    ///   risks vetoing a real logout/shutdown.
+    /// - The self PID → `.stayResident` (defensive; ⌘Q doesn't route here).
+    /// - System Settings / TCC → `.terminateAndRelaunch`.
+    /// - `loginwindow` (logout / restart / shutdown) → `.terminateAndSave`.
+    /// - The **Dock** (`com.apple.dock`) → `.stayResident`: its "Quit" is a
+    ///   user-facing affordance, treated like ⌘Q.
+    /// - Any **other** live sender — with or without a resolvable bundle ID
+    ///   (`osascript`, Script Editor, Shortcuts, an updater, etc.) →
+    ///   `.terminateAndSave`: a programmatic quit is explicit, so it is honored
+    ///   (the accidental-⌘Q protection doesn't apply), with the same
+    ///   save-suspend path as a system quit.
     nonisolated static func classifyQuit(
         senderPID: pid_t?,
         bundleIDResolver: (pid_t) -> String?,
@@ -174,13 +229,76 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         if senderPID == getpid() { return .stayResident }
 
         // Live sender with no resolvable bundle ID (e.g. `osascript` running an
-        // AppleScript `quit`) — not a system-initiated quit, stay resident.
-        guard let bundleID = bundleIDResolver(senderPID) else { return .stayResident }
+        // AppleScript `quit`) — a programmatic quit; honor it.
+        guard let bundleID = bundleIDResolver(senderPID) else { return .terminateAndSave }
 
         if tccSenderBundleIDs.contains(bundleID) { return .terminateAndRelaunch }
         if systemQuitSenderBundleIDs.contains(bundleID) { return .terminateAndSave }
-        // Any other live, identifiable sender — the Dock, a script host, etc.
-        return .stayResident
+        // The Dock's Quit is a user-facing affordance — soft-quit like ⌘Q.
+        if dockSenderBundleIDs.contains(bundleID) { return .stayResident }
+        // Any other live, identifiable sender (a script host, an updater, …) is a
+        // programmatic quit; honor it.
+        return .terminateAndSave
+    }
+
+    /// One item in the app menu's quit section, as decided by `appMenuQuitItems`.
+    struct AppMenuQuitItem: Equatable {
+        /// What invoking the item does.
+        enum Action: Equatable {
+            /// Routes through `NSApplication.terminate(_:)` and thus the
+            /// `applicationShouldTerminate` gate — which downgrades it to a GUI
+            /// close while *Keep Running in Menu Bar* is on, and lets it terminate
+            /// otherwise.
+            case terminateThroughGate
+            /// Requests an unconditional full quit (`quitCompletely(_:)`),
+            /// bypassing the keep-in-menu-bar downgrade.
+            case quitCompletely
+        }
+
+        /// The menu item's title.
+        let title: String
+        /// The key-equivalent character (always `"q"`; ⌘ is always part of the
+        /// shortcut).
+        let keyEquivalent: String
+        /// Whether Option (⌥) joins Command in the shortcut: `false` = ⌘Q,
+        /// `true` = ⌥⌘Q.
+        let usesOptionModifier: Bool
+        /// What the item does when invoked.
+        let action: Action
+    }
+
+    /// Decides the app menu's quit-section items, so every state presents an
+    /// *honest* command (#624).
+    ///
+    /// Pure and `nonisolated` so it is unit-testable without AppKit (mirrors
+    /// `classifyQuit` / `coldLaunchOutcome`).
+    ///
+    /// - **Resident app + keep-in-menu-bar ON** — the honest split: "Close All
+    ///   Windows" (⌘Q), which downgrades to a GUI close, plus "Quit Kernova"
+    ///   (⌥⌘Q), the true quit.
+    /// - **Test host, or resident app + keep-in-menu-bar OFF** — a single "Quit
+    ///   Kernova" (⌘Q) that really quits: the test host has no resident
+    ///   machinery, and with the preference off the `quitShouldTerminateAgent`
+    ///   gate lets ⌘Q through. Both route through `NSApplication.terminate(_:)`,
+    ///   so the one path yields the correct outcome in each mode.
+    nonisolated static func appMenuQuitItems(
+        isTestHost: Bool, keepInMenuBar: Bool
+    ) -> [AppMenuQuitItem] {
+        if !isTestHost && keepInMenuBar {
+            return [
+                AppMenuQuitItem(
+                    title: "Close All Windows", keyEquivalent: "q",
+                    usesOptionModifier: false, action: .terminateThroughGate),
+                AppMenuQuitItem(
+                    title: "Quit Kernova", keyEquivalent: "q",
+                    usesOptionModifier: true, action: .quitCompletely),
+            ]
+        }
+        return [
+            AppMenuQuitItem(
+                title: "Quit Kernova", keyEquivalent: "q",
+                usesOptionModifier: false, action: .terminateThroughGate)
+        ]
     }
 
     private static let logger = Logger(subsystem: "app.kernova", category: "AppDelegate")
@@ -240,8 +358,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         app.run()
     }
 
-    init(isTestHost: Bool) {
+    init(isTestHost: Bool, preferences: AppPreferences = .shared) {
         self.isTestHost = isTestHost
+        self.preferences = preferences
         self.viewModel = VMLibraryViewModel()
 
         let clipboardItem = NSMenuItem(
@@ -321,16 +440,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // summons the GUI (mirrors OrbStack/Docker/Tailscale and the guest agent).
         statusItemController = HostAgentStatusItemController(
             viewModel: viewModel,
+            preferences: preferences,
             onOpen: { [weak self] vmID in
                 if let vmID { self?.viewModel.selectedID = vmID }
                 self?.summonUserInterface()
             },
-            onQuit: { [weak self] in
-                // The only affordance that truly quits the app — everything else
-                // (⌘Q, app-menu Quit, Dock Quit) just closes the GUI.
-                self?.userRequestedAgentQuit = true
-                NSApp.terminate(nil)
-            }
+            onQuit: { [weak self] in self?.requestFullQuit() }
         )
 
         // Single close-side activation-policy reconcile trigger (#437): fires on
@@ -733,16 +848,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        // Resident app: a GUI-origin quit (⌘Q, the app menu's Quit, the Dock's
-        // Quit) only closes the GUI — the app stays resident with its VMs running
-        // headless. It truly terminates only on an explicit status-item Quit, a
-        // system logout/shutdown, or a TCC revocation (`quitShouldTerminateAgent`).
-        // Every quit path funnels through `terminate:` and thus this method, so this
-        // single gate covers them all.
+        // Resident app: while *Keep Running in Menu Bar* is on, a GUI-origin quit
+        // (⌘Q / the app menu's "Close All Windows" / the Dock's Quit) only closes
+        // the GUI — the app stays resident with its VMs running headless. It truly
+        // terminates only on the app menu's "Quit Kernova" or the status-item Quit,
+        // a system logout/shutdown or scripted quit, or a TCC revocation
+        // (`quitShouldTerminateAgent`), or when the preference is off. Every quit
+        // path funnels through `terminate:` and thus this method, so this single
+        // gate covers them all.
         if !isTestHost && !quitShouldTerminateAgent {
             Self.logger.notice("GUI-origin quit — closing the GUI; app stays resident")
             // Defer so the close runs after this termination request is fully cancelled.
-            Task { @MainActor in self.closeAllGUIWindows() }
+            Task { @MainActor in
+                self.closeAllGUIWindows()
+                // Remind the user the app is still resident (unless dismissed
+                // forever); the controller anchors the popover to the status item.
+                self.statusItemController?.showSoftQuitReminder()
+            }
             return .terminateCancel
         }
 
@@ -833,16 +955,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// Handles the `kAEQuitApplication` Apple Event by classifying its sender.
     ///
     /// Routes through `classifyQuit` and sets the flags
-    /// `applicationShouldTerminate`'s gate reads. Flags are only ever set to
-    /// `true` here, never reset to `false`: a `true` flag always drives the
-    /// process toward actual termination on the same call that set it (per
-    /// `quitShouldTerminateAgent`'s gate), so there is never a stale `true` left
-    /// over from a quit whose termination didn't happen. Resetting on
-    /// `.stayResident` was considered and rejected — a later, unrelated
-    /// GUI-origin quit arriving while an earlier system-initiated quit's
-    /// `.terminateLater` VM-save is still in flight would clear the very flag
-    /// that save depends on, risking a wrongful veto of an already-accepted
-    /// termination.
+    /// `applicationShouldTerminate`'s gate reads: `.terminateAndSave` (a system
+    /// logout/shutdown, a scripted/programmatic quit, or an unattributable sender)
+    /// latches `externalQuitRequiresTermination`; a TCC revocation latches
+    /// `terminationIsTCCRevocation`; the Dock's Quit and a self-sent event stay
+    /// resident and latch nothing. Flags are only ever set to `true` here, never
+    /// reset to `false`: a `true` flag always drives the process toward actual
+    /// termination on the same call that set it (per `quitShouldTerminateAgent`'s
+    /// gate), so there is never a stale `true` left over from a quit whose
+    /// termination didn't happen. Resetting on `.stayResident` was considered and
+    /// rejected — a later, unrelated GUI-origin quit arriving while an earlier
+    /// terminating quit's `.terminateLater` VM-save is still in flight would clear
+    /// the very flag that save depends on, risking a wrongful veto of an
+    /// already-accepted termination.
     @objc private func handleQuitAppleEvent(
         _ event: NSAppleEventDescriptor,
         withReplyEvent _: NSAppleEventDescriptor
@@ -854,13 +979,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         //
         // Residual: `kill` (liveness) and `NSRunningApplication` (identity) are two
         // separate, non-atomic probes of the same PID — a sender that exits in the
-        // narrow window between them reads as "alive but unidentifiable" and falls
-        // through to `.stayResident` rather than the fail-safe default. Collapsing
-        // to a single probe isn't available: `NSRunningApplication` alone (the old
-        // code's approach) would misclassify a live-but-non-GUI sender like
-        // `osascript` as "dead", the opposite bug. Same class of residual as
-        // `systemQuitSenderBundleIDs`'s doc comment above, now for liveness instead
-        // of identity.
+        // narrow window between them reads as "alive but unidentifiable". Since
+        // #624 that case classifies as `.terminateAndSave` (the honor-programmatic-
+        // quit default), the same fail-safe direction as a fully unattributable
+        // sender, so the race no longer changes the outcome. Collapsing to a single
+        // probe still isn't available: `NSRunningApplication` alone (the old code's
+        // approach) would misclassify a live-but-non-GUI sender like `osascript` as
+        // "dead" — harmless now for `osascript` (both branches terminate-and-save)
+        // but wrong for the Dock, whose stay-resident outcome depends on being seen
+        // as alive *and* identifiable.
         let attributablePID: pid_t? = senderPID.flatMap { pid in
             guard pid > 0, kill(pid, 0) == 0 || errno != ESRCH else { return nil }
             return pid
@@ -879,8 +1006,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                     "Quit Apple Event from PID \(attributablePID, privacy: .public) (bundle: \(bundleID, privacy: .public)) classified as \(String(describing: classification), privacy: .public)"
                 )
             } else {
-                // Persisted (not .debug): a live sender we can't identify might be a
-                // TCC/system sender this classifier is failing to recognize.
+                // Persisted (not .debug): a live sender we can't identify (e.g.
+                // `osascript`) is honored as a real quit (.terminateAndSave); the
+                // warning records the unresolved identity for post-mortems.
                 Self.logger.warning(
                     "Quit Apple Event: sender PID \(attributablePID, privacy: .public) is alive but could not be resolved to an application with a bundle identifier — classified as \(String(describing: classification), privacy: .public)"
                 )
@@ -898,11 +1026,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         case .stayResident:
             break
         case .terminateAndSave:
-            systemIsPoweringOff = true
+            externalQuitRequiresTermination = true
         case .terminateAndRelaunch:
             terminationIsTCCRevocation = true
         }
 
+        NSApp.terminate(nil)
+    }
+
+    /// The app menu's honest "Quit Kernova" — an unconditional full quit,
+    /// identical to the status item's Quit (#624).
+    @objc func quitCompletely(_ sender: Any?) {
+        requestFullQuit()
+    }
+
+    /// The single "truly terminate the resident app" path, shared by the status
+    /// item's Quit and the app menu's "Quit Kernova": latch the authorized-quit
+    /// flag so `applicationShouldTerminate` proceeds to the save-suspend path
+    /// instead of downgrading to a GUI close, then terminate.
+    private func requestFullQuit() {
+        // `.notice` (persisted): the counterpart to the soft-quit line below, so a
+        // post-mortem can tell a deliberate quit from a crash even when no VM was
+        // running (the save-suspend path's own summary logs only when one was).
+        Self.logger.notice("User-requested full quit — terminating the resident app")
+        userRequestedAgentQuit = true
         NSApp.terminate(nil)
     }
 
@@ -1403,11 +1550,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         // Preparing instances disable all VM menu bar actions (cancel is only available
         // via sidebar context menu). Show in Finder stays available, matching the
-        // sidebar's preparing menu — the bundle already exists on disk.
+        // sidebar's preparing menu — the bundle already exists on disk. `quitCompletely`
+        // is app-level, not VM-level: it must never be gated on the selected VM's state,
+        // or a preparing import would disable the GUI's only full-quit affordance
+        // (`applicationShouldTerminate` already cancels preparing imports and trashes
+        // their partial bundles).
         if let instance = activeInstance, instance.isPreparing {
             switch menuItem.action {
             case #selector(showLibrary(_:)), #selector(newVM(_:)), #selector(openVMsFolder(_:)),
-                #selector(showVMInFinder(_:)):
+                #selector(showVMInFinder(_:)), #selector(quitCompletely(_:)):
                 return true
             default:
                 return false
@@ -1488,7 +1639,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     func menuNeedsUpdate(_ menu: NSMenu) {
         if menu === NSApp.windowsMenu {
             clipboardMenuItem.isEnabled = activeInstance?.canShowClipboard ?? false
+        } else if menu === appMenu {
+            // Re-derive the quit section so a Settings toggle flip is reflected
+            // on the next open (#624).
+            rebuildAppMenuQuitItems()
         }
+    }
+
+    /// Rebuilds the app menu's quit section from `appMenuQuitItems` for the
+    /// current mode, removing exactly the items a prior rebuild added.
+    ///
+    /// A no-op when the derived model is unchanged. That guard is load-bearing,
+    /// not an optimization: AppKit also calls `menuNeedsUpdate(_:)` while
+    /// *matching key equivalents* (the delegate implements no
+    /// `menuHasKeyEquivalent(_:for:target:action:)` fast path), so this runs on
+    /// every ⌘-keystroke — and tearing the items down mid-match is exactly the
+    /// mutation that fast path exists to avoid.
+    private func rebuildAppMenuQuitItems() {
+        guard let appMenu else { return }
+        let model = Self.appMenuQuitItems(
+            isTestHost: isTestHost, keepInMenuBar: preferences.keepInMenuBarOnQuit)
+        guard model != appMenuQuitModel else { return }
+        appMenuQuitModel = model
+
+        for item in appMenuQuitItemViews { appMenu.removeItem(item) }
+        appMenuQuitItemViews = model.map { model in
+            let item: NSMenuItem
+            switch model.action {
+            case .terminateThroughGate:
+                // nil target → the responder chain resolves it to NSApp, funneling
+                // through `applicationShouldTerminate`'s gate.
+                item = NSMenuItem(
+                    title: model.title,
+                    action: #selector(NSApplication.terminate(_:)),
+                    keyEquivalent: model.keyEquivalent)
+            case .quitCompletely:
+                item = NSMenuItem(
+                    title: model.title,
+                    action: #selector(quitCompletely(_:)),
+                    keyEquivalent: model.keyEquivalent)
+                item.target = self
+            }
+            item.keyEquivalentModifierMask =
+                model.usesOptionModifier ? [.command, .option] : [.command]
+            return item
+        }
+        for item in appMenuQuitItemViews { appMenu.addItem(item) }
     }
 
     // MARK: - Main Menu
@@ -1518,7 +1714,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         appMenu.addItem(
             withTitle: "Show All", action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Quit Kernova", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        // The quit section is built dynamically so it stays honest per mode
+        // (test host / resident + preference on / off, #624) and updates the next
+        // time the menu opens after the Settings toggle flips. The delegate's
+        // `menuNeedsUpdate` rebuilds it; build it once now for the first open.
+        self.appMenu = appMenu
+        appMenu.delegate = self
+        rebuildAppMenuQuitItems()
         appMenuItem.submenu = appMenu
         mainMenu.addItem(appMenuItem)
 
