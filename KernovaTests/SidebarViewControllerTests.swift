@@ -104,28 +104,71 @@ struct SidebarViewControllerTests {
 
     @Test("Agent indicator hidden for Linux guests")
     func agentHiddenForLinux() {
-        let instance = makeInstance(guestOS: .linux)
+        let instance = makeInstance(guestOS: .linux, status: .running)
         #expect(SidebarVMRowCellView.visibleAgentStatus(for: instance) == nil)
     }
 
-    @Test("Agent indicator shows .waiting for a fresh macOS VM")
-    func agentWaitingVisibleForFreshMac() {
-        let instance = makeInstance(guestOS: .macOS)
+    @Test("Agent indicator shows .waiting for a running macOS VM without an agent")
+    func agentWaitingVisibleForRunningMac() {
+        let instance = makeInstance(guestOS: .macOS, status: .running)
         #expect(SidebarVMRowCellView.visibleAgentStatus(for: instance) == .waiting)
     }
 
     @Test("Agent indicator suppressed once the install nudge is dismissed")
     func agentSuppressedWhenDismissed() {
-        let instance = makeInstance(guestOS: .macOS)
+        let instance = makeInstance(guestOS: .macOS, status: .running)
         instance.configuration.agentInstallNudgeDismissed = true
         #expect(SidebarVMRowCellView.visibleAgentStatus(for: instance) == nil)
     }
 
-    @Test("Agent indicator suppressed for a stopped VM that has seen the agent")
-    func agentSuppressedWhenSeenAndStopped() {
-        let instance = makeInstance(guestOS: .macOS)  // stopped, no live VM
-        instance.configuration.lastSeenAgentVersion = "1.2.3"
+    @Test("Agent indicator suppressed for a stopped macOS VM")
+    func agentSuppressedWhenStopped() {
+        // Neither a VM that has never had an agent nor one that has: with no
+        // live control channel, `.waiting` means "unknown", not "not installed".
+        let fresh = makeInstance(guestOS: .macOS, status: .stopped)
+        #expect(SidebarVMRowCellView.visibleAgentStatus(for: fresh) == nil)
+
+        let seen = makeInstance(guestOS: .macOS, status: .stopped)
+        seen.configuration.lastSeenAgentVersion = "1.2.3"
+        #expect(SidebarVMRowCellView.visibleAgentStatus(for: seen) == nil)
+    }
+
+    @Test(
+        "Agent indicator suppressed outside a live session",
+        arguments: [VMStatus.starting, .saving, .restoring, .error, .initialBoot]
+    )
+    func agentSuppressedWhenNotInLiveSession(status: VMStatus) {
+        let instance = makeInstance(guestOS: .macOS, status: status)
         #expect(SidebarVMRowCellView.visibleAgentStatus(for: instance) == nil)
+    }
+
+    @Test("Agent indicator suppressed for a cold-paused VM")
+    func agentSuppressedWhenColdPaused() {
+        let instance = makeInstance(guestOS: .macOS, status: .paused)  // no live VM
+        #expect(instance.isColdPaused)
+        #expect(SidebarVMRowCellView.visibleAgentStatus(for: instance) == nil)
+    }
+
+    /// The live-session gate must not swallow the *louder* agent states — only
+    /// the `.waiting` install nudge is dismissible, so a gate that over-reached
+    /// would silently drop the "didn't reconnect" affordance.
+    @Test("Agent indicator surfaces .expectedMissing on a running VM")
+    func agentExpectedMissingVisibleWhenRunning() {
+        let instance = makeInstance(guestOS: .macOS, status: .running)
+        instance.configuration.lastSeenAgentVersion = "1.2.3"
+        instance.agentExpectedButMissing = true
+        #expect(
+            SidebarVMRowCellView.visibleAgentStatus(for: instance)
+                == .expectedMissing(expected: "1.2.3")
+        )
+
+        // Even a dismissed install nudge doesn't suppress it — the dismissal
+        // gate is scoped to `.waiting`.
+        instance.configuration.agentInstallNudgeDismissed = true
+        #expect(
+            SidebarVMRowCellView.visibleAgentStatus(for: instance)
+                == .expectedMissing(expected: "1.2.3")
+        )
     }
 
     // MARK: - Reorder index math

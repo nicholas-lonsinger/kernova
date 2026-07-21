@@ -326,10 +326,22 @@ final class VMInstance {
         status == .paused && virtualMachine == nil
     }
 
+    /// `true` when the VM is paused with its `VZVirtualMachine` still live in
+    /// memory — the resumable counterpart of ``isColdPaused``.
+    ///
+    /// The single spelling of "live-paused" for every caller that needs to tell
+    /// the two paused flavors apart (app-lifetime accounting, the paused-stop
+    /// confirmation sheet, the sidebar agent badge). Callers that additionally
+    /// require `.running` compose it (`status == .running || isLivePaused`)
+    /// rather than re-deriving the paused half.
+    var isLivePaused: Bool {
+        status == .paused && virtualMachine != nil
+    }
+
     /// `true` when this VM should keep the app alive: preparing, in an active lifecycle
     /// state, or live-paused in memory (as opposed to cold-paused to disk).
     var isKeepingAppAlive: Bool {
-        isPreparing || status.isActive || (status == .paused && virtualMachine != nil)
+        isPreparing || status.isActive || isLivePaused
     }
 
     /// `true` when the VM is eligible for graceful stop (running or live-paused, not cold-paused).
