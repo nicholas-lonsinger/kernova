@@ -1170,7 +1170,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     @objc func showSettings(_ sender: Any?) {
         ensureRegularActivationIfAgent()
-        let controller = settingsWindowController ?? SettingsWindowController()
+        let controller = settingsWindowController ?? SettingsWindowController(viewModel: viewModel)
         settingsWindowController = controller
         NSApp.activate()
         controller.showWindow(sender)
