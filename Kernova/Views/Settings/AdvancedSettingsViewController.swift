@@ -46,6 +46,12 @@ final class AdvancedSettingsViewController: NSViewController {
         section.translatesAutoresizingMaskIntoConstraints = false
 
         let root = NSView()
+        // Let the root's size flow from its content. Without this, NSTabViewController
+        // frames the installed pane to the tab view's bounds via autoresizing-mask
+        // constraints that both collide with the explicit width (the logged
+        // "Conflicting constraints" warning) and stretch the four-edge-pinned section
+        // to the tab view's height (the empty-card void).
+        root.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(section)
         let pad = Spacing.large
         NSLayoutConstraint.activate([
@@ -62,6 +68,11 @@ final class AdvancedSettingsViewController: NSViewController {
 
     override func viewWillAppear() {
         super.viewWillAppear()
+        // Drive NSTabViewController's per-tab window resize from the measured
+        // fitting height. Without this the window keeps whatever height it
+        // already has (e.g. a stale tall autosaved frame), and the four-edge
+        // section pin stretches the cards over the excess.
+        preferredContentSize = view.fittingSize
         alwaysShowSwitch.state = preferences.alwaysShowAdvancedOptions ? .on : .off
     }
 

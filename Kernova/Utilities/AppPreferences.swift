@@ -119,4 +119,21 @@ struct AppPreferences {
         get { defaults.bool(forKey: Keys.menuBarQuitReminderDismissed) }
         nonmutating set { defaults.set(newValue, forKey: Keys.menuBarQuitReminderDismissed) }
     }
+
+    /// Re-arms every host-side reminder by clearing its dismissed flag, so each
+    /// nag shows again the next time its condition is met.
+    ///
+    /// Covers only the reminders whose dismissed state lives in *this* defaults
+    /// domain — the menu-bar quit reminder and the host File Provider "enable in
+    /// System Settings" reminder. The guest agent surfaces its own File Provider
+    /// reminder inside the VM, backed by a separate defaults domain in a separate
+    /// process (`KernovaMacOSAgent`); that dismissal is out of reach here and is
+    /// left untouched (an explicitly documented gap surfaced to the user in the
+    /// Reminders settings pane). Per-VM agent-install nudges live in each VM's
+    /// bundle configuration, not here, and are reset by
+    /// `VMLibraryViewModel.resetAllAgentInstallNudges()`.
+    func resetHostReminders() {
+        menuBarQuitReminderDismissed = false
+        fileProviderReminderDismissed = false
+    }
 }

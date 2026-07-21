@@ -1596,9 +1596,36 @@ final class VMLibraryViewModel {
     /// `.expectedMissing` continue to surface (those imply something more urgent than "you could
     /// install this").
     func dismissAgentInstallNudge(for instance: VMInstance) {
-        guard !instance.configuration.agentInstallNudgeDismissed else { return }
-        Self.logger.notice("User dismissed install-agent nudge for '\(instance.name, privacy: .public)'")
-        updateConfiguration(of: instance) { $0.agentInstallNudgeDismissed = true }
+        setAgentInstallNudgeDismissed(true, for: instance)
+    }
+
+    /// Sets whether this VM's agent-install nudge is dismissed and persists the
+    /// choice.
+    ///
+    /// The single write path for the per-VM `agentInstallNudgeDismissed` flag —
+    /// `dismissAgentInstallNudge(for:)` (sidebar popover, VM Settings) and the
+    /// Reminders settings pane both route through here. Routes through
+    /// `updateConfiguration(of:)`, which no-ops when the value is unchanged.
+    /// `dismissed == true` silences the `.waiting` nudge; `false` re-arms it.
+    func setAgentInstallNudgeDismissed(_ dismissed: Bool, for instance: VMInstance) {
+        guard instance.configuration.agentInstallNudgeDismissed != dismissed else { return }
+        Self.logger.notice(
+            "Setting install-agent nudge dismissed=\(dismissed, privacy: .public) for '\(instance.name, privacy: .public)'"
+        )
+        updateConfiguration(of: instance) { $0.agentInstallNudgeDismissed = dismissed }
+    }
+
+    /// Re-arms the agent-install nudge for every VM by clearing its dismissed
+    /// flag, so each VM's `.waiting` nudge can surface again.
+    ///
+    /// Invoked by the Reminders settings pane's *Reset All Reminders* action.
+    /// Each VM's flag lives in its own bundle configuration and is persisted
+    /// individually via `setAgentInstallNudgeDismissed(_:for:)`; VMs already
+    /// armed no-op.
+    func resetAllAgentInstallNudges() {
+        for instance in instances {
+            setAgentInstallNudgeDismissed(false, for: instance)
+        }
     }
 
     /// Removes the bundled guest agent installer entry from

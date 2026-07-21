@@ -7,8 +7,9 @@ import AppKit
 /// non-resizable, matching the platform convention for settings.
 @MainActor
 final class SettingsWindowController: NSWindowController {
-    convenience init() {
-        let window = NSWindow(contentViewController: SettingsTabViewController())
+    convenience init(viewModel: VMLibraryViewModel) {
+        let window = NSWindow(
+            contentViewController: SettingsTabViewController(viewModel: viewModel))
         window.title = "Settings"
         window.styleMask = [.titled, .closable, .miniaturizable]
         // The controller is a singleton reused across opens, so the window must

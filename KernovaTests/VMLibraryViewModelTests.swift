@@ -2072,6 +2072,64 @@ struct VMLibraryViewModelTests {
         #expect(viewModel.selectedID == installing.id)
     }
 
+    // MARK: - Agent Install Nudge
+
+    @Test("setAgentInstallNudgeDismissed persists in both directions")
+    func setAgentInstallNudgeDismissedPersistsBothDirections() {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        viewModel.instances.append(instance)
+
+        viewModel.setAgentInstallNudgeDismissed(true, for: instance)
+        #expect(instance.configuration.agentInstallNudgeDismissed == true)
+        #expect(storage.saveConfigurationCallCount == 1)
+
+        viewModel.setAgentInstallNudgeDismissed(false, for: instance)
+        #expect(instance.configuration.agentInstallNudgeDismissed == false)
+        #expect(storage.saveConfigurationCallCount == 2)
+    }
+
+    @Test("setAgentInstallNudgeDismissed no-ops when unchanged")
+    func setAgentInstallNudgeDismissedNoOpsWhenUnchanged() {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        viewModel.instances.append(instance)
+
+        // Default is already false; setting false again writes nothing.
+        viewModel.setAgentInstallNudgeDismissed(false, for: instance)
+        #expect(storage.saveConfigurationCallCount == 0)
+    }
+
+    @Test("dismissAgentInstallNudge still sets the flag to true")
+    func dismissAgentInstallNudgeSetsTrue() {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let instance = makeInstance()
+        viewModel.instances.append(instance)
+
+        viewModel.dismissAgentInstallNudge(for: instance)
+
+        #expect(instance.configuration.agentInstallNudgeDismissed == true)
+        #expect(storage.saveConfigurationCallCount == 1)
+    }
+
+    @Test("resetAllAgentInstallNudges re-arms every VM")
+    func resetAllAgentInstallNudgesReArmsEveryVM() {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let first = makeInstance(name: "First")
+        let second = makeInstance(name: "Second")
+        let third = makeInstance(name: "Third")
+        first.configuration.agentInstallNudgeDismissed = true
+        second.configuration.agentInstallNudgeDismissed = true
+        // `third` stays armed to confirm the reset no-ops on already-armed VMs.
+        viewModel.instances = [first, second, third]
+
+        viewModel.resetAllAgentInstallNudges()
+
+        #expect(first.configuration.agentInstallNudgeDismissed == false)
+        #expect(second.configuration.agentInstallNudgeDismissed == false)
+        #expect(third.configuration.agentInstallNudgeDismissed == false)
+    }
+
     // MARK: - Rename
 
     @Test("renameVMInDetail sets activeRename to detail target")

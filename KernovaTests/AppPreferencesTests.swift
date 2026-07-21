@@ -143,4 +143,27 @@ struct AppPreferencesTests {
             #expect(prefs.menuBarQuitReminderDismissed == false)
         }
     }
+
+    @Test("resetHostReminders clears both host reminder flags")
+    func resetHostRemindersClearsBothFlags() throws {
+        try withEphemeralPreferences { prefs, _ in
+            prefs.menuBarQuitReminderDismissed = true
+            prefs.fileProviderReminderDismissed = true
+
+            prefs.resetHostReminders()
+
+            #expect(prefs.menuBarQuitReminderDismissed == false)
+            #expect(prefs.fileProviderReminderDismissed == false)
+        }
+    }
+
+    @Test("resetHostReminders is a no-op on fresh defaults")
+    func resetHostRemindersIdempotentOnFreshDefaults() throws {
+        try withEphemeralPreferences { prefs, _ in
+            prefs.resetHostReminders()
+
+            #expect(prefs.menuBarQuitReminderDismissed == false)
+            #expect(prefs.fileProviderReminderDismissed == false)
+        }
+    }
 }
