@@ -140,7 +140,17 @@ final class VirtualizationService {
     /// `EAGAIN` underneath. The underlying error distinguishes it from a
     /// genuinely invalid configuration (same VZ code, no `EAGAIN`); matching
     /// on the localized text would be locale-fragile.
+    ///
+    /// A disk-image attach failure reaches here wrapped in a
+    /// `ConfigurationBuilderError` (which adds the item's identity so the UI
+    /// can offer to remove it), and the lock is taken on exactly those files —
+    /// so unwrap before matching, or the contention retry never fires.
     static func isFileLockContention(_ error: Error) -> Bool {
+        if let builderError = error as? ConfigurationBuilderError,
+            let underlying = builderError.underlyingAttachError
+        {
+            return isFileLockContention(underlying)
+        }
         let nsError = error as NSError
         guard nsError.domain == VZError.errorDomain,
             VZError.Code(rawValue: nsError.code) == .invalidVirtualMachineConfiguration,
@@ -329,13 +339,15 @@ final class VirtualizationService {
     /// Transient errors leave the
     /// VM in `.stopped` so the indicator stays grey; permanent errors set `.error` (red).
     static func isTransientStartError(_ error: Error) -> Bool {
-        if error is ConfigurationBuilderError { return false }
-
         // Transient by construction: the lock holder is a dying
         // VZVirtualMachine whose advisory lock is released at deallocation —
         // even when the bounded retry budget didn't outlast the teardown, a
-        // manual retry will.
+        // manual retry will. Checked ahead of the builder-error rule below
+        // because contention on a disk image surfaces *as* a builder error
+        // (the attach wraps it), and that is still a transient condition.
         if isFileLockContention(error) { return true }
+
+        if error is ConfigurationBuilderError { return false }
 
         let nsError = error as NSError
         guard nsError.domain == VZError.errorDomain else { return false }
