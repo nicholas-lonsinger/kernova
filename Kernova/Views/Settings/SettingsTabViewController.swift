@@ -3,8 +3,8 @@ import os
 
 /// The toolbar-style tab container for the Settings window.
 ///
-/// Holds a **General** tab (Open at Login), an **Advanced** tab, and a
-/// **Reminders** tab (turning suppressed reminders back on); the toolbar style
+/// Holds a **General** tab (Open at Login), a **Reminders** tab (turning
+/// suppressed reminders back on), and an **Advanced** tab; the toolbar style
 /// is used so further panes can be added later as additional `NSTabViewItem`s.
 ///
 /// The Reminders pane needs the app's `VMLibraryViewModel` (to list and re-arm
@@ -34,16 +34,16 @@ final class SettingsTabViewController: NSTabViewController {
         general.image = Self.symbol("gearshape")
         addTabViewItem(general)
 
-        let advanced = NSTabViewItem(viewController: AdvancedSettingsViewController())
-        advanced.label = "Advanced"
-        advanced.image = Self.symbol("gearshape.2")
-        addTabViewItem(advanced)
-
         let reminders = NSTabViewItem(
             viewController: RemindersSettingsViewController(viewModel: viewModel))
         reminders.label = "Reminders"
         reminders.image = Self.symbol("bell")
         addTabViewItem(reminders)
+
+        let advanced = NSTabViewItem(viewController: AdvancedSettingsViewController())
+        advanced.label = "Advanced"
+        advanced.image = Self.symbol("gearshape.2")
+        addTabViewItem(advanced)
     }
 
     /// Resizes the window to fit the newly selected pane, System Settings-style.
