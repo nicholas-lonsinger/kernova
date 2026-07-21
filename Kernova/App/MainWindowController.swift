@@ -57,19 +57,11 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
         splitViewController.splitView.autosaveName = "KernovaMainSplit"
 
-        let initialSize = NSSize(width: 1200, height: 900)
-        let window = NSWindow(
-            contentRect: NSRect(origin: .zero, size: initialSize),
+        let window = NSWindow.withStableContentSize(
+            NSSize(width: 1200, height: 900),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
-            backing: .buffered,
-            defer: false
+            contentViewController: splitViewController
         )
-        window.contentViewController = splitViewController
-        // RATIONALE: contentViewController assignment resizes the window to fit
-        // the content view's auto layout — the split view's minimum thicknesses
-        // (well under the intended size), which minSize then clamps to 800x500.
-        // Re-establish the intended initial size before setFrameAutosaveName.
-        window.setContentSize(initialSize)
         // First-launch position; a saved frame restored by setFrameAutosaveName
         // below overrides both the size and this placement.
         window.center()

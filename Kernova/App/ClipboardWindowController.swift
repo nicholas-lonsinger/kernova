@@ -36,17 +36,11 @@ final class ClipboardWindowController: NSWindowController, NSWindowDelegate {
         // visible. Autosave name is unchanged so existing saved frames win.
         let initialSize = NSSize(width: 480, height: 320)
 
-        let window = NSWindow(
-            contentRect: NSRect(origin: .zero, size: initialSize),
+        let window = NSWindow.withStableContentSize(
+            initialSize,
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
-            backing: .buffered,
-            defer: false
+            contentViewController: viewController
         )
-        window.contentViewController = viewController
-        // RATIONALE: contentViewController assignment resizes the window to fit
-        // the content view's auto layout, which allows near-zero height.
-        // Re-establish the intended initial size before setFrameAutosaveName.
-        window.setContentSize(initialSize)
         window.title = "\(instance.name) — Clipboard"
         window.minSize = NSSize(width: 360, height: 280)
         super.init(window: window)
