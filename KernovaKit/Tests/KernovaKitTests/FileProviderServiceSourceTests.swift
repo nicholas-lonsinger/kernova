@@ -37,14 +37,19 @@ struct FileProviderServiceSourceTests {
         private let listener = NSXPCListener.anonymous()
         private let cancelCallBox = Box<(UInt64, Int)?>(nil)
         private let fetchFileEnteredBox = Box(false)
+        private let connectionDroppedBox = Box(false)
         /// When `true`, `fetchFile` replies immediately with a fixed staged
         /// path instead of the default "never reply" behavior — lets a test
         /// exercise the fast-path-already-succeeded scenario.
         let repliesImmediately = Box(false)
         var cancelCall: (UInt64, Int)? { cancelCallBox.value }
         var fetchFileHasEntered: Bool { fetchFileEnteredBox.value }
+        /// `true` once the accepted (owner-side) connection is torn down — the peer
+        /// observing the source's `invalidate()` dropping its end (#598).
+        var connectionWasDropped: Bool { connectionDroppedBox.value }
         let fetchFileEntered = AsyncGate()
         let cancelFetchCalled = AsyncGate()
+        let connectionDropped = AsyncGate()
 
         override init() {
             super.init()
@@ -59,6 +64,16 @@ struct FileProviderServiceSourceTests {
         ) -> Bool {
             newConnection.exportedInterface = NSXPCInterface(with: FileProviderRelay.self)
             newConnection.exportedObject = self
+            // Observe the peer (owner-side) connection dropping. When the source
+            // invalidates its end, this server side is torn down; either handler
+            // may fire depending on framework timing, so notify on both — the
+            // observable fact under test is that the peer saw the drop.
+            let onDrop: @Sendable () -> Void = { [connectionDroppedBox, connectionDropped] in
+                connectionDroppedBox.value = true
+                connectionDropped.notify()
+            }
+            newConnection.invalidationHandler = onDrop
+            newConnection.interruptionHandler = onDrop
             newConnection.resume()
             return true
         }
@@ -330,6 +345,83 @@ struct FileProviderServiceSourceTests {
         // received a fetchFile for this (generation, repIndex) at all.
         cancellation.cancel()
         #expect(relay.cancelCall == nil)
+    }
+
+    // MARK: - Instance invalidation (#598)
+
+    @Test("invalidate() fails a pending pull with serverUnreachable")
+    func invalidateFailsPendingPullWithServerUnreachable() async throws {
+        // Production connect timeout (not shrunk): the point is that invalidate()
+        // completes the pull promptly, well before the 30s connect timer — per
+        // docs/TESTING.md, don't inject a small "tidy" timeout the test could race.
+        let source = makeSource()
+        let result = Box<Result<String, NSError>?>(nil)
+        let gate = AsyncGate()
+
+        // No accepted connection → the pull enqueues and waits.
+        _ = source.fetchStagedFile(generation: 4, repIndex: 1) { outcome in
+            result.value = outcome
+            gate.notify()
+        }
+        #expect(result.value == nil)
+
+        source.invalidate()
+
+        try await gate.wait { result.value != nil }
+        guard case .failure(let error)? = result.value else {
+            Issue.record(
+                "expected a failure after invalidate, got \(String(describing: result.value))")
+            return
+        }
+        #expect(error.domain == NSFileProviderErrorDomain)
+        #expect(error.code == NSFileProviderError.serverUnreachable.rawValue)
+        #expect(source.pendingPullCountForTesting == 0)
+    }
+
+    @Test("a pull enqueued after invalidate() fails immediately without arming a timer")
+    func fetchAfterInvalidateFailsImmediately() {
+        let source = makeSource()
+        source.invalidate()
+
+        // The invalidated fast-path completes synchronously — no doorbell, no
+        // connect timer, and nothing left on the pending queue.
+        let result = Box<Result<String, NSError>?>(nil)
+        _ = source.fetchStagedFile(generation: 2, repIndex: 0) { outcome in
+            result.value = outcome
+        }
+        guard case .failure(let error)? = result.value else {
+            Issue.record(
+                "expected an immediate failure after invalidate, got \(String(describing: result.value))"
+            )
+            return
+        }
+        #expect(error.domain == NSFileProviderErrorDomain)
+        #expect(error.code == NSFileProviderError.serverUnreachable.rawValue)
+        #expect(source.pendingPullCountForTesting == 0)
+    }
+
+    @Test("invalidate() drops the accepted owner connection so the peer observes the teardown")
+    func invalidateDropsAcceptedOwnerConnection() async throws {
+        let source = makeSource()
+        let relay = RecordingRelay()
+        defer { relay.invalidate() }
+
+        let connection = NSXPCConnection(listenerEndpoint: relay.endpoint)
+        defer { connection.invalidate() }
+        _ = source.listener(NSXPCListener.anonymous(), shouldAcceptNewConnection: connection)
+
+        // Drive one pull so the relay's listener actually accepts the connection
+        // and arms its drop handlers (a listener only accepts on the client's
+        // first message).
+        _ = source.fetchStagedFile(generation: 1, repIndex: 0) { _ in }
+        try await relay.fetchFileEntered.wait { relay.fetchFileHasEntered }
+
+        source.invalidate()
+
+        // Tearing down the accepted connection propagates to the peer — the
+        // mechanism that, in production, fires the owner connector's invalidation
+        // handler and drives its reconnect to the replacement instance.
+        try await relay.connectionDropped.wait { relay.connectionWasDropped }
     }
 
     // MARK: - Servicing progress registry (#426)

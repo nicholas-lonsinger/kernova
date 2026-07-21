@@ -77,6 +77,10 @@ open class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
 
     open func invalidate() {
         logger.notice("FileProviderExtension invalidate")
+        // Tear down the servicing endpoint so the owner's connection drops and it
+        // reconnects to the replacement instance, rather than re-handshaking with
+        // this now-dead instance's zombie source (#598).
+        serviceSource.invalidate()
     }
 
     // MARK: - NSFileProviderServicing
