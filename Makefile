@@ -69,10 +69,11 @@ SWIFT_FORMAT := xcrun swift-format
 # which runs `make lint`). Tracked files define the roots: an untracked .swift
 # file inside an existing root is still covered (swift-format recurses), and a
 # top-level .swift file would appear as its own entry, which swift-format
-# accepts as a path argument. Shell sources are the tracked scripts plus the
-# git hooks (shebang'd but extensionless).
+# accepts as a path argument. Shell sources are the tracked scripts (including
+# the guest agent's double-clickable .command installers) plus the git hooks
+# (shebang'd but extensionless).
 SWIFT_SOURCE_DIRS := $(shell git ls-files '*.swift' | cut -d/ -f1 | sort -u)
-SHELL_SOURCES     := $(shell git ls-files '*.sh' .githooks)
+SHELL_SOURCES     := $(shell git ls-files '*.sh' '*.command' .githooks)
 
 .DEFAULT_GOAL := help
 .PHONY: help build test test-suite test-package clean format lint lint-shell install-hooks check-hooks bootstrap doctor ghosts clean-ghosts fp-reset ls-reset
