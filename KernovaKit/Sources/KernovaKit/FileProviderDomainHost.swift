@@ -244,6 +244,22 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     /// completes `nil` when the dirent is absent or not yet assigned.
     private let resolveItemIdentifier:
         @Sendable (_ url: URL, _ completion: @escaping @Sendable (String?) -> Void) -> Void
+    /// How many times a *throwing* enable-time registry read is retried before
+    /// the cycle latches `.unavailable` for good (#598).
+    ///
+    /// Injected for tests. On an agent's first launch right after install the
+    /// just-installed extension isn't discoverable yet, so
+    /// `NSFileProviderManager.domains()` throws ("The application cannot be used
+    /// right now.") until the system finishes registering it. The read is
+    /// non-destructive — the same `domains()` call `refreshAvailability` already
+    /// repeats freely — so retrying it (never an `add`) is safe; `limit × delay`
+    /// bounds the window (~60 s) to post-install extension discovery.
+    private let registrationReadRetryLimit: Int
+    /// Delay between enable-time registry-read retries (see
+    /// `registrationReadRetryLimit`).
+    ///
+    /// Injected for tests (0 chains retries immediately).
+    private let registrationReadRetryDelay: TimeInterval
     /// Guards `domainChangeObserver`, which — unlike the rest of the state
     /// below — is also read/removed from `deinit`. `deinit` runs on whatever
     /// thread drops the last strong reference, not necessarily main, so that
@@ -277,6 +293,9 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     /// cycle's late completion land after a second cycle already succeeded,
     /// clobbering state out of order.
     private var registrationEpoch: UInt64 = 0
+    /// Throwing enable-time registry reads retried so far this cycle (#598),
+    /// reset to 0 on each enable and bounded by `registrationReadRetryLimit`.
+    private var registrationReadAttempts = 0
     private var availabilityStorage: FileProviderAvailability = .inactive
     /// Token for the `NSFileProviderDomainDidChange` observer.
     ///
@@ -382,7 +401,9 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
             nil,
         resolveItemIdentifier:
             (@Sendable (_ url: URL, _ completion: @escaping @Sendable (String?) -> Void) -> Void)? =
-            nil
+            nil,
+        registrationReadRetryLimit: Int = 12,
+        registrationReadRetryDelay: TimeInterval = 5
     ) {
         self.config = config
         self.logger = KernovaLogger(subsystem: config.loggerSubsystem, category: "FileProviderHost")
@@ -396,6 +417,8 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
         self.notificationCenter = notificationCenter
         self.fetchDomains = fetchDomains
         self.addDomainToSystem = addDomainToSystem
+        self.registrationReadRetryLimit = registrationReadRetryLimit
+        self.registrationReadRetryDelay = registrationReadRetryDelay
         // The domain is rebuilt from `config` inside the closure — the stored
         // `self.domain` is main-queue state a `@Sendable` closure can't capture
         // (same shape as the connector's per-attempt `config.makeDomain()`).
@@ -445,6 +468,9 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
             // would defeat the connector's "re-arm on next enable" recovery.
             relayTransport.startServing(relayService)
             startObservingDomainChanges()
+            // Fresh retry budget per enable cycle for the enable-time registry
+            // read (#598); see `handleRegistrationReadFailure`.
+            registrationReadAttempts = 0
             registerDomain()
         } else {
             stopObservingDomainChanges()
@@ -519,8 +545,9 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     /// registered, where every `NSFileProviderManager` call fails — lands
     /// `.unavailable` honestly. This read also arms `NSFileProviderDomainDidChange`
     /// (Apple posts it only after the process's first `domains()` call), replacing
-    /// the old throwaway priming read; a *throwing* read does not arm it, so that
-    /// (unrecoverable-in-process) state clears only on a re-enable.
+    /// the old throwaway priming read; a *throwing* read does not arm it, so the
+    /// cycle recovers only through the bounded enable-time read retry (see
+    /// `handleRegistrationReadFailure`) — and failing that, clears on a re-enable.
     ///
     /// Per Apple, re-adding an existing identifier would merely update it in place
     /// and preserve the read-only `userEnabled`, so adopting instead of re-adding
@@ -576,20 +603,52 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     }
 
     /// The registry read itself failed — the domain's state is unknown, so report
-    /// `.unavailable` without adding.
+    /// `.unavailable` and retry the read, bounded, before giving up.
     ///
-    /// Written directly (not via `refreshAvailability`): this is the cycle's first
-    /// read, so no probe is in flight to race, and a re-read would just throw again
-    /// — keeping the write synchronous inside this epoch/`enabled`-guarded handler
-    /// avoids a phantom re-read disagreeing with `domainRegistered = false`.
+    /// On an agent's first launch right after install the extension isn't
+    /// discoverable yet and `domains()` throws until the system registers it
+    /// (#598); a throwing read also never armed the change observer, so without a
+    /// retry the cycle is terminal until a manual re-enable. So this keeps the
+    /// honest immediate state (`domainRegistered = false`, `.unavailable` — the UI
+    /// stays red through the window and the transition log dedupes), then, while
+    /// the budget lasts, re-schedules `registerDomain()` after
+    /// `registrationReadRetryDelay`. The retry re-runs only the non-destructive
+    /// `domains()` read — never an `add`, which stays terminally un-healed
+    /// (#567/#590) — and captures the current `registrationEpoch`, so a disable or
+    /// a newer cycle silently cancels the scheduled attempt. On exhaustion
+    /// `.unavailable` stands, clearing only on a re-enable — today's semantics,
+    /// now reached after the bounded retry rather than on the first failure.
+    ///
+    /// Written directly (not via `refreshAvailability`): keeping the write
+    /// synchronous inside this epoch/`enabled`-guarded handler avoids a phantom
+    /// re-read disagreeing with `domainRegistered = false`.
     private func handleRegistrationReadFailure(epoch: UInt64, message: String) {
         dispatchPrecondition(condition: .onQueue(.main))
         guard enabled, registrationEpoch == epoch else { return }
-        logger.error(
-            "File Provider registry read failed at enable: \(message, privacy: .public) — unknown/broken File Provider state, reporting unavailable (no add)"
-        )
         domainRegistered = false
         setAvailability(.unavailable)
+        guard registrationReadAttempts < registrationReadRetryLimit else {
+            logger.error(
+                "File Provider registry read failed at enable: \(message, privacy: .public) — unknown/broken File Provider state, reporting unavailable (no add) after \(self.registrationReadAttempts, privacy: .public) retries"
+            )
+            return
+        }
+        registrationReadAttempts += 1
+        // `.warning`, not `.notice`: a failed read we are recovering from is
+        // degraded-but-recoverable operation, which is what AGENTS.md's level
+        // table assigns to `.warning` (`.notice` is for definitive lifecycle
+        // events). Both persist, so the post-mortem trail is unaffected.
+        logger.warning(
+            "File Provider registry read failed at enable (attempt \(self.registrationReadAttempts, privacy: .public)/\(self.registrationReadRetryLimit, privacy: .public)): \(message, privacy: .public) — retrying the read (post-install extension discovery race, #598)"
+        )
+        // `epoch` is this cycle's — the guard above already proved it equals
+        // `registrationEpoch`, so re-reading the property would say the same
+        // thing less clearly. A disable or a newer cycle bumps it, which is what
+        // makes the scheduled retry a silent no-op.
+        DispatchQueue.main.asyncAfter(deadline: .now() + registrationReadRetryDelay) { [weak self] in
+            guard let self, self.enabled, self.registrationEpoch == epoch else { return }
+            self.registerDomain()
+        }
     }
 
     /// Marks the domain registered and runs the one-time post-registration steps,

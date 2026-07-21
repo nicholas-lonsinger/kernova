@@ -275,15 +275,77 @@ struct VsockHostConnectionTests {
 
     // MARK: - Policy enforcement
 
-    @Test("Default-disabled: forwardLog drops the frame and skips the buffer")
-    func defaultDisabledDropsForwardLog() {
+    @Test("Explicitly disabled: forwardLog drops the frame and skips the buffer")
+    func explicitlyDisabledDropsForwardLog() {
         let conn = VsockHostConnection()
-        // No setEnabled — production default is disabled.
+        conn.setEnabled(false)  // explicit host "off" — drop, don't buffer
 
         let result = conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "msg")
         #expect(result == false)
         #expect(pendingLogCount(conn) == 0)
         #expect(conn.isLogForwardingEnabled == false)
+    }
+
+    // MARK: - Undecided policy: pre-handshake buffering (#598)
+
+    @Test("Undecided (no policy yet): forwardLog buffers the frame instead of dropping it")
+    func undecidedBuffersForwardLog() {
+        let conn = VsockHostConnection()
+        // No setEnabled — policy is undecided until the host's first PolicyUpdate.
+        #expect(conn.isLogForwardingEnabled == false)
+
+        let result = conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "boot")
+        #expect(result == false)  // buffered, not live-sent
+        #expect(pendingLogCount(conn) == 1)
+    }
+
+    @Test("Undecided-era frames are delivered once forwarding is enabled and the channel connects")
+    func undecidedFramesFlushedOnEnableAndConnect() async throws {
+        let conn = VsockHostConnection()
+
+        for i in 0..<3 {
+            let result = conn.forwardLog(
+                level: .info, subsystem: "t", category: "t", message: "boot\(i)")
+            #expect(result == false)
+        }
+        #expect(pendingMessages(conn) == ["boot0", "boot1", "boot2"])
+
+        // The host's first PolicyUpdate enables forwarding; a connect then flushes
+        // the records buffered during the undecided window (enabling doesn't clear
+        // the buffer).
+        conn.setEnabled(true)
+        let (sender, receiver) = try makeChannelPair()
+        defer { sender.close(); receiver.close() }
+        conn.flushPendingLogs(on: sender)
+
+        var received: [String] = []
+        for _ in 0..<3 {
+            let frame = try await nextFrame(from: receiver)
+            guard case .logRecord(let record) = frame.payload else { continue }
+            received.append(record.message)
+        }
+        #expect(received == ["boot0", "boot1", "boot2"])
+        #expect(pendingLogCount(conn) == 0)
+    }
+
+    @Test("A first setEnabled(false) discards undecided-era frames; a later enable does not deliver them")
+    func undecidedFramesDiscardedByFirstDisable() {
+        let conn = VsockHostConnection()
+
+        for i in 0..<5 {
+            conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "boot\(i)")
+        }
+        #expect(pendingLogCount(conn) == 5)
+
+        // First policy decision is "off": undecided → disabled is a transition, so
+        // the buffered undecided-era records are cleared — an explicit "off" ships
+        // nothing retroactively.
+        conn.setEnabled(false)
+        #expect(pendingLogCount(conn) == 0)
+
+        // A later enable must not resurrect them.
+        conn.setEnabled(true)
+        #expect(pendingLogCount(conn) == 0)
     }
 
     @Test("setEnabled(true) allows forwardLog to buffer when no channel exists")

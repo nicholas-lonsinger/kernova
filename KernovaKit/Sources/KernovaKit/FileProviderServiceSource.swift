@@ -28,8 +28,9 @@ import os
 
 /// One long-lived anonymous-XPC service source for a File Provider extension.
 ///
-/// `@unchecked Sendable`: `acceptedConnection` and `pendingPulls` are guarded by
-/// `lock`; `config`/`logger`/`listener`/`queue` are immutable after `init`.
+/// `@unchecked Sendable`: `acceptedConnection`, `pendingPulls`, and `invalidated`
+/// are guarded by `lock`; `config`/`logger`/`listener`/`queue` are immutable
+/// after `init`.
 final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
     NSXPCListenerDelegate, FileProviderControl, @unchecked Sendable
 {
@@ -63,6 +64,10 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
     private var acceptedConnection: NSXPCConnection?
     /// Byte-pulls awaiting a live owner connection, drained on accept.
     private var pendingPulls: [PendingPull] = []
+    /// Set once the owning extension instance is invalidated (#598): refuses new
+    /// connections and fast-fails any pull that races the teardown, so a pull
+    /// landing on this dead source can't hang the full `connectTimeout`.
+    private var invalidated = false
 
     /// In-flight progress handlers keyed by `(generation, repIndex)` (#426).
     ///
@@ -199,13 +204,18 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
         // during/just after resume finds the connection current and clears it (rather
         // than `clearConnection` no-op'ing on a not-yet-published connection and
         // leaving a dead one cached — mirrors the owner-side store-before-resume).
-        let (previous, drained): (NSXPCConnection?, [PendingPull]) = lock.withLock {
+        let accepted: (previous: NSXPCConnection?, drained: [PendingPull])? = lock.withLock {
+            // Refuse once the instance is invalidated: don't publish or resume a
+            // connection this dead source will never service (#598).
+            if invalidated { return nil }
             let prev = acceptedConnection
             acceptedConnection = newConnection
             let waiting = pendingPulls
             pendingPulls = []
             return (prev, waiting)
         }
+        guard let accepted else { return false }
+        let (previous, drained) = accepted
         newConnection.resume()
         // Defensive: the owner holds one connection at a time and invalidates dropped
         // ones, so a still-live previous is not expected — but if one lingers, release
@@ -238,6 +248,47 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
     /// connection may already have replaced it).
     private func clearConnection(_ connection: NSXPCConnection) {
         lock.withLock { if acceptedConnection === connection { acceptedConnection = nil } }
+    }
+
+    /// Tears the source down when the owning extension instance is invalidated.
+    ///
+    /// fileproviderd invalidates and re-instantiates the `FileProviderExtension`
+    /// — including replacing it within the same process — when the File Provider
+    /// toggle flips. Without this teardown the invalidated instance's accepted
+    /// connection stays alive (retained by the owner's live XPC connection), so
+    /// the owner never sees a drop and keeps re-handshaking with this zombie;
+    /// every subsequent pull then times out the full `connectTimeout` against a
+    /// source whose extension is gone (#598). Invalidating the accepted
+    /// connection here fires the owner's invalidation handler, driving its
+    /// reconnect to the *current* instance's listener.
+    ///
+    /// Drops the listener and accepted connection and fails every pending pull
+    /// once with `serverUnreachable` (their wrapped completions unregister the
+    /// progress handlers; `OnceCompletion` dedups against the never-cancelled
+    /// connect timers). `invalidated` — set under `lock` first — then fast-fails
+    /// any pull that lands between here and process teardown and refuses new
+    /// connections.
+    /// Idempotent: only the first call owns the teardown. `NSXPCConnection`'s
+    /// `invalidate()` is documented safe to repeat, but `NSXPCListener`'s carries
+    /// no such guarantee, so the claim below is what keeps a second
+    /// `FileProviderExtension.invalidate()` (the framework does not promise to
+    /// call it exactly once) from re-invalidating the listener.
+    func invalidate() {
+        let teardown: (connection: NSXPCConnection?, drained: [PendingPull])? = lock.withLock {
+            guard !invalidated else { return nil }
+            invalidated = true
+            let connection = acceptedConnection
+            acceptedConnection = nil
+            let pulls = pendingPulls
+            pendingPulls = []
+            return (connection, pulls)
+        }
+        guard let teardown else { return }
+        listener.invalidate()
+        teardown.connection?.invalidate()
+        for pull in teardown.drained {
+            pull.once.fire(.failure(Self.serverUnreachable))
+        }
     }
 
     /// Formats the accept-time owner-identity log line — pure and testable
@@ -391,10 +442,17 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
         let cancellation = FileProviderPullCancellation { [weak self] in
             self?.cancelPull(pull)
         }
-        let liveConnection: NSXPCConnection? = lock.withLock {
-            if let connection = acceptedConnection { return connection }
+        let (isInvalidated, liveConnection): (Bool, NSXPCConnection?) = lock.withLock {
+            // The instance is gone — fast-fail rather than enqueue a pull that
+            // would hang the full `connectTimeout` against a dead source (#598).
+            if invalidated { return (true, nil) }
+            if let connection = acceptedConnection { return (false, connection) }
             pendingPulls.append(pull)  // enqueue atomically vs. a concurrent accept
-            return nil
+            return (false, nil)
+        }
+        if isInvalidated {
+            pull.once.fire(.failure(Self.serverUnreachable))
+            return cancellation
         }
         if let liveConnection {
             performPull(over: liveConnection, pull: pull)
