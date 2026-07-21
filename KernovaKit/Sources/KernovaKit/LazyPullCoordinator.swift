@@ -87,7 +87,9 @@ public final class LazyPullCoordinator: @unchecked Sendable {
     /// run on (e.g. off the guest agent's main thread), or the wakeup deadlocks.
     ///
     /// `timeout` is an **inactivity** window, not an absolute deadline: each
-    /// `heartbeat` (one per durably-written chunk) re-arms it, so a healthy
+    /// `heartbeat` (one per chunk accepted off the wire — since #615 that is
+    /// the receive lane's own signal, so it can run up to one credit window
+    /// ahead of the staging writes) re-arms it, so a healthy
     /// transfer of any size never times out no matter how long it runs. The
     /// backstop fires only after a full window with no chunk *and* no terminal
     /// outcome — and the receiver's own 30 s stall timer normally aborts a dead

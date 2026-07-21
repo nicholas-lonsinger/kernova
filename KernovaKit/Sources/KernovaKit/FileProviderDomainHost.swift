@@ -37,9 +37,12 @@ public protocol FileProviderPullProvider: AnyObject, Sendable {
     /// container, and returns the staged file path (or why it failed).
     ///
     /// `onProgress` is fed the receiver's cumulative `(bytesTransferred,
-    /// totalBytes)` per durably-written chunk, so the relay can push coalesced
-    /// progress back to the extension's `fetchContents` `Progress` (#426). It
-    /// fires off-main on the transfer's serial queue and must be cheap.
+    /// totalBytes)` per chunk accepted off the wire, so the relay can push
+    /// coalesced progress back to the extension's `fetchContents` `Progress`
+    /// (#426). It fires off-main on the transfer's receive lane and must be
+    /// cheap. Since #615 it reports *arrived* bytes, which can lead the staging
+    /// writes by up to one credit window — fine for a progress bar, but it is
+    /// not a durability signal.
     func fetchStagedFile(
         generation: UInt64, repIndex: Int,
         onProgress: @escaping @Sendable (_ bytesTransferred: UInt64, _ totalBytes: UInt64) -> Void

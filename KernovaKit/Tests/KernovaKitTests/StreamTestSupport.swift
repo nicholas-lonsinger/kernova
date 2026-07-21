@@ -92,6 +92,152 @@ func pollUntil(
     }
 }
 
+// MARK: - Staging sink doubles
+
+/// A `StagingSink` that parks every `write` until the test allows it through,
+/// wrapping a real staging sink so everything else (bytes on disk, commit,
+/// abort) behaves exactly as in production.
+///
+/// The receiver's write lane holds a backlog only while an append is
+/// outstanding, which a real staging file never does long enough to observe —
+/// this makes that window as wide as a test needs, so the pipelining (#615) can
+/// be asserted deterministically instead of by timing.
+final class GatedSink: StagingSink, @unchecked Sendable {
+    private let wrapped: ClipboardFileStaging.Sink
+    private let condition = NSCondition()
+    private var allowance = 0
+    private var started = 0
+    private var completed = 0
+    /// Notified when a write parks and after each completed write, so tests
+    /// wait event-driven.
+    let gate = AsyncGate()
+
+    var url: URL { wrapped.url }
+
+    init(wrapping sink: ClipboardFileStaging.Sink) { wrapped = sink }
+
+    /// Writes the receiver's write lane has entered — the last of them is
+    /// parked in the gate whenever `startedWrites > completedWrites`, which
+    /// pins the lane at a known point.
+    var startedWrites: Int {
+        condition.lock()
+        defer { condition.unlock() }
+        return started
+    }
+
+    /// Writes that have fully completed (bytes on disk, `writtenBytes`
+    /// about to advance).
+    var completedWrites: Int {
+        condition.lock()
+        defer { condition.unlock() }
+        return completed
+    }
+
+    /// Lets `count` more parked (or future) writes through.
+    func allow(_ count: Int) {
+        condition.lock()
+        allowance += count
+        condition.broadcast()
+        condition.unlock()
+    }
+
+    /// Lets every remaining write through.
+    func allowAll() {
+        condition.lock()
+        allowance = .max
+        condition.broadcast()
+        condition.unlock()
+    }
+
+    func write(_ data: Data) throws {
+        condition.lock()
+        started += 1
+        condition.unlock()
+        gate.notify()
+        condition.lock()
+        while allowance == 0 { condition.wait() }
+        if allowance != .max { allowance -= 1 }
+        condition.unlock()
+        try wrapped.write(data)
+        condition.lock()
+        completed += 1
+        condition.unlock()
+        gate.notify()
+    }
+
+    @discardableResult
+    func commit() throws -> URL { try wrapped.commit() }
+
+    func abort() { wrapped.abort() }
+}
+
+/// A `StagingSink` that silently discards its `droppingWrite`-th write
+/// (1-based) — accepting the bytes without storing them, and without throwing.
+///
+/// Models the one corruption the end-to-end digest cannot catch: the digest is
+/// taken over the bytes that *arrive*, so bytes lost between the receive lane
+/// and the file leave both the size and SHA-256 checks satisfied.
+final class SilentlyDroppingSink: StagingSink, @unchecked Sendable {
+    private let wrapped: ClipboardFileStaging.Sink
+    private let droppingWrite: Int
+    private let lock = NSLock()
+    private var attempts = 0
+
+    var url: URL { wrapped.url }
+
+    init(wrapping sink: ClipboardFileStaging.Sink, droppingWrite: Int) {
+        wrapped = sink
+        self.droppingWrite = droppingWrite
+    }
+
+    func write(_ data: Data) throws {
+        let attempt = lock.withLock {
+            attempts += 1
+            return attempts
+        }
+        guard attempt != droppingWrite else { return }
+        try wrapped.write(data)
+    }
+
+    @discardableResult
+    func commit() throws -> URL { try wrapped.commit() }
+
+    func abort() { wrapped.abort() }
+}
+
+/// A `StagingSink` that throws on its `failingWrite`-th write (1-based),
+/// wrapping a real staging sink otherwise — models a volume that fails an
+/// append mid-stream.
+final class FailingSink: StagingSink, @unchecked Sendable {
+    private let wrapped: ClipboardFileStaging.Sink
+    private let failingWrite: Int
+    private let lock = NSLock()
+    private var attempts = 0
+
+    var url: URL { wrapped.url }
+
+    init(wrapping sink: ClipboardFileStaging.Sink, failingWrite: Int) {
+        wrapped = sink
+        self.failingWrite = failingWrite
+    }
+
+    func write(_ data: Data) throws {
+        let attempt = lock.withLock {
+            attempts += 1
+            return attempts
+        }
+        guard attempt != failingWrite else {
+            throw StreamTestFailure("Injected staging write failure on write \(attempt)")
+        }
+        try wrapped.write(data)
+    }
+
+    @discardableResult
+    func commit() throws -> URL { try wrapped.commit() }
+
+    func abort() { wrapped.abort() }
+}
+
 // MARK: - Collector
 
 /// Gathers the completed representations and aborts a receiver delivers.
@@ -159,7 +305,8 @@ final class StreamHarness: @unchecked Sendable {
         stallTimeout: Duration = ClipboardStreamTuning.inboundStallTimeout,
         maxResidentInlineBytes: Int = ClipboardStreamTuning.maxResidentInlineBytes,
         suppressAcks: Bool = false,
-        freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil
+        freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
+        sinkFactory: ClipboardStreamReceiver.SinkFactory? = nil
     ) throws {
         (a, b) = try makeStartedChannelPair()
         stagingTempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
@@ -175,6 +322,7 @@ final class StreamHarness: @unchecked Sendable {
             channel: b, staging: staging, windowBytes: windowBytes,
             ackLatencyBound: ackLatencyBound, stallTimeout: stallTimeout,
             maxResidentInlineBytes: maxResidentInlineBytes,
+            sinkFactory: sinkFactory,
             onTransferTimed: { metrics in collector.timed(metrics) },
             onComplete: { id, rep in collector.complete(id, rep) },
             onAbort: { info in collector.abort(info) })

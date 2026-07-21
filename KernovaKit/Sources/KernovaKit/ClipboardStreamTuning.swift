@@ -32,6 +32,16 @@ import Foundation
 /// advance the window, and channel teardown unblocks a parked write via
 /// `shutdown(2)`. Shrinking the window wouldn't remove the blocking possibility
 /// anyway — a single chunk write to an already-full buffer can still park.
+///
+/// Since #615 the window carries a second meaning on the receive side. A
+/// disk-streamed transfer hands each chunk to a write lane and acks from there,
+/// so bytes can sit accepted-but-not-yet-written; because the ack still reports
+/// only durably-written bytes, the sender may never run more than one window
+/// ahead of them, and the window is therefore also the bound on that backlog's
+/// RAM. The receiver is write-lane-bound after that change, not window-bound —
+/// enlarging the window buys no throughput on its own, only a deeper backlog.
+/// It would become a throughput lever again if the write lane ever coalesced
+/// its backlog into one `writev(2)` per wakeup.
 public enum ClipboardStreamTuning {
     /// Default per-chunk payload size: 64 KiB (the shared vsock packet cap).
     public static let defaultChunkPayloadSize = 64 * 1024

@@ -1,5 +1,29 @@
 import Foundation
 
+/// An append-only sink for one streamed file representation: bytes are fed with
+/// `write(_:)` and finalized with `commit()` (keep) or `abort()` (delete the
+/// partial).
+///
+/// `ClipboardFileStaging.Sink` is the production implementation. The protocol
+/// exists so `ClipboardStreamReceiver` can be driven against a sink that parks
+/// or fails a write on demand — the receiver's write lane holds a backlog only
+/// while a write is outstanding, which a real staging file never does long
+/// enough for a test to observe.
+public protocol StagingSink: Sendable {
+    /// The local file the bytes are being written to.
+    var url: URL { get }
+
+    /// Appends a chunk to the file.
+    func write(_ data: Data) throws
+
+    /// Closes the file and keeps it; returns the final URL. Idempotent.
+    @discardableResult
+    func commit() throws -> URL
+
+    /// Closes the file and deletes the partial. Idempotent.
+    func abort()
+}
+
 /// Materializes streamed file representations to real local temp files so a
 /// receiver can put a concrete `public.file-url` on the pasteboard — the only
 /// mechanism by which a Finder **Paste** creates a file (a pasteboard
@@ -36,7 +60,7 @@ public final class ClipboardFileStaging: @unchecked Sendable {
     ///
     /// `@unchecked Sendable`: the receiver writes from one transfer queue at a
     /// time; the internal lock makes concurrent `write`/`commit`/`abort` safe.
-    public final class Sink: @unchecked Sendable {
+    public final class Sink: StagingSink, @unchecked Sendable {
         /// The local file the bytes are being written to.
         public let url: URL
 
