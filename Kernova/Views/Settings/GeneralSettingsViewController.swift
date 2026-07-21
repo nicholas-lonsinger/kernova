@@ -96,6 +96,11 @@ final class GeneralSettingsViewController: NSViewController {
 
     override func viewWillAppear() {
         super.viewWillAppear()
+        // Drive NSTabViewController's per-tab window resize from the measured
+        // fitting height. Without this the window keeps whatever height it
+        // already has (e.g. a stale tall autosaved frame), and the four-edge
+        // section pin stretches the cards over the excess.
+        preferredContentSize = view.fittingSize
         keepInMenuBarSwitch.state = preferences.keepInMenuBarOnQuit ? .on : .off
         refreshFromStatus()
         // Refresh when the app regains focus — e.g. returning from System Settings

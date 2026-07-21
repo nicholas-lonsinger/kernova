@@ -147,18 +147,13 @@ final class RemindersSettingsViewController: NSViewController {
         super.viewWillAppear()
         rebuildVMRows()
         refreshSwitches()
-    }
-
-    override func viewDidLayout() {
-        super.viewDidLayout()
         // Drive NSTabViewController's per-tab window resize from the measured
-        // fitting height (clamped by the height cap), so switching to this tab
-        // animates to the right size — the scroll view otherwise masks the
-        // document's intrinsic height.
-        let fittingSize = view.fittingSize
-        if preferredContentSize != fittingSize {
-            preferredContentSize = fittingSize
-        }
+        // fitting height (clamped by the height cap) — the scroll view otherwise
+        // masks the document's intrinsic height. Must happen here, before the
+        // tab transition sizes the window: NSTabViewController reads the pane's
+        // preferredContentSize when switching and does not react to a later
+        // change (e.g. from viewDidLayout).
+        preferredContentSize = view.fittingSize
     }
 
     /// Rebuilds the per-VM section from `viewModel.instances`: one switch row per

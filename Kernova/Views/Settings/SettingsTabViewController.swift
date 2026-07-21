@@ -46,6 +46,30 @@ final class SettingsTabViewController: NSTabViewController {
         addTabViewItem(reminders)
     }
 
+    /// Resizes the window to fit the newly selected pane, System Settings-style.
+    ///
+    /// `NSTabViewController` does not do this itself: it sizes the window from
+    /// the initial pane at `NSWindow(contentViewController:)` time and then
+    /// keeps whatever height the window has, letting a shorter pane stretch and
+    /// a taller pane clip. Each pane publishes its content height via
+    /// `preferredContentSize` in `viewWillAppear()` (which runs before this
+    /// delegate call), so the target size is already fresh here. The top-left
+    /// corner is kept anchored, matching the system apps' behavior.
+    override func tabView(_ tabView: NSTabView, didSelect tabViewItem: NSTabViewItem?) {
+        super.tabView(tabView, didSelect: tabViewItem)
+        guard let window = view.window, let selected = tabViewItem?.viewController else { return }
+        var contentSize = selected.preferredContentSize
+        if contentSize == .zero {
+            contentSize = selected.view.fittingSize
+        }
+        let contentRect = NSRect(origin: .zero, size: contentSize)
+        let targetSize = window.frameRect(forContentRect: contentRect).size
+        var frame = window.frame
+        frame.origin.y += frame.height - targetSize.height
+        frame.size = targetSize
+        window.setFrame(frame, display: true, animate: true)
+    }
+
     /// Loads an SF Symbol for a tab item, logging and asserting on a typo while
     /// degrading to no image in Release (per the project's defensive-unwrap rule).
     private static func symbol(_ name: String) -> NSImage? {
