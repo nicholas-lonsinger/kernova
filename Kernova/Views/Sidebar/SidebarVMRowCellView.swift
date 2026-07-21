@@ -484,22 +484,31 @@ final class SidebarVMRowCellView: NSTableCellView, NSTextFieldDelegate {
 
     /// The agent status to surface as a sidebar indicator, or `nil` to hide.
     ///
-    /// Ported verbatim from the former SwiftUI `VMRowView`: hidden for Linux
-    /// guests, during macOS install, when `.current`, when `.waiting` was
-    /// dismissed, and when a stopped/cold-paused VM has previously seen an
-    /// agent (so `.waiting` doesn't nag).
+    /// Hidden for Linux guests, during macOS install, when `.current`, when
+    /// `.waiting` was dismissed, and — the outermost gate — whenever the VM has
+    /// no live session.
+    ///
+    /// Every state the badge renders is a statement about *this* session's
+    /// control channel: `.waiting` ("no handshake yet"), `.connecting`,
+    /// `.outdated` and `.unresponsive` report what the channel has or hasn't
+    /// carried, and `.expectedMissing` reports that a previously-seen agent
+    /// failed to reconnect after this session's post-start grace. None of them
+    /// is answerable without a session. On a stopped or cold-paused VM
+    /// `agentStatus` therefore degrades to `.waiting`, and the badge would
+    /// report "guest agent not installed" for a VM whose agent state is simply
+    /// unknown — and whose popover action (mounting the installer DMG, which
+    /// needs USB hot-plug per `VMInstance.canAttachUSBDevices`) can't run
+    /// anyway.
     static func visibleAgentStatus(for instance: VMInstance) -> AgentStatus? {
         guard instance.configuration.guestOS == .macOS else { return nil }
         guard instance.installState == nil else { return nil }
+        // Live-paused counts: the VM is still in memory and resumable, so the
+        // badge shouldn't blink out and back when the user pauses. Cold-paused
+        // (paused to disk, nothing in memory) does not.
+        guard instance.status == .running || instance.isLivePaused else { return nil }
         let status = instance.agentStatus
         if case .current = status { return nil }
         if case .waiting = status, instance.configuration.agentInstallNudgeDismissed {
-            return nil
-        }
-        let isLiveSession = instance.virtualMachine != nil
-        if !isLiveSession, case .waiting = status,
-            instance.configuration.lastSeenAgentVersion != nil
-        {
             return nil
         }
         return status

@@ -381,7 +381,7 @@ final class VMLibraryViewModel {
     func stop(_ instance: VMInstance) {
         // VZ rejects requestStop() on paused VMs ("Invalid virtual machine state").
         // Surface a confirmation sheet offering resume-and-shutdown or force-stop instead.
-        if instance.status == .paused && !instance.isColdPaused {
+        if instance.isLivePaused {
             presenter?.presentStopPaused(for: instance)
             return
         }
