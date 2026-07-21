@@ -123,6 +123,11 @@ struct FileProviderDomainHostEnablementTests {
         /// other test is unchanged.
         private var holdFirstReadArmed = false
         private var heldReadContinuation: CheckedContinuation<Void, Never>?
+        /// Set when `releaseHeldRead()` runs before the held read has stored its
+        /// continuation, so the read resumes immediately instead of parking
+        /// forever (the release would otherwise find `nil` and no-op, stranding
+        /// the read and leaking its continuation).
+        private var heldReadReleased = false
         let gate = AsyncGate()
         let readStartedGate = AsyncGate()
 
@@ -136,6 +141,7 @@ struct FileProviderDomainHostEnablementTests {
 
         func releaseHeldRead() {
             let continuation = lock.withLock { () -> CheckedContinuation<Void, Never>? in
+                heldReadReleased = true
                 let captured = heldReadContinuation
                 heldReadContinuation = nil
                 return captured
@@ -176,7 +182,15 @@ struct FileProviderDomainHostEnablementTests {
             if shouldHold {
                 readStartedGate.notify()
                 await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                    lock.withLock { heldReadContinuation = continuation }
+                    // Resume inline when the release already happened: storing the
+                    // continuation for a release that has come and gone would park
+                    // this read forever.
+                    let alreadyReleased = lock.withLock { () -> Bool in
+                        guard !heldReadReleased else { return true }
+                        heldReadContinuation = continuation
+                        return false
+                    }
+                    if alreadyReleased { continuation.resume() }
                 }
             }
             return try outcome.get()

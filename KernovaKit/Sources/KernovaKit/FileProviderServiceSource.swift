@@ -268,8 +268,14 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
     /// connect timers). `invalidated` — set under `lock` first — then fast-fails
     /// any pull that lands between here and process teardown and refuses new
     /// connections.
+    /// Idempotent: only the first call owns the teardown. `NSXPCConnection`'s
+    /// `invalidate()` is documented safe to repeat, but `NSXPCListener`'s carries
+    /// no such guarantee, so the claim below is what keeps a second
+    /// `FileProviderExtension.invalidate()` (the framework does not promise to
+    /// call it exactly once) from re-invalidating the listener.
     func invalidate() {
-        let (connection, drained): (NSXPCConnection?, [PendingPull]) = lock.withLock {
+        let teardown: (connection: NSXPCConnection?, drained: [PendingPull])? = lock.withLock {
+            guard !invalidated else { return nil }
             invalidated = true
             let connection = acceptedConnection
             acceptedConnection = nil
@@ -277,9 +283,10 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
             pendingPulls = []
             return (connection, pulls)
         }
+        guard let teardown else { return }
         listener.invalidate()
-        connection?.invalidate()
-        for pull in drained {
+        teardown.connection?.invalidate()
+        for pull in teardown.drained {
             pull.once.fire(.failure(Self.serverUnreachable))
         }
     }

@@ -634,12 +634,19 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
             return
         }
         registrationReadAttempts += 1
-        logger.notice(
+        // `.warning`, not `.notice`: a failed read we are recovering from is
+        // degraded-but-recoverable operation, which is what AGENTS.md's level
+        // table assigns to `.warning` (`.notice` is for definitive lifecycle
+        // events). Both persist, so the post-mortem trail is unaffected.
+        logger.warning(
             "File Provider registry read failed at enable (attempt \(self.registrationReadAttempts, privacy: .public)/\(self.registrationReadRetryLimit, privacy: .public)): \(message, privacy: .public) — retrying the read (post-install extension discovery race, #598)"
         )
-        let retryEpoch = registrationEpoch
+        // `epoch` is this cycle's — the guard above already proved it equals
+        // `registrationEpoch`, so re-reading the property would say the same
+        // thing less clearly. A disable or a newer cycle bumps it, which is what
+        // makes the scheduled retry a silent no-op.
         DispatchQueue.main.asyncAfter(deadline: .now() + registrationReadRetryDelay) { [weak self] in
-            guard let self, self.enabled, self.registrationEpoch == retryEpoch else { return }
+            guard let self, self.enabled, self.registrationEpoch == epoch else { return }
             self.registerDomain()
         }
     }

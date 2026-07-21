@@ -151,7 +151,7 @@ final class VsockHostConnection: @unchecked Sendable {
         // (#598). `timestampMs` is stamped above (forward time), so chronology
         // survives the deferred flush; a `.disabled` verdict later clears these.
         guard policy == .enabled else {
-            bufferFrame(frame)
+            bufferFrameUnlessDisabled(frame)
             return false
         }
 
@@ -162,22 +162,39 @@ final class VsockHostConnection: @unchecked Sendable {
             } catch {
                 // Send failed — channel is likely dead. Buffer the frame so
                 // it gets flushed on the next reconnect rather than lost.
-                bufferFrame(frame)
+                bufferFrameUnlessDisabled(frame)
                 return false
             }
         }
 
-        bufferFrame(frame)
+        bufferFrameUnlessDisabled(frame)
         return false
     }
 
     /// Appends a frame to the pre-connect ring, dropping oldest entries once the cap is exceeded.
     func bufferFrame(_ frame: Frame) {
+        lock.withLock { appendToRingLocked(frame) }
+    }
+
+    /// Buffers `frame` unless host policy has meanwhile gone explicitly `.disabled`.
+    ///
+    /// `forwardLog` samples the policy, builds the frame, and only then buffers,
+    /// so a `setEnabled(false)` landing in between would clear `pendingLogs` and
+    /// then find this frame appended behind it — shipping a record on the next
+    /// enable that an explicit "off" was meant to discard. Re-checking under the
+    /// same lock hold as the append makes that discard authoritative.
+    private func bufferFrameUnlessDisabled(_ frame: Frame) {
         lock.withLock {
-            pendingLogs.append(frame)
-            if pendingLogs.count > Self.logBufferLimit {
-                pendingLogs.removeFirst(pendingLogs.count - Self.logBufferLimit)
-            }
+            guard policy != .disabled else { return }
+            appendToRingLocked(frame)
+        }
+    }
+
+    /// The bounded-ring append itself, for callers already holding `lock`.
+    private func appendToRingLocked(_ frame: Frame) {
+        pendingLogs.append(frame)
+        if pendingLogs.count > Self.logBufferLimit {
+            pendingLogs.removeFirst(pendingLogs.count - Self.logBufferLimit)
         }
     }
 
