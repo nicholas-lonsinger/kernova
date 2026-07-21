@@ -22,7 +22,7 @@ Design philosophy and guidelines for Kernova.
 ### Layout
 
 - AppKit owns the entire view layer — `NSSplitViewController`, `NSToolbar`, `NSWindow`, and concrete `NSViewController`s render all content (no SwiftUI / `NSHostingController`).
-- Main window: 1100×700 default, 800×500 minimum.
+- Main window: 1200×900 default, 800×500 minimum.
 - Sidebar: 212–400pt width.
 - Creation wizard sheet: 720×540 (`WizardStyle.width`/`height`).
 

@@ -57,13 +57,14 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
         splitViewController.splitView.autosaveName = "KernovaMainSplit"
 
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1100, height: 700),
+        let window = NSWindow.withStableContentSize(
+            NSSize(width: 1200, height: 900),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
-            backing: .buffered,
-            defer: false
+            contentViewController: splitViewController
         )
-        window.contentViewController = splitViewController
+        // First-launch position; a saved frame restored by setFrameAutosaveName
+        // below overrides both the size and this placement.
+        window.center()
         window.title = "Kernova"
         window.minSize = NSSize(width: 800, height: 500)
 
