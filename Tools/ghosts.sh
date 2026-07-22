@@ -220,6 +220,10 @@ fi
 
 found_count=0
 fixed_count=0
+# Subset of found_count that `--fix` deliberately does not repair, so the
+# summary can point at the manual step instead of promising `make clean-ghosts`
+# will clear it.
+manual_count=0
 
 clean()   { printf '  %s✓%s %s\n' "$c_green" "$c_reset" "$1"; }
 warn()    { printf '  %s⚠%s %s\n' "$c_yellow" "$c_reset" "$1"; }
@@ -370,6 +374,30 @@ else
     done
 fi
 
+# ---- on-disk Kernova.app copies ----------------------------------------------
+
+# Enumerated here, ahead of the section that reports them, because the File
+# Provider verdict below turns on whether any Kernova build exists on disk at
+# all: a domain whose extension "was not found" is the expected resting state
+# when nothing is built, and a genuine wedge when a build is sitting right
+# there. Trash and DerivedData are walked explicitly because both escape
+# `mdfind` — DerivedData ships a `.metadata_never_index` sentinel and Trash is
+# excluded from Spotlight entirely.
+kernova_app_copies() {
+    {
+        mdfind "kMDItemCFBundleIdentifier == 'app.kernova'" 2>/dev/null
+        find "$HOME/.Trash" -maxdepth 6 -iname 'Kernova.app' -type d 2>/dev/null
+        find "$HOME/Library/Developer/Xcode/DerivedData" -maxdepth 6 -iname 'Kernova.app' -type d 2>/dev/null
+        find "$REPO_ROOT/DerivedData" -maxdepth 6 -iname 'Kernova.app' -type d 2>/dev/null
+    } | sort -u
+}
+
+app_copies=()
+while IFS= read -r path; do
+    [ -z "$path" ] && continue
+    [ -e "$path" ] && app_copies+=("$path")
+done < <(kernova_app_copies)
+
 # ---- stale File Provider domains ---------------------------------------------
 
 section 'File Provider domains'
@@ -381,18 +409,66 @@ section 'File Provider domains'
 # extension can strand a dead-end domain. macOS 26's fileproviderctl can only
 # `dump`, not remove, so this only REPORTS; clear it with `make fp-reset`, which
 # restarts fileproviderd — the app re-registers a fresh domain on next launch.
-# The dead-end check isn't domain-scoped (the dump groups backends per-domain
-# but is awkward to parse), so on a machine with other providers it can
-# over-report; running fp-reset is harmless either way.
+#
+# The dump interleaves every provider on the machine, so read the flags out of
+# Kernova's own `===== / <bundle id> / =====` block: a bare `grep DeadEndBackend`
+# over the whole dump reports iCloud Drive's or Photos' wedged domain as
+# Kernova's. Two flags matter and they mean different things — `extension not
+# found` is fileproviderd saying it cannot locate the extension bundle at all,
+# whereas a dead-end backend with the extension present is a binding that went
+# bad. Escape sequences are stripped first because fileproviderctl colors its
+# output unconditionally, even into a pipe.
 fp_dump=$(fileproviderctl dump 2>/dev/null || true)
+fp_flags=$(printf '%s\n' "$fp_dump" | awk '
+    {
+        line = $0
+        gsub(/\033\[[0-9;]*m/, "", line)
+        if (line ~ /^=+$/ && prev2 ~ /^=+$/ && prev1 ~ /^[A-Za-z0-9][A-Za-z0-9._-]*$/) {
+            kern = (prev1 ~ /^app\.kernova(\.|$)/)
+            if (kern) registered = 1
+        } else if (kern) {
+            if (line ~ /extension not found/) notfound = 1
+            if (line ~ /DeadEndBackend/) deadend = 1
+        }
+        prev2 = prev1
+        prev1 = line
+    }
+    END {
+        if (registered) print "registered"
+        if (notfound) print "notfound"
+        if (deadend) print "deadend"
+    }
+')
+fp_has() { printf '%s\n' "$fp_flags" | grep -qx "$1"; }
+
 if ! printf '%s\n' "$fp_dump" | grep -qiE "app\.kernova|kernova-clipboard"; then
     clean 'No Kernova File Provider domains registered'
-elif printf '%s\n' "$fp_dump" | grep -q "DeadEndBackend"; then
-    ghost 'A File Provider domain looks wedged (dead-end backend) with Kernova registered'
+elif fp_has notfound; then
+    # A domain outlives the build that registered it — that is the system
+    # working as designed, not debris: the registration is what lets the next
+    # launch adopt the domain instead of minting a second one. So this is a
+    # ⚠ note, not a counted ✗ — there is nothing here for `--fix` to repair,
+    # and `make fp-reset` cannot conjure an extension binary that isn't on disk.
+    if [ "${#app_copies[@]}" -eq 0 ]; then
+        warn 'A Kernova File Provider domain is registered with no build on disk to serve it'
+        detail 'fileproviderd reports "extension not found" — expected after `make clean`, a torn-down'
+        detail 'worktree, or on a machine with no Kernova installed. The domain is inert until a build'
+        detail 'exists; building and launching Kernova re-binds it. Nothing to clean up.'
+    else
+        warn "A Kernova File Provider domain has no extension to bind to, though ${#app_copies[@]} build(s) are on disk"
+        detail 'fileproviderd reports "extension not found" — normal if no copy is running or the domain was'
+        detail 'registered by a build since deleted. Launch Kernova to re-bind; if Copy to Mac still beeps'
+        detail 'afterwards, `make fp-reset` clears the stale binding.'
+    fi
+elif fp_has deadend; then
+    ghost 'A Kernova File Provider domain looks wedged (dead-end backend) with its extension present'
     detail 'Run `make fp-reset`, then relaunch Kernova to re-register a fresh domain.'
+    detail '(`make clean-ghosts` deliberately leaves this alone — restarting fileproviderd briefly'
+    detail 'interrupts every File Provider on the machine, so it stays an opt-in step.)'
     detail 'A stale "Kernova Clipboard (Mac)" Finder location that survives fp-reset needs a full domain'
     detail 'removal instead: run any build of Kernova with `--remove-clipboard-domain` (#454, #467, #516).'
     detail 'This resets the domain'"'"'s System Settings enablement, so use it only when fp-reset didn'"'"'t help.'
+    manual_count=$((manual_count + 1))
 else
     clean 'Kernova File Provider domain(s) registered, none dead-ended'
     detail 'If Copy to Mac beeps or hangs, `make fp-reset` clears stale fileproviderd bindings.'
@@ -402,24 +478,13 @@ fi
 
 section 'On-disk copies & registration election'
 
-# Unlike the dead-path ghost check above, this looks for LIVE copies that
-# still exist on disk but sit outside /Applications — Trash and DerivedData
-# are the two sources that actually outrank an installed copy, because both
-# escape `mdfind`: DerivedData ships a `.metadata_never_index` sentinel and
-# Trash is excluded from Spotlight entirely. LaunchServices/PluginKit elect a
-# handler by highest CFBundleVersion (a squash-aware git commit count — see
+# Unlike the dead-path ghost check above, this reports the LIVE copies
+# enumerated before the File Provider section — the ones that still exist on
+# disk but sit outside /Applications. LaunchServices/PluginKit elect a handler
+# by highest CFBundleVersion (a squash-aware git commit count — see
 # docs/BUILD.md "Build version"), so a ghost build with a higher count can shadow
 # the real app indefinitely; version ordering can never fix this on its own,
 # eviction is the only lever (#454).
-kernova_app_copies() {
-    {
-        mdfind "kMDItemCFBundleIdentifier == 'app.kernova'" 2>/dev/null
-        find "$HOME/.Trash" -maxdepth 6 -iname 'Kernova.app' -type d 2>/dev/null
-        find "$HOME/Library/Developer/Xcode/DerivedData" -maxdepth 6 -iname 'Kernova.app' -type d 2>/dev/null
-        find "$REPO_ROOT/DerivedData" -maxdepth 6 -iname 'Kernova.app' -type d 2>/dev/null
-    } | sort -u
-}
-
 bundle_version() {
     plutil -extract CFBundleVersion raw -o - "$1/Contents/Info.plist" 2>/dev/null
 }
@@ -448,12 +513,6 @@ is_numeric() {
         *) return 0 ;;
     esac
 }
-
-app_copies=()
-while IFS= read -r path; do
-    [ -z "$path" ] && continue
-    [ -e "$path" ] && app_copies+=("$path")
-done < <(kernova_app_copies)
 
 if [ "${#app_copies[@]}" -eq 0 ]; then
     clean 'No on-disk Kernova.app copies found'
@@ -646,8 +705,13 @@ fi
 
 if [ "$FIX" = 1 ]; then
     printf '%d issue(s) found, %d fixed.\n' "$found_count" "$fixed_count"
+    [ "$manual_count" -gt 0 ] && printf '%d need the manual step noted above; --fix does not perform it.\n' "$manual_count"
     [ "$fixed_count" -lt "$found_count" ] && exit 1
     exit 0
+elif [ "$manual_count" -eq "$found_count" ]; then
+    printf '%s%d issue(s) found.%s Follow the step(s) noted above — %smake clean-ghosts%s does not repair these.\n' \
+        "$c_yellow" "$found_count" "$c_reset" "$c_bold" "$c_reset"
+    exit 1
 else
     # `make` first, direct invocation second: this script is normally reached
     # through the Makefile, and `make ghosts --fix` does not do what leading
