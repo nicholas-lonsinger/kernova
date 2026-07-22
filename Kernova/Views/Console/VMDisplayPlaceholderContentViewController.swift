@@ -215,7 +215,7 @@ final class VMDisplayPlaceholderContentViewController: NSViewController {
 /// `AppDelegate.toggleFullscreen(_:)` / `togglePopOut(_:)`).
 @MainActor
 private final class DisplayPlaceholderEmptyStateView: NSView {
-    struct Action {
+    struct Action: Equatable {
         let title: String
         let selector: Selector
     }
@@ -225,6 +225,17 @@ private final class DisplayPlaceholderEmptyStateView: NSView {
     private let descriptionLabel = NSTextField(wrappingLabelWithString: "")
     private let buttonRow = NSStackView()
     private let stack = NSStackView()
+
+    /// The actions currently materialized as buttons in `buttonRow`.
+    ///
+    /// `configure` re-runs on every observation tick (a status change, a VM
+    /// reference swap), but the action set only changes on a state transition —
+    /// and often not even then (Popped Out and Display Closed share the same two
+    /// actions). Rebuilding buttons unconditionally would churn `NSButton`
+    /// allocations and stack-view constraints on every tick, so the rebuild is
+    /// guarded on this, mirroring the label-equality guard `VMToolbarManager`
+    /// uses for its swap-on-state items. `nil` until the first `configure`.
+    private var renderedActions: [Action]?
 
     /// Soft cap so multi-line descriptions wrap reasonably instead of stretching
     /// to the full detail-pane width.
@@ -287,6 +298,11 @@ private final class DisplayPlaceholderEmptyStateView: NSView {
         titleLabel.stringValue = title
         descriptionLabel.stringValue = description
 
+        // Only rebuild the button row when the action set actually changed;
+        // titles/symbols above are cheap property writes, but recreating buttons
+        // tears down and rebuilds stack-view constraints.
+        guard renderedActions != actions else { return }
+        renderedActions = actions
         buttonRow.setViews(
             actions.map { action in
                 let button = NSButton(title: action.title, target: nil, action: action.selector)
