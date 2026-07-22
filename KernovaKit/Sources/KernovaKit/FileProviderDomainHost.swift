@@ -8,7 +8,8 @@ import Foundation
 // main app (guest→host "Copy to Mac") share one implementation:
 //  1. The XPC relay the sandboxed extension calls on `fetchContents` — the
 //     extension can't open vsock, so the owning process (which does) pulls for
-//     it.
+//     it. (The relay object itself — `FileProviderRelayService` — and its
+//     per-pull progress machinery live in FileProviderRelayService.swift.)
 //  2. Registration of the clipboard File Provider domain so the system
 //     instantiates the extension and surfaces the domain in Finder.
 //  3. The offer manifest + `signalEnumerator` that declare the current file rep
@@ -440,6 +441,18 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
                 }
             }
         super.init()
+        // Key the relay's published Finder-copy-dialog progress (#634) by the
+        // placeholder's user-visible URL: root + the current manifest's dirent
+        // names. Called on the main queue (the resolver's contract), where
+        // `rootURL` lives; a `nil` root (not yet resolved, or disabled) degrades
+        // to no published progress.
+        relayService.visibleFileURLResolver = { [weak self] generation, repIndex, childSeq in
+            dispatchPrecondition(condition: .onQueue(.main))
+            guard let self, let rootURL = self.rootURL else { return nil }
+            return Self.visibleFileURL(
+                rootURL: rootURL, manifest: self.container.readManifest(),
+                generation: generation, repIndex: repIndex, childSeq: childSeq)
+        }
     }
 
     deinit {
@@ -1011,6 +1024,37 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
         relayTransport.ensureConnected()
     }
 
+    /// The user-visible URL of one published placeholder — the key the relay's
+    /// published Finder-copy-dialog progress is filed under (#634).
+    ///
+    /// Resolves a flat rep to `root/filename`, a directory rep's root
+    /// (`childSeq == 0`) to `root/folder`, and a tree node to
+    /// `root/folder/relativePath` — all against the *current* manifest, so a
+    /// superseded generation resolves `nil` (no published progress) rather than
+    /// a stale offer's URL. The manifest's filenames are the on-disk dirent
+    /// names (`publishItems` de-duplicates before writing).
+    ///
+    /// `internal` (not `private`) so `KernovaKitTests` can lock the lookup.
+    static func visibleFileURL(
+        rootURL: URL, manifest: FileProviderManifest, generation: UInt64, repIndex: Int,
+        childSeq: UInt32?
+    ) -> URL? {
+        guard manifest.generation == generation else { return nil }
+        guard let childSeq else {
+            guard let item = manifest.items.first(where: { $0.repIndex == repIndex }) else {
+                return nil
+            }
+            return rootURL.appendingPathComponent(item.filename)
+        }
+        guard let folder = manifest.folders.first(where: { $0.repIndex == repIndex }) else {
+            return nil
+        }
+        let folderRoot = rootURL.appendingPathComponent(folder.filename)
+        guard childSeq != 0 else { return folderRoot }
+        guard let node = folder.nodes.first(where: { $0.childSeq == childSeq }) else { return nil }
+        return folderRoot.appendingPathComponent(node.relativePath)
+    }
+
     /// De-duplicates colliding filenames within one offer, in order: the second
     /// "report.pdf" becomes "report (2).pdf" — the same collision style
     /// `ClipboardFileStaging` mints for staged files.
@@ -1372,255 +1416,5 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
             semaphore.signal()
         }
         semaphore.wait()
-    }
-}
-
-// MARK: - Relay service
-
-/// The XPC-exported relay object.
-///
-/// Pulls a file rep through the clipboard owner and replies with the staged-file
-/// path, never the bytes.
-public final class FileProviderRelayService: NSObject, FileProviderRelay {
-    private let logger: KernovaLogger
-    private let pullProvider: FileProviderPullProvider
-    /// Runs each `fetchFile` pull, and each `cancelFetch` signal, off the XPC
-    /// delivery queue.
-    ///
-    /// `NSXPCConnection` delivers every incoming exported-object call — including
-    /// `cancelFetch` — on one private *serial* queue per connection (WWDC 2012
-    /// session 241), so blocking that queue for the whole vsock pull (as `fetchFile`
-    /// used to) would starve any `cancelFetch` for the very fetch it's trying to
-    /// abort — and `cancelFetch` itself can block on a stalled peer's vsock write,
-    /// so it needs the same treatment. Dispatching here frees the delivery queue
-    /// immediately; `.concurrent` also lets independent multi-file pulls actually
-    /// run in parallel, which the receiver/coordinator already support.
-    private let pullQueue = DispatchQueue(
-        label: "app.kernova.fileprovider.relay.pull", attributes: .concurrent)
-
-    /// Creates the relay service, logging under `loggerSubsystem`.
-    public init(pullProvider: FileProviderPullProvider, loggerSubsystem: String) {
-        self.logger = KernovaLogger(subsystem: loggerSubsystem, category: "FileProviderRelay")
-        self.pullProvider = pullProvider
-        super.init()
-    }
-
-    /// Pulls `(generation, repIndex)` through the owner and replies with the
-    /// staged path, or an `NSFileProviderError` on failure.
-    public func fetchFile(
-        generation: UInt64, repIndex: Int,
-        reply: @escaping @Sendable (String?, NSError?) -> Void
-    ) {
-        logger.debug(
-            "Relay fetchFile (gen=\(generation, privacy: .public), rep=\(repIndex, privacy: .public))")
-        // Capture the calling connection SYNCHRONOUSLY — `NSXPCConnection.current()`
-        // is valid only during this incoming invocation, before we hop to
-        // `pullQueue`. The pusher then drives determinate progress back to the
-        // extension for the pull's duration (#426). `nil` outside XPC (unit tests
-        // call `fetchFile` directly) → no pushes, a no-op.
-        let pusher = NSXPCConnection.current().map {
-            FetchProgressPusher(
-                connection: $0, generation: generation, repIndex: repIndex, logger: logger)
-        }
-        // Off the XPC delivery queue: the File Provider read path has no 60s
-        // deadline so a long block is safe, but it must not be *this* queue — see
-        // `pullQueue`'s doc for why.
-        pullQueue.async { [pullProvider, logger] in
-            let onProgress: @Sendable (UInt64, UInt64) -> Void = { bytes, total in
-                pusher?.record(bytesTransferred: bytes, totalBytes: total)
-            }
-            switch pullProvider.fetchStagedFile(
-                generation: generation, repIndex: repIndex, onProgress: onProgress)
-            {
-            case .success(let path):
-                logger.debug("Relay staged \(path, privacy: .public)")
-                reply(path, nil)
-            case .failure(let error):
-                logger.error(
-                    "Relay fetchFile failed: \(String(describing: error), privacy: .public)")
-                reply(nil, Self.nsError(for: error))
-            }
-        }
-    }
-
-    /// Relays a best-effort cancel to the owner's pull provider.
-    ///
-    /// Dispatched onto `pullQueue`, the same as `fetchFile`, rather than run
-    /// directly on the connection's serial delivery queue: `cancelStagedPull`
-    /// bottoms out in a vsock write (`ClipboardStreamReceiver.cancel(transferID:)`
-    /// sending a `ClipboardStreamAbort`) that can block for real time against a
-    /// stalled peer, and this delivery queue is shared with every other
-    /// `fetchFile`/`cancelFetch` on the connection — blocking it here would
-    /// reintroduce exactly the starvation problem moving `fetchFile` off the
-    /// queue was meant to solve.
-    public func cancelFetch(generation: UInt64, repIndex: Int) {
-        logger.debug(
-            "Relay cancelFetch (gen=\(generation, privacy: .public), rep=\(repIndex, privacy: .public))"
-        )
-        pullQueue.async { [pullProvider] in
-            pullProvider.cancelStagedPull(generation: generation, repIndex: repIndex)
-        }
-    }
-
-    /// Pulls one child file of a directory rep's placeholder tree through the
-    /// owner and replies with the staged path (folder D1b).
-    ///
-    /// Mirrors `fetchFile`.
-    public func fetchChild(
-        generation: UInt64, repIndex: Int, childSeq: UInt32, relativePath: String,
-        reply: @escaping @Sendable (String?, NSError?) -> Void
-    ) {
-        logger.debug(
-            "Relay fetchChild (gen=\(generation, privacy: .public), rep=\(repIndex, privacy: .public), seq=\(childSeq, privacy: .public))"
-        )
-        let pusher = NSXPCConnection.current().map {
-            FetchProgressPusher(
-                connection: $0, generation: generation, repIndex: repIndex, childSeq: childSeq,
-                logger: logger)
-        }
-        pullQueue.async { [pullProvider, logger] in
-            let onProgress: @Sendable (UInt64, UInt64) -> Void = { bytes, total in
-                pusher?.record(bytesTransferred: bytes, totalBytes: total)
-            }
-            switch pullProvider.fetchStagedChild(
-                generation: generation, repIndex: repIndex, childSeq: childSeq,
-                relativePath: relativePath, onProgress: onProgress)
-            {
-            case .success(let path):
-                logger.debug("Relay staged child \(path, privacy: .public)")
-                reply(path, nil)
-            case .failure(let error):
-                logger.error(
-                    "Relay fetchChild failed: \(String(describing: error), privacy: .public)")
-                reply(nil, Self.nsError(for: error))
-            }
-        }
-    }
-
-    /// Relays a best-effort child-fetch cancel to the owner's pull provider.
-    public func cancelChildFetch(generation: UInt64, repIndex: Int, childSeq: UInt32) {
-        logger.debug(
-            "Relay cancelChildFetch (gen=\(generation, privacy: .public), rep=\(repIndex, privacy: .public), seq=\(childSeq, privacy: .public))"
-        )
-        pullQueue.async { [pullProvider] in
-            pullProvider.cancelStagedChildPull(
-                generation: generation, repIndex: repIndex, childSeq: childSeq)
-        }
-    }
-
-    private static func nsError(for error: FileProviderPullError) -> NSError {
-        let code: NSFileProviderError.Code
-        switch error {
-        case .noCurrentOffer: code = .noSuchItem
-        case .pullFailed: code = .serverUnreachable
-        }
-        return NSError(domain: NSFileProviderErrorDomain, code: code.rawValue)
-    }
-}
-
-// MARK: - Servicing progress push
-
-/// Pure throttle for the servicing-XPC progress channel (#426): decides whether
-/// to push a `(bytesTransferred, totalBytes)` update to the extension now.
-///
-/// A multi-GB pull fires the receiver's per-chunk callback tens of thousands of
-/// times; pushing every one would flood the control connection. This coalesces to
-/// at most one push per ~1% of the total OR per ~100 ms, and always pushes the
-/// final chunk (`bytes >= total`) so the determinate bar reaches 100% before the
-/// clone step. Stateless and testable in isolation; the caller owns the
-/// watermarks (`lastPushedBytes`, elapsed since the last push).
-enum FetchProgressThrottle {
-    /// Minimum fraction of the total that must accumulate since the last push.
-    static let minByteFraction = 0.01
-    /// Minimum wall-clock gap between time-triggered pushes.
-    static let minInterval: TimeInterval = 0.1
-
-    /// Whether `bytes`/`total` warrants a push given the last pushed byte count and
-    /// the time since the last push.
-    ///
-    /// Requires strictly forward progress (`bytes > lastPushedBytes`), then pushes
-    /// when it's the final chunk, when `minInterval` has elapsed, or when at least
-    /// `minByteFraction` of `total` has accrued since the last push. Seed
-    /// `elapsedSinceLastPush` with a large value for the first push so the bar
-    /// leaves zero promptly.
-    static func shouldPush(
-        bytes: UInt64, total: UInt64, lastPushedBytes: UInt64, elapsedSinceLastPush: TimeInterval
-    ) -> Bool {
-        guard bytes > lastPushedBytes else { return false }
-        if total > 0, bytes >= total { return true }
-        if elapsedSinceLastPush >= minInterval { return true }
-        guard total > 0 else { return false }
-        return Double(bytes - lastPushedBytes) >= Double(total) * minByteFraction
-    }
-}
-
-/// Coalesces and pushes servicing-XPC progress for one in-flight relay pull (#426).
-///
-/// Holds the extension's control connection — captured synchronously during
-/// `fetchFile`, where `NSXPCConnection.current()` is valid — and pushes throttled
-/// `fetchProgressed` calls back to the extension for the pull's duration. The push
-/// is one-way and best-effort: `remoteObjectProxyWithErrorHandler` swallows a
-/// send failure (a dead connection is logged, never propagated), and a
-/// version-skewed extension without the selector drops the message — so a missing
-/// peer degrades to no-progress without tearing the connection down.
-///
-/// `@unchecked Sendable`: `NSXPCConnection` is thread-safe but not `Sendable`, and
-/// the throttle watermarks are guarded by `lock`.
-final class FetchProgressPusher: @unchecked Sendable {
-    private let connection: NSXPCConnection
-    private let generation: UInt64
-    private let repIndex: Int
-    /// `nil` for a flat rep (pushes `fetchProgressed`); a child seq for a
-    /// directory rep's file node (pushes `childFetchProgressed`, folder D1b).
-    private let childSeq: UInt32?
-    private let logger: KernovaLogger
-    private let lock = NSLock()
-    private var lastPushedBytes: UInt64 = 0
-    /// When the last push was sent; `nil` until the first, so the first forward
-    /// chunk always pushes (elapsed reads as effectively infinite).
-    private var lastPushAt: DispatchTime?
-
-    init(
-        connection: NSXPCConnection, generation: UInt64, repIndex: Int, childSeq: UInt32? = nil,
-        logger: KernovaLogger
-    ) {
-        self.connection = connection
-        self.generation = generation
-        self.repIndex = repIndex
-        self.childSeq = childSeq
-        self.logger = logger
-    }
-
-    /// Records cumulative progress and pushes it when the throttle allows.
-    func record(bytesTransferred: UInt64, totalBytes: UInt64) {
-        let now = DispatchTime.now()
-        let shouldPush: Bool = lock.withLock {
-            let elapsed =
-                lastPushAt.map { Double(now.uptimeNanoseconds - $0.uptimeNanoseconds) / 1_000_000_000 }
-                ?? .greatestFiniteMagnitude
-            guard
-                FetchProgressThrottle.shouldPush(
-                    bytes: bytesTransferred, total: totalBytes, lastPushedBytes: lastPushedBytes,
-                    elapsedSinceLastPush: elapsed)
-            else { return false }
-            lastPushedBytes = bytesTransferred
-            lastPushAt = now
-            return true
-        }
-        guard shouldPush else { return }
-        let control =
-            connection.remoteObjectProxyWithErrorHandler { [logger] error in
-                logger.debug(
-                    "fetch progress push failed: \(error.localizedDescription, privacy: .public)")
-            } as? FileProviderControl
-        if let childSeq {
-            control?.childFetchProgressed(
-                generation: generation, repIndex: repIndex, childSeq: childSeq,
-                bytesTransferred: bytesTransferred, totalBytes: totalBytes)
-        } else {
-            control?.fetchProgressed(
-                generation: generation, repIndex: repIndex,
-                bytesTransferred: bytesTransferred, totalBytes: totalBytes)
-        }
     }
 }

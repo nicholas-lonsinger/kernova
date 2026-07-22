@@ -1056,3 +1056,65 @@ final class StabilizationRecorder: @unchecked Sendable {
         for completion in pending { completion(error) }
     }
 }
+
+/// Locks `FileProviderDomainHost.visibleFileURL` — the pure lookup behind the
+/// relay's published Finder-copy-dialog progress resolver (#634): a pull's
+/// `(generation, repIndex, childSeq?)` addressing against the current manifest
+/// and domain root.
+@Suite("FileProviderDomainHost visible file URL")
+struct FileProviderDomainHostVisibleFileURLTests {
+    private let root = URL(fileURLWithPath: "/tmp/CloudRoot", isDirectory: true)
+
+    /// One flat item (with a de-duplicated dirent name) and one folder rep with
+    /// a nested file node, both at generation 9.
+    private func makeManifest() -> FileProviderManifest {
+        FileProviderManifest(
+            generation: 9,
+            items: [
+                .init(
+                    sessionSalt: 1, generation: 9, repIndex: 0, filename: "big (2).bin",
+                    byteCount: 100, uti: "public.data")
+            ],
+            folders: [
+                .init(
+                    sessionSalt: 1, generation: 9, repIndex: 1, filename: "Folder",
+                    uti: "public.folder",
+                    nodes: [
+                        .init(
+                            childSeq: 4, parentChildSeq: 0, kind: .file, filename: "file.txt",
+                            relativePath: "sub/file.txt", byteCount: 5, uti: "public.plain-text")
+                    ])
+            ])
+    }
+
+    @Test("a flat rep resolves to root + the manifest's (deduplicated) dirent name")
+    func flatRepResolves() {
+        let url = FileProviderDomainHost.visibleFileURL(
+            rootURL: root, manifest: makeManifest(), generation: 9, repIndex: 0, childSeq: nil)
+        #expect(url?.path == "/tmp/CloudRoot/big (2).bin")
+    }
+
+    @Test("a folder child resolves to root/folder/relativePath; childSeq 0 is the folder root")
+    func folderChildResolves() {
+        let child = FileProviderDomainHost.visibleFileURL(
+            rootURL: root, manifest: makeManifest(), generation: 9, repIndex: 1, childSeq: 4)
+        #expect(child?.path == "/tmp/CloudRoot/Folder/sub/file.txt")
+        let folderRoot = FileProviderDomainHost.visibleFileURL(
+            rootURL: root, manifest: makeManifest(), generation: 9, repIndex: 1, childSeq: 0)
+        #expect(folderRoot?.path == "/tmp/CloudRoot/Folder")
+    }
+
+    @Test("a superseded generation, unknown rep, or unknown child resolves nil")
+    func staleAddressingResolvesNil() {
+        let manifest = makeManifest()
+        #expect(
+            FileProviderDomainHost.visibleFileURL(
+                rootURL: root, manifest: manifest, generation: 8, repIndex: 0, childSeq: nil) == nil)
+        #expect(
+            FileProviderDomainHost.visibleFileURL(
+                rootURL: root, manifest: manifest, generation: 9, repIndex: 5, childSeq: nil) == nil)
+        #expect(
+            FileProviderDomainHost.visibleFileURL(
+                rootURL: root, manifest: manifest, generation: 9, repIndex: 1, childSeq: 99) == nil)
+    }
+}
