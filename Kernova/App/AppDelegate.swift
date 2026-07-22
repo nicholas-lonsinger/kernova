@@ -438,12 +438,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // Always-visible menu-bar presence: the app has no Dock icon while
         // headless, so the status item is how the user sees it's running and
         // summons the GUI (mirrors OrbStack/Docker/Tailscale and the guest agent).
+        // "Open Kernova" summons only the library; a per-VM item summons only
+        // what that VM asks for — its dedicated display window when its
+        // `displayPreference` is pop-out/fullscreen, else the library selected
+        // on it (`statusItemOpenTarget`). Neither restores any other window.
         statusItemController = HostAgentStatusItemController(
             viewModel: viewModel,
             preferences: preferences,
             onOpen: { [weak self] vmID in
-                if let vmID { self?.viewModel.selectedID = vmID }
-                self?.summonUserInterface()
+                guard let self else { return }
+                guard
+                    let instance = vmID.flatMap({ id in
+                        self.viewModel.instances.first(where: { $0.instanceID == id })
+                    })
+                else {
+                    self.summonUserInterface()
+                    return
+                }
+                self.viewModel.selectedID = instance.instanceID
+                switch Self.statusItemOpenTarget(
+                    displayPreference: instance.configuration.displayPreference,
+                    canUseExternalDisplay: instance.canUseExternalDisplay)
+                {
+                case .displayWindow:
+                    self.summonUserInterface(showing: .display(instance))
+                case .library:
+                    self.summonUserInterface()
+                }
             },
             onQuit: { [weak self] in self?.requestFullQuit() }
         )
@@ -631,12 +652,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
     }
 
+    /// What a GUI summon puts on screen.
+    private enum SummonTarget {
+        /// The library window — the default surface.
+        case library
+        /// One VM's dedicated display window (pop-out or fullscreen, per its
+        /// `displayPreference`), and nothing else.
+        case display(VMInstance)
+    }
+
+    /// Where the status item's per-VM open command lands, as decided by
+    /// `statusItemOpenTarget`.
+    enum StatusItemOpenTarget: Equatable {
+        /// Show the library window, selected on the VM.
+        case library
+        /// Open only the VM's dedicated display window.
+        case displayWindow
+    }
+
+    /// Decides what clicking a VM in the status-item dropdown opens: the VM's
+    /// own display window when that's how the user last had it (pop-out or
+    /// fullscreen preference) and the VM can present one, else the library.
+    ///
+    /// Deliberately opens *only* the chosen surface — summoning one VM must not
+    /// drag the library or other VMs' windows back on screen, and summoning the
+    /// library ("Open Kernova") must not restore any display windows.
+    ///
+    /// Pure and `nonisolated` so it is unit-testable without AppKit (mirrors
+    /// `classifyQuit` / `coldLaunchOutcome`).
+    nonisolated static func statusItemOpenTarget(
+        displayPreference: VMDisplayPreference, canUseExternalDisplay: Bool
+    ) -> StatusItemOpenTarget {
+        displayPreference != .inline && canUseExternalDisplay ? .displayWindow : .library
+    }
+
     /// Brings the resident app's GUI forward: morph to `.regular`, then activate
-    /// and show the library window.
+    /// and show the summoned surface — the library window by default, or a
+    /// single VM's display window for the status item's per-VM open.
     ///
     /// The sole GUI-summon path — a Finder reopen (`applicationShouldHandleReopen`),
-    /// the status-item Open, and the cold-launch heuristic all route here. Idempotent.
-    private func summonUserInterface() {
+    /// the status-item commands, and the cold-launch heuristic all route here.
+    /// Idempotent.
+    private func summonUserInterface(showing target: SummonTarget = .library) {
         // Morph to a regular app so the Dock icon + menu bar appear (no-op if
         // already `.regular`). Defer the activate + show to the next runloop tick
         // so the menu bar has refreshed (works around the .accessory→.regular
@@ -650,7 +707,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             // reliably front a background-launched process). Harmless (a no-op) on
             // the manual-launch path, where the app is already frontmost.
             NSApp.activate(ignoringOtherApps: true)
-            self.showLibraryWindow(bringToFront: true)
+            switch target {
+            case .library:
+                self.showLibraryWindow(bringToFront: true)
+            case .display(let instance):
+                if let existing = self.displayWindows[instance.instanceID] {
+                    existing.window?.makeKeyAndOrderFront(nil)
+                } else {
+                    self.openDisplayWindow(for: instance)
+                }
+            }
             // Summoning from the status-item menu leaves the freshly-appeared main
             // menu bar with its first menu (File) highlighted — the status menu's
             // dismissal bleeds into the menu bar that the `.accessory`→`.regular`
@@ -861,6 +927,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             // Defer so the close runs after this termination request is fully cancelled.
             Task { @MainActor in
                 self.closeAllGUIWindows()
+                // Settle the Dock-presence policy BEFORE anchoring the reminder.
+                // Every window is closed synchronously above, so this reconcile
+                // lands on `.accessory` now; the per-window reconciles the global
+                // close observer scheduled for the same closes run later as
+                // no-ops. Left to those deferred reconciles, the popover would be
+                // shown first and the `.regular` → `.accessory` flip would land
+                // 20–75ms later — which re-hosts the menu-bar status item and
+                // tears the just-anchored popover down with it (the reminder
+                // flashed for a frame and vanished). The other observed killer —
+                // `NSPopover.show` popping the status item's assigned menu open —
+                // is handled inside `showSoftQuitReminder` by detaching the menu
+                // while the reminder is up.
+                self.syncAgentActivationPolicy()
                 // Remind the user the app is still resident (unless dismissed
                 // forever); the controller anchors the popover to the status item.
                 self.statusItemController?.showSoftQuitReminder()
