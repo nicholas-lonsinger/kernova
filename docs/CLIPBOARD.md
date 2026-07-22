@@ -435,22 +435,23 @@ indicator, over two owner-side channels:
   for the CloudStorage URL because the domain host holds the domain root's security scope while
   the root is current.
 
-**The copy dialog's consumption of the published progress is environment-sensitive** (#639).
-With publication log-proven in every live run, the dialog rendered a determinate bar in some
-runs (single flat files in #638's sessions; folder children once, with fill growth across
-observations) and stayed on the indeterminate "Preparing to copy…" slide in others (every
-flat-file paste across two later sessions — clean host boot included — and two same-boot folder
-re-runs) — byte-identical binaries throughout, varying run-to-run within one boot. Captured frame
-sequences also show the indeterminate sweep parking at the track's left edge each cycle, which
-mimics a small determinate fill in any single glance: a determinate claim needs fill growth
-across multiple observations, never one frame. The dialog also
+**Consumption of the published progress by Finder's copy dialog has never been durably
+observed** (#639). Publication is log-proven full-duration in every live run (development- and
+Release/profile-signed builds alike), but every captured frame of the dialog — all paste shapes,
+clean host boot included — shows the indeterminate "Preparing to copy…" slide. Its sweep
+animation parks at the track's left edge each cycle and produces arbitrary-width segments, so
+one or two glances convincingly mimic a determinate fill; the determinate classifications
+recorded earlier (#638's test plan, #639's session notes) were exactly such sparse-glance
+observations, and no run ever recorded the label flip to a byte-count "Copying…" style that
+real consumption produces. Treat them as unverified: claim consumption only on a captured label
+flip or a dense, file-preserved frame sequence of slow monotonic growth. The dialog also
 dismisses itself tens of seconds into a multi-GB pull while materialization continues in the
 background; the `fetchContents` `Progress` channel keeps driving the framework's own bookkeeping
-for the full pull and payloads land intact either way. This is a **documented gap**, not a defect
-to engineer around: the publication is the API's supported shape, the degradation is only ever an
-indeterminate or absent bar (never a wrong one), and no folder-root aggregate `NSProgress` is
-warranted — per-child publications already render whenever Finder consumes published progress at
-all.
+for the full pull and payloads land intact. This is a **documented gap**, not a defect to
+engineer around: the publication is the API's supported shape (the one first-party providers'
+determinate dialogs consume), the degradation is only ever an indeterminate or absent bar
+(never a wrong one), and a folder-root aggregate `NSProgress` would not close it — no
+publication shape has been observed to render.
 
 The host clipboard window's in-app bar records the guest→host pull from the same per-chunk
 callback (`performBlockingPull`, direction `.inbound`); all indicators clear at every terminal.
