@@ -280,6 +280,12 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     /// User-visible domain root, resolved after registration; `nil` until then
     /// (the File Provider path is unused while it's `nil`).
     private var rootURL: URL?
+    /// The manifest this host most recently published (`.empty` when none) —
+    /// the in-memory copy of what `publishItems` wrote to the container, kept
+    /// so the relay's progress-URL resolver (#634) never re-decodes the
+    /// manifest from disk per pull (a folder tree's manifest scales with its
+    /// node count, and the resolver runs on the main queue).
+    private var publishedManifest: FileProviderManifest = .empty
     /// Whether the security scope of `rootURL` is currently open.
     ///
     /// See `adoptRootURL` for the scope's lifecycle.
@@ -444,13 +450,17 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
         // Key the relay's published Finder-copy-dialog progress (#634) by the
         // placeholder's user-visible URL: root + the current manifest's dirent
         // names. Called on the main queue (the resolver's contract), where
-        // `rootURL` lives; a `nil` root (not yet resolved, or disabled) degrades
-        // to no published progress.
+        // `rootURL` and `publishedManifest` live; a `nil` root (not yet
+        // resolved, or disabled) degrades to no published progress. Resolves
+        // against the in-memory manifest this host just published — never a
+        // per-pull `readManifest()` disk decode, whose cost scales with a
+        // folder tree's total node count and would repeat on the main queue
+        // for every published child pull of a large directory copy.
         relayService.visibleFileURLResolver = { [weak self] generation, repIndex, childSeq in
             dispatchPrecondition(condition: .onQueue(.main))
             guard let self, let rootURL = self.rootURL else { return nil }
             return Self.visibleFileURL(
-                rootURL: rootURL, manifest: self.container.readManifest(),
+                rootURL: rootURL, manifest: self.publishedManifest,
                 generation: generation, repIndex: repIndex, childSeq: childSeq)
         }
     }
@@ -957,6 +967,7 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
                 "Failed to write File Provider manifest: \(error.localizedDescription, privacy: .public)")
             return nil
         }
+        publishedManifest = manifest
         signalEnumerator()
         // `signalEnumerator`'s completion means only that the signal was
         // delivered — NOT that the manifest change has been applied to the
@@ -1302,6 +1313,9 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
         // Only touch the manifest if the domain ever published — avoids creating
         // the container in a context where the File Provider is unused.
         guard domainRegistered else { return }
+        // Cleared even if the disk write below fails: the offer is superseded
+        // either way, so a late progress-URL resolution must miss.
+        publishedManifest = .empty
         do {
             try container.writeManifest(.empty)
         } catch {

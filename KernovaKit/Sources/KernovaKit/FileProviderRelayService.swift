@@ -468,6 +468,18 @@ final class FetchProgressFilePublisher: @unchecked Sendable {
         // The reveal gate: don't publish until the pull has streamed for
         // `revealDelay` (not latched — a later throttled update re-evaluates),
         // so a pull that finishes sooner never publishes at all.
+        // RATIONALE: the gate is event-driven (re-checked per throttled chunk),
+        // not timer-scheduled. A streaming pull delivers per-chunk callbacks
+        // continuously, so the first update past the gate publishes within one
+        // throttle interval; the only orderings a timer would change are (a) a
+        // one-chunk (≤64 KiB) file, whose sole callback is also its final —
+        // suppressing that flash is the gate's purpose, and before the first
+        // chunk there is no total to denominate a bar in anyway — and (b) a
+        // pull that stalls inside the first `revealDelay`, where a timer would
+        // pin a frozen determinate bar for the stall's duration while this
+        // keeps the honest indeterminate display until bytes resume (a
+        // terminal stall aborts via the vsock stall timeout, whose failure
+        // reply finishes this publisher).
         let firstRecordAt: DispatchTime? = lock.withLock { self.firstRecordAt }
         if let firstRecordAt {
             let streaming =
