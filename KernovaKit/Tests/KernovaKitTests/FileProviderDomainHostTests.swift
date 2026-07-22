@@ -790,6 +790,46 @@ struct FileProviderDomainHostEnablementTests {
         #expect(domainSource.callCount == 4)
     }
 
+    @Test("a rejected publish never populates the progress-URL manifest, and a clear empties it")
+    func rejectedPublishLeavesProgressManifestEmpty() async throws {
+        let identifierString = "kernova-clipboard-test-\(UUID().uuidString)"
+        let domainSource = FakeDomainSource()
+        domainSource.setResult(.success([matchingDomain(identifierString)]))
+        let collector = AvailabilityCollector()
+        let host = makeHost(
+            domainIdentifier: identifierString, domainSource: domainSource,
+            notificationCenter: NotificationCenter())
+        host.setAvailabilityObserver { collector.record($0) }
+
+        host.setEnabled(true)
+        try await collector.gate.wait { collector.values.contains(.needsEnabling) }
+        #expect(host.domainRegisteredForTesting)
+
+        // The domain is registered but has no resolved user-visible root (and a
+        // constructed domain's read-only `userEnabled` is false), so this
+        // publish is refused and falls back to the sync path.
+        let urls = host.publishItems(
+            generation: 1,
+            items: [
+                FileProviderPublishItem(
+                    repIndex: 0, filename: "big.bin", byteCount: 1_000, uti: "public.data")
+            ],
+            folders: [], waitForPlaceholder: false)
+
+        #expect(urls == nil)
+        // The cache the progress-URL resolver keys off must stay empty: it is
+        // populated only after every guard passes AND the container write
+        // succeeds. Were it assigned earlier, a refused offer would still
+        // resolve progress URLs for placeholders that were never advertised.
+        #expect(host.publishedManifestForTesting == .empty)
+
+        // The clear path assigns before its container write — which genuinely
+        // throws here, since the test host has no app-group container — so the
+        // cache is emptied even when the manifest can't be rewritten on disk.
+        host.clearOffer()
+        #expect(host.publishedManifestForTesting == .empty)
+    }
+
     @Test("a persistently throwing read retries up to the limit, then stops at .unavailable")
     func readFailureRetriesThenExhausts() async throws {
         let domainSource = FakeDomainSource()

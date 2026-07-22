@@ -336,6 +336,16 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
         dispatchPrecondition(condition: .onQueue(.main))
         return domainRegistered
     }
+
+    /// Test-only view of `publishedManifest` — the manifest the progress-URL
+    /// resolver keys off — so a test can assert a *rejected* publish never
+    /// populates it (a cache set before the guards, or before the container
+    /// write succeeds, would resolve progress URLs for an offer that was never
+    /// advertised).
+    var publishedManifestForTesting: FileProviderManifest {
+        dispatchPrecondition(condition: .onQueue(.main))
+        return publishedManifest
+    }
     #endif
 
     /// Registers an observer notified on the main queue whenever `availability`
@@ -1008,12 +1018,23 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
                 self?.enumerateRoot(root: rootURL)
             }
         }
+        // Derive the pasteboard URLs through the SAME lookup the relay's
+        // progress-URL resolver uses, rather than re-deriving
+        // `rootURL + filename` here: the two must name the identical file for
+        // Finder's copy dialog to attach its published progress to the item
+        // being pasted, and a second derivation could drift from the first
+        // (over a de-duplicated filename, say). One expression, one source of
+        // truth — and `visibleFileURL`'s unit tests now cover both callers.
         var urls: [Int: URL] = [:]
-        for (item, filename) in zip(manifestItems, itemNames) {
-            urls[item.repIndex] = rootURL.appendingPathComponent(filename)
+        for item in manifestItems {
+            urls[item.repIndex] = Self.visibleFileURL(
+                rootURL: rootURL, manifest: manifest, generation: generation,
+                repIndex: item.repIndex, childSeq: nil)
         }
-        for (folder, filename) in zip(manifestFolders, folderNames) {
-            urls[folder.repIndex] = rootURL.appendingPathComponent(filename)
+        for folder in manifestFolders {
+            urls[folder.repIndex] = Self.visibleFileURL(
+                rootURL: rootURL, manifest: manifest, generation: generation,
+                repIndex: folder.repIndex, childSeq: 0)
         }
         logger.info(
             "FP published \(items.count, privacy: .public) file(s) + \(folders.count, privacy: .public) folder(s) (gen=\(generation, privacy: .public))"

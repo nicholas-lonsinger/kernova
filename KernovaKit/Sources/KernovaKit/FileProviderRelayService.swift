@@ -264,6 +264,52 @@ enum FetchProgressThrottle {
     }
 }
 
+/// The stateful half of the throttle: owns one consumer's watermarks and
+/// answers "forward this update?" under its own lock.
+///
+/// `FetchProgressThrottle` is the pure decision; this is the per-consumer
+/// bookkeeping around it (last-forwarded byte count, elapsed since the last
+/// forward, and the first-update timestamp the file publisher's reveal gate
+/// measures from). Both consumers of a pull's `onProgress` — the servicing-XPC
+/// pusher and the published-`NSProgress` file publisher — share this instead of
+/// keeping parallel copies that could drift apart on a policy change.
+///
+/// `@unchecked Sendable`: every stored property is guarded by `lock`, and
+/// `onProgress` fires from the receive lane.
+final class FetchProgressCoalescer: @unchecked Sendable {
+    private let lock = NSLock()
+    private var lastForwardedBytes: UInt64 = 0
+    /// When the last update was forwarded; `nil` until the first, so the first
+    /// forward chunk always passes (elapsed reads as effectively infinite).
+    private var lastForwardAt: DispatchTime?
+    private var firstUpdateAt: DispatchTime?
+
+    /// When the first update was recorded, or `nil` before any — the reveal
+    /// gate's reference point.
+    var firstUpdateTime: DispatchTime? { lock.withLock { firstUpdateAt } }
+
+    /// Whether `(bytesTransferred, totalBytes)` should be forwarded now,
+    /// advancing the watermarks when it should.
+    func shouldForward(bytesTransferred: UInt64, totalBytes: UInt64) -> Bool {
+        let now = DispatchTime.now()
+        return lock.withLock {
+            if firstUpdateAt == nil { firstUpdateAt = now }
+            let elapsed =
+                lastForwardAt.map {
+                    Double(now.uptimeNanoseconds - $0.uptimeNanoseconds) / 1_000_000_000
+                } ?? .greatestFiniteMagnitude
+            guard
+                FetchProgressThrottle.shouldPush(
+                    bytes: bytesTransferred, total: totalBytes,
+                    lastPushedBytes: lastForwardedBytes, elapsedSinceLastPush: elapsed)
+            else { return false }
+            lastForwardedBytes = bytesTransferred
+            lastForwardAt = now
+            return true
+        }
+    }
+}
+
 /// Coalesces and pushes servicing-XPC progress for one in-flight relay pull (#426).
 ///
 /// Holds the extension's control connection — captured synchronously during
@@ -275,7 +321,7 @@ enum FetchProgressThrottle {
 /// peer degrades to no-progress without tearing the connection down.
 ///
 /// `@unchecked Sendable`: `NSXPCConnection` is thread-safe but not `Sendable`, and
-/// the throttle watermarks are guarded by `lock`.
+/// the throttle watermarks live in the (lock-guarded) coalescer.
 final class FetchProgressPusher: @unchecked Sendable {
     private let connection: NSXPCConnection
     private let generation: UInt64
@@ -284,11 +330,7 @@ final class FetchProgressPusher: @unchecked Sendable {
     /// directory rep's file node (pushes `childFetchProgressed`, folder D1b).
     private let childSeq: UInt32?
     private let logger: KernovaLogger
-    private let lock = NSLock()
-    private var lastPushedBytes: UInt64 = 0
-    /// When the last push was sent; `nil` until the first, so the first forward
-    /// chunk always pushes (elapsed reads as effectively infinite).
-    private var lastPushAt: DispatchTime?
+    private let coalescer = FetchProgressCoalescer()
 
     init(
         connection: NSXPCConnection, generation: UInt64, repIndex: Int, childSeq: UInt32? = nil,
@@ -303,21 +345,8 @@ final class FetchProgressPusher: @unchecked Sendable {
 
     /// Records cumulative progress and pushes it when the throttle allows.
     func record(bytesTransferred: UInt64, totalBytes: UInt64) {
-        let now = DispatchTime.now()
-        let shouldPush: Bool = lock.withLock {
-            let elapsed =
-                lastPushAt.map { Double(now.uptimeNanoseconds - $0.uptimeNanoseconds) / 1_000_000_000 }
-                ?? .greatestFiniteMagnitude
-            guard
-                FetchProgressThrottle.shouldPush(
-                    bytes: bytesTransferred, total: totalBytes, lastPushedBytes: lastPushedBytes,
-                    elapsedSinceLastPush: elapsed)
-            else { return false }
-            lastPushedBytes = bytesTransferred
-            lastPushAt = now
-            return true
-        }
-        guard shouldPush else { return }
+        guard coalescer.shouldForward(bytesTransferred: bytesTransferred, totalBytes: totalBytes)
+        else { return }
         let control =
             connection.remoteObjectProxyWithErrorHandler { [logger] error in
                 logger.debug(
@@ -363,8 +392,8 @@ final class FetchProgressPusher: @unchecked Sendable {
 /// host app can publish for the CloudStorage URL because the domain host holds
 /// the domain root's security scope while the root is current (`adoptRootURL`).
 ///
-/// `@unchecked Sendable`: the throttle watermarks are guarded by `lock`;
-/// `progress`/`finished`/`resolutionFailed` are main-queue state.
+/// `@unchecked Sendable`: the throttle watermarks live in the (lock-guarded)
+/// coalescer; `progress`/`finished`/`resolutionFailed` are main-queue state.
 final class FetchProgressFilePublisher: @unchecked Sendable {
     /// The default reveal gate: how long a pull must have been streaming before
     /// its progress publishes (the in-app bar's 300 ms convention).
@@ -379,13 +408,7 @@ final class FetchProgressFilePublisher: @unchecked Sendable {
     /// Seconds after the first chunk before the progress may publish; a pull
     /// that finishes sooner never publishes at all.
     private let revealDelay: TimeInterval
-    private let lock = NSLock()
-    private var lastRecordedBytes: UInt64 = 0
-    /// When the last update was applied; `nil` until the first, so the first
-    /// chunk always clears the throttle promptly.
-    private var lastRecordAt: DispatchTime?
-    /// When the first chunk was recorded — the reveal gate's reference point.
-    private var firstRecordAt: DispatchTime?
+    private let coalescer = FetchProgressCoalescer()
 
     // MARK: Main-queue state
 
@@ -421,22 +444,8 @@ final class FetchProgressFilePublisher: @unchecked Sendable {
         // A total-less update can't drive a determinate bar; the throttle below
         // also enforces forward progress.
         guard totalBytes > 0 else { return }
-        let now = DispatchTime.now()
-        let shouldApply: Bool = lock.withLock {
-            if firstRecordAt == nil { firstRecordAt = now }
-            let elapsed =
-                lastRecordAt.map { Double(now.uptimeNanoseconds - $0.uptimeNanoseconds) / 1_000_000_000 }
-                ?? .greatestFiniteMagnitude
-            guard
-                FetchProgressThrottle.shouldPush(
-                    bytes: bytesTransferred, total: totalBytes, lastPushedBytes: lastRecordedBytes,
-                    elapsedSinceLastPush: elapsed)
-            else { return false }
-            lastRecordedBytes = bytesTransferred
-            lastRecordAt = now
-            return true
-        }
-        guard shouldApply else { return }
+        guard coalescer.shouldForward(bytesTransferred: bytesTransferred, totalBytes: totalBytes)
+        else { return }
         DispatchQueue.main.async { [self] in
             applyOnMain(bytesTransferred: bytesTransferred, totalBytes: totalBytes)
         }
@@ -480,10 +489,9 @@ final class FetchProgressFilePublisher: @unchecked Sendable {
         // keeps the honest indeterminate display until bytes resume (a
         // terminal stall aborts via the vsock stall timeout, whose failure
         // reply finishes this publisher).
-        let firstRecordAt: DispatchTime? = lock.withLock { self.firstRecordAt }
-        if let firstRecordAt {
+        if let firstUpdateAt = coalescer.firstUpdateTime {
             let streaming =
-                Double(DispatchTime.now().uptimeNanoseconds - firstRecordAt.uptimeNanoseconds)
+                Double(DispatchTime.now().uptimeNanoseconds - firstUpdateAt.uptimeNanoseconds)
                 / 1_000_000_000
             guard streaming >= revealDelay else { return }
         }
