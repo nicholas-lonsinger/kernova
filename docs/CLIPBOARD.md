@@ -405,9 +405,9 @@ Large transfers are streamed and take real time. Two obligations follow:
   promise on its own clock. For unbounded operations, **prefer an API with no host-OS deadline**
   (File Provider) over one where we must beat a clock we do not control.
 
-The File Provider paste path is **determinate end to end** (#426, #634), in both directions. One
-per-chunk `(bytesTransferred, totalBytes)` callback from the receiver drives every indicator, over
-two owner-side channels:
+The File Provider paste path reports **determinate progress end to end** (#426, #634), in both
+directions. One per-chunk `(bytesTransferred, totalBytes)` callback from the receiver drives every
+indicator, over two owner-side channels:
 
 - **The extension's `fetchContents` `Progress`** (#426): the extension can't see the vsock
   transfer, so the owner pushes the per-chunk counts to the sandboxed extension over the
@@ -434,6 +434,19 @@ two owner-side channels:
   same shape first-party providers use for per-file downloads. The sandboxed host app can publish
   for the CloudStorage URL because the domain host holds the domain root's security scope while
   the root is current.
+
+**The copy dialog's consumption of the published progress is environment-sensitive** (#639).
+With publication log-proven in every live run, the dialog rendered a determinate bar in some
+sessions (single flat files in #638's runs; folder children in both #639 sessions) and stayed on
+the indeterminate "Preparing to copy…" slide in others (every flat-file paste across two later
+sessions, including from a clean host boot) — byte-identical binaries throughout. The dialog also
+dismisses itself tens of seconds into a multi-GB pull while materialization continues in the
+background; the `fetchContents` `Progress` channel keeps driving the framework's own bookkeeping
+for the full pull and payloads land intact either way. This is a **documented gap**, not a defect
+to engineer around: the publication is the API's supported shape, the degradation is only ever an
+indeterminate or absent bar (never a wrong one), and no folder-root aggregate `NSProgress` is
+warranted — per-child publications already render whenever Finder consumes published progress at
+all.
 
 The host clipboard window's in-app bar records the guest→host pull from the same per-chunk
 callback (`performBlockingPull`, direction `.inbound`); all indicators clear at every terminal.
