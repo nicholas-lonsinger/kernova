@@ -405,17 +405,41 @@ Large transfers are streamed and take real time. Two obligations follow:
   promise on its own clock. For unbounded operations, **prefer an API with no host-OS deadline**
   (File Provider) over one where we must beat a clock we do not control.
 
-The File Provider paste path is now **determinate end to end** (#426), in both directions. The
-extension can't see the vsock transfer, so the owner pushes the receiver's per-chunk
-`(bytesTransferred, totalBytes)` back to the sandboxed extension over the *existing* servicing XPC
-connection — a one-way `FileProviderControl.fetchProgressed`, coalesced to ~1% of the total or
-~100 ms apart (always the final chunk) so a multi-GB pull can't flood the pipe — which drives a
-byte-denominated `fetchContents` `Progress` (`kind = .file`, `fileOperationKind = .downloading`),
-so Finder renders a real download bar instead of the pulsing indeterminate one. A version-skewed
+The File Provider paste path carries determinate progress in both directions, but **two separate
+mechanisms** are needed to put it in front of the user, and conflating them is what made an
+earlier version of this section wrong (#634). The extension can't see the vsock transfer, so the
+owner pushes the receiver's per-chunk `(bytesTransferred, totalBytes)` back to the sandboxed
+extension over the *existing* servicing XPC connection — a one-way
+`FileProviderControl.fetchProgressed`, coalesced to ~1% of the total or ~100 ms apart (always the
+final chunk) so a multi-GB pull can't flood the pipe — which drives a byte-denominated
+`fetchContents` `Progress` (`kind = .file`, `fileOperationKind = .downloading`). A version-skewed
 peer without the selector drops the push and degrades to no-progress without tearing down the
-connection. The host clipboard window's in-app bar records the guest→host pull from the same
-per-chunk callback (`performBlockingPull`, direction `.inbound`); both indicators clear at every
-terminal. No vsock wire change — the channel is the servicing XPC, not the transport.
+connection.
+
+That returned `Progress` drives the **File Provider item's own download badge** — and nothing
+else. It does **not** drive Finder's copy dialog: verified live on macOS 26, ours is
+byte-denominated, `isIndeterminate == false`, and advances 0→100 % over the whole transfer while
+the dialog shows the indeterminate "Preparing to copy…" slide for the entire pull, in both
+directions. fileproviderd simply does not bridge a third-party extension's `fetchContents`
+`Progress` into that dialog. What the dialog *does* consume is a separate **cross-process
+published `NSProgress`** keyed to the file being materialized: `kind = .file`,
+`fileOperationKind = .downloading`, `.fileURLKey` = the placeholder's user-visible URL under
+`~/Library/CloudStorage/…`, `totalUnitCount` = the byte count, `publish()`ed and mutated on a
+run-loop thread (Finder subscribes by file URL). The **owner** publishes exactly that for the
+pull's duration — from the same per-chunk callback, through the same coalescing — and unpublishes
+it at every terminal (success, failure, and cancel alike), so no bar outlives its transfer; a
+subscriber's cancel propagates back through the published progress and aborts the vsock pull.
+Publication is gated behind the same ~300 ms reveal delay as the in-app bar, so an instant
+transfer never flashes a bar and a folder copy doesn't pay a publish/unpublish round-trip per
+small child; the cost is that a transfer stalling immediately after its first chunk shows no bar,
+which is the pre-existing behavior rather than a regression. Because this lives in the owner-side
+relay code, one implementation covers both directions — the host app's guest→host "Copy to Mac"
+and the guest agent's host→guest paste.
+
+The host clipboard window's in-app bar records the guest→host pull from the same per-chunk
+callback (`performBlockingPull`, direction `.inbound`); all indicators clear at every terminal. No
+vsock wire change — the channels are the servicing XPC and the system's progress registry, not the
+transport.
 
 ---
 
@@ -477,7 +501,8 @@ fix, not just whether to fix it. (macOS-guest issues only; Linux/Windows out of 
 | **#561** — host→guest paste has no deadline-safe size cap, unlike guest→host | §2 Disk-as-fallback (deadline cap), §13 OS deadlines | The two directions were asymmetric: the host's synchronous fallback already refused an over-cap file, but the guest's `pullRepresentation` checked only staging disk capacity. ✓ **Resolved** — the guest's synchronous pasteboard-provider pull refuses when the paste's sync-bound reps (non-inline, minus File-Provider-routed) **total** over `maxDeadlineSafeFileBytes`, all-or-nothing (one `clipboard.paste.too.large` per offer, surfaced in the host's clipboard window — no piecemeal subset); the File Provider relay (`fetchStagedFile`, no deadline) stays uncapped via a `deadlineBound` parameter on the shared `pullRepresentation`. The host "Copy to Mac" total gate is now symmetric (#559, `syncBoundTotalBytes`). One asymmetry remains: the guest has no File-Provider escape hatch for folders yet (D1b folders), so every inbound directory rep rides this same deadline-bound path today, while the host's directory pull is eager and never deadline-bound (so host directories don't count toward its total). |
 | **#427** — File Provider placeholder scoped to the paste lifetime, not the offer | §3 Pay on consume, §2 (on-demand) | The placeholder existed for the whole offer lifetime — created the instant the host copied, lingering after a paste. ✓ **Resolved** — routing (and so placeholder creation) moved into the unified paste-time provider closure (§3's routing bullet): the folder stays empty until a real paste, and an offer that missed a ready domain re-checks on its next fire (deleting the #429 re-publish and #510 stale-pull refusal machinery). The trailing edge is deliberately supersession-scoped — post-paste eviction reclaims no physical disk (the pasted copy is an APFS clone) and dirent removal would dangle the pasteboard's cached URL, breaking second pastes and drag-out. The host side of this paste-scoping landed with #559. |
 | **#559** — host "Copy to Mac" routes only a single plain-file rep lazily (D2 scope limit) | §2 Disk-as-fallback (deadline cap), §3 Pay on consume | The host mirror of D1b: dissolve the single-file gate so every eligible plain-file rep routes, and move routing into the paste-time provider closure. ✓ **Resolved** — `materializeForCopy` defers every lazy-eligible plain-file rep as a `.lazyFile`; the pasteboard closure (`copyToMacFileURL`) tries the File Provider first (publishing all eligible reps together, latched on success) and falls back to a size-capped sync pull gated by the offer's plain-file **total** (`syncBoundTotalBytes`), all-or-nothing, with a copy-click advisory when the toggle is already known off. Placeholder creation is now paste-scoped (#427 host mirror); `CopyToMacDropReason.multipleFiles` and its "Only one file…" message are removed. |
-| **#426** — File Provider paste shows only an indeterminate "Preparing to copy…" bar, in both directions | §13 Legibility, §5 preview-only | Drive the native `fetchContents` `Progress` off the transport's existing byte-level progress, both directions; the extension can't see the vsock transfer, so carry it over the servicing XPC (never the data path — §5). ✓ **Resolved** — a one-way, coalesced `FileProviderControl.fetchProgressed(generation:repIndex:bytesTransferred:totalBytes:)` push from the owner (fed by the receiver's per-chunk callback via `FileProviderPullProvider.fetchStagedFile`'s new `onProgress`) drives a byte-denominated `fetchContents` `Progress` (`kind = .file`, `.downloading`), routed by an in-flight `(generation, repIndex)` registry in `FileProviderServiceSource` (a late push for a finished pull no-ops; a version-skewed peer lacking the selector degrades to no-progress without tearing down the connection). The host clipboard window's in-app bar records the guest→host FP pull from the same callback (`performBlockingPull` → `ClipboardTransferProgressTracker`, direction `.inbound`), cleared at every terminal. No vsock wire change (the ground-truth correction: the outbound in-app half already recorded via `handleRequest` — only the host receive side was the gap). |
+| **#426** — File Provider paste shows only an indeterminate "Preparing to copy…" bar, in both directions | §13 Legibility, §5 preview-only | Drive the native `fetchContents` `Progress` off the transport's existing byte-level progress, both directions; the extension can't see the vsock transfer, so carry it over the servicing XPC (never the data path — §5). ✓ **Resolved** — a one-way, coalesced `FileProviderControl.fetchProgressed(generation:repIndex:bytesTransferred:totalBytes:)` push from the owner (fed by the receiver's per-chunk callback via `FileProviderPullProvider.fetchStagedFile`'s new `onProgress`) drives a byte-denominated `fetchContents` `Progress` (`kind = .file`, `.downloading`), routed by an in-flight `(generation, repIndex)` registry in `FileProviderServiceSource` (a late push for a finished pull no-ops; a version-skewed peer lacking the selector degrades to no-progress without tearing down the connection). The host clipboard window's in-app bar records the guest→host FP pull from the same callback (`performBlockingPull` → `ClipboardTransferProgressTracker`, direction `.inbound`), cleared at every terminal. No vsock wire change (the ground-truth correction: the outbound in-app half already recorded via `handleRequest` — only the host receive side was the gap). **Partial:** the `fetchContents` `Progress` this drives turned out to feed the File Provider item badge only, not Finder's copy dialog — see #634. |
+| **#634** — Finder's copy dialog is still indeterminate on an FP paste, despite a correctly advancing `fetchContents` `Progress` | §13 Legibility | The determinate signal exists; it just isn't reaching the surface the user watches. Fix at the surface, not by re-plumbing the transport (§5 — progress never touches the data path), and fix it in the shared owner-side relay so both directions are covered at once. ✓ **Resolved** — the owner publishes a cross-process `NSProgress` keyed to the placeholder's user-visible file URL (`kind = .file`, `.downloading`, byte `totalUnitCount`) for the pull's duration, fed by the same per-chunk callback and coalesced by the same throttle, unpublished at every terminal, with the ~300 ms reveal gate the in-app bar already uses. Verified live before implementation: an experiment publishing exactly this produced a determinate 4 % → 28 % → full bar over a ~38 s guest→host paste. |
 
 ---
 

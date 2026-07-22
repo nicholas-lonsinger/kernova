@@ -239,4 +239,147 @@ struct FileProviderRelayServiceTests {
         try await replyGate.wait { reply.value != nil }
         #expect(reply.value?.0 == "/staged/file")
     }
+
+    // MARK: - Finder-visible published progress (#634)
+
+    /// The domain root the offer-URL index below resolves against, standing in
+    /// for the real `~/Library/CloudStorage/…` root `publishItems` caches.
+    private static let domainRoot = URL(
+        fileURLWithPath: "/Users/test/Library/CloudStorage/Kernova-clipboard")
+
+    /// An index that resolves the offer this suite's tests fetch, so the relay
+    /// takes its `PublishedFetchProgress` path.
+    ///
+    /// The pull providers here never call `onProgress`, so no progress is ever
+    /// revealed and the real `Progress.publish()` is never reached from a test
+    /// bundle — the point of these cases is that the *reply contract* is
+    /// untouched by the publisher's presence, not the publisher's own behavior
+    /// (which `PublishedFetchProgressTests` covers against an injected
+    /// publication).
+    private func makeResolvingIndex(generation: UInt64 = 7) -> FileProviderOfferURLIndex {
+        let index = FileProviderOfferURLIndex()
+        index.update(
+            generation: generation,
+            urls: [
+                0: Self.domainRoot.appendingPathComponent("report.pdf"),
+                1: Self.domainRoot.appendingPathComponent("folder"),
+            ])
+        return index
+    }
+
+    @Test("a resolved placeholder URL leaves the success reply unchanged")
+    func resolvedURLLeavesSuccessReplyUnchanged() async throws {
+        let provider = MockPullProvider(result: .success("/staged/file"))
+        let service = FileProviderRelayService(
+            pullProvider: provider, loggerSubsystem: "app.kernova.test",
+            offerURLIndex: makeResolvingIndex())
+        let path = Box<String?>(nil)
+        let error = Box<NSError?>(nil)
+        let gate = AsyncGate()
+
+        service.fetchFile(generation: 7, repIndex: 0) { stagedPath, nsError in
+            path.value = stagedPath
+            error.value = nsError
+            gate.notify()
+        }
+
+        try await gate.wait { path.value != nil || error.value != nil }
+        #expect(provider.lastFetchCall?.0 == 7)
+        #expect(provider.lastFetchCall?.1 == 0)
+        #expect(path.value == "/staged/file")
+        #expect(error.value == nil)
+    }
+
+    @Test("a resolved placeholder URL leaves the failure mappings unchanged")
+    func resolvedURLLeavesFailureMappingsUnchanged() async throws {
+        for (pullError, expected) in [
+            (FileProviderPullError.noCurrentOffer, NSFileProviderError.noSuchItem),
+            (FileProviderPullError.pullFailed, NSFileProviderError.serverUnreachable),
+        ] {
+            let service = FileProviderRelayService(
+                pullProvider: MockPullProvider(result: .failure(pullError)),
+                loggerSubsystem: "app.kernova.test", offerURLIndex: makeResolvingIndex())
+            let path = Box<String?>("unset")
+            let error = Box<NSError?>(nil)
+            let gate = AsyncGate()
+
+            service.fetchFile(generation: 7, repIndex: 0) { stagedPath, nsError in
+                path.value = stagedPath
+                error.value = nsError
+                gate.notify()
+            }
+
+            try await gate.wait { error.value != nil }
+            #expect(path.value == nil)
+            #expect(error.value?.domain == NSFileProviderErrorDomain)
+            #expect(error.value?.code == expected.rawValue)
+        }
+    }
+
+    @Test("a resolved child URL leaves fetchChild's reply unchanged")
+    func resolvedChildURLLeavesReplyUnchanged() async throws {
+        let provider = MockPullProvider(result: .success("/staged/child"))
+        let service = FileProviderRelayService(
+            pullProvider: provider, loggerSubsystem: "app.kernova.test",
+            offerURLIndex: makeResolvingIndex())
+        let path = Box<String?>(nil)
+        let gate = AsyncGate()
+
+        service.fetchChild(generation: 7, repIndex: 1, childSeq: 3, relativePath: "sub/file.txt") {
+            stagedPath, _ in
+            path.value = stagedPath
+            gate.notify()
+        }
+
+        try await gate.wait { path.value != nil }
+        #expect(path.value == "/staged/child")
+    }
+
+    @Test("cancelFetch still reaches the provider mid-pull with a resolved URL")
+    func cancelStillReachesProviderWithResolvedURL() async throws {
+        let provider = BlockingPullProvider()
+        let service = FileProviderRelayService(
+            pullProvider: provider, loggerSubsystem: "app.kernova.test",
+            offerURLIndex: makeResolvingIndex())
+        let reply = Box<(String?, NSError?)?>(nil)
+        let replyGate = AsyncGate()
+
+        service.fetchFile(generation: 7, repIndex: 0) { path, error in
+            reply.value = (path, error)
+            replyGate.notify()
+        }
+        try await provider.entered.wait { provider.hasEntered }
+
+        service.cancelFetch(generation: 7, repIndex: 0)
+        try await provider.cancelled.wait { provider.lastCancelCall != nil }
+        #expect(provider.lastCancelCall?.0 == 7)
+        #expect(provider.lastCancelCall?.1 == 0)
+
+        // The publisher is finished from a `defer` at the end of the pull's
+        // `pullQueue` body, after the reply — so the reply must still land.
+        provider.release()
+        try await replyGate.wait { reply.value != nil }
+        #expect(reply.value?.0 == "/staged/file")
+    }
+
+    @Test("a stale generation resolves no URL and changes nothing")
+    func staleGenerationChangesNothing() async throws {
+        let provider = MockPullProvider(result: .success("/staged/file"))
+        // The index holds generation 7; this fetch is for the superseded 6, so
+        // no URL resolves and no progress is published — the pull is unaffected.
+        let service = FileProviderRelayService(
+            pullProvider: provider, loggerSubsystem: "app.kernova.test",
+            offerURLIndex: makeResolvingIndex())
+        let path = Box<String?>(nil)
+        let gate = AsyncGate()
+
+        service.fetchFile(generation: 6, repIndex: 0) { stagedPath, _ in
+            path.value = stagedPath
+            gate.notify()
+        }
+
+        try await gate.wait { path.value != nil }
+        #expect(path.value == "/staged/file")
+        #expect(provider.lastFetchCall?.0 == 6)
+    }
 }

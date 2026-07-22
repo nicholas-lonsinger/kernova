@@ -84,3 +84,73 @@ struct FetchProgressThrottleTests {
                 bytes: 5_000, total: 0, lastPushedBytes: 0, elapsedSinceLastPush: 0.2))
     }
 }
+
+/// Unit tests for `FetchProgressCoalescer` — the stateful half of the throttle
+/// (#634).
+///
+/// `FetchProgressThrottle` above is the pure decision; this owns the watermarks
+/// it decides against, shared by the servicing-XPC push and the Finder-facing
+/// published progress. Every case drives `now:` explicitly, so nothing here
+/// depends on wall-clock timing or on how fast the runner happens to be.
+@Suite("FetchProgressCoalescer")
+struct FetchProgressCoalescerTests {
+    private let total: UInt64 = 1_000_000
+
+    /// A `DispatchTime` `nanoseconds` after an arbitrary fixed base.
+    ///
+    /// The coalescer only ever reads *differences* between the values it is
+    /// handed, so the base is irrelevant as long as it is shared.
+    private func time(_ nanoseconds: UInt64) -> DispatchTime {
+        DispatchTime(uptimeNanoseconds: 1_000_000_000 + nanoseconds)
+    }
+
+    @Test("the first call always emits — no prior emit means infinite elapsed")
+    func firstCallAlwaysEmits() {
+        let coalescer = FetchProgressCoalescer()
+        // One byte, no time elapsed, far under the 1% quantum: it emits only
+        // because there is no previous emit to measure against.
+        #expect(coalescer.shouldEmit(bytes: 1, total: total, now: time(0)))
+    }
+
+    @Test("a same-byte repeat does not emit, however much time has passed")
+    func sameByteRepeatDoesNotEmit() {
+        let coalescer = FetchProgressCoalescer()
+        #expect(coalescer.shouldEmit(bytes: 500_000, total: total, now: time(0)))
+        #expect(!coalescer.shouldEmit(bytes: 500_000, total: total, now: time(0)))
+        #expect(!coalescer.shouldEmit(bytes: 500_000, total: total, now: time(10_000_000_000)))
+        // A regressed count (a reordered callback) is likewise not forward progress.
+        #expect(!coalescer.shouldEmit(bytes: 400_000, total: total, now: time(10_000_000_000)))
+    }
+
+    @Test("the byte watermark advances with each emit")
+    func byteWatermarkAdvances() {
+        let coalescer = FetchProgressCoalescer()
+        #expect(coalescer.shouldEmit(bytes: 100_000, total: total, now: time(0)))
+        // 5,000 bytes past the new watermark is 0.5% — under the 1% quantum, and
+        // only 50 ms later, so it is held back.
+        #expect(!coalescer.shouldEmit(bytes: 105_000, total: total, now: time(50_000_000)))
+        // 10,000 past the *watermark* (not past the last call) is exactly 1%.
+        #expect(coalescer.shouldEmit(bytes: 110_000, total: total, now: time(60_000_000)))
+        // …and that emit moved the watermark again: the same 5,000-byte step is
+        // still under the quantum relative to 110,000.
+        #expect(!coalescer.shouldEmit(bytes: 115_000, total: total, now: time(70_000_000)))
+    }
+
+    @Test("the time watermark advances with each emit, not with each call")
+    func timeWatermarkAdvances() {
+        let coalescer = FetchProgressCoalescer()
+        #expect(coalescer.shouldEmit(bytes: 100_000, total: total, now: time(0)))
+        #expect(!coalescer.shouldEmit(bytes: 100_001, total: total, now: time(50_000_000)))
+        // 100 ms after the last *emit* — a tiny delta rides the time bound.
+        #expect(coalescer.shouldEmit(bytes: 100_002, total: total, now: time(100_000_000)))
+        // The bound is measured from that emit, so 50 ms later is too soon again.
+        #expect(!coalescer.shouldEmit(bytes: 100_003, total: total, now: time(150_000_000)))
+    }
+
+    @Test("the final chunk emits regardless of the watermarks")
+    func finalChunkEmits() {
+        let coalescer = FetchProgressCoalescer()
+        #expect(coalescer.shouldEmit(bytes: total - 1, total: total, now: time(0)))
+        #expect(coalescer.shouldEmit(bytes: total, total: total, now: time(0)))
+    }
+}

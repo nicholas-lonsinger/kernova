@@ -226,6 +226,13 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     /// connection to the extension.
     private let relayTransport: FileProviderRelayTransport
     private let relayService: FileProviderRelayService
+    /// The published offer's user-visible URLs, shared with `relayService` so an
+    /// in-flight pull can name the file it is materializing for Finder's copy
+    /// dialog (#634).
+    ///
+    /// Written here (on main, from `publishItems`/`clearOfferOnMain`) and read
+    /// off-main by the relay; the type is lock-guarded for exactly that.
+    private let offerURLIndex: FileProviderOfferURLIndex
     private let notificationCenter: NotificationCenter
     private let fetchDomains: @Sendable () async throws -> [NSFileProviderDomain]
     private let addDomainToSystem: @Sendable (NSFileProviderDomain, @escaping @Sendable (Error?) -> Void) -> Void
@@ -411,8 +418,14 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
         self.pullProvider = pullProvider
         self.relayTransport =
             relayTransport ?? FileProviderServicingConnector(config: config)
+        // Built as a local first: `relayService` is initialized before
+        // `super.init()`, so it can't be handed `self.offerURLIndex` — both get
+        // the same local instance instead.
+        let offerURLIndex = FileProviderOfferURLIndex()
+        self.offerURLIndex = offerURLIndex
         self.relayService = FileProviderRelayService(
-            pullProvider: pullProvider, loggerSubsystem: config.loggerSubsystem)
+            pullProvider: pullProvider, loggerSubsystem: config.loggerSubsystem,
+            offerURLIndex: offerURLIndex)
         self.domain = config.makeDomain()
         self.notificationCenter = notificationCenter
         self.fetchDomains = fetchDomains
@@ -994,6 +1007,10 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
         logger.info(
             "FP published \(items.count, privacy: .public) file(s) + \(folders.count, privacy: .public) folder(s) (gen=\(generation, privacy: .public))"
         )
+        // Cache the URLs the relay's pulls will need to publish a Finder-visible
+        // progress (#634) — these exact ones, so the two paths can't disagree
+        // about a de-duplicated filename.
+        offerURLIndex.update(generation: generation, urls: urls)
         return urls
     }
 
@@ -1255,6 +1272,11 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     }
 
     private func clearOfferOnMain() {
+        // Unconditional, ahead of the `domainRegistered` guard below: the index
+        // is in-memory only, so dropping it creates nothing, and a superseded
+        // offer's URLs must stop resolving even on a path that skips the
+        // manifest write.
+        offerURLIndex.clear()
         // Only touch the manifest if the domain ever published — avoids creating
         // the container in a context where the File Provider is unused.
         guard domainRegistered else { return }
