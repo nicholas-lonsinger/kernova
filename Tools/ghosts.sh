@@ -107,14 +107,67 @@ orphaned_dd_arenas() {
     done
 }
 
-# Something is still executing from inside the arena (e.g. a File Provider
-# extension fileproviderd kept alive) — eviction would yank its binary.
+# PIDs of processes executing from inside the arena (e.g. a File Provider
+# extension fileproviderd kept alive) — eviction would yank their binaries.
 # Not pgrep: `pgrep -f` takes a regex, and the arena path must match
 # literally (`grep -F`); a false match only skips an eviction, the safe
 # failure mode.
-arena_in_use() {
+arena_pids() {
     # shellcheck disable=SC2009
-    ps -axo args= 2>/dev/null | grep -F "$1/" | grep -qv grep
+    ps -axo pid=,args= 2>/dev/null | grep -F "$1/" | grep -v grep | awk '{print $1}'
+}
+
+arena_in_use() {
+    [ -n "$(arena_pids "$1")" ]
+}
+
+# The process's own executable path. lsof's `txt` fd is the mapped binary,
+# which is the only reliable source here: the arena holds bundles whose paths
+# contain spaces ("Kernova Guest Agent.app"), so splitting `ps` args on
+# whitespace would truncate them.
+exe_of_pid() {
+    lsof -a -p "$1" -d txt -Fn 2>/dev/null | sed -n 's/^n//p' | head -1
+}
+
+# True when something other than an on-demand app extension is running from
+# the arena. An .appex is an XPC service its host daemon (fileproviderd, pkd)
+# starts on demand and restarts on the next request, so terminating one costs
+# at most an in-flight request. Anything else — the app itself, a test runner —
+# may be mid-VM-session and is the user's to quit, so the arena is left alone.
+arena_has_non_appex() {
+    local pid exe
+    while IFS= read -r pid; do
+        [ -z "$pid" ] && continue
+        exe=$(exe_of_pid "$pid")
+        # An unreadable exe path (the process exited between the ps and the
+        # lsof) can't be classified as safe to kill — treat it as blocking.
+        case "$exe" in
+            *.appex/*) ;;
+            *) return 0 ;;
+        esac
+    done < <(arena_pids "$1")
+    return 1
+}
+
+# Terminate the extension processes running from the arena so it can be
+# evicted. Callers must rule out non-appex processes first. Returns 0 only
+# once the arena is actually free.
+kill_arena_appexes() {
+    local dir=$1 i
+    local pids=()
+    while IFS= read -r i; do
+        [ -z "$i" ] && continue
+        pids+=("$i")
+    done < <(arena_pids "$dir")
+    [ "${#pids[@]}" -eq 0 ] && return 0
+    kill "${pids[@]}" 2>/dev/null
+    # kill only requests termination; wait for the daemons to reap before
+    # calling the arena free, and give up rather than block if one hangs.
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+        arena_in_use "$dir" || return 0
+        sleep 0.2
+    done
+    return 1
 }
 
 # Unregister every bundle inside the arena, then trash the folder. Unregister
@@ -136,7 +189,9 @@ evict_dd_arena() {
 # at the next worktree creation. Best-effort by design: always exits 0 so a
 # failed sweep can never fail the checkout that triggered it, skips anything
 # a process is still running from, and skips the fix path's re-dump
-# verification — `make ghosts` still reports anything left behind.
+# verification — `make ghosts` still reports anything left behind. Unlike
+# --fix it never terminates the extension blocking an arena: the sweep runs
+# unattended from a git hook, and the next worktree creation sweeps again.
 if [ "$SWEEP" = 1 ]; then
     while IFS= read -r path; do
         [ -z "$path" ] && continue
@@ -229,10 +284,9 @@ section 'Running processes'
 proc_found=0
 while IFS= read -r pid; do
     [ -z "$pid" ] && continue
-    # The `txt` fd in lsof's field output is the process's own executable —
-    # if that path no longer resolves, the file was deleted (or moved to
-    # Trash) while the process was still running from it.
-    exe_path=$(lsof -a -p "$pid" -d txt -Fn 2>/dev/null | sed -n 's/^n//p' | head -1)
+    # If the process's own executable no longer resolves, the file was
+    # deleted (or moved to Trash) while it was still running from it.
+    exe_path=$(exe_of_pid "$pid")
     [ -z "$exe_path" ] && continue
     [ -e "$exe_path" ] && continue
     proc_found=1
@@ -276,9 +330,10 @@ section 'DerivedData build arenas'
 # Unlike the live-copy election check below (which prompts, because a live
 # copy might be wanted), an orphaned arena's source worktree is gone — its
 # build products are unreachable garbage, so --fix evicts without asking.
-# An arena something is still running from is skipped with a pointer instead:
-# killing a possibly-in-use app from a cleanup script is not this script's
-# call.
+# An arena an on-demand extension is running from is unblocked by terminating
+# it (fileproviderd/pkd restart the .appex on the next request); an arena the
+# app itself is running from is skipped with a pointer instead, since quitting
+# a possibly-in-use app is not this script's call.
 dd_orphans=()
 while IFS= read -r dir; do
     [ -z "$dir" ] && continue
@@ -291,8 +346,17 @@ else
     for dir in "${dd_orphans[@]}"; do
         ghost "Orphaned worktree arena: $(pretty_path "$dir") ($(du -sh "$dir" 2>/dev/null | cut -f1))"
         if arena_in_use "$dir"; then
-            detail 'a process is still running from inside — quit it (or reboot), then re-run'
-            continue
+            if arena_has_non_appex "$dir"; then
+                detail 'a running app is still executing from inside — quit it (or reboot), then re-run'
+                continue
+            elif [ "$FIX" != 1 ]; then
+                detail 'an on-demand extension is running from inside — `make clean-ghosts` terminates it'
+                continue
+            elif ! kill_arena_appexes "$dir"; then
+                detail 'the extension(s) running from inside would not exit — reboot, then re-run'
+                continue
+            fi
+            detail 'terminated the on-demand extension(s) running from inside'
         fi
         if [ "$FIX" = 1 ]; then
             if evict_dd_arena "$dir"; then
@@ -517,11 +581,11 @@ pk_dead=()
 pk_registered=0
 for id in app.kernova.fileprovider app.kernova.macosagent.fileprovider; do
     info=$(pluginkit -m -v -i "$id" 2>/dev/null)
-    if [ -z "$info" ]; then
-        pk_lines+=("$id — not registered with PlugInKit")
-        continue
-    fi
-    pk_registered=$((pk_registered + 1))
+    # Count the match lines actually parsed rather than testing $info for
+    # emptiness: an unregistered id makes pluginkit print "  (no matches)",
+    # not nothing, so an emptiness test would report every id as registered
+    # and then print the verdict header with no bundles under it.
+    id_matches=0
     while IFS=$'\t' read -r head _uuid _registered path; do
         [ -z "$path" ] && continue
         ver=${head##*\(}
@@ -535,7 +599,13 @@ for id in app.kernova.fileprovider app.kernova.macosagent.fileprovider; do
         esac
         [ -e "$path" ] || pk_dead+=("$id")
         pk_lines+=("$id $ver — $(pretty_path "$path")$note")
+        id_matches=$((id_matches + 1))
     done <<< "$info"
+    if [ "$id_matches" -eq 0 ]; then
+        pk_lines+=("$id — not registered with PlugInKit")
+    else
+        pk_registered=$((pk_registered + 1))
+    fi
 done
 
 if [ "${#pk_dead[@]}" -gt 0 ]; then
@@ -579,7 +649,11 @@ if [ "$FIX" = 1 ]; then
     [ "$fixed_count" -lt "$found_count" ] && exit 1
     exit 0
 else
-    printf '%s%d issue(s) found.%s Re-run with %s--fix%s (or `make clean-ghosts`) to clean them up.\n' \
+    # `make` first, direct invocation second: this script is normally reached
+    # through the Makefile, and `make ghosts --fix` does not do what leading
+    # with the bare flag suggests — make swallows `--fix` as one of its own
+    # options and bails with "unrecognized option".
+    printf '%s%d issue(s) found.%s Run %smake clean-ghosts%s (or `Tools/ghosts.sh --fix`) to clean them up.\n' \
         "$c_yellow" "$found_count" "$c_reset" "$c_bold" "$c_reset"
     exit 1
 fi
