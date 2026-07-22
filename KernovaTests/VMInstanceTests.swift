@@ -61,6 +61,16 @@ struct VMInstanceTests {
         #expect(instance.serialOutputPipe == nil)
     }
 
+    @Test("tearDownSession resets a hidden (headless) displayMode to inline")
+    func tearDownSessionResetsHiddenDisplayMode() {
+        let instance = makeInstance(status: .running)
+        instance.displayMode = .hidden
+
+        instance.tearDownSession()
+
+        #expect(instance.displayMode == .inline)
+    }
+
     @Test("tearDownSession is idempotent")
     func tearDownSessionIdempotent() {
         let instance = makeInstance(status: .paused)

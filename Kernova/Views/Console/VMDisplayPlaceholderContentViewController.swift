@@ -4,10 +4,10 @@ import os
 /// AppKit content view controller for the detail-pane "console" placeholder.
 ///
 /// Shows a centered empty-state (icon + title + description + optional action
-/// button) for the non-inline display states — `Fullscreen`, `Popped Out`,
-/// `Suspended` (cold-paused), and `No Display` — and falls back to an inert
-/// black fill while a live VM display is layered on top by
-/// `DetailContainerViewController`.
+/// buttons) for the non-inline display states — `Fullscreen`, `Popped Out`,
+/// `Display Closed` (running headless), `Suspended` (cold-paused), and
+/// `No Display` — and falls back to an inert black fill while a live VM
+/// display is layered on top by `DetailContainerViewController`.
 ///
 /// Observes `VMInstance.displayMode`, `isColdPaused`, and `virtualMachine` via
 /// `observeRecurring` and recomputes the visible state in `apply()`.
@@ -101,6 +101,7 @@ final class VMDisplayPlaceholderContentViewController: NSViewController {
     private enum ConsoleState {
         case fullscreen
         case poppedOut
+        case displayClosed
         case suspended
         case live
         case noDisplay
@@ -110,6 +111,7 @@ final class VMDisplayPlaceholderContentViewController: NSViewController {
         switch instance.displayMode {
         case .fullscreen: return .fullscreen
         case .popOut: return .poppedOut
+        case .hidden: return .displayClosed
         case .inline:
             if instance.isColdPaused { return .suspended }
             if instance.virtualMachine != nil { return .live }
@@ -134,10 +136,16 @@ final class VMDisplayPlaceholderContentViewController: NSViewController {
                 symbolName: "arrow.up.left.and.arrow.down.right",
                 title: "Fullscreen",
                 description: "The virtual machine display is in fullscreen mode.",
-                action: DisplayPlaceholderEmptyStateView.Action(
-                    title: "Exit Fullscreen",
-                    selector: #selector(AppDelegate.toggleFullscreen(_:))
-                )
+                actions: [
+                    DisplayPlaceholderEmptyStateView.Action(
+                        title: "Show Display",
+                        selector: #selector(AppDelegate.showDisplayWindow(_:))
+                    ),
+                    DisplayPlaceholderEmptyStateView.Action(
+                        title: "Exit Fullscreen",
+                        selector: #selector(AppDelegate.toggleFullscreen(_:))
+                    ),
+                ]
             )
         case .poppedOut:
             emptyState.isHidden = false
@@ -145,10 +153,33 @@ final class VMDisplayPlaceholderContentViewController: NSViewController {
                 symbolName: "pip.exit",
                 title: "Popped Out",
                 description: "The virtual machine display is in a separate window.",
-                action: DisplayPlaceholderEmptyStateView.Action(
-                    title: "Pop In",
-                    selector: #selector(AppDelegate.togglePopOut(_:))
-                )
+                actions: [
+                    DisplayPlaceholderEmptyStateView.Action(
+                        title: "Show Display",
+                        selector: #selector(AppDelegate.showDisplayWindow(_:))
+                    ),
+                    DisplayPlaceholderEmptyStateView.Action(
+                        title: "Pop In",
+                        selector: #selector(AppDelegate.togglePopOut(_:))
+                    ),
+                ]
+            )
+        case .displayClosed:
+            emptyState.isHidden = false
+            emptyState.configure(
+                symbolName: "eye.slash",
+                title: "Display Closed",
+                description: "The virtual machine is running without a display window.",
+                actions: [
+                    DisplayPlaceholderEmptyStateView.Action(
+                        title: "Show Display",
+                        selector: #selector(AppDelegate.showDisplayWindow(_:))
+                    ),
+                    DisplayPlaceholderEmptyStateView.Action(
+                        title: "Pop In",
+                        selector: #selector(AppDelegate.togglePopOut(_:))
+                    ),
+                ]
             )
         case .suspended:
             emptyState.isHidden = false
@@ -156,7 +187,7 @@ final class VMDisplayPlaceholderContentViewController: NSViewController {
                 symbolName: "pause.circle",
                 title: "Suspended",
                 description: "This virtual machine's state is saved to disk. Resume to continue.",
-                action: nil
+                actions: []
             )
         case .noDisplay:
             emptyState.isHidden = false
@@ -164,7 +195,7 @@ final class VMDisplayPlaceholderContentViewController: NSViewController {
                 symbolName: "display",
                 title: "No Display",
                 description: "The virtual machine display is not available.",
-                action: nil
+                actions: []
             )
         case .live:
             emptyState.isHidden = true
@@ -175,7 +206,7 @@ final class VMDisplayPlaceholderContentViewController: NSViewController {
 // MARK: - DisplayPlaceholderEmptyStateView
 
 /// AppKit empty-state placeholder: a centered SF Symbol, title, description,
-/// and optional action button.
+/// and an optional row of action buttons.
 ///
 /// Approximates SwiftUI's `ContentUnavailableView` styling without inheriting
 /// any of its declarative machinery. Action buttons use `target = nil` so
@@ -184,7 +215,7 @@ final class VMDisplayPlaceholderContentViewController: NSViewController {
 /// `AppDelegate.toggleFullscreen(_:)` / `togglePopOut(_:)`).
 @MainActor
 private final class DisplayPlaceholderEmptyStateView: NSView {
-    struct Action {
+    struct Action: Equatable {
         let title: String
         let selector: Selector
     }
@@ -192,8 +223,19 @@ private final class DisplayPlaceholderEmptyStateView: NSView {
     private let imageView = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let descriptionLabel = NSTextField(wrappingLabelWithString: "")
-    private let actionButton = NSButton(title: "", target: nil, action: nil)
+    private let buttonRow = NSStackView()
     private let stack = NSStackView()
+
+    /// The actions currently materialized as buttons in `buttonRow`.
+    ///
+    /// `configure` re-runs on every observation tick (a status change, a VM
+    /// reference swap), but the action set only changes on a state transition —
+    /// and often not even then (Popped Out and Display Closed share the same two
+    /// actions). Rebuilding buttons unconditionally would churn `NSButton`
+    /// allocations and stack-view constraints on every tick, so the rebuild is
+    /// guarded on this, mirroring the label-equality guard `VMToolbarManager`
+    /// uses for its swap-on-state items. `nil` until the first `configure`.
+    private var renderedActions: [Action]?
 
     /// Soft cap so multi-line descriptions wrap reasonably instead of stretching
     /// to the full detail-pane width.
@@ -218,14 +260,14 @@ private final class DisplayPlaceholderEmptyStateView: NSView {
         descriptionLabel.preferredMaxLayoutWidth = Self.maxContentWidth
         descriptionLabel.lineBreakMode = .byWordWrapping
 
-        actionButton.bezelStyle = .rounded
-        actionButton.controlSize = .regular
+        buttonRow.orientation = .horizontal
+        buttonRow.spacing = Spacing.standard
 
         stack.orientation = .vertical
         stack.alignment = .centerX
         stack.spacing = Spacing.medium
         stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.setViews([imageView, titleLabel, descriptionLabel, actionButton], in: .top)
+        stack.setViews([imageView, titleLabel, descriptionLabel, buttonRow], in: .top)
         // Tighten the gap between the icon and title so the cluster reads as a unit.
         stack.setCustomSpacing(8, after: imageView)
         stack.setCustomSpacing(4, after: titleLabel)
@@ -248,7 +290,7 @@ private final class DisplayPlaceholderEmptyStateView: NSView {
         fatalError("DisplayPlaceholderEmptyStateView does not support NSCoder")
     }
 
-    func configure(symbolName: String, title: String, description: String, action: Action?) {
+    func configure(symbolName: String, title: String, description: String, actions: [Action]) {
         // `NSImage.systemSymbol` already logs at `.fault` and asserts on miss;
         // no need to re-implement the defensive unwrap here.
         imageView.image = NSImage.systemSymbol(symbolName, accessibilityDescription: "")
@@ -256,15 +298,20 @@ private final class DisplayPlaceholderEmptyStateView: NSView {
         titleLabel.stringValue = title
         descriptionLabel.stringValue = description
 
-        if let action {
-            actionButton.title = action.title
-            actionButton.target = nil
-            actionButton.action = action.selector
-            actionButton.isHidden = false
-        } else {
-            actionButton.target = nil
-            actionButton.action = nil
-            actionButton.isHidden = true
-        }
+        // Only rebuild the button row when the action set actually changed;
+        // titles/symbols above are cheap property writes, but recreating buttons
+        // tears down and rebuilds stack-view constraints.
+        guard renderedActions != actions else { return }
+        renderedActions = actions
+        buttonRow.setViews(
+            actions.map { action in
+                let button = NSButton(title: action.title, target: nil, action: action.selector)
+                button.bezelStyle = .rounded
+                button.controlSize = .regular
+                return button
+            },
+            in: .center
+        )
+        buttonRow.isHidden = actions.isEmpty
     }
 }

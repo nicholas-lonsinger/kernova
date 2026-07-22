@@ -902,8 +902,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// `.accessory` state — the response to a GUI-origin quit.
     ///
     /// Display windows are closed as app-initiated dismissals (`closeForAppDismissal`)
-    /// so their close handler skips the user-close side effects (reverting
-    /// `displayPreference` and restoring the library window). The remaining windows'
+    /// so their close handler returns `displayMode` to `.inline` (not the user-close
+    /// `.hidden`) and leaves `displayPreference` intact. The remaining windows'
     /// close observers reconcile the activation policy, so no explicit sync is needed
     /// here. Collections are snapshotted because closing mutates them.
     private func closeAllGUIWindows() {
@@ -1423,12 +1423,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         guard let instance = activeInstance else { return }
 
         if let existing = displayWindows[instance.instanceID] {
-            existing.window?.close()
+            existing.closeForPopIn()
+            return
+        }
+
+        if instance.displayMode == .hidden {
+            // Pop in from headless: there is no window to close — just return
+            // the display slot to the main window.
+            viewModel.updateConfiguration(of: instance) { $0.displayPreference = .inline }
+            instance.displayMode = .inline
             return
         }
 
         viewModel.updateConfiguration(of: instance) { $0.displayPreference = .popOut }
         openDisplayWindow(for: instance, enterFullscreen: false)
+    }
+
+    /// Brings the VM's display window forward, reopening it (in its persisted
+    /// style) if the user previously closed it while the VM ran headless.
+    ///
+    /// Target of the detail-pane placeholder's "Show Display" button.
+    @objc func showDisplayWindow(_ sender: Any?) {
+        guard let instance = activeInstance else { return }
+        if let existing = displayWindows[instance.instanceID] {
+            existing.window?.makeKeyAndOrderFront(nil)
+        } else {
+            openDisplayWindow(for: instance)
+        }
     }
 
     @objc func toggleFullscreen(_ sender: Any?) {
@@ -1485,52 +1506,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 if let token = self.displayWindowObservers.removeValue(forKey: vmID) {
                     NotificationCenter.default.removeObserver(token)
                 }
-                if let controller = self.displayWindows.removeValue(forKey: vmID) {
-                    self.viewModel.updateConfiguration(of: instance) { config in
-                        // Always remember which display the VM was on
-                        if let displayID = controller.lastDisplayID {
-                            config.lastFullscreenDisplayID = displayID
-                        }
-                        if !controller.closedProgrammatically {
-                            // User manually closed the display window
-                            config.displayPreference = .inline
-                            Self.logger.debug(
-                                "Cleared displayPreference for '\(instance.name, privacy: .public)' (user closed display window)"
-                            )
-                        }
+                guard let controller = self.displayWindows.removeValue(forKey: vmID) else { return }
+                let closeReason = controller.closeReason ?? .userClose
+                self.viewModel.updateConfiguration(of: instance) { config in
+                    // Always remember which display the VM was on
+                    if let displayID = controller.lastDisplayID {
+                        config.lastFullscreenDisplayID = displayID
                     }
-
-                    Self.logger.notice(
-                        "Display window closed for '\(instance.name, privacy: .public)' (programmatic=\(controller.closedProgrammatically, privacy: .public), policy=\(NSApp.activationPolicy().rawValue, privacy: .public))"
-                    )
-                    if controller.closedProgrammatically {
-                        // VM stopped/errored/cold-paused — check if app should quit.
-                        // The global `willClose` observer (#437) already schedules the
-                        // Dock-presence reconcile for this same window close.
-                        self.terminateIfIdle()
-                        return
+                    if closeReason == .popIn {
+                        config.displayPreference = .inline
+                        Self.logger.debug(
+                            "Cleared displayPreference for '\(instance.name, privacy: .public)' (popped display back in)"
+                        )
                     }
                 }
-                self.viewModel.selectedID = vmID
 
-                // Restore library window for user-initiated close:
-                // - Key + active app: user deliberately closed display → focus library
-                // - App not active: user closed display while elsewhere → show library in background
-                // - Active but not key: user is in another Kernova window → no action needed
-                if wasKeyWindow && appWasActive {
-                    self.showLibrary(nil)
-                } else if !appWasActive {
-                    self.showLibraryWindow(bringToFront: false)
+                Self.logger.notice(
+                    "Display window closed for '\(instance.name, privacy: .public)' (reason=\(String(describing: closeReason), privacy: .public), policy=\(NSApp.activationPolicy().rawValue, privacy: .public))"
+                )
+                switch closeReason {
+                case .appDismissal:
+                    // VM stopped/errored/cold-paused or GUI dismissed — check if the
+                    // app should quit. The global `willClose` observer (#437) already
+                    // schedules the Dock-presence reconcile for this same window close.
+                    self.terminateIfIdle()
+                case .userClose:
+                    // The user closed the display window: the VM keeps running
+                    // headless and nothing pops back in — the library window (if
+                    // open) shows the "Display Closed" placeholder with a
+                    // "Show Display" button. The global `willClose` observer (#437)
+                    // reconciles Dock presence, dropping to `.accessory` when no
+                    // window remains.
+                    break
+                case .popIn:
+                    self.viewModel.selectedID = vmID
+
+                    // Restore library window so the popped-in display is visible:
+                    // - Key + active app: user popped in from the display window → focus library
+                    // - App not active: popped in while elsewhere → show library in background
+                    // - Active but not key: user is in another Kernova window (e.g. the
+                    //   library's placeholder button) → no action needed
+                    if wasKeyWindow && appWasActive {
+                        self.showLibrary(nil)
+                    } else if !appWasActive {
+                        self.showLibraryWindow(bringToFront: false)
+                    }
+                    // Reconcile immediately (not `scheduleAgentActivationPolicySync()`'s
+                    // extra deferred tick): the global `willClose` observer (#437) also
+                    // schedules a reconcile for this same window close, but as an
+                    // independent `Task` it isn't guaranteed to run after the
+                    // `showLibrary`/`showLibraryWindow` restore above — an ordering race
+                    // that could otherwise flip the Dock icon to `.accessory` and back.
+                    // Calling it synchronously here, after the restore, is the
+                    // authoritative reconcile for this path.
+                    self.syncAgentActivationPolicy()
                 }
-                // Reconcile immediately (not `scheduleAgentActivationPolicySync()`'s
-                // extra deferred tick): the global `willClose` observer (#437) also
-                // schedules a reconcile for this same window close, but as an
-                // independent `Task` it isn't guaranteed to run after the
-                // `showLibrary`/`showLibraryWindow` restore above — an ordering race
-                // that could otherwise flip the Dock icon to `.accessory` and back.
-                // Calling it synchronously here, after the restore, is the
-                // authoritative reconcile for this path.
-                self.syncAgentActivationPolicy()
             }
         }
         displayWindowObservers[vmID] = token
@@ -1702,7 +1732,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         case #selector(togglePopOut(_:)):
             guard let instance = activeInstance else { return false }
             let canUse = instance.canUseExternalDisplay
-            menuItem.title = displayWindows[instance.instanceID] != nil ? "Pop In Display" : "Pop Out Display"
+            // `isDisplayDetached` (not window existence): a hidden (headless)
+            // display has no window but still pops back *in*.
+            menuItem.title = instance.isDisplayDetached ? "Pop In Display" : "Pop Out Display"
             return canUse
         case #selector(toggleFullscreen(_:)):
             guard let instance = activeInstance else { return false }
