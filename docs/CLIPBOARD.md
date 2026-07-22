@@ -437,9 +437,13 @@ indicator, over two owner-side channels:
 
 **The copy dialog's consumption of the published progress is environment-sensitive** (#639).
 With publication log-proven in every live run, the dialog rendered a determinate bar in some
-sessions (single flat files in #638's runs; folder children in both #639 sessions) and stayed on
-the indeterminate "Preparing to copy…" slide in others (every flat-file paste across two later
-sessions, including from a clean host boot) — byte-identical binaries throughout. The dialog also
+runs (single flat files in #638's sessions; folder children once, with fill growth across
+observations) and stayed on the indeterminate "Preparing to copy…" slide in others (every
+flat-file paste across two later sessions — clean host boot included — and two same-boot folder
+re-runs) — byte-identical binaries throughout, varying run-to-run within one boot. Captured frame
+sequences also show the indeterminate sweep parking at the track's left edge each cycle, which
+mimics a small determinate fill in any single glance: a determinate claim needs fill growth
+across multiple observations, never one frame. The dialog also
 dismisses itself tens of seconds into a multi-GB pull while materialization continues in the
 background; the `fetchContents` `Progress` channel keeps driving the framework's own bookkeeping
 for the full pull and payloads land intact either way. This is a **documented gap**, not a defect
