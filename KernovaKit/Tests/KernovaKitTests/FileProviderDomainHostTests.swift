@@ -790,6 +790,46 @@ struct FileProviderDomainHostEnablementTests {
         #expect(domainSource.callCount == 4)
     }
 
+    @Test("a rejected publish never populates the progress-URL manifest, and a clear empties it")
+    func rejectedPublishLeavesProgressManifestEmpty() async throws {
+        let identifierString = "kernova-clipboard-test-\(UUID().uuidString)"
+        let domainSource = FakeDomainSource()
+        domainSource.setResult(.success([matchingDomain(identifierString)]))
+        let collector = AvailabilityCollector()
+        let host = makeHost(
+            domainIdentifier: identifierString, domainSource: domainSource,
+            notificationCenter: NotificationCenter())
+        host.setAvailabilityObserver { collector.record($0) }
+
+        host.setEnabled(true)
+        try await collector.gate.wait { collector.values.contains(.needsEnabling) }
+        #expect(host.domainRegisteredForTesting)
+
+        // The domain is registered but has no resolved user-visible root (and a
+        // constructed domain's read-only `userEnabled` is false), so this
+        // publish is refused and falls back to the sync path.
+        let urls = host.publishItems(
+            generation: 1,
+            items: [
+                FileProviderPublishItem(
+                    repIndex: 0, filename: "big.bin", byteCount: 1_000, uti: "public.data")
+            ],
+            folders: [], waitForPlaceholder: false)
+
+        #expect(urls == nil)
+        // The cache the progress-URL resolver keys off must stay empty: it is
+        // populated only after every guard passes AND the container write
+        // succeeds. Were it assigned earlier, a refused offer would still
+        // resolve progress URLs for placeholders that were never advertised.
+        #expect(host.publishedManifestForTesting == .empty)
+
+        // The clear path assigns before its container write — which genuinely
+        // throws here, since the test host has no app-group container — so the
+        // cache is emptied even when the manifest can't be rewritten on disk.
+        host.clearOffer()
+        #expect(host.publishedManifestForTesting == .empty)
+    }
+
     @Test("a persistently throwing read retries up to the limit, then stops at .unavailable")
     func readFailureRetriesThenExhausts() async throws {
         let domainSource = FakeDomainSource()
@@ -1054,5 +1094,67 @@ final class StabilizationRecorder: @unchecked Sendable {
             return parked
         }
         for completion in pending { completion(error) }
+    }
+}
+
+/// Locks `FileProviderDomainHost.visibleFileURL` — the pure lookup behind the
+/// relay's published Finder-copy-dialog progress resolver (#634): a pull's
+/// `(generation, repIndex, childSeq?)` addressing against the current manifest
+/// and domain root.
+@Suite("FileProviderDomainHost visible file URL")
+struct FileProviderDomainHostVisibleFileURLTests {
+    private let root = URL(fileURLWithPath: "/tmp/CloudRoot", isDirectory: true)
+
+    /// One flat item (with a de-duplicated dirent name) and one folder rep with
+    /// a nested file node, both at generation 9.
+    private func makeManifest() -> FileProviderManifest {
+        FileProviderManifest(
+            generation: 9,
+            items: [
+                .init(
+                    sessionSalt: 1, generation: 9, repIndex: 0, filename: "big (2).bin",
+                    byteCount: 100, uti: "public.data")
+            ],
+            folders: [
+                .init(
+                    sessionSalt: 1, generation: 9, repIndex: 1, filename: "Folder",
+                    uti: "public.folder",
+                    nodes: [
+                        .init(
+                            childSeq: 4, parentChildSeq: 0, kind: .file, filename: "file.txt",
+                            relativePath: "sub/file.txt", byteCount: 5, uti: "public.plain-text")
+                    ])
+            ])
+    }
+
+    @Test("a flat rep resolves to root + the manifest's (deduplicated) dirent name")
+    func flatRepResolves() {
+        let url = FileProviderDomainHost.visibleFileURL(
+            rootURL: root, manifest: makeManifest(), generation: 9, repIndex: 0, childSeq: nil)
+        #expect(url?.path == "/tmp/CloudRoot/big (2).bin")
+    }
+
+    @Test("a folder child resolves to root/folder/relativePath; childSeq 0 is the folder root")
+    func folderChildResolves() {
+        let child = FileProviderDomainHost.visibleFileURL(
+            rootURL: root, manifest: makeManifest(), generation: 9, repIndex: 1, childSeq: 4)
+        #expect(child?.path == "/tmp/CloudRoot/Folder/sub/file.txt")
+        let folderRoot = FileProviderDomainHost.visibleFileURL(
+            rootURL: root, manifest: makeManifest(), generation: 9, repIndex: 1, childSeq: 0)
+        #expect(folderRoot?.path == "/tmp/CloudRoot/Folder")
+    }
+
+    @Test("a superseded generation, unknown rep, or unknown child resolves nil")
+    func staleAddressingResolvesNil() {
+        let manifest = makeManifest()
+        #expect(
+            FileProviderDomainHost.visibleFileURL(
+                rootURL: root, manifest: manifest, generation: 8, repIndex: 0, childSeq: nil) == nil)
+        #expect(
+            FileProviderDomainHost.visibleFileURL(
+                rootURL: root, manifest: manifest, generation: 9, repIndex: 5, childSeq: nil) == nil)
+        #expect(
+            FileProviderDomainHost.visibleFileURL(
+                rootURL: root, manifest: manifest, generation: 9, repIndex: 1, childSeq: 99) == nil)
     }
 }

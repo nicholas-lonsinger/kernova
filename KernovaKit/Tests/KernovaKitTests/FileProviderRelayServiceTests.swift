@@ -21,7 +21,9 @@ import KernovaTestSupport
 @Suite("FileProviderRelayService")
 struct FileProviderRelayServiceTests {
     /// Records the `(generation, repIndex)` it was asked for and returns a fixed
-    /// result, so forwarding and result mapping can be asserted.
+    /// result, so forwarding and result mapping can be asserted; `progressEvents`
+    /// are fired through `onProgress` before returning, standing in for the
+    /// receiver's per-chunk callbacks.
     private final class MockPullProvider: FileProviderPullProvider, @unchecked Sendable {
         private let lastFetchCallBox = Box<(UInt64, Int)?>(nil)
         private let lastCancelCallBox = Box<(UInt64, Int)?>(nil)
@@ -29,9 +31,14 @@ struct FileProviderRelayServiceTests {
         var lastCancelCall: (UInt64, Int)? { lastCancelCallBox.value }
         let cancelled = AsyncGate()
         let result: Result<String, FileProviderPullError>
+        let progressEvents: [(UInt64, UInt64)]
 
-        init(result: Result<String, FileProviderPullError>) {
+        init(
+            result: Result<String, FileProviderPullError>,
+            progressEvents: [(UInt64, UInt64)] = []
+        ) {
             self.result = result
+            self.progressEvents = progressEvents
         }
 
         func fetchStagedFile(
@@ -39,6 +46,7 @@ struct FileProviderRelayServiceTests {
             onProgress: @escaping @Sendable (UInt64, UInt64) -> Void
         ) -> Result<String, FileProviderPullError> {
             lastFetchCallBox.value = (generation, repIndex)
+            for (bytes, total) in progressEvents { onProgress(bytes, total) }
             return result
         }
 
@@ -52,6 +60,7 @@ struct FileProviderRelayServiceTests {
             onProgress: @escaping @Sendable (UInt64, UInt64) -> Void
         ) -> Result<String, FileProviderPullError> {
             lastFetchCallBox.value = (generation, repIndex)
+            for (bytes, total) in progressEvents { onProgress(bytes, total) }
             return result
         }
 
@@ -238,5 +247,148 @@ struct FileProviderRelayServiceTests {
         provider.release()
         try await replyGate.wait { reply.value != nil }
         #expect(reply.value?.0 == "/staged/file")
+    }
+
+    @Test(
+        "fetchFile keys the file-progress resolver by (generation, repIndex) and finishes the publisher at reply"
+    )
+    func fetchFileDrivesFileProgressPublisher() async throws {
+        let url = URL(fileURLWithPath: "/tmp/kernova-relay-test/file.bin")
+        let provider = MockPullProvider(
+            result: .success("/staged/file"),
+            progressEvents: [(65_536, 1_000_000), (1_000_000, 1_000_000)])
+        let service = FileProviderRelayService(
+            pullProvider: provider, loggerSubsystem: "app.kernova.test",
+            fileProgressRevealDelay: 0)
+        let resolverCalls = Box<[(UInt64, Int, UInt32?)]>([])
+        service.visibleFileURLResolver = { generation, repIndex, childSeq in
+            resolverCalls.value.append((generation, repIndex, childSeq))
+            return url
+        }
+        let replied = Box(false)
+        let gate = AsyncGate()
+
+        service.fetchFile(generation: 7, repIndex: 3) { _, _ in
+            replied.value = true
+            gate.notify()
+        }
+
+        try await gate.wait { replied.value }
+        // The reply fired after `finish()` enqueued its main-queue teardown, and
+        // this read is enqueued behind it — so a nil progress here proves the
+        // publish lifecycle ran to its terminal, not that it never started (the
+        // resolver call count proves the publish happened).
+        let publisher = try #require(service.lastFilePublisherForTesting)
+        let progress = await MainActor.run { publisher.progressForTesting }
+        #expect(progress == nil)
+        #expect(resolverCalls.value.count == 1)
+        #expect(resolverCalls.value.first?.0 == 7)
+        #expect(resolverCalls.value.first?.1 == 3)
+        #expect(resolverCalls.value.first?.2 == nil)
+    }
+
+    @Test("a failed pull still finishes the file-progress publisher (the cancel path)")
+    func failedFetchFinishesFileProgressPublisher() async throws {
+        let url = URL(fileURLWithPath: "/tmp/kernova-relay-test/file.bin")
+        // The pull publishes progress, then fails — the shape a Finder cancel
+        // takes: `cancelFetch` aborts the vsock transfer and the pull surfaces
+        // as `.pullFailed`. Nothing else unpublishes, so if the failure branch
+        // ever stopped calling `finish()` the `NSProgress` would stay published
+        // for good and Finder would keep a stuck bar.
+        let provider = MockPullProvider(
+            result: .failure(.pullFailed),
+            progressEvents: [(65_536, 1_000_000), (500_000, 1_000_000)])
+        let service = FileProviderRelayService(
+            pullProvider: provider, loggerSubsystem: "app.kernova.test",
+            fileProgressRevealDelay: 0)
+        let resolverCalls = Box(0)
+        service.visibleFileURLResolver = { _, _, _ in
+            resolverCalls.value += 1
+            return url
+        }
+        let error = Box<NSError?>(nil)
+        let gate = AsyncGate()
+
+        service.fetchFile(generation: 7, repIndex: 3) { _, nsError in
+            error.value = nsError
+            gate.notify()
+        }
+
+        try await gate.wait { error.value != nil }
+        #expect(error.value?.code == NSFileProviderError.serverUnreachable.rawValue)
+        // Read on the main queue FIRST: the reply fires from `pullQueue`, so
+        // waking on it says nothing about the publisher's main-queue work. This
+        // read is enqueued behind every pending `record`/`finish` block, which
+        // is what makes both assertions below ordered rather than racy.
+        let publisher = try #require(service.lastFilePublisherForTesting)
+        let progress = await MainActor.run { publisher.progressForTesting }
+        #expect(progress == nil)
+        // The resolver ran, so the progress genuinely published mid-pull; the
+        // nil read above is therefore an unpublish, not a never-published.
+        #expect(resolverCalls.value == 1)
+    }
+
+    @Test("a failed child pull still finishes the file-progress publisher")
+    func failedChildFetchFinishesFileProgressPublisher() async throws {
+        let url = URL(fileURLWithPath: "/tmp/kernova-relay-test/folder/sub/file.txt")
+        let provider = MockPullProvider(
+            result: .failure(.pullFailed),
+            progressEvents: [(65_536, 500_000), (250_000, 500_000)])
+        let service = FileProviderRelayService(
+            pullProvider: provider, loggerSubsystem: "app.kernova.test",
+            fileProgressRevealDelay: 0)
+        let resolverCalls = Box(0)
+        service.visibleFileURLResolver = { _, _, _ in
+            resolverCalls.value += 1
+            return url
+        }
+        let error = Box<NSError?>(nil)
+        let gate = AsyncGate()
+
+        service.fetchChild(generation: 2, repIndex: 1, childSeq: 5, relativePath: "sub/file.txt") {
+            _, nsError in
+            error.value = nsError
+            gate.notify()
+        }
+
+        try await gate.wait { error.value != nil }
+        // Main-queue barrier before asserting — see the flat-file test above.
+        let publisher = try #require(service.lastFilePublisherForTesting)
+        let progress = await MainActor.run { publisher.progressForTesting }
+        #expect(progress == nil)
+        #expect(resolverCalls.value == 1)
+    }
+
+    @Test("fetchChild keys the file-progress resolver by childSeq")
+    func fetchChildDrivesFileProgressPublisherWithChildSeq() async throws {
+        let url = URL(fileURLWithPath: "/tmp/kernova-relay-test/folder/sub/file.txt")
+        let provider = MockPullProvider(
+            result: .success("/staged/child"),
+            progressEvents: [(65_536, 500_000), (500_000, 500_000)])
+        let service = FileProviderRelayService(
+            pullProvider: provider, loggerSubsystem: "app.kernova.test",
+            fileProgressRevealDelay: 0)
+        let resolverCalls = Box<[(UInt64, Int, UInt32?)]>([])
+        service.visibleFileURLResolver = { generation, repIndex, childSeq in
+            resolverCalls.value.append((generation, repIndex, childSeq))
+            return url
+        }
+        let replied = Box(false)
+        let gate = AsyncGate()
+
+        service.fetchChild(generation: 2, repIndex: 1, childSeq: 5, relativePath: "sub/file.txt") {
+            _, _ in
+            replied.value = true
+            gate.notify()
+        }
+
+        try await gate.wait { replied.value }
+        let publisher = try #require(service.lastFilePublisherForTesting)
+        let progress = await MainActor.run { publisher.progressForTesting }
+        #expect(progress == nil)
+        #expect(resolverCalls.value.count == 1)
+        #expect(resolverCalls.value.first?.0 == 2)
+        #expect(resolverCalls.value.first?.1 == 1)
+        #expect(resolverCalls.value.first?.2 == 5)
     }
 }
