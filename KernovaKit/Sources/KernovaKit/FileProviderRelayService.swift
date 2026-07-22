@@ -468,7 +468,7 @@ final class FetchProgressFilePublisher: @unchecked Sendable {
         // The reveal gate: don't publish until the pull has streamed for
         // `revealDelay` (not latched — a later throttled update re-evaluates),
         // so a pull that finishes sooner never publishes at all.
-        let firstRecordAt = lock.withLock { firstRecordAt }
+        let firstRecordAt: DispatchTime? = lock.withLock { self.firstRecordAt }
         if let firstRecordAt {
             let streaming =
                 Double(DispatchTime.now().uptimeNanoseconds - firstRecordAt.uptimeNanoseconds)
