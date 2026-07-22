@@ -10,6 +10,10 @@ enum VMDisplayMode: Sendable {
     case popOut
     /// Display is in its own window in native macOS fullscreen.
     case fullscreen
+    /// No display surface — the user closed the display window while the VM
+    /// keeps running headless. `displayPreference` is retained so "Show
+    /// Display" (and the next start) reopens the window in its previous style.
+    case hidden
 }
 
 /// Which inline detail pane the user has chosen to view for a running VM.
@@ -380,8 +384,12 @@ final class VMInstance {
     /// `true` when this VM's display is shown in a dedicated fullscreen window.
     var isInFullscreen: Bool { displayMode == .fullscreen }
 
-    /// `true` when the display is in any separate window (pop-out or fullscreen).
-    var isInSeparateWindow: Bool { displayMode != .inline }
+    /// `true` when the display is not hosted inline.
+    ///
+    /// Covers a pop-out or fullscreen window as well as a display closed while
+    /// the VM runs headless (`.hidden`). In every case the matching affordance
+    /// is "Pop In".
+    var isDisplayDetached: Bool { displayMode != .inline }
 
     /// `true` when the VM has clipboard sharing enabled and is eligible to show the clipboard window.
     var canShowClipboard: Bool {
@@ -418,6 +426,11 @@ final class VMInstance {
         virtualMachine = nil
         delegateAdapter = nil
         runtimeFileAccess.releaseAll()
+        // The display surface is tied to the live session. An open display
+        // window resets this itself when it auto-closes; the `.hidden`
+        // (headless) mode has no window to do so — reset here so it can't
+        // leak into the next session.
+        displayMode = .inline
     }
 
     /// Releases the VZVirtualMachine reference and marks the VM as stopped.

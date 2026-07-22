@@ -786,7 +786,7 @@ extension SidebarViewController {
             menu.addItem(.separator())
             menu.addItem(
                 responderItem(
-                    instance.isInSeparateWindow ? "Pop In Display" : "Pop Out Display",
+                    instance.isDisplayDetached ? "Pop In Display" : "Pop Out Display",
                     #selector(AppDelegate.togglePopOut(_:))
                 ))
             menu.addItem(

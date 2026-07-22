@@ -435,14 +435,14 @@ final class VMToolbarManager: NSObject {
             fullscreenItem.isEnabled = true
         }
 
-        let popLabel = instance.isInSeparateWindow ? "Pop In" : "Pop Out"
+        let popLabel = instance.isDisplayDetached ? "Pop In" : "Pop Out"
         if popItem.label != popLabel {
             popItem.label = popLabel
             popItem.image = .systemSymbol(
-                instance.isInSeparateWindow ? "pip.enter" : "pip.exit",
+                instance.isDisplayDetached ? "pip.enter" : "pip.exit",
                 accessibilityDescription: popLabel
             )
-            popItem.toolTip = instance.isInSeparateWindow ? Self.popInToolTip : Self.popOutToolTip
+            popItem.toolTip = instance.isDisplayDetached ? Self.popInToolTip : Self.popOutToolTip
         }
 
         let fsLabel = instance.isInFullscreen ? "Exit Fullscreen" : "Fullscreen"

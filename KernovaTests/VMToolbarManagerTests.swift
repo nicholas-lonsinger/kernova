@@ -380,6 +380,19 @@ struct VMToolbarManagerTests {
         #expect(display?.subitems[0].label == "Pop In")
     }
 
+    @Test("Pop In label when displayMode is hidden (headless)")
+    func popInLabelWhenHidden() {
+        let instance = makeInstance(status: .stopped)
+        instance.displayMode = .hidden
+        let manager = makeManager(instance: instance, gatesDisplayOnCapability: false)
+        let (toolbar, _, _) = makeToolbar(manager: manager)
+
+        manager.updateToolbarItems(in: toolbar)
+
+        let display = toolbar.items.first { $0.itemIdentifier.rawValue == "testDisplay" } as? NSToolbarItemGroup
+        #expect(display?.subitems[0].label == "Pop In")
+    }
+
     @Test("Fullscreen label when not in fullscreen")
     func fullscreenLabelDefault() {
         let instance = makeInstance(status: .stopped)

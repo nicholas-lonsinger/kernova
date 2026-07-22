@@ -8,11 +8,30 @@ import Virtualization
 /// On show the inline display in the main window is replaced by a placeholder
 /// (via `VMInstance.displayMode`), and this controller creates its own
 /// `VMDisplayBackingView` (containing a `VZVirtualMachineView`) bound to the same
-/// `VZVirtualMachine`. On close the process reverses so the inline display re-appears.
+/// `VZVirtualMachine`. What happens on close depends on the `CloseReason`: a
+/// user close leaves the VM running headless (`displayMode == .hidden`), while
+/// pop-in and app dismissal return the display slot to the main window.
 @MainActor
 final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
+    /// Why the display window is closing; `nil` while it is open.
+    ///
+    /// Determines the close side effects both here (`windowWillClose`'s
+    /// `displayMode` transition) and in `AppDelegate`'s close observer
+    /// (`displayPreference` and window restoration).
+    enum CloseReason {
+        /// The user closed the window (red button / ⌘W): the VM keeps running
+        /// headless — nothing pops back into the main window.
+        case userClose
+        /// App-initiated dismissal — the VM stopped/errored/cold-paused out
+        /// from under the window, or the whole GUI is being dismissed.
+        case appDismissal
+        /// Explicit Pop In: the display returns to the main window's detail
+        /// pane and `displayPreference` reverts to `.inline`.
+        case popIn
+    }
+
     let vmID: UUID
-    private(set) var closedProgrammatically = false
+    private(set) var closeReason: CloseReason?
     private(set) var lastDisplayID: CGDirectDisplayID?
     let instance: VMInstance
     private let toolbarManager: VMToolbarManager
@@ -104,31 +123,49 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         observeInstance()
     }
 
-    /// Closes the window as an app-initiated (programmatic) dismissal rather than a
-    /// user close — the single programmatic-close path.
+    /// Closes the window as an app-initiated dismissal rather than a user close.
     ///
-    /// Marks the close programmatic so `AppDelegate`'s display-window close handler
-    /// skips the user-close side effects — reverting `displayPreference` to inline and
-    /// restoring the library window. Used both when the agent dismisses the *whole*
-    /// GUI (a GUI-origin quit) and when the VM stops/errors/cold-pauses out from under
-    /// the window (`observeInstance`). Idempotent via the `closedProgrammatically` guard.
+    /// Used both when the agent dismisses the *whole* GUI (a GUI-origin quit) and
+    /// when the VM stops/errors/cold-pauses out from under the window
+    /// (`observeInstance`).
     func closeForAppDismissal() {
-        guard !closedProgrammatically else { return }
+        close(reason: .appDismissal)
+    }
+
+    /// Closes the window as an explicit Pop In.
+    ///
+    /// The display returns to the main window's detail pane and `AppDelegate`'s
+    /// close observer reverts `displayPreference` to `.inline`.
+    func closeForPopIn() {
+        close(reason: .popIn)
+    }
+
+    /// The single programmatic-close path.
+    ///
+    /// Idempotent via the `closeReason` guard.
+    private func close(reason: CloseReason) {
+        guard closeReason == nil else { return }
         lastDisplayID = window?.screen?.displayID
-        closedProgrammatically = true
+        closeReason = reason
         window?.close()
     }
 
     // MARK: - NSWindowDelegate
 
     func windowWillClose(_ notification: Notification) {
+        // A close that arrives without a programmatic reason is the user
+        // closing the window (red button / ⌘W).
+        if closeReason == nil { closeReason = .userClose }
         // Capture display ID if not already set by the programmatic-close path
         if lastDisplayID == nil {
             lastDisplayID = window?.screen?.displayID
         }
         instanceObservation?.cancel()
         instanceObservation = nil
-        instance.displayMode = .inline
+        // A user close leaves the VM running headless — the display just
+        // disappears; pop-in and app dismissal return the display slot to the
+        // main window.
+        instance.displayMode = (closeReason == .userClose) ? .hidden : .inline
     }
 
     func window(
@@ -154,10 +191,10 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         guard instance.displayMode == .fullscreen else { return }
         instance.displayMode = .popOut
         // Only update the persisted preference for user-initiated exits.
-        // During programmatic close (VM stopped/errored/cold-paused), the
-        // preference should remain .fullscreen so it restores correctly
-        // when the display window is next opened.
-        guard !closedProgrammatically else { return }
+        // During a programmatic close (VM stopped/errored/cold-paused, GUI
+        // dismissal, pop-in), the preference should remain .fullscreen so it
+        // restores correctly when the display window is next opened.
+        guard closeReason == nil else { return }
         onUpdateConfiguration { $0.displayPreference = .popOut }
     }
 
