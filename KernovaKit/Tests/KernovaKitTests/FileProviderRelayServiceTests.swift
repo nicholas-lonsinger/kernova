@@ -258,7 +258,8 @@ struct FileProviderRelayServiceTests {
             result: .success("/staged/file"),
             progressEvents: [(65_536, 1_000_000), (1_000_000, 1_000_000)])
         let service = FileProviderRelayService(
-            pullProvider: provider, loggerSubsystem: "app.kernova.test")
+            pullProvider: provider, loggerSubsystem: "app.kernova.test",
+            fileProgressRevealDelay: 0)
         let resolverCalls = Box<[(UInt64, Int, UInt32?)]>([])
         service.visibleFileURLResolver = { generation, repIndex, childSeq in
             resolverCalls.value.append((generation, repIndex, childSeq))
@@ -293,7 +294,8 @@ struct FileProviderRelayServiceTests {
             result: .success("/staged/child"),
             progressEvents: [(65_536, 500_000), (500_000, 500_000)])
         let service = FileProviderRelayService(
-            pullProvider: provider, loggerSubsystem: "app.kernova.test")
+            pullProvider: provider, loggerSubsystem: "app.kernova.test",
+            fileProgressRevealDelay: 0)
         let resolverCalls = Box<[(UInt64, Int, UInt32?)]>([])
         service.visibleFileURLResolver = { generation, repIndex, childSeq in
             resolverCalls.value.append((generation, repIndex, childSeq))

@@ -67,10 +67,24 @@ public final class FileProviderRelayService: NSObject, FileProviderRelay {
     }
     #endif
 
+    /// How long a pull streams before its published file progress reveals;
+    /// injected only by tests (production keeps the publisher's default).
+    private let fileProgressRevealDelay: TimeInterval
+
     /// Creates the relay service, logging under `loggerSubsystem`.
-    public init(pullProvider: FileProviderPullProvider, loggerSubsystem: String) {
+    ///
+    /// `fileProgressRevealDelay` is the published file progress's reveal gate —
+    /// tests inject 0 so a mock pull's instant chunks still publish; `nil` (the
+    /// default, a sentinel because the internal constant can't appear in a
+    /// public default argument) keeps `FetchProgressFilePublisher.defaultRevealDelay`.
+    public init(
+        pullProvider: FileProviderPullProvider, loggerSubsystem: String,
+        fileProgressRevealDelay: TimeInterval? = nil
+    ) {
         self.logger = KernovaLogger(subsystem: loggerSubsystem, category: "FileProviderRelay")
         self.pullProvider = pullProvider
+        self.fileProgressRevealDelay =
+            fileProgressRevealDelay ?? FetchProgressFilePublisher.defaultRevealDelay
         super.init()
     }
 
@@ -81,7 +95,8 @@ public final class FileProviderRelayService: NSObject, FileProviderRelay {
     ) -> FetchProgressFilePublisher? {
         guard let resolver = visibleFileURLResolver else { return nil }
         let publisher = FetchProgressFilePublisher(
-            resolveFileURL: { resolver(generation, repIndex, childSeq) }, logger: logger)
+            resolveFileURL: { resolver(generation, repIndex, childSeq) }, logger: logger,
+            revealDelay: fileProgressRevealDelay)
         #if DEBUG
         lastFilePublisherLock.withLock { lastFilePublisherStorage = publisher }
         #endif
@@ -337,7 +352,10 @@ final class FetchProgressPusher: @unchecked Sendable {
 ///
 /// Lifecycle: published lazily on the first recorded chunk carrying a non-zero
 /// total (resolving the URL then, not at pull start, so a pull that dies before
-/// its first chunk never publishes), advanced under the shared
+/// its first chunk never publishes) once `revealDelay` has elapsed since the
+/// first chunk — the in-app bar's 300 ms reveal convention, so an instant
+/// transfer (and a folder copy's many small children, each its own pull) never
+/// flashes a publish/unpublish cycle. Advanced under the shared
 /// `FetchProgressThrottle`, and `unpublish()`ed by `finish()` — called from both
 /// reply branches of the pull, which also covers cancel: an aborted pull
 /// surfaces as the failure reply. All `Progress` work runs on the main queue
@@ -348,17 +366,26 @@ final class FetchProgressPusher: @unchecked Sendable {
 /// `@unchecked Sendable`: the throttle watermarks are guarded by `lock`;
 /// `progress`/`finished`/`resolutionFailed` are main-queue state.
 final class FetchProgressFilePublisher: @unchecked Sendable {
+    /// The default reveal gate: how long a pull must have been streaming before
+    /// its progress publishes (the in-app bar's 300 ms convention).
+    static let defaultRevealDelay: TimeInterval = 0.3
+
     /// Resolves the pull's placeholder to its user-visible URL.
     ///
     /// Bound to the pull's `(generation, repIndex, childSeq?)` addressing. Main
     /// queue only; `nil` degrades to no published progress.
     private let resolveFileURL: @Sendable () -> URL?
     private let logger: KernovaLogger
+    /// Seconds after the first chunk before the progress may publish; a pull
+    /// that finishes sooner never publishes at all.
+    private let revealDelay: TimeInterval
     private let lock = NSLock()
     private var lastRecordedBytes: UInt64 = 0
     /// When the last update was applied; `nil` until the first, so the first
-    /// chunk always publishes promptly.
+    /// chunk always clears the throttle promptly.
     private var lastRecordAt: DispatchTime?
+    /// When the first chunk was recorded — the reveal gate's reference point.
+    private var firstRecordAt: DispatchTime?
 
     // MARK: Main-queue state
 
@@ -379,9 +406,13 @@ final class FetchProgressFilePublisher: @unchecked Sendable {
     }
     #endif
 
-    init(resolveFileURL: @escaping @Sendable () -> URL?, logger: KernovaLogger) {
+    init(
+        resolveFileURL: @escaping @Sendable () -> URL?, logger: KernovaLogger,
+        revealDelay: TimeInterval = FetchProgressFilePublisher.defaultRevealDelay
+    ) {
         self.resolveFileURL = resolveFileURL
         self.logger = logger
+        self.revealDelay = revealDelay
     }
 
     /// Records cumulative progress and applies it on the main queue when the
@@ -392,6 +423,7 @@ final class FetchProgressFilePublisher: @unchecked Sendable {
         guard totalBytes > 0 else { return }
         let now = DispatchTime.now()
         let shouldApply: Bool = lock.withLock {
+            if firstRecordAt == nil { firstRecordAt = now }
             let elapsed =
                 lastRecordAt.map { Double(now.uptimeNanoseconds - $0.uptimeNanoseconds) / 1_000_000_000 }
                 ?? .greatestFiniteMagnitude
@@ -432,6 +464,16 @@ final class FetchProgressFilePublisher: @unchecked Sendable {
             if progress.totalUnitCount != total { progress.totalUnitCount = total }
             progress.completedUnitCount = completed
             return
+        }
+        // The reveal gate: don't publish until the pull has streamed for
+        // `revealDelay` (not latched — a later throttled update re-evaluates),
+        // so a pull that finishes sooner never publishes at all.
+        let firstRecordAt = lock.withLock { firstRecordAt }
+        if let firstRecordAt {
+            let streaming =
+                Double(DispatchTime.now().uptimeNanoseconds - firstRecordAt.uptimeNanoseconds)
+                / 1_000_000_000
+            guard streaming >= revealDelay else { return }
         }
         guard let url = resolveFileURL() else {
             resolutionFailed = true

@@ -9,8 +9,11 @@ import Testing
 ///
 /// Locks the lifecycle: lazy publish on the first chunk with a non-zero total
 /// (kind/fileOperationKind/fileURL/byte denomination), advancement to the
-/// total, terminal teardown via `finish()` (with late updates a no-op), and the
-/// degraded paths (nil resolution latches; a zero total never publishes).
+/// total, terminal teardown via `finish()` (with late updates a no-op), the
+/// degraded paths (nil resolution latches; a zero total never publishes), and
+/// the reveal gate (a pull inside `revealDelay` publishes nothing). Tests pass
+/// `revealDelay: 0` except the gate test, which pins it open with `.infinity` —
+/// the two boundaries lock the gate's decision without a timing wait.
 ///
 /// All `Progress` state is main-queue-confined, and `record`/`finish` enqueue
 /// their work on the main queue synchronously before returning — so an
@@ -32,7 +35,7 @@ struct FetchProgressFilePublisherTests {
             resolveFileURL: { [url] in
                 resolveCount.value += 1
                 return url
-            }, logger: Self.makeLogger())
+            }, logger: Self.makeLogger(), revealDelay: 0)
 
         publisher.record(bytesTransferred: 65_536, totalBytes: total)
 
@@ -54,7 +57,7 @@ struct FetchProgressFilePublisherTests {
     @Test("later chunks advance the same progress; the final chunk reaches the total")
     func advancesToTotal() async {
         let publisher = FetchProgressFilePublisher(
-            resolveFileURL: { [url] in url }, logger: Self.makeLogger())
+            resolveFileURL: { [url] in url }, logger: Self.makeLogger(), revealDelay: 0)
 
         publisher.record(bytesTransferred: 65_536, totalBytes: total)
         let first = await MainActor.run { publisher.progressForTesting }
@@ -71,7 +74,7 @@ struct FetchProgressFilePublisherTests {
     @Test("finish unpublishes and clears; a late update after finish is a no-op")
     func finishTearsDown() async {
         let publisher = FetchProgressFilePublisher(
-            resolveFileURL: { [url] in url }, logger: Self.makeLogger())
+            resolveFileURL: { [url] in url }, logger: Self.makeLogger(), revealDelay: 0)
 
         publisher.record(bytesTransferred: 65_536, totalBytes: total)
         publisher.finish()
@@ -92,7 +95,7 @@ struct FetchProgressFilePublisherTests {
             resolveFileURL: {
                 resolveCount.value += 1
                 return nil
-            }, logger: Self.makeLogger())
+            }, logger: Self.makeLogger(), revealDelay: 0)
 
         publisher.record(bytesTransferred: 65_536, totalBytes: total)
         publisher.record(bytesTransferred: total, totalBytes: total)
@@ -102,6 +105,24 @@ struct FetchProgressFilePublisherTests {
         #expect(resolveCount.value == 1)
     }
 
+    @Test("a pull still inside the reveal delay publishes nothing — even its final chunk")
+    func revealGateSuppressesFastPulls() async {
+        let resolveCount = Box(0)
+        let publisher = FetchProgressFilePublisher(
+            resolveFileURL: { [url] in
+                resolveCount.value += 1
+                return url
+            }, logger: Self.makeLogger(), revealDelay: .infinity)
+
+        publisher.record(bytesTransferred: 65_536, totalBytes: total)
+        publisher.record(bytesTransferred: total, totalBytes: total)
+        publisher.finish()
+
+        let progress = await MainActor.run { publisher.progressForTesting }
+        #expect(progress == nil)
+        #expect(resolveCount.value == 0)
+    }
+
     @Test("a zero-total update never publishes (nothing determinate to render)")
     func zeroTotalDoesNotPublish() async {
         let resolveCount = Box(0)
@@ -109,7 +130,7 @@ struct FetchProgressFilePublisherTests {
             resolveFileURL: { [url] in
                 resolveCount.value += 1
                 return url
-            }, logger: Self.makeLogger())
+            }, logger: Self.makeLogger(), revealDelay: 0)
 
         publisher.record(bytesTransferred: 65_536, totalBytes: 0)
 

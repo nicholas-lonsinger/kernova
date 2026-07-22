@@ -426,8 +426,10 @@ two owner-side channels:
   (`FetchProgressFilePublisher`): `kind = .file`, `fileOperationKind = .downloading`,
   `.fileURLKey` = the placeholder's user-visible URL under `~/Library/CloudStorage/…` — the
   `Progress.publish()` / `addSubscriber(forFileURL:)` machinery Finder's dialog subscribes to by
-  source URL. Published lazily on the first chunk with a non-zero total, advanced under the same
-  throttle on the main queue, unpublished at either reply terminal (which covers cancel — an
+  source URL. Published lazily on the first chunk with a non-zero total once the pull has streamed
+  for 300 ms (the in-app bar's reveal convention — an instant transfer, or a folder copy's many
+  small children, never flashes a publish/unpublish cycle), advanced under the same throttle on
+  the main queue, unpublished at either reply terminal (which covers cancel — an
   aborted pull surfaces as the failure reply). Folder children (D1b) publish per-child URLs, the
   same shape first-party providers use for per-file downloads. The sandboxed host app can publish
   for the CloudStorage URL because the domain host holds the domain root's security scope while
