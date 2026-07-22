@@ -280,8 +280,9 @@ Config/
 
 Tools/
 ├── bootstrap-team.sh                   # `make bootstrap` — derives DEVELOPMENT_TEAM from the developer's own signing cert (Subject OU, not the CN parenthetical) into Config/Local.xcconfig; idempotent, `--force` to re-derive, `--check` for a side-effect-free dry run (#476)
-├── doctor.sh                           # `make doctor` — checks the local toolchain (macOS/Xcode/Swift/swift-format), the resolved signing team + keychain identity, and git hooks
-├── ghosts.sh                           # `make ghosts`/`clean-ghosts` — dead-path Launch Services/process/worktree registrations, PLUS live competing Kernova.app copies (Trash, DerivedData) that outrank /Applications in the CFBundleVersion election (#454); `--fix` unregisters/kills/prunes/evicts
+├── derived-data-path.sh                # Resolves the Xcode build arena for a project path (default hashed ~/Library folder / Relative in-checkout / custom), mirroring Xcode's derived-data preference; the default-mode hash is a pure function of the .xcodeproj path, so a torn-down worktree's arena stays locatable — consumed by `make clean` and doctor.sh (docs/BUILD.md "Derived data and build arenas")
+├── doctor.sh                           # `make doctor` — checks the local toolchain (macOS/Xcode/Swift/swift-format), the resolved signing team + keychain identity, git hooks, and reports the resolved derived-data build arena
+├── ghosts.sh                           # `make ghosts`/`clean-ghosts` — dead-path Launch Services/process/worktree registrations, orphaned worktree DerivedData arenas in ~/Library, PLUS live competing Kernova.app copies (Trash, DerivedData) that outrank /Applications in the CFBundleVersion election (#454); `--fix` unregisters/kills/prunes/evicts; `--sweep` is the quiet hook subset run by post-checkout
 ├── hooks-installed.sh                  # Exit-status probe that the checked-in git hooks are active (core.hooksPath resolves to executable pre-push + post-checkout hooks) — consumed by `make doctor` and the Makefile's hook-install nudge
 ├── ls-reset.sh                         # `make ls-reset` — clears ghost Launch Services entries under the legacy pre-#471-rename `com.kernova.app` identifier, a gap ghosts.sh's current-identifier regex doesn't cover
 ├── regen-proto.sh                      # Regenerates kernova.pb.swift via protoc + protoc-gen-swift

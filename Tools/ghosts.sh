@@ -16,6 +16,12 @@
 # Checks for:
 #   - Launch Services registrations for app.kernova.* extensions whose
 #     `path:` no longer exists on disk
+#   - Xcode DerivedData build arenas in the global per-path-hashed
+#     ~/Library location whose recorded source worktree no longer exists —
+#     on default-location machines every worktree the GUI opens leaves a
+#     permanent, LS-registered app copy there that keeps competing in the
+#     version election after the worktree is torn down (docs/BUILD.md
+#     "Derived data and build arenas")
 #   - Running processes executing from a Kernova path that no longer exists
 #     on disk (the file was deleted out from under a still-running process)
 #   - `git worktree list` entries marked `prunable` (administrative metadata
@@ -29,7 +35,9 @@
 #     (#454). Deregistration/eviction is the only lever.
 #
 # Run via `make ghosts` (report only) or `make clean-ghosts` (also fixes).
-# Direct invocation: Tools/ghosts.sh [--fix | --sweep-ls]
+# Direct invocation: Tools/ghosts.sh [--fix | --sweep]
+# (--sweep-ls is the former name of --sweep, kept as an alias for any
+# installed hooks from before the arena sweep was added.)
 
 set -uo pipefail
 
@@ -37,7 +45,7 @@ FIX=0
 SWEEP=0
 case "${1:-}" in
     --fix) FIX=1 ;;
-    --sweep-ls) SWEEP=1 ;;
+    --sweep | --sweep-ls) SWEEP=1 ;;
 esac
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -62,13 +70,73 @@ kernova_registered_paths() {
     ' | sort -u
 }
 
-# --sweep-ls: the quiet, non-interactive subset for hooks — unregister dead
-# app.kernova.* Launch Services registrations and exit. The post-checkout git
-# hook runs it on every new worktree, so registrations left by torn-down
-# worktrees self-heal at the next worktree creation. Best-effort by design:
-# always exits 0 so a failed sweep can never fail the checkout that triggered
-# it, and skips the fix path's re-dump verification — `make ghosts` still
-# reports anything left behind.
+# Xcode DerivedData arenas left by torn-down worktrees. On machines using
+# Xcode's default derived-data location, every worktree the GUI opens gets a
+# permanent per-path-hashed folder under ~/Library — nothing removes it when
+# the worktree goes away, and the LS-registered app copy inside keeps
+# competing in the CFBundleVersion election (docs/BUILD.md "Derived data and build arenas").
+# Each folder records its source project in info.plist's WorkspacePath; that
+# recorded path is the ground truth for orphan detection (and stays readable
+# after the worktree is deleted). Tools/derived-data-path.sh computes the same
+# worktree->arena mapping forward when a single arena needs locating.
+XCODE_DD_ROOT="$HOME/Library/Developer/Xcode/DerivedData"
+
+# The worktrees all live under the *primary* checkout's .claude/worktrees/,
+# which REPO_ROOT is not when this script runs from inside a worktree — the
+# first `git worktree list` entry is the primary checkout.
+main_root=$(git -C "$REPO_ROOT" worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')
+
+# Print one arena directory per line whose recorded WorkspacePath sits in a
+# .claude/worktrees/ worktree of this repo that no longer exists on disk.
+# Scoped to this repo's worktrees deliberately: a deleted checkout of some
+# other project is not this script's call to clean up.
+orphaned_dd_arenas() {
+    [ -n "$main_root" ] || return 0
+    local info ws wt_dir
+    for info in "$XCODE_DD_ROOT"/*/info.plist; do
+        [ -f "$info" ] || continue
+        ws=$(plutil -extract WorkspacePath raw "$info" -o - 2>/dev/null) || continue
+        case "$ws" in
+            "$main_root/.claude/worktrees/"*) ;;
+            *) continue ;;
+        esac
+        wt_dir=${ws#"$main_root/.claude/worktrees/"}
+        wt_dir="$main_root/.claude/worktrees/${wt_dir%%/*}"
+        [ -d "$wt_dir" ] && continue
+        printf '%s\n' "${info%/info.plist}"
+    done
+}
+
+# Something is still executing from inside the arena (e.g. a File Provider
+# extension fileproviderd kept alive) — eviction would yank its binary.
+# Not pgrep: `pgrep -f` takes a regex, and the arena path must match
+# literally (`grep -F`); a false match only skips an eviction, the safe
+# failure mode.
+arena_in_use() {
+    # shellcheck disable=SC2009
+    ps -axo args= 2>/dev/null | grep -F "$1/" | grep -qv grep
+}
+
+# Unregister every bundle inside the arena, then trash the folder. Unregister
+# first: a copy trashed while still registered keeps competing in the
+# election (#454) — the order matters.
+evict_dd_arena() {
+    local dir=$1 app
+    while IFS= read -r app; do
+        "$LSREGISTER" -u "$app" >/dev/null 2>&1
+    done < <(find "$dir" -maxdepth 6 -name '*.app' -type d 2>/dev/null)
+    command -v trash >/dev/null 2>&1 || return 1
+    trash "$dir" 2>/dev/null
+}
+
+# --sweep: the quiet, non-interactive subset for hooks — unregister dead
+# app.kernova.* Launch Services registrations, evict DerivedData arenas
+# orphaned by torn-down worktrees, and exit. The post-checkout git hook runs
+# it on every new worktree, so debris left by torn-down worktrees self-heals
+# at the next worktree creation. Best-effort by design: always exits 0 so a
+# failed sweep can never fail the checkout that triggered it, skips anything
+# a process is still running from, and skips the fix path's re-dump
+# verification — `make ghosts` still reports anything left behind.
 if [ "$SWEEP" = 1 ]; then
     while IFS= read -r path; do
         [ -z "$path" ] && continue
@@ -76,6 +144,13 @@ if [ "$SWEEP" = 1 ]; then
         "$LSREGISTER" -u "$path" >/dev/null 2>&1
         printf 'ghosts.sh: swept dead Launch Services registration: %s\n' "$path"
     done < <(kernova_registered_paths)
+    while IFS= read -r dir; do
+        [ -z "$dir" ] && continue
+        arena_in_use "$dir" && continue
+        if evict_dd_arena "$dir"; then
+            printf 'ghosts.sh: evicted orphaned worktree DerivedData arena: %s\n' "$dir"
+        fi
+    done < <(orphaned_dd_arenas)
     exit 0
 fi
 
@@ -192,6 +267,43 @@ else
             detail 'git worktree prune failed'
         fi
     fi
+fi
+
+# ---- orphaned DerivedData build arenas ----------------------------------------
+
+section 'DerivedData build arenas'
+
+# Unlike the live-copy election check below (which prompts, because a live
+# copy might be wanted), an orphaned arena's source worktree is gone — its
+# build products are unreachable garbage, so --fix evicts without asking.
+# An arena something is still running from is skipped with a pointer instead:
+# killing a possibly-in-use app from a cleanup script is not this script's
+# call.
+dd_orphans=()
+while IFS= read -r dir; do
+    [ -z "$dir" ] && continue
+    dd_orphans+=("$dir")
+done < <(orphaned_dd_arenas)
+
+if [ "${#dd_orphans[@]}" -eq 0 ]; then
+    clean 'No DerivedData arenas left by torn-down worktrees'
+else
+    for dir in "${dd_orphans[@]}"; do
+        ghost "Orphaned worktree arena: $(pretty_path "$dir") ($(du -sh "$dir" 2>/dev/null | cut -f1))"
+        if arena_in_use "$dir"; then
+            detail 'a process is still running from inside — quit it (or reboot), then re-run'
+            continue
+        fi
+        if [ "$FIX" = 1 ]; then
+            if evict_dd_arena "$dir"; then
+                fixed "unregistered bundles and trashed: $(pretty_path "$dir")"
+            elif ! command -v trash >/dev/null 2>&1; then
+                detail 'not evicted: the `trash` CLI is unavailable'
+            else
+                detail "trash failed for $dir"
+            fi
+        fi
+    done
 fi
 
 # ---- stale File Provider domains ---------------------------------------------
