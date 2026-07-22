@@ -167,6 +167,30 @@ if [ -f .worktreeinclude ]; then
     [ "$wti_problems" -eq 0 ] && pass ".worktreeinclude entries are gitignored literal paths"
 fi
 
+# ---- build arena ------------------------------------------------------------
+
+section 'Build arena'
+
+# Where builds land. Kernova follows the machine's Xcode derived-data
+# preference rather than prescribing one — a flag-less terminal build and the
+# GUI share one arena in every mode (docs/BUILD.md "Derived data and build arenas"), and the
+# cleanup tooling (make clean, make ghosts) resolves the same location. Purely
+# informational: every mode works; this just says where the products are.
+arena=$(Tools/derived-data-path.sh 2>/dev/null || true)
+if [ -n "$arena" ]; then
+    dd_pref=$(defaults read com.apple.dt.Xcode IDECustomDerivedDataLocation 2>/dev/null || true)
+    case "$dd_pref" in
+        '') dd_mode='Xcode default (per-path-hashed ~/Library location)' ;;
+        /*) dd_mode="custom location ($dd_pref)" ;;
+        *)  dd_mode="relative location ($dd_pref/ inside the checkout)" ;;
+    esac
+    pass "Derived data: $dd_mode"
+    detail "this checkout's build arena: ${arena/#$HOME/~}"
+    detail 'orphaned worktree arenas are swept at worktree creation; audit with `make ghosts`'
+else
+    warn 'Could not resolve the derived-data arena (Tools/derived-data-path.sh failed)'
+fi
+
 # ---- signing ------------------------------------------------------------
 
 section 'Signing'

@@ -13,37 +13,30 @@ PROJECT      := Kernova.xcodeproj
 SCHEME       := Kernova
 DESTINATION  := platform=macOS
 
-# Xcode's Locations -> Derived Data "Relative" setting doesn't write straight
-# into DerivedData/ — it nests a subfolder named after the project
-# (DerivedData/Kernova/, whichever scheme is built).
+# On a dev machine, OMIT -derivedDataPath so a terminal build follows the
+# machine's Xcode derived-data preference — default per-path-hashed ~/Library
+# location, Relative, or a per-user workspace override alike. A flag-less
+# xcodebuild reads the same IDE setting and computes the identical build arena
+# as the GUI — same location AND same arena identity — so terminal and Xcode
+# builds share incremental state (switching is a null build). Passing
+# -derivedDataPath, even with the identical resolved path, records a different
+# arena identity in the build description, and every CLI<->GUI switch then
+# re-runs the whole compile graph. Kernova adapts to the preference rather
+# than prescribing one; tooling that needs the concrete arena path
+# (`make clean`, Tools/ghosts.sh, Tools/doctor.sh) resolves it with
+# Tools/derived-data-path.sh. See docs/BUILD.md "Derived data and build arenas".
 #
-# When this machine's Xcode is set to Relative (the IDECustomDerivedDataLocation
-# default is exactly "DerivedData") and the workspace carries no per-user
-# derived-data override, OMIT -derivedDataPath: a flag-less xcodebuild reads the
-# same IDE setting and computes the identical build arena as the GUI — same
-# nested location AND same arena identity — so terminal and Xcode builds share
-# incremental state (switching is a null build). Passing -derivedDataPath, even
-# with the identical path, records a different arena identity in the build
-# description, and every CLI<->GUI switch then re-runs the whole compile graph.
-#
-# On machines without the Relative setting (CI, fresh clones), fall back to the
-# explicit flag so output still lands deterministically in the worktree instead
-# of the per-path-hashed ~/Library location. A per-user override set via
-# Xcode's File > Project Settings… also disables the omission: xcodebuild would
-# follow it wherever it points, so the explicit flag is the safer default.
+# Only under CI does the explicit in-worktree flag remain: there is no GUI to
+# share with, and a deterministic DerivedData/Kernova path keeps artifact
+# handling simple (.github/workflows mirrors the same flag by hand).
 #
 # Evaluated lazily (recursive `=`, expanded via $(XCODEBUILD_FLAGS) inside the
 # build/test recipes) so targets that never build — help, lint, format, clean —
-# don't pay for the `defaults`/`plutil` probes on every invocation. Computed in
-# one shell so the two conditions compose precisely: the flag is omitted only
-# when the global preference is exactly "DerivedData" AND no per-user override
-# exists — not when the two probe strings merely concatenate to "DerivedData".
+# don't pay for the probe on every invocation.
 DERIVED_DATA_ROOT := DerivedData
 DERIVED_DATA      := $(DERIVED_DATA_ROOT)/$(basename $(PROJECT))
 DERIVED_DATA_FLAG = $(shell \
-	global=$$(defaults read com.apple.dt.Xcode IDECustomDerivedDataLocation 2>/dev/null); \
-	override=$$(plutil -extract DerivedDataCustomLocation raw '$(PROJECT)/project.xcworkspace/xcuserdata/$(USER).xcuserdatad/WorkspaceSettings.xcsettings' -o - 2>/dev/null); \
-	if [ "$$global" != "DerivedData" ] || [ -n "$$override" ]; then \
+	if [ -n "$${CI:-}" ]; then \
 		printf -- '-derivedDataPath %s' '$(DERIVED_DATA)'; \
 	fi)
 
@@ -169,14 +162,14 @@ bootstrap: ## Derive your signing team into Config/Local.xcconfig (auto-run by b
 doctor: ## Check the local toolchain (macOS, Xcode, Swift, swift-format) and repo setup
 	@Tools/doctor.sh
 
-# Diagnoses ghost Launch Services registrations, orphaned processes, and
-# prunable git worktrees left behind by torn-down worktrees (the post-checkout
-# hook sweeps dead registrations on new checkouts; this reports whatever
+# Diagnoses ghost Launch Services registrations, orphaned DerivedData build
+# arenas in the global ~/Library location, orphaned processes, and prunable
+# git worktrees left behind by torn-down worktrees (the post-checkout hook
+# sweeps registrations and arenas on new checkouts; this reports whatever
 # remains) — plus LIVE on-disk Kernova.app copies (Trash, DerivedData) that
 # outrank the installed /Applications copy in the LaunchServices/PluginKit
 # CFBundleVersion election (#454). `ghosts` only reports; `clean-ghosts` also
-# unregisters/kills/prunes, and offers to evict (trash) a competing copy it
-# finds.
+# unregisters/kills/prunes/evicts, prompting only for live competing copies.
 ghosts: ## Report stale/competing Kernova Launch Services, process, and worktree registrations
 	@Tools/ghosts.sh
 
@@ -205,5 +198,20 @@ fp-reset: ## Restart fileproviderd to clear stale Kernova File Provider bindings
 ls-reset: ## Clear legacy com.kernova.app ghost Launch Services registrations
 	@Tools/ls-reset.sh
 
-clean: ## Remove the DerivedData directory
+# Removes both build arenas this checkout can have: the in-worktree
+# DerivedData/ (CI-style explicit-flag builds, and Relative-mode machines) and
+# the arena the machine's Xcode preference resolves to (the hashed ~/Library
+# folder on default-location machines — where flag-less `make build` and GUI
+# builds land). The resolver is authoritative for "where would a build go",
+# so this cannot delete another project's folder; the $(CURDIR) guard just
+# avoids a redundant second rm when the arena is already inside the worktree.
+clean: ## Remove this checkout's build arenas (in-worktree DerivedData/ and the resolved Xcode arena)
 	rm -rf $(DERIVED_DATA_ROOT)
+	@arena=$$(Tools/derived-data-path.sh 2>/dev/null); \
+	case "$$arena" in \
+		''|'$(CURDIR)'/*) ;; \
+		*) if [ -d "$$arena" ]; then \
+			printf 'Removing resolved build arena %s\n' "$$arena"; \
+			rm -rf "$$arena"; \
+		fi ;; \
+	esac
