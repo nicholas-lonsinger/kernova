@@ -405,9 +405,9 @@ Large transfers are streamed and take real time. Two obligations follow:
   promise on its own clock. For unbounded operations, **prefer an API with no host-OS deadline**
   (File Provider) over one where we must beat a clock we do not control.
 
-The File Provider paste path is **determinate end to end** (#426, #634), in both directions. One
-per-chunk `(bytesTransferred, totalBytes)` callback from the receiver drives every indicator, over
-two owner-side channels:
+The File Provider paste path reports **determinate progress end to end** (#426, #634), in both
+directions. One per-chunk `(bytesTransferred, totalBytes)` callback from the receiver drives every
+indicator, over two owner-side channels:
 
 - **The extension's `fetchContents` `Progress`** (#426): the extension can't see the vsock
   transfer, so the owner pushes the per-chunk counts to the sandboxed extension over the
@@ -434,6 +434,24 @@ two owner-side channels:
   same shape first-party providers use for per-file downloads. The sandboxed host app can publish
   for the CloudStorage URL because the domain host holds the domain root's security scope while
   the root is current.
+
+**Consumption of the published progress by Finder's copy dialog has never been durably
+observed** (#639). Publication is log-proven full-duration in every live run (development- and
+Release/profile-signed builds alike), but every captured frame of the dialog — all paste shapes,
+clean host boot included — shows the indeterminate "Preparing to copy…" slide. Its sweep
+animation parks at the track's left edge each cycle and produces arbitrary-width segments, so
+one or two glances convincingly mimic a determinate fill; the determinate classifications
+recorded earlier (#638's test plan, #639's session notes) were exactly such sparse-glance
+observations, and no run ever recorded the label flip to a byte-count "Copying…" style that
+real consumption produces. Treat them as unverified: claim consumption only on a captured label
+flip or a dense, file-preserved frame sequence of slow monotonic growth. The dialog also
+dismisses itself tens of seconds into a multi-GB pull while materialization continues in the
+background; the `fetchContents` `Progress` channel keeps driving the framework's own bookkeeping
+for the full pull and payloads land intact. This is a **documented gap**, not a defect to
+engineer around: the publication is the API's supported shape (the one first-party providers'
+determinate dialogs consume), the degradation is only ever an indeterminate or absent bar
+(never a wrong one), and a folder-root aggregate `NSProgress` would not close it — no
+publication shape has been observed to render.
 
 The host clipboard window's in-app bar records the guest→host pull from the same per-chunk
 callback (`performBlockingPull`, direction `.inbound`); all indicators clear at every terminal.
