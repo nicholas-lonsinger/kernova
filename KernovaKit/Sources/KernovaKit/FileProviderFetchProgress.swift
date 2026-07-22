@@ -334,12 +334,11 @@ final class PublishedFetchProgress: @unchecked Sendable {
         // ambient progress can exist, and being adopted would both mis-report
         // into that parent and stop this one from being published in its own
         // right.
-        let progress = Progress(
-            parent: nil,
-            userInfo: [
-                .fileURLKey: fileURL,
-                .fileOperationKindKey: Progress.FileOperationKind.downloading,
-            ])
+        // `.fileURLKey` has no property accessor, so it goes in at construction;
+        // the operation kind is set through its property below, which normalizes
+        // it into the same `userInfo` (as the plist-safe raw string the published
+        // dictionary has to carry across processes).
+        let progress = Progress(parent: nil, userInfo: [.fileURLKey: fileURL])
         // Apple requires `kind`, the file-operation kind, and the file URL to be
         // set BEFORE `publish()` — a subscriber matches on them at subscription
         // time, so a progress published bare is never routed to Finder's dialog.

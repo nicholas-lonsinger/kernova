@@ -79,10 +79,12 @@ public final class FileProviderOfferURLIndex: @unchecked Sendable {
         }
         guard let root else { return nil }
         guard let relativePath else { return root }
-        // One component at a time: `appendingPathComponent("sub/file.txt")`
-        // percent-escapes nothing but does treat the whole string as a single
-        // component name, so the separator would have to survive by luck rather
-        // than by construction.
+        // One component at a time. Handing the whole "sub/file.txt" to a single
+        // `appendingPathComponent` does happen to produce the right path today,
+        // but the API is documented as taking *a* path component — multi-component
+        // handling isn't part of its contract. Splitting also drops the empty
+        // components a leading, doubled, or trailing separator would otherwise
+        // contribute.
         return relativePath.split(separator: "/").reduce(root) {
             $0.appendingPathComponent(String($1))
         }
