@@ -359,9 +359,15 @@ final class VMToolbarManager: NSObject {
         }
     }
 
-    /// Renders the clipboard glyph at full size with an opaque Safari-style
-    /// capsule (filled to `fraction`) across the bottom of the canvas, at the
-    /// same pixel size as the plain symbol so the toolbar item never resizes.
+    /// Width of the transfer bar, and so of the composite's canvas: wider than
+    /// the glyph (16 pt), matching the 22 pt bar measured from Safari's
+    /// download item — roughly three-fifths of the 36 pt platter — while its
+    /// corners still clear the platter circle at the bar's height.
+    private static let transferBarWidth: CGFloat = 22
+
+    /// Renders the clipboard glyph at full size, horizontally centered, with an
+    /// opaque Safari-style capsule (filled to `fraction`) across the bottom of
+    /// a bar-width canvas.
     ///
     /// The bar overlaps the glyph's bottom edge rather than shrinking the glyph
     /// — #635 established that the shrunken-glyph variant reads as a different
@@ -369,12 +375,18 @@ final class VMToolbarManager: NSObject {
     /// the dynamic colors resolve in the current appearance.
     private func clipboardProgressImage(fraction: Double) -> NSImage {
         let base = clipboardBaseImage
-        let size = base.size
+        let size = NSSize(
+            width: max(base.size.width, Self.transferBarWidth), height: base.size.height)
         let clamped = CGFloat(min(max(fraction, 0), 1))
         let image = NSImage(size: size, flipped: false) { rect in
-            base.draw(in: rect)
+            let glyphRect = NSRect(
+                x: rect.midX - base.size.width / 2,
+                y: 0,
+                width: base.size.width,
+                height: base.size.height)
+            base.draw(in: glyphRect)
             NSColor.labelColor.set()
-            rect.fill(using: .sourceAtop)  // tint the template glyph
+            glyphRect.fill(using: .sourceAtop)  // tint the template glyph
 
             let barHeight: CGFloat = 5
             let radius = barHeight / 2
