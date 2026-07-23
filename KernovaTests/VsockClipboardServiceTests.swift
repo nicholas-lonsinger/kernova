@@ -833,10 +833,29 @@ struct VsockClipboardServiceTests {
         private let endGate = AsyncGate()
         private var endReleased = false
 
+        /// When `true`, the stream parks after sending the *first* chunk until
+        /// `releaseFirstChunk()` — so a test can observe a partial mid-flight
+        /// snapshot (only the first chunk's bytes recorded) before the rest lands.
+        var holdAfterFirstChunk = false
+        private let firstChunkGate = AsyncGate()
+        private var firstChunkReleased = false
+
+        /// Fires once every chunk has been sent (before the `holdEnd` park);
+        /// `wait { allChunksDidSend }` to sync on the full byte count being on the
+        /// wire.
+        let allChunksSentGate = AsyncGate()
+        private(set) var allChunksDidSend = false
+
         /// Releases a stream parked by `holdEnd` so it sends its `End`.
         func releaseEnd() {
             endReleased = true
             endGate.notify()
+        }
+
+        /// Releases a stream parked by `holdAfterFirstChunk` so it sends the rest.
+        func releaseFirstChunk() {
+            firstChunkReleased = true
+            firstChunkGate.notify()
         }
 
         init(guest: VsockChannel) {
@@ -900,6 +919,7 @@ struct VsockClipboardServiceTests {
 
             var offset = 0
             let chunkSize = 64 * 1024
+            var isFirstChunk = true
             while offset < reply.bytes.count {
                 let end = min(offset + chunkSize, reply.bytes.count)
                 var chunkFrame = Frame()
@@ -911,7 +931,15 @@ struct VsockClipboardServiceTests {
                 }
                 try guest.send(chunkFrame)
                 offset = end
+                // Park after the first chunk so a test can observe a partial
+                // snapshot before the remaining bytes advance the tracker.
+                if isFirstChunk {
+                    isFirstChunk = false
+                    if holdAfterFirstChunk { try await firstChunkGate.wait { self.firstChunkReleased } }
+                }
             }
+            allChunksDidSend = true
+            allChunksSentGate.notify()
 
             // Park before End so a test can observe the live, mid-flight transfer.
             if holdEnd { try await endGate.wait { self.endReleased } }
@@ -1892,6 +1920,73 @@ struct VsockClipboardServiceTests {
 
         // Releasing End resolves the pull; the terminal clears the bar (§13: never
         // leave a stuck bar).
+        responder.releaseEnd()
+        let outcome = await pull.value
+        guard case .success = outcome else {
+            Issue.record("Expected pullStagedFile to succeed, got \(outcome)")
+            return
+        }
+        try await waitForChange { service.transferProgress == nil }
+    }
+
+    @Test(
+        "Interim chunks don't republish the bar (rate-throttled); the terminal clears it unconditionally (#636)"
+    )
+    func progressFlushesAreRateThrottled() async throws {
+        let (guest, host) = try makePair()
+        guest.start()
+        host.start()
+        defer { guest.close() }
+
+        // Reveal instantly (surface on the first chunk), but a flush interval so
+        // large it provably never fires during the test: after the reveal
+        // snapshot, every interim chunk's flush is deferred past the test's life,
+        // so the bar can only be republished by the reveal and by the terminal.
+        let service = VsockClipboardService(
+            channel: host, label: "test-\(UUID().uuidString)",
+            progressRevealDelay: .zero, progressFlushInterval: .seconds(3600))
+        service.start()
+        defer { service.stop() }
+
+        // Multi-chunk payload so the first-chunk reveal snapshot is strictly
+        // partial and the later chunks would advance the bar if unthrottled.
+        let fileBytes = Data((0..<(200 * 1024)).map { UInt8(truncatingIfNeeded: $0) })
+        let responder = FakeGuestResponder(guest: guest)
+        defer { responder.cancel() }
+        responder.holdAfterFirstChunk = true  // partial reveal: only chunk 1 recorded
+        responder.holdEnd = true  // keep the transfer live while we assert the freeze
+        responder.register(
+            generation: 44, repIndex: 0, uti: "public.data", bytes: fileBytes,
+            filename: "big.bin", isInline: false)
+        responder.start()
+
+        try guest.send(
+            makeOffer(
+                generation: 44,
+                reps: [(uti: "public.data", byteCount: fileBytes.count, filename: "big.bin", isInline: false)]))
+        try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
+
+        let pull = Task { await offCooperativePool { service.pullStagedFile(generation: 44, repIndex: 0) } }
+
+        // Reveal surfaces the transfer at exactly the first chunk (the rest is
+        // gated), so the snapshot is strictly partial.
+        try await waitForChange { service.transferProgress?.direction == .inbound }
+        let snapshot = try #require(service.transferProgress)
+        #expect(snapshot.bytesTransferred > 0)
+        #expect(snapshot.bytesTransferred < fileBytes.count)  // partial, not the full total
+
+        // Let every remaining chunk stream and land; the responder then parks
+        // before End, keeping the transfer live.
+        responder.releaseFirstChunk()
+        try await responder.allChunksSentGate.wait { responder.allChunksDidSend }
+
+        // Throttle holds: even though the remaining bytes have been delivered, the
+        // 3600 s flush provably hasn't fired, so the bar is frozen at the reveal
+        // snapshot — the interim chunks republished nothing.
+        #expect(service.transferProgress == snapshot)
+
+        // The terminal clears the bar unconditionally — it does not route through
+        // the throttled flush path (§13: never leave a stuck bar).
         responder.releaseEnd()
         let outcome = await pull.value
         guard case .success = outcome else {

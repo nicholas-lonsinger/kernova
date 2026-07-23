@@ -5,8 +5,8 @@ import Foundation
 /// `ClipboardStreamSender`/`Receiver` fire their progress callbacks off the main
 /// actor (on a transfer's serial queue), so the raw cumulative byte counts land
 /// here under a lock. `VsockClipboardService` then projects the most-significant
-/// *revealed* transfer onto its `@MainActor` `transferProgress` via a coalesced
-/// hop.
+/// *revealed* transfer onto its `@MainActor` `transferProgress` via a coalesced,
+/// rate-throttled hop.
 ///
 /// "Revealed" is the time-based reveal gate: a transfer is recorded on its first
 /// chunk but only enters the projection once the service's reveal `Task` marks it
@@ -18,9 +18,15 @@ final class ClipboardTransferProgressTracker: @unchecked Sendable {
         /// First chunk for this transfer — the caller should arm its reveal `Task`.
         case created
         /// A subsequent chunk and no flush is queued — schedule a coalesced flush.
+        ///
+        /// The caller defers that flush by its own throttle interval; the flag
+        /// stays set for the whole interval, so this is handed out at most once
+        /// per interval — which is what bounds the republish *rate*, not just the
+        /// queue depth.
         case updatedScheduleFlush
         /// A subsequent chunk but a flush is already queued — do nothing (the
-        /// queued flush will read the freshest bytes, so updates conflate).
+        /// queued flush will read the freshest bytes, so updates conflate). Every
+        /// chunk arriving during the caller's throttle interval lands here.
         case updatedSuppressed
     }
 
@@ -36,6 +42,10 @@ final class ClipboardTransferProgressTracker: @unchecked Sendable {
     private var entries: [UInt64: Entry] = [:]
     /// Conflation flag: set when an `.updatedScheduleFlush` is handed out, cleared
     /// by `consumeFlush`, so at most one main-actor flush is ever queued at a time.
+    ///
+    /// Because the caller defers that flush by its throttle interval, the flag also
+    /// stays set for the whole interval — so it bounds the flush *rate*, not just
+    /// the queue depth: interim chunks return `.updatedSuppressed`.
     private var flushScheduled = false
 
     /// Records cumulative progress for a transfer, creating its entry on the first
