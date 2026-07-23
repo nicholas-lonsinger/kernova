@@ -7,6 +7,7 @@ Deep-dive documentation, read on demand. The always-relevant operating guide —
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Making structural changes — the authoritative directory structure, component map, data flow, design decisions, and test-coverage inventory |
 | [SPEC.md](SPEC.md) | Writing UI or making product decisions — design philosophy and GUI guidelines (layout, typography, spacing, colors, controls) |
 | [CLIPBOARD.md](CLIPBOARD.md) | Touching host↔guest copy/paste — the clipboard subsystem's principles and trade-off rules; authoritative for any clipboard work |
+| [TOOLBAR.md](TOOLBAR.md) | Touching toolbar items — the macOS 26 glass-platter model (capsule clustering, the 36×36 metric), the item shapes Kernova uses, and the clipboard button's transfer-bar construction |
 | [BUILD.md](BUILD.md) | Touching build machinery — git hooks and worktree setup, signing-team derivation, test-target topology, DerivedData/IDE build-state sharing, build-number derivation, guest-agent versioning, LaunchServices ghost cleanup |
 | [SANDBOX.md](SANDBOX.md) | Touching entitlements, signing, app groups, or File Provider IPC — the Mac App Store readiness story and launch model behind the sandbox rules in AGENTS.md |
 | [TESTING.md](TESTING.md) | Writing any test that waits on async state or needs private production state — the async-wait seams, the injected-timeout rule, and test-only exposure patterns |

@@ -56,7 +56,8 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
                 // resolves through AppDelegate.activeInstance, which prefers the
                 // key display window's instance over the sidebar selection.
                 clipboardID: NSToolbarItem.Identifier("displayClipboard"),
-                displayID: NSToolbarItem.Identifier("displayDisplay"),
+                popOutID: NSToolbarItem.Identifier("displayPopOut"),
+                fullscreenID: NSToolbarItem.Identifier("displayFullscreen"),
                 settingsToggleID: nil,
                 checksPreparing: false,
                 gatesDisplayOnCapability: false
@@ -245,7 +246,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
 
 extension VMDisplayWindowController: NSToolbarDelegate {
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.flexibleSpace] + toolbarManager.sharedItemIdentifiers
+        [.flexibleSpace] + toolbarManager.defaultItemIdentifiers
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
