@@ -1,13 +1,14 @@
 # Toolbar
 
-How Kernova builds its `NSToolbar` items on the macOS 26 glass toolbar, and the
-measured platform behaviors the construction relies on. The shared item
+How Kernova builds its `NSToolbar` items on the glass toolbar introduced in
+macOS 26, and the measured platform behaviors the construction relies on
+(measurements taken on macOS 27 developer beta 4). The shared item
 machinery lives in `VMToolbarManager`; the clipboard button in
 `ClipboardToolbarButton`. Safari's toolbar is the visual reference for this
 design: independent adjacent buttons sharing glass capsules, per-item circular
 hover, and a downloads-style progress bar inside the clipboard button.
 
-## Glass-toolbar platter model (macOS 26, measured)
+## Glass-toolbar platter model (measured)
 
 The system renders toolbar items above a layer of glass "platter" capsules
 (`NSToolbarView → NSGlassContainerView → NSToolbarPlatterView`, all private —
@@ -56,6 +57,23 @@ with the item image) while the item keeps the full native platter treatment.
 - The bar draws in `draw(_:)` with dynamic colors: opaque track grays (system
   fill colors are translucent and illegible over the glass) and an
   accent-colored fill never narrower than its round cap.
+
+## Sidebar section and collapse
+
+Items left of the `.sidebarTrackingSeparator` (New VM, the sidebar toggle) get
+the flat sidebar-section glass treatment, not capsule platters — that's the
+platform's sectioning (Mail/Notes behave the same). While the sidebar is
+collapsed, New VM is removed from the toolbar and restored on expand
+(`MainWindowController.syncNewVMVisibilityToSidebarState`) — Safari's New Tab
+Group pattern. The mechanism is **remove/insert, not `NSToolbarItem.isHidden`**:
+on the glass toolbar a hidden item's slot keeps its width (measured on macOS 27
+beta 4), leaving a dead gap between the window controls and the toggle, while
+removal reclaims the space. The programmatic mutations run with
+`autosavesConfiguration` suspended so the saved layout never records the
+collapsed state, the removal applies only while New VM actually sits in the
+sidebar section, and the customize palette is always presented with the
+canonical layout (New VM restored before the sheet opens, the collapse state
+re-applied after it closes).
 
 ## Constraints to respect
 

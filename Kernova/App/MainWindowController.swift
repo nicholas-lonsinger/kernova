@@ -13,6 +13,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     private let sidebarViewController: SidebarViewController
     private let sidebarItem: NSSplitViewItem
     private var windowStateObservation: ObservationLoop?
+    private var sidebarCollapseObservation: NSKeyValueObservation?
+    /// True while New VM is programmatically removed for a collapsed sidebar
+    /// (as opposed to the user removing it via customization).
+    private var newVMRemovedForSidebarCollapse = false
     private var sheetIsCustomizationPalette = false
 
     private static let logger = Logger(subsystem: "app.kernova", category: "MainWindowController")
@@ -106,6 +110,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         updateToolbarItems()
         updateWindowTitle()
         observeWindowState()
+        observeSidebarCollapse()
         Self.logger.notice("Main window controller initialized")
     }
 
@@ -149,6 +154,67 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         )
     }
 
+    // MARK: - Sidebar-Collapse New VM Visibility
+
+    /// Hides New VM while the sidebar is collapsed and restores it on expand —
+    /// Safari's New Tab Group pattern.
+    ///
+    /// Implemented as remove/insert rather than `NSToolbarItem.isHidden`: on
+    /// the glass toolbar a hidden item's slot keeps its width (measured on
+    /// macOS 27 beta 4), leaving a dead gap between the window controls and
+    /// the sidebar toggle, while removal reclaims the space. Autosave is
+    /// suspended around the programmatic mutations so the user's saved layout
+    /// never records the collapsed state. Applies only while New VM sits in
+    /// the sidebar section — a user who moved it into the content section
+    /// keeps it visible.
+    private func observeSidebarCollapse() {
+        sidebarCollapseObservation = sidebarItem.observe(\.isCollapsed, options: [.initial]) {
+            [weak self] _, _ in
+            MainActor.assumeIsolated {
+                self?.syncNewVMVisibilityToSidebarState()
+            }
+        }
+    }
+
+    private func syncNewVMVisibilityToSidebarState() {
+        guard let toolbar = window?.toolbar, !toolbar.customizationPaletteIsRunning else { return }
+        if sidebarItem.isCollapsed {
+            guard !newVMRemovedForSidebarCollapse,
+                let index = toolbar.items.firstIndex(where: { $0.itemIdentifier == Self.toolbarNewVM }),
+                let separatorIndex = toolbar.items.firstIndex(where: {
+                    $0.itemIdentifier == .sidebarTrackingSeparator
+                }),
+                index < separatorIndex
+            else { return }
+            withAutosaveSuspended(toolbar) { toolbar.removeItem(at: index) }
+            newVMRemovedForSidebarCollapse = true
+        } else if newVMRemovedForSidebarCollapse {
+            restoreNewVMItem(in: toolbar)
+        }
+    }
+
+    /// Reinstates a collapse-removed New VM at its home slot (just before the
+    /// sidebar toggle).
+    private func restoreNewVMItem(in toolbar: NSToolbar) {
+        newVMRemovedForSidebarCollapse = false
+        guard !toolbar.items.contains(where: { $0.itemIdentifier == Self.toolbarNewVM }) else {
+            return
+        }
+        let index = toolbar.items.firstIndex(where: { $0.itemIdentifier == .toggleSidebar }) ?? 0
+        withAutosaveSuspended(toolbar) {
+            toolbar.insertItem(withItemIdentifier: Self.toolbarNewVM, at: index)
+        }
+    }
+
+    /// Runs a programmatic toolbar mutation without contaminating the
+    /// autosaved configuration.
+    private func withAutosaveSuspended(_ toolbar: NSToolbar, _ mutate: () -> Void) {
+        let autosaved = toolbar.autosavesConfiguration
+        toolbar.autosavesConfiguration = false
+        mutate()
+        toolbar.autosavesConfiguration = autosaved
+    }
+
     /// Titles the window after the selected VM ("Kernova — <name>", plain
     /// "Kernova" with no selection) so the active VM stays identifiable when
     /// the sidebar is collapsed.
@@ -168,16 +234,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     // MARK: - NSToolbarDelegate
 
-    // The leading flexible space right-aligns New VM and the toggle against the
-    // sidebar's trailing edge; verified gap-free in the collapsed state, where
-    // the space compresses to nothing and the title sits right after the
-    // toggle.
-    //
-    // RATIONALE: New VM must stay visible when the sidebar collapses (as
-    // Mail's Compose does) — a hidden toolbar item still reserves its slot's
-    // width, which pushes the inline window title away from the leading
-    // controls and leaves a dead gap. Don't reintroduce collapse-driven
-    // hiding or removal here.
+    // The leading flexible space right-aligns New VM and the toggle against
+    // the sidebar's trailing edge. While the sidebar is collapsed, New VM is
+    // removed from the toolbar entirely (`syncNewVMVisibilityToSidebarState`)
+    // — Safari's New Tab Group pattern.
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [
             .flexibleSpace,
@@ -224,6 +284,12 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         // remember whether this one is the customize palette so the recreate
         // below only runs when the layout could actually have changed.
         sheetIsCustomizationPalette = window?.toolbar?.customizationPaletteIsRunning ?? false
+        // The palette must present the user's canonical layout, so a
+        // collapse-removed New VM is restored for the sheet's duration
+        // (windowDidEndSheet re-applies the collapse state afterwards).
+        if sheetIsCustomizationPalette, newVMRemovedForSidebarCollapse, let toolbar = window?.toolbar {
+            restoreNewVMItem(in: toolbar)
+        }
     }
 
     /// Recreates the app's custom toolbar items when the customize sheet closes.
@@ -266,6 +332,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             toolbar.insertItem(withItemIdentifier: identifier, at: index)
         }
         updateToolbarItems()
+        // Re-apply the collapse-driven New VM removal that windowWillBeginSheet
+        // undid for the palette.
+        syncNewVMVisibilityToSidebarState()
     }
 
     func toolbar(

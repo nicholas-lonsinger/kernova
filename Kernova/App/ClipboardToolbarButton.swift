@@ -9,7 +9,7 @@ import Cocoa
 /// the item looks and behaves like an image-backed bordered item while hosting
 /// the bar as a real view (see docs/TOOLBAR.md for the platter metrics).
 final class ClipboardToolbarButton: NSButton {
-    /// The glass toolbar platter's circle diameter on macOS 26.
+    /// The glass toolbar platter's circle diameter (docs/TOOLBAR.md).
     ///
     /// The bezel's hover circle matches the platter only at exactly this size.
     private static let platterDiameter: CGFloat = 36
