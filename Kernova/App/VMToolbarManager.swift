@@ -408,6 +408,13 @@ final class VMToolbarManager: NSObject {
     /// appearance.
     private func clipboardProgressImage(fraction: Double) -> NSImage {
         let glyph = clipboardTransferGlyph
+        // RATIONALE: this composite is intentionally a different size than the
+        // idle base image — the enlarged glyph (#635) needs the taller canvas,
+        // and matching the plain symbol's ~16×18 box is exactly what reintroduces
+        // the glyph shrink. Safe because the macOS 26 native platter renders the
+        // item at a fixed size and does not track its image's dimensions:
+        // verified on screen that swapping between the idle symbol and this
+        // larger composite produces no item reflow.
         let size = NSSize(
             width: glyph.size.width,
             height: max(glyph.size.height, Self.transferCanvasHeight))
