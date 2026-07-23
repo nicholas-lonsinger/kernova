@@ -12,7 +12,8 @@ extension NSImage {
     ///
     /// Shared by the host and guest status-item controllers to make the
     /// "enable File Provider" reminder (#581) glanceable without opening the
-    /// dropdown. Rendered via a `drawingHandler` closure so `NSColor.labelColor`
+    /// dropdown. Rendered via a `drawingHandler` closure — the same technique
+    /// as `VMToolbarManager.clipboardProgressImage` — so `NSColor.labelColor`
     /// resolves in the *current* menu-bar appearance every time AppKit
     /// redraws the status item. The result is intentionally non-template: the
     /// base glyph is baked in `labelColor` and the badge keeps its own color,
