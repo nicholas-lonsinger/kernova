@@ -1,5 +1,7 @@
-import Testing
 import Cocoa
+import KernovaKit
+import Testing
+
 @testable import Kernova
 
 @Suite("VMToolbarManager Tests")
@@ -136,18 +138,47 @@ struct VMToolbarManagerTests {
 
     // MARK: - Clipboard item
 
-    @Test("makeToolbarItem returns clipboard single-item group (native styling)")
-    func clipboardGroupStructure() {
+    /// In-memory `ClipboardServicing` whose `transferProgress` a test sets
+    /// directly to drive the toolbar item's transfer bar. `@Observable` so the
+    /// manager's `observeRecurring` arms against it like a real transport.
+    @MainActor
+    @Observable
+    final class FakeClipboardService: ClipboardServicing {
+        var clipboardContent: ClipboardContent = .empty
+        var isConnected = true
+        var supportsBinaryRepresentations = true
+        var supportsDirectoryTree = false
+        var lastTransferIssue: ClipboardTransferIssue?
+        var transferProgress: ClipboardTransferProgress?
+
+        func stop() {}
+        func grabIfChanged() {}
+        func clearBuffer() { clipboardContent = .empty }
+    }
+
+    private func clipboardItemView(in toolbar: NSToolbar) -> ClipboardToolbarItemView? {
+        toolbar.items.first { $0.itemIdentifier.rawValue == "testClipboard" }?.view
+            as? ClipboardToolbarItemView
+    }
+
+    @Test("makeToolbarItem returns clipboard custom-view item with a standard toolbar button")
+    func clipboardItemStructure() {
         let manager = makeManager()
         let item = manager.makeToolbarItem(for: NSToolbarItem.Identifier("testClipboard"))
-        let group = item as? NSToolbarItemGroup
-        // A native group (like Suspend) so it gets the standard toolbar pill,
-        // hover highlight, and sizing; the transfer bar is composited into its
-        // image, not overlaid as a custom view.
-        #expect(group != nil)
-        #expect(group?.subitems.count == 1)
-        #expect(group?.label == "Clipboard")
-        #expect(group?.autovalidates == false)
+        // A custom-view item, not a native group: the Safari-style transfer bar
+        // hangs below the button, outside its hover region and undimmed by an
+        // inactive window, which a native item's image cannot express (#635).
+        #expect(item != nil)
+        #expect(!(item is NSToolbarItemGroup))
+        #expect(item?.label == "Clipboard")
+        #expect(item?.paletteLabel == "Clipboard")
+        #expect(item?.autovalidates == false)
+        // Overflow menu needs an explicit menu form for a custom-view item.
+        #expect(item?.menuFormRepresentation != nil)
+        let view = item?.view as? ClipboardToolbarItemView
+        #expect(view != nil)
+        #expect(view?.button.bezelStyle == .toolbar)
+        #expect(view?.transferBar.isHidden == true)
     }
 
     @Test("updateClipboardItem disables the clipboard item without a running VM")
@@ -158,11 +189,8 @@ struct VMToolbarManagerTests {
 
         manager.updateToolbarItems(in: toolbar)
 
-        let group =
-            toolbar.items.first { $0.itemIdentifier.rawValue == "testClipboard" }
-            as? NSToolbarItemGroup
         // canShowClipboard is false (a test instance has no VZVirtualMachine).
-        #expect(group?.subitems.first?.isEnabled == false)
+        #expect(clipboardItemView(in: toolbar)?.button.isEnabled == false)
     }
 
     @Test("updateClipboardItem disables the clipboard item for a nil instance")
@@ -172,10 +200,43 @@ struct VMToolbarManagerTests {
 
         manager.updateToolbarItems(in: toolbar)
 
-        let group =
-            toolbar.items.first { $0.itemIdentifier.rawValue == "testClipboard" }
-            as? NSToolbarItemGroup
-        #expect(group?.subitems.first?.isEnabled == false)
+        #expect(clipboardItemView(in: toolbar)?.button.isEnabled == false)
+    }
+
+    @Test("Transfer bar is shown at the transfer's fraction while in flight")
+    func clipboardTransferBarShownDuringTransfer() {
+        let instance = makeInstance(status: .running)
+        let service = FakeClipboardService()
+        service.transferProgress = ClipboardTransferProgress(
+            direction: .inbound, bytesTransferred: 25, totalBytes: 100, label: nil)
+        instance.clipboardService = service
+        let manager = makeManager(instance: instance)
+        let (toolbar, _, _) = makeToolbar(manager: manager)
+
+        manager.updateToolbarItems(in: toolbar)
+
+        let view = clipboardItemView(in: toolbar)
+        #expect(view?.transferBar.isHidden == false)
+        #expect(view?.transferBar.fraction == 0.25)
+    }
+
+    @Test("Transfer bar hides again once the transfer reaches a terminal state")
+    func clipboardTransferBarHiddenAfterTerminal() {
+        let instance = makeInstance(status: .running)
+        let service = FakeClipboardService()
+        service.transferProgress = ClipboardTransferProgress(
+            direction: .outbound, bytesTransferred: 50, totalBytes: 100, label: nil)
+        instance.clipboardService = service
+        let manager = makeManager(instance: instance)
+        let (toolbar, _, _) = makeToolbar(manager: manager)
+        manager.updateToolbarItems(in: toolbar)
+        #expect(clipboardItemView(in: toolbar)?.transferBar.isHidden == false)
+
+        // Terminal: the tracker clears the projection.
+        service.transferProgress = nil
+        manager.updateToolbarItems(in: toolbar)
+
+        #expect(clipboardItemView(in: toolbar)?.transferBar.isHidden == true)
     }
 
     // MARK: - Preparing State
