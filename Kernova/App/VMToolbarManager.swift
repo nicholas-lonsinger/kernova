@@ -60,6 +60,29 @@ final class VMToolbarManager: NSObject {
     /// The plain template clipboard glyph shown when no transfer is in flight.
     private lazy var clipboardBaseImage = NSImage.systemSymbol(
         Self.clipboardSymbolName, accessibilityDescription: "Clipboard")
+    /// The glyph drawn inside the transfer composite, enlarged so its rendered
+    /// size matches the idle template symbol.
+    ///
+    /// RATIONALE: the picker renders a *template* symbol at its own preferred
+    /// size (measured ~1.28× the symbol's default canvas on macOS 26), while a
+    /// non-template composite is scaled by a private fitting rule of its own —
+    /// so a composite drawn from the default 16×18 symbol shows a ~22% smaller
+    /// glyph whenever the bar appears (#635). The 19 pt configuration was
+    /// found by on-screen measurement: with the 28 pt canvas below, its ink
+    /// renders within a pixel of the idle glyph's. The fitting rule is not
+    /// modelable from public API (probes at other canvas sizes scale
+    /// differently), so re-verify on screen if either constant changes.
+    private lazy var clipboardTransferGlyph: NSImage = {
+        guard
+            let enlarged = clipboardBaseImage.withSymbolConfiguration(
+                .init(pointSize: 19, weight: .regular))
+        else {
+            Self.logger.fault("Failed to configure enlarged clipboard transfer glyph")
+            assertionFailure("withSymbolConfiguration returned nil for the clipboard symbol")
+            return clipboardBaseImage
+        }
+        return enlarged
+    }()
     /// Opaque track grays for the transfer bar, sampled from Safari's download bar.
     ///
     /// Light gray on the dark toolbar, a slightly darker gray on the light one.
@@ -359,32 +382,43 @@ final class VMToolbarManager: NSObject {
         }
     }
 
-    /// Width of the transfer bar, and so of the composite's canvas: wider than
-    /// the glyph (16 pt), matching the 22 pt bar measured from Safari's
-    /// download item — roughly three-fifths of the 36 pt platter — while its
-    /// corners still clear the platter circle at the bar's height.
-    private static let transferBarWidth: CGFloat = 22
-
-    /// Renders the clipboard glyph at full size, horizontally centered, with an
-    /// opaque Safari-style capsule (filled to `fraction`) across the bottom of
-    /// a bar-width canvas.
+    /// Height of the composite's canvas.
     ///
-    /// The bar overlaps the glyph's bottom edge rather than shrinking the glyph
-    /// — #635 established that the shrunken-glyph variant reads as a different
-    /// icon instead of "transfer in progress". Drawn via a `drawingHandler` so
-    /// the dynamic colors resolve in the current appearance.
+    /// Taller than the glyph, with the glyph drawn centered, so the
+    /// bottom-anchored bar sits low in the platter circle — the picker centers
+    /// the whole image, and the symmetric padding keeps the glyph's ink
+    /// centered where the idle symbol renders.
+    ///
+    /// RATIONALE: probed live up to a full-height 36 canvas (#635): the
+    /// platter clips content to its circle, so a rim-hugging bar loses its
+    /// capsule ends and reads as a tinted bottom slice; 28 keeps the capsule
+    /// intact just above the rim. Paired by measurement with the 19 pt glyph
+    /// above — change one and the other must be re-verified on screen.
+    private static let transferCanvasHeight: CGFloat = 28
+
+    /// Renders the clipboard glyph at the idle symbol's on-screen size,
+    /// centered, with an opaque Safari-style capsule (filled to `fraction`)
+    /// across the bottom of the canvas.
+    ///
+    /// The bar spans the canvas width — rendered, roughly Safari's
+    /// three-fifths of the platter — and overlaps the glyph's feet rather than
+    /// shrinking the glyph: #635 established that the shrunken-glyph variant
+    /// reads as a different icon instead of "transfer in progress". Drawn via
+    /// a `drawingHandler` so the dynamic colors resolve in the current
+    /// appearance.
     private func clipboardProgressImage(fraction: Double) -> NSImage {
-        let base = clipboardBaseImage
+        let glyph = clipboardTransferGlyph
         let size = NSSize(
-            width: max(base.size.width, Self.transferBarWidth), height: base.size.height)
+            width: glyph.size.width,
+            height: max(glyph.size.height, Self.transferCanvasHeight))
         let clamped = CGFloat(min(max(fraction, 0), 1))
         let image = NSImage(size: size, flipped: false) { rect in
             let glyphRect = NSRect(
-                x: rect.midX - base.size.width / 2,
-                y: 0,
-                width: base.size.width,
-                height: base.size.height)
-            base.draw(in: glyphRect)
+                x: rect.midX - glyph.size.width / 2,
+                y: rect.midY - glyph.size.height / 2,
+                width: glyph.size.width,
+                height: glyph.size.height)
+            glyph.draw(in: glyphRect)
             NSColor.labelColor.set()
             glyphRect.fill(using: .sourceAtop)  // tint the template glyph
 
