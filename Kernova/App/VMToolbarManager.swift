@@ -55,16 +55,16 @@ final class VMToolbarManager: NSObject {
     /// glass capsule clusters.
     ///
     /// Adjacent bordered items merge into one shared capsule platter (see
-    /// docs/TOOLBAR.md), so the spaces choose the groupings: Suspend +
-    /// Clipboard together, the display pair together, the settings toggle on
-    /// its own. The lifecycle group needs no space — an `NSToolbarItemGroup`
-    /// always gets its own platter.
+    /// docs/TOOLBAR.md), so the spaces choose the groupings: Suspend and
+    /// Clipboard each in their own circle, the display pair together, the
+    /// settings toggle on its own. The lifecycle group needs no space — an
+    /// `NSToolbarItemGroup` always gets its own platter.
     var defaultItemIdentifiers: [NSToolbarItem.Identifier] {
-        var ids = [configuration.lifecycleID, configuration.saveStateID]
+        var ids = [configuration.lifecycleID, configuration.saveStateID, .space]
         if let clipboardID = configuration.clipboardID {
-            ids.append(clipboardID)
+            ids += [clipboardID, .space]
         }
-        ids += [.space, configuration.popOutID, configuration.fullscreenID]
+        ids += [configuration.popOutID, configuration.fullscreenID]
         if let settingsToggleID = configuration.settingsToggleID {
             ids += [.space, settingsToggleID]
         }

@@ -32,8 +32,9 @@ named here for debugging orientation only; Kernova references none of them):
 | View-backed item (`ClipboardToolbarButton`) | Clipboard | Identical to the bordered items — see below |
 
 `VMToolbarManager.defaultItemIdentifiers` places fixed spaces to choose the
-default capsule clusters: [lifecycle] [Suspend + Clipboard] [Pop Out +
-Fullscreen] [settings toggle].
+default capsule clusters: [lifecycle] [Suspend] [Clipboard] [Pop Out +
+Fullscreen] [settings toggle] — every standalone action in its own circle, with
+only the display pair sharing a capsule.
 
 ## The clipboard button
 

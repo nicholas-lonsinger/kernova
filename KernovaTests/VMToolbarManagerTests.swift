@@ -137,6 +137,7 @@ struct VMToolbarManagerTests {
             manager.defaultItemIdentifiers == [
                 NSToolbarItem.Identifier("testLifecycle"),
                 NSToolbarItem.Identifier("testSaveState"),
+                .space,
                 NSToolbarItem.Identifier("testClipboard"),
                 .space,
                 NSToolbarItem.Identifier("testPopOut"),
@@ -153,6 +154,7 @@ struct VMToolbarManagerTests {
             manager.defaultItemIdentifiers == [
                 NSToolbarItem.Identifier("testLifecycle"),
                 NSToolbarItem.Identifier("testSaveState"),
+                .space,
                 NSToolbarItem.Identifier("testClipboard"),
                 .space,
                 NSToolbarItem.Identifier("testPopOut"),
