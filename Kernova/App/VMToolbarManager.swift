@@ -4,8 +4,8 @@ import os
 /// Shared toolbar logic for VM window controllers.
 ///
 /// Creates and manages the lifecycle,
-/// suspend, and display toolbar item groups that appear in both the main window
-/// and per-VM display windows.
+/// suspend, clipboard, and display toolbar items that appear in both the main
+/// window and per-VM display windows.
 ///
 /// Each window controller creates its own `VMToolbarManager` with a ``Configuration``
 /// that captures per-controller differences (toolbar item identifiers, preparing checks,
@@ -18,7 +18,8 @@ final class VMToolbarManager: NSObject {
         let lifecycleID: NSToolbarItem.Identifier
         let saveStateID: NSToolbarItem.Identifier
         let clipboardID: NSToolbarItem.Identifier?
-        let displayID: NSToolbarItem.Identifier
+        let popOutID: NSToolbarItem.Identifier
+        let fullscreenID: NSToolbarItem.Identifier
         /// When non-nil, a gear-icon button that toggles the detail pane between the live
         /// display and the (read-only) settings form.
         ///
@@ -42,9 +43,30 @@ final class VMToolbarManager: NSObject {
         if let clipboardID = configuration.clipboardID {
             ids.append(clipboardID)
         }
-        ids.append(configuration.displayID)
+        ids.append(configuration.popOutID)
+        ids.append(configuration.fullscreenID)
         if let settingsToggleID = configuration.settingsToggleID {
             ids.append(settingsToggleID)
+        }
+        return ids
+    }
+
+    /// The shared items in default-layout order, with fixed spaces between the
+    /// glass capsule clusters.
+    ///
+    /// Adjacent bordered items merge into one shared capsule platter (see
+    /// docs/TOOLBAR.md), so the spaces choose the groupings: Suspend +
+    /// Clipboard together, the display pair together, the settings toggle on
+    /// its own. The lifecycle group needs no space — an `NSToolbarItemGroup`
+    /// always gets its own platter.
+    var defaultItemIdentifiers: [NSToolbarItem.Identifier] {
+        var ids = [configuration.lifecycleID, configuration.saveStateID]
+        if let clipboardID = configuration.clipboardID {
+            ids.append(clipboardID)
+        }
+        ids += [.space, configuration.popOutID, configuration.fullscreenID]
+        if let settingsToggleID = configuration.settingsToggleID {
+            ids += [.space, settingsToggleID]
         }
         return ids
     }
@@ -56,45 +78,6 @@ final class VMToolbarManager: NSObject {
 
     // MARK: - Clipboard transfer-progress state
 
-    private static let clipboardSymbolName = "doc.on.clipboard"
-    /// The plain template clipboard glyph shown when no transfer is in flight.
-    private lazy var clipboardBaseImage = NSImage.systemSymbol(
-        Self.clipboardSymbolName, accessibilityDescription: "Clipboard")
-    /// The glyph drawn inside the transfer composite, enlarged so its rendered
-    /// size matches the idle template symbol.
-    ///
-    /// RATIONALE: the picker renders a *template* symbol at its own preferred
-    /// size (measured ~1.28× the symbol's default canvas on macOS 26), while a
-    /// non-template composite is scaled by a private fitting rule of its own —
-    /// so a composite drawn from the default 16×18 symbol shows a ~22% smaller
-    /// glyph whenever the bar appears (#635). The 19 pt configuration was
-    /// found by on-screen measurement: with the 28 pt canvas below, its ink
-    /// renders within a pixel of the idle glyph's. The fitting rule is not
-    /// modelable from public API (probes at other canvas sizes scale
-    /// differently), so re-verify on screen if either constant changes.
-    private lazy var clipboardTransferGlyph: NSImage = {
-        guard
-            let enlarged = clipboardBaseImage.withSymbolConfiguration(
-                .init(pointSize: 19, weight: .regular))
-        else {
-            Self.logger.fault("Failed to configure enlarged clipboard transfer glyph")
-            assertionFailure("withSymbolConfiguration returned nil for the clipboard symbol")
-            return clipboardBaseImage
-        }
-        return enlarged
-    }()
-    /// Opaque track grays for the transfer bar, sampled from Safari's download bar.
-    ///
-    /// Light gray on the dark toolbar, a slightly darker gray on the light one.
-    /// Deliberately not a system fill color — those are translucent, which is
-    /// what made the pre-#635 bar illegible.
-    private static let transferBarTrackColor = NSColor(
-        name: nil,
-        dynamicProvider: { appearance in
-            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                ? NSColor(white: 0.85, alpha: 1)
-                : NSColor(white: 0.75, alpha: 1)
-        })
     /// The VM whose `transferProgress` the clipboard item currently reflects;
     /// weak so it never keeps an instance alive.
     ///
@@ -124,14 +107,13 @@ final class VMToolbarManager: NSObject {
         case play = 0, pause = 1, stop = 2
     }
 
-    private enum DisplaySegment: Int {
-        case popOutOrIn = 0, fullscreen = 1
-    }
-
     // MARK: - Init
 
     init(configuration: Configuration, instanceProvider: @escaping () -> VMInstance?) {
-        var allIDs = [configuration.lifecycleID, configuration.saveStateID, configuration.displayID]
+        var allIDs = [
+            configuration.lifecycleID, configuration.saveStateID,
+            configuration.popOutID, configuration.fullscreenID,
+        ]
         if let clipboardID = configuration.clipboardID { allIDs.append(clipboardID) }
         if let settingsToggleID = configuration.settingsToggleID { allIDs.append(settingsToggleID) }
         assert(
@@ -172,7 +154,7 @@ final class VMToolbarManager: NSObject {
             return group
 
         case configuration.saveStateID:
-            return makeSingleItemGroup(
+            return makeBorderedItem(
                 identifier: identifier,
                 label: "Suspend",
                 symbol: "moon.zzz.fill",
@@ -181,59 +163,50 @@ final class VMToolbarManager: NSObject {
             )
 
         case configuration.clipboardID:
-            // RATIONALE: a native single-item group (identical machinery to
-            // Suspend), with the Safari-style transfer bar composited *into*
-            // the item's image, even though that means the bar dims with the
-            // window's inactive rendering and sits inside the hover region.
-            // The alternative — a custom-view item with the bar as a real
-            // subview — was built and reverted in #635: on macOS 26 the glass
-            // toolbar excludes custom-view items from the platter's circular
-            // hover treatment (the stock `.toolbar`-bezel button draws its own
-            // mismatched rollover shape), never renders item-view content
-            // outside the item's bounds (so the bar cannot hang below the
-            // circle like Safari's anyway), and needs the platter's private
-            // 36×36 metric hardcoded to match native sizing.
-            return makeSingleItemGroup(
+            // A view-backed item so the transfer bar is a real subview over the
+            // glyph (Safari's downloads-button construction) rather than baked
+            // into the item's image; the button reproduces the native platter
+            // treatment (see ClipboardToolbarButton).
+            let button = ClipboardToolbarButton()
+            button.target = nil
+            button.action = #selector(AppDelegate.showClipboard(_:))
+            button.toolTip = "Open the clipboard sharing window"
+            let item = NSToolbarItem(itemIdentifier: identifier)
+            item.label = "Clipboard"
+            item.paletteLabel = "Clipboard"
+            item.view = button
+            item.autovalidates = false
+            return item
+
+        case configuration.popOutID:
+            return makeBorderedItem(
                 identifier: identifier,
-                label: "Clipboard",
-                symbol: Self.clipboardSymbolName,
-                action: #selector(AppDelegate.showClipboard(_:)),
-                toolTip: "Open the clipboard sharing window"
+                label: "Pop Out",
+                symbol: "pip.exit",
+                action: #selector(AppDelegate.togglePopOut(_:)),
+                toolTip: Self.popOutToolTip
             )
 
-        case configuration.displayID:
-            let group = NSToolbarItemGroup(
-                itemIdentifier: identifier,
-                images: [
-                    .systemSymbol("pip.exit", accessibilityDescription: "Pop Out"),
-                    .systemSymbol("arrow.up.left.and.arrow.down.right", accessibilityDescription: "Fullscreen"),
-                ],
-                selectionMode: .momentary,
-                labels: ["Pop Out", "Fullscreen"],
-                target: self,
-                action: #selector(displayAction(_:))
+        case configuration.fullscreenID:
+            return makeBorderedItem(
+                identifier: identifier,
+                label: "Fullscreen",
+                symbol: "arrow.up.left.and.arrow.down.right",
+                action: #selector(AppDelegate.toggleFullscreen(_:)),
+                toolTip: Self.fullscreenToolTip
             )
-            group.label = "Display"
-            group.subitems[DisplaySegment.popOutOrIn.rawValue].toolTip = Self.popOutToolTip
-            group.subitems[DisplaySegment.fullscreen.rawValue].toolTip = Self.fullscreenToolTip
-            group.autovalidates = false
-            return group
 
         case configuration.settingsToggleID:
-            let item = NSToolbarItem(itemIdentifier: identifier)
-            item.label = "Show Settings"
+            let item = makeBorderedItem(
+                identifier: identifier,
+                label: "Show Settings",
+                symbol: "gearshape",
+                action: #selector(AppDelegate.toggleSettingsPane(_:)),
+                toolTip: Self.showSettingsToolTip
+            )
             // The runtime label flips between Show/Hide Settings; the customize
             // palette needs a stable name.
             item.paletteLabel = "Settings"
-            item.image = .systemSymbol("gearshape", accessibilityDescription: "Show Settings")
-            item.action = #selector(AppDelegate.toggleSettingsPane(_:))
-            item.toolTip = Self.showSettingsToolTip
-            item.isBordered = true
-            // RATIONALE: `updateSettingsToggleItem` owns the enabled state; with
-            // autovalidation on, AppKit would force isEnabled=true (validateToolbarItem
-            // returns true for any shared identifier) and fight our manual updates,
-            // producing a visible flicker when switching between stopped VMs.
-            item.autovalidates = false
             return item
 
         default:
@@ -249,8 +222,16 @@ final class VMToolbarManager: NSObject {
         updateLifecycleGroup(in: toolbar, instance: instance)
         updateSaveStateItem(in: toolbar, instance: instance)
         updateClipboardItem(in: toolbar, instance: instance)
-        updateDisplayGroup(in: toolbar, instance: instance)
+        updatePopOutItem(in: toolbar, instance: instance)
+        updateFullscreenItem(in: toolbar, instance: instance)
         updateSettingsToggleItem(in: toolbar, instance: instance)
+    }
+
+    /// Whether the display items should be enabled for the given instance,
+    /// honoring the per-controller capability gate.
+    private func displayItemsEnabled(for instance: VMInstance?) -> Bool {
+        guard let instance else { return false }
+        return configuration.gatesDisplayOnCapability ? instance.canUseExternalDisplay : true
     }
 
     private func updateLifecycleGroup(in toolbar: NSToolbar, instance: VMInstance?) {
@@ -318,33 +299,22 @@ final class VMToolbarManager: NSObject {
         // Absence is legitimate under user customization — skip silently.
         guard let item = toolbar.items.first(where: { $0.itemIdentifier == configuration.saveStateID })
         else { return }
-        guard let group = item as? NSToolbarItemGroup, let subitem = group.subitems.first else {
-            Self.logger.warning("updateSaveStateItem: save state group malformed — wrong type or empty")
-            return
-        }
 
-        guard let instance else {
-            subitem.isEnabled = false
-            return
-        }
-
-        subitem.isEnabled = instance.canSave
+        item.isEnabled = instance?.canSave ?? false
     }
 
     private func updateClipboardItem(in toolbar: NSToolbar, instance: VMInstance?) {
         // Absence is legitimate under user customization — skip silently (matches
         // the other update* methods).
         guard let clipboardID = configuration.clipboardID,
-            let group = toolbar.items.first(where: { $0.itemIdentifier == clipboardID })
-                as? NSToolbarItemGroup,
-            let subitem = group.subitems.first
+            let item = toolbar.items.first(where: { $0.itemIdentifier == clipboardID })
         else { return }
 
-        subitem.isEnabled = instance?.canShowClipboard ?? false
+        item.isEnabled = instance?.canShowClipboard ?? false
 
         // Re-arm the transfer-progress observation onto the current VM so the
-        // item's image picks up the composited Safari-style bar — without
-        // re-running the whole toolbar update on every chunk.
+        // button's bar tracks in-flight transfers — without re-running the
+        // whole toolbar update on every chunk.
         if instance !== clipboardObservedInstance {
             clipboardObservedInstance = instance
             clipboardProgressToolbar = toolbar
@@ -356,94 +326,22 @@ final class VMToolbarManager: NSObject {
                     track: { [weak self] in
                         _ = self?.clipboardObservedInstance?.clipboardService?.transferProgress
                     },
-                    apply: { [weak self] in self?.refreshClipboardProgressImage() })
+                    apply: { [weak self] in self?.refreshClipboardTransferBar() })
         }
-        refreshClipboardProgressImage()
+        refreshClipboardTransferBar()
     }
 
-    /// Swaps the clipboard item's icon between the plain template symbol (idle)
-    /// and a composited glyph + Safari-style transfer bar (in flight).
-    private func refreshClipboardProgressImage() {
+    /// Pushes the current transfer fraction (or idle `nil`) into the clipboard
+    /// button's bar.
+    private func refreshClipboardTransferBar() {
         guard let clipboardID = configuration.clipboardID,
             let toolbar = clipboardProgressToolbar,
-            let group = toolbar.items.first(where: { $0.itemIdentifier == clipboardID })
-                as? NSToolbarItemGroup,
-            let subitem = group.subitems.first
+            let button = toolbar.items.first(where: { $0.itemIdentifier == clipboardID })?.view
+                as? ClipboardToolbarButton
         else { return }
 
-        if let progress = clipboardObservedInstance?.clipboardService?.transferProgress {
-            subitem.image = clipboardProgressImage(fraction: progress.fractionComplete)
-        } else if subitem.image !== clipboardBaseImage {
-            // Idle: restore the plain glyph, but only when it isn't already shown —
-            // this runs on every VM-state toolbar tick, and re-assigning an
-            // unchanged image needlessly redraws the item (matches the label/image
-            // equality guards used by the other update* methods).
-            subitem.image = clipboardBaseImage
-        }
-    }
-
-    /// Height of the composite's canvas.
-    ///
-    /// Taller than the glyph, with the glyph drawn centered, so the
-    /// bottom-anchored bar sits low in the platter circle — the picker centers
-    /// the whole image, and the symmetric padding keeps the glyph's ink
-    /// centered where the idle symbol renders.
-    ///
-    /// RATIONALE: probed live up to a full-height 36 canvas (#635): the
-    /// platter clips content to its circle, so a rim-hugging bar loses its
-    /// capsule ends and reads as a tinted bottom slice; 28 keeps the capsule
-    /// intact just above the rim. Paired by measurement with the 19 pt glyph
-    /// above — change one and the other must be re-verified on screen.
-    private static let transferCanvasHeight: CGFloat = 28
-
-    /// Renders the clipboard glyph at the idle symbol's on-screen size,
-    /// centered, with an opaque Safari-style capsule (filled to `fraction`)
-    /// across the bottom of the canvas.
-    ///
-    /// The bar spans the canvas width — rendered, roughly Safari's
-    /// three-fifths of the platter — and overlaps the glyph's feet rather than
-    /// shrinking the glyph: #635 established that the shrunken-glyph variant
-    /// reads as a different icon instead of "transfer in progress". Drawn via
-    /// a `drawingHandler` so the dynamic colors resolve in the current
-    /// appearance.
-    private func clipboardProgressImage(fraction: Double) -> NSImage {
-        let glyph = clipboardTransferGlyph
-        // RATIONALE: this composite is intentionally a different size than the
-        // idle base image — the enlarged glyph (#635) needs the taller canvas,
-        // and matching the plain symbol's ~16×18 box is exactly what reintroduces
-        // the glyph shrink. Safe because the macOS 26 native platter renders the
-        // item at a fixed size and does not track its image's dimensions:
-        // verified on screen that swapping between the idle symbol and this
-        // larger composite produces no item reflow.
-        let size = NSSize(
-            width: glyph.size.width,
-            height: max(glyph.size.height, Self.transferCanvasHeight))
-        let clamped = CGFloat(min(max(fraction, 0), 1))
-        let image = NSImage(size: size, flipped: false) { rect in
-            let glyphRect = NSRect(
-                x: rect.midX - glyph.size.width / 2,
-                y: rect.midY - glyph.size.height / 2,
-                width: glyph.size.width,
-                height: glyph.size.height)
-            glyph.draw(in: glyphRect)
-            NSColor.labelColor.set()
-            glyphRect.fill(using: .sourceAtop)  // tint the template glyph
-
-            let barHeight: CGFloat = 5
-            let radius = barHeight / 2
-            let track = NSRect(x: 0, y: 0, width: rect.width, height: barHeight)
-            Self.transferBarTrackColor.setFill()
-            NSBezierPath(roundedRect: track, xRadius: radius, yRadius: radius).fill()
-            // Never narrower than the capsule's round cap, so a just-started
-            // transfer shows a full leading dot rather than a clipped sliver.
-            let fillWidth = max(barHeight, rect.width * clamped)
-            let fill = NSRect(x: 0, y: 0, width: fillWidth, height: barHeight)
-            NSColor.controlAccentColor.setFill()
-            NSBezierPath(roundedRect: fill, xRadius: radius, yRadius: radius).fill()
-            return true
-        }
-        image.isTemplate = false  // keep the baked colors (not tinted by the item)
-        return image
+        button.transferFraction =
+            clipboardObservedInstance?.clipboardService?.transferProgress?.fractionComplete
     }
 
     private func updateSettingsToggleItem(in toolbar: NSToolbar, instance: VMInstance?) {
@@ -473,53 +371,44 @@ final class VMToolbarManager: NSObject {
         }
     }
 
-    private func updateDisplayGroup(in toolbar: NSToolbar, instance: VMInstance?) {
+    private func updatePopOutItem(in toolbar: NSToolbar, instance: VMInstance?) {
         // Absence is legitimate under user customization — skip silently.
-        guard let item = toolbar.items.first(where: { $0.itemIdentifier == configuration.displayID })
+        guard let item = toolbar.items.first(where: { $0.itemIdentifier == configuration.popOutID })
         else { return }
-        guard let group = item as? NSToolbarItemGroup, group.subitems.count == 2 else {
-            Self.logger.warning("updateDisplayGroup: display group malformed — wrong type or subitem count")
-            return
-        }
 
-        let popItem = group.subitems[DisplaySegment.popOutOrIn.rawValue]
-        let fullscreenItem = group.subitems[DisplaySegment.fullscreen.rawValue]
+        item.isEnabled = displayItemsEnabled(for: instance)
 
-        guard let instance else {
-            popItem.isEnabled = false
-            fullscreenItem.isEnabled = false
-            return
-        }
-
-        if configuration.gatesDisplayOnCapability {
-            let canUse = instance.canUseExternalDisplay
-            popItem.isEnabled = canUse
-            fullscreenItem.isEnabled = canUse
-        } else {
-            popItem.isEnabled = true
-            fullscreenItem.isEnabled = true
-        }
-
-        let popLabel = instance.isDisplayDetached ? "Pop In" : "Pop Out"
-        if popItem.label != popLabel {
-            popItem.label = popLabel
-            popItem.image = .systemSymbol(
+        guard let instance else { return }
+        let label = instance.isDisplayDetached ? "Pop In" : "Pop Out"
+        if item.label != label {
+            item.label = label
+            item.image = .systemSymbol(
                 instance.isDisplayDetached ? "pip.enter" : "pip.exit",
-                accessibilityDescription: popLabel
+                accessibilityDescription: label
             )
-            popItem.toolTip = instance.isDisplayDetached ? Self.popInToolTip : Self.popOutToolTip
+            item.toolTip = instance.isDisplayDetached ? Self.popInToolTip : Self.popOutToolTip
         }
+    }
 
-        let fsLabel = instance.isInFullscreen ? "Exit Fullscreen" : "Fullscreen"
-        if fullscreenItem.label != fsLabel {
-            fullscreenItem.label = fsLabel
-            fullscreenItem.image = .systemSymbol(
+    private func updateFullscreenItem(in toolbar: NSToolbar, instance: VMInstance?) {
+        // Absence is legitimate under user customization — skip silently.
+        guard
+            let item = toolbar.items.first(where: { $0.itemIdentifier == configuration.fullscreenID })
+        else { return }
+
+        item.isEnabled = displayItemsEnabled(for: instance)
+
+        guard let instance else { return }
+        let label = instance.isInFullscreen ? "Exit Fullscreen" : "Fullscreen"
+        if item.label != label {
+            item.label = label
+            item.image = .systemSymbol(
                 instance.isInFullscreen
                     ? "arrow.down.right.and.arrow.up.left"
                     : "arrow.up.left.and.arrow.down.right",
-                accessibilityDescription: fsLabel
+                accessibilityDescription: label
             )
-            fullscreenItem.toolTip =
+            item.toolTip =
                 instance.isInFullscreen
                 ? Self.exitFullscreenToolTip : Self.fullscreenToolTip
         }
@@ -546,19 +435,6 @@ final class VMToolbarManager: NSObject {
         }
     }
 
-    @objc private func displayAction(_ group: NSToolbarItemGroup) {
-        guard let segment = DisplaySegment(rawValue: group.selectedIndex) else {
-            Self.logger.warning("displayAction: unexpected selectedIndex \(group.selectedIndex, privacy: .public)")
-            return
-        }
-        switch segment {
-        case .popOutOrIn:
-            NSApp.sendAction(#selector(AppDelegate.togglePopOut(_:)), to: nil, from: nil)
-        case .fullscreen:
-            NSApp.sendAction(#selector(AppDelegate.toggleFullscreen(_:)), to: nil, from: nil)
-        }
-    }
-
     // MARK: - Helpers
 
     /// Resolves the current VM instance, returning `nil` if no instance is available
@@ -572,24 +448,29 @@ final class VMToolbarManager: NSObject {
         return instance
     }
 
-    private func makeSingleItemGroup(
+    /// Creates a bordered image-backed item — the standard single-button shape,
+    /// which merges into a shared glass capsule with adjacent bordered items.
+    ///
+    /// The factory label doubles as the stable palette label; state-dependent
+    /// relabeling (Pop Out ⇆ Pop In) happens in the update methods.
+    private func makeBorderedItem(
         identifier: NSToolbarItem.Identifier,
         label: String,
         symbol: String,
         action: Selector,
-        toolTip: String? = nil
-    ) -> NSToolbarItemGroup {
-        let group = NSToolbarItemGroup(
-            itemIdentifier: identifier,
-            images: [.systemSymbol(symbol, accessibilityDescription: label)],
-            selectionMode: .momentary,
-            labels: [label],
-            target: nil,
-            action: action
-        )
-        group.label = label
-        if let toolTip { group.subitems.first?.toolTip = toolTip }
-        group.autovalidates = false
-        return group
+        toolTip: String
+    ) -> NSToolbarItem {
+        let item = NSToolbarItem(itemIdentifier: identifier)
+        item.label = label
+        item.paletteLabel = label
+        item.image = .systemSymbol(symbol, accessibilityDescription: label)
+        item.action = action
+        item.toolTip = toolTip
+        item.isBordered = true
+        // RATIONALE: the update methods own enabled state; with autovalidation
+        // on, AppKit would force isEnabled=true and fight the manual updates,
+        // producing a visible flicker when switching between stopped VMs.
+        item.autovalidates = false
+        return item
     }
 }

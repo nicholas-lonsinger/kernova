@@ -35,7 +35,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
                 lifecycleID: NSToolbarItem.Identifier("lifecycle"),
                 saveStateID: NSToolbarItem.Identifier("saveState"),
                 clipboardID: NSToolbarItem.Identifier("clipboard"),
-                displayID: NSToolbarItem.Identifier("display"),
+                popOutID: NSToolbarItem.Identifier("popOut"),
+                fullscreenID: NSToolbarItem.Identifier("fullscreen"),
                 settingsToggleID: NSToolbarItem.Identifier("settingsToggle"),
                 checksPreparing: true,
                 gatesDisplayOnCapability: true
@@ -183,7 +184,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             Self.toolbarNewVM,
             .toggleSidebar,
             .sidebarTrackingSeparator,
-        ] + toolbarManager.sharedItemIdentifiers
+        ] + toolbarManager.defaultItemIdentifiers
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -236,7 +237,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     /// reinserting at the same index routes through the delegate factory, giving
     /// the fresh instance the treatment of the section it now lives in, while
     /// leaving the autosaved layout untouched (same identifiers, same order).
-    /// Applies to every custom item (New VM and the manager's groups can all be
+    /// Applies to every custom item (New VM and the manager's items can all be
     /// dragged across the separator); AppKit's own items handle this themselves.
     /// Known limitation: a ⌘-drag move across the separator outside the sheet
     /// has no AppKit hook, so its stale treatment persists until the next

@@ -31,13 +31,18 @@ struct VMToolbarManagerTests {
                 lifecycleID: NSToolbarItem.Identifier("testLifecycle"),
                 saveStateID: NSToolbarItem.Identifier("testSaveState"),
                 clipboardID: NSToolbarItem.Identifier("testClipboard"),
-                displayID: NSToolbarItem.Identifier("testDisplay"),
+                popOutID: NSToolbarItem.Identifier("testPopOut"),
+                fullscreenID: NSToolbarItem.Identifier("testFullscreen"),
                 settingsToggleID: includeSettingsToggle ? NSToolbarItem.Identifier("testSettingsToggle") : nil,
                 checksPreparing: checksPreparing,
                 gatesDisplayOnCapability: gatesDisplayOnCapability
             ),
             instanceProvider: { instance }
         )
+    }
+
+    private func item(_ rawIdentifier: String, in toolbar: NSToolbar) -> NSToolbarItem? {
+        toolbar.items.first { $0.itemIdentifier.rawValue == rawIdentifier }
     }
 
     /// Creates an NSToolbar attached to a window so `toolbar.items` is populated via delegate callbacks.
@@ -73,24 +78,30 @@ struct VMToolbarManagerTests {
         #expect(group?.label == "State Controls")
     }
 
-    @Test("makeToolbarItem returns save state group with 1 subitem")
-    func saveStateGroupStructure() {
+    @Test("makeToolbarItem returns save state as a plain bordered item")
+    func saveStateItemStructure() {
         let manager = makeManager()
         let item = manager.makeToolbarItem(for: NSToolbarItem.Identifier("testSaveState"))
-        let group = item as? NSToolbarItemGroup
-        #expect(group != nil)
-        #expect(group?.subitems.count == 1)
-        #expect(group?.label == "Suspend")
+        #expect(item != nil)
+        #expect(!(item is NSToolbarItemGroup))
+        #expect(item?.isBordered == true)
+        #expect(item?.label == "Suspend")
+        #expect(item?.autovalidates == false)
     }
 
-    @Test("makeToolbarItem returns display group with 2 subitems")
-    func displayGroupStructure() {
+    @Test("makeToolbarItem returns separate bordered pop-out and fullscreen items")
+    func displayItemsStructure() {
         let manager = makeManager()
-        let item = manager.makeToolbarItem(for: NSToolbarItem.Identifier("testDisplay"))
-        let group = item as? NSToolbarItemGroup
-        #expect(group != nil)
-        #expect(group?.subitems.count == 2)
-        #expect(group?.label == "Display")
+        let popOut = manager.makeToolbarItem(for: NSToolbarItem.Identifier("testPopOut"))
+        let fullscreen = manager.makeToolbarItem(for: NSToolbarItem.Identifier("testFullscreen"))
+        #expect(popOut?.isBordered == true)
+        #expect(popOut?.label == "Pop Out")
+        #expect(fullscreen?.isBordered == true)
+        #expect(fullscreen?.label == "Fullscreen")
+        // The runtime labels flip (Pop In / Exit Fullscreen); the customize
+        // palette keeps the factory names.
+        #expect(popOut?.paletteLabel == "Pop Out")
+        #expect(fullscreen?.paletteLabel == "Fullscreen")
     }
 
     @Test("makeToolbarItem returns nil for unknown identifier")
@@ -103,19 +114,50 @@ struct VMToolbarManagerTests {
     @Test("sharedItemIdentifiers contains all configured identifiers")
     func sharedIdentifiers() {
         let manager = makeManager()
-        #expect(manager.sharedItemIdentifiers.count == 5)
+        #expect(manager.sharedItemIdentifiers.count == 6)
         #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testLifecycle")))
         #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testSaveState")))
         #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testClipboard")))
-        #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testDisplay")))
+        #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testPopOut")))
+        #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testFullscreen")))
         #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testSettingsToggle")))
     }
 
     @Test("sharedItemIdentifiers omits settings toggle when not configured")
     func sharedIdentifiersWithoutSettingsToggle() {
         let manager = makeManager(includeSettingsToggle: false)
-        #expect(manager.sharedItemIdentifiers.count == 4)
+        #expect(manager.sharedItemIdentifiers.count == 5)
         #expect(!manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testSettingsToggle")))
+    }
+
+    @Test("defaultItemIdentifiers separates the capsule clusters with fixed spaces")
+    func defaultIdentifiersClusterSpacing() {
+        let manager = makeManager()
+        #expect(
+            manager.defaultItemIdentifiers == [
+                NSToolbarItem.Identifier("testLifecycle"),
+                NSToolbarItem.Identifier("testSaveState"),
+                NSToolbarItem.Identifier("testClipboard"),
+                .space,
+                NSToolbarItem.Identifier("testPopOut"),
+                NSToolbarItem.Identifier("testFullscreen"),
+                .space,
+                NSToolbarItem.Identifier("testSettingsToggle"),
+            ])
+    }
+
+    @Test("defaultItemIdentifiers omits the trailing space without a settings toggle")
+    func defaultIdentifiersWithoutSettingsToggle() {
+        let manager = makeManager(includeSettingsToggle: false)
+        #expect(
+            manager.defaultItemIdentifiers == [
+                NSToolbarItem.Identifier("testLifecycle"),
+                NSToolbarItem.Identifier("testSaveState"),
+                NSToolbarItem.Identifier("testClipboard"),
+                .space,
+                NSToolbarItem.Identifier("testPopOut"),
+                NSToolbarItem.Identifier("testFullscreen"),
+            ])
     }
 
     // MARK: - Nil Instance
@@ -127,13 +169,11 @@ struct VMToolbarManagerTests {
 
         manager.updateToolbarItems(in: toolbar)
 
-        let lifecycle = toolbar.items.first { $0.itemIdentifier.rawValue == "testLifecycle" } as? NSToolbarItemGroup
-        let saveState = toolbar.items.first { $0.itemIdentifier.rawValue == "testSaveState" } as? NSToolbarItemGroup
-        let display = toolbar.items.first { $0.itemIdentifier.rawValue == "testDisplay" } as? NSToolbarItemGroup
-
+        let lifecycle = item("testLifecycle", in: toolbar) as? NSToolbarItemGroup
         #expect(lifecycle?.subitems.allSatisfy { !$0.isEnabled } == true)
-        #expect(saveState?.subitems.first?.isEnabled == false)
-        #expect(display?.subitems.allSatisfy { !$0.isEnabled } == true)
+        #expect(item("testSaveState", in: toolbar)?.isEnabled == false)
+        #expect(item("testPopOut", in: toolbar)?.isEnabled == false)
+        #expect(item("testFullscreen", in: toolbar)?.isEnabled == false)
     }
 
     // MARK: - Clipboard item
@@ -156,24 +196,18 @@ struct VMToolbarManagerTests {
         func clearBuffer() { clipboardContent = .empty }
     }
 
-    private func clipboardSubitem(in toolbar: NSToolbar) -> NSToolbarItem? {
-        (toolbar.items.first { $0.itemIdentifier.rawValue == "testClipboard" }
-            as? NSToolbarItemGroup)?.subitems.first
+    private func clipboardButton(in toolbar: NSToolbar) -> ClipboardToolbarButton? {
+        item("testClipboard", in: toolbar)?.view as? ClipboardToolbarButton
     }
 
-    @Test("makeToolbarItem returns clipboard single-item group (native styling)")
-    func clipboardGroupStructure() {
+    @Test("makeToolbarItem returns the clipboard item backed by ClipboardToolbarButton")
+    func clipboardItemStructure() {
         let manager = makeManager()
         let item = manager.makeToolbarItem(for: NSToolbarItem.Identifier("testClipboard"))
-        let group = item as? NSToolbarItemGroup
-        // A native group (like Suspend) so it gets the standard toolbar platter,
-        // hover highlight, and sizing; the transfer bar is composited into its
-        // image, not overlaid as a custom view (see the RATIONALE in
-        // makeToolbarItem for the #635 findings behind this).
-        #expect(group != nil)
-        #expect(group?.subitems.count == 1)
-        #expect(group?.label == "Clipboard")
-        #expect(group?.autovalidates == false)
+        #expect(item?.view is ClipboardToolbarButton)
+        #expect(item?.label == "Clipboard")
+        #expect(item?.paletteLabel == "Clipboard")
+        #expect(item?.autovalidates == false)
     }
 
     @Test("updateClipboardItem disables the clipboard item without a running VM")
@@ -185,7 +219,7 @@ struct VMToolbarManagerTests {
         manager.updateToolbarItems(in: toolbar)
 
         // canShowClipboard is false (a test instance has no VZVirtualMachine).
-        #expect(clipboardSubitem(in: toolbar)?.isEnabled == false)
+        #expect(clipboardButton(in: toolbar)?.isEnabled == false)
     }
 
     @Test("updateClipboardItem disables the clipboard item for a nil instance")
@@ -195,11 +229,11 @@ struct VMToolbarManagerTests {
 
         manager.updateToolbarItems(in: toolbar)
 
-        #expect(clipboardSubitem(in: toolbar)?.isEnabled == false)
+        #expect(clipboardButton(in: toolbar)?.isEnabled == false)
     }
 
-    @Test("Clipboard item shows the composited progress image while a transfer is in flight")
-    func clipboardImageCompositedDuringTransfer() {
+    @Test("Clipboard button shows the transfer fraction while a transfer is in flight")
+    func clipboardBarShownDuringTransfer() {
         let instance = makeInstance(status: .running)
         let service = FakeClipboardService()
         service.transferProgress = ClipboardTransferProgress(
@@ -210,13 +244,11 @@ struct VMToolbarManagerTests {
 
         manager.updateToolbarItems(in: toolbar)
 
-        // The composite bakes its colors, so it is deliberately non-template —
-        // unlike the plain symbol shown when idle.
-        #expect(clipboardSubitem(in: toolbar)?.image?.isTemplate == false)
+        #expect(clipboardButton(in: toolbar)?.transferFraction == 0.25)
     }
 
-    @Test("Clipboard item restores the plain symbol once the transfer reaches a terminal state")
-    func clipboardImageRestoredAfterTerminal() {
+    @Test("Clipboard button hides the bar once the transfer reaches a terminal state")
+    func clipboardBarHiddenAfterTerminal() {
         let instance = makeInstance(status: .running)
         let service = FakeClipboardService()
         service.transferProgress = ClipboardTransferProgress(
@@ -225,13 +257,13 @@ struct VMToolbarManagerTests {
         let manager = makeManager(instance: instance)
         let (toolbar, _, _) = makeToolbar(manager: manager)
         manager.updateToolbarItems(in: toolbar)
-        #expect(clipboardSubitem(in: toolbar)?.image?.isTemplate == false)
+        #expect(clipboardButton(in: toolbar)?.transferFraction == 0.5)
 
         // Terminal: the tracker clears the projection.
         service.transferProgress = nil
         manager.updateToolbarItems(in: toolbar)
 
-        #expect(clipboardSubitem(in: toolbar)?.image?.isTemplate == true)
+        #expect(clipboardButton(in: toolbar)?.transferFraction == nil)
     }
 
     // MARK: - Preparing State
@@ -364,8 +396,7 @@ struct VMToolbarManagerTests {
 
         manager.updateToolbarItems(in: toolbar)
 
-        let saveState = toolbar.items.first { $0.itemIdentifier.rawValue == "testSaveState" } as? NSToolbarItemGroup
-        #expect(saveState?.subitems.first?.isEnabled == true)
+        #expect(item("testSaveState", in: toolbar)?.isEnabled == true)
     }
 
     @Test("Save state disabled when stopped")
@@ -376,11 +407,10 @@ struct VMToolbarManagerTests {
 
         manager.updateToolbarItems(in: toolbar)
 
-        let saveState = toolbar.items.first { $0.itemIdentifier.rawValue == "testSaveState" } as? NSToolbarItemGroup
-        #expect(saveState?.subitems.first?.isEnabled == false)
+        #expect(item("testSaveState", in: toolbar)?.isEnabled == false)
     }
 
-    // MARK: - Display Group Gating
+    // MARK: - Display Item Gating
 
     @Test("Display items disabled when gatesDisplayOnCapability=true and canUseExternalDisplay is false")
     func displayGatedAndDisabled() {
@@ -390,9 +420,8 @@ struct VMToolbarManagerTests {
 
         manager.updateToolbarItems(in: toolbar)
 
-        let display = toolbar.items.first { $0.itemIdentifier.rawValue == "testDisplay" } as? NSToolbarItemGroup
-        #expect(display?.subitems[0].isEnabled == false)
-        #expect(display?.subitems[1].isEnabled == false)
+        #expect(item("testPopOut", in: toolbar)?.isEnabled == false)
+        #expect(item("testFullscreen", in: toolbar)?.isEnabled == false)
     }
 
     @Test("Display items enabled when gatesDisplayOnCapability=false regardless of status")
@@ -403,9 +432,8 @@ struct VMToolbarManagerTests {
 
         manager.updateToolbarItems(in: toolbar)
 
-        let display = toolbar.items.first { $0.itemIdentifier.rawValue == "testDisplay" } as? NSToolbarItemGroup
-        #expect(display?.subitems[0].isEnabled == true)
-        #expect(display?.subitems[1].isEnabled == true)
+        #expect(item("testPopOut", in: toolbar)?.isEnabled == true)
+        #expect(item("testFullscreen", in: toolbar)?.isEnabled == true)
     }
 
     // MARK: - Display Labels
@@ -419,8 +447,7 @@ struct VMToolbarManagerTests {
 
         manager.updateToolbarItems(in: toolbar)
 
-        let display = toolbar.items.first { $0.itemIdentifier.rawValue == "testDisplay" } as? NSToolbarItemGroup
-        #expect(display?.subitems[0].label == "Pop Out")
+        #expect(item("testPopOut", in: toolbar)?.label == "Pop Out")
     }
 
     @Test("Pop In label when displayMode is popOut")
@@ -432,8 +459,7 @@ struct VMToolbarManagerTests {
 
         manager.updateToolbarItems(in: toolbar)
 
-        let display = toolbar.items.first { $0.itemIdentifier.rawValue == "testDisplay" } as? NSToolbarItemGroup
-        #expect(display?.subitems[0].label == "Pop In")
+        #expect(item("testPopOut", in: toolbar)?.label == "Pop In")
     }
 
     @Test("Pop In label when displayMode is hidden (headless)")
@@ -445,8 +471,7 @@ struct VMToolbarManagerTests {
 
         manager.updateToolbarItems(in: toolbar)
 
-        let display = toolbar.items.first { $0.itemIdentifier.rawValue == "testDisplay" } as? NSToolbarItemGroup
-        #expect(display?.subitems[0].label == "Pop In")
+        #expect(item("testPopOut", in: toolbar)?.label == "Pop In")
     }
 
     @Test("Fullscreen label when not in fullscreen")
@@ -458,8 +483,7 @@ struct VMToolbarManagerTests {
 
         manager.updateToolbarItems(in: toolbar)
 
-        let display = toolbar.items.first { $0.itemIdentifier.rawValue == "testDisplay" } as? NSToolbarItemGroup
-        #expect(display?.subitems[1].label == "Fullscreen")
+        #expect(item("testFullscreen", in: toolbar)?.label == "Fullscreen")
     }
 
     @Test("Exit Fullscreen label when in fullscreen")
@@ -471,8 +495,7 @@ struct VMToolbarManagerTests {
 
         manager.updateToolbarItems(in: toolbar)
 
-        let display = toolbar.items.first { $0.itemIdentifier.rawValue == "testDisplay" } as? NSToolbarItemGroup
-        #expect(display?.subitems[1].label == "Exit Fullscreen")
+        #expect(item("testFullscreen", in: toolbar)?.label == "Exit Fullscreen")
     }
 
     // MARK: - Settings Toggle
