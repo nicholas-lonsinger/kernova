@@ -484,13 +484,13 @@ the denominators (how many files will materialize — flat reps and folder file 
 total bytes across all of them) and the pulls supply the numerators, so a flat multi-file paste
 (sequential pulls) and a folder (concurrent children) read identically — one bar, one
 byte-progress line in Safari's download phrasing ("47.6 MB of 3.03 GB (7.8 MB/s)"), one
-time-remaining line ("6 minutes, 27 seconds remaining"), and "N of M files", where a
+time-remaining line ("6 minutes, 27 seconds remaining"), and "N of M", where a
 folder's children count individually so a folder-only paste gets a live counter too (the
 current item's name follows the most recently begun pull — a folder's children under the
 *folder's* name — but only the tooltip/accessibility summary renders it). The status item
 carries a determinate ring; the
 dropdown carries the full readout and opens itself **once per paste**, and never again for that
-paste once the user closes it. Revealed after 4 s of materializing — far past the in-app bar's
+paste once the user closes it. Revealed after 3 s of materializing — far past the in-app bar's
 300 ms, because a dropdown that opens itself is a heavier interruption than a bar in a window
 already on screen, so it is reserved for genuinely long transfers — and cleared 2 s after the
 last pull ends, a dwell that both bridges Finder's gap between two sequentially-pulled items and

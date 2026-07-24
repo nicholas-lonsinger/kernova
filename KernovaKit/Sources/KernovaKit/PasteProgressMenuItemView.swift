@@ -17,7 +17,7 @@ public final class PasteProgressMenuItemView: NSView {
     ///
     /// Wide enough for a headline naming a VM plus the byte-progress line with
     /// its file counter, without making the whole dropdown unusually wide.
-    private static let contentWidth: CGFloat = 260
+    private static let contentWidth: CGFloat = 312
     /// Leading inset aligning the readout with the dropdown's ordinary item
     /// titles, whose text starts clear of the checkmark gutter.
     private static let leadingInset: CGFloat = 21

@@ -17,16 +17,16 @@ public enum PasteProgressFormat {
         "Pasting from “\(sourceName)”…"
     }
 
-    /// Progress through the paste's files ("2 of 5 files" — a folder's file
-    /// nodes count individually), or `nil` for a single-file paste, where the
-    /// file's own name already says everything a counter would.
+    /// Progress through the paste's files ("2 of 5" — a folder's file nodes
+    /// count individually), or `nil` for a single-file paste, where the file's
+    /// own name already says everything a counter would.
     public static func itemCounter(completed: Int, total: Int) -> String? {
         guard total > 1 else { return nil }
         // A count that has been delivered but not yet incremented past the file
         // currently streaming reads better as "3 of 5" than "2 of 5" — the user
         // counts the file on screen as the one in progress.
         let position = min(completed + 1, total)
-        return "\(position) of \(total) files"
+        return "\(position) of \(total)"
     }
 
     /// Throughput ("1.2 GB/s"), or `nil` before an estimate exists.

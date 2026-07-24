@@ -15,11 +15,11 @@ struct PasteProgressFormatTests {
     @Test("the file counter shows the file being worked on, and is absent for a single file")
     func itemCounter() {
         #expect(PasteProgressFormat.itemCounter(completed: 0, total: 1) == nil)
-        #expect(PasteProgressFormat.itemCounter(completed: 0, total: 5) == "1 of 5 files")
-        #expect(PasteProgressFormat.itemCounter(completed: 2, total: 5) == "3 of 5 files")
+        #expect(PasteProgressFormat.itemCounter(completed: 0, total: 5) == "1 of 5")
+        #expect(PasteProgressFormat.itemCounter(completed: 2, total: 5) == "3 of 5")
         // Never past the total, even in the beat between the last file finishing
         // and the readout clearing.
-        #expect(PasteProgressFormat.itemCounter(completed: 5, total: 5) == "5 of 5 files")
+        #expect(PasteProgressFormat.itemCounter(completed: 5, total: 5) == "5 of 5")
     }
 
     @Test("speed is a byte count per second, and absent without an estimate")
@@ -79,7 +79,7 @@ struct PasteProgressFormatTests {
         let snapshot = PasteMaterializationSnapshot(
             sourceName: "VM", currentItemName: "big.mov", filesCompleted: 1, fileCount: 5,
             bytesTransferred: 500, totalBytes: 1_000, bytesPerSecond: nil, secondsRemaining: nil)
-        #expect(PasteProgressFormat.summary(snapshot) == "Pasting from “VM”… — 50% — 2 of 5 files")
+        #expect(PasteProgressFormat.summary(snapshot) == "Pasting from “VM”… — 50% — 2 of 5")
     }
 
     @Test("the summary falls back to the file's name for a single-file paste")

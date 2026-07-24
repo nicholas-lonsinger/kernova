@@ -45,7 +45,7 @@ final class PasteMaterializationTracker: @unchecked Sendable {
     /// heavier interruption than a bar inside a window the user is already
     /// looking at, so it is reserved for transfers long enough (several
     /// seconds at minimum) to genuinely need a standing readout.
-    static let defaultRevealDelay: TimeInterval = 4.0
+    static let defaultRevealDelay: TimeInterval = 3.0
 
     /// How long the readout stays up after the last pull finishes — the gap
     /// bridge and completion dwell described in the type's documentation.
