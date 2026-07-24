@@ -221,19 +221,27 @@ final class HostClipboardFileProvider: HostClipboardDomainCoordinating {
         } else {
             progressBySource.removeValue(forKey: key)
         }
-        materializationProgress = Self.mostSignificant(of: progressBySource.values)
+        materializationProgress = Self.mostSignificant(of: progressBySource)
     }
 
     /// The snapshot with the most bytes left to move, or `nil` when none is live.
+    ///
+    /// Ties break on the source's identity — arbitrary, but *stable*, which
+    /// dictionary iteration order is not: two VMs whose readouts are level (both
+    /// lingering at 100 %, say) would otherwise swap the status item's headline
+    /// between them as entries come and go.
     private static func mostSignificant(
-        of snapshots: some Collection<ClipboardProgressSnapshot>
+        of snapshots: [ObjectIdentifier: ClipboardProgressSnapshot]
     ) -> ClipboardProgressSnapshot? {
-        snapshots.max { lhs, rhs in
-            func remaining(_ snapshot: ClipboardProgressSnapshot) -> UInt64 {
-                snapshot.totalBytes - min(snapshot.bytesTransferred, snapshot.totalBytes)
-            }
-            return remaining(lhs) < remaining(rhs)
+        func remaining(_ snapshot: ClipboardProgressSnapshot) -> UInt64 {
+            snapshot.totalBytes - min(snapshot.bytesTransferred, snapshot.totalBytes)
         }
+        return snapshots.max { lhs, rhs in
+            let lhsRemaining = remaining(lhs.value)
+            let rhsRemaining = remaining(rhs.value)
+            if lhsRemaining != rhsRemaining { return lhsRemaining < rhsRemaining }
+            return lhs.key < rhs.key
+        }?.value
     }
 
     /// Clears the current offer, but only if `source` is the one that published

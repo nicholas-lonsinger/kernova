@@ -407,11 +407,16 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// `generation`, opening one if the host's request is the first under it.
     ///
     /// A newer generation supersedes an older session outright: the offer it was
-    /// measuring no longer exists.
+    /// measuring no longer exists. A session the tracker has already ended is
+    /// replaced too — the host's preview wave and its paste wave can be minutes
+    /// apart, far longer than the idle linger, and reusing the ended token would
+    /// drop the paste's progress entirely.
     private func outboundSessionToken(for generation: UInt64)
         -> ClipboardProgressTracker.SessionToken
     {
-        if let existing = outboundSession, existing.generation == generation {
+        if let existing = outboundSession, existing.generation == generation,
+            progressTracker.isSessionLive(existing.token)
+        {
             return existing.token
         }
         if let stale = outboundSession { progressTracker.closeSession(stale.token, immediately: true) }

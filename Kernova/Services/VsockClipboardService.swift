@@ -398,11 +398,16 @@ final class VsockClipboardService: ClipboardServicing {
     /// opening one if the guest's request is the first under that generation.
     ///
     /// A newer generation supersedes an older session outright: the offer it was
-    /// measuring no longer exists.
+    /// measuring no longer exists. A session the tracker has already ended is
+    /// replaced too — the waves can be minutes apart, far longer than the idle
+    /// linger, and reusing the ended token would drop the second wave's progress
+    /// entirely.
     private func outboundSessionToken(for generation: UInt64)
         -> ClipboardProgressTracker.SessionToken
     {
-        if let existing = outboundSession, existing.generation == generation {
+        if let existing = outboundSession, existing.generation == generation,
+            progress.isSessionLive(existing.token)
+        {
             return existing.token
         }
         if let stale = outboundSession { progress.closeSession(stale.token, immediately: true) }

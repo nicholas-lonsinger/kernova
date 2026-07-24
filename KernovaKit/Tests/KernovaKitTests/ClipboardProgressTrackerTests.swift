@@ -514,9 +514,8 @@ struct ClipboardProgressTrackerTests {
         #expect(harness.latest?.fractionComplete == 1)
     }
 
-    // The suite's one wall-clock-dependent assertion, and the same trade-off
-    // `ClipboardTransferProgressTrackerTests.subQuantumChunkSuppressed` already
-    // documents: the throttle admits on the byte quantum OR ~100 ms elapsed, and
+    // The suite's one wall-clock-dependent assertion:
+    // the throttle admits on the byte quantum OR ~100 ms elapsed, and
     // `FetchProgressCoalescer` reads its own clock, so proving suppression needs
     // the two records to land inside that window. They are adjacent synchronous
     // statements — no awaits, actor hops, or I/O. The quantum itself is covered
@@ -732,6 +731,31 @@ struct ClipboardProgressTrackerTests {
 
         harness.fireScheduledWork()
         #expect(!harness.lastEmissionClears)
+    }
+
+    @Test("a session the linger already ended reports itself dead so its token isn't reused")
+    func endedSessionIsNotLive() {
+        // The waves can be minutes apart — far longer than the linger — and the
+        // callers that cache a token across them (`outboundSessionToken` on both
+        // sides of the link) have no other way to tell that the session they
+        // opened is gone. Without the check every event of the second wave is
+        // dropped, which is the whole outbound readout for a paste.
+        let harness = Harness()
+        let session = harness.tracker.openSession(direction: .outbound, peerName: "VM")
+        harness.tracker.unitBegan(session: session, id: 0, expectedBytes: 1_000, name: "a.bin")
+        harness.now = 2
+        harness.tracker.unitEnded(session: session, id: 0, succeeded: true)
+        #expect(harness.tracker.isSessionLive(session))
+
+        harness.fireScheduledWork()
+        #expect(!harness.tracker.isSessionLive(session))
+
+        // And the token really is inert, so reusing it would measure nothing.
+        let emissionsBefore = harness.emissions.count
+        harness.tracker.unitBegan(session: session, id: 1, expectedBytes: 5_000, name: "b.bin")
+        harness.now = 5
+        harness.tracker.unitProgressed(session: session, id: 1, bytesTransferred: 2_500)
+        #expect(harness.emissions.count == emissionsBefore)
     }
 
     @Test("progress or a terminal for a session that never began is ignored")

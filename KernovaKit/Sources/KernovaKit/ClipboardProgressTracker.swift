@@ -143,7 +143,9 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
         /// Whether the reveal gate has been passed — once true, the readout is on
         /// screen and every terminal must clear it.
         var revealed = false
-        var units: [Unit: UnitState]
+        /// Writable only through `setUnit`, which keeps the running byte sums
+        /// below in step with it.
+        private(set) var units: [Unit: UnitState]
         var completedCount = 0
         /// Transfers currently in flight, in the order they began.
         ///
@@ -166,6 +168,17 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
         /// terminal can tell it was superseded.
         var idleEpoch: UInt64 = 0
 
+        /// Bytes moved across the whole operation.
+        ///
+        /// Kept as a running sum rather than reduced from `units` on demand: both
+        /// totals are read on *every* event, including the per-chunk progress the
+        /// throttle then suppresses, and a folder paste's session holds one unit
+        /// per file — so reducing here would make the hot path cost scale with the
+        /// tree's size.
+        private(set) var transferredBytes: UInt64 = 0
+        /// Bytes the whole operation expects to move; see `transferredBytes`.
+        private(set) var totalBytes: UInt64 = 0
+
         init(
             token: SessionToken, direction: ClipboardProgressSnapshot.Direction, peerName: String,
             isPaste: Bool, startedAt: TimeInterval, units: [Unit: UnitState]
@@ -176,10 +189,21 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
             self.isPaste = isPaste
             self.startedAt = startedAt
             self.units = units
+            for state in units.values {
+                totalBytes &+= state.expected
+                transferredBytes &+= state.observed
+            }
         }
 
-        var transferredBytes: UInt64 { units.values.reduce(UInt64(0)) { $0 &+ $1.observed } }
-        var totalBytes: UInt64 { units.values.reduce(UInt64(0)) { $0 &+ $1.expected } }
+        /// Installs one transfer's state, keeping the running sums in step.
+        ///
+        /// The only way `units` is written after `init`, so the two can't drift.
+        func setUnit(_ unit: Unit, _ state: UnitState) {
+            let previous = units[unit]
+            totalBytes = totalBytes &- (previous?.expected ?? 0) &+ state.expected
+            transferredBytes = transferredBytes &- (previous?.observed ?? 0) &+ state.observed
+            units[unit] = state
+        }
     }
 
     /// What a mutation left behind: whether this event can have ended the
@@ -286,6 +310,17 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
         }
     }
 
+    /// Whether `token` still addresses a live session.
+    ///
+    /// A session ends on its own once `idleLinger` elapses with nothing in flight,
+    /// so a caller that *caches* a token across waves an unpredictable peer drives
+    /// (see `outboundSessionToken` on either side of the vsock link) must ask
+    /// before reusing one: events for an ended session are dropped by design, so a
+    /// reused stale token silently measures nothing at all.
+    public func isSessionLive(_ token: SessionToken) -> Bool {
+        lock.withLock { sessions[token] != nil }
+    }
+
     /// Records that one of a session's transfers started, declaring it if this is
     /// the first the session has heard of it (the `.growing` case).
     public func unitBegan(
@@ -317,7 +352,7 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
             guard var state = session.units[unit] else { return .running }
             if totalBytes > 0 { state.expected = totalBytes }
             state.observed = max(state.observed, min(bytesTransferred, state.expected))
-            session.units[unit] = state
+            session.setUnit(unit, state)
             // Deliberately does NOT touch `activeUnits`: what is in flight is
             // owned by began/ended alone. A chunk callback fires on the transfer's
             // own lane, so one can land *after* the transfer it belongs to has
@@ -341,7 +376,7 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
                 // suppressed the final chunks, and a completed transfer must read
                 // as complete.
                 state.observed = state.expected
-                session.units[unit] = state
+                session.setUnit(unit, state)
             }
             // A failed transfer keeps whatever it moved (those bytes really did
             // cross) but never counts its file complete.
@@ -463,7 +498,7 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
             session, unit in
             guard var state = session.units[unit] else { return .running }
             state.observed = max(state.observed, min(bytesTransferred, state.expected))
-            session.units[unit] = state
+            session.setUnit(unit, state)
             return .running
         }
     }
@@ -479,7 +514,7 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
                     session.completedCount += 1
                 }
                 state.observed = state.expected
-                session.units[unit] = state
+                session.setUnit(unit, state)
             }
             return .mayBeIdle
         }
@@ -503,7 +538,8 @@ public final class ClipboardProgressTracker: @unchecked Sendable {
             let unit = Unit.adHoc(id)
             if session.units[unit] == nil {
                 guard let planned else { return Outcome(.none) }
-                session.units[unit] = UnitState(expected: planned.expectedBytes, name: planned.name)
+                session.setUnit(
+                    unit, UnitState(expected: planned.expectedBytes, name: planned.name))
             }
             return mutateLocked(session: session, unit: unit, mutate)
         }
