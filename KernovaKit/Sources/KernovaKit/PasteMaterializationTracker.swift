@@ -65,7 +65,11 @@ final class PasteMaterializationTracker: @unchecked Sendable {
         let sourceName: String
         /// Bytes each pull is expected to move.
         let unitBytes: [PullUnit: UInt64]
-        /// The file name each pull materializes.
+        /// The display name each pull streams under: a flat rep's own
+        /// filename, but a folder's *folder* name for every one of its
+        /// children — concurrent children interleave, and a readout flickering
+        /// through sibling filenames reads as noise next to the steady
+        /// counter/percent pair.
         let unitNames: [PullUnit: String]
         let totalBytes: UInt64
 
@@ -93,11 +97,9 @@ final class PasteMaterializationTracker: @unchecked Sendable {
         var completedUnits: Set<PullUnit> = []
         /// Pulls currently in flight, in the order they began.
         ///
-        /// The readout names the most recently begun one, which follows a
-        /// sequential walk file by file and stays stable across a concurrent
-        /// batch. (An earlier version ranked these by bytes remaining, whose
-        /// tie-break pinned a folder of same-sized children to its first file
-        /// for the whole paste.)
+        /// The readout names the most recently begun one — which follows a
+        /// flat paste's sequential walk file by file, and holds steady on the
+        /// folder name across a folder's concurrent batch.
         var activeUnits: [PullUnit] = []
         /// Last file seen streaming, kept so the readout still names something
         /// during the gap between two items and at the completion dwell.
@@ -186,7 +188,7 @@ final class PasteMaterializationTracker: @unchecked Sendable {
             for node in folder.nodes where node.kind == .file {
                 let unit = PullUnit(repIndex: folder.repIndex, childSeq: node.childSeq)
                 unitBytes[unit] = node.byteCount
-                unitNames[unit] = node.filename
+                unitNames[unit] = folder.filename
                 totalBytes &+= node.byteCount
             }
         }

@@ -512,7 +512,8 @@ struct FileProviderRelayServiceTests {
 
         try await gate.wait { replied.value }
         let snapshots = emissions.value.compactMap { $0 }
-        #expect(snapshots.first?.currentItemName == "file.txt")
+        // A folder's children stream under the folder's name.
+        #expect(snapshots.first?.currentItemName == "Photos")
         let final = try #require(snapshots.last)
         #expect(final.bytesTransferred == 500_000)
         // The folder's single file node is the counter's whole population.

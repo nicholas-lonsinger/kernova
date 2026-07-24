@@ -556,8 +556,8 @@ struct PasteMaterializationTrackerTests {
 
     // MARK: - Current file name
 
-    @Test("the readout names the most recently begun pull still in flight")
-    func nameFollowsMostRecentActivePull() throws {
+    @Test("a folder's children all stream under the folder's own name")
+    func folderChildrenDisplayTheFolderName() {
         let harness = Harness()
         harness.tracker.offerPublished(
             Self.manifest(folders: [
@@ -565,54 +565,47 @@ struct PasteMaterializationTrackerTests {
                     0, "Photos",
                     nodes: [
                         Self.fileNode(1, "one.jpg", 1_000), Self.fileNode(2, "two.jpg", 1_000),
-                        Self.fileNode(3, "three.jpg", 1_000),
                     ])
             ]),
             sourceName: "VM")
 
-        // Sequential walk: the name follows each child as it begins. The
-        // session starts at the first pull, so the clock advances afterwards to
-        // clear the reveal gate.
+        // Whether the children run sequentially or overlap, the display name is
+        // the folder's — concurrent children would otherwise flicker through
+        // sibling filenames while the counter and percent already carry the
+        // motion.
         harness.tracker.pullBegan(generation: 1, repIndex: 0, childSeq: 1)
         harness.now = 2
         harness.tracker.pullEnded(generation: 1, repIndex: 0, childSeq: 1, succeeded: true)
-        #expect(harness.latest?.currentItemName == "one.jpg")
+        #expect(harness.latest?.currentItemName == "Photos")
 
         harness.tracker.pullBegan(generation: 1, repIndex: 0, childSeq: 2)
         harness.now = 3
         harness.tracker.pullEnded(generation: 1, repIndex: 0, childSeq: 2, succeeded: true)
-        #expect(harness.latest?.currentItemName == "two.jpg")
-
-        harness.tracker.pullBegan(generation: 1, repIndex: 0, childSeq: 3)
-        harness.now = 4
-        harness.tracker.pullEnded(generation: 1, repIndex: 0, childSeq: 3, succeeded: true)
-        #expect(harness.latest?.currentItemName == "three.jpg")
+        #expect(harness.latest?.currentItemName == "Photos")
     }
 
-    @Test("concurrent children show the newest pull, reverting when it finishes first")
+    @Test("the name follows the most recently begun pull, reverting when it finishes first")
     func nameRevertsWhenTheNewestConcurrentPullFinishes() {
         let harness = Harness()
         harness.tracker.offerPublished(
-            Self.manifest(folders: [
-                Self.folder(
-                    0, "Photos",
-                    nodes: [
-                        Self.fileNode(1, "big.raw", 100_000), Self.fileNode(2, "small.jpg", 100_000),
-                    ])
-            ]),
+            Self.manifest(
+                items: [Self.item(0, "loose.bin", 100_000)],
+                folders: [
+                    Self.folder(1, "Photos", nodes: [Self.fileNode(1, "one.jpg", 100_000)])
+                ]),
             sourceName: "VM")
 
-        harness.tracker.pullBegan(generation: 1, repIndex: 0, childSeq: 1)
-        harness.tracker.pullBegan(generation: 1, repIndex: 0, childSeq: 2)
+        harness.tracker.pullBegan(generation: 1, repIndex: 0, childSeq: nil)
+        harness.tracker.pullBegan(generation: 1, repIndex: 1, childSeq: 1)
         harness.now = 2
         harness.tracker.pullProgressed(
-            generation: 1, repIndex: 0, childSeq: 1, bytesTransferred: 10_000)
-        #expect(harness.latest?.currentItemName == "small.jpg")
+            generation: 1, repIndex: 0, childSeq: nil, bytesTransferred: 10_000)
+        #expect(harness.latest?.currentItemName == "Photos")
 
         // The newer pull finishes while the older streams on: the name falls
-        // back to the one still in flight instead of sticking to a done file.
+        // back to what is still in flight instead of sticking to a done item.
         harness.now = 3
-        harness.tracker.pullEnded(generation: 1, repIndex: 0, childSeq: 2, succeeded: true)
-        #expect(harness.latest?.currentItemName == "big.raw")
+        harness.tracker.pullEnded(generation: 1, repIndex: 1, childSeq: 1, succeeded: true)
+        #expect(harness.latest?.currentItemName == "loose.bin")
     }
 }

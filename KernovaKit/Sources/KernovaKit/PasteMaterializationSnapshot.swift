@@ -12,14 +12,16 @@ import Foundation
 /// sequentially (a flat multi-file paste) or concurrently (a folder's children),
 /// so the readout is identical in both shapes. `filesCompleted`/`fileCount`
 /// count individual *files* — flat reps and a folder's file nodes alike, so a
-/// folder paste gets a live counter too — while `currentItemName` names the
-/// file streaming right now.
+/// folder paste gets a live counter too — while `currentItemName` names what is
+/// streaming right now (a folder's children stream under the folder's name).
 public struct PasteMaterializationSnapshot: Equatable, Sendable {
     /// Display name of the machine the bytes are coming from — the VM's name on
     /// the host, "Mac" in the guest.
     public let sourceName: String
-    /// The file currently streaming (a folder's descendant shows its own name),
-    /// or `nil` when nothing is in flight between two files.
+    /// What is currently streaming — a flat file by its own name, a folder's
+    /// children by the *folder's* name (concurrent children would flicker
+    /// through sibling filenames) — or `nil` when nothing is in flight between
+    /// two files.
     public let currentItemName: String?
     /// Files fully materialized so far.
     public let filesCompleted: Int

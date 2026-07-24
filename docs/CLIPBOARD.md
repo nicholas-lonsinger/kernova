@@ -483,9 +483,10 @@ per-chunk callback's fourth consumer, and the only one that also needs each pull
 the denominators (how many files will materialize — flat reps and folder file nodes alike — and
 total bytes across all of them) and the pulls supply the numerators, so a flat multi-file paste
 (sequential pulls) and a folder (concurrent children) read identically — one bar, one percent,
-one speed, one time remaining, plus the file currently streaming (the most recently begun pull
-still in flight) and "N of M files", where a folder's children count individually so a
-folder-only paste gets a live counter too. The status item carries a determinate ring; the
+one speed, one time remaining, plus what is currently streaming (the most recently begun pull
+still in flight — a flat file by its own name, a folder's children under the *folder's* name,
+since concurrent children would flicker through sibling filenames) and "N of M files", where a
+folder's children count individually so a folder-only paste gets a live counter too. The status item carries a determinate ring; the
 dropdown carries the full readout and opens itself **once per paste**, and never again for that
 paste once the user closes it. Revealed after 5 s of materializing — far past the in-app bar's
 300 ms, because a dropdown that opens itself is a heavier interruption than a bar in a window
