@@ -69,47 +69,11 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
     /// landing on this dead source can't hang the full `connectTimeout`.
     private var invalidated = false
 
-    /// In-flight progress handlers keyed by `(generation, repIndex)` (#426).
-    ///
-    /// An owner `fetchProgressed` push during a live pull reaches that pull's
-    /// `Progress` through this map. Registered by `fetchStagedFile` when the pull
-    /// starts, removed when it completes — a late push for a finished pull finds no
-    /// handler and no-ops.
-    ///
-    /// Each entry carries a monotonic `token` so a pull's completion only removes
-    /// *its own* registration: if a same-`(generation, repIndex)` retry re-registered
-    /// (the #500 supersession edge), the displaced pull's completion must not evict
-    /// the successor's handler.
-    private var progressHandlers: [ProgressKey: ProgressRegistration] = [:]
-    private var nextProgressToken: UInt64 = 0
-
-    /// Addresses one in-flight pull's progress handler — the same
-    /// `(generation, repIndex, childSeq)` the owner keys its progress push on
-    /// (`childSeq == 0` for a flat rep; `>= 1` for a directory rep's file node,
-    /// so a folder's concurrent child pulls each key distinctly — folder D1b).
-    private struct ProgressKey: Hashable {
-        let generation: UInt64
-        let repIndex: Int
-        let childSeq: UInt32
-    }
-
     /// What a pending pull addresses: a flat single-file rep, or one child file
     /// of a directory rep's placeholder tree (folder D1b).
     private enum PullTarget {
         case flat
         case child(childSeq: UInt32, relativePath: String)
-
-        /// `childSeq` for the progress key — `0` for a flat rep.
-        var childSeq: UInt32 {
-            if case .child(let childSeq, _) = self { return childSeq }
-            return 0
-        }
-    }
-
-    /// A registered progress handler plus the token that identifies its pull.
-    private struct ProgressRegistration {
-        let token: UInt64
-        let handler: @Sendable (UInt64, UInt64) -> Void
     }
 
     /// A byte-pull waiting for the owner to connect.
@@ -331,46 +295,6 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
         reply()
     }
 
-    /// The owner's byte-progress push for an in-flight pull (#426): routes it to
-    /// the pull's registered handler, or no-ops when none is registered.
-    ///
-    /// A no-op for an unknown or already-finished `(generation, repIndex)` — the
-    /// handler is removed the instant the pull completes, so a push racing (or
-    /// arriving after) the terminal harmlessly finds nothing. The handler is read
-    /// under `lock` and invoked outside it (it only advances an `NSProgress`).
-    func fetchProgressed(
-        generation: UInt64, repIndex: Int, bytesTransferred: UInt64, totalBytes: UInt64
-    ) {
-        routeProgress(
-            key: ProgressKey(generation: generation, repIndex: repIndex, childSeq: 0),
-            bytesTransferred: bytesTransferred, totalBytes: totalBytes)
-    }
-
-    func childFetchProgressed(
-        generation: UInt64, repIndex: Int, childSeq: UInt32, bytesTransferred: UInt64,
-        totalBytes: UInt64
-    ) {
-        routeProgress(
-            key: ProgressKey(generation: generation, repIndex: repIndex, childSeq: childSeq),
-            bytesTransferred: bytesTransferred, totalBytes: totalBytes)
-    }
-
-    /// Routes an owner progress push to the keyed pull's registered handler, or
-    /// no-ops when none is registered (a late push for a finished pull).
-    private func routeProgress(key: ProgressKey, bytesTransferred: UInt64, totalBytes: UInt64) {
-        let handler = lock.withLock { progressHandlers[key]?.handler }
-        handler?(bytesTransferred, totalBytes)
-    }
-
-    /// Removes a pull's progress handler, but only if it's still the same
-    /// registration (`token` match) — so a displaced pull's completion can't evict
-    /// a same-key retry's handler (the #500 supersession edge).
-    private func unregisterProgress(key: ProgressKey, token: UInt64) {
-        lock.withLock {
-            if progressHandlers[key]?.token == token { progressHandlers[key] = nil }
-        }
-    }
-
     // MARK: - Byte pull (called from the extension's fetchContents)
 
     /// Pulls `(generation, repIndex)` through the owner and completes with the
@@ -383,13 +307,9 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
     /// arbitrary queue.
     func fetchStagedFile(
         generation: UInt64, repIndex: Int,
-        onProgress: @escaping @Sendable (_ bytesTransferred: UInt64, _ totalBytes: UInt64) -> Void =
-            { _, _ in },
         completion: @escaping (Result<String, NSError>) -> Void
     ) -> FileProviderPullCancellation {
-        enqueue(
-            generation: generation, repIndex: repIndex, target: .flat, onProgress: onProgress,
-            completion: completion)
+        enqueue(generation: generation, repIndex: repIndex, target: .flat, completion: completion)
     }
 
     /// Pulls one child file of a directory rep's placeholder tree (folder D1b),
@@ -400,39 +320,19 @@ final class FileProviderServiceSource: NSObject, NSFileProviderServiceSource,
     /// `fetchStagedFile`.
     func fetchStagedChild(
         generation: UInt64, repIndex: Int, childSeq: UInt32, relativePath: String,
-        onProgress: @escaping @Sendable (_ bytesTransferred: UInt64, _ totalBytes: UInt64) -> Void =
-            { _, _ in },
         completion: @escaping (Result<String, NSError>) -> Void
     ) -> FileProviderPullCancellation {
         enqueue(
             generation: generation, repIndex: repIndex,
-            target: .child(childSeq: childSeq, relativePath: relativePath), onProgress: onProgress,
-            completion: completion)
+            target: .child(childSeq: childSeq, relativePath: relativePath), completion: completion)
     }
 
-    /// Shared body of `fetchStagedFile`/`fetchStagedChild`: registers the pull's
-    /// progress handler, enqueues (or fast-paths) the pull, and returns its
-    /// cancellation handle.
+    /// Shared body of `fetchStagedFile`/`fetchStagedChild`: enqueues (or
+    /// fast-paths) the pull and returns its cancellation handle.
     private func enqueue(
         generation: UInt64, repIndex: Int, target: PullTarget,
-        onProgress: @escaping @Sendable (_ bytesTransferred: UInt64, _ totalBytes: UInt64) -> Void,
         completion: @escaping (Result<String, NSError>) -> Void
     ) -> FileProviderPullCancellation {
-        // Register the progress handler for the pull's lifetime and wrap the
-        // completion so it is removed exactly once, on whichever terminal wins the
-        // pull's one-shot. A late progress push after this finds no handler.
-        let progressKey = ProgressKey(
-            generation: generation, repIndex: repIndex, childSeq: target.childSeq)
-        let progressToken: UInt64 = lock.withLock {
-            nextProgressToken &+= 1
-            let token = nextProgressToken
-            progressHandlers[progressKey] = ProgressRegistration(token: token, handler: onProgress)
-            return token
-        }
-        let completion: (Result<String, NSError>) -> Void = { [weak self] result in
-            self?.unregisterProgress(key: progressKey, token: progressToken)
-            completion(result)
-        }
         let pull = PendingPull(
             generation: generation, repIndex: repIndex, target: target, completion: completion)
         // The cancel handle the extension wires to `fetchContents`' `Progress`. It

@@ -1271,10 +1271,10 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
             onAbort: { abort in coordinator.abort(transferID, abort) },
             // Re-arm the pull's inactivity backstop on every chunk so a large
             // still-streaming transfer is never timed out mid-flight [large-paste].
-            // The guest has no in-app progress UI, but the File Provider relay path
-            // forwards the bytes so the guest's *Finder* renders a determinate
-            // download bar (#426); the synchronous pasteboard path passes no
-            // `onProgress` and the counts are ignored.
+            // The File Provider relay path forwards the bytes so the guest agent's
+            // status-item paste readout can render the materialization (#643); the
+            // synchronous pasteboard path passes no `onProgress` and the counts are
+            // ignored.
             onProgress: { bytes, total in
                 coordinator.heartbeat(transferID)
                 onProgress?(UInt64(bytes), UInt64(total))
@@ -1812,8 +1812,8 @@ extension VsockGuestClipboardAgent: FileProviderPullProvider {
         guard let context else { return .failure(.noCurrentOffer) }
 
         // Blocking pull off-main; a delivered file rep carries its staged URL in
-        // the shared container. `onProgress` feeds the servicing-XPC progress push
-        // so the guest's Finder renders a determinate download bar (#426).
+        // the shared container. `onProgress` feeds the guest agent's status-item
+        // paste readout (#643).
         guard
             let representation = pullRepresentation(
                 repIndex, promise: context.promise, channel: context.channel,

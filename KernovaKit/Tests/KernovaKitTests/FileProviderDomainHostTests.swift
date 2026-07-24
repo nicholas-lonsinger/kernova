@@ -790,8 +790,8 @@ struct FileProviderDomainHostEnablementTests {
         #expect(domainSource.callCount == 4)
     }
 
-    @Test("a rejected publish never populates the progress-URL manifest, and a clear empties it")
-    func rejectedPublishLeavesProgressManifestEmpty() async throws {
+    @Test("a publish with no resolved root is refused and falls back to the sync path")
+    func rejectedPublishFallsBackToSyncPath() async throws {
         let identifierString = "kernova-clipboard-test-\(UUID().uuidString)"
         let domainSource = FakeDomainSource()
         domainSource.setResult(.success([matchingDomain(identifierString)]))
@@ -806,8 +806,9 @@ struct FileProviderDomainHostEnablementTests {
         #expect(host.domainRegisteredForTesting)
 
         // The domain is registered but has no resolved user-visible root (and a
-        // constructed domain's read-only `userEnabled` is false), so this
-        // publish is refused and falls back to the sync path.
+        // constructed domain's read-only `userEnabled` is false), so this publish
+        // is refused: it returns no promise URLs and the caller falls back to the
+        // synchronous pasteboard path.
         let urls = host.publishItems(
             generation: 1, sourceName: "Test VM",
             items: [
@@ -817,17 +818,6 @@ struct FileProviderDomainHostEnablementTests {
             folders: [], waitForPlaceholder: false)
 
         #expect(urls == nil)
-        // The cache the progress-URL resolver keys off must stay empty: it is
-        // populated only after every guard passes AND the container write
-        // succeeds. Were it assigned earlier, a refused offer would still
-        // resolve progress URLs for placeholders that were never advertised.
-        #expect(host.publishedManifestForTesting == .empty)
-
-        // The clear path assigns before its container write — which genuinely
-        // throws here, since the test host has no app-group container — so the
-        // cache is emptied even when the manifest can't be rewritten on disk.
-        host.clearOffer()
-        #expect(host.publishedManifestForTesting == .empty)
     }
 
     @Test("a persistently throwing read retries up to the limit, then stops at .unavailable")
@@ -1098,7 +1088,7 @@ final class StabilizationRecorder: @unchecked Sendable {
 }
 
 /// Locks `FileProviderDomainHost.visibleFileURL` — the pure lookup behind the
-/// relay's published Finder-copy-dialog progress resolver (#634): a pull's
+/// pasteboard promise URLs `publishItems` derives: a placeholder's
 /// `(generation, repIndex, childSeq?)` addressing against the current manifest
 /// and domain root.
 @Suite("FileProviderDomainHost visible file URL")

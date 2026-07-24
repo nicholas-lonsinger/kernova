@@ -19,10 +19,10 @@ import Foundation
 ///   shown yet.
 /// - **Reveals** once it has been running for `revealDelay`, evaluated on each
 ///   event rather than from a timer, so a paste that finishes inside the gate
-///   never flashes UI. (Same shape as `FetchProgressFilePublisher`'s gate: a
-///   streaming pull delivers events continuously, so the first one past the gate
-///   reveals within a throttle interval, while a paste stalled before its first
-///   byte honestly shows nothing rather than a frozen bar.)
+///   never flashes UI. (Event-driven, not timer-scheduled: a streaming pull
+///   delivers events continuously, so the first one past the gate reveals within
+///   a throttle interval, while a paste stalled before its first byte honestly
+///   shows nothing rather than a frozen bar.)
 /// - **Ends** `idleLinger` after the last pull finishes — whether that left every
 ///   item materialized or not. That dwell is what bridges Finder's gap between
 ///   two sequentially-pulled items (so a five-file paste reads as one continuous

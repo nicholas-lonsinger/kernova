@@ -38,12 +38,11 @@ public protocol FileProviderPullProvider: AnyObject, Sendable {
     /// container, and returns the staged file path (or why it failed).
     ///
     /// `onProgress` is fed the receiver's cumulative `(bytesTransferred,
-    /// totalBytes)` per chunk accepted off the wire, so the relay can push
-    /// coalesced progress back to the extension's `fetchContents` `Progress`
-    /// (#426). It fires off-main on the transfer's receive lane and must be
-    /// cheap. Since #615 it reports *arrived* bytes, which can lead the staging
-    /// writes by up to one credit window — fine for a progress bar, but it is
-    /// not a durability signal.
+    /// totalBytes)` per chunk accepted off the wire, so the relay can drive the
+    /// paste readout (#643) and the window's in-app bar (#354). It fires off-main
+    /// on the transfer's receive lane and must be cheap. Since #615 it reports
+    /// *arrived* bytes, which can lead the staging writes by up to one credit
+    /// window — fine for a progress bar, but it is not a durability signal.
     func fetchStagedFile(
         generation: UInt64, repIndex: Int,
         onProgress: @escaping @Sendable (_ bytesTransferred: UInt64, _ totalBytes: UInt64) -> Void
@@ -283,12 +282,6 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     /// User-visible domain root, resolved after registration; `nil` until then
     /// (the File Provider path is unused while it's `nil`).
     private var rootURL: URL?
-    /// The manifest this host most recently published (`.empty` when none) —
-    /// the in-memory copy of what `publishItems` wrote to the container, kept
-    /// so the relay's progress-URL resolver (#634) never re-decodes the
-    /// manifest from disk per pull (a folder tree's manifest scales with its
-    /// node count, and the resolver runs on the main queue).
-    private var publishedManifest: FileProviderManifest = .empty
     /// Whether the security scope of `rootURL` is currently open.
     ///
     /// See `adoptRootURL` for the scope's lifecycle.
@@ -330,8 +323,7 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     /// Aggregates the relay's per-pull events into that readout.
     ///
     /// Assigned once, right after `super.init()`, because its `emit` closure
-    /// captures `self` — the same reason the relay's `visibleFileURLResolver` is
-    /// wired there. Read on main.
+    /// captures `self`. Read on main.
     private var materializationTracker: PasteMaterializationTracker?
 
     /// Current File Provider usability, for the UI.
@@ -351,15 +343,6 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
         return domainRegistered
     }
 
-    /// Test-only view of `publishedManifest` — the manifest the progress-URL
-    /// resolver keys off — so a test can assert a *rejected* publish never
-    /// populates it (a cache set before the guards, or before the container
-    /// write succeeds, would resolve progress URLs for an offer that was never
-    /// advertised).
-    var publishedManifestForTesting: FileProviderManifest {
-        dispatchPrecondition(condition: .onQueue(.main))
-        return publishedManifest
-    }
     #endif
 
     /// Registers an observer notified on the main queue whenever `availability`
@@ -486,22 +469,6 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
                 }
             }
         super.init()
-        // Key the relay's published Finder-copy-dialog progress (#634) by the
-        // placeholder's user-visible URL: root + the current manifest's dirent
-        // names. Called on the main queue (the resolver's contract), where
-        // `rootURL` and `publishedManifest` live; a `nil` root (not yet
-        // resolved, or disabled) degrades to no published progress. Resolves
-        // against the in-memory manifest this host just published — never a
-        // per-pull `readManifest()` disk decode, whose cost scales with a
-        // folder tree's total node count and would repeat on the main queue
-        // for every published child pull of a large directory copy.
-        relayService.visibleFileURLResolver = { [weak self] generation, repIndex, childSeq in
-            dispatchPrecondition(condition: .onQueue(.main))
-            guard let self, let rootURL = self.rootURL else { return nil }
-            return Self.visibleFileURL(
-                rootURL: rootURL, manifest: self.publishedManifest,
-                generation: generation, repIndex: repIndex, childSeq: childSeq)
-        }
         // The paste readout (#643). The tracker is driven off-main from the
         // relay's XPC queues, so every emission hops to main before reaching the
         // owner's UI.
@@ -1017,7 +984,6 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
                 "Failed to write File Provider manifest: \(error.localizedDescription, privacy: .public)")
             return nil
         }
-        publishedManifest = manifest
         // Denominators for the paste readout (#643), adopted from the same
         // manifest the enumerator serves so the two can never describe different
         // sets of files. A publish that fails its reconciliation barrier below
@@ -1064,13 +1030,12 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
                 self?.enumerateRoot(root: rootURL)
             }
         }
-        // Derive the pasteboard URLs through the SAME lookup the relay's
-        // progress-URL resolver uses, rather than re-deriving
-        // `rootURL + filename` here: the two must name the identical file for
-        // Finder's copy dialog to attach its published progress to the item
-        // being pasted, and a second derivation could drift from the first
-        // (over a de-duplicated filename, say). One expression, one source of
-        // truth — and `visibleFileURL`'s unit tests now cover both callers.
+        // Derive the pasteboard promise URLs — root + the current manifest's
+        // (de-duplicated) dirent names — through `visibleFileURL`, so the URL put
+        // on the pasteboard names the identical on-disk file the enumerator
+        // serves, rather than re-deriving `rootURL + filename` here where a second
+        // derivation could drift from the first (over a de-duplicated filename,
+        // say).
         var urls: [Int: URL] = [:]
         for item in manifestItems {
             urls[item.repIndex] = Self.visibleFileURL(
@@ -1102,15 +1067,15 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
         relayTransport.ensureConnected()
     }
 
-    /// The user-visible URL of one published placeholder — the key the relay's
-    /// published Finder-copy-dialog progress is filed under (#634).
+    /// The user-visible URL of one published placeholder — used to derive the
+    /// pasteboard promise URLs in `publishItems`.
     ///
     /// Resolves a flat rep to `root/filename`, a directory rep's root
     /// (`childSeq == 0`) to `root/folder`, and a tree node to
     /// `root/folder/relativePath` — all against the *current* manifest, so a
-    /// superseded generation resolves `nil` (no published progress) rather than
-    /// a stale offer's URL. The manifest's filenames are the on-disk dirent
-    /// names (`publishItems` de-duplicates before writing).
+    /// superseded generation resolves `nil` rather than a stale offer's URL. The
+    /// manifest's filenames are the on-disk dirent names (`publishItems`
+    /// de-duplicates before writing).
     ///
     /// `internal` (not `private`) so `KernovaKitTests` can lock the lookup.
     static func visibleFileURL(
@@ -1384,9 +1349,6 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
         // Only touch the manifest if the domain ever published — avoids creating
         // the container in a context where the File Provider is unused.
         guard domainRegistered else { return }
-        // Cleared even if the disk write below fails: the offer is superseded
-        // either way, so a late progress-URL resolution must miss.
-        publishedManifest = .empty
         do {
             try container.writeManifest(.empty)
         } catch {

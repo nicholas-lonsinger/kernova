@@ -927,9 +927,9 @@ struct VsockClipboardServiceTests {
         }
     }
 
-    /// Thread-safe recorder for the `pullStagedFile` `onProgress` pushes (#426),
+    /// Thread-safe recorder for the `pullStagedFile` `onProgress` callbacks,
     /// which fire off the main actor on the transfer's serial queue.
-    private final class ServicingProgressLog: @unchecked Sendable {
+    private final class RelayProgressLog: @unchecked Sendable {
         private let lock = NSLock()
         private var entries: [(bytes: UInt64, total: UInt64)] = []
         func record(_ bytes: UInt64, _ total: UInt64) {
@@ -1803,7 +1803,7 @@ struct VsockClipboardServiceTests {
         }
     }
 
-    @Test("pullStagedFile forwards cumulative byte progress via onProgress (#426)")
+    @Test("pullStagedFile forwards cumulative byte progress via onProgress")
     func pullStagedFileForwardsProgress() async throws {
         let (guest, host) = try makePair()
         guest.start()
@@ -1830,7 +1830,7 @@ struct VsockClipboardServiceTests {
                 reps: [(uti: "public.data", byteCount: fileBytes.count, filename: "big.bin", isInline: false)]))
         try await waitForChange { service.clipboardContent.representations.first?.isPendingRemote == true }
 
-        let log = ServicingProgressLog()
+        let log = RelayProgressLog()
         let outcome = await offCooperativePool {
             service.pullStagedFile(
                 generation: 40, repIndex: 0, onProgress: { log.record($0, $1) })
@@ -1841,7 +1841,7 @@ struct VsockClipboardServiceTests {
         }
 
         // The relay forwarded cumulative, non-decreasing progress ending at the
-        // total — what drives the extension's determinate download bar.
+        // total — the byte stream that drives the in-app bar and paste readout.
         #expect(log.count >= 1)
         #expect(log.last?.bytes == UInt64(fileBytes.count))
         #expect(log.last?.total == UInt64(fileBytes.count))
@@ -1850,7 +1850,7 @@ struct VsockClipboardServiceTests {
     }
 
     @Test(
-        "pullStagedFile records the guest→host pull in the window's in-app bar, cleared at the terminal (#426/#354)"
+        "pullStagedFile records the guest→host pull in the window's in-app bar, cleared at the terminal (#354)"
     )
     func pullStagedFileRecordsInAppProgress() async throws {
         let (guest, host) = try makePair()
@@ -1885,7 +1885,7 @@ struct VsockClipboardServiceTests {
         let pull = Task { await offCooperativePool { service.pullStagedFile(generation: 41, repIndex: 0) } }
 
         // The bar reveals mid-flight: inbound, denominated by the rep's total, and
-        // labelled with the filename (#426 — LazyPullSnapshot.filename).
+        // labelled with the filename (#354 — LazyPullSnapshot.filename).
         try await waitForChange { service.transferProgress?.direction == .inbound }
         #expect(service.transferProgress?.totalBytes == fileBytes.count)
         #expect(service.transferProgress?.label == "big.bin")

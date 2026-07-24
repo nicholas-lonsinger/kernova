@@ -165,11 +165,14 @@ open class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
             return Progress()
         }
 
-        // A byte-denominated download progress (#426): the owner pushes per-chunk
-        // `(bytesTransferred, totalBytes)` over the servicing connection during the
-        // pull, so Finder renders a determinate download bar instead of the pulsing
-        // indeterminate one. `kind`/`fileOperationKind` make the system present it as
-        // a file download. `byteCount` is the manifest's declared size; a zero-byte
+        // `fetchContents` must return a `Progress`: it carries the fetch's
+        // cancellation token (wired below), and the framework reads its
+        // `kind`/`fileOperationKind` to present the item as a file download. It is
+        // not advanced per chunk — the byte pull runs over vsock out of this
+        // process's sight, and the owner-pushed per-chunk advancement (#426) was
+        // removed by #644 after #639 found no Finder surface ever rendered it.
+        // The bar is created at the declared size and completed in one step at
+        // `materialize`. `byteCount` is the manifest's declared size; a zero-byte
         // rep gets a unit of 1 (a 0/0 progress reads as indeterminate) and completes
         // instantly in `materialize`.
         let totalUnitCount = target.byteCount > 0 ? Int64(clamping: target.byteCount) : 1
@@ -178,16 +181,6 @@ open class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
         progress.fileOperationKind = .downloading
 
         let returnedItem = target.returnedItem
-        // Advance the determinate bar from the owner's coalesced pushes (#426).
-        // `progress` is captured weakly (same reason as the completion below — the
-        // cancellation strongly retains this closure via the pull); the system owns
-        // `progress` for the fetch's duration, so it's non-nil here. Clamp to
-        // `totalUnitCount`: the final push carries bytes == total, and `materialize`
-        // sets the terminal 100% regardless.
-        let onProgress: @Sendable (UInt64, UInt64) -> Void = { [weak progress] bytesTransferred, _ in
-            guard let progress else { return }
-            progress.completedUnitCount = min(Int64(clamping: bytesTransferred), totalUnitCount)
-        }
         // Relay the byte pull to the owner over the servicing connection — the
         // sandboxed extension can't open vsock (CLIPBOARD.md §11). INVERTED wiring:
         // the owner is the XPC client and exported the relay; we call it back
@@ -227,12 +220,11 @@ open class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
         switch target.pull {
         case .flat(let generation, let repIndex):
             cancellation = serviceSource.fetchStagedFile(
-                generation: generation, repIndex: repIndex, onProgress: onProgress,
-                completion: completion)
+                generation: generation, repIndex: repIndex, completion: completion)
         case .child(let generation, let repIndex, let childSeq, let relativePath):
             cancellation = serviceSource.fetchStagedChild(
                 generation: generation, repIndex: repIndex, childSeq: childSeq,
-                relativePath: relativePath, onProgress: onProgress, completion: completion)
+                relativePath: relativePath, completion: completion)
         }
         // Wire Finder's cancel button to the pull. RATIONALE: the completion closure
         // above captures `progress` WEAKLY so this handler — which strongly holds
@@ -279,8 +271,9 @@ open class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension,
             logger.notice(
                 "fetchContents materialized \(returnedItem.documentSize??.int64Value ?? 0, privacy: .public) bytes"
             )
-            // Complete the byte-denominated bar (#426): a throttled final push may
-            // have been coalesced away, and a zero-byte rep never pushed at all.
+            // Complete the returned bar in one step: it is never advanced per
+            // chunk (the owner-pushed advancement was removed by #644), so this
+            // terminal set is the only completion the system's `Progress` receives.
             if let progress { progress.completedUnitCount = progress.totalUnitCount }
             completionHandler(destination, returnedItem, nil)
         } catch {
