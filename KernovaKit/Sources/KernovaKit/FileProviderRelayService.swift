@@ -239,11 +239,11 @@ public final class FileProviderRelayService: NSObject, FileProviderRelay {
 /// (`bytes >= total`) so the determinate bar reaches 100% before the clone step.
 /// Stateless and testable in isolation; the caller owns the watermarks
 /// (`lastPushedBytes`, elapsed since the last push).
-enum FetchProgressThrottle {
+public enum FetchProgressThrottle {
     /// Minimum fraction of the total that must accumulate since the last push.
-    static let minByteFraction = 0.01
+    public static let minByteFraction = 0.01
     /// Minimum wall-clock gap between time-triggered pushes.
-    static let minInterval: TimeInterval = 0.1
+    public static let minInterval: TimeInterval = 0.1
 
     /// Whether `bytes`/`total` warrants a push given the last pushed byte count and
     /// the time since the last push.
@@ -270,13 +270,15 @@ enum FetchProgressThrottle {
 /// `FetchProgressThrottle` is the pure decision; this is the per-consumer
 /// bookkeeping around it (last-forwarded byte count, elapsed since the last
 /// forward, and the first-update timestamp the file publisher's reveal gate
-/// measures from). Both consumers of a pull's `onProgress` — the servicing-XPC
-/// pusher and the published-`NSProgress` file publisher — share this instead of
-/// keeping parallel copies that could drift apart on a policy change.
+/// measures from). All three consumers of a pull's per-chunk progress — the
+/// servicing-XPC pusher, the published-`NSProgress` file publisher, and the host
+/// app's in-app transfer bar (`ClipboardTransferProgressTracker`, one coalescer
+/// per tracked transfer) — share this instead of keeping parallel copies that
+/// could drift apart on a policy change.
 ///
 /// `@unchecked Sendable`: every stored property is guarded by `lock`, and
 /// `onProgress` fires from the receive lane.
-final class FetchProgressCoalescer: @unchecked Sendable {
+public final class FetchProgressCoalescer: @unchecked Sendable {
     private let lock = NSLock()
     private var lastForwardedBytes: UInt64 = 0
     /// When the last update was forwarded; `nil` until the first, so the first
@@ -284,13 +286,17 @@ final class FetchProgressCoalescer: @unchecked Sendable {
     private var lastForwardAt: DispatchTime?
     private var firstUpdateAt: DispatchTime?
 
+    /// Creates a coalescer with empty watermarks, so its first forward-progress
+    /// update always passes.
+    public init() {}
+
     /// When the first update was recorded, or `nil` before any — the reveal
     /// gate's reference point.
     var firstUpdateTime: DispatchTime? { lock.withLock { firstUpdateAt } }
 
     /// Whether `(bytesTransferred, totalBytes)` should be forwarded now,
     /// advancing the watermarks when it should.
-    func shouldForward(bytesTransferred: UInt64, totalBytes: UInt64) -> Bool {
+    public func shouldForward(bytesTransferred: UInt64, totalBytes: UInt64) -> Bool {
         let now = DispatchTime.now()
         return lock.withLock {
             if firstUpdateAt == nil { firstUpdateAt = now }

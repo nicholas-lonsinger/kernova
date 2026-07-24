@@ -353,6 +353,13 @@ final class VsockClipboardService: ClipboardServicing {
     /// Reacts to a tracker `record` outcome (called off-main from the sender /
     /// receiver progress callbacks) by scheduling the right main-actor work: arm
     /// the reveal timer on the first chunk, or run a coalesced flush.
+    ///
+    /// The republish *rate* is the tracker's business, not this hop's: a chunk only
+    /// comes back `.updatedScheduleFlush` once its transfer's shared
+    /// `FetchProgressCoalescer` admits it (~1% of the total or ~100 ms apart,
+    /// always the final chunk), so a 64 KiB-chunked File Provider pull can't drive
+    /// a main-actor hop per chunk (#636). Terminal paths (reveal, `finishProgress`)
+    /// bypass the throttle entirely — they go through `refreshTransferProgress`.
     nonisolated private func scheduleProgressFollowUp(
         _ outcome: ClipboardTransferProgressTracker.RecordOutcome, transferID: UInt64
     ) {
@@ -389,7 +396,11 @@ final class VsockClipboardService: ClipboardServicing {
         }
     }
 
-    /// Coalesced-flush path: clears the conflation flag and republishes.
+    /// Coalesced-flush path: clears the conflation flag and republishes the
+    /// freshest projection.
+    ///
+    /// Clearing the flag re-opens the queue for the next chunk the tracker's
+    /// per-transfer throttle admits.
     @MainActor private func flushTransferProgress() { publish(progress.consumeFlush()) }
 
     /// Reveal/finish refresh path: republishes without touching the flush flag.

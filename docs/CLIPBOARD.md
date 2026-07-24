@@ -458,6 +458,16 @@ callback (`performBlockingPull`, direction `.inbound`); all indicators clear at 
 No vsock wire change — the channels are the servicing XPC and local `NSProgress` publication,
 never the transport.
 
+That bar is the **third consumer of the same throttle** (#636). Its
+`ClipboardTransferProgressTracker` holds one `FetchProgressCoalescer` per tracked transfer — the
+coalescer models a single byte stream, and a folder copy tracks several children at once — so a
+64 KiB-chunked pull republishes the `@MainActor` observable at the shared policy's rate (~1% of
+the total or ~100 ms, always the final chunk) instead of once per chunk. All three indicators
+therefore share one policy: a rate change moves them together, and none of them can drift.
+Terminal and reveal republishes bypass the throttle entirely (§13: an indicator must never stick),
+as does an unrevealed transfer, whose chunks schedule nothing because they cannot change what is
+on screen.
+
 ---
 
 ## Engineering practices
