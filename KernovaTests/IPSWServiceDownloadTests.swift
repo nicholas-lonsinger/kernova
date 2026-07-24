@@ -717,17 +717,18 @@ struct IPSWServiceDownloadTests {
         //
         //   • Consumer hasn't entered the loop yet → it picks up the buffered
         //     chunk on first `next()`, body runs `checkCancellation()`, throws.
-        //   • Consumer is parked on `next()` → `AsyncThrowingStream.next()`
-        //     doesn't auto-observe cancellation (see RATIONALE in production
-        //     code), so the buffered chunk is delivered, body throws.
+        //   • Consumer is parked on `next()` → cancellation resolves the
+        //     pending `next()` with `nil` instead of throwing (see the
+        //     cancellation comments inside `streamBytes`), the loop exits
+        //     normally, and the *post-loop* `checkCancellation()` throws.
         //   • Consumer is mid-MainActor-hop from initial progress → same as
         //     the first case after the hop completes.
         //
-        // If a future refactor removes the in-loop `checkCancellation()`,
-        // none of those paths throw — the chunk gets written, the stream
-        // finishes cleanly, `streamBytes` returns success, and the
-        // `Issue.record("Expected CancellationError")` below fires. That's
-        // the regression this test guards against.
+        // Either check alone can be the one that fires depending on the
+        // interleaving, so this test guards the pair in `streamBytes`: if a
+        // refactor removes both, the chunk gets written, the stream finishes
+        // cleanly, `streamBytes` returns success, and the
+        // `Issue.record("Expected CancellationError")` below fires.
         let temp = try Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: temp) }
         let bundleURL = temp.appendingPathComponent("R.kernovadownload")

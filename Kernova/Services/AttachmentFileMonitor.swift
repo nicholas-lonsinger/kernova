@@ -120,11 +120,9 @@ final class AttachmentFileMonitor {
         let center = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.didMountNotification, NSWorkspace.didUnmountNotification] {
             let token = center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                // RATIONALE: `queue: .main` runs the block on the main
-                // thread; spawning an explicitly `@MainActor`-isolated
-                // Task lets us call `requestRefreshAll` (sync, MainActor)
-                // without an extra hop.
-                Task { @MainActor [weak self] in
+                // `queue: .main` delivers on the main thread, where the
+                // @MainActor `requestRefreshAll` is callable synchronously.
+                MainActor.assumeIsolated {
                     self?.requestRefreshAll()
                 }
             }

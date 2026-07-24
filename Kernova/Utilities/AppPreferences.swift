@@ -30,10 +30,8 @@ struct AppPreferences {
         static let lastSelectedVMID = "lastSelectedVMID"
         static let vmOrder = "vmOrder"
         static let fileProviderReminderDismissed = "fileProviderReminderDismissed"
-        // RATIONALE: stored under the inverted sense (`quitTerminatesApp`) so the
-        // false-default `bool(forKey:)` pattern yields `keepInMenuBarOnQuit`'s
-        // desired `true` default without a `register(defaults:)` call. See the
-        // property's doc comment.
+        // Deliberately inverted relative to `keepInMenuBarOnQuit` — see that
+        // property's RATIONALE.
         static let quitTerminatesApp = "quitTerminatesApp"
         static let menuBarQuitReminderDismissed = "menuBarQuitReminderDismissed"
     }

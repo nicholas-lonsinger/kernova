@@ -8,13 +8,6 @@ import Foundation
 /// message it has already dismissed once.
 struct ClipboardTransferIssue: Equatable, Sendable {
     enum Kind: Equatable, Sendable {
-        /// The outbound content exceeds what one transfer can carry.
-        ///
-        /// RATIONALE: retained though clipboard transfers are now chunk-streamed
-        /// with no size cap — it still covers a frame-level encoding ceiling and
-        /// keeps the issue surface stable. Not produced by the streaming path.
-        case contentTooLarge(byteCount: Int, limit: Int)
-
         /// Not enough disk space on the receiving side to stage a streamed file.
         /// `needed` is the transfer size; `available` is the staging volume's
         /// free capacity when known.

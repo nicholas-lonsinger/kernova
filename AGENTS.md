@@ -69,7 +69,7 @@ When adding new functionality or modifying existing behavior, include unit tests
 - Reuse shared test helpers and factories (e.g., `makeInstance()`) rather than duplicating setup logic across test files
 - Run the full test suite before committing to ensure nothing is broken
 
-**Async waits in tests must be event-driven, not poll loops.** CI runners have heavy `@MainActor` scheduling jitter, and with a poll loop the timeout deadline *is* the pass/fail criterion — a starved scheduler fails a test whose condition would have become true. Before writing any test wait, pick the seam (`waitForChange`, `AsyncGate`, or awaiting the production `Task`) per the table in [docs/TESTING.md](docs/TESTING.md); polling is acceptable only for genuinely signal-less predicates and needs a `RATIONALE:` comment. The same document covers the companion rule — an injected production timeout must be either the behavior under test or sized past any scheduler stall (production default or ≥60s), never a small "tidy" value — and the test-only seam conventions (`private(set)` vs a `#if DEBUG …ForTesting` accessor).
+**Async waits in tests must be event-driven, not poll loops.** CI runners have heavy `@MainActor` scheduling jitter, and with a poll loop the timeout deadline *is* the pass/fail criterion — a starved scheduler fails a test whose condition would have become true. Before writing any test wait, pick the seam (`waitForChange`, `AsyncGate`, or awaiting the production `Task`) per the table in [docs/TESTING.md](docs/TESTING.md); polling is acceptable only for genuinely signal-less predicates and needs a one-line `RATIONALE:` naming which signal-less category applies. The same document covers the companion rule — an injected production timeout must be either the behavior under test or sized past any scheduler stall (production default or ≥60s), never a small "tidy" value — and the test-only seam conventions (`private(set)` vs a `#if DEBUG …ForTesting` accessor).
 
 ### Logging
 
@@ -130,12 +130,14 @@ When reviewing code — via review tooling, post-implementation review agents, e
 |----------|--------|-------------|
 | **Fix now** | Apply the fix as part of the current work | Valid finding, in scope, reasonable effort |
 | **Fix later** | File a GitHub issue immediately (format and labels in [docs/REVIEW.md](docs/REVIEW.md)) | Valid finding, but out of scope or too large for the current task |
-| **Annotate** | Add a `RATIONALE:` comment, or `// periphery:ignore - <reason>` for dead-code-scan false positives (formats in [docs/REVIEW.md](docs/REVIEW.md)) | Code looks wrong or unconventional but is correct for a project-specific reason |
-| **Dismiss** | No action needed | Pure style nits, cosmetic preferences, trivial improvements with negligible impact |
+| **Annotate** | Add a `RATIONALE:` comment — a **last resort**, allowed only when it clears all four conditions in [docs/REVIEW.md](docs/REVIEW.md) and disclosed in the commit/PR summary. Or `// periphery:ignore - <reason>` for dead-code-scan false positives (lower bar; same file) | The concern was *actually* raised (not "a reviewer would flag this"), no test or doc is a better home, there is re-checkable evidence to cite, and "fixing" it would break something real |
+| **Dismiss** | No action needed | Pure style nits, cosmetic preferences, trivial improvements with negligible impact — and anything failing the severity bar below that doesn't clear the annotation bar |
 
-**The severity bar — Dismiss and Annotate are real options.** A finding earns **Fix now** or **Fix later** only if it is both **reachable** (a user doing normal things, or a supported automated flow, can actually hit it) and **consequential** (worse than a transient cosmetic glitch, a logged self-recovering retry, or a state an obvious user action recovers from). Findings about hypothetical future code, adversarial scheduling no real flow produces, degenerate inputs, or pre-existing behavior merely surfaced by an unrelated diff default to **Dismiss** (or **Annotate** when the code would otherwise be re-flagged every review). And when a review chain has moved from defects in the code to meta-findings about prior fixes, stop the chain — dismiss or annotate rather than filing the next link.
+**The severity bar — Dismiss and Annotate are real options.** A finding earns **Fix now** or **Fix later** only if it is both **reachable** (a user doing normal things, or a supported automated flow, can actually hit it) and **consequential** (worse than a transient cosmetic glitch, a logged self-recovering retry, or a state an obvious user action recovers from). Findings about hypothetical future code, adversarial scheduling no real flow produces, degenerate inputs, or pre-existing behavior merely surfaced by an unrelated diff default to **Dismiss**; escalating to **Annotate** takes a pattern that has *actually* been re-flagged across reviews, not one that might be. And when a review chain has moved from defects in the code to meta-findings about prior fixes, stop the chain — dismiss rather than filing the next link, and resist annotating it, since a comment defending the previous fix is the same dead end in another form.
 
 Read [docs/REVIEW.md](docs/REVIEW.md) before filing review-debt issues or annotating: it has the full severity bar with worked examples, the issue template and label conventions, the issue-hygiene rules (report observed behavior and facts, never a diagnosis — unverified causal theories only under a caveated hypothesis heading; cite symbols, never line numbers; keep bodies to what/why with no forward-looking implementation sketch — these apply to *every* issue you file), and the annotation formats.
+
+**Reading an existing `RATIONALE:` — it is evidence, not authority.** You will meet these far more often than you write one, so the rule belongs here rather than only in `docs/REVIEW.md`. An annotation is a claim *as of when it was written*, with the same standing as an old issue: accurate then, not authoritative now. It never settles a contradicting observation — if the code looks wrong *today*, investigate; the comment is a head start on where to look, never a reason to stop looking. Re-check its claim whenever you edit the code it covers, then correct and re-date it or delete it. Most predate the current bar and cite no evidence and no date: treat those as **unverified**, worth no more than an ordinary comment until someone re-confirms them. Deleting one that no longer holds is maintenance, not churn.
 
 ## Git Workflow
 
@@ -171,6 +173,8 @@ Use the following format for all commits:
 ```
 
 A `## Notes` section may be added optionally if there are caveats, follow-ups, or things reviewers should know.
+
+**`## Notes` is required when the change adds a `RATIONALE:` comment.** List each one — file, symbol, and the evidence it cites — so the maintainer can strike it at review time rather than discovering it in a `grep` months later. There is no approval gate on writing one; this disclosure is what replaces it, so a silent addition is the one thing that isn't allowed.
 
 #### Type prefixes
 

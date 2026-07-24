@@ -407,7 +407,7 @@ final class IPSWService: Sendable {
     ) async throws {
         let handle = try FileHandle(forWritingTo: bundle.dataURL)
         try handle.seek(toOffset: UInt64(initialOffset))
-        // RATIONALE: explicit close on success path so finalize() can move the file
+        // Explicit close on the success path so finalize() can move the file
         // (a still-open handle would block the move on some filesystems); the defer
         // is the cancellation/error safety net.
         var handleClosed = false

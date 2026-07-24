@@ -150,9 +150,9 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
             content: content, from: button, preferredEdge: .minY, behavior: .applicationDefined)
         Self.logger.debug("Showing soft-quit menu-bar reminder")
 
-        // RATIONALE: a one-shot auto-dismiss timer, not a poll loop — `Task.sleep`
-        // is the delay itself; with the `.applicationDefined` popover this is the
-        // primary bound on how long an ignored reminder lingers.
+        // One-shot auto-dismiss timer — `Task.sleep` is the delay itself; with
+        // the `.applicationDefined` popover this is the primary bound on how
+        // long an ignored reminder lingers.
         softQuitReminderDismissTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(4.5))
             guard !Task.isCancelled else { return }

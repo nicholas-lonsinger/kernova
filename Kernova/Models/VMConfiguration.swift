@@ -267,10 +267,13 @@ struct VMConfiguration: Codable, Sendable, Equatable {
 
     // MARK: - Codable
 
-    // RATIONALE: Custom `init(from:)` so newly added optional fields decode
-    // as `nil` / their natural default when absent in older configs, rather
-    // than failing the whole decode. Every new property must be added here
-    // as well — synthesized `Codable` would not surface the choice.
+    // RATIONALE: Custom `init(from:)` for the non-optional fields with
+    // defaults (`clipboardPassthroughEnabled ?? false`, `audioOutputEnabled
+    // ?? true`, …): synthesized `Codable` would `decode` them and fail the
+    // whole decode when the key is absent in an older config. (Optionals are
+    // not the reason — synthesis already gives those `decodeIfPresent`.)
+    // Every new property must be added here as well, so the absent-key
+    // behavior is an explicit per-property choice.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.id = try c.decode(UUID.self, forKey: .id)

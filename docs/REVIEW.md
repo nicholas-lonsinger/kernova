@@ -9,7 +9,7 @@ A finding earns **Fix now** or **Fix later** only if **both** hold:
 1. **Reachable** — a user doing normal things (or a supported automated flow) can actually hit it.
 2. **Consequential** — the outcome is worse than a transient cosmetic glitch, a logged self-recovering retry, or a state an obvious user action recovers from.
 
-Findings with these signatures default to **Dismiss** (or **Annotate** with `RATIONALE:` when the code would otherwise be re-flagged every review):
+Findings with these signatures default to **Dismiss**. Escalating one to **Annotate** requires that the pattern has *actually* been re-flagged across reviews — not that it might be — and that the annotation clears all four conditions in [Intentional Pattern Annotations](#intentional-pattern-annotations):
 
 - **Hypothetical future code** — "a future caller/method could bypass X." Unwritten code can't be defended against with access control; document the invariant where it lives instead.
 - **Adversarial scheduling** — races requiring timing no real user/system flow produces, with a bounded, benign outcome (e.g. one spurious retry). If unsure whether the flow can produce it, that investigation is the triage — do it before filing, not after.
@@ -82,30 +82,46 @@ These rules apply to **all** issues you file — feature/enhancement as well as 
 
 ## Intentional Pattern Annotations
 
-When a review flags code that *looks* wrong or unconventional but is **intentionally correct** for a project-specific reason, add an inline comment with the `RATIONALE:` prefix explaining why. This prevents the same pattern from being re-flagged in future reviews.
+A `RATIONALE:` comment records **why a specific alternative was rejected**, so a future reader can re-evaluate that trade-off without redoing the investigation. It is evidence, not a verdict — the reading rules below matter more than the writing rules.
 
-**When to annotate:**
-- The code contradicts a general best practice but is correct here due to framework constraints, performance requirements, or architectural decisions
-- A reviewer (human or automated) would reasonably flag this without project-specific context
-- The reason is not already documented in AGENTS.md, the `docs/` files, or an adjacent comment
+It is a **last resort**, not the routine outcome of **Annotate**. The population only ever grows, each one taxes every future reader, and an unverifiable one is worse than no comment at all: it gets believed. Most findings that reach this point should be **Dismissed**.
 
-**Format:**
+### When to annotate — all four must hold
+
+1. **Actually flagged, or actually attempted.** Either a review (human or automated) raised this specific concern, or you wrote the obvious alternative and it demonstrably failed. "A reviewer *would* reasonably flag this" is **not** enough — that is true of most non-obvious code, and pre-emptive self-defense is how these accumulate.
+2. **No better home.** Each of these beats a comment, in order:
+   - **A test that fails when the constraint changes.** A comment asserting "this must stay sequential" rots silently; a test named for the constraint cannot. Prefer this whenever the constraint is observable.
+   - **Restructuring so it stops looking wrong** — a rename, an extracted helper, or a named constant often removes the objection outright.
+   - **AGENTS.md or a `docs/` file**, when the reason is project-wide rather than local to one call site. Do not repeat a project-wide rule at every site; state only the local fact the reader cannot derive from the doc.
+3. **Cites re-checkable evidence.** A PR or issue number, a named test, a vendor-doc URL, or a dated first-hand observation (`verified 2026-07-20 via log stream`). A bare assertion about framework, OS, or hardware behavior does **not** qualify — that is exactly the class that goes stale invisibly while still being trusted. With nothing to cite you have a hypothesis, not a rationale: leave the code unannotated, or file it under the `## Hypothesis` heading described in [Issue Hygiene](#issue-hygiene).
+4. **Consequential.** "Fixing" the pattern breaks something real. If the worst case is a style regression, dismiss instead.
+
+**Format** — name the rejected alternative and why it loses, then the evidence and its date:
 
 ```swift
-// RATIONALE: VZVirtualMachine delegates are not actor-isolated by the framework,
-// so we use nonisolated(unsafe) and bridge back via MainActor.assumeIsolated.
+// RATIONALE: `nonisolated(unsafe)`, not `@MainActor` — VZVirtualMachine delegate
+// callbacks are not actor-isolated by the framework, so we bridge back via
+// MainActor.assumeIsolated. (VZVirtualMachineDelegate docs; the @MainActor form
+// fails to compile under Swift 6 strict concurrency.)
 nonisolated(unsafe) func guestDidStop(_ virtualMachine: VZVirtualMachine) {
 ```
 
-**Guidelines:**
-- Keep annotations concise — explain *why* the pattern is correct, not *what* the code does
-- If the same rationale applies project-wide (not just at one call site), consider adding it to AGENTS.md or the relevant `docs/` file instead of repeating the comment on every instance
-- `RATIONALE:` comments are greppable — use `grep -r "RATIONALE:"` to audit all intentional deviations
-- Do not use `RATIONALE:` for general explanatory comments — reserve it strictly for patterns that would otherwise be flagged as issues
+### Reading a RATIONALE — evidence, not authority
+
+- **It is a claim as of its date, not a standing verdict.** Treat an old annotation the way you treat an old issue: accurate when written, not authoritative now.
+- **It never settles a contradicting observation.** If the code looks wrong *today* and the comment says it is fine, the comment loses — investigate. A RATIONALE is a head start on where to look, never a reason to stop looking.
+- **Verify on contact.** When you edit code an annotation covers, re-check its claim, then correct and re-date it or delete it. Removing one that no longer holds is the maintenance the greppability exists for — not churn.
+- **Uncited or undated ⇒ unverified.** Many predate these rules. Give them no more weight than an ordinary comment until someone re-verifies and re-dates them.
+
+### Guidelines
+
+- **Disclose every addition.** A change that adds a `RATIONALE:` names it in the commit/PR summary — file, symbol, and the evidence cited — so the maintainer can veto it at review time with the diff in front of them. Never add one silently.
+- Explain *why the rejected alternative is wrong here*, never *what the code does*. The prefix is not decoration for an ordinary comment; if the prose would read the same without it, drop the prefix.
+- `grep -rn "RATIONALE:"` audits every intentional deviation — run it periodically to prune, not only when writing a new one.
 
 ## Periphery Directives
 
-When the dead-code scan flags a symbol that is alive through machinery Periphery's symbol graph cannot see — protocol witnesses invoked by Swift's compiler-emitted code (string interpolation, `Codable`), members reached through type inference on argument labels, declarations referenced only from a test target Periphery does not currently scan, or symbols intentionally retained for API symmetry — annotate the declaration with `// periphery:ignore - <reason>` instead of deleting it. This is the Periphery-specific counterpart to `RATIONALE:`: same spirit (silence a finding that would otherwise be re-raised every scan), different syntax that the tool itself recognizes.
+When the dead-code scan flags a symbol that is alive through machinery Periphery's symbol graph cannot see — protocol witnesses invoked by Swift's compiler-emitted code (string interpolation, `Codable`), members reached through type inference on argument labels, declarations referenced only from a test target Periphery does not currently scan, or symbols intentionally retained for API symmetry — annotate the declaration with `// periphery:ignore - <reason>` instead of deleting it. This is the Periphery-specific counterpart to `RATIONALE:`, with different syntax that the tool itself recognizes — and a **lower bar**, because the two differ in kind: the scan re-raises the symbol deterministically on every run, so the directive suppresses a finding that provably recurs, and its reason is a statement about this codebase's own wiring that any reader can verify from the code. A `RATIONALE:`, by contrast, defends against a *hypothetical* future reader and usually asserts something about external behavior. Annotate here freely where the criteria below hold; annotate a `RATIONALE:` sparingly.
 
 **When to annotate vs. fix vs. dismiss:**
 - **Annotate** when the symbol is genuinely used through one of the invisible paths above, OR when the surface is intentionally complete (e.g. all `os.Logger` levels exposed even if a particular call isn't used today).
