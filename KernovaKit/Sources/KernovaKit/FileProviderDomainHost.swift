@@ -164,8 +164,11 @@ public protocol FileProviderPublishing: AnyObject, Sendable {
     /// paste-time barrier verifies only the root-level dirents (flat files +
     /// folder roots) — a folder's descendants enumerate lazily as the consumer
     /// descends.
+    ///
+    /// `sourceName` names the machine the bytes come from, for the paste
+    /// progress readout (#643): the VM's name on the host, "Mac" in the guest.
     func publishItems(
-        generation: UInt64, items: [FileProviderPublishItem],
+        generation: UInt64, sourceName: String, items: [FileProviderPublishItem],
         folders: [FileProviderPublishFolder], waitForPlaceholder: Bool
     ) -> [Int: URL]?
 
@@ -319,6 +322,17 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     /// Lets an owner mirror availability into observable UI state. Set on main;
     /// invoked on main. Single-slot; see `setAvailabilityObserver`.
     private var availabilityObserver: (@MainActor (FileProviderAvailability) -> Void)?
+    /// Notified on the main queue with the paste readout to show, or `nil` to
+    /// clear it (#643).
+    ///
+    /// Single-slot, for the same reason as `availabilityObserver`.
+    private var materializationObserver: (@MainActor (PasteMaterializationSnapshot?) -> Void)?
+    /// Aggregates the relay's per-pull events into that readout.
+    ///
+    /// Assigned once, right after `super.init()`, because its `emit` closure
+    /// captures `self` — the same reason the relay's `visibleFileURLResolver` is
+    /// wired there. Read on main.
+    private var materializationTracker: PasteMaterializationTracker?
 
     /// Current File Provider usability, for the UI.
     ///
@@ -374,6 +388,21 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
         dispatchPrecondition(condition: .onQueue(.main))
         availabilityObserver = observer
         MainActor.assumeIsolated { observer(availabilityStorage) }
+    }
+
+    /// Registers an observer notified on the main queue with the paste
+    /// materialization readout to render, or `nil` to clear it (#643).
+    ///
+    /// Single-observer for the same reason as `setAvailabilityObserver`: each
+    /// host instance has exactly one owner, and an owner driving several
+    /// consumers fans them out inside its own closure. Unlike availability there
+    /// is no current value to deliver on registration — a readout only exists
+    /// while a paste is materializing.
+    public func setMaterializationObserver(
+        _ observer: @escaping @MainActor (PasteMaterializationSnapshot?) -> Void
+    ) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        materializationObserver = observer
     }
 
     /// Updates the cached availability and notifies the observer on a transition.
@@ -473,6 +502,17 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
                 rootURL: rootURL, manifest: self.publishedManifest,
                 generation: generation, repIndex: repIndex, childSeq: childSeq)
         }
+        // The paste readout (#643). The tracker is driven off-main from the
+        // relay's XPC queues, so every emission hops to main before reaching the
+        // owner's UI.
+        let tracker = PasteMaterializationTracker { [weak self] snapshot in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                MainActor.assumeIsolated { self.materializationObserver?(snapshot) }
+            }
+        }
+        materializationTracker = tracker
+        relayService.materializationTracker = tracker
     }
 
     deinit {
@@ -910,7 +950,7 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     /// their domain URLs by rep index, or `nil` to fall back to the synchronous
     /// provider path.
     public func publishItems(
-        generation: UInt64, items: [FileProviderPublishItem],
+        generation: UInt64, sourceName: String, items: [FileProviderPublishItem],
         folders: [FileProviderPublishFolder], waitForPlaceholder: Bool
     ) -> [Int: URL]? {
         dispatchPrecondition(condition: .onQueue(.main))
@@ -978,6 +1018,12 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
             return nil
         }
         publishedManifest = manifest
+        // Denominators for the paste readout (#643), adopted from the same
+        // manifest the enumerator serves so the two can never describe different
+        // sets of files. A publish that fails its reconciliation barrier below
+        // falls back to the sync path and simply never produces a pull, so the
+        // adopted offer stays unused rather than needing to be rolled back.
+        materializationTracker?.offerPublished(manifest, sourceName: sourceName)
         signalEnumerator()
         // `signalEnumerator`'s completion means only that the signal was
         // delivered — NOT that the manifest change has been applied to the
@@ -1331,6 +1377,10 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
     }
 
     private func clearOfferOnMain() {
+        // Ahead of the `domainRegistered` guard: a superseded offer must stop
+        // driving the paste readout even in a context that never registered
+        // (where the tracker holds nothing anyway, making this a no-op).
+        materializationTracker?.offerCleared()
         // Only touch the manifest if the domain ever published — avoids creating
         // the container in a context where the File Provider is unused.
         guard domainRegistered else { return }

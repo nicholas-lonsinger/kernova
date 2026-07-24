@@ -187,6 +187,13 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
             self?.statusItemController?.fileProviderAvailabilityChanged(availability)
         }
 
+        // Progress for a paste materializing into the guest (#643) — the
+        // status item is the agent's only UI, so it renders the ring and the
+        // dropdown readout. Delivered on main.
+        fileProviderHost.setMaterializationObserver { [weak self] snapshot in
+            self?.statusItemController?.materializationProgressChanged(snapshot)
+        }
+
         installSignalHandlers(
             vsockConnection: vsockConnection,
             clipboardAgent: clipboardAgent,

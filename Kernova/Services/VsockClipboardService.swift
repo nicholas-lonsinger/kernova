@@ -1110,7 +1110,8 @@ final class VsockClipboardService: ClipboardServicing {
         guard !items.isEmpty || !folders.isEmpty else { return [:] }
         guard
             let urls = fileProvider.publishItemsForPaste(
-                source: self, generation: promise.generation, items: items, folders: folders)
+                source: self, generation: promise.generation, sourceName: label, items: items,
+                folders: folders)
         else { return [:] }
         promise.fpRoutedURLs = urls
         Self.logger.notice(

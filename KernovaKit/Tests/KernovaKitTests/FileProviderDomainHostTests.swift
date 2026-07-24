@@ -607,7 +607,7 @@ struct FileProviderDomainHostEnablementTests {
         // Standing in for a real paste: finds the domain unregistered and falls
         // back (returns nil) — must not trigger any re-registration.
         let published = host.publishItems(
-            generation: 1,
+            generation: 1, sourceName: "Test VM",
             items: [
                 FileProviderPublishItem(
                     repIndex: 0, filename: "test.txt", byteCount: 10, uti: "public.data")
@@ -809,7 +809,7 @@ struct FileProviderDomainHostEnablementTests {
         // constructed domain's read-only `userEnabled` is false), so this
         // publish is refused and falls back to the sync path.
         let urls = host.publishItems(
-            generation: 1,
+            generation: 1, sourceName: "Test VM",
             items: [
                 FileProviderPublishItem(
                     repIndex: 0, filename: "big.bin", byteCount: 1_000, uti: "public.data")

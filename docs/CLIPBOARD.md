@@ -451,22 +451,54 @@ for the full pull and payloads land intact. This is a **documented gap**, not a 
 engineer around: the publication is the API's supported shape (the one first-party providers'
 determinate dialogs consume), the degradation is only ever an indeterminate or absent bar
 (never a wrong one), and a folder-root aggregate `NSProgress` would not close it — no
-publication shape has been observed to render.
+publication shape has been observed to render. What *does* close it is not another publication
+but a surface Kernova owns outright: the status-item readout below (#643).
 
 The host clipboard window's in-app bar records the guest→host pull from the same per-chunk
 callback (`performBlockingPull`, direction `.inbound`); all indicators clear at every terminal.
 No vsock wire change — the channels are the servicing XPC and local `NSProgress` publication,
 never the transport.
 
-That bar is the **third consumer of the same throttle** (#636). Its
+That bar is the **third consumer of the same throttle** (#636), and the paste readout below is
+the fourth. Its
 `ClipboardTransferProgressTracker` holds one `FetchProgressCoalescer` per tracked transfer — the
 coalescer models a single byte stream, and a folder copy tracks several children at once — so a
 64 KiB-chunked pull republishes the `@MainActor` observable at the shared policy's rate (~1% of
-the total or ~100 ms, always the final chunk) instead of once per chunk. All three indicators
-therefore share one policy: a rate change moves them together, and none of them can drift.
+the total or ~100 ms, always the final chunk) instead of once per chunk. Every indicator
+therefore shares one policy: a rate change moves them together, and none of them can drift.
 Terminal and reveal republishes bypass the throttle entirely (§13: an indicator must never stick),
 as does an unrevealed transfer, whose chunks schedule nothing because they cannot change what is
-on screen.
+on screen. A consumer that bypasses the throttle tells its coalescer so
+(`markForwarded`), or the next update would measure its delta from a byte count already on
+screen and sail through the policy no matter how small it was.
+
+**Kernova renders its own aggregate readout for the whole paste** (#643) — the answer to the
+documented gap above, since a multi-GB materialization was otherwise visible nowhere once the
+copy dialog dismissed itself. It is rendered on the side where the bytes *land* — the host app's
+status item for a guest→host paste, the guest agent's for a host→guest one — because the user
+who pressed ⌘V is looking at that machine; the guest agent's status item is its only UI, and
+this is the first thing it renders beyond menu text. `PasteMaterializationTracker` is the
+per-chunk callback's fourth consumer, and the only one that also needs each pull's *start* and
+*terminal*, because it aggregates many pulls into one session: the published manifest supplies
+the denominators (how many files will materialize — flat reps and folder file nodes alike — and
+total bytes across all of them) and the pulls supply the numerators, so a flat multi-file paste
+(sequential pulls) and a folder (concurrent children) read identically — one bar, one
+byte-progress line in Safari's download phrasing ("47.6 MB of 3.03 GB (7.8 MB/s)"), one
+time-remaining line ("6 minutes, 27 seconds remaining"), and "N of M", where a
+folder's children count individually so a folder-only paste gets a live counter too (the
+current item's name follows the most recently begun pull — a folder's children under the
+*folder's* name — but only the tooltip/accessibility summary renders it). The status item
+carries a determinate ring; the
+dropdown carries the full readout and opens itself **once per paste**, and never again for that
+paste once the user closes it. Revealed after 3 s of materializing — far past the in-app bar's
+300 ms, because a dropdown that opens itself is a heavier interruption than a bar in a window
+already on screen, so it is reserved for genuinely long transfers — and cleared 2 s after the
+last pull ends, a dwell that both bridges Finder's gap between two sequentially-pulled items and
+leaves the finished readout up for a beat. A cancelled paste or a partial materialization (one
+file dragged out of a folder placeholder tree) clears the same way, below 100 %, by design.
+Supersession — a new offer publishing, an offer release, clipboard sharing off — clears it
+immediately, which is the one case where a still-finishing pull loses its readout; that is
+accepted rather than special-cased, since the offer it was measured against no longer exists.
 
 ---
 
@@ -530,6 +562,7 @@ fix, not just whether to fix it. (macOS-guest issues only; Linux/Windows out of 
 | **#559** — host "Copy to Mac" routes only a single plain-file rep lazily (D2 scope limit) | §2 Disk-as-fallback (deadline cap), §3 Pay on consume | The host mirror of D1b: dissolve the single-file gate so every eligible plain-file rep routes, and move routing into the paste-time provider closure. ✓ **Resolved** — `materializeForCopy` defers every lazy-eligible plain-file rep as a `.lazyFile`; the pasteboard closure (`copyToMacFileURL`) tries the File Provider first (publishing all eligible reps together, latched on success) and falls back to a size-capped sync pull gated by the offer's plain-file **total** (`syncBoundTotalBytes`), all-or-nothing, with a copy-click advisory when the toggle is already known off. Placeholder creation is now paste-scoped (#427 host mirror); `CopyToMacDropReason.multipleFiles` and its "Only one file…" message are removed. |
 | **#426** — File Provider paste shows only an indeterminate "Preparing to copy…" bar, in both directions | §13 Legibility, §5 preview-only | Drive the native `fetchContents` `Progress` off the transport's existing byte-level progress, both directions; the extension can't see the vsock transfer, so carry it over the servicing XPC (never the data path — §5). ✓ **Resolved** — a one-way, coalesced `FileProviderControl.fetchProgressed(generation:repIndex:bytesTransferred:totalBytes:)` push from the owner (fed by the receiver's per-chunk callback via `FileProviderPullProvider.fetchStagedFile`'s new `onProgress`) drives a byte-denominated `fetchContents` `Progress` (`kind = .file`, `.downloading`), routed by an in-flight `(generation, repIndex)` registry in `FileProviderServiceSource` (a late push for a finished pull no-ops; a version-skewed peer lacking the selector degrades to no-progress without tearing down the connection). The host clipboard window's in-app bar records the guest→host FP pull from the same callback (`performBlockingPull` → `ClipboardTransferProgressTracker`, direction `.inbound`), cleared at every terminal. No vsock wire change (the ground-truth correction: the outbound in-app half already recorded via `handleRequest` — only the host receive side was the gap). |
 | **#634** — FP paste never shows determinate progress in Finder's *copy dialog*, despite #426's advancing `fetchContents` `Progress` | §13 Legibility, §5 preview-only | Live verification refuted the "shared callback never fires" hypothesis: every #426 link fires; the gap is that fileproviderd doesn't bridge a third-party extension's `fetchContents` `Progress` into the copy-dialog UI on macOS 26. The dialog consumes a *published* `NSProgress` keyed by the source file's URL. ✓ **Resolved** — the owner publishes one per pull (`FetchProgressFilePublisher`, fed from the same per-chunk callback, same `FetchProgressThrottle`, per-child URLs for D1b, unpublished at either reply terminal); see §13's published-progress bullet. Both directions, since the guest agent runs the same shared relay (guest agent version bump). |
+| **#643** — a multi-GB FP paste has no visible progress anywhere once Finder's copy dialog dismisses itself | §13 Legibility, §4 one data plane | The gap #639 settled is in a surface we don't own, so stop trying to drive that one: render our own. It must be *aggregate per paste* (not per pull) or a folder copy would flicker through thousands of children, and it must render on the side where the bytes land, since that is where the user who pressed ⌘V is looking. ✓ **Resolved** — `PasteMaterializationTracker` folds every pull of one paste into a single readout keyed off the published manifest, and each side's status item renders it as a determinate ring plus a live dropdown row that opens itself once per paste. A fourth consumer of the same per-chunk callback and the same throttle — not a replacement for the in-app bar or the toolbar indicator, and no change to the data path (§5). |
 
 ---
 

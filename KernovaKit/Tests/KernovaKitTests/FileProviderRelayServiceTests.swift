@@ -391,4 +391,151 @@ struct FileProviderRelayServiceTests {
         #expect(resolverCalls.value.first?.1 == 1)
         #expect(resolverCalls.value.first?.2 == 5)
     }
+
+    // MARK: - Paste materialization tracker (#643)
+
+    /// Publishes a one-file offer into a tracker whose emissions the test can
+    /// read, wired to the relay exactly as the domain host wires it.
+    private static func makeTrackerHarness(
+        byteCount: UInt64
+    ) -> (tracker: PasteMaterializationTracker, emissions: Box<[PasteMaterializationSnapshot?]>) {
+        let emissions = Box<[PasteMaterializationSnapshot?]>([])
+        // No reveal gate and no idle linger: this suite is asserting that the
+        // relay reports each pull, not the tracker's own timing, which
+        // `PasteMaterializationTrackerTests` covers with an injected clock.
+        let tracker = PasteMaterializationTracker(
+            revealDelay: 0, idleLinger: 0,
+            schedule: { _, _ in },
+            emit: { emissions.value.append($0) })
+        tracker.offerPublished(
+            FileProviderManifest(
+                generation: 4,
+                items: [
+                    FileProviderManifest.Item(
+                        sessionSalt: 1, generation: 4, repIndex: 2, filename: "big.bin",
+                        byteCount: byteCount, uti: "public.data")
+                ]),
+            sourceName: "macOS TEST")
+        return (tracker, emissions)
+    }
+
+    @Test("fetchFile reports the pull's start, bytes, and success to the materialization tracker")
+    func fetchFileDrivesMaterializationTracker() async throws {
+        let harness = Self.makeTrackerHarness(byteCount: 1_000_000)
+        let provider = MockPullProvider(
+            result: .success("/staged/file"),
+            progressEvents: [(400_000, 1_000_000)])
+        let service = FileProviderRelayService(
+            pullProvider: provider, loggerSubsystem: "app.kernova.test")
+        service.materializationTracker = harness.tracker
+        let replied = Box(false)
+        let gate = AsyncGate()
+
+        service.fetchFile(generation: 4, repIndex: 2) { _, _ in
+            replied.value = true
+            gate.notify()
+        }
+
+        try await gate.wait { replied.value }
+        let snapshots = harness.emissions.value.compactMap { $0 }
+        // The pull is announced before the queue hop, so the file is named from
+        // the start rather than from its first byte.
+        #expect(snapshots.first?.currentItemName == "big.bin")
+        #expect(snapshots.contains { $0.bytesTransferred == 400_000 })
+        // A successful pull is credited its full manifest size.
+        let final = try #require(snapshots.last)
+        #expect(final.bytesTransferred == 1_000_000)
+        #expect(final.filesCompleted == 1)
+    }
+
+    @Test("a failed fetchFile reports its terminal without completing the item")
+    func failedFetchFileReportsTerminalToTracker() async throws {
+        let harness = Self.makeTrackerHarness(byteCount: 1_000_000)
+        let provider = MockPullProvider(
+            result: .failure(.pullFailed),
+            progressEvents: [(250_000, 1_000_000)])
+        let service = FileProviderRelayService(
+            pullProvider: provider, loggerSubsystem: "app.kernova.test")
+        service.materializationTracker = harness.tracker
+        let error = Box<NSError?>(nil)
+        let gate = AsyncGate()
+
+        service.fetchFile(generation: 4, repIndex: 2) { _, nsError in
+            error.value = nsError
+            gate.notify()
+        }
+
+        try await gate.wait { error.value != nil }
+        let final = try #require(harness.emissions.value.compactMap { $0 }.last)
+        #expect(final.filesCompleted == 0)
+        // The bytes that really did cross are kept; only completion is withheld.
+        #expect(final.bytesTransferred == 250_000)
+    }
+
+    @Test("fetchChild reports its pull against the folder's own tree node")
+    func fetchChildDrivesMaterializationTracker() async throws {
+        let emissions = Box<[PasteMaterializationSnapshot?]>([])
+        let tracker = PasteMaterializationTracker(
+            revealDelay: 0, idleLinger: 0,
+            schedule: { _, _ in },
+            emit: { emissions.value.append($0) })
+        tracker.offerPublished(
+            FileProviderManifest(
+                generation: 4, items: [],
+                folders: [
+                    FileProviderManifest.FolderRep(
+                        sessionSalt: 1, generation: 4, repIndex: 1, filename: "Photos",
+                        uti: "public.folder",
+                        nodes: [
+                            FileProviderManifest.FolderRep.Node(
+                                childSeq: 5, parentChildSeq: 0, kind: .file, filename: "file.txt",
+                                relativePath: "sub/file.txt", byteCount: 500_000,
+                                uti: "public.data")
+                        ])
+                ]),
+            sourceName: "macOS TEST")
+
+        let provider = MockPullProvider(
+            result: .success("/staged/child"),
+            progressEvents: [(200_000, 500_000)])
+        let service = FileProviderRelayService(
+            pullProvider: provider, loggerSubsystem: "app.kernova.test")
+        service.materializationTracker = tracker
+        let replied = Box(false)
+        let gate = AsyncGate()
+
+        service.fetchChild(generation: 4, repIndex: 1, childSeq: 5, relativePath: "sub/file.txt") {
+            _, _ in
+            replied.value = true
+            gate.notify()
+        }
+
+        try await gate.wait { replied.value }
+        let snapshots = emissions.value.compactMap { $0 }
+        // A folder's children stream under the folder's name.
+        #expect(snapshots.first?.currentItemName == "Photos")
+        let final = try #require(snapshots.last)
+        #expect(final.bytesTransferred == 500_000)
+        // The folder's single file node is the counter's whole population.
+        #expect(final.fileCount == 1)
+        #expect(final.filesCompleted == 1)
+    }
+
+    @Test("a relay with no tracker wired pulls normally")
+    func noTrackerIsHarmless() async throws {
+        let provider = MockPullProvider(
+            result: .success("/staged/file"), progressEvents: [(1, 2)])
+        let service = FileProviderRelayService(
+            pullProvider: provider, loggerSubsystem: "app.kernova.test")
+        let path = Box<String?>(nil)
+        let gate = AsyncGate()
+
+        service.fetchFile(generation: 4, repIndex: 2) { stagedPath, _ in
+            path.value = stagedPath
+            gate.notify()
+        }
+
+        try await gate.wait { path.value != nil }
+        #expect(path.value == "/staged/file")
+    }
 }

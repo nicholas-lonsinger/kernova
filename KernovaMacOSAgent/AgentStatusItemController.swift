@@ -26,6 +26,13 @@ import os
 /// icon too, with its own non-dismissible explanatory line (no toggle to
 /// flip, so no enable/stop commands). Mirrors the host app's
 /// `HostAgentStatusItemController`.
+///
+/// While a host→guest paste is materializing through the File Provider it also
+/// carries that paste's progress (#643): a determinate ring around the icon, a
+/// live readout at the top of the dropdown, and a one-time automatic open of the
+/// dropdown. Rendering it here rather than on the host is deliberate — the user
+/// who pressed ⌘V is looking at the guest's screen, and this status item is the
+/// agent's only UI.
 @MainActor
 final class AgentStatusItemController: NSObject, NSMenuDelegate {
     private static let logger = Logger(subsystem: "app.kernova.macosagent", category: "AgentStatusItem")
@@ -41,6 +48,12 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
     private let clipboardActivity: () -> ClipboardActivity
     private let fileProviderAvailability: () -> FileProviderAvailability
     private let onQuit: () -> Void
+
+    /// The dropdown readout, its one-shot automatic open, and the shared menu
+    /// wiring for a materializing paste (#643), built lazily since most sessions
+    /// never reveal one.
+    private lazy var pasteProgressPresenter = PasteProgressStatusItemPresenter(
+        statusItem: statusItem, menu: menu)
 
     init(
         version: String,
@@ -99,6 +112,18 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
         setIcon(for: connectionState())
     }
 
+    // MARK: - Paste progress (#643)
+
+    /// Applies the paste readout the domain host just published — a snapshot to
+    /// render, or `nil` to clear it.
+    ///
+    /// Called by the app delegate from `FileProviderDomainHost
+    /// .setMaterializationObserver`, which delivers on main.
+    func materializationProgressChanged(_ snapshot: PasteMaterializationSnapshot?) {
+        pasteProgressPresenter.apply(snapshot)
+        setIcon(for: connectionState())
+    }
+
     /// Whether the proactive status-item badge should currently show.
     ///
     /// Distinct from the always-present passive menu line below, which shows
@@ -137,6 +162,17 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
         }
         image.isTemplate = true
         statusItem.button?.title = ""
+        // A materializing paste outranks the enablement badge: it is happening
+        // now and ends on its own, while the badge is a standing nudge that will
+        // still be there afterwards. The two barely overlap in practice — a
+        // paste only materializes through the File Provider while the domain is
+        // `.ready`, which is exactly when the badge is absent.
+        if let snapshot = pasteProgressPresenter.snapshot {
+            statusItem.button?.image = image.withProgressRing(
+                fraction: snapshot.fractionComplete)
+            statusItem.button?.toolTip = PasteProgressFormat.summary(snapshot)
+            return
+        }
         statusItem.button?.image = reminderActive ? image.withAttentionBadge() : image
         statusItem.button?.toolTip = reminderActive ? badgeSummary() : nil
     }
@@ -155,6 +191,10 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
+
+        // A materializing paste leads: it is the only transient thing here, and
+        // the automatic open exists to put it in front of the user (#643).
+        pasteProgressPresenter.insertItemsIfActive()
 
         // Lead with live status. Identity + version/build are reached through
         // the About item below; only an actionable pending update surfaces here.
@@ -219,6 +259,14 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
             title: AgentMenuText.quit(), action: #selector(quitTapped), keyEquivalent: "")
         quit.target = self
         menu.addItem(quit)
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        pasteProgressPresenter.menuWillOpen()
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        pasteProgressPresenter.menuDidClose()
     }
 
     // MARK: - About

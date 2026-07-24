@@ -2943,6 +2943,8 @@ final class FakeHostClipboardDomainCoordinator: HostClipboardDomainCoordinating 
     private(set) var published: [Published] = []
     private(set) var publishedFolders: [FileProviderPublishFolder] = []
     private(set) var publishCallCount = 0
+    /// Source name the most recent publish carried, for the paste readout.
+    private(set) var publishedSourceName: String?
     private(set) var startCount = 0
     private(set) var stopCount = 0
     private(set) var clearCount = 0
@@ -2958,10 +2960,11 @@ final class FakeHostClipboardDomainCoordinator: HostClipboardDomainCoordinating 
     func prepareForCopy() { prepareCount += 1 }
 
     func publishItemsForPaste(
-        source: any HostClipboardFileRepProviding, generation: UInt64,
+        source: any HostClipboardFileRepProviding, generation: UInt64, sourceName: String,
         items: [FileProviderPublishItem], folders: [FileProviderPublishFolder]
     ) -> [Int: URL]? {
         publishCallCount += 1
+        publishedSourceName = sourceName
         published.append(
             contentsOf: items.map {
                 Published(

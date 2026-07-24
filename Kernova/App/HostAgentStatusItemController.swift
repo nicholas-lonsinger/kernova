@@ -24,6 +24,15 @@ import os
 /// menu line) stay regardless of dismissal. A registration/install failure
 /// (`.unavailable`, #591) badges the icon too, with its own non-dismissible
 /// explanatory line (no toggle to flip, so no enable/stop commands).
+///
+/// While a guest→host paste is materializing through the File Provider it also
+/// carries that paste's progress (#643): a determinate ring around the icon, a
+/// live readout at the top of the dropdown, and a one-time automatic open of the
+/// dropdown so the readout is seen without a click. Finder's copy dialog has
+/// never been observed rendering determinate progress for our pulls
+/// (docs/CLIPBOARD.md §13), so this is the only surface a multi-GB paste has
+/// while it runs. Mirrored by the guest agent's `AgentStatusItemController` for
+/// the host→guest direction.
 @MainActor
 final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     private static let logger = Logger(subsystem: "app.kernova", category: "HostAgentStatusItem")
@@ -44,6 +53,18 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     private var runningObservation: ObservationLoop?
     /// Keeps the icon/tooltip in sync with the host File Provider toggle.
     private var fileProviderObservation: ObservationLoop?
+    /// Keeps the paste readout in sync with the materializing transfer (#643).
+    private var pasteProgressObservation: ObservationLoop?
+
+    /// The dropdown readout, its one-shot automatic open, and the shared menu
+    /// wiring for a materializing paste (#643).
+    ///
+    /// Built lazily — most sessions never reveal one. The host dismisses its
+    /// soft-quit reminder before an automatic open so the click reaches the
+    /// menu rather than the reminder's dismissal handler.
+    private lazy var pasteProgressPresenter = PasteProgressStatusItemPresenter(
+        statusItem: statusItem, menu: menu,
+        willAutoOpen: { [weak self] in self?.dismissSoftQuitReminder() })
 
     /// Manages the transient "still running in the menu bar" soft-quit reminder
     /// popover (#624).
@@ -88,6 +109,24 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
             track: { _ = HostClipboardFileProvider.shared.availability },
             apply: { [weak self] in self?.fileProviderAvailabilityChanged() }
         )
+
+        // The coordinator publishes an aggregate readout per paste, already
+        // rate-bounded by the shared fetch-progress throttle, so this drives the
+        // ring and the dropdown row directly without any pacing of its own.
+        pasteProgressObservation = observeRecurring(
+            track: { _ = HostClipboardFileProvider.shared.materializationProgress },
+            apply: { [weak self] in self?.pasteProgressChanged() }
+        )
+    }
+
+    // MARK: - Paste progress (#643)
+
+    /// Applies the current paste readout to the dropdown, then refreshes the
+    /// icon and tooltip from it.
+    private func pasteProgressChanged() {
+        pasteProgressPresenter.apply(HostClipboardFileProvider.shared.materializationProgress)
+        setIcon()
+        updateTooltip()
     }
 
     // MARK: - Soft-quit reminder (#624)
@@ -190,8 +229,11 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         // Deferred a tick: `dismissSoftQuitReminder` reattached the menu, but
         // popping it from inside the button-action callback that the same click
         // is still delivering re-enters menu tracking mid-event; the next
-        // runloop turn opens it cleanly.
-        Task { @MainActor [weak self] in
+        // runloop turn opens it cleanly. A run-loop block rather than a `Task`,
+        // for the same reason as the paste readout's automatic open — see
+        // `performOnMainRunLoop` — so a dropdown reached this way doesn't
+        // freeze whatever is updating behind it.
+        performOnMainRunLoop { [weak self] in
             self?.statusItem.button?.performClick(nil)
         }
     }
@@ -242,28 +284,40 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
             return
         }
         image.isTemplate = true
+        // A materializing paste outranks the enablement badge: it is happening
+        // right now and ends on its own, while the badge is a standing nudge
+        // that will still be there afterwards. In practice the two barely
+        // overlap — a paste only materializes through the File Provider while
+        // the domain is `.ready`, which is exactly when the badge is absent —
+        // so this only decides the moment a user flips the toggle off mid-paste.
+        if let snapshot = pasteProgressPresenter.snapshot {
+            statusItem.button?.image = image.withProgressRing(
+                fraction: snapshot.fractionComplete)
+            return
+        }
         statusItem.button?.image = reminderActive ? image.withAttentionBadge() : image
     }
 
     /// Updates the tooltip.
     ///
     /// The running-count line always shows (the class's
-    /// own promise); the reminder — when active — appends as a second line
-    /// rather than replacing it, so headless users don't lose the only
-    /// at-a-glance view of how many VMs are running (#581).
+    /// own promise); a materializing paste (#643) and the reminder — when
+    /// active — append as further lines rather than replacing it, so headless
+    /// users don't lose the only at-a-glance view of how many VMs are running
+    /// (#581).
     private func updateTooltip() {
         let count = viewModel.instances.lazy.filter(\.isKeepingAppAlive).count
-        let countLine: String
+        var lines: [String]
         switch count {
-        case 0: countLine = "Kernova"
-        case 1: countLine = "Kernova — 1 virtual machine running"
-        default: countLine = "Kernova — \(count) virtual machines running"
+        case 0: lines = ["Kernova"]
+        case 1: lines = ["Kernova — 1 virtual machine running"]
+        default: lines = ["Kernova — \(count) virtual machines running"]
         }
-        guard reminderActive else {
-            statusItem.button?.toolTip = countLine
-            return
+        if let snapshot = pasteProgressPresenter.snapshot {
+            lines.append(PasteProgressFormat.summary(snapshot))
         }
-        statusItem.button?.toolTip = "\(countLine)\n\(badgeSummary())"
+        if reminderActive { lines.append(badgeSummary()) }
+        statusItem.button?.toolTip = lines.joined(separator: "\n")
     }
 
     /// The badge tooltip's second line for the current availability, picking
@@ -285,6 +339,10 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         dismissSoftQuitReminder()
 
         menu.removeAllItems()
+
+        // A materializing paste leads: it is the only transient thing here, and
+        // the automatic open exists to put it in front of the user (#643).
+        pasteProgressPresenter.insertItemsIfActive()
 
         let open = NSMenuItem(title: "Open Kernova", action: #selector(openTapped), keyEquivalent: "")
         open.target = self
@@ -344,6 +402,14 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         let quit = NSMenuItem(title: "Quit Kernova", action: #selector(quitTapped), keyEquivalent: "")
         quit.target = self
         menu.addItem(quit)
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        pasteProgressPresenter.menuWillOpen()
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        pasteProgressPresenter.menuDidClose()
     }
 
     /// Appends a disabled, informational (non-actionable) line to the dropdown.
