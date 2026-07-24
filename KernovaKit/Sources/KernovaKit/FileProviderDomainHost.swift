@@ -505,7 +505,10 @@ public final class FileProviderDomainHost: NSObject, FileProviderPublishing,
         // The paste readout (#643). The tracker is driven off-main from the
         // relay's XPC queues, so every emission hops to main before reaching the
         // owner's UI.
-        let tracker = PasteMaterializationTracker { [weak self] snapshot in
+        // TEMPORARY (#650 live verification): reveal at 1 s instead of
+        // `defaultRevealDelay` so short test pastes still surface the readout.
+        // Restore the default (drop the argument) before merge.
+        let tracker = PasteMaterializationTracker(revealDelay: 1.0) { [weak self] snapshot in
             DispatchQueue.main.async {
                 guard let self else { return }
                 MainActor.assumeIsolated { self.materializationObserver?(snapshot) }

@@ -26,7 +26,10 @@ public final class PasteProgressMenuItemView: NSView {
     private static let rowSpacing: CGFloat = 4
 
     private let headline = NSTextField(labelWithString: "")
-    private let bar = PasteProgressBarView()
+    private let bar = NSProgressIndicator()
+    /// The fraction the bar should show, committed to it only while the view is
+    /// on screen — see `viewDidMoveToWindow`.
+    private var pendingFraction: Double = 0
     private let itemName = NSTextField(labelWithString: "")
     private let itemCounter = NSTextField(labelWithString: "")
     private let detail = NSTextField(labelWithString: "")
@@ -57,6 +60,13 @@ public final class PasteProgressMenuItemView: NSView {
         headline.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold)
         headline.textColor = .labelColor
         headline.lineBreakMode = .byTruncatingTail
+
+        bar.style = .bar
+        bar.isIndeterminate = false
+        bar.minValue = 0
+        bar.maxValue = 1
+        bar.doubleValue = 0
+        bar.controlSize = .small
 
         for label in [itemName, itemCounter, detail, percent] {
             label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
@@ -99,7 +109,6 @@ public final class PasteProgressMenuItemView: NSView {
             itemRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
             detailRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
             bar.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            bar.heightAnchor.constraint(equalToConstant: PasteProgressBarView.barHeight),
             // Pin the content width so the rows lay out (and the height measures)
             // against the width the menu will actually give this view.
             stack.widthAnchor.constraint(
@@ -108,11 +117,37 @@ public final class PasteProgressMenuItemView: NSView {
         return stack
     }
 
+    /// Commits the bar's stored fraction when the view lands on screen.
+    ///
+    /// This is the *only* place a detached bar's value catches up, and it is
+    /// what keeps the dropdown's first frame honest: `apply` runs on every
+    /// throttled snapshot from the reveal onward — before the dropdown ever
+    /// opens — and committing those to an `NSProgressIndicator` that has no
+    /// window left its first on-screen frame animating out of the accumulated,
+    /// never-displayed state (observed live on #650 as the bar opening around
+    /// 40 % and springing back). Withholding commits until the view is attached
+    /// means the control's first on-screen animation runs from its built value
+    /// of zero up to the real fraction — an ordinary fill.
+    public override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil {
+            bar.doubleValue = pendingFraction
+        } else {
+            // Detached: park the control back at zero so its next appearance
+            // fills from empty again, rather than springing down from whatever
+            // the previous showing left behind (the view is kept across
+            // pastes).
+            bar.doubleValue = 0
+        }
+    }
+
     /// Applies a snapshot in place, so the readout keeps advancing while its
     /// menu is open.
     public func apply(_ snapshot: PasteMaterializationSnapshot) {
         headline.stringValue = PasteProgressFormat.headline(sourceName: snapshot.sourceName)
-        bar.fraction = snapshot.fractionComplete
+        pendingFraction = snapshot.fractionComplete
+        // Off screen, the value is only recorded — see `viewDidMoveToWindow`.
+        if window != nil { bar.doubleValue = pendingFraction }
         itemName.stringValue = snapshot.currentItemName ?? ""
         itemCounter.stringValue =
             PasteProgressFormat.itemCounter(
@@ -123,43 +158,5 @@ public final class PasteProgressMenuItemView: NSView {
                 secondsRemaining: snapshot.secondsRemaining) ?? ""
         percent.stringValue = PasteProgressFormat.percent(fraction: snapshot.fractionComplete)
         setAccessibilityLabel(PasteProgressFormat.summary(snapshot))
-    }
-}
-
-/// The readout's determinate fill bar, drawn by hand.
-///
-/// Deliberately not an `NSProgressIndicator`: that control animates every value
-/// commit with a private fluid spring — including its first commit after
-/// landing in a window, observed live (#643) as the bar opening at an arbitrary
-/// fill and springing back to the real fraction when the dropdown first
-/// appeared — and it exposes no non-animated setter to suppress that with. The
-/// readout redraws at the shared throttle's ~1 %/100 ms cadence anyway, so the
-/// per-chunk motion *is* the animation; drawing the stored fraction directly
-/// makes the first frame correct by construction.
-@MainActor
-final class PasteProgressBarView: NSView {
-    /// The bar's fixed height (the capsule diameter).
-    static let barHeight: CGFloat = 5
-
-    /// Fill fraction, clamped to `0...1` at draw time.
-    var fraction: Double = 0 {
-        didSet {
-            if fraction != oldValue { needsDisplay = true }
-        }
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        let radius = bounds.height / 2
-        NSColor.quaternaryLabelColor.setFill()
-        NSBezierPath(roundedRect: bounds, xRadius: radius, yRadius: radius).fill()
-
-        let clamped = min(1, max(0, fraction))
-        guard clamped > 0 else { return }
-        // Never narrower than the capsule's own diameter, so a tiny fraction
-        // draws a dot rather than a squashed sliver.
-        let width = max(bounds.width * clamped, bounds.height)
-        let fill = NSRect(x: bounds.minX, y: bounds.minY, width: width, height: bounds.height)
-        NSColor.controlAccentColor.setFill()
-        NSBezierPath(roundedRect: fill, xRadius: radius, yRadius: radius).fill()
     }
 }
