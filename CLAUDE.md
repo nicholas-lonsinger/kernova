@@ -52,9 +52,8 @@ ref in the refspec. A PR's head branch must always be the clean
 ## Post-merge cleanup in an `EnterWorktree` session
 
 In an `EnterWorktree` session (the usual case), after confirming a merge landed
-(`gh pr view <N> --json state -q .state` → `"MERGED"`), **stay in the worktree** —
-do not `ExitWorktree`. Just fast-forward the primary checkout's `main` from
-inside the worktree:
+(`gh pr view <N> --json state -q .state` → `"MERGED"`), fast-forward the primary
+checkout's `main`:
 
 - `git -C <primary-checkout-path> pull --prune --ff-only` — `git -C <path>` runs
   this one command as if in the primary checkout (where `main` is checked out),
@@ -66,8 +65,6 @@ inside the worktree:
   `<primary-checkout-path>` at runtime — it is the first entry of
   `git worktree list` (the one with no `.claude/worktrees/` segment), e.g.
   `git -C "$(git worktree list --porcelain | head -1 | cut -d' ' -f2)" pull --prune --ff-only`.
-  The worktree and its scratch branch are left in place for continued or
-  follow-up work.
 
 Working directly in a checkout (no `EnterWorktree` session), follow the
 tool-neutral post-merge steps in AGENTS.md instead.
