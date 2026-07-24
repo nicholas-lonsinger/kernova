@@ -34,6 +34,7 @@ struct AppPreferences {
         // property's RATIONALE.
         static let quitTerminatesApp = "quitTerminatesApp"
         static let menuBarQuitReminderDismissed = "menuBarQuitReminderDismissed"
+        static let mainToolbarNewVMCollapseIndex = "KernovaMainToolbarNewVMCollapseIndex"
     }
 
     /// When `true`, advanced menu actions (e.g. *Start in Recovery Mode*) are
@@ -116,6 +117,20 @@ struct AppPreferences {
     var menuBarQuitReminderDismissed: Bool {
         get { defaults.bool(forKey: Keys.menuBarQuitReminderDismissed) }
         nonmutating set { defaults.set(newValue, forKey: Keys.menuBarQuitReminderDismissed) }
+    }
+
+    /// The main toolbar index New VM was removed from while the sidebar is
+    /// collapsed, or `nil` when it sits in the toolbar (#645).
+    ///
+    /// `MainWindowController` removes New VM for a collapsed sidebar with
+    /// `autosavesConfiguration` suspended, but an autosave triggered by anything
+    /// *else* while it is out (View ▸ Hide Toolbar, a display-mode change) still
+    /// persists the New-VM-less item list. Mirroring the removal here is what
+    /// lets the next launch tell it apart from a deliberate customization
+    /// removal — and put the item back in the slot it came from.
+    var mainToolbarNewVMCollapseIndex: Int? {
+        get { defaults.object(forKey: Keys.mainToolbarNewVMCollapseIndex) as? Int }
+        nonmutating set { defaults.set(newValue, forKey: Keys.mainToolbarNewVMCollapseIndex) }
     }
 
     /// Re-arms every host-side reminder by clearing its dismissed flag, so each

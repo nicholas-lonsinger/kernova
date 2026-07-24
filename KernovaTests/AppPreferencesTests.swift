@@ -144,6 +144,37 @@ struct AppPreferencesTests {
         }
     }
 
+    @Test("mainToolbarNewVMCollapseIndex defaults to nil")
+    func mainToolbarNewVMCollapseIndexDefaultsToNil() throws {
+        try withEphemeralPreferences { prefs, _ in
+            #expect(prefs.mainToolbarNewVMCollapseIndex == nil)
+        }
+    }
+
+    @Test("mainToolbarNewVMCollapseIndex round-trips through UserDefaults and clears on nil")
+    func mainToolbarNewVMCollapseIndexRoundTrips() throws {
+        try withEphemeralPreferences { prefs, defaults in
+            prefs.mainToolbarNewVMCollapseIndex = 2
+            #expect(prefs.mainToolbarNewVMCollapseIndex == 2)
+            #expect(defaults.object(forKey: "KernovaMainToolbarNewVMCollapseIndex") as? Int == 2)
+
+            prefs.mainToolbarNewVMCollapseIndex = nil
+            #expect(prefs.mainToolbarNewVMCollapseIndex == nil)
+            #expect(defaults.object(forKey: "KernovaMainToolbarNewVMCollapseIndex") == nil)
+        }
+    }
+
+    @Test("mainToolbarNewVMCollapseIndex distinguishes slot 0 from an absent removal")
+    func mainToolbarNewVMCollapseIndexZeroIsNotNil() throws {
+        try withEphemeralPreferences { prefs, _ in
+            // Index 0 is a real slot (New VM can be the leading item), so the
+            // getter must not conflate it with "no removal recorded" the way a
+            // plain `integer(forKey:)` would.
+            prefs.mainToolbarNewVMCollapseIndex = 0
+            #expect(prefs.mainToolbarNewVMCollapseIndex == 0)
+        }
+    }
+
     @Test("resetHostReminders clears both host reminder flags")
     func resetHostRemindersClearsBothFlags() throws {
         try withEphemeralPreferences { prefs, _ in

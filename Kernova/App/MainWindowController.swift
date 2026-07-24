@@ -8,15 +8,22 @@ import os
 @MainActor
 final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindowDelegate {
     private let viewModel: VMLibraryViewModel
+    private let preferences: AppPreferences
     private let toolbarManager: VMToolbarManager
     private let splitViewController = SnapToFitSplitViewController()
     private let sidebarViewController: SidebarViewController
     private let sidebarItem: NSSplitViewItem
     private var windowStateObservation: ObservationLoop?
     private var sidebarCollapseObservation: NSKeyValueObservation?
-    /// True while New VM is programmatically removed for a collapsed sidebar
-    /// (as opposed to the user removing it via customization).
-    private var newVMRemovedForSidebarCollapse = false
+    /// The toolbar index New VM was programmatically removed from for a
+    /// collapsed sidebar, or `nil` when it is in the toolbar (or the user
+    /// removed it themselves via customization).
+    ///
+    /// Mirrored into `AppPreferences` on every change so the removal survives a
+    /// relaunch — see `adoptPersistedNewVMRemoval`.
+    private var newVMCollapseRemovalIndex: Int? {
+        didSet { preferences.mainToolbarNewVMCollapseIndex = newVMCollapseRemovalIndex }
+    }
     private var sheetIsCustomizationPalette = false
 
     private static let logger = Logger(subsystem: "app.kernova", category: "MainWindowController")
@@ -32,8 +39,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     // MARK: - Init
 
-    init(viewModel: VMLibraryViewModel) {
+    init(viewModel: VMLibraryViewModel, preferences: AppPreferences = .shared) {
         self.viewModel = viewModel
+        self.preferences = preferences
         self.toolbarManager = VMToolbarManager(
             configuration: .init(
                 lifecycleID: NSToolbarItem.Identifier("lifecycle"),
@@ -110,6 +118,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         updateToolbarItems()
         updateWindowTitle()
         observeWindowState()
+        adoptPersistedNewVMRemoval()
         observeSidebarCollapse()
         Self.logger.notice("Main window controller initialized")
     }
@@ -162,11 +171,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     /// Implemented as remove/insert rather than `NSToolbarItem.isHidden`: on
     /// the glass toolbar a hidden item's slot keeps its width (measured on
     /// macOS 27 beta 4), leaving a dead gap between the window controls and
-    /// the sidebar toggle, while removal reclaims the space. Autosave is
-    /// suspended around the programmatic mutations so the user's saved layout
-    /// never records the collapsed state. Applies only while New VM sits in
-    /// the sidebar section — a user who moved it into the content section
-    /// keeps it visible.
+    /// the sidebar toggle, while removal reclaims the space. Applies only while
+    /// New VM sits in the sidebar section — a user who moved it into the
+    /// content section keeps it visible.
     private func observeSidebarCollapse() {
         sidebarCollapseObservation = sidebarItem.observe(\.isCollapsed, options: [.initial]) {
             [weak self] _, _ in
@@ -179,31 +186,67 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     private func syncNewVMVisibilityToSidebarState() {
         guard let toolbar = window?.toolbar, !toolbar.customizationPaletteIsRunning else { return }
         if sidebarItem.isCollapsed {
-            guard !newVMRemovedForSidebarCollapse,
+            guard newVMCollapseRemovalIndex == nil,
                 let index = toolbar.items.firstIndex(where: { $0.itemIdentifier == Self.toolbarNewVM }),
                 let separatorIndex = toolbar.items.firstIndex(where: {
                     $0.itemIdentifier == .sidebarTrackingSeparator
                 }),
                 index < separatorIndex
             else { return }
+            // Only the *removal* is kept out of the saved layout — the collapsed
+            // toolbar is a transient presentation, not a customization.
             withAutosaveSuspended(toolbar) { toolbar.removeItem(at: index) }
-            newVMRemovedForSidebarCollapse = true
-        } else if newVMRemovedForSidebarCollapse {
-            restoreNewVMItem(in: toolbar)
+            newVMCollapseRemovalIndex = index
+        } else if let index = newVMCollapseRemovalIndex {
+            restoreNewVMItem(in: toolbar, at: index)
         }
     }
 
-    /// Reinstates a collapse-removed New VM at its home slot (just before the
-    /// sidebar toggle).
-    private func restoreNewVMItem(in toolbar: NSToolbar) {
-        newVMRemovedForSidebarCollapse = false
+    /// Reinstates a collapse-removed New VM at the slot it came from.
+    ///
+    /// The index is remembered rather than recomputed from the sidebar toggle's
+    /// position because New VM is user-movable within the sidebar section, so
+    /// anchoring to the toggle would silently reorder a layout that had put New
+    /// VM on the toggle's trailing side. Clamped because a ⌘-drag move while the
+    /// sidebar is collapsed has no AppKit hook to keep the index current.
+    ///
+    /// The insert deliberately runs with autosave *live*: it returns the toolbar
+    /// to the user's canonical layout, which is exactly what should be persisted,
+    /// and writing it through heals a saved configuration that a foreign autosave
+    /// captured mid-collapse.
+    private func restoreNewVMItem(in toolbar: NSToolbar, at index: Int) {
+        newVMCollapseRemovalIndex = nil
         guard !toolbar.items.contains(where: { $0.itemIdentifier == Self.toolbarNewVM }) else {
             return
         }
-        let index = toolbar.items.firstIndex(where: { $0.itemIdentifier == .toggleSidebar }) ?? 0
-        withAutosaveSuspended(toolbar) {
-            toolbar.insertItem(withItemIdentifier: Self.toolbarNewVM, at: index)
+        toolbar.insertItem(
+            withItemIdentifier: Self.toolbarNewVM,
+            at: min(max(index, 0), toolbar.items.count)
+        )
+    }
+
+    /// Re-adopts a collapse removal that outlived the process, so New VM is
+    /// never stranded out of the toolbar for good.
+    ///
+    /// `withAutosaveSuspended` keeps *our* mutation out of the saved layout, but
+    /// an autosave triggered by anything else while New VM is out (View ▸ Hide
+    /// Toolbar, a display-mode change) persists the New-VM-less item list — and
+    /// since the collapsed layout differs from the default set, AppKit writes
+    /// that list rather than omitting it. Without re-adopting, the next launch
+    /// has no way to tell that removal from a deliberate one and never puts the
+    /// item back. Adopted only when New VM really is absent: an uncontaminated
+    /// saved layout still has it, and the collapse path owns it from there.
+    private func adoptPersistedNewVMRemoval() {
+        guard let index = preferences.mainToolbarNewVMCollapseIndex,
+            let toolbar = window?.toolbar,
+            !toolbar.items.contains(where: { $0.itemIdentifier == Self.toolbarNewVM })
+        else {
+            newVMCollapseRemovalIndex = nil
+            return
         }
+        Self.logger.notice(
+            "Re-adopting collapse-removed New VM toolbar item at index \(index, privacy: .public)")
+        newVMCollapseRemovalIndex = index
     }
 
     /// Runs a programmatic toolbar mutation without contaminating the
@@ -287,8 +330,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         // The palette must present the user's canonical layout, so a
         // collapse-removed New VM is restored for the sheet's duration
         // (windowDidEndSheet re-applies the collapse state afterwards).
-        if sheetIsCustomizationPalette, newVMRemovedForSidebarCollapse, let toolbar = window?.toolbar {
-            restoreNewVMItem(in: toolbar)
+        if sheetIsCustomizationPalette, let index = newVMCollapseRemovalIndex,
+            let toolbar = window?.toolbar
+        {
+            restoreNewVMItem(in: toolbar, at: index)
         }
     }
 
